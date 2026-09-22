@@ -1,7 +1,8 @@
 //! The agent loop. Runs as a background task; clients drive it with [`Op`]s and receive
 //! [`Envelope`]s. See `protocol.rs` for the event lifecycle.
 
-use crate::config::{Config, Profile, ToolMode};
+use crate::config::{Config, Profile, ProviderKind, ToolMode};
+use crate::context::{self, Estimator};
 use crate::message::{Block, Message, Role, Usage};
 use crate::prompt;
 use crate::protocol::{
@@ -146,6 +147,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     });
 
     tokio::spawn(async move {
+        agent.resolve_window().await;
         agent.emit_status();
         agent.emit(Event::Idle);
         while let Some(op) = work_rx.recv().await {
@@ -254,6 +256,11 @@ struct Agent {
     seq: AtomicU64,
     turn: u64,
     active_turn: Option<u64>,
+    /// The context window actually in effect (config, bounded by what the server reports).
+    window: u64,
+    est: Estimator,
+    /// Everything the user has typed this session, kept verbatim through compaction.
+    inputs: Vec<String>,
     root: PathBuf,
     system: String,
     specs: Vec<ToolSpec>,
@@ -272,18 +279,27 @@ impl Agent {
         shared: Arc<Shared>,
     ) -> Result<Self> {
         let system = prompt::system_prompt(&o.cwd, &o.cfg, &o.profile.model);
-        let (session_id, messages, seq, turn, log) = match (&o.resume, &o.store) {
+        let (session_id, messages, seq, turn, log, inputs) = match (&o.resume, &o.store) {
             (Some(id), Some(dir)) => {
                 let l = session::load(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let (seq, turn) = (l.last_seq(), l.last_turn());
-                (id.clone(), l.messages, seq, turn, Some(log))
+                let inputs = l
+                    .events
+                    .iter()
+                    .filter_map(|e| match &e.event {
+                        Event::TurnStarted { input, .. } => Some(input.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                (id.clone(), l.messages, seq, turn, Some(log), inputs)
             }
             (Some(_), None) => {
                 anyhow::bail!(ConfigError("can't resume without a session store".into()))
             }
-            (None, _) => (session::new_id(), Vec::new(), 0, 0, None),
+            (None, _) => (session::new_id(), Vec::new(), 0, 0, None, Vec::new()),
         };
+        let window = o.profile.context_window();
         let resumed = o.resume.is_some();
         let mut agent = Self {
             cfg: o.cfg,
@@ -302,6 +318,9 @@ impl Agent {
             seq: AtomicU64::new(seq),
             turn,
             active_turn: None,
+            window,
+            est: Estimator::default(),
+            inputs,
             root: o.cwd,
             system,
             specs: tools::specs(),
@@ -421,7 +440,7 @@ impl Agent {
             cwd: self.ctx.cwd.clone(),
             messages: self.messages.len(),
             context_tokens: self.context_tokens(),
-            context_window: self.profile.context_window(),
+            context_window: self.window,
             tokens_per_sec: self.tokens_per_sec(),
             todos: self.ctx.todos.clone(),
         }));
@@ -473,6 +492,7 @@ impl Agent {
                 self.system = prompt::system_prompt(&self.root, &self.cfg, &profile.model);
                 self.profile_name = name;
                 self.profile = profile;
+                self.resolve_window().await;
                 self.emit(Event::ModelChanged {
                     model: self.profile_name.clone(),
                 });
@@ -496,6 +516,7 @@ impl Agent {
                 self.sync_log();
                 *self.log.lock().unwrap() = None;
                 self.messages.clear();
+                self.inputs.clear();
                 self.ctx = Ctx::new(self.root.clone());
                 self.usage = Usage::default();
                 self.session_id = session::new_id();
@@ -553,6 +574,7 @@ impl Agent {
             input: input.to_string(),
         });
         self.active_turn = Some(turn);
+        self.inputs.push(input.to_string());
 
         let mut text = std::mem::take(&mut self.pending).join("\n");
         if !text.is_empty() {
@@ -563,10 +585,14 @@ impl Agent {
 
         let mut compacted = false;
         let reason = loop {
+            self.fit_context(&mut compacted).await?;
+            let sent = self.fixed_chars() + context::history_chars(&self.messages);
             let started = Instant::now();
             let (resp, streamed) = self.call("thinking", &self.messages, false).await?;
             self.last_call = started.elapsed();
             self.usage = resp.usage;
+            self.est
+                .calibrate(sent, resp.usage.input + resp.usage.cache_read);
             let msg = normalize(resp.message);
 
             let reasoning: String = msg
@@ -606,17 +632,73 @@ impl Agent {
             if self.run_tools(uses).await? {
                 break EndReason::Denied;
             }
-            let over = self
-                .context_tokens()
-                .is_some_and(|c| c > self.profile.context_window() * 8 / 10);
-            if over && !compacted {
-                self.notice(Level::Warn, "context is nearly full, compacting…");
-                self.compact(None).await?;
-                compacted = true;
-            }
         };
         self.active_turn = None;
         self.end_turn(turn, reason);
+        Ok(())
+    }
+
+    /// Settle the context window: configured value, bounded by what the server reports.
+    /// Ollama allocates memory per `num_ctx`, so an unconfigured window stays at 32k.
+    async fn resolve_window(&mut self) {
+        let configured = self.profile.context_window;
+        let probed = self.provider.probe_context().await;
+        self.window = match (configured, probed) {
+            (Some(c), Some(p)) if p < c => {
+                self.notice(
+                    Level::Warn,
+                    format!("context_window is {c} but the server supports {p}; using {p}"),
+                );
+                p
+            }
+            (Some(c), _) => c,
+            (None, Some(p)) if self.profile.provider == ProviderKind::Ollama => p.min(32_768),
+            (None, Some(p)) => p,
+            (None, None) => self.profile.context_window(),
+        };
+        self.provider.set_context_window(self.window);
+    }
+
+    fn fixed_chars(&self) -> usize {
+        fixed_chars(&self.system, &self.specs)
+    }
+
+    fn estimate(&self) -> u64 {
+        self.est
+            .tokens(self.fixed_chars() + context::history_chars(&self.messages))
+    }
+
+    /// Stage 1: prune stale and old tool output (no LLM). Stage 2: summarize, at most once per turn.
+    async fn fit_context(&mut self, compacted: &mut bool) -> Result<()> {
+        let window = self.window as f64;
+        let before = self.estimate();
+        if (before as f64) < window * context::PRUNE_AT {
+            return Ok(());
+        }
+        let target = self.est.chars((window * context::PRUNE_TO) as u64);
+        let plan = context::plan_prune(&self.messages, target.saturating_sub(self.fixed_chars()));
+        if !plan.is_empty() {
+            for (id, content) in &plan {
+                self.record(Record::Replace {
+                    id: id.clone(),
+                    content: content.clone(),
+                });
+                context::apply(&mut self.messages, id, content);
+            }
+            self.emit(Event::ContextPruned {
+                results: plan.len(),
+                tokens_before: before,
+                tokens_after: self.estimate(),
+            });
+        }
+        if (self.estimate() as f64) > window * context::COMPACT_AT && !*compacted {
+            self.notice(
+                Level::Warn,
+                "context is still nearly full after pruning; summarizing…",
+            );
+            self.compact(None).await?;
+            *compacted = true;
+        }
         Ok(())
     }
 
@@ -848,8 +930,14 @@ impl Agent {
             anyhow::bail!("compaction produced an empty summary; keeping the full history");
         }
         let before = self.usage.context();
+        let pinned = context::pinned_inputs(&self.inputs, 8_000)
+            .iter()
+            .map(|s| format!("<user-message>\n{s}\n</user-message>"))
+            .collect::<Vec<_>>()
+            .join("\n");
         self.reset(vec![Message::user(format!(
-            "(The earlier part of this session was compacted. Summary:)\n\n{summary}"
+            "(The earlier part of this session was compacted.)\n\nSummary:\n{summary}\n\n\
+The user's messages so far, verbatim. Any instructions or constraints in them still apply:\n{pinned}"
         ))]);
         self.usage = Usage {
             input: resp.usage.output,
@@ -938,6 +1026,15 @@ impl Agent {
     }
 }
 
+/// Prompt chars that don't live in the history: system prompt and tool schemas.
+fn fixed_chars(system: &str, specs: &[ToolSpec]) -> usize {
+    let tools: usize = specs
+        .iter()
+        .map(|t| t.name.len() + t.description.len() + t.schema.to_string().len())
+        .sum();
+    system.len() + tools
+}
+
 /// Recover tool calls a model wrote as text instead of via the API.
 fn normalize(mut msg: Message) -> Message {
     if !msg.tool_uses().is_empty() {
@@ -1007,11 +1104,24 @@ mod tests {
         store: Option<PathBuf>,
         resume: Option<String>,
     ) -> Handle {
+        engine_with(script, can_ask, store, resume, None, std::env::temp_dir())
+    }
+
+    fn engine_with(
+        script: Vec<Response>,
+        can_ask: bool,
+        store: Option<PathBuf>,
+        resume: Option<String>,
+        window: Option<u64>,
+        cwd: PathBuf,
+    ) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.context_window = window;
         let opts = Options {
             cfg: Config::default(),
             profile_name: "test".into(),
-            profile: Profile::new(ProviderKind::Ollama, "test"),
-            cwd: std::env::temp_dir(),
+            profile,
+            cwd,
             mode: Mode::Default,
             can_ask,
             resume,
@@ -1294,6 +1404,98 @@ mod tests {
                 .iter()
                 .any(|b| matches!(b, Block::ToolResult { id, is_error: true, .. } if id == "t1"))
         );
+    }
+
+    #[tokio::test]
+    async fn stale_reads_are_pruned_before_the_call_and_logged() {
+        let dir = tmp_store();
+        let big: String = (0..800).map(|i| format!("fn line_{i}() {{}}\n")).collect();
+        std::fs::write(dir.join("big.rs"), &big).unwrap();
+        let read = |id: &str| Block::ToolUse {
+            id: id.into(),
+            name: "Read".into(),
+            input: json!({ "file_path": "big.rs" }),
+        };
+        let script = vec![
+            reply(vec![read("r1")], Stop::ToolUse),
+            reply(vec![read("r2")], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        // Size the window so the fixed prompt plus one read fits under PRUNE_AT but two don't.
+        let fixed = fixed_chars(&prompt::system_prompt(&dir, &Config::default(), "test"), &tools::specs());
+        let read_chars: usize = big.lines().map(|l| 6 + 1 + l.len() + 1).sum();
+        let window = context::Estimator::default()
+            .tokens(((fixed as f64 + 1.5 * read_chars as f64) / context::PRUNE_AT) as usize);
+        let mut h = engine_with(
+            script,
+            true,
+            Some(dir.clone()),
+            None,
+            Some(window),
+            dir.clone(),
+        );
+        let evs = run(&mut h, "look at big.rs twice").await;
+        let sid = evs[0].session.clone();
+        let pruned = evs.iter().find_map(|e| match e.event {
+            Event::ContextPruned {
+                results,
+                tokens_before,
+                tokens_after,
+            } => Some((results, tokens_before, tokens_after)),
+            _ => None,
+        });
+        let (results, before, after) = pruned.expect("expected a ContextPruned event");
+        assert_eq!(results, 1);
+        assert!(after < before);
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+        shutdown(h).await;
+
+        // The pruning is in the log, so a resumed session sees the same history.
+        let loaded = session::load(&dir, &sid).unwrap();
+        let contents: Vec<&str> = loaded
+            .messages
+            .iter()
+            .flat_map(|m| &m.content)
+            .filter_map(|b| match b {
+                Block::ToolResult { id, content, .. } if id == "r1" || id == "r2" => {
+                    Some(content.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(contents[0].starts_with("[stale: big.rs"));
+        assert!(contents[1].contains("fn line_799"));
+    }
+
+    #[tokio::test]
+    async fn compaction_keeps_the_users_words_verbatim() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(vec![text("ok")], Stop::End),
+            reply(vec![text("They are refactoring the parser.")], Stop::End),
+        ];
+        let mut h = engine_at(script, true, Some(dir.clone()), None);
+        let evs = run(&mut h, "refactor the parser but NEVER touch main.rs").await;
+        let sid = evs[0].session.clone();
+        h.ops.send(Op::Compact { focus: None }).unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e.event, Event::Compacted { .. }))
+        );
+        shutdown(h).await;
+
+        let loaded = session::load(&dir, &sid).unwrap();
+        assert_eq!(loaded.messages.len(), 1);
+        let text = loaded.messages[0].text();
+        assert!(text.contains("They are refactoring the parser."));
+        assert!(text.contains("NEVER touch main.rs"));
     }
 
     #[test]

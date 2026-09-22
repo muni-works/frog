@@ -14,6 +14,44 @@ pub struct Client {
 }
 
 impl Client {
+    /// The context window the server is running with, if it says. Tries llama.cpp (`/props`),
+    /// LM Studio (`/api/v0/models/{id}`), then vLLM (`/v1/models` `max_model_len`).
+    pub async fn probe_context(&self) -> Option<u64> {
+        let base = self.base.trim_end_matches('/');
+        let root = base.trim_end_matches("/v1");
+        let get = |url: String| async move {
+            let mut rb = self.http.get(url);
+            if let Some(k) = &self.key {
+                rb = rb.bearer_auth(k);
+            }
+            let resp = rb.send().await.ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            resp.json::<Value>().await.ok()
+        };
+        if let Some(v) = get(format!("{root}/props")).await
+            && let Some(n) = v["default_generation_settings"]["n_ctx"]
+                .as_u64()
+                .or(v["n_ctx"].as_u64())
+        {
+            return Some(n);
+        }
+        if let Some(v) = get(format!("{root}/api/v0/models/{}", self.model)).await
+            && let Some(n) = v["loaded_context_length"]
+                .as_u64()
+                .or(v["max_context_length"].as_u64())
+        {
+            return Some(n);
+        }
+        let v = get(format!("{base}/models")).await?;
+        v["data"]
+            .as_array()?
+            .iter()
+            .find(|m| m["id"].as_str() == Some(self.model.as_str()))
+            .and_then(|m| m["max_model_len"].as_u64())
+    }
+
     fn body(&self, req: &Request) -> Value {
         let mut messages = vec![json!({ "role": "system", "content": req.system })];
         for m in req.messages {

@@ -70,6 +70,11 @@ pub enum Record {
     Extend {
         blocks: Vec<Block>,
     },
+    /// Rewrite one tool result's content (context pruning).
+    Replace {
+        id: String,
+        content: String,
+    },
     /// Replace the whole history (compaction).
     Reset {
         messages: Vec<Message>,
@@ -192,6 +197,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
                 Some(m) => m.content.extend(blocks),
                 None => bail!("session {id}: extend with no message"),
             },
+            Record::Replace { id, content } => crate::context::apply(&mut messages, &id, &content),
             Record::Reset { messages: m } => messages = m,
         }
     }

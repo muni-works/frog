@@ -88,7 +88,18 @@ The tools behave like Claude Code's: Edit replaces an exact string that must be 
 - `tool_mode = "text"` (or `--text-tools`) describes the tools in the system prompt and parses `<tool_call>` blocks from the text. Use it with servers whose tool calling is broken.
 - Even in native mode, `<tool_call>` blocks a model writes as plain text are picked up as tool calls.
 - Tool arguments are accepted loosely: numbers sent as strings, arguments sent as a JSON string, and invalid JSON reported back so the model can retry.
-- The footer shows context usage and tok/s. Once context passes 80% of the window, the conversation is compacted automatically.
+- The footer shows context usage and tokens per second. See [Context budget](#context-budget) for how kiln stays inside the window.
+
+## Context budget
+
+Local models often run with a 32k window, and ollama silently cuts off anything that doesn't fit. So kiln checks the budget before every model call rather than reacting after an overflow:
+
+1. **Probe the real window.** It asks the server: ollama `/api/show`, llama.cpp `/props`, LM Studio `/api/v0/models`, vLLM `max_model_len`. A configured `context_window` is lowered to fit what the server reports. If you don't configure one, ollama's window is capped at 32k, since ollama allocates memory for the whole window.
+2. **Estimate the prompt.** Characters are converted to tokens using a ratio calibrated against the token counts the provider reports.
+3. **Prune without an LLM call** (`context_pruned`). Past 60% of the window, it first replaces stale file reads, where the same file was read, written or edited again later. Then it trims old tool output, oldest first, down to 45%. The last 4 tool results are never touched. Pruning happens in one large step because it invalidates the provider's prompt cache.
+4. **Summarize only when pruning isn't enough** (`compacted`), which is past 80% of the window and at most once per turn. The user's own messages survive verbatim, so instructions like "never touch main.rs" can't get paraphrased away. Rules in the system prompt and AGENTS.md live outside the history entirely.
+
+Every pruning step is written to the session log, so a resumed session sees exactly the history the model saw.
 
 ## Permissions
 

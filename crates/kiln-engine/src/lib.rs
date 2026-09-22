@@ -1,6 +1,7 @@
 //! Headless agent engine. Clients talk to it only through [`protocol::Op`] and [`protocol::Event`].
 
 pub mod config;
+pub mod context;
 pub mod engine;
 pub mod message;
 pub mod prompt;

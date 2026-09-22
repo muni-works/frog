@@ -28,15 +28,24 @@ Still to do:
 - pruning or compacting old logs
 - exporting logs as `kiln bench` datasets
 
-## 3. Context as a budget (next)
+## 3. Context as a budget: done
 
+Shipped:
+- a pre-call budget check with a calibrated chars→tokens estimate
+- window probing (ollama, llama.cpp, LM Studio, vLLM)
+- deterministic pruning: stale reads first, then old output, with hysteresis between 60% and 45%, logged as `Record::Replace`
+- LLM compaction only past 80%, at most once per turn, rejecting empty summaries
+- the user's messages pinned verbatim through compaction
+- no synthetic "continue" turns
+- unknown usage reported as unknown instead of zero
 
-- **Staged compaction.** First drop stale tool outputs by rule. Call an LLM summarizer only as a last resort. Allow at most one compaction per run, and reject empty summaries ([2609.20804](https://arxiv.org/abs/2609.20804), [2606.11213](https://arxiv.org/abs/2606.11213), [opencode#27924](https://github.com/anomalyco/opencode/issues/27924)).
-- **Pin rules.** Keep the system prompt, AGENTS.md, and permissions outside anything compaction can touch. After a naive compaction, rule-violating tool calls rose from 0% to 30–59%, and pinning brought them back to 0% ([2606.22528](https://arxiv.org/abs/2606.22528), [2608.22752](https://arxiv.org/abs/2608.22752)).
-- **No synthetic "continue" user turns.** They make small models stop ([opencode#49965](https://github.com/anomalyco/opencode/issues/49965)).
-- **Treat missing usage data as unknown, not zero.** Probe the context window from the server instead of relying on config ([opencode#40908](https://github.com/anomalyco/opencode/issues/40908)).
+Evidence: [2609.20804](https://arxiv.org/abs/2609.20804), [2606.11213](https://arxiv.org/abs/2606.11213), [2606.22528](https://arxiv.org/abs/2606.22528), [2608.22752](https://arxiv.org/abs/2608.22752), [opencode#49965](https://github.com/anomalyco/opencode/issues/49965), [#40908](https://github.com/anomalyco/opencode/issues/40908).
 
-## 4. Adapt the harness to the model
+Still to do:
+- measure how often pruning fires, and how much it saves, in `kiln bench`
+- try evicting whole finished sub-tasks (the episode eviction from 2606.11213) once sub-agents exist
+
+## 4. Adapt the harness to the model (next)
 
 The same model's results vary 40–139x in tokens and up to 30 points in score depending on the harness ([2607.22585](https://arxiv.org/abs/2607.22585), [2608.08654](https://arxiv.org/abs/2608.08654), [2609.17394](https://arxiv.org/abs/2609.17394)).
 

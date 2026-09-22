@@ -128,6 +128,28 @@ impl Provider {
         })
     }
 
+    /// The context window the server reports, if it does. Bounded by a short timeout.
+    pub async fn probe_context(&self) -> Option<u64> {
+        let probe = async {
+            match self {
+                Self::Ollama(c) => c.probe_context().await,
+                Self::OpenAi(c) => c.probe_context().await,
+                _ => None,
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(3), probe)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Ollama allocates the window per request (`num_ctx`), so it has to be told.
+    pub fn set_context_window(&mut self, n: u64) {
+        if let Self::Ollama(c) = self {
+            c.num_ctx = n;
+        }
+    }
+
     pub async fn complete(
         &self,
         req: &Request<'_>,

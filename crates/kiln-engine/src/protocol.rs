@@ -130,6 +130,12 @@ pub enum Event {
         tokens_before: u64,
         tokens_after: u64,
     },
+    /// Old tool output was trimmed (no LLM call) to stay inside the window.
+    ContextPruned {
+        results: usize,
+        tokens_before: u64,
+        tokens_after: u64,
+    },
     ModelChanged {
         model: String,
     },
@@ -184,6 +190,7 @@ impl Event {
                 | Self::ItemCompleted { .. }
                 | Self::PermissionResolved { .. }
                 | Self::Compacted { .. }
+                | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }
                 | Self::ModeChanged { .. }
         )

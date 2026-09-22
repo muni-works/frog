@@ -15,6 +15,26 @@ pub struct Client {
 }
 
 impl Client {
+    /// The model's maximum context length, from `/api/show`.
+    pub async fn probe_context(&self) -> Option<u64> {
+        let url = format!("{}/api/show", self.base.trim_end_matches('/'));
+        let v: Value = self
+            .http
+            .post(url)
+            .json(&json!({ "model": self.model }))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        v["model_info"]
+            .as_object()?
+            .iter()
+            .find(|(k, _)| k.ends_with(".context_length"))
+            .and_then(|(_, v)| v.as_u64())
+    }
+
     fn body(&self, req: &Request) -> Value {
         let mut messages = vec![json!({ "role": "system", "content": req.system })];
         for m in req.messages {

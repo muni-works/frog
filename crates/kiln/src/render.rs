@@ -210,6 +210,18 @@ impl Renderer {
                 error(&e.to_string());
             }
             Event::ModelChanged { model } => info(&format!("  model: {model}")),
+            Event::ContextPruned {
+                results,
+                tokens_before,
+                tokens_after,
+            } => {
+                self.idle();
+                info(&format!(
+                    "  pruned {results} old tool results: ~{} → ~{} tokens",
+                    fmt_tokens(tokens_before),
+                    fmt_tokens(tokens_after)
+                ));
+            }
             Event::Compacted {
                 tokens_before,
                 tokens_after,
