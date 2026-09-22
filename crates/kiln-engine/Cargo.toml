@@ -1,0 +1,22 @@
+[package]
+name = "kiln-engine"
+description = "Headless agent engine for kiln. No terminal code lives here."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+futures-util.workspace = true
+globset.workspace = true
+ignore.workspace = true
+libc.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+toml.workspace = true

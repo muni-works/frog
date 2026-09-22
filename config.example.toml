@@ -1,0 +1,41 @@
+# Copy to ~/.config/kiln/config.toml
+
+default_model = "qwen"
+
+# Bash command prefixes that run without asking (on top of the built-in read-only list).
+allow_bash = ["cargo check", "cargo test", "cargo clippy", "npm test", "npm run build"]
+
+show_thinking = true
+# Also load ~/.claude/CLAUDE.md and CLAUDE.md files as project instructions.
+load_claude_md = true
+
+[models.qwen]
+provider = "ollama"
+model = "qwen3-coder:30b"
+context_window = 65536       # sent as num_ctx — ollama's default is tiny
+
+[models.gpt-oss]
+provider = "ollama"
+model = "gpt-oss:20b"
+context_window = 65536
+extra = { think = "medium" }  # merged into the request body
+
+[models.lmstudio]
+provider = "openai"
+base_url = "http://localhost:1234/v1"
+model = "qwen/qwen3-coder-30b"
+context_window = 65536
+
+[models.llamacpp]
+provider = "openai"
+base_url = "http://localhost:8080/v1"
+model = "default"
+context_window = 32768
+# If the server's chat template mangles tool calls, describe tools in the prompt instead:
+# tool_mode = "text"
+
+[models.sonnet]
+provider = "anthropic"
+model = "claude-sonnet-5"
+max_tokens = 32000
+# api_key_env = "ANTHROPIC_API_KEY"  (default)
