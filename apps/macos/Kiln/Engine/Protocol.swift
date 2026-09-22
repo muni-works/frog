@@ -199,6 +199,7 @@ enum Item: Decodable, Sendable {
     struct ToolResult: Decodable, Sendable {
         var name: String
         var arg: String
+        var input: JSONValue?
         var outcome: ToolOutcome
         var output: String
         var display: String?
@@ -220,13 +221,18 @@ enum Item: Decodable, Sendable {
 enum Delta: Decodable, Sendable {
     case text(String)
     case reasoning(String)
+    case output(String)
 
     private enum Key: String, CodingKey { case type, text }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         let text = try c.decode(String.self, forKey: .text)
-        self = try c.decode(String.self, forKey: .type) == "reasoning" ? .reasoning(text) : .text(text)
+        switch try c.decode(String.self, forKey: .type) {
+        case "reasoning": self = .reasoning(text)
+        case "output": self = .output(text)
+        default: self = .text(text)
+        }
     }
 }
 
@@ -236,6 +242,8 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
     var name: String
     var arg: String
     var always: String
+    /// For Edit/Write: exactly what would change.
+    var preview: FileDiff?
 }
 
 enum Event: Sendable {
@@ -326,6 +334,41 @@ struct Envelope: Decodable, Sendable {
     }
 }
 
+/// Arbitrary JSON (tool inputs).
+enum JSONValue: Decodable, Sendable, Hashable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([JSONValue])
+    case object([String: JSONValue])
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let b = try? c.decode(Bool.self) { self = .bool(b) }
+        else if let n = try? c.decode(Double.self) { self = .number(n) }
+        else if let s = try? c.decode(String.self) { self = .string(s) }
+        else if let a = try? c.decode([JSONValue].self) { self = .array(a) }
+        else { self = .object(try c.decode([String: JSONValue].self)) }
+    }
+
+    subscript(key: String) -> JSONValue? {
+        if case .object(let o) = self { return o[key] }
+        return nil
+    }
+
+    var string: String? {
+        if case .string(let s) = self { return s }
+        return nil
+    }
+
+    var array: [JSONValue]? {
+        if case .array(let a) = self { return a }
+        return nil
+    }
+}
+
 // MARK: - CLI listings
 
 struct SessionInfo: Decodable, Sendable, Identifiable, Hashable {
@@ -342,6 +385,11 @@ struct SessionInfo: Decodable, Sendable, Identifiable, Hashable {
     var forkedFrom: ForkPoint?
 
     var modifiedDate: Date { Date(timeIntervalSince1970: Double(modified) / 1000) }
+}
+
+struct Rewound: Decodable, Sendable {
+    var session: String
+    var restored: [String]
 }
 
 struct ModelEntry: Decodable, Sendable, Identifiable, Hashable {

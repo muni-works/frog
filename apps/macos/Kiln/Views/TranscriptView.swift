@@ -2,15 +2,17 @@ import SwiftUI
 
 struct TranscriptView: View {
     let conversation: Conversation
-    let onFork: (UInt64) -> Void
+    let actions: TurnActions
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
                 ForEach(conversation.turns) { turn in
-                    TurnView(turn: turn, conversation: conversation, onFork: onFork)
+                    TurnView(turn: turn, conversation: conversation, actions: actions)
                 }
-                if conversation.busy, conversation.permission == nil {
+                // The running turn's work group shows progress once there's something to show.
+                if conversation.busy, conversation.permission == nil,
+                   conversation.replaying || (conversation.turns.last?.items.isEmpty ?? true) {
                     WorkingIndicator(label: conversation.replaying ? "Loading session…" : conversation.progress)
                 }
                 if let failure = conversation.failure {
@@ -31,35 +33,6 @@ struct TranscriptView: View {
         .overlay {
             if conversation.turns.isEmpty, !conversation.busy, conversation.failure == nil {
                 EmptyTranscript(conversation: conversation)
-            }
-        }
-    }
-}
-
-struct TurnView: View {
-    let turn: TurnState
-    let conversation: Conversation
-    let onFork: (UInt64) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if !turn.input.isEmpty {
-                UserPrompt(text: turn.input)
-                    .contextMenu {
-                        if let n = turn.number, turn.finished {
-                            Button("Fork from Here", systemImage: "arrow.triangle.branch") { onFork(n) }
-                        }
-                        Button("Copy", systemImage: "doc.on.doc") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(turn.input, forType: .string)
-                        }
-                    }
-            }
-            ForEach(turn.items) { item in
-                ItemView(item: item, conversation: conversation)
-            }
-            if let end = turn.end {
-                EndView(reason: end, usage: turn.usage)
             }
         }
     }

@@ -2,6 +2,10 @@ import SwiftUI
 
 @main
 struct KilnApp: App {
+    init() {
+        Notifier.shared.setup()
+    }
+
     var body: some Scene {
         WindowGroup("Kiln", for: URL.self) { $folder in
             RootView(folder: $folder)

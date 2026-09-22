@@ -5,16 +5,27 @@ struct ComposerView: View {
     let conversation: Conversation
     @State private var text = ""
     @State private var height: CGFloat = 22
+    @State private var controller = ComposerController()
+    @State private var mention: String?
+    @State private var picked = 0
 
     private var canSend: Bool {
-        !conversation.busy && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var suggestions: [String] {
+        guard let mention else { return [] }
+        return FileIndex.search(workspace.files, mention)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if !conversation.queue.isEmpty {
+                QueuedMessages(conversation: conversation)
+            }
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text(conversation.busy ? "Working… press Esc to interrupt" : "Ask kiln to do something")
+                    Text(conversation.busy ? "Working… Esc interrupts · Return queues a follow-up" : "Ask kiln to do something · @ to mention a file")
                         .foregroundStyle(.tertiary)
                         .padding(.leading, 5)
                         .padding(.top, 1)
@@ -23,14 +34,28 @@ struct ComposerView: View {
                 ComposerTextView(
                     text: $text,
                     height: $height,
+                    controller: controller,
                     onSubmit: send,
                     onEscape: {
                         guard conversation.busy else { return false }
                         conversation.interrupt()
                         return true
-                    }
+                    },
+                    onMention: { query in
+                        if query != nil { workspace.loadFiles() }
+                        if query != mention { picked = 0 }
+                        mention = query
+                    },
+                    onMentionKey: handleMentionKey
                 )
                 .frame(height: height)
+            }
+            .overlay(alignment: .topLeading) {
+                if !suggestions.isEmpty {
+                    MentionList(files: suggestions, picked: picked) { controller.insertMention($0) }
+                        .alignmentGuide(.top) { $0[.bottom] + 14 }
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
             }
 
             HStack(spacing: 10) {
@@ -40,7 +65,7 @@ struct ComposerView: View {
                 if let s = conversation.status {
                     ContextRing(status: s)
                 }
-                if conversation.busy {
+                if conversation.busy, !canSend {
                     Button {
                         conversation.interrupt()
                     } label: {
@@ -60,7 +85,7 @@ struct ComposerView: View {
                     .buttonStyle(.glassProminent)
                     .buttonBorderShape(.circle)
                     .disabled(!canSend)
-                    .help("Send (Return)")
+                    .help(conversation.busy ? "Queue (Return)" : "Send (Return)")
                 }
             }
         }
@@ -75,6 +100,19 @@ struct ComposerView: View {
         guard canSend else { return }
         conversation.submit(text)
         text = ""
+        mention = nil
+    }
+
+    private func handleMentionKey(_ key: MentionKey) -> Bool {
+        let list = suggestions
+        guard !list.isEmpty else { return false }
+        switch key {
+        case .up: picked = (picked - 1 + list.count) % list.count
+        case .down: picked = (picked + 1) % list.count
+        case .accept: controller.insertMention(list[min(picked, list.count - 1)])
+        case .cancel: mention = nil
+        }
+        return true
     }
 }
 
@@ -165,5 +203,60 @@ struct ContextRing: View {
         let window = status.contextWindow.tokens
         guard let used = status.contextTokens else { return "Context window: \(window) tokens" }
         return "\(used.tokens) of \(window) tokens (\(Int(fraction * 100))%)"
+    }
+}
+
+struct MentionList: View {
+    let files: [String]
+    let picked: Int
+    let choose: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(files.enumerated()), id: \.element) { i, path in
+                Button {
+                    choose(path)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text").foregroundStyle(.secondary)
+                        Text((path as NSString).lastPathComponent).fontWeight(.medium)
+                        let dir = (path as NSString).deletingLastPathComponent
+                        Text(dir).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                        Spacer(minLength: 0)
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(i == picked ? AnyShapeStyle(.tint.opacity(0.22)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(6)
+        .frame(width: 420, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+    }
+}
+
+struct QueuedMessages: View {
+    let conversation: Conversation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(conversation.queue.enumerated()), id: \.offset) { i, text in
+                HStack(spacing: 6) {
+                    Image(systemName: "clock").foregroundStyle(.secondary)
+                    Text(text).lineLimit(1)
+                    Spacer()
+                    Button("Remove", systemImage: "xmark.circle.fill") { conversation.unqueue(at: i) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.callout)
+            }
+        }
+        .padding(.horizontal, 4)
     }
 }

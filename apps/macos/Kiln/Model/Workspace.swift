@@ -11,10 +11,19 @@ final class Workspace {
     private(set) var conversation: Conversation?
     var selection: String?
     var preferredModel: String?
+    /// Project files for `@` mentions, loaded on first use.
+    private(set) var files: [String] = []
+    @ObservationIgnored private var filesLoaded = false
+
+    func loadFiles() {
+        guard !filesLoaded else { return }
+        filesLoaded = true
+        Task { files = await FileIndex.load(folder) }
+    }
 
     init(folder: URL) {
         self.folder = folder
-        start(arguments: [])
+        start(arguments: Replay.arguments ?? [])
         Task { await refresh() }
     }
 
@@ -44,6 +53,22 @@ final class Workspace {
         start(arguments: ["--fork", "\(id)@\(turn)"])
     }
 
+    /// Restore files edited in `turn` and later, and continue on a branch from just before it.
+    func rewind(toBefore turn: UInt64) async {
+        guard let id = conversation?.sessionID else { return }
+        do {
+            let r = try await Kiln.json(Rewound.self, args: ["--rewind", "\(id)@\(turn)", "--json"], cwd: folder)
+            start(arguments: ["-r", r.session])
+            let files = r.restored.count
+            conversation?.flash(files == 0
+                ? "Rewound to before turn \(turn). No files needed restoring."
+                : "Rewound to before turn \(turn) and restored \(files) file\(files == 1 ? "" : "s").")
+            await refresh()
+        } catch {
+            conversation?.flash("Rewind failed: \(error.localizedDescription)", warning: true)
+        }
+    }
+
     func stop() {
         conversation?.stop()
     }
@@ -57,5 +82,21 @@ final class Workspace {
             Task { await self.refresh() }
         }
         conversation = c
+    }
+}
+
+/// `-KilnReplay <session or .jsonl>` (with optional `-KilnReplaySpeed 4` and `-KilnReplayAsk YES`)
+/// plays a recorded session in the first window instead of starting a live engine.
+@MainActor
+enum Replay {
+    private static var used = false
+
+    static var arguments: [String]? {
+        guard !used, let spec = UserDefaults.standard.string(forKey: "KilnReplay") else { return nil }
+        used = true
+        let speed = UserDefaults.standard.double(forKey: "KilnReplaySpeed")
+        var args = ["--replay", spec, "--speed", String(speed > 0 ? speed : 2)]
+        if UserDefaults.standard.bool(forKey: "KilnReplayAsk") { args.append("--replay-ask") }
+        return args
     }
 }

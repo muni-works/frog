@@ -98,12 +98,49 @@ enum Markdown {
     }
 }
 
+/// Streaming text only grows at the end, so blocks before the last paragraph break (outside a
+/// code fence) never change. Those are parsed once and cached; only the tail is re-parsed.
+final class MarkdownCache {
+    private var prefix = ""
+    private var blocks: [MarkdownBlock] = []
+
+    func blocks(for text: String) -> [MarkdownBlock] {
+        let cut = Self.stableBoundary(text)
+        let head = String(text[..<cut])
+        if head != prefix {
+            prefix = head
+            blocks = Markdown.parse(head)
+        }
+        return blocks + Markdown.parse(String(text[cut...]))
+    }
+
+    /// End of the last blank line that isn't inside a code fence.
+    static func stableBoundary(_ text: String) -> String.Index {
+        var fences = 0
+        var boundary = text.startIndex
+        var lineStart = text.startIndex
+        var previousBlank = false
+        for i in text.indices where text[i] == "\n" {
+            let line = text[lineStart..<i].trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("```") { fences += 1 }
+            let blank = line.isEmpty
+            if blank && !previousBlank && fences % 2 == 0 {
+                boundary = text.index(after: i)
+            }
+            previousBlank = blank
+            lineStart = text.index(after: i)
+        }
+        return boundary
+    }
+}
+
 struct MarkdownView: View {
     let text: String
+    @State private var cache = MarkdownCache()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(Markdown.parse(text).enumerated()), id: \.offset) { _, block in
+            ForEach(Array(cache.blocks(for: text).enumerated()), id: \.offset) { _, block in
                 blockView(block)
             }
         }
@@ -151,7 +188,7 @@ struct CodeBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(language.isEmpty ? "code" : language)
+                Text(language)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()

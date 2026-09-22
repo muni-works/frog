@@ -13,6 +13,8 @@ struct ItemState: Identifiable {
     let id: String
     var kind: Kind
     var text = ""
+    /// Live output from a running tool.
+    var output = ""
     var result: Item.ToolResult?
     var done = false
     var needsPermission = false
@@ -26,6 +28,8 @@ struct TurnState: Identifiable {
     var items: [ItemState] = []
     var end: EndReason?
     var usage: TurnUsage?
+    var startedAt: Date?
+    var endedAt: Date?
 
     var finished: Bool { end != nil }
 }
@@ -43,11 +47,15 @@ final class Conversation {
     private(set) var permission: PermissionRequest?
     private(set) var failure: String?
     private(set) var replaying = false
+    /// Messages sent while a turn was running; they go out in order as the engine frees up.
+    private(set) var queue: [String] = []
 
     @ObservationIgnored private var engine: EngineProcess?
     @ObservationIgnored private let replayOnStart: Bool
     @ObservationIgnored private var sawFirstIdle = false
     @ObservationIgnored private var stopping = false
+    /// A notice to show once the transcript has loaded.
+    @ObservationIgnored private var pendingFlash: (String, Bool)?
     /// Called when the session id changes or a turn ends, so the sidebar can refresh.
     @ObservationIgnored var onSessionChange: (() -> Void)?
 
@@ -73,11 +81,27 @@ final class Conversation {
         }
     }
 
+    /// An engine-less conversation that only renders events fed to `ingest` (previews, snapshots).
+    init(preview folder: URL) {
+        self.folder = folder
+        replayOnStart = false
+        busy = false
+    }
+
+    /// Apply an event as if the engine had sent it.
+    func ingest(_ env: Envelope) {
+        handle(env)
+    }
+
     // MARK: - Actions
 
     func submit(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !busy else { return }
+        guard !text.isEmpty else { return }
+        if busy {
+            queue.append(text)
+            return
+        }
         if text.hasPrefix("!") {
             let command = String(text.dropFirst()).trimmingCharacters(in: .whitespaces)
             turns.append(TurnState(number: nil, input: text, end: .complete))
@@ -90,6 +114,11 @@ final class Conversation {
         engine?.send(.submit(text))
     }
 
+    func unqueue(at index: Int) {
+        guard queue.indices.contains(index) else { return }
+        queue.remove(at: index)
+    }
+
     func interrupt() {
         engine?.send(.interrupt)
     }
@@ -98,6 +127,7 @@ final class Conversation {
         guard let p = permission else { return }
         engine?.send(.permission(id: p.id, decision: decision))
         permission = nil
+        Notifier.shared.resolved(p.id)
     }
 
     func setMode(_ mode: Mode) {
@@ -138,15 +168,22 @@ final class Conversation {
         }
         switch env.event {
         case .turnStarted(let n, let input):
+            let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             if let i = turns.lastIndex(where: { $0.number == nil && !$0.finished && $0.input == input }) {
                 turns[i].number = n
+                turns[i].startedAt = at
             } else {
-                turns.append(TurnState(number: n, input: input))
+                turns.append(TurnState(number: n, input: input, startedAt: at))
             }
+            busy = true
         case .turnEnded(let n, let reason, let usage):
             if let i = turns.lastIndex(where: { $0.number == n }) {
                 turns[i].end = reason
                 turns[i].usage = usage
+                turns[i].endedAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
+                if !replaying {
+                    Notifier.shared.turnFinished(project: folder.lastPathComponent, text: Self.summary(turns[i]))
+                }
             }
             progress = nil
             onSessionChange?()
@@ -156,6 +193,7 @@ final class Conversation {
             upsert(id) { item in
                 switch delta {
                 case .text(let t), .reasoning(let t): item.text += t
+                case .output(let t): item.output += t
                 }
             }
             progress = nil
@@ -177,6 +215,11 @@ final class Conversation {
             }
         case .permissionRequest(let req):
             permission = req
+            if !replaying {
+                Notifier.shared.needsPermission(project: folder.lastPathComponent, request: req) { [weak self] d in
+                    self?.answer(d)
+                }
+            }
             upsert(req.item) { $0.needsPermission = true }
             progress = nil
         case .permissionResolved:
@@ -195,6 +238,10 @@ final class Conversation {
             status = s
         case .synced:
             replaying = false
+            if let (text, warning) = pendingFlash {
+                note(text, warning: warning)
+                pendingFlash = nil
+            }
         case .idle:
             if !sawFirstIdle {
                 sawFirstIdle = true
@@ -207,8 +254,25 @@ final class Conversation {
             busy = false
             progress = nil
             permission = nil
+            if !queue.isEmpty {
+                submit(queue.removeFirst())
+            }
         case .modelChanged, .modeChanged, .unknown:
             break
+        }
+    }
+
+    /// One line for a notification: the start of the answer, or how the turn ended.
+    private static func summary(_ turn: TurnState) -> String {
+        switch turn.end {
+        case .cancelled: return "Interrupted"
+        case .error(let e): return e.description
+        case .looping: return "Stopped: the model kept repeating the same tool call"
+        case .stepLimit: return "Stopped at the step limit"
+        default:
+            let answer = turn.items.last { $0.kind == .message }?.text ?? ""
+            let line = answer.split(separator: "\n").first.map(String.init) ?? "Done"
+            return line.count > 140 ? String(line.prefix(140)) + "…" : line
         }
     }
 
@@ -234,6 +298,12 @@ final class Conversation {
         var item = ItemState(id: id, kind: .message)
         update(&item)
         turns[turns.count - 1].items.append(item)
+    }
+
+    /// Show a one-off notice in the transcript (e.g. after a rewind).
+    func flash(_ text: String, warning: Bool = false) {
+        pendingFlash = (text, warning)
+        if !turns.isEmpty { note(text, warning: warning); pendingFlash = nil }
     }
 
     private func note(_ text: String, warning: Bool) {

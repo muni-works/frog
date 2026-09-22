@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WorkspaceView: View {
     @Bindable var workspace: Workspace
+    @AppStorage("showChanges") private var showChanges = false
 
     var body: some View {
         NavigationSplitView {
@@ -9,15 +10,22 @@ struct WorkspaceView: View {
                 .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 360)
         } detail: {
             if let conversation = workspace.conversation {
-                TranscriptView(conversation: conversation) { turn in
-                    workspace.fork(afterTurn: turn)
-                }
+                TranscriptView(
+                    conversation: conversation,
+                    actions: TurnActions(
+                        fork: { workspace.fork(afterTurn: $0) },
+                        rewind: { turn in Task { await workspace.rewind(toBefore: turn) } }
+                    )
+                )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     ComposerView(workspace: workspace, conversation: conversation)
                         .id(ObjectIdentifier(conversation))
                 }
                 .navigationTitle(workspace.name)
                 .navigationSubtitle(conversation.status?.model ?? "")
+                .inspector(isPresented: $showChanges) {
+                    ChangesInspector(conversation: conversation)
+                }
             }
         }
         .toolbar {
@@ -26,6 +34,17 @@ struct WorkspaceView: View {
                     workspace.newSession()
                 }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
+            }
+            ToolbarItem(placement: .primaryAction) {
+                let count = workspace.conversation?.sessionChanges.count ?? 0
+                Button {
+                    withAnimation { showChanges.toggle() }
+                } label: {
+                    Label("Changes", systemImage: "plusminus")
+                }
+                .badge(count)
+                .keyboardShortcut("0", modifiers: [.command, .option])
+                .help("Changes in this session (⌥⌘0)")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button("Compact", systemImage: "arrow.down.right.and.arrow.up.left") {

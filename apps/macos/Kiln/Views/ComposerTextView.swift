@@ -1,17 +1,61 @@
 import AppKit
 import SwiftUI
 
+/// Lets the composer act on the text view (inserting a picked `@` mention).
+@MainActor
+final class ComposerController {
+    weak var textView: NSTextView?
+
+    /// The `@query` token touching the cursor, if any.
+    static func mentionRange(in tv: NSTextView) -> NSRange? {
+        let s = tv.string as NSString
+        let cursor = tv.selectedRange().location
+        guard cursor != NSNotFound, cursor <= s.length else { return nil }
+        var i = cursor
+        while i > 0 {
+            let c = s.character(at: i - 1)
+            if c == 0x40 /* @ */ {
+                let before = i - 1 == 0 ? 0x20 : s.character(at: i - 2)
+                guard before == 0x20 || before == 0x0A || before == 0x09 else { return nil }
+                return NSRange(location: i - 1, length: cursor - (i - 1))
+            }
+            if c == 0x20 || c == 0x0A || c == 0x09 { return nil }
+            i -= 1
+        }
+        return nil
+    }
+
+    func insertMention(_ path: String) {
+        guard let tv = textView, let range = Self.mentionRange(in: tv) else { return }
+        tv.insertText("@\(path) ", replacementRange: range)
+    }
+
+    func focus() {
+        guard let tv = textView else { return }
+        tv.window?.makeFirstResponder(tv)
+    }
+}
+
+enum MentionKey {
+    case up, down, accept, cancel
+}
+
 /// A multi-line input backed by NSTextView.
 ///
 /// SwiftUI's TextEditor can reset its cursor when unrelated state re-renders the view mid-typing,
 /// which scrambles what the user types. This only writes to the text view when the bound value
-/// really differs (e.g. cleared after sending), and handles Return / Shift-Return / Esc through
-/// AppKit's command selectors.
+/// really differs (e.g. cleared after sending), and handles Return / Shift-Return / Esc / arrows
+/// through AppKit's command selectors.
 struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
+    var controller: ComposerController
     var onSubmit: () -> Void
     var onEscape: () -> Bool
+    /// Called with the `@query` at the cursor (without the `@`), or nil when there isn't one.
+    var onMention: (String?) -> Void = { _ in }
+    /// Keys while mention suggestions are showing. Return true if handled.
+    var onMentionKey: (MentionKey) -> Bool = { _ in false }
     var minHeight: CGFloat = 22
     var maxHeight: CGFloat = 180
 
@@ -39,6 +83,7 @@ struct ComposerTextView: NSViewRepresentable {
         tv.isAutomaticDashSubstitutionEnabled = false
         tv.isAutomaticTextReplacementEnabled = false
         tv.string = text
+        controller.textView = tv
         DispatchQueue.main.async {
             tv.window?.makeFirstResponder(tv)
             context.coordinator.updateHeight(tv)
@@ -68,9 +113,32 @@ struct ComposerTextView: NSViewRepresentable {
             guard let tv = notification.object as? NSTextView else { return }
             parent.text = tv.string
             updateHeight(tv)
+            reportMention(tv)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let tv = notification.object as? NSTextView else { return }
+            reportMention(tv)
+        }
+
+        private func reportMention(_ tv: NSTextView) {
+            let query = ComposerController.mentionRange(in: tv).map {
+                (tv.string as NSString).substring(with: NSRange(location: $0.location + 1, length: $0.length - 1))
+            }
+            parent.onMention(query)
         }
 
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            let mentionKey: MentionKey? = switch selector {
+            case #selector(NSResponder.moveUp(_:)): .up
+            case #selector(NSResponder.moveDown(_:)): .down
+            case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertNewline(_:)): .accept
+            case #selector(NSResponder.cancelOperation(_:)): .cancel
+            default: nil
+            }
+            if let key = mentionKey, parent.onMentionKey(key) {
+                return true
+            }
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
                 let flags = NSApp.currentEvent?.modifierFlags ?? []

@@ -25,27 +25,50 @@ struct ReasoningView: View {
     @State private var expanded = false
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            Text(text)
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .frame(width: 18)
+                        .symbolEffect(.pulse, isActive: !done)
+                    Text(done ? "Thought" : "Thinking…")
+                        .fontWeight(.medium)
+                    if !expanded {
+                        Text(preview)
+                            .lineLimit(1)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 4)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .symbolEffect(.pulse, isActive: !done)
-                Text(done ? "Thought" : "Thinking…")
-                if !expanded, let first = text.split(separator: "\n").first {
-                    Text(first)
-                        .lineLimit(1)
-                        .foregroundStyle(.tertiary)
-                }
+                .contentShape(.rect)
             }
-            .font(.callout)
-            .foregroundStyle(.secondary)
+            .buttonStyle(.plain)
+            if expanded {
+                Text(text)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 26)
+                    .transition(.opacity)
+            }
         }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+    }
+
+    /// The latest line while streaming (what it's thinking now), the first line once done.
+    private var preview: String {
+        let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return (done ? lines.first : lines.last) ?? ""
     }
 }
 
@@ -98,6 +121,7 @@ struct ToolCallView: View {
                         .foregroundStyle(failed ? .red : .secondary)
                     Text(name == "!" ? "Shell" : name)
                         .fontWeight(.medium)
+                        .font(.callout)
                     Text(arg)
                         .font(.system(.callout, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -119,19 +143,21 @@ struct ToolCallView: View {
                 if let diff = result.diff {
                     DiffView(diff: diff)
                 } else {
-                    OutputView(text: result.display ?? result.output, failed: failed)
+                    TerminalView(text: result.display ?? result.output)
                 }
-            } else if !expanded, let diff = result?.diff, result?.outcome == .ok {
-                DiffView(diff: diff, maxLines: 12)
+            } else if !item.done, !item.output.isEmpty {
+                // Live tail of a running command.
+                TerminalView(text: String(item.output.suffix(6000)), live: true, maxHeight: 150)
+                    .transition(.opacity)
             }
 
             if item.needsPermission, let p = conversation.permission, p.item == item.id {
                 PermissionCard(request: p, conversation: conversation)
             }
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 10)
-        .background(.quaternary.opacity(expanded ? 0.3 : 0), in: .rect(cornerRadius: 10))
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(.quaternary.opacity(expanded ? 0.3 : 0), in: .rect(cornerRadius: 8))
     }
 
     @ViewBuilder
@@ -164,24 +190,6 @@ struct ToolCallView: View {
         } else if result?.outcome == .ok {
             Image(systemName: "checkmark").foregroundStyle(.green).font(.caption.weight(.bold))
         }
-    }
-}
-
-struct OutputView: View {
-    let text: String
-    let failed: Bool
-
-    var body: some View {
-        ScrollView {
-            Text(text.isEmpty ? "(no output)" : text)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(failed ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-        }
-        .frame(maxHeight: 280)
-        .background(.background.opacity(0.6), in: .rect(cornerRadius: 8))
     }
 }
 
@@ -226,7 +234,8 @@ struct DiffView: View {
                 }
             }
         }
-        .background(.background.opacity(0.6), in: .rect(cornerRadius: 8))
+        .background(.background.opacity(0.6))
+        .clipShape(.rect(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary, lineWidth: 0.5))
     }
 }
@@ -280,26 +289,51 @@ struct PermissionCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
-                Text("Allow \(request.name)?").fontWeight(.semibold)
+                Text(title).fontWeight(.semibold)
+                Spacer()
             }
-            Text(request.arg)
-                .font(.system(.callout, design: .monospaced))
-                .textSelection(.enabled)
-                .lineLimit(6)
+            if let diff = request.preview {
+                DiffView(diff: diff, maxLines: 40)
+            } else {
+                Text(request.arg)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .lineLimit(8)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.black.opacity(0.3), in: .rect(cornerRadius: 8))
+            }
             HStack(spacing: 8) {
-                Button("Allow") { conversation.answer(.allow) }
-                    .buttonStyle(.glassProminent)
-                    .keyboardShortcut(.return, modifiers: .command)
+                Button {
+                    conversation.answer(.allow)
+                } label: {
+                    Text("Allow").frame(minWidth: 56)
+                }
+                .buttonStyle(.glassProminent)
+                .keyboardShortcut(.return, modifiers: .command)
+                .help("Allow (⌘↩)")
                 Button(alwaysLabel) { conversation.answer(.allowAlways) }
                     .buttonStyle(.glass)
                 Spacer()
                 Button("Deny") { conversation.answer(.deny) }
                     .buttonStyle(.glass)
                     .keyboardShortcut(".", modifiers: .command)
+                    .help("Deny (⌘.)")
             }
         }
         .padding(14)
-        .glassEffect(.regular.tint(.orange.opacity(0.12)), in: .rect(cornerRadius: 14))
+        .glassEffect(.regular.tint(.orange.opacity(0.10)), in: .rect(cornerRadius: 14))
+    }
+
+    private var title: String {
+        switch request.name {
+        case "Edit": "Allow this edit to \((request.arg as NSString).lastPathComponent)?"
+        case "Write": request.preview?.created == true
+            ? "Allow creating \((request.arg as NSString).lastPathComponent)?"
+            : "Allow rewriting \((request.arg as NSString).lastPathComponent)?"
+        case "Bash": "Allow this command?"
+        default: "Allow \(request.name)?"
+        }
     }
 
     private var alwaysLabel: String {
