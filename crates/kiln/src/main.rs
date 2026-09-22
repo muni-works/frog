@@ -1,8 +1,9 @@
 mod headless;
 mod render;
+mod replay;
 mod tui;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use kiln_engine::config::{Config, ToolMode};
 use kiln_engine::session;
@@ -45,6 +46,19 @@ struct Cli {
     /// Confine file writes (including shell commands, on macOS) to the working directory.
     #[arg(long)]
     sandbox: bool,
+    /// Undo a turn and everything after it: restore the files kiln edited and branch the
+    /// conversation from just before `<id>@<turn>`. With --json, print the result and exit.
+    #[arg(long, value_name = "ID@TURN", conflicts_with_all = ["cont", "resume", "fork"])]
+    rewind: Option<String>,
+    /// Play a recorded session (id or .jsonl path) over the serve protocol, for UI work.
+    #[arg(long, value_name = "SESSION")]
+    replay: Option<String>,
+    /// Replay speed multiplier.
+    #[arg(long, default_value_t = 2.0, requires = "replay")]
+    speed: f64,
+    /// During replay, stop at each edit or command for a permission answer.
+    #[arg(long, requires = "replay")]
+    replay_ask: bool,
     /// List sessions started in this directory and exit.
     #[arg(long)]
     sessions: bool,
@@ -82,6 +96,10 @@ async fn main() {
 
 async fn run() -> Result<bool> {
     let cli = Cli::parse();
+    if let Some(spec) = &cli.replay {
+        replay::run(spec, cli.speed, cli.replay_ask).await?;
+        return Ok(true);
+    }
     let cfg = Config::load()?;
     if cli.models {
         return list_models(&cfg, cli.json).await;
@@ -105,7 +123,20 @@ async fn run() -> Result<bool> {
         list_sessions(&store, &cwd, cli.json)?;
         return Ok(true);
     }
-    let resume = if let Some(spec) = &cli.fork {
+    let resume = if let Some(spec) = &cli.rewind {
+        let (id, turn) = spec.split_once('@').context("--rewind takes <id>@<turn>")?;
+        let r = session::rewind(&store, id, turn.parse()?)?;
+        if cli.json {
+            println!("{}", serde_json::to_string(&r)?);
+            return Ok(true);
+        }
+        eprintln!(
+            "rewound {id} to before turn {turn} → {} ({} files restored)",
+            r.session,
+            r.restored.len()
+        );
+        Some(r.session)
+    } else if let Some(spec) = &cli.fork {
         let (id, at) = match spec.split_once('@') {
             Some((id, turn)) => (id, Some(session::turn_end_seq(&store, id, turn.parse()?)?)),
             None => (spec.as_str(), None),

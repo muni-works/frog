@@ -167,6 +167,8 @@ impl Renderer {
                         self.write(&text, true);
                     }
                     Delta::Reasoning { .. } => {}
+                    // The TUI shows tool output when the tool finishes.
+                    Delta::Output { .. } => {}
                     Delta::Text { text } => {
                         self.enter(State::Text);
                         self.write(&text, false);
@@ -280,6 +282,35 @@ fn tool_result(text: &str, err: bool) {
             "{}",
             format!("     … +{} lines", lines.len() - max).dark_grey()
         );
+    }
+}
+
+/// Show what an edit would change before asking to allow it.
+pub fn preview(diff: &kiln_engine::protocol::FileDiff) {
+    use kiln_engine::protocol::LineKind;
+    let mut shown = 0;
+    for (i, hunk) in diff.hunks.iter().enumerate() {
+        if i > 0 {
+            println!("{}", "     ⋮".dark_grey());
+        }
+        for line in &hunk.lines {
+            if shown == 30 {
+                println!("{}", "     …".dark_grey());
+                return;
+            }
+            shown += 1;
+            let n = line
+                .new
+                .or(line.old)
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let text = format!("{n:>5} {}", line.text);
+            match line.kind {
+                LineKind::Add => println!("  {}", format!("+{text}").green()),
+                LineKind::Remove => println!("  {}", format!("-{text}").red()),
+                LineKind::Context => println!("  {}", format!(" {text}").dark_grey()),
+            }
+        }
     }
 }
 

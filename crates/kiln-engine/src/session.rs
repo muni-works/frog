@@ -75,6 +75,13 @@ pub enum Record {
         id: String,
         content: String,
     },
+    /// A file's content just before an Edit/Write in `turn` (`None` = it didn't exist).
+    /// Rewind restores these.
+    Snapshot {
+        turn: u64,
+        path: PathBuf,
+        before: Option<String>,
+    },
     /// Replace the whole history (compaction).
     Reset {
         messages: Vec<Message>,
@@ -139,6 +146,8 @@ pub struct Loaded {
     pub header: Header,
     pub messages: Vec<Message>,
     pub events: Vec<Envelope>,
+    /// File snapshots in the order they were taken.
+    pub snapshots: Vec<(u64, PathBuf, Option<String>)>,
 }
 
 impl Loaded {
@@ -188,6 +197,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
     }
     let mut messages: Vec<Message> = Vec::new();
     let mut events = Vec::new();
+    let mut snapshots = Vec::new();
     for r in records {
         match r {
             Record::Header(_) => bail!("session {id} has a second header"),
@@ -198,6 +208,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
                 None => bail!("session {id}: extend with no message"),
             },
             Record::Replace { id, content } => crate::context::apply(&mut messages, &id, &content),
+            Record::Snapshot { turn, path, before } => snapshots.push((turn, path, before)),
             Record::Reset { messages: m } => messages = m,
         }
     }
@@ -205,6 +216,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
         header,
         messages,
         events,
+        snapshots,
     })
 }
 
@@ -286,6 +298,49 @@ pub fn turn_end_seq(dir: &Path, id: &str, turn: u64) -> Result<u64> {
             _ => None,
         })
         .with_context(|| format!("session {id} has no completed turn {turn}"))
+}
+
+/// What a rewind did.
+#[derive(Debug, Serialize)]
+pub struct Rewound {
+    /// The new session, holding the conversation up to just before the turn.
+    pub session: String,
+    /// Files put back to how they were before the turn.
+    pub restored: Vec<PathBuf>,
+}
+
+/// Undo turn `turn` and everything after it: restore files kiln edited in those turns (newest
+/// first), then fork the conversation at the point just before the turn. The original session
+/// is left intact, so a rewind can itself be undone by resuming it.
+///
+/// Changes made by shell commands aren't captured; only Edit/Write snapshots are restored.
+pub fn rewind(dir: &Path, id: &str, turn: u64) -> Result<Rewound> {
+    let loaded = load(dir, id)?;
+    let start = loaded
+        .events
+        .iter()
+        .find_map(|e| match e.event {
+            Event::TurnStarted { turn: t, .. } if t == turn => Some(e.seq),
+            _ => None,
+        })
+        .with_context(|| format!("session {id} has no turn {turn}"))?;
+    let mut restored = Vec::new();
+    for (t, path, before) in loaded.snapshots.iter().rev() {
+        if *t < turn {
+            continue;
+        }
+        match before {
+            Some(content) => std::fs::write(path, content)?,
+            None => {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        if !restored.contains(path) {
+            restored.push(path.clone());
+        }
+    }
+    let session = fork(dir, id, Some(start.saturating_sub(1)))?;
+    Ok(Rewound { session, restored })
 }
 
 pub fn latest_for(dir: &Path, cwd: &Path) -> Result<String> {

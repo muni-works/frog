@@ -1,9 +1,10 @@
-use super::{Ctx, Output, int_arg, str_arg, truncate_middle};
+use super::{Ctx, Output, int_arg, str_arg, strip_ansi, truncate_middle};
 use crate::provider::ToolSpec;
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::process::Stdio;
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -55,13 +56,17 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         None => tokio::process::Command::new(shell),
         Some(root) => sandboxed(root, &shell)?,
     };
-    let child = command
+    let mut child = command
         .arg("-c")
         .arg(&script)
         .current_dir(&ctx.cwd)
         .env("PAGER", "cat")
         .env("GIT_PAGER", "cat")
         .env("KILN", "1")
+        // Colors for the human watching; they're stripped before the model sees the output.
+        .env("FORCE_COLOR", "1")
+        .env("CLICOLOR_FORCE", "1")
+        .env("CARGO_TERM_COLOR", "always")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -69,9 +74,36 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .kill_on_drop(true)
         .spawn()?;
     let group = Group(child.id().unwrap_or(0) as i32);
-
-    let out = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(out) => out?,
+    let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        bail!("couldn't capture command output");
+    };
+    let progress = ctx.progress.clone();
+    let collect = async {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let (mut buf, mut ebuf) = ([0u8; 8192], [0u8; 4096]);
+        let (mut out_done, mut err_done) = (false, false);
+        while !(out_done && err_done) {
+            tokio::select! {
+                r = stdout.read(&mut buf), if !out_done => match r? {
+                    0 => out_done = true,
+                    n => {
+                        out.extend_from_slice(&buf[..n]);
+                        if let Some(p) = &progress {
+                            let _ = p.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+                        }
+                    }
+                },
+                r = stderr.read(&mut ebuf), if !err_done => match r? {
+                    0 => err_done = true,
+                    n => err.extend_from_slice(&ebuf[..n]),
+                },
+            }
+        }
+        let status = child.wait().await?;
+        anyhow::Ok((out, err, status))
+    };
+    let (stdout, stderr, status) = match tokio::time::timeout(timeout, collect).await {
+        Ok(r) => r?,
         Err(_) => bail!("command timed out after {}s", timeout.as_secs()),
     };
     // Finished normally: leave any backgrounded processes alone.
@@ -85,20 +117,30 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         let _ = std::fs::remove_file(&cwd_file);
     }
 
-    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut raw = String::from_utf8_lossy(&stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr);
     if !stderr.trim().is_empty() {
-        text.push_str(&stderr);
+        raw.push_str(&stderr);
     }
-    let mut text = truncate_middle(text.trim_end(), 30_000);
-    let code = out.status.code().unwrap_or(-1);
-    if code != 0 {
-        text.push_str(&format!("\n[exit code {code}]"));
-    }
-    if text.trim().is_empty() {
-        text = "(no output)".into();
-    }
-    Ok(Output::text(text))
+    let code = status.code().unwrap_or(-1);
+    let finish = |text: String| {
+        let mut text = truncate_middle(text.trim_end(), 30_000);
+        if code != 0 {
+            text.push_str(&format!("\n[exit code {code}]"));
+        }
+        if text.trim().is_empty() {
+            "(no output)".to_string()
+        } else {
+            text
+        }
+    };
+    let plain = strip_ansi(&raw);
+    let display = (plain != raw).then(|| finish(raw.clone()));
+    Ok(Output {
+        content: finish(plain),
+        display,
+        diff: None,
+    })
 }
 
 /// Wrap the shell in macOS seatbelt: everything allowed except file writes outside the

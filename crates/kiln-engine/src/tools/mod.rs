@@ -18,6 +18,8 @@ pub struct Ctx {
     /// When set, writes (Write/Edit, and Bash on macOS via sandbox-exec) are confined to this
     /// directory and the system temp dirs. Canonical path.
     pub sandbox: Option<PathBuf>,
+    /// Live output from the running tool, if someone is listening.
+    pub progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 }
 
 impl Ctx {
@@ -27,6 +29,7 @@ impl Ctx {
             read_files: HashMap::new(),
             todos: Vec::new(),
             sandbox: None,
+            progress: None,
         }
     }
 
@@ -190,6 +193,14 @@ pub fn bool_arg(input: &Value, key: &str) -> bool {
         Value::String(s) => s == "true",
         _ => false,
     }
+}
+
+/// Remove ANSI escape sequences (colors, cursor movement) so the model sees plain text.
+pub fn strip_ansi(s: &str) -> String {
+    static ANSI: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-B]|\r").unwrap()
+    });
+    ANSI.replace_all(s, "").into_owned()
 }
 
 /// Keep the head and tail of long output.

@@ -157,6 +157,9 @@ pub enum Event {
         name: String,
         arg: String,
         always: String,
+        /// For Edit/Write: exactly what would change, computed without touching the file.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preview: Option<FileDiff>,
     },
     /// Something is in flight with nothing to show yet (a model request, a tool call's
     /// arguments streaming). Clients typically show a spinner.
@@ -277,8 +280,16 @@ pub enum ToolOutcome {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Delta {
-    Text { text: String },
-    Reasoning { text: String },
+    Text {
+        text: String,
+    },
+    Reasoning {
+        text: String,
+    },
+    /// Live output from a running tool (e.g. a shell command). May contain ANSI colors.
+    Output {
+        text: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

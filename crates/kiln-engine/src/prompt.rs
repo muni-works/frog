@@ -125,6 +125,17 @@ pub fn to_text_mode(messages: &[Message]) -> Vec<Message> {
         .collect()
 }
 
+static ANSWER_TAGS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)</?(final_answer|answer|response|output)>").unwrap());
+
+/// Small models often wrap their answer in tags like `<final_answer>` that nobody asked for.
+pub fn strip_answer_tags(text: &str) -> String {
+    if !text.contains('<') {
+        return text.to_string();
+    }
+    ANSWER_TAGS.replace_all(text, "").trim().to_string()
+}
+
 static TOOL_CALL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<tool_call>\s*(.*?)\s*(?:</tool_call>|$)").unwrap());
 
@@ -292,6 +303,15 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].0, "Read");
         assert_eq!(calls[1].1["command"], "ls");
+    }
+
+    #[test]
+    fn strips_answer_wrappers() {
+        assert_eq!(
+            strip_answer_tags("<final_answer>\nDone.\n</final_answer>"),
+            "Done."
+        );
+        assert_eq!(strip_answer_tags("use a <div> here"), "use a <div> here");
     }
 
     #[test]

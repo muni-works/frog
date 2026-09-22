@@ -217,6 +217,37 @@ pub async fn edit(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     })
 }
 
+/// What an Edit or Write would change, computed without touching the file.
+/// `None` when it can't be previewed (e.g. old_string not found; the tool will report that).
+pub fn preview(name: &str, input: &Value, ctx: &Ctx) -> Option<FileDiff> {
+    let path = ctx.resolve(input["file_path"].as_str()?);
+    let label = ctx.display(&path);
+    match name {
+        "Write" => {
+            let new = input["content"].as_str()?;
+            let old = std::fs::read_to_string(&path).ok();
+            Some(file_diff(&label, old.as_deref(), new))
+        }
+        "Edit" => {
+            let (old_s, new_s) = (input["old_string"].as_str()?, input["new_string"].as_str()?);
+            if old_s.is_empty() {
+                return (!path.exists()).then(|| file_diff(&label, None, new_s));
+            }
+            let text = std::fs::read_to_string(&path).ok()?;
+            if !text.contains(old_s) {
+                return None;
+            }
+            let updated = if bool_arg(input, "replace_all") {
+                text.replace(old_s, new_s)
+            } else {
+                text.replacen(old_s, new_s, 1)
+            };
+            Some(file_diff(&label, Some(&text), &updated))
+        }
+        _ => None,
+    }
+}
+
 /// Structured diff for clients. `old` is `None` for a newly created file.
 pub fn file_diff(path: &str, old: Option<&str>, new: &str) -> FileDiff {
     let d = TextDiff::from_lines(old.unwrap_or(""), new);

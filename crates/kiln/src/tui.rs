@@ -103,8 +103,16 @@ impl Tui {
                     return true;
                 }
                 Event::Status(s) => self.status = Some(s),
-                Event::PermissionRequest { id, always, .. } => {
+                Event::PermissionRequest {
+                    id,
+                    always,
+                    preview,
+                    ..
+                } => {
                     r.idle();
+                    if let Some(diff) = &preview {
+                        render::preview(diff);
+                    }
                     match render::ask_permission(&always).await {
                         Some(decision) => self.send(Op::Permission { id, decision }),
                         None => {

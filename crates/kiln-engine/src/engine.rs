@@ -273,7 +273,7 @@ struct Agent {
     usage: Usage,
     last_call: Duration,
     session_id: String,
-    seq: AtomicU64,
+    seq: Arc<AtomicU64>,
     turn: u64,
     active_turn: Option<u64>,
     /// The context window actually in effect (config, bounded by what the server reports).
@@ -359,7 +359,7 @@ impl Agent {
             usage: Usage::default(),
             last_call: Duration::ZERO,
             session_id,
-            seq: AtomicU64::new(seq),
+            seq: Arc::new(AtomicU64::new(seq)),
             turn,
             active_turn: None,
             window,
@@ -866,6 +866,72 @@ impl Agent {
         Ok(())
     }
 
+    /// Before an Edit/Write, log the file's current content so the turn can be rewound.
+    fn snapshot(&self, name: &str, input: &Value) {
+        if !matches!(name, "Edit" | "Write") {
+            return;
+        }
+        let Some(p) = input["file_path"].as_str() else {
+            return;
+        };
+        let path = self.ctx.resolve(p);
+        let before = match std::fs::metadata(&path) {
+            Ok(m) if m.len() > 4_000_000 => return,
+            Ok(_) => match std::fs::read_to_string(&path) {
+                Ok(s) => Some(s),
+                Err(_) => return,
+            },
+            Err(_) => None,
+        };
+        self.record(Record::Snapshot {
+            turn: self.turn,
+            path,
+            before,
+        });
+    }
+
+    /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
+    async fn run_tool(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        self.ctx.progress = Some(tx);
+        // The tool holds `ctx` mutably, so deltas go out through a detached emitter.
+        let emit = {
+            let (events, seq, session, id) = (
+                self.events.clone(),
+                self.seq.clone(),
+                self.session_id.clone(),
+                id.to_string(),
+            );
+            move |text: String| {
+                let seq = seq.fetch_add(1, Ordering::Relaxed) + 1;
+                let _ = events.send(Envelope {
+                    seq,
+                    session: session.clone(),
+                    created: now_ms(),
+                    event: Event::ItemDelta {
+                        id: id.clone(),
+                        delta: Delta::Output { text },
+                    },
+                });
+            }
+        };
+        let out = {
+            let run = tools::run(name, input, &mut self.ctx);
+            tokio::pin!(run);
+            loop {
+                tokio::select! {
+                    out = &mut run => break out,
+                    Some(chunk) = rx.recv() => emit(chunk),
+                }
+            }
+        };
+        while let Ok(chunk) = rx.try_recv() {
+            emit(chunk);
+        }
+        self.ctx.progress = None;
+        out
+    }
+
     /// Run one batch of tool calls. Returns true if the user denied one.
     async fn run_tools(
         &mut self,
@@ -921,7 +987,8 @@ Don't repeat it. Change the arguments or try a different approach.",
                 denied = self.can_ask;
                 (ToolOutcome::Denied, msg.to_string(), None, None)
             } else {
-                match tools::run(&name, &input, &mut self.ctx).await {
+                self.snapshot(&name, &input);
+                match self.run_tool(&id, &name, &input).await {
                     Ok(o) => (ToolOutcome::Ok, o.content, o.display, o.diff),
                     Err(e) => (ToolOutcome::Error, format!("Error: {e:#}"), None, None),
                 }
@@ -1111,12 +1178,14 @@ Don't repeat it. Change the arguments or try a different approach.",
         let id = new_id();
         let (tx, rx) = oneshot::channel();
         self.shared.pending.lock().unwrap().insert(id.clone(), tx);
+        let preview = tools::fs::preview(name, input, &self.ctx);
         self.emit(Event::PermissionRequest {
             id: id.clone(),
             item: item.into(),
             name: name.into(),
             arg: arg.into(),
             always,
+            preview,
         });
         let decision = rx.await.unwrap_or(Decision::Deny);
         self.emit(Event::PermissionResolved { id, decision });
@@ -1222,9 +1291,9 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
             },
         });
         let input = serde_json::json!({ "command": cmd });
-        let (outcome, output) = match tools::run("Bash", &input, &mut self.ctx).await {
-            Ok(o) => (ToolOutcome::Ok, o.content),
-            Err(e) => (ToolOutcome::Error, format!("{e:#}")),
+        let (outcome, output, display) = match self.run_tool(&id, "Bash", &input).await {
+            Ok(o) => (ToolOutcome::Ok, o.content, o.display),
+            Err(e) => (ToolOutcome::Error, format!("{e:#}"), None),
         };
         self.pending.push(format!(
             "<bash-input>{cmd}</bash-input>\n<bash-output>{output}</bash-output>"
@@ -1237,7 +1306,7 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
                 input,
                 outcome,
                 output,
-                display: None,
+                display,
                 diff: None,
             },
         });
@@ -1282,6 +1351,11 @@ fn from_json_mode(mut resp: Response) -> Option<Response> {
 /// Recover tool calls a model wrote as text instead of via the API.
 /// Returns whether anything was recovered (a sign the configured format isn't working).
 fn normalize(mut msg: Message) -> (Message, bool) {
+    for b in &mut msg.content {
+        if let Block::Text { text } = b {
+            *text = prompt::strip_answer_tags(text);
+        }
+    }
     if !msg.tool_uses().is_empty() {
         return (msg, false);
     }
@@ -1884,6 +1958,114 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[tokio::test]
+    async fn permission_requests_preview_the_exact_edit() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("calc.py"), "def add(a, b):\n    return a - b\n").unwrap();
+        let read = Block::ToolUse {
+            id: "r".into(),
+            name: "Read".into(),
+            input: json!({ "file_path": "calc.py" }),
+        };
+        let edit = Block::ToolUse {
+            id: "e".into(),
+            name: "Edit".into(),
+            input: json!({ "file_path": "calc.py", "old_string": "a - b", "new_string": "a + b" }),
+        };
+        let script = vec![
+            reply(vec![read], Stop::ToolUse),
+            reply(vec![edit], Stop::ToolUse),
+            reply(vec![text("fixed")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "fix add".into(),
+            })
+            .unwrap();
+        let preview = loop {
+            if let Event::PermissionRequest { id, preview, .. } =
+                h.events.recv().await.unwrap().event
+            {
+                h.ops
+                    .send(Op::Permission {
+                        id,
+                        decision: Decision::Allow,
+                    })
+                    .unwrap();
+                break preview;
+            }
+        };
+        let preview = preview.expect("edit should carry a preview");
+        assert_eq!((preview.added, preview.removed), (1, 1));
+        // Nothing was written before the answer.
+        let evs = until_idle(&mut h).await;
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+        assert!(
+            std::fs::read_to_string(dir.join("calc.py"))
+                .unwrap()
+                .contains("a + b")
+        );
+    }
+
+    #[tokio::test]
+    async fn rewind_restores_files_and_branches_the_conversation() {
+        let dir = tmp_store();
+        let ws = tmp_store();
+        let write = Block::ToolUse {
+            id: "w".into(),
+            name: "Write".into(),
+            input: json!({ "file_path": "notes.txt", "content": "v1\n" }),
+        };
+        let edit = Block::ToolUse {
+            id: "e".into(),
+            name: "Edit".into(),
+            input: json!({ "file_path": "notes.txt", "old_string": "v1", "new_string": "v2" }),
+        };
+        let script = vec![
+            reply(vec![write], Stop::ToolUse),
+            reply(vec![text("created")], Stop::End),
+            reply(vec![edit], Stop::ToolUse),
+            reply(vec![text("edited")], Stop::End),
+        ];
+        let mut h = engine_with(script, false, Some(dir.clone()), None, None, ws.clone());
+        // Headless engines deny edits, so run this one in yolo.
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+        let evs = until_idle(&mut h).await;
+        let sid = evs[0].session.clone();
+        h.ops
+            .send(Op::Submit {
+                text: "create notes".into(),
+            })
+            .unwrap();
+        until_idle(&mut h).await;
+        h.ops
+            .send(Op::Submit {
+                text: "bump notes".into(),
+            })
+            .unwrap();
+        until_idle(&mut h).await;
+        shutdown(h).await;
+        let file = ws.join("notes.txt");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v2\n");
+
+        let r = session::rewind(&dir, &sid, 2).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v1\n");
+        let branch = session::load(&dir, &r.session).unwrap();
+        assert_eq!(branch.last_turn(), 1, "the branch ends after turn 1");
+
+        session::rewind(&dir, &sid, 1).unwrap();
+        assert!(!file.exists(), "a file created in turn 1 is removed");
     }
 
     #[test]
