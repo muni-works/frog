@@ -3,6 +3,7 @@ import SwiftUI
 struct WorkspaceView: View {
     @Bindable var workspace: Workspace
     @AppStorage("showChanges") private var showChanges = false
+    @State private var showPalette = false
 
     var body: some View {
         NavigationSplitView {
@@ -28,7 +29,26 @@ struct WorkspaceView: View {
                 }
             }
         }
+        .overlay(alignment: .top) {
+            if showPalette {
+                ZStack(alignment: .top) {
+                    Color.black.opacity(0.001)
+                        .onTapGesture { showPalette = false }
+                    CommandPalette(commands: workspace.commands(showChanges: $showChanges)) {
+                        showPalette = false
+                    }
+                    .padding(.top, 80)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
+        }
+        .animation(.snappy(duration: 0.18), value: showPalette)
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Commands", systemImage: "command") { showPalette.toggle() }
+                    .keyboardShortcut("k")
+                    .help("Command palette (⌘K)")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button("New Session", systemImage: "square.and.pencil") {
                     workspace.newSession()

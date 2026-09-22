@@ -212,7 +212,7 @@ struct CodeBlock: View {
             .padding(.vertical, 6)
             Divider().opacity(0.5)
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
+                Text(Highlight.block(code, Highlight.lang(fence: language)))
                     .font(.system(.callout, design: .monospaced))
                     .padding(12)
                     .fixedSize(horizontal: true, vertical: true)

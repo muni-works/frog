@@ -121,12 +121,16 @@ cd apps/macos && xcodegen generate && open Kiln.xcodeproj
 - A build phase compiles the Rust engine and copies it into the app bundle.
 
 **What's in the window:**
-- a sessions sidebar for the project folder
-- a streaming transcript: Markdown rendering, collapsible reasoning, tool calls as compact rows that expand, and real diff cards for edits
-- inline permission cards (⌘↩ to allow, ⌘. to deny)
-- a composer with a mode and model picker and a context ring
-- Esc to interrupt
-- **Fork from Here** on any finished turn (right-click)
+- **Outcome-first turns.** The work collapses to one line, like "Worked 42s · read 3 files · edited 1 file". While a turn runs you see a live tail of its steps and the plan checklist. Below that come the answer and a strip of the files it changed.
+- **Changes inspector (⌥⌘0):** every file the session touched, with syntax-highlighted diffs.
+- **Rewind** on any finished turn. It restores the files kiln edited from that turn onward and continues on a new branch; the old session is kept. **Fork** and **Copy** are there too, on hover.
+- **Permission cards** show exactly what an edit will change before you allow it (⌘↩ to allow, ⌘. to deny).
+- **Live, ANSI-colored output** from running commands.
+- **Composer:** `@` file picker with fuzzy search, follow-ups queued while kiln is working, Esc to interrupt, and pickers for mode and model.
+- **⌘K command palette:** sessions, models, modes, fork, compact.
+- **Notifications** when a turn finishes or needs permission while you're in another app. You can Allow or Deny straight from the notification.
+
+**Designing without a model.** `open Kiln.app --args -KilnFolder <dir> -KilnReplay <session.jsonl> -KilnReplaySpeed 4 [-KilnReplayAsk YES]` plays back a recorded session. Some fixtures live in [apps/macos/Fixtures](apps/macos/Fixtures). The snapshot tests render them through the real views into `$TMPDIR/kiln-snapshots/*.png`.
 
 **Opening a folder from the command line:** `open Kiln.app --args -KilnFolder <path>`. Engine stderr is logged to `~/Library/Logs/Kiln/engine.log`.
 

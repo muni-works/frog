@@ -222,7 +222,7 @@ struct DiffView: View {
                         if i > 0, shown[shown.startIndex + i - 1].hunk != entry.hunk {
                             Text("⋯").font(.caption).foregroundStyle(.tertiary).padding(.leading, 60).padding(.vertical, 2)
                         }
-                        DiffLineView(line: entry.line)
+                        DiffLineView(line: entry.line, lang: Highlight.lang(path: diff.path))
                     }
                     if all.count > shown.count {
                         Text("\(all.count - shown.count) more lines")
@@ -242,6 +242,7 @@ struct DiffView: View {
 
 struct DiffLineView: View {
     let line: DiffLine
+    var lang: Highlight.Lang = .plain
 
     var body: some View {
         HStack(spacing: 0) {
@@ -252,7 +253,7 @@ struct DiffLineView: View {
             Text(sign)
                 .frame(width: 20)
                 .foregroundStyle(tint)
-            Text(line.text)
+            Text(Highlight.line(line.text, lang))
                 .foregroundStyle(.primary)
                 .fixedSize()
                 .padding(.trailing, 12)

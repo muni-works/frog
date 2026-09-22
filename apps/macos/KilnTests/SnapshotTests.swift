@@ -75,6 +75,17 @@ final class SnapshotTests: XCTestCase {
                 try render(transcript(live), size: CGSize(width: 900, height: 800), to: "\(name)-live")
             }
         }
+        try render(
+            CommandPalette(commands: [
+                PaletteCommand(id: "1", title: "New Session", subtitle: "⇧⌘N", symbol: "square.and.pencil") {},
+                PaletteCommand(id: "2", title: "Show Changes", subtitle: "⌥⌘0", symbol: "plusminus") {},
+                PaletteCommand(id: "3", title: "Mode: Accept Edits", symbol: "pencil.and.outline") {},
+                PaletteCommand(id: "4", title: "Model: ollama/qwen3:4b", subtitle: "native tools · medium tier", symbol: "cpu") {},
+                PaletteCommand(id: "5", title: "Rename get_usr to get_user everywhere", subtitle: "ollama/qwen3:4b", symbol: "bubble.left") {},
+            ], dismiss: {})
+            .padding(40)
+            .background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 660, height: 420), to: "palette")
         print("snapshots: \(outDir.path)")
     }
 }
