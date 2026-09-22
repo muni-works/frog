@@ -50,6 +50,19 @@ struct Cli {
     /// conversation from just before `<id>@<turn>`. With --json, print the result and exit.
     #[arg(long, value_name = "ID@TURN", conflicts_with_all = ["cont", "resume", "fork"])]
     rewind: Option<String>,
+    /// Create N worktrees for parallel attempts, all starting from the current working tree
+    /// (uncommitted changes included). Prints {"base", "dirs"} as JSON.
+    #[arg(long, value_name = "N")]
+    attempts: Option<usize>,
+    /// Apply an attempt worktree's changes (since --base) to this working tree. Prints the files.
+    #[arg(long, value_name = "DIR", requires = "base")]
+    apply_attempt: Option<std::path::PathBuf>,
+    /// The attempts' base commit (from --attempts).
+    #[arg(long)]
+    base: Option<String>,
+    /// Remove attempt worktrees.
+    #[arg(long, value_name = "DIR")]
+    discard_attempt: Vec<std::path::PathBuf>,
     /// Play a recorded session (id or .jsonl path) over the serve protocol, for UI work.
     #[arg(long, value_name = "SESSION")]
     replay: Option<String>,
@@ -96,6 +109,9 @@ async fn main() {
 
 async fn run() -> Result<bool> {
     let cli = Cli::parse();
+    if cli.attempts.is_some() || cli.apply_attempt.is_some() || !cli.discard_attempt.is_empty() {
+        return attempts(&cli);
+    }
     if let Some(spec) = &cli.replay {
         replay::run(spec, cli.speed, cli.replay_ask).await?;
         return Ok(true);
@@ -224,7 +240,11 @@ fn list_sessions(store: &std::path::Path, cwd: &std::path::Path, json: bool) -> 
     }
     for s in sessions {
         let when = chrono::DateTime::<chrono::Local>::from(s.modified).format("%b %d %H:%M");
-        let first = s.title.or(s.first_input).unwrap_or_default().replace('\n', " ");
+        let first = s
+            .title
+            .or(s.first_input)
+            .unwrap_or_default()
+            .replace('\n', " ");
         let first: String = first.chars().take(60).collect();
         let fork = s
             .header
@@ -260,5 +280,29 @@ async fn probe(name: &str, profile: &kiln_engine::config::Profile) -> Result<boo
     println!("abstains      {}", yes(caps.abstains));
     println!("tier          {tier:?}");
     println!("auto picks    {mode:?}");
+    Ok(true)
+}
+
+fn attempts(cli: &Cli) -> Result<bool> {
+    use kiln_engine::checkpoint;
+    let cwd = std::env::current_dir()?;
+    let root = checkpoint::repo_root(&cwd).context("parallel attempts need a git repository")?;
+    if let Some(n) = cli.attempts {
+        let name = format!(
+            "{}-{}",
+            root.file_name().and_then(|s| s.to_str()).unwrap_or("repo"),
+            session::new_id()
+        );
+        let parent = kiln_engine::config::data_dir().join("attempts");
+        let a = checkpoint::create_attempts(&root, &name, n.clamp(1, 8), &parent)?;
+        println!("{}", serde_json::to_string(&a)?);
+    }
+    if let (Some(dir), Some(base)) = (&cli.apply_attempt, &cli.base) {
+        let files = checkpoint::apply_attempt(&root, dir, base)?;
+        println!("{}", serde_json::json!({ "files": files }));
+    }
+    if !cli.discard_attempt.is_empty() {
+        checkpoint::remove_attempts(&root, &cli.discard_attempt);
+    }
     Ok(true)
 }

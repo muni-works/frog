@@ -8,6 +8,7 @@ struct ComposerView: View {
     @State private var controller = ComposerController()
     @State private var mention: String?
     @State private var picked = 0
+    @State private var racing = false
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -69,8 +70,29 @@ struct ComposerView: View {
                 ModePicker(conversation: conversation)
                 ModelPicker(workspace: workspace, conversation: conversation)
                 Spacer()
+                if let e = workspace.raceError {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
+                }
                 if let s = conversation.status {
                     ContextRing(status: s)
+                }
+                Button {
+                    racing = true
+                } label: {
+                    Image(systemName: "square.stack.3d.up")
+                        .frame(width: 26, height: 26)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .disabled(!canSend || conversation.busy)
+                .accessibilityLabel("Race")
+                .help("Race: run this prompt as several parallel attempts")
+                .popover(isPresented: $racing, arrowEdge: .top) {
+                    RaceSetup(workspace: workspace, prompt: text) { models, check in
+                        racing = false
+                        workspace.startRace(prompt: text, models: models, check: check)
+                        text = ""
+                    }
                 }
                 if conversation.busy, !canSend {
                     Button {

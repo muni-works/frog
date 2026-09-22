@@ -11,6 +11,26 @@ final class Workspace {
     private(set) var conversation: Conversation?
     var selection: String?
     var preferredModel: String?
+    /// Parallel attempts in progress, shown instead of the transcript.
+    var race: Race?
+    private(set) var raceError: String?
+
+    func startRace(prompt: String, models: [String], check: String?) {
+        raceError = nil
+        Task {
+            do {
+                race = try await Race.start(in: folder, prompt: prompt, models: models, check: check)
+            } catch {
+                raceError = "Couldn't start attempts: \(error.localizedDescription). Racing needs a git repository."
+            }
+        }
+    }
+
+    func endRace() {
+        race = nil
+        Task { await refresh() }
+    }
+
     /// Project files for `@` mentions, loaded on first use.
     private(set) var files: [String] = []
     @ObservationIgnored private var filesLoaded = false
@@ -70,6 +90,7 @@ final class Workspace {
     }
 
     func stop() {
+        race?.discard()
         conversation?.stop()
     }
 

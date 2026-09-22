@@ -26,11 +26,18 @@ pub fn default_dir() -> PathBuf {
 }
 
 pub fn new_id() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos();
-    let salt = (nanos ^ std::process::id().rotate_left(16)) & 0xffff;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    // A per-process random start plus a counter: unique within a process, and unlikely to
+    // collide across processes started in the same second.
+    static NEXT: std::sync::OnceLock<AtomicU32> = std::sync::OnceLock::new();
+    let next = NEXT.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        AtomicU32::new(nanos ^ std::process::id().rotate_left(16))
+    });
+    let salt = next.fetch_add(1, Ordering::Relaxed) & 0xffff;
     format!(
         "{}-{salt:04x}",
         chrono::Local::now().format("%Y%m%d-%H%M%S")

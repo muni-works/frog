@@ -123,7 +123,11 @@ cd apps/macos && xcodegen generate && open Kiln.xcodeproj
 **What's in the window:**
 - **Outcome-first turns.** The work collapses to one line, like "Worked 42s · read 3 files · edited 1 file". While a turn runs you see a live tail of its steps and the plan checklist. Below that come the answer and a strip of the files it changed.
 - **Changes inspector (⌥⌘0):** every file the session touched, with syntax-highlighted diffs.
-- **Rewind** on any finished turn. It restores the files kiln edited from that turn onward and continues on a new branch; the old session is kept. **Fork** and **Copy** are there too, on hover.
+- **Rewind** on any finished turn, and continue on a new branch; the old session is kept. **Fork** and **Copy** are there too, on hover.
+  - In a git repo, every turn starts with a checkpoint of the whole working tree, pinned under `refs/kiln/`. Rewind restores it, so it also undoes what shell commands did. Your index, stash and HEAD are never touched.
+  - Outside git, rewind restores the files kiln edited with Edit and Write.
+- **Race.** One prompt runs as 2–4 parallel attempts, each with its own engine in its own git worktree. Every worktree starts from your current files, uncommitted changes included, and runs unattended but sandboxed to that worktree. An optional check command, like your tests, scores each attempt. You apply the one you want; the others are thrown away. The same steps are available from the CLI: `kiln --attempts N`, `--apply-attempt DIR --base COMMIT`, and `--discard-attempt DIR`.
+- **Session titles** come from Apple's on-device model after the first turn.
 - **Permission cards** show exactly what an edit will change before you allow it (⌘↩ to allow, ⌘. to deny).
 - **Live, ANSI-colored output** from running commands.
 - **Composer:** `@` file picker with fuzzy search, follow-ups queued while kiln is working, Esc to interrupt, and pickers for mode and model.

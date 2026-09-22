@@ -10,7 +10,11 @@ struct WorkspaceView: View {
             SessionList(workspace: workspace)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 360)
         } detail: {
-            if let conversation = workspace.conversation {
+            if let race = workspace.race {
+                RaceView(race: race) { workspace.endRace() }
+                    .navigationTitle(workspace.name)
+                    .navigationSubtitle("Racing")
+            } else if let conversation = workspace.conversation {
                 TranscriptView(
                     conversation: conversation,
                     actions: TurnActions(
