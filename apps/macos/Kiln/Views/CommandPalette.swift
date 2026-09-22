@@ -38,7 +38,7 @@ extension Workspace {
             }
         }
         for s in sessions where s.id != conversation?.sessionID {
-            out.append(PaletteCommand(id: "session-\(s.id)", title: s.firstInput ?? "Untitled session", subtitle: s.model, symbol: s.forkedFrom == nil ? "bubble.left" : "arrow.triangle.branch") {
+            out.append(PaletteCommand(id: "session-\(s.id)", title: s.displayTitle, subtitle: s.model, symbol: s.forkedFrom == nil ? "bubble.left" : "arrow.triangle.branch") {
                 self.selection = s.id
                 self.open(s.id)
             })

@@ -588,6 +588,12 @@ impl Agent {
                 self.apply_harness();
                 self.notice(Level::Info, "started a new conversation");
             }
+            Op::SetTitle { title } => {
+                let title: String = title.trim().chars().take(80).collect();
+                if !title.is_empty() {
+                    self.emit(Event::Titled { title });
+                }
+            }
             // Handled by the router, never queued.
             Op::Interrupt | Op::Permission { .. } | Op::Shutdown => {}
         }
@@ -638,6 +644,7 @@ impl Agent {
         });
         self.active_turn = Some(turn);
         self.inputs.push(input.to_string());
+        self.checkpoint(turn);
         self.turn_usage = TurnUsage::default();
 
         self.ensure_profiled().await;
@@ -864,6 +871,23 @@ impl Agent {
             *compacted = true;
         }
         Ok(())
+    }
+
+    /// Pin the working tree before the turn touches anything (git repos, persisted sessions only).
+    fn checkpoint(&self, turn: u64) {
+        if self.store.is_none() {
+            return;
+        }
+        let Some(root) = crate::checkpoint::repo_root(&self.root) else {
+            return;
+        };
+        match crate::checkpoint::snapshot(&root, &format!("{}/{turn}", self.session_id)) {
+            Ok(commit) => self.record(Record::Checkpoint { turn, root, commit }),
+            Err(e) => self.notice(
+                Level::Warn,
+                format!("couldn't checkpoint the working tree: {e:#}"),
+            ),
+        }
     }
 
     /// Before an Edit/Write, log the file's current content so the turn can be rewound.
@@ -2066,6 +2090,67 @@ mod tests {
 
         session::rewind(&dir, &sid, 1).unwrap();
         assert!(!file.exists(), "a file created in turn 1 is removed");
+    }
+
+    #[tokio::test]
+    async fn rewind_in_a_git_repo_undoes_shell_commands_too() {
+        let dir = tmp_store();
+        let ws = tmp_store();
+        let git = |args: &[&str]| {
+            assert!(
+                std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&ws)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            )
+        };
+        std::fs::write(ws.join("keep.txt"), "original\n").unwrap();
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "init",
+        ]);
+
+        let bash = Block::ToolUse {
+            id: "b".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "echo junk > made.txt && echo changed > keep.txt" }),
+        };
+        let script = vec![
+            reply(vec![bash], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_with(script, false, Some(dir.clone()), None, None, ws.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+        let sid = until_idle(&mut h).await[0].session.clone();
+        h.ops
+            .send(Op::Submit {
+                text: "make a mess".into(),
+            })
+            .unwrap();
+        until_idle(&mut h).await;
+        shutdown(h).await;
+        assert!(ws.join("made.txt").exists());
+
+        session::rewind(&dir, &sid, 1).unwrap();
+        assert!(
+            !ws.join("made.txt").exists(),
+            "files a command created are removed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(ws.join("keep.txt")).unwrap(),
+            "original\n"
+        );
     }
 
     #[test]

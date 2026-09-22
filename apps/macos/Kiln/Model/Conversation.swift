@@ -47,6 +47,10 @@ final class Conversation {
     private(set) var permission: PermissionRequest?
     private(set) var failure: String?
     private(set) var replaying = false
+    private(set) var title: String?
+    /// A short-lived status line (info notices), shown above the composer.
+    private(set) var toast: String?
+    @ObservationIgnored private var toastTask: Task<Void, Never>?
     /// Messages sent while a turn was running; they go out in order as the engine frees up.
     private(set) var queue: [String] = []
 
@@ -183,6 +187,7 @@ final class Conversation {
                 turns[i].endedAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
                 if !replaying {
                     Notifier.shared.turnFinished(project: folder.lastPathComponent, text: Self.summary(turns[i]))
+                    if title == nil, case .complete = reason { nameSession(from: turns[i]) }
                 }
             }
             progress = nil
@@ -227,7 +232,8 @@ final class Conversation {
         case .progress(let label):
             progress = label
         case .notice(let level, let message):
-            note(message, warning: level == "warn")
+            // Warnings belong in the transcript; info is transient.
+            if level == "warn" { note(message, warning: true) } else { show(message) }
         case .error(let e):
             note(e.description, warning: true)
         case .compacted(let before, let after):
@@ -257,6 +263,9 @@ final class Conversation {
             if !queue.isEmpty {
                 submit(queue.removeFirst())
             }
+        case .titled(let t):
+            title = t
+            onSessionChange?()
         case .modelChanged, .modeChanged, .unknown:
             break
         }
@@ -298,6 +307,26 @@ final class Conversation {
         var item = ItemState(id: id, kind: .message)
         update(&item)
         turns[turns.count - 1].items.append(item)
+    }
+
+    private func show(_ text: String) {
+        toast = text
+        toastTask?.cancel()
+        toastTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.toast = nil
+        }
+    }
+
+    /// Name the session with the on-device model after its first completed turn.
+    private func nameSession(from turn: TurnState) {
+        let answer = turn.items.last { $0.kind == .message }?.text ?? ""
+        let request = turn.input
+        Task { [weak self] in
+            guard let t = await Titler.title(for: request, answer: answer) else { return }
+            self?.engine?.send(.setTitle(t))
+        }
     }
 
     /// Show a one-off notice in the transcript (e.g. after a rewind).

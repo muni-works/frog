@@ -211,6 +211,7 @@ fn list_sessions(store: &std::path::Path, cwd: &std::path::Path, json: bool) -> 
                     "created": s.header.created,
                     "model": s.header.model,
                     "first_input": s.first_input,
+                    "title": s.title,
                     "forked_from": s.header.forked_from,
                 })
             })
@@ -223,7 +224,7 @@ fn list_sessions(store: &std::path::Path, cwd: &std::path::Path, json: bool) -> 
     }
     for s in sessions {
         let when = chrono::DateTime::<chrono::Local>::from(s.modified).format("%b %d %H:%M");
-        let first = s.first_input.unwrap_or_default().replace('\n', " ");
+        let first = s.title.or(s.first_input).unwrap_or_default().replace('\n', " ");
         let first: String = first.chars().take(60).collect();
         let fork = s
             .header

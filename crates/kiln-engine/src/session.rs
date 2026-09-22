@@ -82,6 +82,14 @@ pub enum Record {
         path: PathBuf,
         before: Option<String>,
     },
+    /// The whole working tree just before `turn` began (git repos only): a commit pinned under
+    /// `refs/kiln/`. Preferred over per-file snapshots when rewinding, since it also covers
+    /// changes made by shell commands.
+    Checkpoint {
+        turn: u64,
+        root: PathBuf,
+        commit: String,
+    },
     /// Replace the whole history (compaction).
     Reset {
         messages: Vec<Message>,
@@ -148,6 +156,8 @@ pub struct Loaded {
     pub events: Vec<Envelope>,
     /// File snapshots in the order they were taken.
     pub snapshots: Vec<(u64, PathBuf, Option<String>)>,
+    /// Working-tree checkpoints: (turn, repo root, commit).
+    pub checkpoints: Vec<(u64, PathBuf, String)>,
 }
 
 impl Loaded {
@@ -198,6 +208,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
     let mut messages: Vec<Message> = Vec::new();
     let mut events = Vec::new();
     let mut snapshots = Vec::new();
+    let mut checkpoints = Vec::new();
     for r in records {
         match r {
             Record::Header(_) => bail!("session {id} has a second header"),
@@ -209,6 +220,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
             },
             Record::Replace { id, content } => crate::context::apply(&mut messages, &id, &content),
             Record::Snapshot { turn, path, before } => snapshots.push((turn, path, before)),
+            Record::Checkpoint { turn, root, commit } => checkpoints.push((turn, root, commit)),
             Record::Reset { messages: m } => messages = m,
         }
     }
@@ -217,6 +229,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
         messages,
         events,
         snapshots,
+        checkpoints,
     })
 }
 
@@ -241,6 +254,7 @@ pub struct Info {
     pub modified: std::time::SystemTime,
     pub header: Header,
     pub first_input: Option<String>,
+    pub title: Option<String>,
 }
 
 /// Sessions started in `cwd`, newest first.
@@ -266,22 +280,33 @@ pub fn list(dir: &Path, cwd: &Path) -> Result<Vec<Info>> {
         if header.cwd != cwd {
             continue;
         }
-        let first_input = lines.find_map(|l| match serde_json::from_str(&l) {
-            Ok(Record::Event {
-                env:
-                    Envelope {
-                        event: Event::TurnStarted { input, .. },
-                        ..
-                    },
-            }) => Some(input),
-            _ => None,
-        });
+        let (mut first_input, mut title) = (None, None);
+        for l in lines {
+            match serde_json::from_str(&l) {
+                Ok(Record::Event {
+                    env:
+                        Envelope {
+                            event: Event::TurnStarted { input, .. },
+                            ..
+                        },
+                }) if first_input.is_none() => first_input = Some(input),
+                Ok(Record::Event {
+                    env:
+                        Envelope {
+                            event: Event::Titled { title: t },
+                            ..
+                        },
+                }) => title = Some(t),
+                _ => {}
+            }
+        }
         let modified = e.metadata()?.modified()?;
         out.push(Info {
             id: id.to_string(),
             modified,
             header,
             first_input,
+            title,
         });
     }
     out.sort_by_key(|i| std::cmp::Reverse(i.modified));
@@ -313,7 +338,8 @@ pub struct Rewound {
 /// first), then fork the conversation at the point just before the turn. The original session
 /// is left intact, so a rewind can itself be undone by resuming it.
 ///
-/// Changes made by shell commands aren't captured; only Edit/Write snapshots are restored.
+/// In a git repo, the working tree goes back to the checkpoint taken when the turn started
+/// (covering shell commands too). Elsewhere, only Edit/Write snapshots are restored.
 pub fn rewind(dir: &Path, id: &str, turn: u64) -> Result<Rewound> {
     let loaded = load(dir, id)?;
     let start = loaded
@@ -325,6 +351,13 @@ pub fn rewind(dir: &Path, id: &str, turn: u64) -> Result<Rewound> {
         })
         .with_context(|| format!("session {id} has no turn {turn}"))?;
     let mut restored = Vec::new();
+    // A whole-tree checkpoint from the start of the turn also covers shell commands.
+    if let Some((_, root, commit)) = loaded.checkpoints.iter().find(|(t, _, _)| *t == turn) {
+        let paths = crate::checkpoint::restore(root, commit)?;
+        let restored = paths.into_iter().map(|p| root.join(p)).collect();
+        let session = fork(dir, id, Some(start.saturating_sub(1)))?;
+        return Ok(Rewound { session, restored });
+    }
     for (t, path, before) in loaded.snapshots.iter().rev() {
         if *t < turn {
             continue;

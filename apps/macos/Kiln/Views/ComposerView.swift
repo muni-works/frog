@@ -20,6 +20,13 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let toast = conversation.toast {
+                Label(toast, systemImage: "info.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             if !conversation.queue.isEmpty {
                 QueuedMessages(conversation: conversation)
             }
@@ -90,6 +97,7 @@ struct ComposerView: View {
             }
         }
         .padding(12)
+        .animation(.snappy, value: conversation.toast)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .padding(.horizontal, 20)
         .padding(.bottom, 16)

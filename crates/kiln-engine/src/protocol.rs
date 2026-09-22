@@ -87,6 +87,10 @@ pub enum Op {
         after: u64,
     },
     Clear,
+    /// Name the session (clients may generate this, e.g. with an on-device model).
+    SetTitle {
+        title: String,
+    },
     Shutdown,
 }
 
@@ -144,6 +148,9 @@ pub enum Event {
     ModeChanged {
         mode: Mode,
     },
+    Titled {
+        title: String,
+    },
 
     // ---- ephemeral ----
     ItemDelta {
@@ -198,6 +205,7 @@ impl Event {
                 | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }
                 | Self::ModeChanged { .. }
+                | Self::Titled { .. }
         )
     }
 }

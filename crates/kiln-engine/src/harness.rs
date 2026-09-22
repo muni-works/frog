@@ -95,7 +95,9 @@ pub fn tier(p: &Profile, caps: Option<&Caps>) -> Tier {
     let Some(c) = caps else { return Tier::Medium };
     match c.params_b {
         Some(b) if b >= 30.0 && c.native_tools => Tier::Strong,
-        Some(b) if b >= 10.0 => Tier::Medium,
+        // Small reasoning models that handle native tools punch above their size
+        // (qwen3:4b: 5/6 in the bench).
+        Some(b) if b >= 10.0 || (c.thinks && c.native_tools) => Tier::Medium,
         Some(_) => Tier::Weak,
         None if c.native_tools && c.abstains => Tier::Medium,
         None => Tier::Weak,

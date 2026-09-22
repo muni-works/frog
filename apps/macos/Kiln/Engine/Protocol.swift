@@ -46,10 +46,11 @@ enum Op: Encodable, Sendable {
     case compact(focus: String?)
     case subscribe(after: UInt64)
     case clear
+    case setTitle(String)
     case shutdown
 
     private enum Key: String, CodingKey {
-        case op, text, command, id, decision, mode, spec, focus, after
+        case op, text, command, id, decision, mode, spec, focus, after, title
     }
 
     func encode(to encoder: Encoder) throws {
@@ -81,6 +82,9 @@ enum Op: Encodable, Sendable {
             try c.encode(after, forKey: .after)
         case .clear:
             try c.encode("clear", forKey: .op)
+        case .setTitle(let title):
+            try c.encode("set_title", forKey: .op)
+            try c.encode(title, forKey: .title)
         case .shutdown:
             try c.encode("shutdown", forKey: .op)
         }
@@ -256,6 +260,7 @@ enum Event: Sendable {
     case contextPruned(results: Int, tokensBefore: UInt64, tokensAfter: UInt64)
     case modelChanged(String)
     case modeChanged(Mode)
+    case titled(String)
     case itemDelta(id: String, delta: Delta)
     case permissionRequest(PermissionRequest)
     case progress(String)
@@ -276,7 +281,7 @@ struct Envelope: Decodable, Sendable {
     private enum Key: String, CodingKey {
         case seq, session, created, event
         case turn, input, reason, usage, id, kind, item, delta, decision
-        case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto
+        case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title
     }
 
     init(from decoder: Decoder) throws {
@@ -312,6 +317,8 @@ struct Envelope: Decodable, Sendable {
                 tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter))
         case "model_changed":
             event = .modelChanged(try c.decode(String.self, forKey: .model))
+        case "titled":
+            event = .titled(try c.decode(String.self, forKey: .title))
         case "mode_changed":
             event = .modeChanged(try c.decode(Mode.self, forKey: .mode))
         case "permission_request":
@@ -382,7 +389,10 @@ struct SessionInfo: Decodable, Sendable, Identifiable, Hashable {
     var created: Int64
     var model: String
     var firstInput: String?
+    var title: String?
     var forkedFrom: ForkPoint?
+
+    var displayTitle: String { title ?? firstInput ?? "Untitled" }
 
     var modifiedDate: Date { Date(timeIntervalSince1970: Double(modified) / 1000) }
 }

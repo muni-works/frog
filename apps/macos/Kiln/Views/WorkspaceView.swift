@@ -23,7 +23,7 @@ struct WorkspaceView: View {
                         .id(ObjectIdentifier(conversation))
                 }
                 .navigationTitle(workspace.name)
-                .navigationSubtitle(conversation.status?.model ?? "")
+                .navigationSubtitle(conversation.title ?? conversation.status?.model ?? "")
                 .inspector(isPresented: $showChanges) {
                     ChangesInspector(conversation: conversation)
                 }
@@ -114,7 +114,7 @@ struct SessionRow: View {
                         .foregroundStyle(.secondary)
                         .help("Forked from \(session.forkedFrom!.session)")
                 }
-                Text(session.firstInput ?? "Untitled")
+                Text(session.displayTitle)
                     .lineLimit(2)
             }
             HStack(spacing: 6) {
