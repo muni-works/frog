@@ -12,6 +12,7 @@ kiln -p "why does the build fail?"   # one-shot, prints to stdout
 kiln -c                              # continue the last session in this dir
 kiln --sessions                      # list sessions started in this dir
 kiln --fork <id>@3                   # branch a session right after turn 3
+kiln --sandbox                       # confine writes to this directory (bash too, on macOS)
 kiln -p --json "..."                 # one-shot, every engine event as a JSON line
 kiln --serve                         # speak the engine protocol over stdio
 ```
@@ -21,6 +22,8 @@ kiln --serve                         # speak the engine protocol over stdio
 ```
 crates/kiln-engine   headless agent: providers, tools, sessions, the agent loop
 crates/kiln          clients: TUI (tui.rs/render.rs), -p and --serve (headless.rs)
+crates/kiln-bench    another client: runs task suites across models and harness settings
+apps/macos           the native Mac app, another client (SwiftUI, speaks --serve)
 ```
 
 The engine runs as a background task. Clients talk to it only through `kiln_engine::protocol`, which has two types:
@@ -104,6 +107,51 @@ Local models often run with a 32k window, and ollama silently cuts off anything 
 4. **Summarize only when pruning isn't enough** (`compacted`), which is past 80% of the window and at most once per turn. The user's own messages survive verbatim, so instructions like "never touch main.rs" can't get paraphrased away. Rules in the system prompt and AGENTS.md live outside the history entirely.
 
 Every pruning step is written to the session log, so a resumed session sees exactly the history the model saw.
+
+## Mac app
+
+```bash
+brew install xcodegen
+cd apps/macos && xcodegen generate && open Kiln.xcodeproj
+```
+
+**How it works:**
+- The app is a SwiftUI client that launches the bundled `kiln --serve` and speaks the same JSON-lines protocol as every other client. [Protocol.swift](apps/macos/Kiln/Engine/Protocol.swift) mirrors `protocol.rs`.
+- The protocol tests decode events captured from a real engine run, so the two sides can't drift apart.
+- A build phase compiles the Rust engine and copies it into the app bundle.
+
+**What's in the window:**
+- a sessions sidebar for the project folder
+- a streaming transcript: Markdown rendering, collapsible reasoning, tool calls as compact rows that expand, and real diff cards for edits
+- inline permission cards (⌘↩ to allow, ⌘. to deny)
+- a composer with a mode and model picker and a context ring
+- Esc to interrupt
+- **Fork from Here** on any finished turn (right-click)
+
+**Opening a folder from the command line:** `open Kiln.app --args -KilnFolder <path>`. Engine stderr is logged to `~/Library/Logs/Kiln/engine.log`.
+
+## Bench
+
+```bash
+cargo run -p kiln-bench -- run -m ollama/qwen3:4b,lmstudio/qwen3-coder-30b --modes auto,native,json -r 3
+cargo run -p kiln-bench -- report ~/.local/share/kiln/bench/<timestamp>/results.jsonl
+```
+
+**Tasks.** Each task lives in [bench/tasks](bench/tasks) and has two parts:
+- a `task.toml` with a prompt and a shell `check` that must exit 0 to pass
+- a `repo/` directory that gets copied into a fresh workspace for every run
+
+**How runs work:**
+- Runs are headless, with no permission prompts, and they're `--sandbox`ed to the workspace.
+- `auto` models are profiled up front, so the one-time probe isn't counted in a timed run.
+
+**What gets reported for each model × mode:**
+- pass rate, time, model calls and tokens per solved task
+- tool calls and tool errors
+- how each turn ended (`complete`, `looping`, `timeout`, …)
+- a per-task pass grid
+
+**What gets saved:** every run's session log, so any failure can be replayed with `kiln -r`. Every task's check is verified to fail on the untouched repo and to pass with a reference fix.
 
 ## Permissions
 

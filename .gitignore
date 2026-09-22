@@ -1,1 +1,3 @@
 /target
+apps/macos/build/
+apps/macos/Kiln.xcodeproj/
