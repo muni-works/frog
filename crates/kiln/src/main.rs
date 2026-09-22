@@ -5,7 +5,7 @@ mod tui;
 use anyhow::Result;
 use clap::Parser;
 use kiln_engine::config::{Config, ToolMode};
-use kiln_engine::session::Session;
+use kiln_engine::session;
 use kiln_engine::{Mode, Options};
 use std::io::Read;
 
@@ -37,8 +37,14 @@ struct Cli {
     #[arg(short = 'c', long = "continue")]
     cont: bool,
     /// Resume a session by id.
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "cont")]
     resume: Option<String>,
+    /// Fork a session into a new one and continue there: `<id>`, or `<id>@<turn>` to cut right after that turn.
+    #[arg(long, conflicts_with_all = ["cont", "resume"])]
+    fork: Option<String>,
+    /// List sessions started in this directory and exit.
+    #[arg(long)]
+    sessions: bool,
     /// Never ask for permission.
     #[arg(long)]
     yolo: bool,
@@ -73,10 +79,23 @@ async fn run() -> Result<bool> {
         profile.tool_mode = ToolMode::Text;
     }
     let cwd = std::env::current_dir()?;
-    let resume = match (&cli.resume, cli.cont) {
-        (Some(id), _) => Some(Session::load(id)?),
-        (None, true) => Some(Session::latest_for(&cwd)?),
-        _ => None,
+    let store = session::default_dir();
+    if cli.sessions {
+        list_sessions(&store, &cwd)?;
+        return Ok(true);
+    }
+    let resume = if let Some(spec) = &cli.fork {
+        let (id, at) = match spec.split_once('@') {
+            Some((id, turn)) => (id, Some(session::turn_end_seq(&store, id, turn.parse()?)?)),
+            None => (spec.as_str(), None),
+        };
+        let new = session::fork(&store, id, at)?;
+        eprintln!("forked {id} → {new}");
+        Some(new)
+    } else if cli.cont {
+        Some(session::latest_for(&store, &cwd)?)
+    } else {
+        cli.resume.clone()
     };
     let mode = match (cli.yolo, cli.accept_edits) {
         (true, _) => Mode::Yolo,
@@ -91,7 +110,7 @@ async fn run() -> Result<bool> {
         mode,
         can_ask: !cli.print,
         resume,
-        persist: true,
+        store: Some(store),
     })?;
 
     let mut prompt = cli.prompt.join(" ");
@@ -107,4 +126,23 @@ async fn run() -> Result<bool> {
     }
     tui::run(handle, cfg, (!prompt.is_empty()).then_some(prompt)).await?;
     Ok(true)
+}
+
+fn list_sessions(store: &std::path::Path, cwd: &std::path::Path) -> Result<()> {
+    let sessions = session::list(store, cwd)?;
+    if sessions.is_empty() {
+        println!("no sessions in {}", cwd.display());
+    }
+    for s in sessions {
+        let when = chrono::DateTime::<chrono::Local>::from(s.modified).format("%b %d %H:%M");
+        let first = s.first_input.unwrap_or_default().replace('\n', " ");
+        let first: String = first.chars().take(60).collect();
+        let fork = s
+            .header
+            .forked_from
+            .map(|f| format!(" (fork of {}@{})", f.session, f.seq))
+            .unwrap_or_default();
+        println!("{}  {when}  {first}{fork}", s.id);
+    }
+    Ok(())
 }

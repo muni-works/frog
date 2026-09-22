@@ -2,9 +2,7 @@
 
 Ordered by leverage. Each item cites the evidence behind it.
 
-## 1. Protocol hardening: done, except replay
-
-All of this has shipped except `Op::Subscribe { after }` and the `synced` marker, which need the event log from step 2.
+## 1. Protocol hardening: done
 
 - **Separate durable facts from ephemeral deltas.** Text and tool-progress deltas are never persisted. Only completed items are. opencode's database grew to 13GB because 87% of it was `message.updated` snapshots, and its shell progress alone wrote 1.1GB ([opencode#33356](https://github.com/anomalyco/opencode/issues/33356), [#38020](https://github.com/anomalyco/opencode/issues/38020)).
 - **Use an envelope `{seq, session, created, event}`** plus `Op::Subscribe { after }` and a `synced` marker, so clients can replay the log and then follow it live ([opencode#35015](https://github.com/anomalyco/opencode/issues/35015)).
@@ -13,11 +11,25 @@ All of this has shipped except `Op::Subscribe { after }` and the `synced` marker
 - **Use a closed error enum** instead of free-form strings ([opencode#35021](https://github.com/anomalyco/opencode/issues/35021)).
 - **Keep the item shapes compatible with ACP v2's patch semantics,** so a `kiln-acp` adapter can map to them without losing anything.
 
-## 2. Event-log sessions (next)
+## 2. Event-log sessions: done
 
-Replace the rewrite-the-whole-JSON-file approach with an append-only log. That gives crash safety, forking a session at any point, and replay datasets for `kiln bench`. Use one writer per store, and version the store schema.
+Sessions are now an append-only JSONL log: a versioned header, then durable events interleaved with history ops (`push`, `extend`, `reset`).
 
-## 3. Context as a budget
+Shipped:
+- resume by folding the history ops back into the message list
+- `Op::Subscribe { after }` → `synced` for replay
+- `--fork <id>@<turn>` to branch a session
+- `--sessions` to list them
+- `flock` so only one process writes a session
+- torn-tail tolerance and mid-turn crash repair
+
+Still to do:
+- a `/fork` command in the TUI
+- pruning or compacting old logs
+- exporting logs as `kiln bench` datasets
+
+## 3. Context as a budget (next)
+
 
 - **Staged compaction.** First drop stale tool outputs by rule. Call an LLM summarizer only as a last resort. Allow at most one compaction per run, and reject empty summaries ([2609.20804](https://arxiv.org/abs/2609.20804), [2606.11213](https://arxiv.org/abs/2606.11213), [opencode#27924](https://github.com/anomalyco/opencode/issues/27924)).
 - **Pin rules.** Keep the system prompt, AGENTS.md, and permissions outside anything compaction can touch. After a naive compaction, rule-violating tool calls rose from 0% to 30–59%, and pinning brought them back to 0% ([2606.22528](https://arxiv.org/abs/2606.22528), [2608.22752](https://arxiv.org/abs/2608.22752)).

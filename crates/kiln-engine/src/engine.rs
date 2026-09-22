@@ -11,7 +11,7 @@ use crate::protocol::{
 use crate::provider::{
     HttpError, Provider, Request, Response, Stop, StreamEvent, ToolSpec, new_id,
 };
-use crate::session::Session;
+use crate::session::{self, Header, Log, Record};
 use crate::text_filter::TagFilter;
 use crate::tools::{self, Ctx, Kind};
 use anyhow::Result;
@@ -94,9 +94,10 @@ pub struct Options {
     pub mode: Mode,
     /// False for headless clients: anything that would ask is denied instead.
     pub can_ask: bool,
-    pub resume: Option<Session>,
-    /// Write sessions to disk.
-    pub persist: bool,
+    /// Session id to resume from `store`.
+    pub resume: Option<String>,
+    /// Directory for session logs. `None` keeps everything in memory.
+    pub store: Option<PathBuf>,
 }
 
 pub struct Handle {
@@ -115,15 +116,15 @@ struct Shared {
 /// (or when every `ops` sender is dropped), closing the event stream.
 pub fn spawn(opts: Options) -> Result<Handle> {
     let provider = Provider::new(&opts.profile)?;
-    Ok(start(opts, provider))
+    start(opts, provider)
 }
 
-fn start(opts: Options, provider: Provider) -> Handle {
+fn start(opts: Options, provider: Provider) -> Result<Handle> {
     let (op_tx, mut op_rx) = mpsc::unbounded_channel::<Op>();
     let (ev_tx, ev_rx) = mpsc::unbounded_channel();
     let (work_tx, mut work_rx) = mpsc::unbounded_channel::<Op>();
     let shared = Arc::new(Shared::default());
-    let mut agent = Agent::new(opts, provider, ev_tx, shared.clone());
+    let mut agent = Agent::new(opts, provider, ev_tx, shared.clone())?;
 
     let router = shared.clone();
     tokio::spawn(async move {
@@ -176,13 +177,13 @@ fn start(opts: Options, provider: Provider) -> Handle {
             agent.emit_status();
             agent.emit(Event::Idle);
         }
-        agent.save();
+        agent.sync_log();
     });
 
-    Handle {
+    Ok(Handle {
         ops: op_tx,
         events: ev_rx,
-    }
+    })
 }
 
 /// Map any failure onto the closed [`EngineError`] set.
@@ -244,7 +245,9 @@ struct Agent {
     ctx: Ctx,
     mode: Mode,
     can_ask: bool,
-    persist: bool,
+    store: Option<PathBuf>,
+    /// Opened lazily on the first durable write, so idle launches leave no files behind.
+    log: Mutex<Option<Log>>,
     usage: Usage,
     last_call: Duration,
     session_id: String,
@@ -267,13 +270,22 @@ impl Agent {
         provider: Provider,
         events: mpsc::UnboundedSender<Envelope>,
         shared: Arc<Shared>,
-    ) -> Self {
+    ) -> Result<Self> {
         let system = prompt::system_prompt(&o.cwd, &o.cfg, &o.profile.model);
-        let (session_id, messages) = match o.resume {
-            Some(s) => (s.id, s.messages),
-            None => (Session::new_id(), Vec::new()),
+        let (session_id, messages, seq, turn, log) = match (&o.resume, &o.store) {
+            (Some(id), Some(dir)) => {
+                let l = session::load(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
+                let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
+                let (seq, turn) = (l.last_seq(), l.last_turn());
+                (id.clone(), l.messages, seq, turn, Some(log))
+            }
+            (Some(_), None) => {
+                anyhow::bail!(ConfigError("can't resume without a session store".into()))
+            }
+            (None, _) => (session::new_id(), Vec::new(), 0, 0, None),
         };
-        Self {
+        let resumed = o.resume.is_some();
+        let mut agent = Self {
             cfg: o.cfg,
             profile_name: o.profile_name,
             profile: o.profile,
@@ -282,12 +294,13 @@ impl Agent {
             ctx: Ctx::new(o.cwd.clone()),
             mode: o.mode,
             can_ask: o.can_ask,
-            persist: o.persist,
+            store: o.store,
+            log: Mutex::new(log),
             usage: Usage::default(),
             last_call: Duration::ZERO,
             session_id,
-            seq: AtomicU64::new(0),
-            turn: 0,
+            seq: AtomicU64::new(seq),
+            turn,
             active_turn: None,
             root: o.cwd,
             system,
@@ -296,19 +309,91 @@ impl Agent {
             pending: Vec::new(),
             events,
             shared,
+        };
+        if resumed {
+            // A session that died mid-turn may have dangling tool calls.
+            agent.repair();
         }
+        Ok(agent)
+    }
+
+    // ---- persistence ----
+
+    /// Append a record to the session log, creating the log on first use.
+    fn record(&self, rec: Record) {
+        let Some(dir) = &self.store else { return };
+        let mut log = self.log.lock().unwrap();
+        if log.is_none() {
+            let header = Header {
+                version: session::VERSION,
+                id: self.session_id.clone(),
+                cwd: self.root.clone(),
+                model: self.profile_name.clone(),
+                created: now_ms(),
+                forked_from: None,
+            };
+            match Log::create(dir, header) {
+                Ok(l) => *log = Some(l),
+                Err(e) => {
+                    drop(log);
+                    self.notice(Level::Warn, format!("session won't be saved: {e:#}"));
+                    return;
+                }
+            }
+        }
+        if let Some(Err(e)) = log.as_mut().map(|l| l.append(&rec)) {
+            *log = None;
+            drop(log);
+            self.notice(
+                Level::Warn,
+                format!("session log write failed, no longer saving: {e:#}"),
+            );
+        }
+    }
+
+    fn sync_log(&self) {
+        if let Some(l) = self.log.lock().unwrap().as_ref() {
+            let _ = l.sync();
+        }
+    }
+
+    fn push_msg(&mut self, message: Message) {
+        self.record(Record::Push {
+            message: message.clone(),
+        });
+        self.messages.push(message);
+    }
+
+    fn extend_last(&mut self, blocks: Vec<Block>) {
+        self.record(Record::Extend {
+            blocks: blocks.clone(),
+        });
+        if let Some(m) = self.messages.last_mut() {
+            m.content.extend(blocks);
+        }
+    }
+
+    fn reset(&mut self, messages: Vec<Message>) {
+        self.record(Record::Reset {
+            messages: messages.clone(),
+        });
+        self.messages = messages;
     }
 
     // ---- events ----
 
     fn emit(&self, event: Event) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let _ = self.events.send(Envelope {
+        let env = Envelope {
             seq,
             session: self.session_id.clone(),
             created: now_ms(),
             event,
-        });
+        };
+        if env.event.is_durable() {
+            self.record(Record::Event { env: env.clone() });
+        }
+        let _ = self.events.send(env);
     }
 
     fn notice(&self, level: Level, message: impl Into<String>) {
@@ -353,6 +438,7 @@ impl Agent {
             reason,
             usage,
         });
+        self.sync_log();
     }
 
     fn complete_item(&self, streamed: Option<String>, kind: ItemKind, item: Item) {
@@ -392,12 +478,27 @@ impl Agent {
                 });
             }
             Op::Compact { focus } => self.compact(focus.as_deref()).await?,
+            Op::Subscribe { after } => {
+                let replay = match &self.store {
+                    Some(dir) if self.log.lock().unwrap().is_some() => {
+                        session::events_after(dir, &self.session_id, after)?
+                    }
+                    _ => Vec::new(),
+                };
+                for env in replay {
+                    let _ = self.events.send(env);
+                }
+                self.emit(Event::Synced {
+                    seq: self.seq.load(Ordering::Relaxed),
+                });
+            }
             Op::Clear => {
-                self.save();
+                self.sync_log();
+                *self.log.lock().unwrap() = None;
                 self.messages.clear();
                 self.ctx = Ctx::new(self.root.clone());
                 self.usage = Usage::default();
-                self.session_id = Session::new_id();
+                self.session_id = session::new_id();
                 self.seq.store(0, Ordering::Relaxed);
                 self.turn = 0;
                 self.system = prompt::system_prompt(&self.root, &self.cfg, &self.profile.model);
@@ -409,26 +510,11 @@ impl Agent {
         Ok(())
     }
 
-    fn save(&self) {
-        if !self.persist {
-            return;
-        }
-        let s = Session {
-            id: self.session_id.clone(),
-            cwd: self.root.clone(),
-            model: self.profile_name.clone(),
-            messages: self.messages.clone(),
-        };
-        if let Err(e) = s.save() {
-            self.notice(Level::Warn, format!("couldn't save session: {e}"));
-        }
-    }
-
     /// Append user text, merging into a trailing user message so roles always alternate.
     fn push_user(&mut self, text: String) {
-        match self.messages.last_mut() {
-            Some(m) if m.role == Role::User => m.content.push(Block::Text { text }),
-            _ => self.messages.push(Message::user(text)),
+        match self.messages.last() {
+            Some(m) if m.role == Role::User => self.extend_last(vec![Block::Text { text }]),
+            _ => self.push_msg(Message::user(text)),
         }
     }
 
@@ -474,7 +560,6 @@ impl Agent {
         }
         text.push_str(&self.expand_mentions(input));
         self.push_user(text);
-        self.save();
 
         let mut compacted = false;
         let reason = loop {
@@ -509,7 +594,7 @@ impl Agent {
             }
 
             let uses = msg.tool_uses();
-            self.messages.push(msg);
+            self.push_msg(msg);
             if uses.is_empty() {
                 break if resp.stop == Stop::Length {
                     EndReason::MaxTokens
@@ -530,7 +615,6 @@ impl Agent {
                 compacted = true;
             }
         };
-        self.save();
         self.active_turn = None;
         self.end_turn(turn, reason);
         Ok(())
@@ -539,7 +623,7 @@ impl Agent {
     /// Run one batch of tool calls. Returns true if the user denied one.
     async fn run_tools(&mut self, uses: Vec<(String, String, Value)>) -> Result<bool> {
         // Results accumulate in place so an interrupt keeps what already ran.
-        self.messages.push(Message {
+        self.push_msg(Message {
             role: Role::User,
             content: Vec::new(),
         });
@@ -575,14 +659,12 @@ impl Agent {
                 }
             };
 
-            if let Some(m) = self.messages.last_mut() {
-                m.content.push(Block::ToolResult {
-                    id: id.clone(),
-                    name: name.clone(),
-                    content: output.clone(),
-                    is_error: outcome != ToolOutcome::Ok,
-                });
-            }
+            self.extend_last(vec![Block::ToolResult {
+                id: id.clone(),
+                name: name.clone(),
+                content: output.clone(),
+                is_error: outcome != ToolOutcome::Ok,
+            }]);
             self.emit(Event::ItemCompleted {
                 id,
                 item: Item::ToolCall {
@@ -595,7 +677,6 @@ impl Agent {
                 },
             });
         }
-        self.save();
         Ok(denied)
     }
 
@@ -767,9 +848,9 @@ impl Agent {
             anyhow::bail!("compaction produced an empty summary; keeping the full history");
         }
         let before = self.usage.context();
-        self.messages = vec![Message::user(format!(
+        self.reset(vec![Message::user(format!(
             "(The earlier part of this session was compacted. Summary:)\n\n{summary}"
-        ))];
+        ))]);
         self.usage = Usage {
             input: resp.usage.output,
             ..Default::default()
@@ -778,7 +859,6 @@ impl Agent {
             tokens_before: before,
             tokens_after: resp.usage.output,
         });
-        self.save();
         Ok(())
     }
 
@@ -792,7 +872,7 @@ impl Agent {
             let uses = self.messages[ai].tool_uses();
             if !uses.is_empty() {
                 if ai + 1 == self.messages.len() {
-                    self.messages.push(Message {
+                    self.push_msg(Message {
                         role: Role::User,
                         content: Vec::new(),
                     });
@@ -805,22 +885,25 @@ impl Agent {
                         _ => None,
                     })
                     .collect();
-                for (id, name, _) in uses {
-                    if !done.contains(&id) {
-                        self.messages[ai + 1].content.push(Block::ToolResult {
-                            id,
-                            name,
-                            content: "Interrupted by user before this ran.".into(),
-                            is_error: true,
-                        });
-                    }
+                // The results message is always the last one.
+                let missing: Vec<Block> = uses
+                    .into_iter()
+                    .filter(|(id, _, _)| !done.contains(id))
+                    .map(|(id, name, _)| Block::ToolResult {
+                        id,
+                        name,
+                        content: "Interrupted by user before this ran.".into(),
+                        is_error: true,
+                    })
+                    .collect();
+                if !missing.is_empty() {
+                    self.extend_last(missing);
                 }
             }
         }
         if self.messages.last().is_some_and(|m| m.role == Role::User) {
             self.push_user("[Request interrupted by user]".into());
         }
-        self.save();
     }
 
     async fn shell(&mut self, cmd: &str) {
@@ -915,6 +998,15 @@ mod tests {
     }
 
     fn engine(script: Vec<Response>, can_ask: bool) -> Handle {
+        engine_at(script, can_ask, None, None)
+    }
+
+    fn engine_at(
+        script: Vec<Response>,
+        can_ask: bool,
+        store: Option<PathBuf>,
+        resume: Option<String>,
+    ) -> Handle {
         let opts = Options {
             cfg: Config::default(),
             profile_name: "test".into(),
@@ -922,10 +1014,10 @@ mod tests {
             cwd: std::env::temp_dir(),
             mode: Mode::Default,
             can_ask,
-            resume: None,
-            persist: false,
+            resume,
+            store,
         };
-        start(opts, Provider::Scripted(scripted::Client::new(script)))
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
     }
 
     /// Submit one prompt and collect every event through the following `Idle`.
@@ -1081,6 +1173,126 @@ mod tests {
                 "item_completed",
                 "turn_ended"
             ]
+        );
+    }
+
+    fn tmp_store() -> PathBuf {
+        let d = std::env::temp_dir().join(format!("kiln-engine-test-{}", session::new_id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Collect events through the next `Idle`.
+    async fn until_idle(h: &mut Handle) -> Vec<Envelope> {
+        let mut out = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let idle = matches!(env.event, Event::Idle);
+            out.push(env);
+            if idle {
+                return out;
+            }
+        }
+    }
+
+    async fn shutdown(mut h: Handle) {
+        h.ops.send(Op::Shutdown).unwrap();
+        while h.events.recv().await.is_some() {}
+    }
+
+    #[tokio::test]
+    async fn session_resumes_with_history_replay_and_continuing_seq() {
+        let dir = tmp_store();
+        let mut h = engine_at(
+            vec![reply(vec![text("hello")], Stop::End)],
+            true,
+            Some(dir.clone()),
+            None,
+        );
+        let first = run(&mut h, "hi").await;
+        let sid = first[0].session.clone();
+        let last_seq = first.last().unwrap().seq;
+        shutdown(h).await;
+
+        let mut h = engine_at(
+            vec![reply(vec![text("again")], Stop::End)],
+            true,
+            Some(dir),
+            Some(sid.clone()),
+        );
+        let boot = until_idle(&mut h).await;
+        assert!(matches!(&boot[0].event, Event::Status(s) if s.messages == 2));
+
+        h.ops.send(Op::Subscribe { after: 0 }).unwrap();
+        let replay = until_idle(&mut h).await;
+        let durable = replay
+            .iter()
+            .take_while(|e| !matches!(e.event, Event::Synced { .. }))
+            .count();
+        assert_eq!(
+            durable, 4,
+            "turn_started, item_started, item_completed, turn_ended"
+        );
+        assert!(matches!(&replay[0].event, Event::TurnStarted { input, .. } if input == "hi"));
+        assert!(replay.iter().all(|e| e.session == sid));
+
+        h.ops
+            .send(Op::Submit {
+                text: "more".into(),
+            })
+            .unwrap();
+        let second = until_idle(&mut h).await;
+        assert!(matches!(
+            second[0].event,
+            Event::TurnStarted { turn: 2, .. }
+        ));
+        assert!(second[0].seq > last_seq, "seq continues across restarts");
+        shutdown(h).await;
+    }
+
+    #[tokio::test]
+    async fn crashed_mid_turn_session_is_repaired_on_resume() {
+        let dir = tmp_store();
+        let id = session::new_id();
+        let mut log = Log::create(
+            &dir,
+            Header {
+                version: session::VERSION,
+                id: id.clone(),
+                cwd: "/x".into(),
+                model: "m".into(),
+                created: 0,
+                forked_from: None,
+            },
+        )
+        .unwrap();
+        log.append(&Record::Push {
+            message: Message::user("go"),
+        })
+        .unwrap();
+        let call = Block::ToolUse {
+            id: "t1".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "ls" }),
+        };
+        log.append(&Record::Push {
+            message: Message {
+                role: Role::Assistant,
+                content: vec![call],
+            },
+        })
+        .unwrap();
+        drop(log);
+
+        let h = engine_at(vec![], true, Some(dir.clone()), Some(id.clone()));
+        shutdown(h).await;
+        let loaded = session::load(&dir, &id).unwrap();
+        let last = loaded.messages.last().unwrap();
+        assert_eq!(last.role, Role::User);
+        assert!(
+            last.content
+                .iter()
+                .any(|b| matches!(b, Block::ToolResult { id, is_error: true, .. } if id == "t1"))
         );
     }
 

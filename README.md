@@ -10,6 +10,8 @@ kiln -m lmstudio/qwen3-coder-30b
 kiln -m anthropic/claude-sonnet-5
 kiln -p "why does the build fail?"   # one-shot, prints to stdout
 kiln -c                              # continue the last session in this dir
+kiln --sessions                      # list sessions started in this dir
+kiln --fork <id>@3                   # branch a session right after turn 3
 kiln -p --json "..."                 # one-shot, every engine event as a JSON line
 kiln --serve                         # speak the engine protocol over stdio
 ```
@@ -41,7 +43,25 @@ The protocol follows a few rules:
 - Every event is wrapped in an envelope with a `seq` that increases within a session.
 - Each turn contains items, and every item goes started → delta* → completed.
 - Every turn ends with `turn_ended`, whose reason is `complete`, `max_tokens`, `denied`, `cancelled` or `error`. Errors come from a closed set of types.
-- `Event::is_durable()` marks which events are durable facts and which are live-only hints. Deltas, progress and status are never meant to be persisted.
+- `Event::is_durable()` marks which events are durable facts and which are live-only hints. Deltas, progress and status are never persisted.
+- `{"op":"subscribe","after":N}` replays the session's durable events with `seq > N`, then sends `synced`. After that the stream is live.
+
+## Sessions
+
+Each session is an append-only JSONL log in `~/.local/share/kiln/sessions/<id>.jsonl`:
+
+```
+{"type":"header","version":1,"id":"…","cwd":"…","model":"…","created":…}
+{"type":"event","env":{"seq":3,…,"event":"turn_started",…}}   ← durable protocol events
+{"type":"push","message":{…}}                                    ← model history ops
+{"type":"extend","blocks":[…]}
+{"type":"reset","messages":[…]}                                  ← compaction
+```
+
+- **Resuming** folds the `push`, `extend` and `reset` records back into the message history and continues the `seq` numbering where it left off.
+- **Durability:** records are appended as they happen, the file is fsynced at the end of each turn, and a half-written last line from a crash is ignored.
+- **Crash recovery:** if a session died in the middle of a turn, resuming it gives any tool calls that never finished an "interrupted" result.
+- **One writer at a time:** `flock` stops two kiln processes from writing the same session.
 
 The engine crate has no terminal dependencies, so the compiler enforces this boundary.
 

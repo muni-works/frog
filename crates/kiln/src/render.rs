@@ -71,6 +71,8 @@ pub struct Renderer {
     fresh: bool,
     /// Items whose content already arrived as deltas.
     streamed: HashSet<String>,
+    /// Re-rendering a past session: show each turn's input.
+    replay: bool,
 }
 
 impl Drop for Renderer {
@@ -80,13 +82,14 @@ impl Drop for Renderer {
 }
 
 impl Renderer {
-    pub fn new(show_thinking: bool) -> Self {
+    pub fn new(show_thinking: bool, replay: bool) -> Self {
         Self {
             spinner: None,
             state: State::Idle,
             show_thinking,
             fresh: true,
             streamed: HashSet::new(),
+            replay,
         }
     }
 
@@ -136,6 +139,10 @@ impl Renderer {
 
     pub fn event(&mut self, ev: Event) {
         match ev {
+            Event::TurnStarted { input, .. } if self.replay => {
+                self.idle();
+                println!("\n{} {}", ">".dark_grey(), input.dark_grey());
+            }
             Event::Progress { label } => {
                 self.idle();
                 self.spinner = Spinner::start(label);

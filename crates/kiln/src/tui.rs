@@ -77,7 +77,12 @@ impl Tui {
 
     /// Render events until the engine is idle again. Returns false if the engine is gone.
     async fn drain(&mut self) -> bool {
-        let mut r = Renderer::new(self.cfg.show_thinking);
+        self.drain_with(false).await
+    }
+
+    /// With `replay`, past turns are being re-rendered: echo inputs, skip footers.
+    async fn drain_with(&mut self, replay: bool) -> bool {
+        let mut r = Renderer::new(self.cfg.show_thinking, replay);
         let mut finished = None;
         loop {
             let env = tokio::select! {
@@ -115,7 +120,7 @@ impl Tui {
                     reason: EndReason::Complete,
                     usage,
                     ..
-                } => {
+                } if !replay => {
                     r.idle();
                     finished = Some(usage);
                 }
@@ -236,6 +241,13 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
         return Ok(());
     }
     tui.banner();
+    if tui.status.as_ref().is_some_and(|s| s.messages > 0) {
+        tui.send(Op::Subscribe { after: 0 });
+        if !tui.drain_with(true).await {
+            return Ok(());
+        }
+        println!();
+    }
     let mut ed = editor()?;
     loop {
         let line = match queued.take() {

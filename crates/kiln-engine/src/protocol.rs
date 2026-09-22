@@ -79,6 +79,11 @@ pub enum Op {
     Compact {
         focus: Option<String>,
     },
+    /// Replay this session's durable events with `seq > after`, then [`Event::Synced`].
+    /// Replayed envelopes keep their original `seq`, so gaps (where ephemeral events were) are expected.
+    Subscribe {
+        after: u64,
+    },
     Clear,
     Shutdown,
 }
@@ -159,6 +164,10 @@ pub enum Event {
         error: EngineError,
     },
     Status(Status),
+    /// Replay after [`Op::Subscribe`] is done; live events follow. `seq` is the latest so far.
+    Synced {
+        seq: u64,
+    },
     /// The engine finished the queued op and is waiting.
     Idle,
 }
