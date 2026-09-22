@@ -34,6 +34,10 @@ pub struct Caps {
     pub json_mode: bool,
     /// Answers directly when no tool is needed, instead of calling one anyway.
     pub abstains: bool,
+    /// Emits reasoning ("thinking") before answering. Constraining these models to a JSON
+    /// schema suppresses the reasoning and hurt them in the bench (qwen3:4b: native 5/6, json 2/6).
+    #[serde(default)]
+    pub thinks: bool,
     /// Parameter count in billions, when the server says.
     pub params_b: Option<f64>,
     /// Unix milliseconds.
@@ -106,8 +110,9 @@ pub fn choose_mode(p: &Profile, caps: Option<&Caps>, tier: Tier) -> ToolMode {
     let Some(c) = caps else {
         return ToolMode::Native;
     };
-    // Grammar-constrained output helps small models most (arXiv 2609.23742).
-    if tier == Tier::Weak && c.json_mode {
+    // Grammar-constrained output helps small models most (arXiv 2609.23742), but not ones
+    // that reason first.
+    if tier == Tier::Weak && c.json_mode && !c.thinks {
         return ToolMode::Json;
     }
     if c.native_tools {
@@ -180,14 +185,21 @@ pub async fn probe(provider: &Provider, specs: &[ToolSpec]) -> anyhow::Result<Ca
     let text_tools = prompt::extract_tool_calls(&r.message.text())
         .is_some_and(|(_, calls)| calls.iter().any(|(n, a)| reads_probe(n, a)));
 
-    let native_tools = ask(provider, PROBE_SYSTEM, PROBE_READ, specs, None)
+    let native = ask(provider, PROBE_SYSTEM, PROBE_READ, specs, None)
         .await
-        .is_ok_and(|r| {
-            r.message
-                .tool_uses()
-                .iter()
-                .any(|(_, n, a)| reads_probe(n, a))
-        });
+        .ok();
+    let native_tools = native.as_ref().is_some_and(|r| {
+        r.message
+            .tool_uses()
+            .iter()
+            .any(|(_, n, a)| reads_probe(n, a))
+    });
+    let thinks = [&r, native.as_ref().unwrap_or(&r)].iter().any(|resp| {
+        resp.message
+            .content
+            .iter()
+            .any(|b| matches!(b, crate::message::Block::Thinking { text, .. } if !text.trim().is_empty()))
+    });
 
     let abstains = ask(provider, PROBE_SYSTEM, PROBE_MATH, specs, None)
         .await
@@ -207,6 +219,7 @@ pub async fn probe(provider: &Provider, specs: &[ToolSpec]) -> anyhow::Result<Ca
         text_tools,
         json_mode,
         abstains,
+        thinks,
         params_b: provider.params_b().await,
         probed: chrono::Utc::now().timestamp_millis(),
     })
@@ -226,6 +239,7 @@ mod tests {
             text_tools: true,
             json_mode: json,
             abstains: true,
+            thinks: false,
             params_b: params,
             probed: 0,
         }
@@ -247,6 +261,17 @@ mod tests {
         let t = tier(&p, Some(&c));
         assert_eq!(t, Tier::Strong);
         assert_eq!(choose_mode(&p, Some(&c), t), ToolMode::Native);
+    }
+
+    #[test]
+    fn thinking_models_are_not_forced_into_json() {
+        let p = local("qwen3:4b");
+        let mut c = caps(true, true, Some(4.0));
+        c.thinks = true;
+        assert_eq!(
+            choose_mode(&p, Some(&c), tier(&p, Some(&c))),
+            ToolMode::Native
+        );
     }
 
     #[test]

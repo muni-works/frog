@@ -132,7 +132,7 @@ impl Config {
             .map(String::from)
             .or_else(|| std::env::var("KILN_MODEL").ok())
             .or_else(|| self.default_model.clone())
-            .unwrap_or_else(|| "ollama/qwen3".into());
+            .unwrap_or_else(|| "ollama/qwen3:4b".into());
         if let Some(p) = self.models.get(&spec) {
             return Ok((spec, p.clone()));
         }
