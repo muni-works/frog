@@ -238,6 +238,12 @@ impl Renderer {
                 match reason {
                     EndReason::Cancelled => warn("\n  ⎿  interrupted"),
                     EndReason::MaxTokens => warn("\n  ⎿  hit the output token limit"),
+                    EndReason::Looping => {
+                        warn("\n  ⎿  stopped: the model kept repeating the same tool call")
+                    }
+                    EndReason::StepLimit => warn(
+                        "\n  ⎿  stopped: step limit for one turn reached; say \"continue\" to keep going",
+                    ),
                     EndReason::Error { error: e } => error(&e.to_string()),
                     EndReason::Complete | EndReason::Denied => {}
                 }

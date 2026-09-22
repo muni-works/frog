@@ -23,6 +23,8 @@ pub struct Request<'a> {
     pub messages: &'a [Message],
     pub tools: &'a [ToolSpec],
     pub max_tokens: Option<u32>,
+    /// JSON schema the whole response must match (grammar-constrained decoding).
+    pub format: Option<&'a Value>,
 }
 
 pub enum StreamEvent {
@@ -32,6 +34,7 @@ pub enum StreamEvent {
     ToolCall(String),
 }
 
+#[derive(Clone)]
 pub struct Response {
     pub message: Message,
     pub usage: Usage,
@@ -141,6 +144,14 @@ impl Provider {
             .await
             .ok()
             .flatten()
+    }
+
+    /// Model size in billions of parameters, if the server reports it (ollama only).
+    pub async fn params_b(&self) -> Option<f64> {
+        match self {
+            Self::Ollama(c) => c.params_b().await,
+            _ => None,
+        }
     }
 
     /// Ollama allocates the window per request (`num_ctx`), so it has to be told.

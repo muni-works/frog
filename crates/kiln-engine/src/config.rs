@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -12,15 +12,20 @@ pub enum ProviderKind {
     Ollama,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolMode {
-    /// Use the API's native tool calling.
+    /// Pick per model from its capability profile (see `harness.rs`).
     #[default]
+    Auto,
+    /// Use the API's native tool calling.
     Native,
     /// Describe tools in the system prompt and parse `<tool_call>` blocks from text.
     /// For models/servers with broken or missing native tool support.
     Text,
+    /// Grammar-constrained JSON: every response is one tool call or an answer, enforced by
+    /// the server (ollama `format`, OpenAI-compatible `response_format`). For small models.
+    Json,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -48,7 +53,7 @@ impl Profile {
             api_key_env: None,
             context_window: None,
             max_tokens: None,
-            tool_mode: ToolMode::Native,
+            tool_mode: ToolMode::Auto,
             extra: None,
         }
     }

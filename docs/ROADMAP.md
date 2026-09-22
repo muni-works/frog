@@ -45,14 +45,24 @@ Still to do:
 - measure how often pruning fires, and how much it saves, in `kiln bench`
 - try evicting whole finished sub-tasks (the episode eviction from 2606.11213) once sub-agents exist
 
-## 4. Adapt the harness to the model (next)
+## 4. Adapt the harness to the model: first pass done
 
 The same model's results vary 40–139x in tokens and up to 30 points in score depending on the harness ([2607.22585](https://arxiv.org/abs/2607.22585), [2608.08654](https://arxiv.org/abs/2608.08654), [2609.17394](https://arxiv.org/abs/2609.17394)).
 
-- **Profile each model** on first use: whether native tool calls work, whether text-format calls work, and whether constrained output is available.
-- **For small models, use grammar-constrained tool calls** (llama.cpp GBNF / ollama `format`), and always include an "answer in text" branch ([2609.23742](https://arxiv.org/abs/2609.23742), [2608.13959](https://arxiv.org/abs/2608.13959)).
-- **Match the toolset to the model.** Weak models get structured tools and planning. Strong models do as well or better with bash only, at lower cost ([2609.20804](https://arxiv.org/abs/2609.20804)).
-- **Stay on JSON for tool-call arguments.** Compact formats save 18–27% of tokens but cost 9–14 points of accuracy ([2605.29676](https://arxiv.org/abs/2605.29676)).
+Shipped:
+- **Capability probes**, cached per model: native tools, text tools, grammar JSON, and whether the model answers directly when no tool is needed. Run them with `--probe`. Unreachable models fail the probe instead of being cached as incapable.
+- **`json` tool mode:** a grammar-constrained `{thought, action}` reply, with one tool branch per tool plus an answer branch ([2609.23742](https://arxiv.org/abs/2609.23742), [2608.13959](https://arxiv.org/abs/2608.13959)).
+- **Tiers** (strong, medium, weak) from probe results and parameter count. They drive the `auto` mode choice and the planning guidance in the prompt ([2609.20804](https://arxiv.org/abs/2609.20804)).
+- **Fallback during a session** to text mode after two format failures, and the cache is updated.
+- **Loop guard:** the 3rd identical call is refused, the 5th ends the turn. Plus a 60-step limit per turn ([opencode#45442](https://github.com/anomalyco/opencode/issues/45442)).
+
+Observed: `qwen2.5:3b` produces perfectly valid JSON-mode output but still picks the wrong tools, as 2609.23742 predicts. The loop guard turned a 5-minute hang into a 26-second `looping` stop.
+
+Still to do:
+- **Validate with a capable local model** such as `qwen3-coder:30b` through `kiln bench`. Tier thresholds and prompt guidance are guesses until measured.
+- **Choose tools by tier.** Strong models do as well or better with bash alone.
+- **Shorter system prompt for the weak tier.** Global `CLAUDE.md` files add a lot of tokens.
+- **Stay on JSON for arguments.** Compact formats cost 9–14 points of accuracy ([2605.29676](https://arxiv.org/abs/2605.29676)).
 
 ## 5. Standards
 

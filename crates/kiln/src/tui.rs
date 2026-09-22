@@ -259,7 +259,10 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
                 let right = tui
                     .status
                     .as_ref()
-                    .map(|s| format!("{} · {}", s.mode.label(), s.model))
+                    .map(|s| {
+                        format!("{} · {} · {:?}", s.mode.label(), s.model, s.tool_mode)
+                            .to_lowercase()
+                    })
                     .unwrap_or_default();
                 match tokio::task::block_in_place(|| ed.read_line(&KilnPrompt { right }))? {
                     Signal::Success(s) | Signal::HostCommand(s) => s,

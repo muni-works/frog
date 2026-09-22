@@ -85,10 +85,14 @@ Named profiles live in `~/.config/kiln/config.toml`. See [config.example.toml](c
 The tools behave like Claude Code's: Edit replaces an exact string that must be unique, and a file has to be Read before it can be edited, with a check that it hasn't changed since. Bash keeps its working directory between calls.
 
 **Local-model affordances**
-- `tool_mode = "text"` (or `--text-tools`) describes the tools in the system prompt and parses `<tool_call>` blocks from the text. Use it with servers whose tool calling is broken.
-- Even in native mode, `<tool_call>` blocks a model writes as plain text are picked up as tool calls.
-- Tool arguments are accepted loosely: numbers sent as strings, arguments sent as a JSON string, and invalid JSON reported back so the model can retry.
-- The footer shows context usage and tokens per second. See [Context budget](#context-budget) for how kiln stays inside the window.
+- **Tool-call modes.** `tool_mode` (or `--tool-mode`) can be `native`, `text`, `json` or `auto`, the default.
+  - `native` uses the API's own tool calling.
+  - `text` describes the tools in the system prompt and parses `<tool_call>` blocks out of the reply.
+  - `json` constrains the whole reply with a grammar to `{thought, action}`, where the action is exactly one tool call with schema-checked arguments or a plain answer. It works on ollama (`format`) and OpenAI-compatible servers (`response_format`). There's always an answer branch, because forcing a tool choice hurts a model's ability to decline.
+- **Profiling for `auto`.** The first time a local model is used, kiln sends four small probe requests. They check native tools, text tools, JSON mode, and whether the model answers directly when no tool is needed. The results are cached in `~/.local/share/kiln/models.json`. Together with the parameter count, they set a tier (strong, medium or weak) and pick the mode: weak models whose server supports grammars get `json`. Weaker tiers also get planning guidance in the system prompt. To profile a model on demand, run `kiln --probe -m <model>`.
+- **Fallback during a session.** Under `auto`, if the model botches the format twice (writing tool calls as text in native mode, invalid argument JSON, or JSON mode not honored), kiln switches to text mode for the rest of the session and updates the cache.
+- **Loop guard.** The 3rd identical tool call in a turn is refused with a nudge to change approach. The 5th ends the turn (`looping`). A turn also stops after 60 model calls (`step_limit`).
+- **Forgiving argument parsing.** Numbers sent as strings and arguments sent as a JSON string are accepted. Invalid JSON is sent back to the model so it can retry.
 
 ## Context budget
 

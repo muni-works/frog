@@ -104,6 +104,12 @@ impl Client {
                 .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": t.schema } }))
                 .collect();
         }
+        if let Some(schema) = req.format {
+            body["response_format"] = json!({
+                "type": "json_schema",
+                "json_schema": { "name": "kiln_action", "schema": schema },
+            });
+        }
         if let Some(extra) = &self.extra {
             deep_merge(&mut body, extra);
         }

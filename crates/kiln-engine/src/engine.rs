@@ -3,6 +3,7 @@
 
 use crate::config::{Config, Profile, ProviderKind, ToolMode};
 use crate::context::{self, Estimator};
+use crate::harness::{self, Caps, Tier};
 use crate::message::{Block, Message, Role, Usage};
 use crate::prompt;
 use crate::protocol::{
@@ -81,6 +82,21 @@ const SAFE_BASH: &[&str] = &[
     "git rev-parse",
     "git blame",
 ];
+
+/// The Nth identical tool call in one turn is refused, with a nudge to change approach…
+const LOOP_REFUSE: u32 = 3;
+/// …and at this count the turn stops. opencode saw a sub-agent make 364 identical greps.
+const LOOP_STOP: u32 = 5;
+/// Model calls per turn before stopping to check in with the user.
+const MAX_STEPS: u32 = 60;
+
+/// How a batch of tool calls ended.
+#[derive(PartialEq)]
+enum Batch {
+    Continue,
+    Denied,
+    Looping,
+}
 
 const COMPACT_PROMPT: &str = "Your context window is nearly full. Write a detailed summary of this conversation \
 so work can continue from it alone. Include: the user's requests and intent, key decisions, files read or changed \
@@ -236,6 +252,8 @@ fn now_ms() -> i64 {
 struct Streamed {
     message: Option<String>,
     reasoning: Option<String>,
+    /// The reply didn't follow the requested tool-call format.
+    format_failed: bool,
 }
 
 struct Agent {
@@ -261,6 +279,12 @@ struct Agent {
     est: Estimator,
     /// Everything the user has typed this session, kept verbatim through compaction.
     inputs: Vec<String>,
+    /// The tool-call mode in effect (the profile's, or resolved from `auto`).
+    tool_mode: ToolMode,
+    tier: Tier,
+    caps: Option<Caps>,
+    /// Tool-call format failures under `auto`; enough of them switches modes.
+    mode_failures: u32,
     root: PathBuf,
     system: String,
     specs: Vec<ToolSpec>,
@@ -278,7 +302,17 @@ impl Agent {
         events: mpsc::UnboundedSender<Envelope>,
         shared: Arc<Shared>,
     ) -> Result<Self> {
-        let system = prompt::system_prompt(&o.cwd, &o.cfg, &o.profile.model);
+        // The capability cache lives next to the session store; in-memory engines skip it.
+        let caps = (o.store.is_some() && !harness::is_hosted(&o.profile))
+            .then(|| harness::cached(&o.profile))
+            .flatten();
+        let tier = harness::tier(&o.profile, caps.as_ref());
+        let tool_mode = harness::choose_mode(&o.profile, caps.as_ref(), tier);
+        let system = format!(
+            "{}{}",
+            prompt::system_prompt(&o.cwd, &o.cfg, &o.profile.model),
+            harness::guidance(tier)
+        );
         let (session_id, messages, seq, turn, log, inputs) = match (&o.resume, &o.store) {
             (Some(id), Some(dir)) => {
                 let l = session::load(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
@@ -321,6 +355,10 @@ impl Agent {
             window,
             est: Estimator::default(),
             inputs,
+            tool_mode,
+            tier,
+            caps,
+            mode_failures: 0,
             root: o.cwd,
             system,
             specs: tools::specs(),
@@ -441,6 +479,8 @@ impl Agent {
             messages: self.messages.len(),
             context_tokens: self.context_tokens(),
             context_window: self.window,
+            tool_mode: self.tool_mode,
+            tier: self.tier,
             tokens_per_sec: self.tokens_per_sec(),
             todos: self.ctx.todos.clone(),
         }));
@@ -489,9 +529,13 @@ impl Agent {
                     .map_err(|e| ConfigError(format!("{e:#}")))?;
                 self.provider =
                     Provider::new(&profile).map_err(|e| ConfigError(format!("{e:#}")))?;
-                self.system = prompt::system_prompt(&self.root, &self.cfg, &profile.model);
                 self.profile_name = name;
                 self.profile = profile;
+                self.caps = (self.store.is_some() && !harness::is_hosted(&self.profile))
+                    .then(|| harness::cached(&self.profile))
+                    .flatten();
+                self.mode_failures = 0;
+                self.apply_harness();
                 self.resolve_window().await;
                 self.emit(Event::ModelChanged {
                     model: self.profile_name.clone(),
@@ -522,7 +566,7 @@ impl Agent {
                 self.session_id = session::new_id();
                 self.seq.store(0, Ordering::Relaxed);
                 self.turn = 0;
-                self.system = prompt::system_prompt(&self.root, &self.cfg, &self.profile.model);
+                self.apply_harness();
                 self.notice(Level::Info, "started a new conversation");
             }
             // Handled by the router, never queued.
@@ -576,6 +620,8 @@ impl Agent {
         self.active_turn = Some(turn);
         self.inputs.push(input.to_string());
 
+        self.ensure_profiled().await;
+
         let mut text = std::mem::take(&mut self.pending).join("\n");
         if !text.is_empty() {
             text.push('\n');
@@ -584,7 +630,13 @@ impl Agent {
         self.push_user(text);
 
         let mut compacted = false;
+        let mut repeats: HashMap<String, u32> = HashMap::new();
+        let mut steps = 0;
         let reason = loop {
+            steps += 1;
+            if steps > MAX_STEPS {
+                break EndReason::StepLimit;
+            }
             self.fit_context(&mut compacted).await?;
             let sent = self.fixed_chars() + context::history_chars(&self.messages);
             let started = Instant::now();
@@ -593,7 +645,14 @@ impl Agent {
             self.usage = resp.usage;
             self.est
                 .calibrate(sent, resp.usage.input + resp.usage.cache_read);
-            let msg = normalize(resp.message);
+            let (msg, recovered) = normalize(resp.message);
+            let bad_args = msg
+                .tool_uses()
+                .iter()
+                .any(|(_, _, i)| i.get("_invalid_json").is_some());
+            if recovered || bad_args || streamed.format_failed {
+                self.note_format_failure();
+            }
 
             let reasoning: String = msg
                 .content
@@ -629,13 +688,97 @@ impl Agent {
                 };
             }
 
-            if self.run_tools(uses).await? {
-                break EndReason::Denied;
+            match self.run_tools(uses, &mut repeats).await? {
+                Batch::Continue => {}
+                Batch::Denied => break EndReason::Denied,
+                Batch::Looping => break EndReason::Looping,
             }
         };
         self.active_turn = None;
         self.end_turn(turn, reason);
         Ok(())
+    }
+
+    /// Recompute tier, tool mode and system prompt from the profile and capabilities.
+    fn apply_harness(&mut self) {
+        self.tier = harness::tier(&self.profile, self.caps.as_ref());
+        self.tool_mode = harness::choose_mode(&self.profile, self.caps.as_ref(), self.tier);
+        self.system = format!(
+            "{}{}",
+            prompt::system_prompt(&self.root, &self.cfg, &self.profile.model),
+            harness::guidance(self.tier)
+        );
+    }
+
+    /// Probe a local model's capabilities the first time it's used under `auto`.
+    async fn ensure_profiled(&mut self) {
+        if self.profile.tool_mode != ToolMode::Auto
+            || harness::is_hosted(&self.profile)
+            || self.caps.is_some()
+        {
+            return;
+        }
+        self.emit(Event::Progress {
+            label: format!("profiling {} (first use only)", self.profile.model),
+        });
+        let caps = match harness::probe(&self.provider, &self.specs).await {
+            Ok(caps) => caps,
+            Err(e) => {
+                // Don't cache anything; the turn itself will surface the real error.
+                self.notice(
+                    Level::Warn,
+                    format!("couldn't profile {}: {e:#}", self.profile.model),
+                );
+                return;
+            }
+        };
+        if self.store.is_some() {
+            harness::save(&self.profile, &caps);
+        }
+        self.caps = Some(caps);
+        self.apply_harness();
+        self.notice(
+            Level::Info,
+            format!(
+                "{}: using {:?} tool calls, {:?} tier",
+                self.profile.model, self.tool_mode, self.tier
+            )
+            .to_lowercase(),
+        );
+    }
+
+    /// The model botched the tool-call format (text calls under native, invalid JSON args, or
+    /// JSON mode not honored). Under `auto`, two strikes moves to text mode for the session
+    /// and records the finding.
+    fn note_format_failure(&mut self) {
+        if self.profile.tool_mode != ToolMode::Auto || self.tool_mode == ToolMode::Text {
+            return;
+        }
+        self.mode_failures += 1;
+        if self.mode_failures < 2 {
+            return;
+        }
+        let from = self.tool_mode;
+        self.tool_mode = ToolMode::Text;
+        self.mode_failures = 0;
+        if let Some(c) = self.caps.as_mut() {
+            match from {
+                ToolMode::Native => c.native_tools = false,
+                ToolMode::Json => c.json_mode = false,
+                _ => {}
+            }
+            if self.store.is_some() {
+                harness::save(&self.profile, c);
+            }
+        }
+        self.notice(
+            Level::Warn,
+            format!(
+                "{:?} tool calls keep failing; switching to text tool calls",
+                from
+            )
+            .to_lowercase(),
+        );
     }
 
     /// Settle the context window: configured value, bounded by what the server reports.
@@ -703,14 +846,23 @@ impl Agent {
     }
 
     /// Run one batch of tool calls. Returns true if the user denied one.
-    async fn run_tools(&mut self, uses: Vec<(String, String, Value)>) -> Result<bool> {
+    async fn run_tools(
+        &mut self,
+        uses: Vec<(String, String, Value)>,
+        repeats: &mut HashMap<String, u32>,
+    ) -> Result<Batch> {
         // Results accumulate in place so an interrupt keeps what already ran.
         self.push_msg(Message {
             role: Role::User,
             content: Vec::new(),
         });
         let mut denied = false;
+        let mut looping = false;
         for (id, name, input) in uses {
+            let seen = repeats.entry(format!("{name}\u{0}{input}")).or_insert(0);
+            *seen += 1;
+            let seen = *seen;
+            looping |= seen >= LOOP_STOP;
             let (_, arg) = tools::label(&name, &input, &self.ctx);
             self.emit(Event::ItemStarted {
                 id: id.clone(),
@@ -720,7 +872,18 @@ impl Agent {
                 },
             });
 
-            let (outcome, output, display) = if denied {
+            let (outcome, output, display) = if seen >= LOOP_REFUSE {
+                let msg = format!(
+                    "Not run: this exact call already ran {} times this turn with the same result. \
+Don't repeat it. Change the arguments or try a different approach.",
+                    seen - 1
+                );
+                (
+                    ToolOutcome::Error,
+                    msg,
+                    Some("refused: repeated identical call".to_string()),
+                )
+            } else if denied {
                 (
                     ToolOutcome::Skipped,
                     "Skipped: an earlier tool call was rejected.".to_string(),
@@ -759,7 +922,13 @@ impl Agent {
                 },
             });
         }
-        Ok(denied)
+        Ok(if denied {
+            Batch::Denied
+        } else if looping {
+            Batch::Looping
+        } else {
+            Batch::Continue
+        })
     }
 
     /// One model request. Streams item events (unless `quiet`) and retries transient errors
@@ -770,23 +939,31 @@ impl Agent {
         messages: &[Message],
         quiet: bool,
     ) -> Result<(Response, Streamed)> {
-        let text_mode = self.profile.tool_mode == ToolMode::Text;
+        let json_mode = self.tool_mode == ToolMode::Json;
         let converted;
-        let (system, messages, tools) = if text_mode {
-            converted = prompt::to_text_mode(messages);
-            (
-                format!("{}{}", self.system, prompt::text_tools_prompt(&self.specs)),
-                &converted[..],
-                &[][..],
-            )
-        } else {
-            (self.system.clone(), messages, &self.specs[..])
+        let schema;
+        let (system, messages, tools, format) = match self.tool_mode {
+            ToolMode::Text => {
+                converted = prompt::to_text_mode(messages);
+                let system = format!("{}{}", self.system, prompt::text_tools_prompt(&self.specs));
+                (system, &converted[..], &[][..], None)
+            }
+            ToolMode::Json => {
+                converted = prompt::to_json_mode(messages);
+                schema = prompt::json_schema(&self.specs);
+                let system = format!("{}{}", self.system, prompt::json_tools_prompt(&self.specs));
+                (system, &converted[..], &[][..], Some(&schema))
+            }
+            ToolMode::Native | ToolMode::Auto => {
+                (self.system.clone(), messages, &self.specs[..], None)
+            }
         };
         let req = Request {
             system: &system,
             messages,
             tools,
             max_tokens: self.profile.max_tokens,
+            format,
         };
         let mut attempt = 0;
         loop {
@@ -835,6 +1012,8 @@ impl Agent {
                         StreamEvent::ToolCall(name) => self.emit(Event::Progress {
                             label: format!("{name}…"),
                         }),
+                        // JSON-mode output is raw JSON; the parsed answer is shown when complete.
+                        StreamEvent::Text(_) if json_mode => {}
                         StreamEvent::Text(s) => {
                             let was_inside = filter.inside;
                             let visible = filter.push(&s);
@@ -856,6 +1035,19 @@ impl Agent {
             }
             match r {
                 Ok(resp) if resp.stop == Stop::Incomplete => return Err(IncompleteStream.into()),
+                // Unparseable JSON-mode output is kept as a plain answer and counted as a failure.
+                Ok(resp) if json_mode => {
+                    return Ok(match from_json_mode(resp.clone()) {
+                        Some(resp) => (resp, streamed),
+                        None => (
+                            resp,
+                            Streamed {
+                                format_failed: true,
+                                ..streamed
+                            },
+                        ),
+                    });
+                }
                 Ok(resp) => return Ok((resp, streamed)),
                 Err(e) if !started && attempt < 3 && retryable(&e) => {
                     attempt += 1;
@@ -1035,13 +1227,40 @@ fn fixed_chars(system: &str, specs: &[ToolSpec]) -> usize {
     system.len() + tools
 }
 
+/// Turn a JSON-mode reply into ordinary blocks: thought → reasoning, action → tool call or answer.
+/// Returns `None` if the reply doesn't parse (the server didn't enforce the schema).
+fn from_json_mode(mut resp: Response) -> Option<Response> {
+    let (thought, action) = prompt::parse_action(&resp.message.text())?;
+    let mut content = Vec::new();
+    if !thought.is_empty() {
+        content.push(Block::Thinking {
+            text: thought,
+            signature: None,
+        });
+    }
+    match action {
+        prompt::Action::Tool { name, args } => {
+            content.push(Block::ToolUse {
+                id: new_id(),
+                name,
+                input: args,
+            });
+            resp.stop = Stop::ToolUse;
+        }
+        prompt::Action::Answer(text) => content.push(Block::Text { text }),
+    }
+    resp.message.content = content;
+    Some(resp)
+}
+
 /// Recover tool calls a model wrote as text instead of via the API.
-fn normalize(mut msg: Message) -> Message {
+/// Returns whether anything was recovered (a sign the configured format isn't working).
+fn normalize(mut msg: Message) -> (Message, bool) {
     if !msg.tool_uses().is_empty() {
-        return msg;
+        return (msg, false);
     }
     let Some((clean, calls)) = prompt::extract_tool_calls(&msg.text()) else {
-        return msg;
+        return (msg, false);
     };
     msg.content.retain(|b| !matches!(b, Block::Text { .. }));
     if !clean.is_empty() {
@@ -1054,7 +1273,7 @@ fn normalize(mut msg: Message) -> Message {
             input,
         });
     }
-    msg
+    (msg, true)
 }
 
 fn bash_allowed(cmd: &str, extra: &[String]) -> bool {
@@ -1107,6 +1326,22 @@ mod tests {
         engine_with(script, can_ask, store, resume, None, std::env::temp_dir())
     }
 
+    fn engine_mode(script: Vec<Response>, mode: ToolMode) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = mode;
+        let opts = Options {
+            cfg: Config::default(),
+            profile_name: "test".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
     fn engine_with(
         script: Vec<Response>,
         can_ask: bool,
@@ -1117,6 +1352,7 @@ mod tests {
     ) -> Handle {
         let mut profile = Profile::new(ProviderKind::Ollama, "test");
         profile.context_window = window;
+        profile.tool_mode = ToolMode::Native;
         let opts = Options {
             cfg: Config::default(),
             profile_name: "test".into(),
@@ -1422,7 +1658,10 @@ mod tests {
             reply(vec![text("done")], Stop::End),
         ];
         // Size the window so the fixed prompt plus one read fits under PRUNE_AT but two don't.
-        let fixed = fixed_chars(&prompt::system_prompt(&dir, &Config::default(), "test"), &tools::specs());
+        let fixed = fixed_chars(
+            &prompt::system_prompt(&dir, &Config::default(), "test"),
+            &tools::specs(),
+        );
         let read_chars: usize = big.lines().map(|l| 6 + 1 + l.len() + 1).sum();
         let window = context::Estimator::default()
             .tokens(((fixed as f64 + 1.5 * read_chars as f64) / context::PRUNE_AT) as usize);
@@ -1496,6 +1735,127 @@ mod tests {
         let text = loaded.messages[0].text();
         assert!(text.contains("They are refactoring the parser."));
         assert!(text.contains("NEVER touch main.rs"));
+    }
+
+    #[tokio::test]
+    async fn json_mode_turn_runs_the_action_and_shows_the_answer() {
+        let script = vec![
+            reply(
+                vec![text(
+                    r#"{"thought":"check the file","action":{"tool":"Glob","args":{"pattern":"*.nothing"}}}"#,
+                )],
+                Stop::End,
+            ),
+            reply(
+                vec![text(
+                    r#"{"thought":"","action":{"answer":"No such files."}}"#,
+                )],
+                Stop::End,
+            ),
+        ];
+        let mut h = engine_mode(script, ToolMode::Json);
+        let evs = run(&mut h, "any .nothing files?").await;
+        let items: Vec<&Item> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::ItemCompleted { item, .. } => Some(item),
+                _ => None,
+            })
+            .collect();
+        assert!(matches!(items[0], Item::Reasoning { text } if text == "check the file"));
+        assert!(
+            matches!(items[1], Item::ToolCall { name, outcome: ToolOutcome::Ok, .. } if name == "Glob")
+        );
+        assert!(matches!(items[2], Item::Message { text } if text == "No such files."));
+        // Raw JSON never streams to the client.
+        assert!(!evs.iter().any(|e| matches!(&e.event, Event::ItemDelta { delta: Delta::Text { text }, .. } if text.contains("thought"))));
+    }
+
+    #[tokio::test]
+    async fn auto_profiles_on_first_use_then_falls_back_when_native_calls_fail() {
+        let read_probe = Block::ToolUse {
+            id: "p".into(),
+            name: "Read".into(),
+            input: json!({ "file_path": "probe.txt" }),
+        };
+        let text_call =
+            r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+        let script = vec![
+            // Capability probes (text first, as the reachability check): text ok, native ok,
+            // abstains ok, JSON not enforced.
+            reply(
+                vec![text(
+                    r#"<tool_call>{"name":"Read","arguments":{"file_path":"probe.txt"}}</tool_call>"#,
+                )],
+                Stop::End,
+            ),
+            reply(vec![read_probe], Stop::ToolUse),
+            reply(vec![text("42")], Stop::End),
+            reply(vec![text("not json")], Stop::End),
+            // The turn: native mode, but the model keeps writing calls as text.
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text("none found")], Stop::End),
+        ];
+        let mut h = engine_mode(script, ToolMode::Auto);
+        let evs = run(&mut h, "find .nothing files").await;
+        let notices: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { message, .. } => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("using native tool calls, medium tier")),
+            "{notices:?}"
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("switching to text tool calls")),
+            "{notices:?}"
+        );
+        let status = evs.iter().rev().find_map(|e| match &e.event {
+            Event::Status(s) => Some(s.tool_mode),
+            _ => None,
+        });
+        assert_eq!(status, Some(ToolMode::Text));
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test]
+    async fn identical_calls_are_refused_then_the_turn_stops() {
+        let call = || Block::ToolUse {
+            id: new_id(),
+            name: "Glob".into(),
+            input: json!({ "pattern": "*.nothing" }),
+        };
+        let script = (0..LOOP_STOP)
+            .map(|_| reply(vec![call()], Stop::ToolUse))
+            .collect();
+        let mut h = engine(script, true);
+        let evs = run(&mut h, "loop forever").await;
+        let refused = evs
+            .iter()
+            .filter(|e| matches!(&e.event, Event::ItemCompleted { item: Item::ToolCall { display: Some(d), .. }, .. } if d.starts_with("refused")))
+            .count();
+        assert_eq!(refused as u32, LOOP_STOP - LOOP_REFUSE + 1);
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Looping,
+                ..
+            }
+        )));
     }
 
     #[test]

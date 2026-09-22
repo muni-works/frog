@@ -162,6 +162,123 @@ pub fn extract_tool_calls(text: &str) -> Option<(String, Vec<(String, Value)>)> 
     Some((clean, calls))
 }
 
+// ---- constrained-JSON tool calling, for small models on servers with grammar support ----
+
+/// Every response must be `{"thought", "action"}` where `action` is exactly one tool call with
+/// schema-checked arguments, or a final answer. The answer branch is always allowed: forcing a
+/// tool choice hurts a model's ability to decline (arXiv 2608.13959).
+pub fn json_schema(tools: &[ToolSpec]) -> Value {
+    let mut actions: Vec<Value> = tools
+        .iter()
+        .map(|t| {
+            json!({
+                "type": "object",
+                "properties": { "tool": { "const": t.name }, "args": t.schema },
+                "required": ["tool", "args"],
+            })
+        })
+        .collect();
+    actions.push(json!({
+        "type": "object",
+        "properties": { "answer": { "type": "string" } },
+        "required": ["answer"],
+    }));
+    json!({
+        "type": "object",
+        "properties": {
+            "thought": { "type": "string" },
+            "action": { "anyOf": actions },
+        },
+        "required": ["thought", "action"],
+    })
+}
+
+pub fn json_tools_prompt(tools: &[ToolSpec]) -> String {
+    let mut s = String::from(
+        "\n# Response format\nEvery reply is one JSON object: {\"thought\": \"...\", \"action\": ...}.\n\
+- To use a tool: \"action\": {\"tool\": \"ToolName\", \"args\": {...}}. One tool per reply; its result comes back \
+in the next message as <tool_result>.\n\
+- When you're done, or no tool is needed: \"action\": {\"answer\": \"your reply to the user\"}.\n\
+Keep \"thought\" short.\n\nTools:\n",
+    );
+    for t in tools {
+        s.push_str(&format!(
+            "\n## {}\n{}\nargs schema: {}\n",
+            t.name, t.description, t.schema
+        ));
+    }
+    s
+}
+
+/// Render history the way a JSON-mode model writes it, so its own past turns are examples.
+pub fn to_json_mode(messages: &[Message]) -> Vec<Message> {
+    messages
+        .iter()
+        .map(|m| {
+            if m.role == crate::message::Role::User {
+                return to_text_mode(std::slice::from_ref(m)).remove(0);
+            }
+            let thought: String = m
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    Block::Thinking { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let text = m.text();
+            let actions: Vec<Value> = m
+                .tool_uses()
+                .into_iter()
+                .map(|(_, name, args)| json!({ "tool": name, "args": args }))
+                .collect();
+            let replies: Vec<Value> = if actions.is_empty() {
+                vec![json!({ "thought": thought, "action": { "answer": text } })]
+            } else {
+                actions
+                    .into_iter()
+                    .map(|a| json!({ "thought": if thought.is_empty() { &text } else { &thought }, "action": a }))
+                    .collect()
+            };
+            Message {
+                role: m.role,
+                content: vec![Block::Text {
+                    text: replies.iter().map(Value::to_string).collect::<Vec<_>>().join("\n"),
+                }],
+            }
+        })
+        .collect()
+}
+
+pub enum Action {
+    Tool { name: String, args: Value },
+    Answer(String),
+}
+
+/// Parse a JSON-mode reply. `None` if the model (or server) didn't honor the format.
+pub fn parse_action(text: &str) -> Option<(String, Action)> {
+    let v: Value = serde_json::from_str(text.trim()).ok()?;
+    let thought = v["thought"].as_str().unwrap_or("").to_string();
+    let a = &v["action"];
+    if let Some(name) = a["tool"].as_str() {
+        let args = match &a["args"] {
+            Value::String(s) => serde_json::from_str(s).unwrap_or(json!({})),
+            Value::Null => json!({}),
+            args => args.clone(),
+        };
+        return Some((
+            thought,
+            Action::Tool {
+                name: name.into(),
+                args,
+            },
+        ));
+    }
+    a["answer"]
+        .as_str()
+        .map(|ans| (thought, Action::Answer(ans.into())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +292,29 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].0, "Read");
         assert_eq!(calls[1].1["command"], "ls");
+    }
+
+    #[test]
+    fn json_mode_round_trip() {
+        let (thought, action) = parse_action(
+            r#"{"thought":"look","action":{"tool":"Read","args":{"file_path":"a.rs"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(thought, "look");
+        assert!(
+            matches!(action, Action::Tool { ref name, ref args } if name == "Read" && args["file_path"] == "a.rs")
+        );
+        assert!(
+            matches!(parse_action(r#"{"thought":"","action":{"answer":"hi"}}"#), Some((_, Action::Answer(a))) if a == "hi")
+        );
+        assert!(parse_action("not json").is_none());
+
+        let schema = json_schema(&crate::tools::specs());
+        let branches = schema["properties"]["action"]["anyOf"].as_array().unwrap();
+        assert_eq!(
+            branches.len(),
+            crate::tools::specs().len() + 1,
+            "one per tool plus the answer branch"
+        );
     }
 }

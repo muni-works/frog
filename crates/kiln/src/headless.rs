@@ -46,7 +46,8 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
                 },
                 ..
             } if outcome != ToolOutcome::Ok => {
-                eprintln!("  {outcome:?}: {}", output.lines().next().unwrap_or(""))
+                let first = output.lines().next().unwrap_or("");
+                eprintln!("  {}", first.strip_prefix("Error: ").unwrap_or(first))
             }
             Event::Notice {
                 level: Level::Warn,

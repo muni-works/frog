@@ -8,6 +8,8 @@
 //!   hints (deltas, spinners, status). See [`Event::is_durable`]. Deltas are never persisted.
 //! - Turns always end with [`Event::TurnEnded`] carrying a typed [`EndReason`].
 
+use crate::config::ToolMode;
+use crate::harness::Tier;
 use crate::tools::todo::Todo;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -252,6 +254,10 @@ pub enum EndReason {
     MaxTokens,
     /// The user denied a tool call; the engine stopped to wait for instructions.
     Denied,
+    /// The model kept repeating an identical tool call.
+    Looping,
+    /// The turn hit the per-turn step limit.
+    StepLimit,
     Cancelled,
     Error {
         error: EngineError,
@@ -316,6 +322,8 @@ pub struct Status {
     pub messages: usize,
     pub context_tokens: Option<u64>,
     pub context_window: u64,
+    pub tool_mode: ToolMode,
+    pub tier: Tier,
     pub tokens_per_sec: Option<f64>,
     pub todos: Vec<Todo>,
 }

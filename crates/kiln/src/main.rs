@@ -52,8 +52,14 @@ struct Cli {
     #[arg(long)]
     accept_edits: bool,
     /// Describe tools in the prompt instead of using native tool calling.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "tool_mode")]
     text_tools: bool,
+    /// How tool calls are made: auto (profile the model), native, text, or json (grammar-constrained).
+    #[arg(long, value_parser = ["auto", "native", "text", "json"])]
+    tool_mode: Option<String>,
+    /// Profile the model's tool-calling abilities, print them, cache them, and exit.
+    #[arg(long)]
+    probe: bool,
 }
 
 #[tokio::main]
@@ -77,6 +83,12 @@ async fn run() -> Result<bool> {
     }
     if cli.text_tools {
         profile.tool_mode = ToolMode::Text;
+    }
+    if let Some(m) = &cli.tool_mode {
+        profile.tool_mode = serde_json::from_value(serde_json::json!(m))?;
+    }
+    if cli.probe {
+        return probe(&profile_name, &profile).await;
     }
     let cwd = std::env::current_dir()?;
     let store = session::default_dir();
@@ -145,4 +157,31 @@ fn list_sessions(store: &std::path::Path, cwd: &std::path::Path) -> Result<()> {
         println!("{}  {when}  {first}{fork}", s.id);
     }
     Ok(())
+}
+
+async fn probe(name: &str, profile: &kiln_engine::config::Profile) -> Result<bool> {
+    use kiln_engine::harness;
+    let provider = kiln_engine::provider::Provider::new(profile)?;
+    eprintln!("probing {name}…");
+    let caps = harness::probe(&provider, &kiln_engine::tools::specs()).await?;
+    harness::save(profile, &caps);
+    let tier = harness::tier(profile, Some(&caps));
+    let mut auto = profile.clone();
+    auto.tool_mode = ToolMode::Auto;
+    let mode = harness::choose_mode(&auto, Some(&caps), tier);
+    let yes = |b: bool| if b { "yes" } else { "no" };
+    println!("model         {name}");
+    println!(
+        "parameters    {}",
+        caps.params_b
+            .map(|b| format!("{b:.1}B"))
+            .unwrap_or_else(|| "unknown".into())
+    );
+    println!("native tools  {}", yes(caps.native_tools));
+    println!("text tools    {}", yes(caps.text_tools));
+    println!("json mode     {}", yes(caps.json_mode));
+    println!("abstains      {}", yes(caps.abstains));
+    println!("tier          {tier:?}");
+    println!("auto picks    {mode:?}");
+    Ok(true)
 }

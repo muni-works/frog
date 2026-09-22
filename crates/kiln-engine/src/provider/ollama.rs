@@ -15,20 +15,35 @@ pub struct Client {
 }
 
 impl Client {
-    /// The model's maximum context length, from `/api/show`.
-    pub async fn probe_context(&self) -> Option<u64> {
+    async fn show(&self) -> Option<Value> {
         let url = format!("{}/api/show", self.base.trim_end_matches('/'));
-        let v: Value = self
+        let resp = self
             .http
             .post(url)
             .json(&json!({ "model": self.model }))
             .send()
             .await
-            .ok()?
-            .json()
-            .await
             .ok()?;
-        v["model_info"]
+        resp.json().await.ok()
+    }
+
+    /// `details.parameter_size`, like "3.1B" or "270M".
+    pub async fn params_b(&self) -> Option<f64> {
+        let v = self.show().await?;
+        let size = v["details"]["parameter_size"]
+            .as_str()?
+            .trim()
+            .to_uppercase();
+        let (num, scale) = match size.strip_suffix('B') {
+            Some(n) => (n, 1.0),
+            None => (size.strip_suffix('M')?, 0.001),
+        };
+        num.parse::<f64>().ok().map(|n| n * scale)
+    }
+
+    /// The model's maximum context length, from `/api/show`.
+    pub async fn probe_context(&self) -> Option<u64> {
+        self.show().await?["model_info"]
             .as_object()?
             .iter()
             .find(|(k, _)| k.ends_with(".context_length"))
@@ -83,6 +98,9 @@ impl Client {
                 .iter()
                 .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": t.schema } }))
                 .collect();
+        }
+        if let Some(schema) = req.format {
+            body["format"] = schema.clone();
         }
         if let Some(extra) = &self.extra {
             deep_merge(&mut body, extra);
