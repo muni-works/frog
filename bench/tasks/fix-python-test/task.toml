@@ -1,0 +1,3 @@
+prompt = "The tests in test_fizzbuzz.py fail. Fix fizzbuzz.py so they pass. Don't change the tests. Run them with: python3 test_fizzbuzz.py"
+check = "python3 test_fizzbuzz.py && shasum -a 256 -c .bench-hashes >/dev/null"
+timeout_secs = 240

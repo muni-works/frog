@@ -51,7 +51,11 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .filter(|s| s.ends_with("zsh") || s.ends_with("bash"))
         .unwrap_or("/bin/bash".into());
 
-    let child = tokio::process::Command::new(shell)
+    let mut command = match &ctx.sandbox {
+        None => tokio::process::Command::new(shell),
+        Some(root) => sandboxed(root, &shell)?,
+    };
+    let child = command
         .arg("-c")
         .arg(&script)
         .current_dir(&ctx.cwd)
@@ -95,4 +99,68 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         text = "(no output)".into();
     }
     Ok(Output::text(text))
+}
+
+/// Wrap the shell in macOS seatbelt: everything allowed except file writes outside the
+/// workspace and temp dirs. Fails closed on other platforms until bubblewrap support lands.
+fn sandboxed(root: &std::path::Path, shell: &str) -> Result<tokio::process::Command> {
+    if !cfg!(target_os = "macos") {
+        bail!("the Bash sandbox is only implemented on macOS so far");
+    }
+    let tmp = std::env::temp_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let quote = |p: &std::path::Path| {
+        p.display()
+            .to_string()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+    };
+    let profile = format!(
+        r#"(version 1)
+(allow default)
+(deny file-write*)
+(allow file-write*
+  (subpath "{}")
+  (subpath "{}")
+  (subpath "/private/tmp")
+  (subpath "/private/var/folders")
+  (literal "/dev/null")
+  (literal "/dev/tty")
+  (regex #"^/dev/fd/"))"#,
+        quote(root),
+        quote(&tmp)
+    );
+    let mut cmd = tokio::process::Command::new("/usr/bin/sandbox-exec");
+    cmd.arg("-p").arg(profile).arg(shell);
+    Ok(cmd)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn sandbox_confines_shell_writes_to_the_workspace() {
+        let ws = std::env::temp_dir().join(format!("kiln-sbx-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.sandbox = Some(ws.canonicalize().unwrap());
+
+        let inside = run(
+            &json!({ "command": "echo ok > inside.txt && cat inside.txt" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert_eq!(inside.content.trim(), "ok");
+
+        let escape = dirs::home_dir().unwrap().join(".kiln-sandbox-escape-test");
+        let cmd = format!("touch '{}'", escape.display());
+        let out = run(&json!({ "command": cmd }), &mut ctx).await.unwrap();
+        let escaped = escape.exists();
+        let _ = std::fs::remove_file(&escape);
+        assert!(!escaped, "sandbox let a write escape the workspace");
+        assert!(out.content.contains("exit code"), "{}", out.content);
+    }
 }

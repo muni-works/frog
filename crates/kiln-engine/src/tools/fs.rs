@@ -1,4 +1,5 @@
 use super::{Ctx, Output, bool_arg, int_arg, str_arg};
+use crate::protocol::{DiffLine, FileDiff, Hunk, LineKind};
 use crate::provider::ToolSpec;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -80,6 +81,7 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         return Ok(Output {
             content: "(empty file)".into(),
             display: Some("empty file".into()),
+            diff: None,
         });
     }
     let start = int_arg(input, "offset").unwrap_or(1).max(1) as usize - 1;
@@ -111,6 +113,7 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     Ok(Output {
         content: out,
         display: Some(format!("Read {shown} lines")),
+        diff: None,
     })
 }
 
@@ -132,6 +135,7 @@ fn check_fresh(ctx: &Ctx, path: &Path) -> Result<()> {
 pub async fn write(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     let path = ctx.resolve(str_arg(input, "file_path")?);
     let content = str_arg(input, "content")?;
+    ctx.check_writable(&path)?;
     let old = if path.exists() {
         check_fresh(ctx, &path)?;
         Some(tokio::fs::read_to_string(&path).await.unwrap_or_default())
@@ -144,13 +148,15 @@ pub async fn write(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     tokio::fs::write(&path, content).await?;
     ctx.mark_read(&path);
     let lines = content.lines().count();
-    let display = match old {
-        Some(old) => diff(&old, content),
+    let display = match &old {
+        Some(old) => diff(old, content),
         None => format!("Created {} ({lines} lines)", ctx.display(&path)),
     };
+    let structured = file_diff(&ctx.display(&path), old.as_deref(), content);
     Ok(Output {
         content: format!("Wrote {lines} lines to {}", ctx.display(&path)),
         display: Some(display),
+        diff: Some(structured),
     })
 }
 
@@ -172,6 +178,7 @@ pub async fn edit(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         )
         .await;
     }
+    ctx.check_writable(&path)?;
     check_fresh(ctx, &path)?;
     let text = tokio::fs::read_to_string(&path).await?;
     let n = text.matches(old_s).count();
@@ -206,7 +213,50 @@ pub async fn edit(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     Ok(Output {
         content: format!("Edited {}{what}", ctx.display(&path)),
         display: Some(diff(&text, &updated)),
+        diff: Some(file_diff(&ctx.display(&path), Some(&text), &updated)),
     })
+}
+
+/// Structured diff for clients. `old` is `None` for a newly created file.
+pub fn file_diff(path: &str, old: Option<&str>, new: &str) -> FileDiff {
+    let d = TextDiff::from_lines(old.unwrap_or(""), new);
+    let (mut added, mut removed) = (0, 0);
+    let hunks = d
+        .grouped_ops(3)
+        .iter()
+        .map(|group| Hunk {
+            lines: group
+                .iter()
+                .flat_map(|op| d.iter_changes(op))
+                .map(|c| {
+                    let kind = match c.tag() {
+                        ChangeTag::Delete => {
+                            removed += 1;
+                            LineKind::Remove
+                        }
+                        ChangeTag::Insert => {
+                            added += 1;
+                            LineKind::Add
+                        }
+                        ChangeTag::Equal => LineKind::Context,
+                    };
+                    DiffLine {
+                        kind,
+                        old: c.old_index().map(|n| n as u32 + 1),
+                        new: c.new_index().map(|n| n as u32 + 1),
+                        text: c.value().trim_end_matches('\n').to_string(),
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+    FileDiff {
+        path: path.to_string(),
+        created: old.is_none(),
+        added,
+        removed,
+        hunks,
+    }
 }
 
 /// Compact line diff: `+`/`-`/` ` prefixed lines with line numbers, hunks separated by `⋮`.

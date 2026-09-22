@@ -167,8 +167,8 @@ impl Tui {
                 if let Some(s) = &self.status {
                     let usage = kiln_engine::protocol::TurnUsage {
                         context_tokens: s.context_tokens,
-                        output_tokens: 0,
                         tokens_per_sec: s.tokens_per_sec,
+                        ..Default::default()
                     };
                     render::footer(&usage, s.context_window);
                 }

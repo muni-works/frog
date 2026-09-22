@@ -61,5 +61,6 @@ pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     Ok(Output {
         content: "Todo list updated.".into(),
         display: Some(render(&ctx.todos)),
+        diff: None,
     })
 }

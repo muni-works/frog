@@ -174,7 +174,7 @@ pub enum Event {
     Status(Status),
     /// Replay after [`Op::Subscribe`] is done; live events follow. `seq` is the latest so far.
     Synced {
-        seq: u64,
+        upto: u64,
     },
     /// The engine finished the queued op and is waiting.
     Idle,
@@ -225,7 +225,43 @@ pub enum Item {
         output: String,
         /// What a human should see, if different (diffs, summaries).
         display: Option<String>,
+        /// Set for Write/Edit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diff: Option<FileDiff>,
     },
+}
+
+/// A file change as data, so clients can draw it however they like.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FileDiff {
+    pub path: String,
+    /// The file didn't exist before.
+    pub created: bool,
+    pub added: u32,
+    pub removed: u32,
+    pub hunks: Vec<Hunk>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Hunk {
+    pub lines: Vec<DiffLine>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DiffLine {
+    pub kind: LineKind,
+    /// 1-based line numbers in the old and new file.
+    pub old: Option<u32>,
+    pub new: Option<u32>,
+    pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LineKind {
+    Context,
+    Add,
+    Remove,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -310,7 +346,11 @@ pub enum Level {
 pub struct TurnUsage {
     /// Tokens in the context window after the last model call. `None` if the provider didn't say.
     pub context_tokens: Option<u64>,
+    /// Totals across every model call in the turn (including compaction).
+    pub input_tokens: u64,
     pub output_tokens: u64,
+    pub model_calls: u32,
+    /// Generation speed of the last call.
     pub tokens_per_sec: Option<f64>,
 }
 

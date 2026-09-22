@@ -1,0 +1,3 @@
+prompt = "In settings.json, change the log level to \"debug\" and add \"metrics\" to the enabled features. Keep everything else the same."
+check = "python3 -c \"import json; s = json.load(open('settings.json')); assert s['logging']['level'] == 'debug'; assert s['features'] == ['auth', 'search', 'metrics'] or sorted(s['features']) == ['auth', 'metrics', 'search']; assert s['logging']['file'] == 'app.log'; assert s['name'] == 'svc' and s['retries'] == 3\""
+timeout_secs = 240

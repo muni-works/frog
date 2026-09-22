@@ -21,8 +21,8 @@ struct Cli {
     /// Print mode: run the prompt (or stdin) and exit.
     #[arg(short, long)]
     print: bool,
-    /// With -p, print every engine event as a JSON line.
-    #[arg(long, requires = "print")]
+    /// JSON output: with -p, every engine event as a JSON line; with --sessions or --models, a JSON array.
+    #[arg(long)]
     json: bool,
     /// Speak the engine protocol over stdio (Op JSON lines in, Event JSON lines out).
     #[arg(long, conflicts_with = "print")]
@@ -42,9 +42,15 @@ struct Cli {
     /// Fork a session into a new one and continue there: `<id>`, or `<id>@<turn>` to cut right after that turn.
     #[arg(long, conflicts_with_all = ["cont", "resume"])]
     fork: Option<String>,
+    /// Confine file writes (including shell commands, on macOS) to the working directory.
+    #[arg(long)]
+    sandbox: bool,
     /// List sessions started in this directory and exit.
     #[arg(long)]
     sessions: bool,
+    /// List available models (configured profiles and installed ollama models) and exit.
+    #[arg(long)]
+    models: bool,
     /// Never ask for permission.
     #[arg(long)]
     yolo: bool,
@@ -77,6 +83,9 @@ async fn main() {
 async fn run() -> Result<bool> {
     let cli = Cli::parse();
     let cfg = Config::load()?;
+    if cli.models {
+        return list_models(&cfg, cli.json).await;
+    }
     let (profile_name, mut profile) = cfg.resolve(cli.model.as_deref())?;
     if let Some(b) = cli.base_url {
         profile.base_url = Some(b);
@@ -93,7 +102,7 @@ async fn run() -> Result<bool> {
     let cwd = std::env::current_dir()?;
     let store = session::default_dir();
     if cli.sessions {
-        list_sessions(&store, &cwd)?;
+        list_sessions(&store, &cwd, cli.json)?;
         return Ok(true);
     }
     let resume = if let Some(spec) = &cli.fork {
@@ -123,6 +132,7 @@ async fn run() -> Result<bool> {
         can_ask: !cli.print,
         resume,
         store: Some(store),
+        sandbox: cli.sandbox,
     })?;
 
     let mut prompt = cli.prompt.join(" ");
@@ -140,8 +150,43 @@ async fn run() -> Result<bool> {
     Ok(true)
 }
 
-fn list_sessions(store: &std::path::Path, cwd: &std::path::Path) -> Result<()> {
+async fn list_models(cfg: &Config, json: bool) -> Result<bool> {
+    let models = kiln_engine::models::list(cfg).await;
+    if json {
+        println!("{}", serde_json::to_string(&models)?);
+        return Ok(true);
+    }
+    for m in models {
+        let mode = format!("{:?}", m.tool_mode).to_lowercase();
+        let profiled = if m.caps.is_some() {
+            ""
+        } else {
+            " (not profiled)"
+        };
+        println!("{:<32} {:<8} {:?} tier{profiled}", m.spec, mode, m.tier);
+    }
+    Ok(true)
+}
+
+fn list_sessions(store: &std::path::Path, cwd: &std::path::Path, json: bool) -> Result<()> {
     let sessions = session::list(store, cwd)?;
+    if json {
+        let rows: Vec<serde_json::Value> = sessions
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id,
+                    "modified": chrono::DateTime::<chrono::Utc>::from(s.modified).timestamp_millis(),
+                    "created": s.header.created,
+                    "model": s.header.model,
+                    "first_input": s.first_input,
+                    "forked_from": s.header.forked_from,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string(&rows)?);
+        return Ok(());
+    }
     if sessions.is_empty() {
         println!("no sessions in {}", cwd.display());
     }

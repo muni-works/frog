@@ -97,7 +97,11 @@ pub async fn glob(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     }
     Ok(Output {
         content: out,
-        display: Some(format!("Found {total} files")),
+        display: Some(format!(
+            "Found {total} file{}",
+            if total == 1 { "" } else { "s" }
+        )),
+        diff: None,
     })
 }
 
@@ -181,6 +185,7 @@ pub async fn grep(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     };
     Ok(Output {
         content: out + &more,
-        display: Some(format!("Found {n} results")),
+        display: Some(format!("Found {n} result{}", if n == 1 { "" } else { "s" })),
+        diff: None,
     })
 }

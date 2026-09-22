@@ -115,6 +115,8 @@ pub struct Options {
     pub resume: Option<String>,
     /// Directory for session logs. `None` keeps everything in memory.
     pub store: Option<PathBuf>,
+    /// Confine writes to `cwd` (and temp dirs).
+    pub sandbox: bool,
 }
 
 pub struct Handle {
@@ -285,6 +287,8 @@ struct Agent {
     caps: Option<Caps>,
     /// Tool-call format failures under `auto`; enough of them switches modes.
     mode_failures: u32,
+    /// Running totals for the current turn.
+    turn_usage: TurnUsage,
     root: PathBuf,
     system: String,
     specs: Vec<ToolSpec>,
@@ -341,7 +345,13 @@ impl Agent {
             profile: o.profile,
             provider,
             messages,
-            ctx: Ctx::new(o.cwd.clone()),
+            ctx: {
+                let mut ctx = Ctx::new(o.cwd.clone());
+                if o.sandbox {
+                    ctx.sandbox = Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
+                }
+                ctx
+            },
             mode: o.mode,
             can_ask: o.can_ask,
             store: o.store,
@@ -359,6 +369,7 @@ impl Agent {
             tier,
             caps,
             mode_failures: 0,
+            turn_usage: TurnUsage::default(),
             root: o.cwd,
             system,
             specs: tools::specs(),
@@ -486,11 +497,17 @@ impl Agent {
         }));
     }
 
+    fn count_call(&mut self, u: Usage) {
+        self.turn_usage.input_tokens += u.input + u.cache_read;
+        self.turn_usage.output_tokens += u.output;
+        self.turn_usage.model_calls += 1;
+    }
+
     fn end_turn(&self, turn: u64, reason: EndReason) {
         let usage = TurnUsage {
-            context_tokens: self.context_tokens(),
-            output_tokens: self.usage.output,
             tokens_per_sec: self.tokens_per_sec(),
+            context_tokens: self.context_tokens(),
+            ..self.turn_usage
         };
         self.emit(Event::TurnEnded {
             turn,
@@ -553,7 +570,7 @@ impl Agent {
                     let _ = self.events.send(env);
                 }
                 self.emit(Event::Synced {
-                    seq: self.seq.load(Ordering::Relaxed),
+                    upto: self.seq.load(Ordering::Relaxed),
                 });
             }
             Op::Clear => {
@@ -561,7 +578,9 @@ impl Agent {
                 *self.log.lock().unwrap() = None;
                 self.messages.clear();
                 self.inputs.clear();
+                let sandbox = self.ctx.sandbox.take();
                 self.ctx = Ctx::new(self.root.clone());
+                self.ctx.sandbox = sandbox;
                 self.usage = Usage::default();
                 self.session_id = session::new_id();
                 self.seq.store(0, Ordering::Relaxed);
@@ -619,6 +638,7 @@ impl Agent {
         });
         self.active_turn = Some(turn);
         self.inputs.push(input.to_string());
+        self.turn_usage = TurnUsage::default();
 
         self.ensure_profiled().await;
 
@@ -643,6 +663,7 @@ impl Agent {
             let (resp, streamed) = self.call("thinking", &self.messages, false).await?;
             self.last_call = started.elapsed();
             self.usage = resp.usage;
+            self.count_call(resp.usage);
             self.est
                 .calibrate(sent, resp.usage.input + resp.usage.cache_read);
             let (msg, recovered) = normalize(resp.message);
@@ -872,7 +893,7 @@ impl Agent {
                 },
             });
 
-            let (outcome, output, display) = if seen >= LOOP_REFUSE {
+            let (outcome, output, display, diff) = if seen >= LOOP_REFUSE {
                 let msg = format!(
                     "Not run: this exact call already ran {} times this turn with the same result. \
 Don't repeat it. Change the arguments or try a different approach.",
@@ -882,11 +903,13 @@ Don't repeat it. Change the arguments or try a different approach.",
                     ToolOutcome::Error,
                     msg,
                     Some("refused: repeated identical call".to_string()),
+                    None,
                 )
             } else if denied {
                 (
                     ToolOutcome::Skipped,
                     "Skipped: an earlier tool call was rejected.".to_string(),
+                    None,
                     None,
                 )
             } else if self.permit(&id, &name, &arg, &input).await == Decision::Deny {
@@ -896,11 +919,11 @@ Don't repeat it. Change the arguments or try a different approach.",
                     "Not permitted in non-interactive mode (run with --yolo to allow)."
                 };
                 denied = self.can_ask;
-                (ToolOutcome::Denied, msg.to_string(), None)
+                (ToolOutcome::Denied, msg.to_string(), None, None)
             } else {
                 match tools::run(&name, &input, &mut self.ctx).await {
-                    Ok(o) => (ToolOutcome::Ok, o.content, o.display),
-                    Err(e) => (ToolOutcome::Error, format!("Error: {e:#}"), None),
+                    Ok(o) => (ToolOutcome::Ok, o.content, o.display, o.diff),
+                    Err(e) => (ToolOutcome::Error, format!("Error: {e:#}"), None, None),
                 }
             };
 
@@ -919,6 +942,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                     outcome,
                     output,
                     display,
+                    diff,
                 },
             });
         }
@@ -1117,6 +1141,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             _ => msgs.push(Message::user(instr)),
         }
         let (resp, _) = self.call("compacting", &msgs, true).await?;
+        self.count_call(resp.usage);
         let summary = resp.message.text();
         if summary.trim().is_empty() {
             anyhow::bail!("compaction produced an empty summary; keeping the full history");
@@ -1213,6 +1238,7 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
                 outcome,
                 output,
                 display: None,
+                diff: None,
             },
         });
     }
@@ -1338,6 +1364,7 @@ mod tests {
             can_ask: true,
             resume: None,
             store: None,
+            sandbox: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
     }
@@ -1362,6 +1389,7 @@ mod tests {
             can_ask,
             resume,
             store,
+            sandbox: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
     }

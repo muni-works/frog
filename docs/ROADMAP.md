@@ -87,6 +87,18 @@ The MCP-vs-CLI study found that harnesses using only bash were 5–28x cheaper (
 
 A sub-agent works in its own branch and returns only a summary to the parent. Context-Folding got a 10x smaller context with equal or better results ([2510.11967](https://arxiv.org/abs/2510.11967)). Sub-agents need an `Op::Cancel{id}`, step and token budgets, and detection of repeated calls. opencode had a sub-agent make 364 identical grep calls ([opencode#45442](https://github.com/anomalyco/opencode/issues/45442)). Multi-agent teams by default are not supported by the evidence ([2503.13657](https://arxiv.org/abs/2503.13657), [2609.13890](https://arxiv.org/abs/2609.13890)).
 
-## 8. `kiln bench` and test-time scaling
+## 8. `kiln bench`: first pass done (moved up because every other item needs measuring)
 
-Build a fixed task set, run it against any model and harness configuration, and report pass rate, tokens per solved task, and idle turns. Later, add best-of-N selection using structured trajectory summaries ([2604.16529](https://arxiv.org/abs/2604.16529), [2601.22129](https://arxiv.org/abs/2601.22129)).
+Shipped:
+- the `kiln-bench` crate, which drives the engine protocol headless
+- a suite of 6 tasks, each check verified to fail untouched and to pass with a reference fix
+- the matrix: models × modes × repeats
+- JSONL results, a summary table, a task grid, and session logs for replay
+- per-turn usage totals in the protocol
+- the `--sandbox` workspace confinement it needs (macOS seatbelt for Bash; Write/Edit path checks)
+
+Still to do:
+- harder, multi-file tasks, plus tasks where the right move is to ask or do nothing
+- report idle turns (a model call with no tool call and no progress) as a cost ([2607.22585](https://arxiv.org/abs/2607.22585))
+- best-of-N selection using structured trajectory summaries ([2604.16529](https://arxiv.org/abs/2604.16529), [2601.22129](https://arxiv.org/abs/2601.22129))
+- a Linux sandbox using bubblewrap

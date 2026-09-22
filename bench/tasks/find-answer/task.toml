@@ -1,0 +1,3 @@
+prompt = "What TCP port does the HTTP server in this project listen on in production? Write just the number to answer.txt."
+check = "[ \"$(tr -d '[:space:]' < answer.txt)\" = 8431 ]"
+timeout_secs = 240

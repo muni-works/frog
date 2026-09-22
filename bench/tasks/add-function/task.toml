@@ -1,0 +1,3 @@
+prompt = "Add a `mul(a, b)` function to calc.py that multiplies two numbers, and add an assertion for it to test_calc.py. Run the tests with: python3 test_calc.py"
+check = "python3 -c 'from calc import mul; assert mul(3, 4) == 12 and mul(-2, 5) == -10' && grep -q 'mul' test_calc.py && python3 test_calc.py"
+timeout_secs = 240

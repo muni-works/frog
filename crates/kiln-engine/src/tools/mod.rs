@@ -15,6 +15,9 @@ pub struct Ctx {
     /// Files the model has seen, with the mtime at read time. Guards Edit/Write.
     pub read_files: HashMap<PathBuf, Option<SystemTime>>,
     pub todos: Vec<todo::Todo>,
+    /// When set, writes (Write/Edit, and Bash on macOS via sandbox-exec) are confined to this
+    /// directory and the system temp dirs. Canonical path.
+    pub sandbox: Option<PathBuf>,
 }
 
 impl Ctx {
@@ -23,6 +26,7 @@ impl Ctx {
             cwd,
             read_files: HashMap::new(),
             todos: Vec::new(),
+            sandbox: None,
         }
     }
 
@@ -32,6 +36,45 @@ impl Ctx {
             None => PathBuf::from(p),
         };
         if p.is_absolute() { p } else { self.cwd.join(p) }
+    }
+
+    /// Refuse writes outside the sandbox. Resolves `..` and symlinks through the nearest
+    /// existing ancestor, so a not-yet-created file is judged by where it would land.
+    pub fn check_writable(&self, p: &Path) -> Result<()> {
+        let Some(root) = &self.sandbox else {
+            return Ok(());
+        };
+        let mut existing = p.to_path_buf();
+        let mut rest = Vec::new();
+        while !existing.exists() {
+            let Some(name) = existing.file_name() else {
+                break;
+            };
+            rest.push(name.to_os_string());
+            if !existing.pop() {
+                break;
+            }
+        }
+        let mut real = existing.canonicalize().unwrap_or(existing);
+        for part in rest.iter().rev() {
+            if part == ".." {
+                real.pop();
+            } else if part != "." {
+                real.push(part);
+            }
+        }
+        let tmp = std::env::temp_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::temp_dir());
+        if real.starts_with(root) || real.starts_with(&tmp) {
+            Ok(())
+        } else {
+            bail!(
+                "{} is outside the workspace ({}); writes are sandboxed",
+                p.display(),
+                root.display()
+            )
+        }
     }
 
     /// Path shown to the model/user: relative to cwd when possible.
@@ -57,6 +100,8 @@ pub struct Output {
     pub content: String,
     /// What the user sees, if different (diffs, summaries).
     pub display: Option<String>,
+    /// Structured change, for Write/Edit.
+    pub diff: Option<crate::protocol::FileDiff>,
 }
 
 impl Output {
@@ -64,6 +109,7 @@ impl Output {
         Self {
             content: s.into(),
             display: None,
+            diff: None,
         }
     }
 }
@@ -159,4 +205,29 @@ pub fn truncate_middle(s: &str, max: usize) -> String {
         tail - head,
         &s[tail..]
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_write_check_resolves_dotdot_and_new_paths() {
+        let ws = std::env::temp_dir().join(format!("kiln-ws-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        assert!(
+            ctx.check_writable(Path::new("/etc/passwd")).is_ok(),
+            "no sandbox, no check"
+        );
+
+        ctx.sandbox = Some(ws.canonicalize().unwrap());
+        assert!(ctx.check_writable(&ctx.resolve("new/dir/file.rs")).is_ok());
+        let home = dirs::home_dir().unwrap().join("escape.txt");
+        assert!(ctx.check_writable(&home).is_err());
+        let sneaky = ctx
+            .resolve("sub/../../../../../../..")
+            .join(home.strip_prefix("/").unwrap());
+        assert!(ctx.check_writable(&sneaky).is_err());
+    }
 }

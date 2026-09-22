@@ -1,0 +1,9 @@
+{
+  "name": "svc",
+  "retries": 3,
+  "logging": {
+    "level": "info",
+    "file": "app.log"
+  },
+  "features": ["auth", "search"]
+}

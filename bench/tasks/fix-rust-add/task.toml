@@ -1,0 +1,3 @@
+prompt = "main.rs has a bug in `add`. Fix it, then verify with: rustc main.rs -o m && ./m"
+check = "rustc main.rs -o m 2>/dev/null && [ \"$(./m)\" = 5 ]"
+timeout_secs = 240

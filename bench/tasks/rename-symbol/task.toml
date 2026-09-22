@@ -1,0 +1,3 @@
+prompt = "Rename the function `get_usr` to `get_user` everywhere in this project. Then check that `python3 main.py` still works."
+check = "! grep -rn 'get_usr\\b' --include='*.py' . && python3 main.py | grep -qx 'user: ada'"
+timeout_secs = 300
