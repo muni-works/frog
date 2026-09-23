@@ -13,17 +13,25 @@ struct WorkspaceView: View {
     static let changesWidth: CGFloat = 380
     static let margin: CGFloat = 12
 
+    /// Open only when there's something in it: an empty "No Changes Yet" card is just clutter.
     private var changesShown: Bool {
-        showChanges && workspace.conversation != nil && workspace.race == nil
+        guard showChanges, workspace.race == nil, let c = workspace.conversation else { return false }
+        return !c.sessionChanges.isEmpty
     }
+
+    /// How far the conversation's content stays clear of each open card.
+    private var leadingInset: CGFloat { showSessions ? Self.sessionsWidth + Self.margin : 0 }
+    private var trailingInset: CGFloat { changesShown ? Self.changesWidth + Self.margin : 0 }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
+            // Full-bleed, like a viewport: the scroll view spans the window and scrolls under the
+            // cards; only its content (and the composer) keeps clear of them.
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Keep the conversation clear of the cards; it still scrolls under their edges.
-                .safeAreaPadding(.leading, showSessions ? Self.sessionsWidth + Self.margin : 0)
-                .safeAreaPadding(.trailing, changesShown ? Self.changesWidth + Self.margin : 0)
+                .contentMargins(.leading, leadingInset, for: .scrollContent)
+                .contentMargins(.trailing, trailingInset, for: .scrollContent)
+                .environment(\.canvasInsets, EdgeInsets(top: 0, leading: leadingInset, bottom: 0, trailing: trailingInset))
 
             GeometryReader { geo in
                 let room = max(120, geo.size.height - Self.margin * 2)
@@ -93,6 +101,7 @@ struct WorkspaceView: View {
                     Label("Changes", systemImage: "plusminus")
                 }
                 .badge(count)
+                .disabled(count == 0)
                 .keyboardShortcut("0", modifiers: [.command, .option])
                 .help("Changes in this session (⌥⌘0)")
             }
@@ -105,6 +114,12 @@ struct WorkspaceView: View {
             }
         }
     }
+}
+
+extension EnvironmentValues {
+    /// Horizontal space the floating cards take from the canvas, for content positioned outside
+    /// scroll views (which get it as content margins).
+    @Entry var canvasInsets = EdgeInsets()
 }
 
 extension View {
@@ -149,6 +164,8 @@ extension WorkspaceView {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ComposerView(workspace: workspace, conversation: conversation)
                     .id(ObjectIdentifier(conversation))
+                    .padding(.leading, leadingInset)
+                    .padding(.trailing, trailingInset)
             }
             .navigationTitle(workspace.name)
             .navigationSubtitle(conversation.title ?? conversation.status?.model ?? "")

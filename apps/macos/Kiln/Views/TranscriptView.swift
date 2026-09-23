@@ -26,6 +26,7 @@ struct TranscriptView: View {
             .padding(.top, 20)
             .padding(.bottom, 12)
             .frame(maxWidth: .infinity)
+            .background(ScrollBackdropClear())
         }
         .scrollContentBackground(.hidden)
         // Start at the bottom, and stay pinned there as streamed content grows.
@@ -110,6 +111,7 @@ struct WorkingIndicator: View {
 
 struct EmptyTranscript: View {
     let conversation: Conversation
+    @Environment(\.canvasInsets) private var insets
 
     var body: some View {
         VStack(spacing: 10) {
@@ -130,5 +132,45 @@ struct EmptyTranscript: View {
         }
         .multilineTextAlignment(.center)
         .padding()
+        .padding(.leading, insets.leading)
+        .padding(.trailing, insets.trailing)
+    }
+}
+
+/// Keeps the `NSScrollView` behind a SwiftUI `ScrollView` from painting anything of its own,
+/// so the transcript stays one canvas with the window instead of a panel that lightens on hover.
+struct ScrollBackdropClear: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        v.postsFrameChangedNotifications = true
+        DispatchQueue.main.async { Self.clear(from: v) }
+        // The content grows as the conversation streams; clear again whenever it does.
+        NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification, object: v, queue: .main
+        ) { [weak v] _ in
+            MainActor.assumeIsolated { if let v { Self.clear(from: v) } }
+        }
+        return v
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { Self.clear(from: view) }
+    }
+
+    private static func clear(from view: NSView) {
+        guard let scroll = view.enclosingScrollView else { return }
+        scroll.drawsBackground = false
+        scroll.backgroundColor = .clear
+        scroll.contentView.drawsBackground = false
+        scroll.wantsLayer = true
+        scroll.layer?.backgroundColor = .clear
+        // macOS 26 adds a backdrop behind the content and a scroll-edge "pocket" (a 5% white
+        // fill) that light up while the pointer is over the scroll view: the lighter panel.
+        // AppKit re-shows it, so zero its alpha (which it leaves alone) as well.
+        let chrome: Set<String> = ["BackdropView", "NSScrollPocket"]
+        for sub in scroll.subviews where chrome.contains(String(describing: type(of: sub))) {
+            sub.isHidden = true
+            sub.alphaValue = 0
+        }
     }
 }
