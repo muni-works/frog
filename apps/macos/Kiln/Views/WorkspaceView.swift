@@ -1,53 +1,116 @@
 import SwiftUI
 
-/// The conversation is the canvas: it fills the window, and the session list and the changes
-/// panel float over it as Liquid Glass cards (no split view). Each card hugs its content, up to
-/// the window's height, and the conversation is inset so nothing important sits underneath.
+/// The conversation is the canvas: it fills the window, and everything else floats over it as
+/// Liquid Glass. Sessions (left) and Changes (right) are cards that fold into small glass
+/// buttons in their corners and morph back out; under Changes, a timeline rail maps the whole
+/// conversation. The conversation and composer are centered on the window when there's room
+/// (equal insets on both sides), and fit between the cards when there isn't.
 struct WorkspaceView: View {
     @Bindable var workspace: Workspace
     @AppStorage("showSessions") private var showSessions = true
     @AppStorage("showChanges") private var showChanges = false
     @State private var showPalette = false
+    @State private var canvasWidth: CGFloat = 1100
+    @State private var jumpTo: TurnState.ID?
+    @State private var visibleTurns: Set<TurnState.ID> = []
+    /// A card shown floating over the conversation because the window is too narrow to dock it.
+    @State private var peek: Peek?
+    @Namespace private var glass
+
+    enum Peek { case sessions, changes }
 
     static let sessionsWidth: CGFloat = 250
     static let changesWidth: CGFloat = 380
+    static let button: CGFloat = 36
+    /// Estimated width of the collapsed changes pill ("± 12").
+    static let changesPill: CGFloat = 64
     static let margin: CGFloat = 12
+    /// Clearance between a card and the conversation.
+    static let gap: CGFloat = 16
+    /// Narrowest the centered column may get; a card that would squeeze it further stays folded.
+    static let minColumn: CGFloat = 520
 
-    /// Open only when there's something in it: an empty "No Changes Yet" card is just clutter.
-    private var changesShown: Bool {
-        guard showChanges, workspace.race == nil, let c = workspace.conversation else { return false }
-        return !c.sessionChanges.isEmpty
+    /// The conversation shown on the canvas (a race has its own view).
+    private var conversation: Conversation? { workspace.race == nil ? workspace.conversation : nil }
+    private var changeCount: Int { conversation?.sessionChanges.count ?? 0 }
+    /// Open only when there's something in it: an empty "No Changes Yet" card is clutter.
+    private var changesOpen: Bool { showChanges && changeCount > 0 }
+    private var hasRail: Bool { !(conversation?.turns.isEmpty ?? true) }
+
+    // Layout. The column is centered on the window with equal insets. A card docks (stands
+    // beside the column) only if the column still gets `minColumn` with it; otherwise it folds to
+    // its button, and the button floats it over the conversation instead ("peek").
+
+    private func extent(sessions open: Bool) -> CGFloat {
+        Self.margin + (open ? Self.sessionsWidth : Self.button) + Self.gap
     }
 
-    /// How far the conversation's content stays clear of each open card.
-    private var leadingInset: CGFloat { showSessions ? Self.sessionsWidth + Self.margin : 0 }
-    private var trailingInset: CGFloat { changesShown ? Self.changesWidth + Self.margin : 0 }
+    private func extent(changes open: Bool) -> CGFloat {
+        guard changeCount > 0 || hasRail else { return Self.gap }
+        let width = open ? Self.changesWidth : (changeCount > 0 ? Self.changesPill : TimelineRail.width)
+        return Self.margin + width + Self.gap
+    }
+
+    private func fits(_ left: CGFloat, _ right: CGFloat) -> Bool {
+        canvasWidth - 2 * max(left, right) >= Self.minColumn
+    }
+
+    private var sessionsDocked: Bool {
+        showSessions && fits(extent(sessions: true), extent(changes: false))
+    }
+
+    private var changesDocked: Bool {
+        changesOpen && fits(extent(sessions: sessionsDocked), extent(changes: true))
+    }
+
+    private var sessionsVisible: Bool { sessionsDocked || peek == .sessions }
+    private var changesVisible: Bool { changesDocked || (peek == .changes && changeCount > 0) }
+
+    private var insets: EdgeInsets {
+        let left = extent(sessions: sessionsDocked), right = extent(changes: changesDocked)
+        let even = max(left, right)
+        // Equal insets center the column; a window below the minimum gives up symmetry.
+        return fits(left, right)
+            ? EdgeInsets(top: 0, leading: even, bottom: 0, trailing: even)
+            : EdgeInsets(top: 0, leading: left, bottom: 0, trailing: right)
+    }
+
+    private func toggleSessions() {
+        if fits(extent(sessions: true), extent(changes: changesDocked)) {
+            peek = nil
+            showSessions.toggle()
+        } else {
+            peek = peek == .sessions ? nil : .sessions
+        }
+    }
+
+    private func toggleChanges() {
+        if fits(extent(sessions: sessionsDocked), extent(changes: true)) {
+            peek = nil
+            showChanges.toggle()
+        } else {
+            peek = peek == .changes ? nil : .changes
+        }
+    }
 
     var body: some View {
+        let insets = insets
         ZStack(alignment: .topLeading) {
             // Full-bleed, like a viewport: the scroll view spans the window and scrolls under the
-            // cards; only its content (and the composer) keeps clear of them.
-            detail
+            // glass; only its content (and the composer) keeps clear.
+            detail(insets: insets)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentMargins(.leading, leadingInset, for: .scrollContent)
-                .contentMargins(.trailing, trailingInset, for: .scrollContent)
-                .environment(\.canvasInsets, EdgeInsets(top: 0, leading: leadingInset, bottom: 0, trailing: trailingInset))
+                .contentMargins(.leading, insets.leading, for: .scrollContent)
+                .contentMargins(.trailing, insets.trailing, for: .scrollContent)
+                .environment(\.canvasInsets, insets)
 
             GeometryReader { geo in
                 let room = max(120, geo.size.height - Self.margin * 2)
-                HStack(alignment: .top, spacing: 0) {
-                    if showSessions {
-                        SessionList(workspace: workspace, maxHeight: room)
-                            .frame(width: Self.sessionsWidth)
-                            .floatingPanel()
-                            .transition(.move(edge: .leading).combined(with: .opacity))
-                    }
-                    Spacer(minLength: 0)
-                    if changesShown, let conversation = workspace.conversation {
-                        ChangesInspector(conversation: conversation, maxHeight: room)
-                            .frame(width: Self.changesWidth)
-                            .floatingPanel()
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                GlassEffectContainer(spacing: 20) {
+                    HStack(alignment: .top, spacing: 0) {
+                        sessions(room: room)
+                        Spacer(minLength: 0)
+                        instruments(room: room)
                     }
                 }
                 .padding(Self.margin)
@@ -66,22 +129,19 @@ struct WorkspaceView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
-        // One backdrop for the whole canvas, so the conversation reads as a single surface under
-        // the cards rather than a lighter column between them.
+        .onGeometryChange(for: CGFloat.self, of: \.size.width) { canvasWidth = $0 }
+        // One backdrop for the whole canvas, so the conversation reads as a single surface.
         .background(Color(nsColor: .windowBackgroundColor).ignoresSafeArea())
-        .animation(.snappy(duration: 0.22), value: showSessions)
-        .animation(.snappy(duration: 0.22), value: changesShown)
+        .animation(.bouncy(duration: 0.4), value: sessionsVisible)
+        .animation(.bouncy(duration: 0.4), value: changesVisible)
+        .animation(.snappy(duration: 0.3), value: insets)
+        .animation(.snappy(duration: 0.25), value: hasRail)
         .animation(.snappy(duration: 0.18), value: showPalette)
+        .onChange(of: conversation.map(ObjectIdentifier.init)) { visibleTurns = []; peek = nil }
+        .onChange(of: workspace.selection) { if peek == .sessions { peek = nil } }
+        .onExitCommand { peek = nil }
+        .focusedSceneValue(\.panelToggles, PanelToggles(sessions: toggleSessions, changes: toggleChanges))
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    showSessions.toggle()
-                } label: {
-                    Label("Sessions", systemImage: "sidebar.left")
-                }
-                .keyboardShortcut("s", modifiers: [.command, .control])
-                .help("Sessions (⌃⌘S)")
-            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Commands", systemImage: "command") { showPalette.toggle() }
                     .keyboardShortcut("k")
@@ -94,24 +154,120 @@ struct WorkspaceView: View {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             }
             ToolbarItem(placement: .primaryAction) {
-                let count = workspace.conversation?.sessionChanges.count ?? 0
-                Button {
-                    showChanges.toggle()
-                } label: {
-                    Label("Changes", systemImage: "plusminus")
-                }
-                .badge(count)
-                .disabled(count == 0)
-                .keyboardShortcut("0", modifiers: [.command, .option])
-                .help("Changes in this session (⌥⌘0)")
-            }
-            ToolbarItem(placement: .primaryAction) {
                 Button("Compact", systemImage: "arrow.down.right.and.arrow.up.left") {
                     workspace.conversation?.compact()
                 }
                 .disabled(workspace.conversation?.busy ?? true || workspace.conversation?.turns.isEmpty ?? true)
                 .help("Summarize the conversation to free up context")
             }
+        }
+    }
+
+    // MARK: Glass
+
+    /// The session list, or the button it folds into. Same glass ID, so one morphs into the other.
+    @ViewBuilder
+    private func sessions(room: CGFloat) -> some View {
+        if sessionsVisible {
+            SessionList(workspace: workspace, maxHeight: room) { toggleSessions() }
+                .frame(width: Self.sessionsWidth)
+                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                .glassEffectID("sessions", in: glass)
+                .shadow(color: .black.opacity(peek == .sessions ? 0.35 : 0), radius: 24, y: 10)
+        } else {
+            Button(action: toggleSessions) {
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: Self.button, height: Self.button)
+                    .contentShape(.circle)
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .circle)
+            .glassEffectID("sessions", in: glass)
+            .help("Show sessions (⌃⌘S)")
+        }
+    }
+
+    /// The right-hand column: changes (card or pill) above the timeline rail.
+    @ViewBuilder
+    private func instruments(room: CGFloat) -> some View {
+        if let conversation, changeCount > 0 || hasRail {
+            VStack(alignment: .trailing, spacing: 8) {
+                if changeCount > 0 {
+                    if changesVisible {
+                        ChangesInspector(conversation: conversation, maxHeight: max(120, room - (hasRail ? 160 : 0))) {
+                            toggleChanges()
+                        }
+                        .frame(width: Self.changesWidth)
+                        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                        .glassEffectID("changes", in: glass)
+                        .shadow(color: .black.opacity(peek == .changes ? 0.35 : 0), radius: 24, y: 10)
+                    } else {
+                        Button(action: toggleChanges) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "plusminus")
+                                Text("\(changeCount)").monospacedDigit()
+                            }
+                            .font(.callout.weight(.medium))
+                            .padding(.horizontal, 12)
+                            .frame(height: Self.button)
+                            .contentShape(.capsule)
+                        }
+                        .buttonStyle(.plain)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .glassEffectID("changes", in: glass)
+                        .help("\(changeCount) file\(changeCount == 1 ? "" : "s") changed (⌥⌘0)")
+                    }
+                }
+                if hasRail {
+                    TimelineRail(
+                        conversation: conversation,
+                        visible: visibleTurns,
+                        actions: turnActions,
+                        jump: { jumpTo = $0 }
+                    )
+                    // Grows with the conversation instead of standing full height from turn one.
+                    .frame(height: min(room, CGFloat(conversation.turns.count) * 22 + 28))
+                    .glassEffect(.regular, in: .capsule)
+                    .glassEffectID("timeline", in: glass)
+                    .transition(.opacity)
+                }
+            }
+            .frame(maxHeight: room, alignment: .top)
+        }
+    }
+
+    private var turnActions: TurnActions {
+        TurnActions(
+            fork: { workspace.fork(afterTurn: $0) },
+            rewind: { turn in Task { await workspace.rewind(toBefore: turn) } }
+        )
+    }
+}
+
+/// Toggles for the focused window's floating panels, for the menu bar.
+struct PanelToggles {
+    var sessions: () -> Void
+    var changes: () -> Void
+}
+
+extension FocusedValues {
+    @Entry var panelToggles: PanelToggles?
+}
+
+/// View-menu items (and their shortcuts) for the floating panels.
+struct PanelCommands: Commands {
+    @FocusedValue(\.panelToggles) private var toggles
+
+    var body: some Commands {
+        CommandGroup(before: .toolbar) {
+            Button("Toggle Sessions") { toggles?.sessions() }
+                .keyboardShortcut("s", modifiers: [.command, .control])
+                .disabled(toggles == nil)
+            Button("Toggle Changes") { toggles?.changes() }
+                .keyboardShortcut("0", modifiers: [.command, .option])
+                .disabled(toggles == nil)
+            Divider()
         }
     }
 }
@@ -148,7 +304,7 @@ struct HuggingScroll<Content: View>: View {
 
 extension WorkspaceView {
     @ViewBuilder
-    private var detail: some View {
+    private func detail(insets: EdgeInsets) -> some View {
         if let race = workspace.race {
             RaceView(race: race) { workspace.endRace() }
                 .navigationTitle(workspace.name)
@@ -156,16 +312,15 @@ extension WorkspaceView {
         } else if let conversation = workspace.conversation {
             TranscriptView(
                 conversation: conversation,
-                actions: TurnActions(
-                    fork: { workspace.fork(afterTurn: $0) },
-                    rewind: { turn in Task { await workspace.rewind(toBefore: turn) } }
-                )
+                actions: turnActions,
+                jump: $jumpTo,
+                onVisibleTurns: { visibleTurns = Set($0) }
             )
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ComposerView(workspace: workspace, conversation: conversation)
                     .id(ObjectIdentifier(conversation))
-                    .padding(.leading, leadingInset)
-                    .padding(.trailing, trailingInset)
+                    .padding(.leading, insets.leading)
+                    .padding(.trailing, insets.trailing)
             }
             .navigationTitle(workspace.name)
             .navigationSubtitle(conversation.title ?? conversation.status?.model ?? "")
@@ -176,15 +331,27 @@ extension WorkspaceView {
 struct SessionList: View {
     @Bindable var workspace: Workspace
     let maxHeight: CGFloat
+    var collapse: (() -> Void)?
 
     var body: some View {
         HuggingScroll(maxHeight: maxHeight) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Sessions")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 4)
+                HStack {
+                    Text("Sessions")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if let collapse {
+                        Button(action: collapse) {
+                            Image(systemName: "sidebar.left")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Hide sessions (⌃⌘S)")
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
                 if workspace.sessions.isEmpty {
                     Text("No sessions yet")
                         .font(.callout)

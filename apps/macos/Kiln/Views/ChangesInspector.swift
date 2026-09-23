@@ -20,6 +20,7 @@ extension Conversation {
 struct ChangesInspector: View {
     let conversation: Conversation
     let maxHeight: CGFloat
+    var collapse: (() -> Void)?
     @State private var selection: String?
 
     var body: some View {
@@ -41,6 +42,16 @@ struct ChangesInspector: View {
                         Spacer()
                         Text("+\(changes.reduce(0) { $0 + $1.added })").foregroundStyle(.green)
                         Text("−\(changes.reduce(0) { $0 + $1.removed })").foregroundStyle(.red)
+                        if let collapse {
+                            Button(action: collapse) {
+                                Image(systemName: "xmark")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 4)
+                            .help("Hide changes (⌥⌘0)")
+                        }
                     }
                     .font(.callout.monospacedDigit())
                     VStack(spacing: 2) {

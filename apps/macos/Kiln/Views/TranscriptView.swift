@@ -3,8 +3,23 @@ import SwiftUI
 struct TranscriptView: View {
     let conversation: Conversation
     let actions: TurnActions
+    /// Set to a turn's id to scroll it into view (the timeline rail does this).
+    var jump: Binding<TurnState.ID?> = .constant(nil)
+    /// Told which turns are on screen.
+    var onVisibleTurns: ([TurnState.ID]) -> Void = { _ in }
 
     var body: some View {
+        ScrollViewReader { proxy in
+            transcript
+                .onChange(of: jump.wrappedValue) { _, id in
+                    guard let id else { return }
+                    withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(id, anchor: .top) }
+                    jump.wrappedValue = nil
+                }
+        }
+    }
+
+    private var transcript: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
                 ForEach(conversation.turns) { turn in
@@ -21,6 +36,7 @@ struct TranscriptView: View {
                         .textSelection(.enabled)
                 }
             }
+            .scrollTargetLayout()
             .frame(maxWidth: 820)
             .padding(.horizontal, 28)
             .padding(.top, 20)
@@ -29,6 +45,7 @@ struct TranscriptView: View {
             .background(ScrollBackdropClear())
         }
         .scrollContentBackground(.hidden)
+        .onScrollTargetVisibilityChange(idType: TurnState.ID.self, threshold: 0.05) { onVisibleTurns($0) }
         // Start at the bottom, and stay pinned there as streamed content grows.
         .defaultScrollAnchor(.bottom)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)

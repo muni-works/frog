@@ -62,7 +62,7 @@ final class SnapshotTests: XCTestCase {
             all.forEach(done.ingest)
             try render(transcript(done), size: CGSize(width: 900, height: 1000), to: "\(name)-done")
             try render(
-                ChangesInspector(conversation: done).background(Color(nsColor: .windowBackgroundColor)),
+                ChangesInspector(conversation: done, maxHeight: 800).background(Color(nsColor: .windowBackgroundColor)),
                 size: CGSize(width: 420, height: 800), to: "\(name)-changes")
 
             // Mid-turn: everything up to the second-to-last tool call, so the work group is live.
