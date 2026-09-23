@@ -116,6 +116,7 @@ enum ToolIcon {
         case "Diagram": "point.3.connected.trianglepath.dotted"
         case "CodeMap": "map"
         case "Task": "person.2"
+        case "Skill": "sparkles.rectangle.stack"
         case "McpTools": "puzzlepiece.extension"
         case let n where n.hasPrefix("mcp__desktop__"): "macwindow.and.cursorarrow"
         case let n where n.hasPrefix("mcp__"): "puzzlepiece.extension"

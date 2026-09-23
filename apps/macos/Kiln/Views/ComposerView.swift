@@ -21,6 +21,16 @@ struct ComposerView: View {
         return FileIndex.search(workspace.files, mention)
     }
 
+    /// `/sk…` at the start of the message: matching skills.
+    private var skillSuggestions: [SkillInfo] {
+        guard text.hasPrefix("/"), !text.contains(where: \.isWhitespace) else { return [] }
+        let q = text.dropFirst().lowercased()
+        let all = workspace.skills
+        let prefix = all.filter { $0.name.hasPrefix(q) }
+        let rest = q.isEmpty ? [] : all.filter { !$0.name.hasPrefix(q) && ($0.name.contains(q) || $0.description.lowercased().contains(q)) }
+        return Array((prefix + rest).prefix(8))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let toast = conversation.toast {
@@ -35,7 +45,7 @@ struct ComposerView: View {
             }
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text(conversation.busy ? "Working… Esc interrupts · Return queues a follow-up" : "Ask kiln to do something · @ to mention a file")
+                    Text(conversation.busy ? "Working… Esc interrupts · Return queues a follow-up" : workspace.skills.isEmpty ? "Ask kiln to do something · @ to mention a file" : "Ask kiln to do something · @ to mention a file · / for skills")
                         .foregroundStyle(.tertiary)
                         .padding(.leading, 5)
                         .padding(.top, 1)
@@ -63,6 +73,10 @@ struct ComposerView: View {
             .overlay(alignment: .topLeading) {
                 if !suggestions.isEmpty {
                     MentionList(files: suggestions, picked: picked) { controller.insertMention($0) }
+                        .alignmentGuide(.top) { $0[.bottom] + 14 }
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                } else if !skillSuggestions.isEmpty {
+                    SkillList(skills: skillSuggestions, picked: picked) { controller.replaceAll("/\($0.name) ") }
                         .alignmentGuide(.top) { $0[.bottom] + 14 }
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
@@ -153,6 +167,16 @@ struct ComposerView: View {
     }
 
     private func handleMentionKey(_ key: MentionKey) -> Bool {
+        let skills = skillSuggestions
+        if suggestions.isEmpty, !skills.isEmpty {
+            switch key {
+            case .up: picked = (picked - 1 + skills.count) % skills.count
+            case .down: picked = (picked + 1) % skills.count
+            case .accept: controller.replaceAll("/\(skills[min(picked, skills.count - 1)].name) ")
+            case .cancel: controller.replaceAll("")
+            }
+            return true
+        }
         let list = suggestions
         guard !list.isEmpty else { return false }
         switch key {
@@ -252,6 +276,50 @@ struct ContextRing: View {
         let window = status.contextWindow.tokens
         guard let used = status.contextTokens else { return "Context window: \(window) tokens" }
         return "\(used.tokens) of \(window) tokens (\(Int(fraction * 100))%)"
+    }
+}
+
+/// `/skill` completions: name and what it's for.
+struct SkillList: View {
+    let skills: [SkillInfo]
+    let picked: Int
+    let choose: (SkillInfo) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(skills.enumerated()), id: \.element) { i, skill in
+                Button {
+                    choose(skill)
+                } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles.rectangle.stack").foregroundStyle(.secondary)
+                            Text("/" + skill.name).fontWeight(.medium)
+                            if skill.project {
+                                Text("project").font(.caption2).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 5).padding(.vertical, 1)
+                                    .background(.quaternary, in: .capsule)
+                            }
+                        }
+                        Text(skill.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .padding(.leading, 22)
+                    }
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(i == picked ? AnyShapeStyle(.tint.opacity(0.22)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(6)
+        .frame(width: 480, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 12))
     }
 }
 

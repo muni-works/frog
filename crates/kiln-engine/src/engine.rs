@@ -341,6 +341,9 @@ struct Agent {
     specs: Vec<ToolSpec>,
     /// Connected MCP servers, whose tools are appended to `specs`.
     mcp: crate::mcp::Hub,
+    /// Agent Skills found for this project, and the ones already loaded this session.
+    skills: std::collections::BTreeMap<String, crate::skills::Skill>,
+    skills_loaded: HashSet<String>,
     session_allow: HashSet<String>,
     /// Context from `Op::Shell`, attached to the next message.
     pending: Vec<String>,
@@ -386,6 +389,11 @@ impl Agent {
             }
             (None, _) => (session::new_id(), Vec::new(), 0, 0, None, Vec::new()),
         };
+        let skills = if o.subagent {
+            Default::default()
+        } else {
+            crate::skills::discover(&o.cwd)
+        };
         let window = o.profile.context_window();
         let resumed = o.resume.is_some();
         let mut agent = Self {
@@ -425,6 +433,8 @@ impl Agent {
             system,
             specs: tools::specs(),
             mcp: crate::mcp::Hub::empty(),
+            skills,
+            skills_loaded: HashSet::new(),
             session_allow: HashSet::new(),
             pending: Vec::new(),
             events,
@@ -632,6 +642,7 @@ impl Agent {
                 *self.log.lock().unwrap() = None;
                 self.messages.clear();
                 self.inputs.clear();
+                self.skills_loaded.clear();
                 let sandbox = self.ctx.sandbox.take();
                 self.ctx = Ctx::new(self.root.clone());
                 self.ctx.sandbox = sandbox;
@@ -713,7 +724,15 @@ impl Agent {
         if !text.is_empty() {
             text.push('\n');
         }
-        text.push_str(&self.expand_mentions(input));
+        // `/skill-name ...` loads that skill ahead of the request.
+        let input = match crate::skills::expand_command(&self.skills, input) {
+            Some((expanded, name)) => {
+                self.skills_loaded.insert(name);
+                expanded
+            }
+            None => input.to_string(),
+        };
+        text.push_str(&self.expand_mentions(&input));
         self.push_user(text);
 
         let mut compacted = false;
@@ -809,6 +828,7 @@ impl Agent {
         if self.subagent {
             self.system.push_str(crate::subagent::PROMPT);
         }
+        self.system.push_str(&crate::skills::catalog(&self.skills));
     }
 
     /// Probe a local model's capabilities the first time it's used under `auto`.
@@ -1057,6 +1077,9 @@ impl Agent {
             specs.retain(|s| tools::kind(&s.name) == Kind::Read);
         } else {
             specs.push(crate::subagent::spec());
+            if !self.skills.is_empty() {
+                specs.push(crate::skills::spec());
+            }
             specs.extend(self.mcp.specs());
         }
         self.specs = specs;
@@ -1111,6 +1134,9 @@ impl Agent {
 
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
     async fn run_tool(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
+        if name == crate::skills::TOOL {
+            return crate::skills::run(&self.skills, &mut self.skills_loaded, input);
+        }
         if name == crate::subagent::TOOL {
             return self.run_task(id, input).await;
         }
@@ -1468,6 +1494,8 @@ Don't repeat it. Change the arguments or try a different approach.",
             .map(|s| format!("<user-message>\n{s}\n</user-message>"))
             .collect::<Vec<_>>()
             .join("\n");
+        // Loaded skills' instructions are summarized away; let them load again.
+        self.skills_loaded.clear();
         self.reset(vec![Message::user(format!(
             "(The earlier part of this session was compacted.)\n\nSummary:\n{summary}\n\n\
 The user's messages so far, verbatim. Any instructions or constraints in them still apply:\n{pinned}"

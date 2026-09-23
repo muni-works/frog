@@ -49,6 +49,9 @@ struct Cli {
     /// Confine file writes (including shell commands, on macOS) to the working directory.
     #[arg(long)]
     sandbox: bool,
+    /// List the Agent Skills this folder sees (with --json for JSON).
+    #[arg(long)]
+    skills: bool,
     /// Let the agent see and drive macOS apps (computer use, via the kiln-desktop sidecar).
     #[arg(long)]
     computer_use: bool,
@@ -162,6 +165,39 @@ async fn run() -> Result<bool> {
     }
     if cli.session_tree {
         print_diagram(session_tree(&store, &cwd)?, &cwd, cli.json)?;
+        return Ok(true);
+    }
+    if cli.skills {
+        let skills = kiln_engine::skills::discover(&cwd);
+        if cli.json {
+            println!(
+                "{}",
+                serde_json::to_string(&skills.values().collect::<Vec<_>>())?
+            );
+        } else if skills.is_empty() {
+            println!(
+                "no skills (add <name>/SKILL.md under .agents/skills here, or ~/.config/kiln/skills)"
+            );
+        } else {
+            for s in skills.values() {
+                let first = s
+                    .description
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let first: String = first.chars().take(90).collect();
+                println!(
+                    "{}{}  {first}",
+                    s.name,
+                    if s.project { " (project)" } else { "" }
+                );
+            }
+            println!(
+                "\n{} skills; catalog is {} chars",
+                skills.len(),
+                kiln_engine::skills::catalog(&skills).len()
+            );
+        }
         return Ok(true);
     }
     if cli.mcp {

@@ -30,6 +30,12 @@ final class ComposerController {
         tv.insertText("@\(path) ", replacementRange: range)
     }
 
+    /// Replace everything typed so far (e.g. with a picked `/skill`).
+    func replaceAll(_ text: String) {
+        guard let tv = textView else { return }
+        tv.insertText(text, replacementRange: NSRange(location: 0, length: (tv.string as NSString).length))
+    }
+
     /// Insert text at the cursor (e.g. `@path` mentions for dropped files).
     func insert(_ text: String) {
         guard let tv = textView else { return }

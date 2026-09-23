@@ -151,6 +151,7 @@ pub fn kind(name: &str) -> Kind {
         crate::mcp::SEARCH_TOOL => Kind::Read,
         // A subagent can only read.
         crate::subagent::TOOL => Kind::Read,
+        crate::skills::TOOL => Kind::Read,
         _ => Kind::Read,
     }
 }
@@ -185,6 +186,10 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "Diagram" => s("title"),
         "CodeMap" => s("path"),
         "Task" => s("description"),
+        "Skill" => {
+            let n = s("name");
+            if n.is_empty() { s("query") } else { n }
+        }
         // MCP: the first string argument is usually the interesting one (a query, a path).
         n if n.starts_with("mcp__") => input
             .as_object()

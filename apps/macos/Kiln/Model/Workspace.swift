@@ -33,6 +33,8 @@ final class Workspace {
 
     /// Project files for `@` mentions, loaded on first use.
     private(set) var files: [String] = []
+    /// Agent Skills this folder sees, for `/skill` completion.
+    private(set) var skills: [SkillInfo] = []
     @ObservationIgnored private var filesLoaded = false
 
     func loadFiles() {
@@ -67,6 +69,9 @@ final class Workspace {
     }
 
     func refresh() async {
+        if skills.isEmpty, let k = try? await Kiln.json([SkillInfo].self, args: ["--skills", "--json"], cwd: folder) {
+            skills = k
+        }
         if let s = try? await Kiln.json([SessionInfo].self, args: ["--sessions", "--json"], cwd: folder) {
             sessions = s
         }

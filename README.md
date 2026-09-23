@@ -129,6 +129,19 @@ headers = { Authorization = "Bearer ${DOCS_TOKEN}" }
   - MCP Apps (`ui://` resources) run inline, e.g. vcad's 3D viewer. An app can call tools only on its own server.
 - MCP is opt-in. Bash alone is often cheaper.
 
+**Agent Skills.** kiln loads [Agent Skills](https://agentskills.io) (a folder with a `SKILL.md`) from these places:
+- **In the project:** `.kiln/skills`, `.agents/skills` and `.claude/skills`.
+- **In your home folder:** `~/.config/kiln/skills`, `~/.agents/skills` and `~/.claude/skills`.
+
+A project skill wins over a user skill with the same name.
+
+The skills load in stages:
+- **Catalog:** the model sees a short list of skills, cut to fit a small token budget. With many skills it's names only, and the model searches their descriptions.
+- **Loading one:** when a task matches, the model loads the skill's instructions with `Skill`. These are kept when old tool output is trimmed to save context.
+- **Extra files:** the skill's other files (scripts, references) are listed but only read if the instructions call for them.
+
+Starting a message with `/skill-name` loads that skill directly; the Mac app autocompletes these. `kiln --skills` lists what a folder sees.
+
 **Subagents.** `Task` hands a self-contained investigation to a subagent: a child engine with its own context and read-only tools (Read, Grep, Glob, CodeMap).
 - Only its final report comes back, so a search through many files costs the parent a few hundred tokens.
 - Its steps stream live into the parent's tool card.

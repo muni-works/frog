@@ -506,6 +506,13 @@ enum JSONValue: Codable, Sendable, Hashable {
 
 // MARK: - CLI listings
 
+/// An Agent Skill (`kiln --skills --json`).
+struct SkillInfo: Decodable, Sendable, Hashable {
+    var name: String
+    var description: String
+    var project: Bool
+}
+
 struct SessionInfo: Decodable, Sendable, Identifiable, Hashable {
     struct ForkPoint: Decodable, Sendable, Hashable {
         var session: String

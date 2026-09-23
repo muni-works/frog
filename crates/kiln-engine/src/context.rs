@@ -111,6 +111,8 @@ pub fn plan_prune(msgs: &[Message], budget_chars: usize) -> Vec<(String, String)
             }),
             _ => None,
         })
+        // Loaded skills are standing instructions; trimming them silently degrades the agent.
+        .filter(|r| r.name != crate::skills::TOOL)
         .collect();
 
     let mut plan: Vec<(String, String)> = Vec::new();
