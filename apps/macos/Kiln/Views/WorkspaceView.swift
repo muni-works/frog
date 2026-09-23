@@ -11,6 +11,7 @@ struct WorkspaceView: View {
     @AppStorage("showChanges") private var showChanges = false
     @State private var canvasWidth: CGFloat = 1100
     @State private var ui = WindowState()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// A card shown floating over the conversation because the window is too narrow to dock it.
     @State private var peek: Peek?
     @Namespace private var glass
@@ -74,6 +75,7 @@ struct WorkspaceView: View {
     }
 
     private func toggleSessions() {
+        Haptics.settle()
         if fits(extent(sessions: true), extent(changes: changesDocked)) {
             peek = nil
             showSessions.toggle()
@@ -83,6 +85,7 @@ struct WorkspaceView: View {
     }
 
     private func toggleChanges() {
+        Haptics.settle()
         if fits(extent(sessions: sessionsDocked), extent(changes: true)) {
             peek = nil
             showChanges.toggle()
@@ -137,12 +140,12 @@ struct WorkspaceView: View {
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { canvasWidth = $0 }
         // One backdrop for the whole canvas, so the conversation reads as a single surface.
         .background(Color(nsColor: .windowBackgroundColor).ignoresSafeArea())
-        .animation(.bouncy(duration: 0.4), value: sessionsVisible)
-        .animation(.bouncy(duration: 0.4), value: changesVisible)
-        .animation(.snappy(duration: 0.3), value: insets)
-        .animation(.snappy(duration: 0.25), value: hasRail)
-        .animation(.snappy(duration: 0.18), value: ui.paletteShown)
-        .animation(.snappy(duration: 0.2), value: ui.findShown)
+        .animation(Motion.panel(reduced: reduceMotion), value: sessionsVisible)
+        .animation(Motion.panel(reduced: reduceMotion), value: changesVisible)
+        .animation(Motion.panel(reduced: reduceMotion), value: insets)
+        .animation(Motion.quick(reduced: reduceMotion), value: hasRail)
+        .animation(Motion.quick(reduced: reduceMotion), value: ui.paletteShown)
+        .animation(Motion.quick(reduced: reduceMotion), value: ui.findShown)
         .onChange(of: conversation.map(ObjectIdentifier.init)) { ui.visibleTurns = []; peek = nil }
         .onChange(of: workspace.selection) { if peek == .sessions { peek = nil } }
         .onExitCommand {

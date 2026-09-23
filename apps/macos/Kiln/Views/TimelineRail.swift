@@ -14,6 +14,7 @@ struct TimelineRail: View {
     static let width: CGFloat = 28
 
     @State private var hovered: Int?
+    @State private var scrubbed: Int?
     @State private var confirmRewind: UInt64?
 
     private var turns: [TurnState] { conversation.turns }
@@ -43,9 +44,13 @@ struct TimelineRail: View {
             .gesture(
                 DragGesture(minimumDistance: 0).onChanged { g in
                     guard let i = index(at: g.location.y, in: h) else { return }
+                    // A detent under the finger for each turn crossed while scrubbing.
+                    if i != scrubbed { Haptics.tick() }
+                    scrubbed = i
                     hovered = i
                     jump(turns[i].id)
                 }
+                .onEnded { _ in scrubbed = nil }
             )
             .contextMenu { menu }
         }
