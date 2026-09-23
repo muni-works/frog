@@ -10,26 +10,17 @@ struct WorkspaceView: View {
             SessionList(workspace: workspace)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 360)
         } detail: {
-            if let race = workspace.race {
-                RaceView(race: race) { workspace.endRace() }
-                    .navigationTitle(workspace.name)
-                    .navigationSubtitle("Racing")
-            } else if let conversation = workspace.conversation {
-                TranscriptView(
-                    conversation: conversation,
-                    actions: TurnActions(
-                        fork: { workspace.fork(afterTurn: $0) },
-                        rewind: { turn in Task { await workspace.rewind(toBefore: turn) } }
-                    )
-                )
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    ComposerView(workspace: workspace, conversation: conversation)
-                        .id(ObjectIdentifier(conversation))
-                }
-                .navigationTitle(workspace.name)
-                .navigationSubtitle(conversation.title ?? conversation.status?.model ?? "")
-                .inspector(isPresented: $showChanges) {
+            HStack(spacing: 0) {
+                detail
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // A plain side panel, not `.inspector`: an inspector is a third split-view column,
+                // and its size negotiation with the transcript loops AppKit's constraint passes
+                // (crash on launch with the panel left open).
+                if showChanges, let conversation = workspace.conversation, workspace.race == nil {
+                    Divider()
                     ChangesInspector(conversation: conversation)
+                        .frame(width: 380)
+                        .transition(.move(edge: .trailing))
                 }
             }
         }
@@ -77,6 +68,31 @@ struct WorkspaceView: View {
                 .disabled(workspace.conversation?.busy ?? true || workspace.conversation?.turns.isEmpty ?? true)
                 .help("Summarize the conversation to free up context")
             }
+        }
+    }
+}
+
+extension WorkspaceView {
+    @ViewBuilder
+    private var detail: some View {
+        if let race = workspace.race {
+            RaceView(race: race) { workspace.endRace() }
+                .navigationTitle(workspace.name)
+                .navigationSubtitle("Racing")
+        } else if let conversation = workspace.conversation {
+            TranscriptView(
+                conversation: conversation,
+                actions: TurnActions(
+                    fork: { workspace.fork(afterTurn: $0) },
+                    rewind: { turn in Task { await workspace.rewind(toBefore: turn) } }
+                )
+            )
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                ComposerView(workspace: workspace, conversation: conversation)
+                    .id(ObjectIdentifier(conversation))
+            }
+            .navigationTitle(workspace.name)
+            .navigationSubtitle(conversation.title ?? conversation.status?.model ?? "")
         }
     }
 }

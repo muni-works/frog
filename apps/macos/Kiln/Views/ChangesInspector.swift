@@ -24,8 +24,6 @@ struct ChangesInspector: View {
     var body: some View {
         let changes = conversation.sessionChanges
         let current = changes.first { $0.path == selection } ?? changes.first
-        // One scroll view with a fixed frame: content-dependent sizes here feed back into the
-        // split view's column constraints and can loop the layout.
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 if changes.isEmpty {
@@ -77,7 +75,6 @@ struct ChangesInspector: View {
             .padding(14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .inspectorColumnWidth(min: 300, ideal: 400, max: 640)
     }
 }
 
