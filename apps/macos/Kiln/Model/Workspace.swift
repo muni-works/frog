@@ -115,7 +115,8 @@ final class Workspace {
         case .acceptEdits: ["--accept-edits"]
         default: []
         }
-        let c = Conversation(folder: folder, arguments: arguments + modeFlag, model: preferredModel)
+        let computerUse = UserDefaults.standard.bool(forKey: "computerUse") ? ["--computer-use"] : []
+        let c = Conversation(folder: folder, arguments: arguments + modeFlag + computerUse, model: preferredModel)
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID

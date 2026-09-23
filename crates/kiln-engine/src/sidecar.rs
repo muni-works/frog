@@ -32,6 +32,25 @@ const APPLE_KIND: Kind = Kind {
     port: 8912,
 };
 
+const DESKTOP: Kind = Kind {
+    bin: "kiln-desktop",
+    env: "KILN_DESKTOP_BIN",
+    port: 0,
+};
+
+/// The computer-use MCP server, if it's bundled, configured or on `PATH`.
+pub fn desktop() -> Option<PathBuf> {
+    let bin = binary(&DESKTOP);
+    if bin.is_absolute() {
+        return bin.exists().then_some(bin);
+    }
+    std::env::var_os("PATH").and_then(|p| {
+        std::env::split_paths(&p)
+            .map(|d| d.join(&bin))
+            .find(|c| c.exists())
+    })
+}
+
 fn kind(model: &str) -> &'static Kind {
     if model == APPLE { &APPLE_KIND } else { &TANG }
 }

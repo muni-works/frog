@@ -49,6 +49,9 @@ struct Cli {
     /// Confine file writes (including shell commands, on macOS) to the working directory.
     #[arg(long)]
     sandbox: bool,
+    /// Let the agent see and drive macOS apps (computer use, via the kiln-desktop sidecar).
+    #[arg(long)]
+    computer_use: bool,
     /// Undo a turn and everything after it: restore the files kiln edited and branch the
     /// conversation from just before `<id>@<turn>`. With --json, print the result and exit.
     #[arg(long, value_name = "ID@TURN", conflicts_with_all = ["cont", "resume", "fork"])]
@@ -133,7 +136,8 @@ async fn run() -> Result<bool> {
         replay::run(spec, cli.speed, cli.replay_ask).await?;
         return Ok(true);
     }
-    let cfg = Config::load()?;
+    let mut cfg = Config::load()?;
+    cfg.computer_use |= cli.computer_use;
     if cli.models {
         return list_models(&cfg, cli.json).await;
     }
@@ -161,7 +165,7 @@ async fn run() -> Result<bool> {
         return Ok(true);
     }
     if cli.mcp {
-        let servers = kiln_engine::mcp::configured(&cfg.mcp_servers, &cwd);
+        let servers = kiln_engine::mcp::configured(&cfg, &cwd);
         let hub =
             kiln_engine::mcp::Hub::connect(servers, kiln_engine::mcp::Host::headless(&cwd)).await;
         let status = hub.status();
@@ -255,6 +259,7 @@ async fn run() -> Result<bool> {
         store: Some(store),
         sandbox: cli.sandbox,
         rich: cli.rich,
+        subagent: false,
     })?;
 
     let mut prompt = cli.prompt.join(" ");

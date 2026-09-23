@@ -129,6 +129,17 @@ headers = { Authorization = "Bearer ${DOCS_TOKEN}" }
   - MCP Apps (`ui://` resources) run inline, e.g. vcad's 3D viewer. An app can call tools only on its own server.
 - MCP is opt-in. Bash alone is often cheaper.
 
+**Subagents.** `Task` hands a self-contained investigation to a subagent: a child engine with its own context and read-only tools (Read, Grep, Glob, CodeMap).
+- Only its final report comes back, so a search through many files costs the parent a few hundred tokens.
+- Its steps stream live into the parent's tool card.
+- Interrupting the parent stops the child.
+
+**Computer use.** Turn it on with `computer_use = true` in `config.toml`, `--computer-use`, or Settings › Permissions in the Mac app. kiln then starts the bundled `kiln-desktop` MCP server.
+- **How it sees:** it reads an app's window through Accessibility as a list of indexed elements, and shows you a screenshot.
+- **How it acts:** it presses and types into elements by index, which usually works without taking over your screen. Coordinates and keystrokes are the fallback.
+- **Checking its work:** every action returns the refreshed list and how much changed, so the model can tell whether it worked.
+- **Guardrails:** every action asks permission, and it never types into password fields.
+
 ## Diagrams
 
 The agent draws when a picture explains better than prose: architecture, data flow, a request's path through the code, or the order of calls between parts.

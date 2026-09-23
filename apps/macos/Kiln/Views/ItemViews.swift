@@ -113,6 +113,9 @@ enum ToolIcon {
         case "TodoWrite": "checklist"
         case "Diagram": "point.3.connected.trianglepath.dotted"
         case "CodeMap": "map"
+        case "Task": "person.2"
+        case "McpTools": "puzzlepiece.extension"
+        case let n where n.hasPrefix("mcp__desktop__"): "macwindow.and.cursorarrow"
         case let n where n.hasPrefix("mcp__"): "puzzlepiece.extension"
         default: "wrench.and.screwdriver"
         }
@@ -121,6 +124,7 @@ enum ToolIcon {
     /// `mcp__github__list_issues` reads as `github › list_issues`.
     static func title(_ name: String) -> String {
         if name == "!" { return "Shell" }
+        if name == "Task" { return "Subagent" }
         guard name.hasPrefix("mcp__") else { return name }
         let parts = name.dropFirst(5).components(separatedBy: "__")
         return parts.count >= 2 ? "\(parts[0]) › \(parts.dropFirst().joined(separator: "__"))" : String(name.dropFirst(5))
@@ -169,6 +173,12 @@ struct ToolCallView: View {
             if expanded, let result {
                 if let diff = result.diff {
                     DiffView(diff: diff)
+                } else if name == "Task", result.outcome == .ok {
+                    // A subagent's report reads like an answer.
+                    MarkdownView(text: result.display ?? result.output)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
                 } else {
                     TerminalView(text: result.display ?? result.output)
                 }

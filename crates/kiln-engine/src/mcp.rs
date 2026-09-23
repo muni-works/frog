@@ -58,12 +58,19 @@ struct McpJson {
 }
 
 /// Every configured server: config.toml first, then the project's `.mcp.json` (which can't
-/// override a config.toml server of the same name).
-pub fn configured(
-    cfg: &BTreeMap<String, ServerConfig>,
-    cwd: &Path,
-) -> BTreeMap<String, ServerConfig> {
-    let mut all = cfg.clone();
+/// override a config.toml server of the same name), plus `desktop` (computer use) when it's on.
+pub fn configured(cfg: &crate::config::Config, cwd: &Path) -> BTreeMap<String, ServerConfig> {
+    let mut all = cfg.mcp_servers.clone();
+    if cfg.computer_use
+        && let Some(bin) = crate::sidecar::desktop()
+    {
+        all.entry("desktop".into()).or_insert(ServerConfig {
+            command: Some(bin.display().to_string()),
+            enabled: true,
+            trust: true,
+            ..Default::default()
+        });
+    }
     if let Ok(text) = std::fs::read_to_string(cwd.join(".mcp.json"))
         && let Ok(file) = serde_json::from_str::<McpJson>(&text)
     {
@@ -922,8 +929,8 @@ mod tests {
             r#"{"mcpServers": {"fs": {"command": "npx", "args": ["-y", "server-fs"]}, "docs": {"type": "http", "url": "https://example.com/mcp"}, "mine": {"command": "other"}}}"#,
         )
         .unwrap();
-        let mut cfg = BTreeMap::new();
-        cfg.insert(
+        let mut cfg = crate::config::Config::default();
+        cfg.mcp_servers.insert(
             "mine".to_string(),
             ServerConfig {
                 command: Some("kept".into()),

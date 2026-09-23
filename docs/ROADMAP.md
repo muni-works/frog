@@ -85,6 +85,13 @@ The MCP-vs-CLI study found that harnesses using only bash were 5–28x cheaper (
 
 ## 7. Sub-agents for context folding, not role-play
 
+First pass done: `Task` runs a read-only child engine and returns its report. It has a 30-step budget, keeps the loop guard, and interrupting the parent stops the child.
+Next:
+- Work agents in git worktrees that return a diff for review.
+- Forking the tang KV cache so a child starts from the parent's context.
+- Routing each kind of subagent to a suitable model.
+- Running subagents in parallel.
+
 A sub-agent works in its own branch and returns only a summary to the parent. Context-Folding got a 10x smaller context with equal or better results ([2510.11967](https://arxiv.org/abs/2510.11967)). Sub-agents need an `Op::Cancel{id}`, step and token budgets, and detection of repeated calls. opencode had a sub-agent make 364 identical grep calls ([opencode#45442](https://github.com/anomalyco/opencode/issues/45442)). Multi-agent teams by default are not supported by the evidence ([2503.13657](https://arxiv.org/abs/2503.13657), [2609.13890](https://arxiv.org/abs/2609.13890)).
 
 ## 8. `kiln bench`: first pass done (moved up because every other item needs measuring)
@@ -144,3 +151,18 @@ Next:
 - State and ER diagram kinds.
 - Diagrams that update in place across turns, pinned as a card.
 - Hold weak models to the schema with grammar-constrained generation when they call Diagram.
+
+## Computer use
+
+First pass done: the `kiln-desktop` MCP sidecar.
+- It reads windows as Accessibility elements first and uses screenshots as a fallback.
+- Actions go to elements in the background.
+- Every action returns the refreshed element list and how much changed.
+
+Next:
+- A local grounding model (Holo3.1, Apache-2.0, 4B/9B GGUF) so the agent can act in canvas apps that expose no elements.
+- Screenshots for vision-capable models.
+- Recording successful runs and replaying them.
+- LocalLSTC-style subgoal state kept outside the context ([2608.25777](https://arxiv.org/abs/2608.25777)).
+- Running computer use as a subagent.
+- An optional macOS VM sandbox.

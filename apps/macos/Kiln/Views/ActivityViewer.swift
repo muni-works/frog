@@ -78,7 +78,8 @@ struct ActivityViewer: View {
         switch last.kind {
         case .tool(let name, let arg):
             let verb = ["Bash": "Running", "Read": "Reading", "Edit": "Editing", "Write": "Writing",
-                        "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "CodeMap": "Mapping"][name]
+                        "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "CodeMap": "Mapping",
+                        "Task": "Delegating", "McpTools": "Finding tools"][name]
                 ?? ToolIcon.title(name)
             return arg.isEmpty ? verb : "\(verb) \(arg)"
         case .reasoning: return "Thinking"

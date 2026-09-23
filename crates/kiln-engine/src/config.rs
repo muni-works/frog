@@ -107,6 +107,9 @@ pub struct Config {
     /// project's `.mcp.json` adds more.
     #[serde(default)]
     pub mcp_servers: BTreeMap<String, crate::mcp::ServerConfig>,
+    /// Let the agent see and drive macOS apps (the bundled `kiln-desktop` MCP server).
+    #[serde(default)]
+    pub computer_use: bool,
 }
 
 impl Default for Config {

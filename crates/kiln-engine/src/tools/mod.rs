@@ -149,6 +149,8 @@ pub fn kind(name: &str) -> Kind {
         // MCP tools can do anything their server does: ask, like Bash.
         n if n.starts_with("mcp__") => Kind::Exec,
         crate::mcp::SEARCH_TOOL => Kind::Read,
+        // A subagent can only read.
+        crate::subagent::TOOL => Kind::Read,
         _ => Kind::Read,
     }
 }
@@ -182,6 +184,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "Glob" | "Grep" => s("pattern"),
         "Diagram" => s("title"),
         "CodeMap" => s("path"),
+        "Task" => s("description"),
         // MCP: the first string argument is usually the interesting one (a query, a path).
         n if n.starts_with("mcp__") => input
             .as_object()

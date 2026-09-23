@@ -119,6 +119,8 @@ pub struct Options {
     pub sandbox: bool,
     /// The client can answer MCP elicitations and host MCP Apps (the Mac app).
     pub rich: bool,
+    /// Run as a subagent: read-only tools, no MCP, no `Task`, a report at the end.
+    pub subagent: bool,
 }
 
 pub struct Handle {
@@ -303,6 +305,7 @@ struct Agent {
     mode: Mode,
     can_ask: bool,
     rich: bool,
+    subagent: bool,
     store: Option<PathBuf>,
     /// Opened lazily on the first durable write, so idle launches leave no files behind.
     log: Mutex<Option<Log>>,
@@ -393,6 +396,7 @@ impl Agent {
             mode: o.mode,
             can_ask: o.can_ask,
             rich: o.rich,
+            subagent: o.subagent,
             store: o.store,
             log: Mutex::new(log),
             usage: Usage::default(),
@@ -422,6 +426,8 @@ impl Agent {
             // A session that died mid-turn may have dangling tool calls.
             agent.repair();
         }
+        agent.sync_specs();
+        agent.apply_harness();
         Ok(agent)
     }
 
@@ -706,7 +712,12 @@ impl Agent {
         let mut steps = 0;
         let reason = loop {
             steps += 1;
-            if steps > MAX_STEPS {
+            let limit = if self.subagent {
+                crate::subagent::MAX_STEPS
+            } else {
+                MAX_STEPS
+            };
+            if steps > limit {
                 break EndReason::StepLimit;
             }
             if self.mcp.refresh().await {
@@ -786,6 +797,9 @@ impl Agent {
             harness::guidance(self.tier)
         );
         self.system.push_str(&self.mcp.prompt());
+        if self.subagent {
+            self.system.push_str(crate::subagent::PROMPT);
+        }
     }
 
     /// Probe a local model's capabilities the first time it's used under `auto`.
@@ -977,7 +991,10 @@ impl Agent {
     /// Connect the configured MCP servers (config.toml and the project's `.mcp.json`) and add
     /// their tools. Failures and quarantined tools become notices; nothing here is fatal.
     async fn connect_mcp(&mut self) {
-        let servers = crate::mcp::configured(&self.cfg.mcp_servers, &self.root);
+        if self.subagent {
+            return;
+        }
+        let servers = crate::mcp::configured(&self.cfg, &self.root);
         if servers.is_empty() {
             return;
         }
@@ -1027,12 +1044,59 @@ impl Agent {
     /// Built-in tools plus whatever MCP tools are live (and, with many, loaded).
     fn sync_specs(&mut self) {
         let mut specs = tools::specs();
-        specs.extend(self.mcp.specs());
+        if self.subagent {
+            specs.retain(|s| tools::kind(&s.name) == Kind::Read);
+        } else {
+            specs.push(crate::subagent::spec());
+            specs.extend(self.mcp.specs());
+        }
         self.specs = specs;
+    }
+
+    /// `Task`: run a read-only subagent and return its report. Its steps stream as live output.
+    async fn run_task(&mut self, id: &str, input: &Value) -> Result<tools::Output> {
+        if self.subagent {
+            anyhow::bail!("subagents can't start subagents");
+        }
+        let opts = Options {
+            cfg: self.cfg.clone(),
+            profile_name: self.profile_name.clone(),
+            profile: self.profile.clone(),
+            cwd: self.root.clone(),
+            mode: Mode::Default,
+            can_ask: false,
+            resume: None,
+            store: None,
+            sandbox: true,
+            rich: false,
+            subagent: true,
+        };
+        let (events, seq, session, id) = (
+            self.events.clone(),
+            self.seq.clone(),
+            self.session_id.clone(),
+            id.to_string(),
+        );
+        crate::subagent::run(opts, input, move |text| {
+            let seq = seq.fetch_add(1, Ordering::Relaxed) + 1;
+            let _ = events.send(Envelope {
+                seq,
+                session: session.clone(),
+                created: now_ms(),
+                event: Event::ItemDelta {
+                    id: id.clone(),
+                    delta: Delta::Output { text },
+                },
+            });
+        })
+        .await
     }
 
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
     async fn run_tool(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
+        if name == crate::subagent::TOOL {
+            return self.run_task(id, input).await;
+        }
         if self.mcp.handles(name) {
             return self.mcp.call(id, name, input).await;
         }
@@ -1609,6 +1673,7 @@ mod tests {
             store: None,
             sandbox: false,
             rich: false,
+            subagent: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
     }
@@ -1635,6 +1700,7 @@ mod tests {
             store,
             sandbox: false,
             rich: false,
+            subagent: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
     }

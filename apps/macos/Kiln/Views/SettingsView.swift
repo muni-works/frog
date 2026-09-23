@@ -174,6 +174,7 @@ struct SuggestedModelRow: View {
 
 private struct PermissionSettings: View {
     @AppStorage("defaultMode") private var defaultMode = Mode.default.rawValue
+    @AppStorage("computerUse") private var computerUse = false
 
     private var configURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/kiln/config.toml")
@@ -193,6 +194,11 @@ private struct PermissionSettings: View {
                 LabeledContent("Yolo", value: "Everything runs without asking")
             }
             .foregroundStyle(.secondary)
+            Section("Computer use") {
+                Toggle("Let kiln see and use other apps", isOn: $computerUse)
+                Text("kiln reads windows through Accessibility and acts on their buttons and fields, usually without taking over your screen. Every action asks first unless you allow it, and it never types into password fields. New sessions pick this up.")
+                    .foregroundStyle(.secondary)
+            }
             Section("Always-allowed commands") {
                 Text("Command prefixes that never ask (like `cargo check`) live in kiln's config file, shared with the terminal app.")
                     .foregroundStyle(.secondary)
