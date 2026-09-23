@@ -74,9 +74,6 @@ struct ComposerView: View {
                 if let e = workspace.raceError {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
                 }
-                if let s = conversation.status {
-                    ContextRing(status: s)
-                }
                 Button {
                     racing = true
                 } label: {

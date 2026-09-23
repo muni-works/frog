@@ -163,7 +163,16 @@ struct WorkspaceView: View {
         } message: {
             Text("Files kiln edited in that turn go back to how they were, and the conversation continues from just before it. The current session is kept, so you can go back to it.")
         }
+        .onChange(of: workspace.conversation?.busy ?? false, initial: true) { _, busy in
+            DockActivity.shared.set(ObjectIdentifier(workspace), busy: busy)
+        }
+        .onDisappear { DockActivity.shared.set(ObjectIdentifier(workspace), busy: false) }
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                if let c = workspace.conversation, workspace.race == nil {
+                    ActivityViewer(conversation: c)
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Commands", systemImage: "command") { ui.paletteShown.toggle() }
                     .help("Command Palette (⌘K)")
@@ -323,7 +332,7 @@ extension WorkspaceView {
                     .padding(.trailing, insets.trailing)
             }
             .navigationTitle(workspace.name)
-            .navigationSubtitle(conversation.title ?? conversation.status?.model ?? "")
+            .navigationSubtitle(conversation.title ?? "New session")
         }
     }
 }
