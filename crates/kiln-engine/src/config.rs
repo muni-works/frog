@@ -110,6 +110,10 @@ pub struct Config {
     /// Let the agent see and drive macOS apps (the bundled `kiln-desktop` MCP server).
     #[serde(default)]
     pub computer_use: bool,
+    /// Run shell commands in a sandbox (writes only in the project, credentials hidden), so
+    /// they run without asking. Set false to have every command ask instead.
+    #[serde(default = "default_true")]
+    pub sandbox_shell: bool,
 }
 
 impl Default for Config {

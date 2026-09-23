@@ -175,6 +175,7 @@ struct SuggestedModelRow: View {
 private struct PermissionSettings: View {
     @AppStorage("defaultMode") private var defaultMode = Mode.default.rawValue
     @AppStorage("computerUse") private var computerUse = false
+    @AppStorage("sandboxShell") private var sandboxShell = true
 
     private var configURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/kiln/config.toml")
@@ -189,11 +190,16 @@ private struct PermissionSettings: View {
             }
             .pickerStyle(.radioGroup)
             Section {
-                LabeledContent("Ask", value: "Every edit and command asks first")
+                LabeledContent("Ask", value: sandboxShell ? "Edits, and commands leaving the sandbox, ask first" : "Every edit and command asks first")
                 LabeledContent("Accept Edits", value: "File edits are allowed; commands still ask")
                 LabeledContent("Yolo", value: "Everything runs without asking")
             }
             .foregroundStyle(.secondary)
+            Section("Sandbox") {
+                Toggle("Run shell commands in a sandbox", isOn: $sandboxShell)
+                Text("Sandboxed commands can write only inside the project, temp folders and toolchain caches, and can't read credentials like ~/.ssh or ~/.aws, so they run without asking. A command that needs more asks first. Network access works either way. New sessions pick this up.")
+                    .foregroundStyle(.secondary)
+            }
             Section("Computer use") {
                 Toggle("Let kiln see and use other apps", isOn: $computerUse)
                 Text("kiln reads windows through Accessibility and acts on their buttons and fields, usually without taking over your screen. Every action asks first unless you allow it, and it never types into password fields. New sessions pick this up.")

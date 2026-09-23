@@ -53,6 +53,9 @@ struct Cli {
     /// Speak the Agent Client Protocol on stdio, for editors (Zed, JetBrains, Neovim).
     #[arg(long, conflicts_with_all = ["print", "serve"])]
     acp: bool,
+    /// Don't sandbox shell commands; every command asks instead (unless allowed or --yolo).
+    #[arg(long)]
+    no_shell_sandbox: bool,
     /// A plain chat, not tied to a project: no file or shell tools.
     #[arg(long)]
     chat: bool,
@@ -154,6 +157,9 @@ async fn run() -> Result<bool> {
     }
     let mut cfg = Config::load()?;
     cfg.computer_use |= cli.computer_use;
+    if cli.no_shell_sandbox {
+        cfg.sandbox_shell = false;
+    }
     if cli.models {
         return list_models(&cfg, cli.json).await;
     }

@@ -137,7 +137,9 @@ final class Workspace {
         }
         let computerUse = UserDefaults.standard.bool(forKey: "computerUse") ? ["--computer-use"] : []
         let chat = isChat ? ["--chat"] : []
-        let c = Conversation(folder: folder, arguments: arguments + modeFlag + computerUse + chat, model: preferredModel)
+        let sandbox = UserDefaults.standard.object(forKey: "sandboxShell") as? Bool ?? true
+        let noSandbox = sandbox ? [] : ["--no-shell-sandbox"]
+        let c = Conversation(folder: folder, arguments: arguments + modeFlag + computerUse + chat + noSandbox, model: preferredModel)
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID

@@ -397,6 +397,7 @@ impl Agent {
         } else {
             crate::skills::discover(&o.cwd)
         };
+        let shell_sandbox = o.cfg.sandbox_shell && tools::bash::available() && !o.chat;
         let window = o.profile.context_window();
         let resumed = o.resume.is_some();
         let mut agent = Self {
@@ -409,6 +410,10 @@ impl Agent {
                 let mut ctx = Ctx::new(o.cwd.clone());
                 if o.sandbox {
                     ctx.sandbox = Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
+                }
+                if shell_sandbox {
+                    ctx.shell_sandbox =
+                        Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
                 }
                 ctx
             },
@@ -1431,14 +1436,21 @@ Don't repeat it. Change the arguments or try a different approach.",
         let cmd = input["command"].as_str().unwrap_or("").trim();
         let prefix = cmd.split_whitespace().next().unwrap_or("").to_string();
         let mcp = name.starts_with("mcp__");
+        // A sandboxed command can only write inside the project and can't read credentials,
+        // so it runs without asking; leaving the sandbox always asks.
+        let leaves_sandbox = name == "Bash" && input["unsandboxed"].as_bool() == Some(true);
+        if name == "Bash" && self.ctx.shell_sandbox.is_some() && !leaves_sandbox {
+            return Decision::Allow;
+        }
         let key = match kind {
             Kind::Edit => "edits".to_string(),
             _ if mcp => format!("mcp:{name}"),
+            _ if leaves_sandbox => format!("bash-unsandboxed:{prefix}"),
             _ => format!("bash:{prefix}"),
         };
         let auto = match kind {
             Kind::Edit => self.mode == Mode::AcceptEdits,
-            _ if mcp => false,
+            _ if mcp || leaves_sandbox => false,
             _ => bash_allowed(cmd, &self.cfg.allow_bash),
         };
         if auto || self.session_allow.contains(&key) {
@@ -1456,8 +1468,15 @@ Don't repeat it. Change the arguments or try a different approach.",
                     .replacen("__", " › ", 1);
                 format!("always allow {pretty} this session")
             }
+            _ if leaves_sandbox => {
+                format!("always allow `{prefix}` outside the sandbox this session")
+            }
             _ => format!("always allow `{prefix}` this session"),
         };
+        let reason = leaves_sandbox.then(|| {
+            "Runs outside the sandbox: it can change files anywhere and read your credentials."
+                .to_string()
+        });
         let id = new_id();
         let (tx, rx) = oneshot::channel();
         self.shared.pending.lock().unwrap().insert(id.clone(), tx);
@@ -1469,6 +1488,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             arg: arg.into(),
             always,
             preview,
+            reason,
         });
         let decision = rx.await.unwrap_or(Decision::Deny);
         self.emit(Event::PermissionResolved { id, decision });
@@ -1839,10 +1859,11 @@ mod tests {
 
     #[tokio::test]
     async fn headless_denial_is_reported_and_turn_continues() {
+        // Leaving the sandbox always asks, so headless it's denied (sandboxed commands run).
         let call = Block::ToolUse {
             id: "t1".into(),
             name: "Bash".into(),
-            input: json!({ "command": "touch nope" }),
+            input: json!({ "command": "touch nope", "unsandboxed": true }),
         };
         let mut h = engine(
             vec![

@@ -342,9 +342,14 @@ struct PermissionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
+                Image(systemName: request.reason == nil ? "hand.raised.fill" : "lock.open.fill").foregroundStyle(.orange)
                 Text(title).fontWeight(.semibold)
                 Spacer()
+            }
+            if let reason = request.reason {
+                Text(reason)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
             if let diff = request.preview {
                 DiffView(diff: diff, maxLines: 40)
@@ -385,7 +390,7 @@ struct PermissionCard: View {
         case "Write": request.preview?.created == true
             ? "Allow creating \((request.arg as NSString).lastPathComponent)?"
             : "Allow rewriting \((request.arg as NSString).lastPathComponent)?"
-        case "Bash": "Allow this command?"
+        case "Bash": request.reason == nil ? "Allow this command?" : "Allow this command outside the sandbox?"
         case let n where n.hasPrefix("mcp__"): "Allow \(ToolIcon.title(n))?"
         default: "Allow \(request.name)?"
         }

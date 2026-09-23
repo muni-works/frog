@@ -80,7 +80,7 @@ The MCP-vs-CLI study found that harnesses using only bash were 5–28x cheaper (
 ## 6. Security
 
 - **Enforce at dispatch, in deterministic code, not in the prompt.** Track where each value came from, and only let values from trusted sources flow into tools with side effects ([2503.18813](https://arxiv.org/abs/2503.18813), [2608.27496](https://arxiv.org/abs/2608.27496), [2607.24625](https://arxiv.org/abs/2607.24625)).
-- **Add an OS sandbox,** using seatbelt on macOS and bubblewrap on Linux (the codex-rs approach). Matching command strings is not a security boundary ([opencode#49948](https://github.com/anomalyco/opencode/issues/49948)).
+- **Add an OS sandbox,** using seatbelt on macOS and bubblewrap on Linux (the codex-rs approach). Matching command strings is not a security boundary ([opencode#49948](https://github.com/anomalyco/opencode/issues/49948)). macOS is done: Bash is sandboxed by default. It can write only to the project, temp folders and toolchain caches, and credentials are unreadable. Sandboxed commands run without asking, and leaving the sandbox (`unsandboxed: true`) always asks. Linux (bubblewrap) is next.
 - **Quarantine suspicious MCP tool descriptions** ([2606.20922](https://arxiv.org/abs/2606.20922)). Done: descriptions that look like injection, or that hide Unicode, are withheld unless the server has `trust = true`.
 
 ## 7. Sub-agents for context folding, not role-play

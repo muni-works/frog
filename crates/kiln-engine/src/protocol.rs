@@ -188,6 +188,9 @@ pub enum Event {
         /// For Edit/Write: exactly what would change, computed without touching the file.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         preview: Option<FileDiff>,
+        /// Why this one asks when similar calls don't (e.g. a command leaving the sandbox).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     /// An MCP server asks the user for input mid-call: a form (`schema`, a flat JSON Schema
     /// object) or a URL to open. Reply with [`Op::Elicit`].

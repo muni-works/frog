@@ -7,20 +7,33 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 
 pub fn spec() -> ToolSpec {
+    let mut description = String::from(
+        "Run a shell command and return its combined stdout/stderr. The working directory persists \
+between calls (cd works). Use for builds, tests, git, and other terminal operations. Prefer Read/Edit/Glob/Grep \
+over cat/sed/find/grep. Avoid interactive commands; they will hang until the timeout.",
+    );
+    let mut props = json!({
+        "command": { "type": "string", "description": "The command to run" },
+        "timeout": { "type": "integer", "description": "Timeout in milliseconds (default 120000, max 600000)" }
+    });
+    if available() {
+        description.push_str(" Commands run in a sandbox: they can write only inside the project, temp folders and toolchain caches, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
+        props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox. Asks the user first; use only when the sandbox blocked something the task needs." });
+    }
     ToolSpec {
         name: "Bash".into(),
-        description: "Run a shell command and return its combined stdout/stderr. The working directory persists \
-between calls (cd works). Use for builds, tests, git, and other terminal operations. Prefer Read/Edit/Glob/Grep \
-over cat/sed/find/grep. Avoid interactive commands; they will hang until the timeout.".into(),
+        description: description.into(),
         schema: json!({
             "type": "object",
-            "properties": {
-                "command": { "type": "string", "description": "The command to run" },
-                "timeout": { "type": "integer", "description": "Timeout in milliseconds (default 120000, max 600000)" }
-            },
+            "properties": props,
             "required": ["command"]
         }),
     }
+}
+
+/// Whether Bash can be sandboxed here (macOS seatbelt, for now).
+pub fn available() -> bool {
+    cfg!(target_os = "macos") && std::path::Path::new("/usr/bin/sandbox-exec").exists()
 }
 
 /// Kills the whole process group if the command is cancelled or times out.
@@ -52,7 +65,14 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .filter(|s| s.ends_with("zsh") || s.ends_with("bash"))
         .unwrap_or("/bin/bash".into());
 
-    let mut command = match &ctx.sandbox {
+    // `--sandbox` (strict, for the bench) always applies; the everyday sandbox yields to an
+    // explicit (and user-approved) `unsandboxed` call.
+    let unsandboxed = input["unsandboxed"].as_bool() == Some(true);
+    let jail = ctx
+        .sandbox
+        .clone()
+        .or_else(|| (!unsandboxed).then(|| ctx.shell_sandbox.clone()).flatten());
+    let mut command = match &jail {
         None => tokio::process::Command::new(shell),
         Some(root) => sandboxed(root, &shell)?,
     };
@@ -134,6 +154,10 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             text
         }
     };
+    let mut raw = raw;
+    if jail.is_some() && blocked(&raw) {
+        raw.push_str("\n(This ran in kiln's sandbox, which allows writes only inside the project, temp folders and toolchain caches, and hides credentials. If the command genuinely needs more, run it again with unsandboxed: true; the user will be asked.)");
+    }
     let plain = strip_ansi(&raw);
     let display = (plain != raw).then(|| finish(raw.clone()));
     Ok(Output {
@@ -145,8 +169,67 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     })
 }
 
-/// Wrap the shell in macOS seatbelt: everything allowed except file writes outside the
-/// workspace and temp dirs. Fails closed on other platforms until bubblewrap support lands.
+/// Output that looks like the sandbox got in the way.
+fn blocked(out: &str) -> bool {
+    out.contains("Operation not permitted") && out.contains("exit code")
+        || out.contains("Read-only file system")
+        || out.contains("deny(1) file-")
+}
+
+/// Toolchain caches that builds write to (a `cargo build` locks ~/.cargo, npm keeps ~/.npm):
+/// low-risk, and builds break without them.
+const CACHES: &[&str] = &[
+    ".cargo",
+    ".rustup",
+    ".npm",
+    ".cache",
+    "Library/Caches",
+    "go",
+    ".gradle",
+    ".m2",
+    ".bun",
+    ".pnpm-store",
+    "Library/pnpm",
+    ".yarn",
+    ".nuget",
+    ".swiftpm",
+    "Library/Developer/Xcode/DerivedData",
+    ".gem",
+    ".local/share/pnpm",
+    ".deno",
+    ".elan",
+    ".opam",
+    ".stack",
+    ".cabal",
+    ".mix",
+    ".hex",
+];
+
+/// Credentials a sandboxed command can't read, so a prompt-injected command can't read them
+/// and send them over the network.
+const SECRETS: &[&str] = &[
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".netrc",
+    ".docker/config.json",
+    ".kube",
+    ".config/gh",
+    ".config/gcloud",
+    ".azure",
+    ".password-store",
+    "Library/Keychains",
+    ".config/kiln",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    ".config/op",
+    ".vault-token",
+];
+
+/// Wrap the shell in macOS seatbelt: writes only inside the workspace, temp dirs and toolchain
+/// caches, credentials unreadable, everything else (including network) allowed. Fails closed
+/// on other platforms until bubblewrap support lands.
 fn sandboxed(root: &std::path::Path, shell: &str) -> Result<tokio::process::Command> {
     if !cfg!(target_os = "macos") {
         bail!("the Bash sandbox is only implemented on macOS so far");
@@ -160,6 +243,16 @@ fn sandboxed(root: &std::path::Path, shell: &str) -> Result<tokio::process::Comm
             .replace('\\', "\\\\")
             .replace('"', "\\\"")
     };
+    let home = dirs::home_dir().unwrap_or_default();
+    let home = home.canonicalize().unwrap_or(home);
+    let caches: String = CACHES
+        .iter()
+        .map(|c| format!("\n  (subpath \"{}\")", quote(&home.join(c))))
+        .collect();
+    let secrets: String = SECRETS
+        .iter()
+        .map(|c| format!("\n  (subpath \"{}\")", quote(&home.join(c))))
+        .collect();
     let profile = format!(
         r#"(version 1)
 (allow default)
@@ -171,7 +264,8 @@ fn sandboxed(root: &std::path::Path, shell: &str) -> Result<tokio::process::Comm
   (subpath "/private/var/folders")
   (literal "/dev/null")
   (literal "/dev/tty")
-  (regex #"^/dev/fd/"))"#,
+  (regex #"^/dev/fd/"){caches})
+(deny file-read* file-write*{secrets})"#,
         quote(root),
         quote(&tmp)
     );
@@ -205,6 +299,22 @@ mod tests {
         let escaped = escape.exists();
         let _ = std::fs::remove_file(&escape);
         assert!(!escaped, "sandbox let a write escape the workspace");
+
+        // Credentials are hidden, even for reading.
+        let ssh = dirs::home_dir().unwrap().join(".ssh");
+        if ssh.is_dir() {
+            let out = run(
+                &json!({ "command": format!("ls '{}'", ssh.display()) }),
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+            assert!(
+                out.content.contains("Operation not permitted"),
+                "{}",
+                out.content
+            );
+        }
         assert!(out.content.contains("exit code"), "{}", out.content);
     }
 }

@@ -19,6 +19,9 @@ pub struct Ctx {
     /// When set, writes (Write/Edit, and Bash on macOS via sandbox-exec) are confined to this
     /// directory and the system temp dirs. Canonical path.
     pub sandbox: Option<PathBuf>,
+    /// Run Bash sandboxed by default (writes confined to this project, temp and toolchain
+    /// caches; credentials unreadable), unless a call asks for `unsandboxed`. Canonical path.
+    pub shell_sandbox: Option<PathBuf>,
     /// Live output from the running tool, if someone is listening.
     pub progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 }
@@ -30,6 +33,7 @@ impl Ctx {
             read_files: HashMap::new(),
             todos: Vec::new(),
             sandbox: None,
+            shell_sandbox: None,
             progress: None,
         }
     }

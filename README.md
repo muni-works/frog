@@ -266,6 +266,13 @@ cargo run -p kiln-bench -- report ~/.local/share/kiln/bench/<timestamp>/results.
 
 `default` asks before edits and shell commands. `accept-edits` lets edits through without asking. `yolo` never asks. **shift+tab** cycles the mode. Read-only commands such as `ls`, `git status`, and `rg` run without asking, as long as they don't include pipes or redirects.
 
+
+**Sandbox.** On macOS, shell commands run in a seatbelt sandbox by default.
+- **What it limits:** a command can write only inside the project, temp folders and toolchain caches (`~/.cargo`, `~/.npm`, …). It can't read credentials (`~/.ssh`, `~/.aws`, `~/.gnupg`, keychains, …), so a prompt-injected command can't send them anywhere. Network access works.
+- **No prompts:** because of those limits, sandboxed commands run without asking, even in Ask mode.
+- **Leaving it:** when a command genuinely needs more (say, `git push` over ssh), the model runs it again with `unsandboxed: true`. That always asks, and the prompt says why.
+- **Turning it off:** set `sandbox_shell = false` in `config.toml`, pass `--no-shell-sandbox`, or use Settings › Permissions. Every command then asks, as before.
+
 ## REPL
 
 - `/model` `/mode` `/compact` `/clear` `/context` `/todos` `/exit`

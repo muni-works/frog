@@ -304,6 +304,8 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
     var always: String
     /// For Edit/Write: exactly what would change.
     var preview: FileDiff?
+    /// Why this one asks when similar calls don't (a command leaving the sandbox).
+    var reason: String?
 }
 
 enum Event: Decodable, Sendable {
