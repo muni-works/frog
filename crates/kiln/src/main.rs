@@ -1,3 +1,4 @@
+mod acp;
 mod headless;
 mod render;
 mod replay;
@@ -49,6 +50,9 @@ struct Cli {
     /// Confine file writes (including shell commands, on macOS) to the working directory.
     #[arg(long)]
     sandbox: bool,
+    /// Speak the Agent Client Protocol on stdio, for editors (Zed, JetBrains, Neovim).
+    #[arg(long, conflicts_with_all = ["print", "serve"])]
+    acp: bool,
     /// List the Agent Skills this folder sees (with --json for JSON).
     #[arg(long)]
     skills: bool,
@@ -293,6 +297,10 @@ async fn run() -> Result<bool> {
         (_, true) => Mode::AcceptEdits,
         _ => Mode::Default,
     };
+    if cli.acp {
+        acp::serve(cfg.clone(), profile_name, profile, store, cli.sandbox).await?;
+        return Ok(true);
+    }
     let handle = kiln_engine::spawn(Options {
         cfg: cfg.clone(),
         profile_name,

@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+agent-client-protocol-schema = { version = "1.9", default-features = false }
+serde = { workspace = true }
 kiln-engine.workspace = true
 anyhow.workspace = true
 chrono.workspace = true

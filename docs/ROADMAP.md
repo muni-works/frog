@@ -69,7 +69,7 @@ Still to do:
 | | verdict |
 |---|---|
 | MCP client (2026-07-28 spec, rmcp 3.x; also accept 2025-11-25 servers) | done |
-| ACP adapter (`kiln-acp`) for Zed, JetBrains, and Neovim | must |
+| ACP adapter (`kiln --acp`, v1) for Zed, JetBrains, and Neovim | done |
 | Agent Skills (`SKILL.md`), loaded progressively | done |
 | AGENTS.md | done |
 | OpenTelemetry GenAI spans (behind a feature flag) | nice |

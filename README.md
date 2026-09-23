@@ -153,6 +153,23 @@ Starting a message with `/skill-name` loads that skill directly; the Mac app aut
 - **Checking its work:** every action returns the refreshed list and how much changed, so the model can tell whether it worked.
 - **Guardrails:** every action asks permission, and it never types into password fields.
 
+## Editors (ACP)
+
+`kiln --acp` makes kiln an [Agent Client Protocol](https://agentclientprotocol.com) agent, so it runs inside Zed, JetBrains IDEs and Neovim (CodeCompanion, avante). In Zed's `settings.json`:
+
+```json
+"agent_servers": {
+  "kiln": { "command": "kiln", "args": ["--acp", "-m", "tang/Qwen/Qwen3-4B"] }
+}
+```
+
+What the editor gets:
+- **Sessions:** each ACP session is a kiln session, saved like any other.
+- **Live output:** answers and thinking stream, and tool calls show up with their kind and the file they touch. Edits come back as diffs, and the todo list as the plan.
+- **Permissions:** kiln's prompts become the editor's permission dialog (allow, always allow, deny).
+- **Modes:** Ask, Accept Edits and Yolo are session modes.
+- **MCP:** servers the editor passes in are added to kiln's own.
+
 ## Diagrams
 
 The agent draws when a picture explains better than prose: architecture, data flow, a request's path through the code, or the order of calls between parts.
