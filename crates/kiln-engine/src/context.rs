@@ -60,6 +60,8 @@ pub fn block_chars(b: &Block) -> usize {
         Block::Text { text } | Block::Thinking { text, .. } => text.len(),
         Block::ToolUse { name, input, .. } => name.len() + input.to_string().len(),
         Block::ToolResult { content, .. } => content.len(),
+        // What a model is charged for an image (~1.5k tokens), not its base64 size.
+        Block::Image { .. } => 6_000,
     }
 }
 

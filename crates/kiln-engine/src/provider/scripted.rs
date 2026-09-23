@@ -29,7 +29,7 @@ impl Client {
                 Block::Thinking { text, .. } => on(StreamEvent::Thinking(text.clone())),
                 Block::Text { text } => on(StreamEvent::Text(text.clone())),
                 Block::ToolUse { name, .. } => on(StreamEvent::ToolCall(name.clone())),
-                Block::ToolResult { .. } => {}
+                Block::ToolResult { .. } | Block::Image { .. } => {}
             }
         }
         Ok(r)

@@ -347,6 +347,8 @@ struct Agent {
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
     skills_loaded: HashSet<String>,
+    /// The model can see images (probed, or `vision` in the profile).
+    vision: bool,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
     session_allow: HashSet<String>,
@@ -447,6 +449,7 @@ impl Agent {
             skills,
             skills_loaded: HashSet::new(),
             classifier: None,
+            vision: false,
             session_allow: HashSet::new(),
             pending: Vec::new(),
             events,
@@ -570,6 +573,7 @@ impl Agent {
             tier: self.tier,
             tokens_per_sec: self.tokens_per_sec(),
             todos: self.ctx.todos.clone(),
+            vision: self.vision,
         }));
     }
 
@@ -609,7 +613,7 @@ impl Agent {
 
     async fn handle(&mut self, op: Op) -> Result<()> {
         match op {
-            Op::Submit { text } => self.turn(&text).await?,
+            Op::Submit { text, images } => self.turn(&text, images).await?,
             Op::Shell { command } => self.shell(&command).await,
             Op::SetMode { mode } => {
                 self.mode = mode;
@@ -718,12 +722,13 @@ impl Agent {
         }
     }
 
-    async fn turn(&mut self, input: &str) -> Result<()> {
+    async fn turn(&mut self, input: &str, images: Vec<crate::protocol::Image>) -> Result<()> {
         self.turn += 1;
         let turn = self.turn;
         self.emit(Event::TurnStarted {
             turn,
             input: input.to_string(),
+            images: images.clone(),
         });
         self.active_turn = Some(turn);
         self.inputs.push(input.to_string());
@@ -746,6 +751,17 @@ impl Agent {
         };
         text.push_str(&self.expand_mentions(&input));
         self.push_user(text);
+        if !images.is_empty() {
+            self.extend_last(
+                images
+                    .into_iter()
+                    .map(|i| Block::Image {
+                        mime: i.mime,
+                        data: i.data,
+                    })
+                    .collect(),
+            );
+        }
 
         let mut compacted = false;
         let mut repeats: HashMap<String, u32> = HashMap::new();
@@ -928,6 +944,10 @@ impl Agent {
                 self.notice(Level::Warn, format!("{e:#}"));
             }
         }
+        self.vision = match self.profile.vision {
+            Some(v) => v,
+            None => self.provider.supports_vision().await.unwrap_or(false),
+        };
         let configured = self.profile.context_window;
         let probed = self.provider.probe_context().await;
         self.window = match (configured, probed) {
@@ -1278,6 +1298,20 @@ Don't repeat it. Change the arguments or try a different approach.",
                 content: output.clone(),
                 is_error: outcome != ToolOutcome::Ok,
             }]);
+            // Images a tool returned (a render, a screenshot) go to the model too, after the
+            // results; `prepare_images` decides per request whether it gets to see them.
+            let seen: Vec<Block> = out
+                .images
+                .iter()
+                .take(2)
+                .map(|i| Block::Image {
+                    mime: i.mime.clone(),
+                    data: i.data.clone(),
+                })
+                .collect();
+            if !seen.is_empty() {
+                self.extend_last(seen);
+            }
             self.emit(Event::ItemCompleted {
                 id,
                 item: Item::ToolCall {
@@ -1303,6 +1337,53 @@ Don't repeat it. Change the arguments or try a different approach.",
         })
     }
 
+    /// Images as the model should get them: the last few as images for a model that can see,
+    /// the rest (and all of them, for one that can't) as a short note. `None` when there are
+    /// no images to change.
+    fn prepare_images(&self, messages: &[Message]) -> Option<Vec<Message>> {
+        const KEEP: usize = 3;
+        let total = messages
+            .iter()
+            .flat_map(|m| &m.content)
+            .filter(|b| matches!(b, Block::Image { .. }))
+            .count();
+        let keep = if self.vision { KEEP } else { 0 };
+        if total <= keep {
+            return None;
+        }
+        let mut seen = 0;
+        let out = messages
+            .iter()
+            .map(|m| Message {
+                role: m.role,
+                content: m
+                    .content
+                    .iter()
+                    .map(|b| match b {
+                        Block::Image { mime, .. } => {
+                            seen += 1;
+                            if seen > total - keep {
+                                b.clone()
+                            } else if self.vision {
+                                Block::Text {
+                                    text: format!("[earlier {mime} image omitted to save context]"),
+                                }
+                            } else {
+                                Block::Text {
+                                    text: format!(
+                                        "[{mime} image attached; this model can't see images]"
+                                    ),
+                                }
+                            }
+                        }
+                        other => other.clone(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        Some(out)
+    }
+
     /// One model request. Streams item events (unless `quiet`) and retries transient errors
     /// that happen before anything streamed.
     async fn call(
@@ -1312,6 +1393,8 @@ Don't repeat it. Change the arguments or try a different approach.",
         quiet: bool,
     ) -> Result<(Response, Streamed)> {
         let json_mode = self.tool_mode == ToolMode::Json;
+        let with_images = self.prepare_images(messages);
+        let messages = with_images.as_deref().unwrap_or(messages);
         let converted;
         let schema;
         let (system, messages, tools, format) = match self.tool_mode {
@@ -1854,6 +1937,7 @@ mod tests {
         h.ops
             .send(Op::Submit {
                 text: prompt.into(),
+                images: Vec::new(),
             })
             .unwrap();
         let mut out = Vec::new();
@@ -2068,6 +2152,7 @@ mod tests {
         h.ops
             .send(Op::Submit {
                 text: "more".into(),
+                images: Vec::new(),
             })
             .unwrap();
         let second = until_idle(&mut h).await;
@@ -2365,6 +2450,7 @@ mod tests {
         h.ops
             .send(Op::Submit {
                 text: "fix add".into(),
+                images: Vec::new(),
             })
             .unwrap();
         let preview = loop {
@@ -2427,12 +2513,14 @@ mod tests {
         h.ops
             .send(Op::Submit {
                 text: "create notes".into(),
+                images: Vec::new(),
             })
             .unwrap();
         until_idle(&mut h).await;
         h.ops
             .send(Op::Submit {
                 text: "bump notes".into(),
+                images: Vec::new(),
             })
             .unwrap();
         until_idle(&mut h).await;
@@ -2493,6 +2581,7 @@ mod tests {
         h.ops
             .send(Op::Submit {
                 text: "make a mess".into(),
+                images: Vec::new(),
             })
             .unwrap();
         until_idle(&mut h).await;

@@ -40,7 +40,7 @@ enum Decision: String, Codable, Sendable {
 }
 
 enum Op: Encodable, Sendable {
-    case submit(String)
+    case submit(String, images: [ToolImage] = [])
     case shell(String)
     case interrupt
     case permission(id: String, decision: Decision)
@@ -60,15 +60,16 @@ enum Op: Encodable, Sendable {
 
     private enum Key: String, CodingKey {
         case op, text, command, id, decision, mode, spec, focus, after, title
-        case action, content, server, tool, arguments
+        case action, content, server, tool, arguments, images
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         switch self {
-        case .submit(let text):
+        case .submit(let text, let images):
             try c.encode("submit", forKey: .op)
             try c.encode(text, forKey: .text)
+            if !images.isEmpty { try c.encode(images, forKey: .images) }
         case .shell(let command):
             try c.encode("shell", forKey: .op)
             try c.encode(command, forKey: .command)
@@ -133,6 +134,8 @@ struct Status: Decodable, Sendable {
     var tier: String
     var tokensPerSec: Double?
     var todos: [Todo]
+    /// The model can see images.
+    var vision: Bool?
 }
 
 struct TurnUsage: Decodable, Sendable {
@@ -269,7 +272,7 @@ enum Delta: Decodable, Sendable {
     }
 }
 
-struct ToolImage: Decodable, Sendable, Hashable {
+struct ToolImage: Codable, Sendable, Hashable {
     var mime: String
     /// Base64.
     var data: String
@@ -312,7 +315,7 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
 }
 
 enum Event: Decodable, Sendable {
-    case turnStarted(turn: UInt64, input: String)
+    case turnStarted(turn: UInt64, input: String, images: [ToolImage])
     case turnEnded(turn: UInt64, reason: EndReason, usage: TurnUsage)
     case itemStarted(id: String, kind: ItemKind)
     case itemCompleted(id: String, item: Item)
@@ -364,6 +367,7 @@ extension Event {
         case turn, input, reason, usage, id, kind, item, delta, decision
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title
         case progress, total, result, inner
+            case images
     }
 
     init(from decoder: Decoder) throws {
@@ -371,7 +375,10 @@ extension Event {
         let name = try c.decode(String.self, forKey: .event)
         switch name {
         case "turn_started":
-            self = .turnStarted(turn: try c.decode(UInt64.self, forKey: .turn), input: try c.decode(String.self, forKey: .input))
+            self = .turnStarted(
+                turn: try c.decode(UInt64.self, forKey: .turn),
+                input: try c.decode(String.self, forKey: .input),
+                images: try c.decodeIfPresent([ToolImage].self, forKey: .images) ?? [])
         case "turn_ended":
             self = .turnEnded(
                 turn: try c.decode(UInt64.self, forKey: .turn),

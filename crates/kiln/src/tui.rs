@@ -294,7 +294,10 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
             });
             tui.drain().await
         } else {
-            tui.send(Op::Submit { text: line.into() });
+            tui.send(Op::Submit {
+                text: line.into(),
+                images: Vec::new(),
+            });
             tui.drain().await
         };
         if !alive {

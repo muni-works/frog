@@ -52,22 +52,38 @@ impl Client {
             .and_then(|m| m["max_model_len"].as_u64())
     }
 
+    /// OpenAI's own API (not a compatible server).
+    pub fn is_openai(&self) -> bool {
+        self.base.contains("api.openai.com")
+    }
+
     fn body(&self, req: &Request) -> Value {
         let mut messages = vec![json!({ "role": "system", "content": req.system })];
         for m in req.messages {
             match m.role {
                 Role::User => {
-                    let mut text = Vec::new();
+                    let (mut text, mut images) = (Vec::new(), Vec::new());
                     for b in &m.content {
                         match b {
                             Block::ToolResult { id, content, .. } => messages.push(
                                 json!({ "role": "tool", "tool_call_id": id, "content": content }),
                             ),
                             Block::Text { text: t } => text.push(t.as_str()),
+                            Block::Image { mime, data } => images.push(json!({
+                                "type": "image_url",
+                                "image_url": { "url": format!("data:{mime};base64,{data}") },
+                            })),
                             _ => {}
                         }
                     }
-                    if !text.is_empty() {
+                    if !images.is_empty() {
+                        // Tool messages can't carry images, so they follow as a user message.
+                        let mut parts = vec![
+                            json!({ "type": "text", "text": if text.is_empty() { "(image)".to_string() } else { text.join("\n\n") } }),
+                        ];
+                        parts.extend(images);
+                        messages.push(json!({ "role": "user", "content": parts }));
+                    } else if !text.is_empty() {
                         messages.push(json!({ "role": "user", "content": text.join("\n\n") }));
                     }
                 }
@@ -213,5 +229,52 @@ impl Client {
             usage,
             stop: stop.unwrap_or(Stop::Incomplete),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::Message;
+
+    #[test]
+    fn images_follow_tool_results_as_a_user_message() {
+        let c = Client {
+            http: reqwest::Client::new(),
+            base: "http://localhost:1/v1".into(),
+            model: "m".into(),
+            key: None,
+            extra: None,
+        };
+        let msgs = vec![Message {
+            role: Role::User,
+            content: vec![
+                Block::ToolResult {
+                    id: "t1".into(),
+                    name: "look".into(),
+                    content: "a window".into(),
+                    is_error: false,
+                },
+                Block::Image {
+                    mime: "image/png".into(),
+                    data: "AAAA".into(),
+                },
+            ],
+        }];
+        let req = Request {
+            system: "s",
+            messages: &msgs,
+            tools: &[],
+            max_tokens: None,
+            format: None,
+        };
+        let body = c.body(&req);
+        let m = body["messages"].as_array().unwrap();
+        assert_eq!(m[1]["role"], "tool");
+        assert_eq!(m[2]["role"], "user");
+        assert_eq!(
+            m[2]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,AAAA"
+        );
     }
 }

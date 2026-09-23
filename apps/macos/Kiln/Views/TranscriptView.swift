@@ -79,16 +79,35 @@ struct TranscriptView: View {
 
 struct UserPrompt: View {
     let text: String
+    var images: [ToolImage] = []
 
     var body: some View {
-        Text(text)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(.tint.opacity(0.14), in: .rect(cornerRadius: 16))
-            .frame(maxWidth: 560, alignment: .trailing)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        VStack(alignment: .trailing, spacing: 6) {
+            if !images.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(images, id: \.self) { img in
+                        if let data = Data(base64Encoded: img.data), let ns = NSImage(data: data) {
+                            Image(nsImage: ns)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: images.count == 1 ? 220 : 110, height: images.count == 1 ? 150 : 80)
+                                .clipShape(.rect(cornerRadius: 12))
+                                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+                        }
+                    }
+                }
+            }
+            if !text.isEmpty {
+                Text(text)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.tint.opacity(0.14), in: .rect(cornerRadius: 16))
+            }
+        }
+        .frame(maxWidth: 560, alignment: .trailing)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 

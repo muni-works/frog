@@ -33,6 +33,11 @@ pub enum Block {
         #[serde(default)]
         is_error: bool,
     },
+    /// An image the model can look at (attached by the user, or returned by a tool). Base64.
+    Image {
+        mime: String,
+        data: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

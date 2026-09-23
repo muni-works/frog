@@ -45,6 +45,10 @@ pub struct Profile {
     /// sidecar, started on demand. Implies an OpenAI-compatible provider on its port.
     #[serde(default)]
     pub sidecar: Option<String>,
+    /// Whether the model takes images. Probed when unset (ollama reports it; Anthropic and
+    /// OpenAI's own models do).
+    #[serde(default)]
+    pub vision: Option<bool>,
 }
 
 impl Profile {
@@ -60,6 +64,7 @@ impl Profile {
             tool_mode: ToolMode::Auto,
             extra: None,
             sidecar: None,
+            vision: None,
         }
     }
 

@@ -535,6 +535,7 @@ mod tests {
             Event::TurnStarted {
                 turn: 1,
                 input: "hi".into(),
+                images: Vec::new(),
             },
         ))
         .unwrap();
@@ -586,6 +587,7 @@ mod tests {
             Event::TurnStarted {
                 turn: 1,
                 input: "one".into(),
+                images: Vec::new(),
             },
         ))
         .unwrap();
@@ -598,6 +600,7 @@ mod tests {
             Event::TurnStarted {
                 turn: 2,
                 input: "two".into(),
+                images: Vec::new(),
             },
         ))
         .unwrap();

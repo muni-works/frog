@@ -65,6 +65,9 @@ pub enum Decision {
 pub enum Op {
     Submit {
         text: String,
+        /// Images attached to the message.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<Image>,
     },
     /// Run a shell command directly; its output is attached to the next message.
     Shell {
@@ -139,6 +142,8 @@ pub enum Event {
     TurnStarted {
         turn: u64,
         input: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<Image>,
     },
     TurnEnded {
         turn: u64,
@@ -489,6 +494,9 @@ pub struct Status {
     pub tier: Tier,
     pub tokens_per_sec: Option<f64>,
     pub todos: Vec<Todo>,
+    /// The model can see images.
+    #[serde(default)]
+    pub vision: bool,
 }
 
 #[cfg(test)]

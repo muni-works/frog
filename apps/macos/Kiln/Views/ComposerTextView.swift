@@ -69,6 +69,8 @@ struct ComposerTextView: NSViewRepresentable {
     var onMention: (String?) -> Void = { _ in }
     /// Keys while mention suggestions are showing. Return true if handled.
     var onMentionKey: (MentionKey) -> Bool = { _ in false }
+    /// Pasted images (copied images or image files). Nil: paste as usual.
+    var onPasteImages: (([ToolImage]) -> Void)?
     var minHeight: CGFloat = 22
     var maxHeight: CGFloat = 180
 
@@ -77,13 +79,23 @@ struct ComposerTextView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSTextView.scrollableTextView()
+        let scroll = NSScrollView()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
-
-        let tv = scroll.documentView as! NSTextView
+        let tv = PastingTextView(frame: .zero)
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.autoresizingMask = [.width]
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        tv.textContainer?.widthTracksTextView = true
+        tv.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        tv.pasteImages = { [weak coordinator = context.coordinator] images in
+            coordinator?.parent.onPasteImages?(images)
+        }
+        tv.acceptsImages = { [weak coordinator = context.coordinator] in coordinator?.parent.onPasteImages != nil }
+        scroll.documentView = tv
         tv.delegate = context.coordinator
         tv.drawsBackground = false
         tv.isRichText = false
@@ -180,5 +192,27 @@ struct ComposerTextView: NSViewRepresentable {
                 parent.height = h
             }
         }
+    }
+}
+
+/// The composer's text view: pasting an image (or an image file) attaches it instead of
+/// dropping it on the floor, as a plain-text view otherwise would.
+final class PastingTextView: NSTextView {
+    var pasteImages: (([ToolImage]) -> Void)?
+    var acceptsImages: () -> Bool = { false }
+
+    override func paste(_ sender: Any?) {
+        let pb = NSPasteboard.general
+        if acceptsImages() {
+            // Image files (copied in Finder) attach; so does image data with no text alongside.
+            let files = (pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+            let images = files.contains(where: Attachments.isImage) || pb.string(forType: .string) == nil
+                ? Attachments.images(on: pb) : []
+            if !images.isEmpty {
+                pasteImages?(images)
+                return
+            }
+        }
+        super.paste(sender)
     }
 }

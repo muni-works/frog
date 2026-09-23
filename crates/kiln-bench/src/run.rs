@@ -77,6 +77,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
     })?;
     h.ops.send(Op::Submit {
         text: r.task.prompt.clone(),
+        images: Vec::new(),
     })?;
     h.ops.send(Op::Shutdown)?;
 

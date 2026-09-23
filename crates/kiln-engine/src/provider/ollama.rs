@@ -15,6 +15,13 @@ pub struct Client {
 }
 
 impl Client {
+    /// Whether the model takes images (ollama lists a `vision` capability).
+    pub async fn supports_vision(&self) -> Option<bool> {
+        let caps = self.show().await?;
+        let caps = caps["capabilities"].as_array()?;
+        Some(caps.iter().any(|c| c.as_str() == Some("vision")))
+    }
+
     async fn show(&self) -> Option<Value> {
         let url = format!("{}/api/show", self.base.trim_end_matches('/'));
         let resp = self
@@ -55,18 +62,23 @@ impl Client {
         for m in req.messages {
             match m.role {
                 Role::User => {
-                    let mut text = Vec::new();
+                    let (mut text, mut images) = (Vec::new(), Vec::new());
                     for b in &m.content {
                         match b {
                             Block::ToolResult { name, content, .. } => messages.push(
                                 json!({ "role": "tool", "tool_name": name, "content": content }),
                             ),
                             Block::Text { text: t } => text.push(t.as_str()),
+                            Block::Image { data, .. } => images.push(data.as_str()),
                             _ => {}
                         }
                     }
-                    if !text.is_empty() {
-                        messages.push(json!({ "role": "user", "content": text.join("\n\n") }));
+                    if !text.is_empty() || !images.is_empty() {
+                        let mut msg = json!({ "role": "user", "content": text.join("\n\n") });
+                        if !images.is_empty() {
+                            msg["images"] = json!(images);
+                        }
+                        messages.push(msg);
                     }
                 }
                 Role::Assistant => {
@@ -180,5 +192,45 @@ impl Client {
             usage,
             stop: stop.unwrap_or(Stop::Incomplete),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::Message;
+
+    #[test]
+    fn images_ride_on_a_user_message() {
+        let c = Client {
+            http: reqwest::Client::new(),
+            base: "http://localhost:1".into(),
+            model: "m".into(),
+            num_ctx: 4096,
+            extra: None,
+        };
+        let msgs = vec![Message {
+            role: Role::User,
+            content: vec![
+                Block::Text {
+                    text: "what's this?".into(),
+                },
+                Block::Image {
+                    mime: "image/png".into(),
+                    data: "AAAA".into(),
+                },
+            ],
+        }];
+        let req = Request {
+            system: "s",
+            messages: &msgs,
+            tools: &[],
+            max_tokens: None,
+            format: None,
+        };
+        let body = c.body(&req);
+        let m = &body["messages"][1];
+        assert_eq!(m["content"], "what's this?");
+        assert_eq!(m["images"][0], "AAAA");
     }
 }

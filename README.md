@@ -170,6 +170,19 @@ What the editor gets:
 - **Modes:** Ask, Accept Edits and Yolo are session modes.
 - **MCP:** servers the editor passes in are added to kiln's own.
 
+## Images
+
+Paste, drop or attach images in the Mac composer (or send them over ACP). They're resized to 1568px and shown in your message.
+
+They go to the model as images:
+- Anthropic gets image blocks.
+- OpenAI-compatible servers get `image_url` parts.
+- ollama gets its `images` array.
+
+Images tools return also reach the model: MCP renders like vcad's `render_view`, and computer use's `look` screenshots.
+
+Vision support is detected: ollama reports it, and Anthropic and OpenAI's own models have it. Set `vision = true` on any other profile. A model that can't see images gets a short note in each image's place, and the composer says so. Only the three most recent images are sent, and each counts as about 1.5k tokens in the context budget.
+
 ## Diagrams
 
 The agent draws when a picture explains better than prose: architecture, data flow, a request's path through the code, or the order of calls between parts.

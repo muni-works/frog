@@ -20,7 +20,7 @@ struct TurnView: View {
         let parts = TurnParts(turn)
         VStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 8 : 14) {
             if !turn.input.isEmpty {
-                UserPrompt(text: turn.input)
+                UserPrompt(text: turn.input, images: turn.images)
                     .overlay(alignment: .bottomTrailing) {
                         if hovering, turn.finished, turn.number != nil, !conversation.busy {
                             hoverBar(changes: parts.changes.count)

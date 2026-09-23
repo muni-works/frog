@@ -34,6 +34,9 @@ fn block_json(b: &Block) -> Option<Value> {
         } => {
             json!({ "type": "tool_result", "tool_use_id": id, "content": content, "is_error": is_error })
         }
+        Block::Image { mime, data } => {
+            json!({ "type": "image", "source": { "type": "base64", "media_type": mime, "data": data } })
+        }
     })
 }
 

@@ -58,7 +58,10 @@ pub async fn run(
         bail!("`prompt` is required: describe the task in full");
     }
     let mut child = Child(crate::engine::spawn(opts)?);
-    child.0.ops.send(Op::Submit { text: prompt })?;
+    child.0.ops.send(Op::Submit {
+        text: prompt,
+        images: Vec::new(),
+    })?;
     let (mut report, mut steps, mut started) = (String::new(), 0u32, false);
     // The message being written, so a stop keeps the partial report.
     let mut draft = String::new();

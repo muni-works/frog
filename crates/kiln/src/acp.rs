@@ -122,7 +122,9 @@ pub async fn serve(
         match method {
             "initialize" => {
                 let caps = AgentCapabilities::new()
-                    .prompt_capabilities(PromptCapabilities::new().embedded_context(true))
+                    .prompt_capabilities(
+                        PromptCapabilities::new().embedded_context(true).image(true),
+                    )
                     .mcp_capabilities(McpCapabilities::new().http(true));
                 conn.respond(
                     &id,
@@ -189,6 +191,7 @@ pub async fn serve(
                 *s.turn.lock().unwrap() = Some(tx);
                 let _ = s.ops.send(kiln_engine::protocol::Op::Submit {
                     text: prompt_text(&req.prompt),
+                    images: prompt_images(&req.prompt),
                 });
                 let conn = conn.clone();
                 tokio::spawn(async move {
@@ -286,6 +289,20 @@ fn add_mcp_servers(cfg: &mut Config, servers: &[McpServer]) {
         };
         cfg.mcp_servers.insert(name, server);
     }
+}
+
+/// Images in the prompt (pasted into the editor's chat).
+fn prompt_images(blocks: &[ContentBlock]) -> Vec<kiln_engine::protocol::Image> {
+    blocks
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Image(i) => Some(kiln_engine::protocol::Image {
+                mime: i.mime_type.clone(),
+                data: i.data.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The prompt as kiln text: text as is, linked files as `@path` mentions, embedded files inline.

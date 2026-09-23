@@ -133,6 +133,21 @@ impl Provider {
         })
     }
 
+    /// Whether the model takes images: ollama says so, Anthropic's always do, and OpenAI's own
+    /// API models do. Unknown (`None`) for other OpenAI-compatible servers.
+    pub async fn supports_vision(&self) -> Option<bool> {
+        match self {
+            Self::Ollama(c) => tokio::time::timeout(Duration::from_secs(3), c.supports_vision())
+                .await
+                .ok()
+                .flatten(),
+            Self::Anthropic(_) => Some(true),
+            Self::OpenAi(c) => c.is_openai().then_some(true),
+            #[cfg(test)]
+            Self::Scripted(_) => None,
+        }
+    }
+
     /// The context window the server reports, if it does. Bounded by a short timeout.
     pub async fn probe_context(&self) -> Option<u64> {
         let probe = async {

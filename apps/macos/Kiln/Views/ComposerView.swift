@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ComposerView: View {
@@ -11,10 +12,12 @@ struct ComposerView: View {
     @State private var picked = 0
     @State private var racing = false
     @State private var dropTargeted = false
+    /// Images to send with the message.
+    @State private var attachments: [ToolImage] = []
     @Environment(\.switchFolder) private var switchFolder
 
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
     }
 
     private var suggestions: [String] {
@@ -68,6 +71,9 @@ struct ComposerView: View {
             if !conversation.queue.isEmpty {
                 QueuedMessages(conversation: conversation)
             }
+            if !attachments.isEmpty {
+                AttachmentStrip(images: $attachments, blind: conversation.status?.vision == false ? conversation.status?.model : nil)
+            }
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
                     Text(conversation.busy ? "Working… Esc interrupts · Return queues a follow-up" : workspace.skills.isEmpty ? "Ask kiln to do something · @ to mention a file" : "Ask kiln to do something · @ to mention a file · / for skills")
@@ -91,12 +97,22 @@ struct ComposerView: View {
                         if query != mention { picked = 0 }
                         mention = query
                     },
-                    onMentionKey: handleMentionKey
+                    onMentionKey: handleMentionKey,
+                    onPasteImages: { attachments += $0 }
                 )
                 .frame(height: height)
             }
 
             HStack(spacing: 10) {
+                Button {
+                    attachFromPanel()
+                } label: {
+                    Image(systemName: "photo.badge.plus")
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Attach images (or paste, or drop them here)")
                 ModePicker(conversation: conversation)
                 ModelPicker(workspace: workspace, conversation: conversation)
                 Spacer()
@@ -175,8 +191,13 @@ struct ComposerView: View {
         }
         // Drop files to mention them: `@path` relative to the project when inside it.
         .dropDestination(for: URL.self) { urls, _ in
+            // Images attach; other files become @mentions.
+            let images = urls.filter(Attachments.isImage)
+            attachments += images.compactMap(Attachments.image(at:))
+            let files = urls.filter { !Attachments.isImage($0) }
+            guard !files.isEmpty else { return !images.isEmpty }
             let root = conversation.folder.standardizedFileURL.path + "/"
-            let mentions = urls.map { url in
+            let mentions = files.map { url in
                 let p = url.standardizedFileURL.path
                 return "@" + (p.hasPrefix(root) ? String(p.dropFirst(root.count)) : p)
             }
@@ -187,9 +208,19 @@ struct ComposerView: View {
 
     private func send() {
         guard canSend else { return }
-        conversation.submit(text)
+        conversation.submit(text, images: attachments)
         text = ""
+        attachments = []
         mention = nil
+    }
+
+    private func attachFromPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = true
+        panel.message = "Attach images to your message"
+        guard panel.runModal() == .OK else { return }
+        attachments += panel.urls.compactMap(Attachments.image(at:))
     }
 
     private func handleMentionKey(_ key: MentionKey) -> Bool {
@@ -341,6 +372,53 @@ struct GitBar: View {
     }
 }
 
+/// Images waiting to be sent: thumbnails with a remove button, and a note when the model can't
+/// see them.
+struct AttachmentStrip: View {
+    @Binding var images: [ToolImage]
+    /// The model's name, when it can't see images.
+    let blind: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { i, img in
+                        if let data = Data(base64Encoded: img.data), let ns = NSImage(data: data) {
+                            Image(nsImage: ns)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 56, height: 56)
+                                .clipShape(.rect(cornerRadius: 10))
+                                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+                                .overlay(alignment: .topTrailing) {
+                                    Button {
+                                        images.remove(at: i)
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .symbolRenderingMode(.palette)
+                                            .foregroundStyle(.white, .black.opacity(0.6))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .offset(x: 5, y: -5)
+                                    .help("Remove")
+                                }
+                        }
+                    }
+                }
+                .padding(.top, 6)
+                .padding(.trailing, 6)
+            }
+            .scrollIndicators(.never)
+            if let blind {
+                Label("\(blind) can't see images; pick a vision model (like gemma3 or qwen2.5vl) to include them.", systemImage: "eye.slash")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+}
+
 /// `/skill` completions: name and what it's for.
 struct SkillList: View {
     let skills: [SkillInfo]
@@ -423,7 +501,7 @@ struct QueuedMessages: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(conversation.queue.enumerated()), id: \.offset) { i, text in
+            ForEach(Array(conversation.queue.map(\.text).enumerated()), id: \.offset) { i, text in
                 HStack(spacing: 6) {
                     Image(systemName: "clock").foregroundStyle(.secondary)
                     Text(text).lineLimit(1)

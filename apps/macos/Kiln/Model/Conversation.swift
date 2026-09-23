@@ -102,6 +102,8 @@ struct TurnState: Identifiable {
     /// Assigned by the engine; nil until `turn_started` arrives for a locally echoed prompt.
     var number: UInt64?
     var input: String
+    /// Images attached to the message.
+    var images: [ToolImage] = []
     var items: [ItemState] = []
     var end: EndReason?
     var usage: TurnUsage?
@@ -132,7 +134,13 @@ final class Conversation {
     private(set) var toast: String?
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     /// Messages sent while a turn was running; they go out in order as the engine frees up.
-    private(set) var queue: [String] = []
+    private(set) var queue: [Queued] = []
+
+    /// A message sent while a turn was running.
+    struct Queued {
+        var text: String
+        var images: [ToolImage] = []
+    }
 
     @ObservationIgnored private var engine: EngineProcess?
     @ObservationIgnored private let replayOnStart: Bool
@@ -179,11 +187,11 @@ final class Conversation {
 
     // MARK: - Actions
 
-    func submit(_ text: String) {
+    func submit(_ text: String, images: [ToolImage] = []) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !images.isEmpty else { return }
         if busy {
-            queue.append(text)
+            queue.append(Queued(text: text, images: images))
             return
         }
         if text.hasPrefix("!") {
@@ -193,9 +201,9 @@ final class Conversation {
             engine?.send(.shell(command))
             return
         }
-        turns.append(TurnState(number: nil, input: text))
+        turns.append(TurnState(number: nil, input: text, images: images))
         busy = true
-        engine?.send(.submit(text))
+        engine?.send(.submit(text, images: images))
     }
 
     func unqueue(at index: Int) {
@@ -279,13 +287,13 @@ final class Conversation {
         }
         defer { reportLive() }
         switch env.event {
-        case .turnStarted(let n, let input):
+        case .turnStarted(let n, let input, let images):
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             if let i = turns.lastIndex(where: { $0.number == nil && !$0.finished && $0.input == input }) {
                 turns[i].number = n
                 turns[i].startedAt = at
             } else {
-                turns.append(TurnState(number: n, input: input, startedAt: at))
+                turns.append(TurnState(number: n, input: input, images: images, startedAt: at))
             }
             busy = true
         case .turnEnded(let n, let reason, let usage):
@@ -389,7 +397,8 @@ final class Conversation {
             permission = nil
             elicitation = nil
             if !queue.isEmpty {
-                submit(queue.removeFirst())
+                let next = queue.removeFirst()
+                submit(next.text, images: next.images)
             }
         case .titled(let t):
             title = t
