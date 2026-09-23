@@ -19,12 +19,13 @@ extension Conversation {
 
 struct ChangesInspector: View {
     let conversation: Conversation
+    let maxHeight: CGFloat
     @State private var selection: String?
 
     var body: some View {
         let changes = conversation.sessionChanges
         let current = changes.first { $0.path == selection } ?? changes.first
-        ScrollView {
+        HuggingScroll(maxHeight: maxHeight) {
             VStack(alignment: .leading, spacing: 12) {
                 if changes.isEmpty {
                     ContentUnavailableView(
@@ -32,7 +33,7 @@ struct ChangesInspector: View {
                         systemImage: "doc.text.magnifyingglass",
                         description: Text("Files kiln edits in this session show up here.")
                     )
-                    .padding(.top, 60)
+                    .padding(.vertical, 12)
                 } else {
                     HStack {
                         Text("\(changes.count) file\(changes.count == 1 ? "" : "s") changed")
@@ -74,7 +75,6 @@ struct ChangesInspector: View {
             }
             .padding(14)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

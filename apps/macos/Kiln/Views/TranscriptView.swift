@@ -27,6 +27,7 @@ struct TranscriptView: View {
             .padding(.bottom, 12)
             .frame(maxWidth: .infinity)
         }
+        .scrollContentBackground(.hidden)
         // Start at the bottom, and stay pinned there as streamed content grows.
         .defaultScrollAnchor(.bottom)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
