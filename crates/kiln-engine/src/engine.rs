@@ -241,6 +241,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             agent.emit(Event::Idle);
         }
         agent.mcp.shutdown();
+        shared.mcp.lock().unwrap().take();
         agent.sync_log();
     });
 

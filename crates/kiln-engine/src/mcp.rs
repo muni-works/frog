@@ -98,10 +98,13 @@ pub struct Quarantined {
     pub reason: String,
 }
 
+type Emit = Box<dyn Fn(Event) + Send + Sync>;
+
 /// What the MCP client needs from the engine: a way to show things to the user and to ask
 /// them questions on a server's behalf.
 pub struct Host {
-    emit: Box<dyn Fn(Event) + Send + Sync>,
+    /// Dropped by [`Host::close`], so the engine's event stream can end.
+    emit: Mutex<Option<Emit>>,
     /// The client can answer elicitations and host MCP Apps (the Mac app). Without this,
     /// elicitation is declined and neither capability is declared, so servers fall back.
     rich: bool,
@@ -119,7 +122,7 @@ pub struct ElicitReply {
 impl Host {
     pub fn new(emit: impl Fn(Event) + Send + Sync + 'static, rich: bool, root: &Path) -> Arc<Self> {
         Arc::new(Self {
-            emit: Box::new(emit),
+            emit: Mutex::new(Some(Box::new(emit))),
             rich,
             root: root.to_path_buf(),
             elicits: Mutex::new(HashMap::new()),
@@ -140,7 +143,15 @@ impl Host {
     }
 
     pub fn emit(&self, e: Event) {
-        (self.emit)(e)
+        if let Some(emit) = self.emit.lock().unwrap().as_ref() {
+            emit(e)
+        }
+    }
+
+    /// Stop emitting and let go of the event sender, so the engine's event stream closes.
+    pub fn close(&self) {
+        self.emit.lock().unwrap().take();
+        self.elicits.lock().unwrap().clear();
     }
 }
 
@@ -704,6 +715,7 @@ impl Hub {
     }
 
     pub fn shutdown(&self) {
+        self.inner.host.close();
         for s in self.inner.servers.values() {
             s.client.cancellation_token().cancel();
         }
