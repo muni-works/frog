@@ -132,6 +132,7 @@ final class Workspace {
         let mode = UserDefaults.standard.string(forKey: "defaultMode").flatMap(Mode.init(rawValue:))
         let modeFlag: [String] = switch mode {
         case .yolo: ["--yolo"]
+        case .auto: ["--auto"]
         case .acceptEdits: ["--accept-edits"]
         default: []
         }

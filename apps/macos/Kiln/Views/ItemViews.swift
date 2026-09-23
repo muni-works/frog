@@ -204,6 +204,14 @@ struct ToolCallView: View {
                     .transition(.opacity)
             }
 
+            if let why = item.autoReason {
+                Label("Auto: \(why)", systemImage: "wand.and.sparkles")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .padding(.leading, 26)
+                    .help("Auto mode's classifier let this run without asking")
+            }
             if item.needsPermission, let p = conversation.permission, p.item == item.id {
                 PermissionCard(request: p, conversation: conversation)
             }

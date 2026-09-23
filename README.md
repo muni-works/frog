@@ -267,6 +267,13 @@ cargo run -p kiln-bench -- report ~/.local/share/kiln/bench/<timestamp>/results.
 `default` asks before edits and shell commands. `accept-edits` lets edits through without asking. `yolo` never asks. **shift+tab** cycles the mode. Read-only commands such as `ls`, `git status`, and `rg` run without asking, as long as they don't include pipes or redirects.
 
 
+**Auto mode.** `--auto`, `/mode auto` in the terminal, or Auto in the Mac app's mode picker. Every step that would otherwise ask goes to a local classifier first.
+- **Edits:** in-project edits run without asking, since they're checkpointed and can be undone. Sandboxed commands already run without asking.
+- **Always asks:** hard rules, no model involved: `sudo`, pushes, `reset --hard`/`clean -f`/history rewrites, `curl | sh`, `rm -rf` outside the project, publishing, system settings, killing processes, and writes outside the project.
+- **The classifier:** a small local model (Apple's on-device model when available, otherwise the session's model; set `auto_classifier` to choose) judges the rest against your recent messages. It answers allow or ask, with a reason, in grammar-constrained JSON. The call's arguments are marked untrusted, so text in them aimed at the classifier doesn't count.
+- **Fails closed:** a timeout, error or unreadable answer means ask.
+- **Visible:** approved calls show "Auto: <reason>" on the tool card. When it asks, the permission card says why.
+
 **Sandbox.** On macOS, shell commands run in a seatbelt sandbox by default.
 - **What it limits:** a command can write only inside the project, temp folders and toolchain caches (`~/.cargo`, `~/.npm`, …). It can't read credentials (`~/.ssh`, `~/.aws`, `~/.gnupg`, keychains, …), so a prompt-injected command can't send them anywhere. Network access works.
 - **No prompts:** because of those limits, sandboxed commands run without asking, even in Ask mode.

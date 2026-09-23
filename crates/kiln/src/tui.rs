@@ -215,9 +215,10 @@ impl Tui {
                     "" => current.next(),
                     "default" => Mode::Default,
                     "accept-edits" | "edits" => Mode::AcceptEdits,
+                    "auto" => Mode::Auto,
                     "yolo" => Mode::Yolo,
                     _ => {
-                        render::warn("  modes: default, accept-edits, yolo");
+                        render::warn("  modes: default, accept-edits, auto, yolo");
                         return true;
                     }
                 };

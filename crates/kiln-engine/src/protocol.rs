@@ -21,6 +21,8 @@ pub enum Mode {
     Default,
     /// Edits run freely; shell commands still ask.
     AcceptEdits,
+    /// A local classifier approves the steps that plainly serve the request; the rest ask.
+    Auto,
     /// Never ask.
     Yolo,
 }
@@ -29,7 +31,8 @@ impl Mode {
     pub fn next(self) -> Self {
         match self {
             Self::Default => Self::AcceptEdits,
-            Self::AcceptEdits => Self::Yolo,
+            Self::AcceptEdits => Self::Auto,
+            Self::Auto => Self::Yolo,
             Self::Yolo => Self::Default,
         }
     }
@@ -38,6 +41,7 @@ impl Mode {
         match self {
             Self::Default => "default",
             Self::AcceptEdits => "accept edits",
+            Self::Auto => "auto",
             Self::Yolo => "yolo",
         }
     }
@@ -153,6 +157,11 @@ pub enum Event {
         id: String,
         decision: Decision,
     },
+    /// Auto mode's classifier let tool call `item` run without asking.
+    AutoApproved {
+        item: String,
+        reason: String,
+    },
     Compacted {
         tokens_before: u64,
         tokens_after: u64,
@@ -263,6 +272,7 @@ impl Event {
                 | Self::ItemStarted { .. }
                 | Self::ItemCompleted { .. }
                 | Self::PermissionResolved { .. }
+                | Self::AutoApproved { .. }
                 | Self::Compacted { .. }
                 | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }

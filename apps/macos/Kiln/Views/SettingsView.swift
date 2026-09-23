@@ -192,6 +192,7 @@ private struct PermissionSettings: View {
             Section {
                 LabeledContent("Ask", value: sandboxShell ? "Edits, and commands leaving the sandbox, ask first" : "Every edit and command asks first")
                 LabeledContent("Accept Edits", value: "File edits are allowed; commands still ask")
+                LabeledContent("Auto", value: "A local model approves steps that plainly serve your request; risky ones ask")
                 LabeledContent("Yolo", value: "Everything runs without asking")
             }
             .foregroundStyle(.secondary)

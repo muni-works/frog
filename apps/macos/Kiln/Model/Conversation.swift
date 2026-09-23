@@ -22,6 +22,8 @@ struct ItemState: Identifiable {
     var progress: ToolProgress?
     /// For a `Task` call: the subagent's own run, live.
     var subagent: SubagentRun?
+    /// Why auto mode let this call run without asking.
+    var autoReason: String?
 }
 
 /// A subagent's run as it streams in: its items (thinking, tool calls, the report being
@@ -344,6 +346,8 @@ final class Conversation {
             if elicitation?.id == id { elicitation = nil }
         case .toolProgress(let id, let p):
             upsert(id) { $0.progress = p }
+        case .autoApproved(let item, let reason):
+            upsert(item) { $0.autoReason = reason }
         case .subagent(let item, let inner):
             upsert(item) { state in
                 if state.subagent == nil { state.subagent = SubagentRun() }

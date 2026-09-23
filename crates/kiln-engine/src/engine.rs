@@ -347,6 +347,8 @@ struct Agent {
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
     skills_loaded: HashSet<String>,
+    /// Auto mode's classifier, started on first use.
+    classifier: Option<crate::auto::Classifier>,
     session_allow: HashSet<String>,
     /// Context from `Op::Shell`, attached to the next message.
     pending: Vec<String>,
@@ -444,6 +446,7 @@ impl Agent {
             mcp: crate::mcp::Hub::empty(),
             skills,
             skills_loaded: HashSet::new(),
+            classifier: None,
             session_allow: HashSet::new(),
             pending: Vec::new(),
             events,
@@ -1449,12 +1452,37 @@ Don't repeat it. Change the arguments or try a different approach.",
             _ => format!("bash:{prefix}"),
         };
         let auto = match kind {
-            Kind::Edit => self.mode == Mode::AcceptEdits,
+            Kind::Edit => {
+                self.mode == Mode::AcceptEdits
+                    // Auto mode: edits inside the project are checkpointed and can be undone.
+                    || (self.mode == Mode::Auto
+                        && crate::auto::hard_rule(name, input, &self.root).is_none())
+            }
             _ if mcp || leaves_sandbox => false,
             _ => bash_allowed(cmd, &self.cfg.allow_bash),
         };
         if auto || self.session_allow.contains(&key) {
             return Decision::Allow;
+        }
+        let mut reason = leaves_sandbox.then(|| {
+            "Runs outside the sandbox: it can change files anywhere and read your credentials."
+                .to_string()
+        });
+        if self.mode == Mode::Auto {
+            let sandbox = match (self.ctx.shell_sandbox.is_some(), leaves_sandbox) {
+                (_, true) => crate::auto::Sandbox::Leaving,
+                (true, false) => crate::auto::Sandbox::In,
+                (false, false) => crate::auto::Sandbox::Off,
+            };
+            match self.auto_judge(item, name, input, sandbox).await {
+                Ok(()) => return Decision::Allow,
+                Err(why) => {
+                    reason = Some(format!(
+                        "Auto mode asked because {}.",
+                        why.trim_end_matches('.')
+                    ))
+                }
+            }
         }
         if !self.can_ask {
             return Decision::Deny;
@@ -1473,10 +1501,6 @@ Don't repeat it. Change the arguments or try a different approach.",
             }
             _ => format!("always allow `{prefix}` this session"),
         };
-        let reason = leaves_sandbox.then(|| {
-            "Runs outside the sandbox: it can change files anywhere and read your credentials."
-                .to_string()
-        });
         let id = new_id();
         let (tx, rx) = oneshot::channel();
         self.shared.pending.lock().unwrap().insert(id.clone(), tx);
@@ -1496,6 +1520,48 @@ Don't repeat it. Change the arguments or try a different approach.",
             self.session_allow.insert(key);
         }
         decision
+    }
+
+    /// Auto mode: hard rules, then the classifier. `Ok` runs the call (and records why);
+    /// `Err` says why the user should decide.
+    async fn auto_judge(
+        &mut self,
+        item: &str,
+        name: &str,
+        input: &Value,
+        sandbox: crate::auto::Sandbox,
+    ) -> std::result::Result<(), String> {
+        if let Some(why) = crate::auto::hard_rule(name, input, &self.root) {
+            return Err(format!("it {why}"));
+        }
+        if self.classifier.is_none() {
+            match crate::auto::Classifier::new(&self.cfg, (&self.profile_name, &self.profile)) {
+                Ok(c) => self.classifier = Some(c),
+                Err(e) => return Err(format!("the classifier couldn't start ({e:#})")),
+            }
+        }
+        let model = self
+            .classifier
+            .as_ref()
+            .map(|c| c.profile_name.clone())
+            .unwrap_or_default();
+        self.emit(Event::Progress {
+            label: format!("checking with auto mode ({model})"),
+        });
+        let preview = tools::fs::preview(name, input, &self.ctx);
+        let action = crate::auto::describe(name, input, preview.as_ref(), sandbox);
+        let inputs = self.inputs.clone();
+        let classifier = self.classifier.as_mut().expect("set above");
+        match classifier.judge(&inputs, &action).await {
+            crate::auto::Verdict::Allow(reason) => {
+                self.emit(Event::AutoApproved {
+                    item: item.to_string(),
+                    reason,
+                });
+                Ok(())
+            }
+            crate::auto::Verdict::Ask(reason) => Err(format!("the classifier said: {reason}")),
+        }
     }
 
     /// Summarize the conversation and continue from the summary.

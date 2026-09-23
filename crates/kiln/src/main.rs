@@ -123,6 +123,9 @@ struct Cli {
     /// Allow file edits without asking.
     #[arg(long)]
     accept_edits: bool,
+    /// Auto mode: a local classifier approves steps that plainly serve your request.
+    #[arg(long, conflicts_with_all = ["yolo", "accept_edits"])]
+    auto: bool,
     /// Describe tools in the prompt instead of using native tool calling.
     #[arg(long, conflicts_with = "tool_mode")]
     text_tools: bool,
@@ -311,9 +314,10 @@ async fn run() -> Result<bool> {
         }
         r => r,
     };
-    let mode = match (cli.yolo, cli.accept_edits) {
-        (true, _) => Mode::Yolo,
-        (_, true) => Mode::AcceptEdits,
+    let mode = match (cli.yolo, cli.accept_edits, cli.auto) {
+        (true, _, _) => Mode::Yolo,
+        (_, true, _) => Mode::AcceptEdits,
+        (_, _, true) => Mode::Auto,
         _ => Mode::Default,
     };
     if cli.acp {

@@ -114,6 +114,10 @@ pub struct Config {
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]
     pub sandbox_shell: bool,
+    /// The model auto mode's classifier uses (a profile or provider/model). Default: Apple's
+    /// on-device model when available, else the session's model.
+    #[serde(default)]
+    pub auto_classifier: Option<String>,
 }
 
 impl Default for Config {

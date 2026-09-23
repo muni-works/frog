@@ -159,6 +159,10 @@ impl Renderer {
                 };
                 println!("\n{} {}{}", "⏺".green(), name.bold(), arg);
             }
+            Event::AutoApproved { reason, .. } => {
+                self.idle();
+                println!("  {} {}", "auto:".dark_grey(), reason.dark_grey());
+            }
             // A subagent's steps, indented under its Task call; its report arrives as the
             // call's output.
             Event::Subagent { inner, .. } => {

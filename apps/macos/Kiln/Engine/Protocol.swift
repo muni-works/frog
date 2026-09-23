@@ -9,6 +9,7 @@ import Foundation
 enum Mode: String, Codable, Sendable, CaseIterable, Identifiable {
     case `default` = "default"
     case acceptEdits = "accept-edits"
+    case auto = "auto"
     case yolo = "yolo"
 
     var id: String { rawValue }
@@ -17,6 +18,7 @@ enum Mode: String, Codable, Sendable, CaseIterable, Identifiable {
         switch self {
         case .default: "Ask"
         case .acceptEdits: "Accept Edits"
+        case .auto: "Auto"
         case .yolo: "Yolo"
         }
     }
@@ -25,6 +27,7 @@ enum Mode: String, Codable, Sendable, CaseIterable, Identifiable {
         switch self {
         case .default: "hand.raised"
         case .acceptEdits: "pencil.and.outline"
+        case .auto: "wand.and.sparkles"
         case .yolo: "bolt.fill"
         }
     }
@@ -326,6 +329,8 @@ enum Event: Decodable, Sendable {
     case elicitationDone(id: String)
     case toolProgress(id: String, ToolProgress)
     case appResult(id: String, result: JSONValue?, error: String?)
+    /// Auto mode's classifier let tool call `item` run without asking.
+    case autoApproved(item: String, reason: String)
     /// An event from the subagent running as tool call `item`.
     indirect case subagent(item: String, inner: Event)
     case notice(level: String, message: String)
@@ -410,6 +415,8 @@ extension Event {
                     progress: try c.decode(Double.self, forKey: .progress),
                     total: try c.decodeIfPresent(Double.self, forKey: .total),
                     message: try c.decodeIfPresent(String.self, forKey: .message)))
+        case "auto_approved":
+            self = .autoApproved(item: try c.decode(String.self, forKey: .item), reason: try c.decode(String.self, forKey: .reason))
         case "subagent":
             self = .subagent(item: try c.decode(String.self, forKey: .item), inner: try c.decode(Event.self, forKey: .inner))
         case "app_result":

@@ -207,6 +207,7 @@ pub async fn serve(
                 Ok(req) => {
                     let mode = match &*req.mode_id.0 {
                         "accept_edits" => Mode::AcceptEdits,
+                        "auto" => Mode::Auto,
                         "yolo" => Mode::Yolo,
                         _ => Mode::Default,
                     };
@@ -230,6 +231,7 @@ pub async fn serve(
 fn modes(current: Mode) -> SessionModeState {
     let id = match current {
         Mode::AcceptEdits => "accept_edits",
+        Mode::Auto => "auto",
         Mode::Yolo => "yolo",
         _ => "default",
     };
@@ -240,6 +242,9 @@ fn modes(current: Mode) -> SessionModeState {
                 .description("Every edit and command asks first".to_string()),
             SessionMode::new("accept_edits", "Accept Edits")
                 .description("File edits are allowed; commands still ask".to_string()),
+            SessionMode::new("auto", "Auto").description(
+                "A local classifier approves steps that plainly serve your request".to_string(),
+            ),
             SessionMode::new("yolo", "Yolo")
                 .description("Everything runs without asking".to_string()),
         ],
