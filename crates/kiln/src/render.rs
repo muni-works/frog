@@ -177,6 +177,13 @@ impl Renderer {
             }
             Event::ItemCompleted { id, item } => match item {
                 Item::ToolCall {
+                    diagram: Some(d),
+                    outcome: ToolOutcome::Ok,
+                    ..
+                } => {
+                    print_diagram(&d.to_ascii());
+                }
+                Item::ToolCall {
                     outcome,
                     output,
                     display,
@@ -189,10 +196,20 @@ impl Renderer {
                     };
                     tool_result(&text, outcome != ToolOutcome::Ok);
                 }
-                // Not streamed (non-streaming provider): show it whole.
-                Item::Message { text } if !self.streamed.contains(&id) => {
-                    self.enter(State::Text);
-                    self.write(&text, false);
+                Item::Message { text } => {
+                    // Not streamed (non-streaming provider): show it whole.
+                    if !self.streamed.contains(&id) {
+                        self.enter(State::Text);
+                        self.write(&text, false);
+                    }
+                    // Mermaid blocks get drawn after the message.
+                    for src in mermaid_blocks(&text) {
+                        if let Some(mut d) = kiln_engine::diagram::Diagram::from_mermaid(&src) {
+                            d.prepare(std::path::Path::new("."));
+                            self.idle();
+                            print_diagram(&d.to_ascii());
+                        }
+                    }
                 }
                 Item::Reasoning { text } if self.show_thinking && !self.streamed.contains(&id) => {
                     self.enter(State::Thinking);
@@ -253,6 +270,35 @@ impl Renderer {
             _ => {}
         }
     }
+}
+
+fn print_diagram(art: &str) {
+    println!();
+    for line in art.lines() {
+        println!("     {}", line.cyan());
+    }
+}
+
+/// The bodies of ```mermaid fenced blocks in a message.
+fn mermaid_blocks(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur: Option<String> = None;
+    for line in text.lines() {
+        let t = line.trim();
+        match &mut cur {
+            None if t.starts_with("```mermaid") => cur = Some(String::new()),
+            Some(body) if t.starts_with("```") => {
+                out.push(std::mem::take(body));
+                cur = None;
+            }
+            Some(body) => {
+                body.push_str(line);
+                body.push('\n');
+            }
+            None => {}
+        }
+    }
+    out
 }
 
 fn tool_result(text: &str, err: bool) {

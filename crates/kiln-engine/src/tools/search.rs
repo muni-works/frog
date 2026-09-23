@@ -102,6 +102,7 @@ pub async fn glob(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             if total == 1 { "" } else { "s" }
         )),
         diff: None,
+        diagram: None,
     })
 }
 
@@ -187,5 +188,6 @@ pub async fn grep(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         content: out + &more,
         display: Some(format!("Found {n} result{}", if n == 1 { "" } else { "s" })),
         diff: None,
+        diagram: None,
     })
 }

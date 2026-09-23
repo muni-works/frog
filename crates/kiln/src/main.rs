@@ -75,6 +75,12 @@ struct Cli {
     /// List sessions started in this directory and exit.
     #[arg(long)]
     sessions: bool,
+    /// Draw this directory's sessions and their forks as a diagram (JSON with --json) and exit.
+    #[arg(long)]
+    session_tree: bool,
+    /// Read Mermaid from stdin, lay it out, and print the diagram (JSON with --json) and exit.
+    #[arg(long)]
+    mermaid: bool,
     /// List available models (configured profiles and installed ollama models) and exit.
     #[arg(long)]
     models: bool,
@@ -137,6 +143,18 @@ async fn run() -> Result<bool> {
     let store = session::default_dir();
     if cli.sessions {
         list_sessions(&store, &cwd, cli.json)?;
+        return Ok(true);
+    }
+    if cli.session_tree {
+        print_diagram(session_tree(&store, &cwd)?, &cwd, cli.json)?;
+        return Ok(true);
+    }
+    if cli.mermaid {
+        let mut src = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut src)?;
+        let d = kiln_engine::diagram::Diagram::from_mermaid(&src)
+            .context("not a Mermaid flowchart or sequence diagram kiln can draw")?;
+        print_diagram(d, &cwd, cli.json)?;
         return Ok(true);
     }
     let resume = if let Some(spec) = &cli.rewind {
@@ -213,6 +231,64 @@ async fn list_models(cfg: &Config, json: bool) -> Result<bool> {
         println!("{:<32} {:<8} {:?} tier{profiled}", m.spec, mode, m.tier);
     }
     Ok(true)
+}
+
+fn print_diagram(
+    mut d: kiln_engine::diagram::Diagram,
+    cwd: &std::path::Path,
+    json: bool,
+) -> Result<()> {
+    d.finish(cwd);
+    if json {
+        println!("{}", serde_json::to_string(&d)?);
+    } else {
+        println!("{}", d.to_ascii());
+    }
+    Ok(())
+}
+
+/// Sessions as a tree: each fork hangs off the session it branched from.
+fn session_tree(
+    store: &std::path::Path,
+    cwd: &std::path::Path,
+) -> Result<kiln_engine::diagram::Diagram> {
+    use kiln_engine::diagram::{Diagram, Edge, Node, Shape};
+    let mut sessions = session::list(store, cwd)?;
+    sessions.sort_by_key(|s| s.header.created);
+    let ids: std::collections::HashSet<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
+    let mut d = Diagram {
+        title: "Sessions".into(),
+        ..Default::default()
+    };
+    for s in &sessions {
+        let label = s
+            .title
+            .clone()
+            .or_else(|| s.first_input.clone())
+            .unwrap_or_else(|| "New session".into());
+        let when = chrono::DateTime::<chrono::Local>::from(s.modified).format("%b %d %H:%M");
+        d.nodes.push(Node {
+            id: s.id.clone(),
+            label: label.lines().next().unwrap_or("").to_string(),
+            shape: if s.header.forked_from.is_some() {
+                Shape::Rounded
+            } else {
+                Shape::Box
+            },
+            detail: Some(format!("{} · {when}", s.header.model)),
+            ..Default::default()
+        });
+        if let Some(f) = &s.header.forked_from
+            && ids.contains(f.session.as_str())
+        {
+            d.edges.push(Edge {
+                from: f.session.clone(),
+                to: s.id.clone(),
+                ..Default::default()
+            });
+        }
+    }
+    Ok(d)
 }
 
 fn list_sessions(store: &std::path::Path, cwd: &std::path::Path, json: bool) -> Result<()> {

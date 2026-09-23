@@ -815,7 +815,7 @@ impl Agent {
         if let Some(model) = self.profile.sidecar.clone() {
             if !crate::sidecar::is_serving(&model).await {
                 self.emit(Event::Progress {
-                    label: format!("starting the inference sidecar for {model}"),
+                    label: format!("loading {model}"),
                 });
             }
             if let Err(e) = crate::sidecar::ensure(&self.profile).await {
@@ -993,7 +993,7 @@ impl Agent {
                 },
             });
 
-            let (outcome, output, display, diff) = if seen >= LOOP_REFUSE {
+            let (outcome, output, display, diff, diagram) = if seen >= LOOP_REFUSE {
                 let msg = format!(
                     "Not run: this exact call already ran {} times this turn with the same result. \
 Don't repeat it. Change the arguments or try a different approach.",
@@ -1004,11 +1004,13 @@ Don't repeat it. Change the arguments or try a different approach.",
                     msg,
                     Some("refused: repeated identical call".to_string()),
                     None,
+                    None,
                 )
             } else if denied {
                 (
                     ToolOutcome::Skipped,
                     "Skipped: an earlier tool call was rejected.".to_string(),
+                    None,
                     None,
                     None,
                 )
@@ -1019,12 +1021,18 @@ Don't repeat it. Change the arguments or try a different approach.",
                     "Not permitted in non-interactive mode (run with --yolo to allow)."
                 };
                 denied = self.can_ask;
-                (ToolOutcome::Denied, msg.to_string(), None, None)
+                (ToolOutcome::Denied, msg.to_string(), None, None, None)
             } else {
                 self.snapshot(&name, &input);
                 match self.run_tool(&id, &name, &input).await {
-                    Ok(o) => (ToolOutcome::Ok, o.content, o.display, o.diff),
-                    Err(e) => (ToolOutcome::Error, format!("Error: {e:#}"), None, None),
+                    Ok(o) => (ToolOutcome::Ok, o.content, o.display, o.diff, o.diagram),
+                    Err(e) => (
+                        ToolOutcome::Error,
+                        format!("Error: {e:#}"),
+                        None,
+                        None,
+                        None,
+                    ),
                 }
             };
 
@@ -1044,6 +1052,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                     output,
                     display,
                     diff,
+                    diagram,
                 },
             });
         }
@@ -1342,6 +1351,7 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
                 output,
                 display,
                 diff: None,
+                diagram: None,
             },
         });
     }

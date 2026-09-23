@@ -239,6 +239,9 @@ pub enum Item {
         /// Set for Write/Edit.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diff: Option<FileDiff>,
+        /// Set for Diagram: validated and laid out, ready to draw.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diagram: Option<Box<crate::diagram::Diagram>>,
     },
 }
 

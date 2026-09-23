@@ -1,4 +1,5 @@
 pub mod bash;
+pub mod diagram;
 pub mod fs;
 pub mod search;
 pub mod todo;
@@ -105,6 +106,8 @@ pub struct Output {
     pub display: Option<String>,
     /// Structured change, for Write/Edit.
     pub diff: Option<crate::protocol::FileDiff>,
+    /// A laid-out diagram, for Diagram.
+    pub diagram: Option<Box<crate::diagram::Diagram>>,
 }
 
 impl Output {
@@ -113,6 +116,7 @@ impl Output {
             content: s.into(),
             display: None,
             diff: None,
+            diagram: None,
         }
     }
 }
@@ -126,6 +130,7 @@ pub fn specs() -> Vec<ToolSpec> {
         search::glob_spec(),
         search::grep_spec(),
         todo::spec(),
+        diagram::spec(),
     ]
 }
 
@@ -149,8 +154,9 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "Glob" => search::glob(input, ctx).await,
         "Grep" => search::grep(input, ctx).await,
         "TodoWrite" => todo::run(input, ctx),
+        "Diagram" => diagram::run(input, ctx),
         _ => bail!(
-            "unknown tool `{name}`. Available: Bash, Read, Write, Edit, Glob, Grep, TodoWrite"
+            "unknown tool `{name}`. Available: Bash, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram"
         ),
     }
 }
@@ -162,6 +168,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "Bash" => s("command").lines().next().unwrap_or("").to_string(),
         "Read" | "Write" | "Edit" => ctx.display(&ctx.resolve(&s("file_path"))),
         "Glob" | "Grep" => s("pattern"),
+        "Diagram" => s("title"),
         _ => String::new(),
     };
     let arg = if arg.chars().count() > 100 {

@@ -140,6 +140,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         content: finish(plain),
         display,
         diff: None,
+        diagram: None,
     })
 }
 

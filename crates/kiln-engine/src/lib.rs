@@ -3,6 +3,7 @@
 pub mod checkpoint;
 pub mod config;
 pub mod context;
+pub mod diagram;
 pub mod engine;
 pub mod harness;
 pub mod message;
