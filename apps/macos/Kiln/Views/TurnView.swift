@@ -14,10 +14,11 @@ struct TurnView: View {
     @State private var hovering = false
     @State private var confirmRewind = false
     @AppStorage("showThinking") private var showThinking = true
+    @AppStorage("density") private var density = Density.comfortable.rawValue
 
     var body: some View {
         let parts = TurnParts(turn)
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 8 : 14) {
             if !turn.input.isEmpty {
                 UserPrompt(text: turn.input)
                     .overlay(alignment: .bottomTrailing) {

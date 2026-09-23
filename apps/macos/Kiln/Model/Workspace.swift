@@ -44,11 +44,22 @@ final class Workspace {
     init(folder: URL) {
         self.folder = folder
         preferredModel = UserDefaults.standard.string(forKey: "defaultModel").flatMap { $0.isEmpty ? nil : $0 }
-        start(arguments: Replay.arguments ?? [])
+        // Pick up where you left off: reopen this folder's last session.
+        let last = UserDefaults.standard.string(forKey: Self.lastSessionKey(folder))
+        let replay = Replay.arguments
+        isReplay = replay != nil
+        start(arguments: replay ?? last.map { ["-r", $0] } ?? [])
         Task { await refresh() }
     }
 
     var name: String { folder.lastPathComponent }
+
+    /// Showing a recorded session (`-KilnReplay`): don't remember it as this folder's last one.
+    @ObservationIgnored private var isReplay = false
+
+    private static func lastSessionKey(_ folder: URL) -> String {
+        "lastSession:" + folder.standardizedFileURL.path
+    }
 
     func refresh() async {
         if let s = try? await Kiln.json([SessionInfo].self, args: ["--sessions", "--json"], cwd: folder) {
@@ -108,6 +119,9 @@ final class Workspace {
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID
+            if !self.isReplay, let id = c?.sessionID {
+                UserDefaults.standard.set(id, forKey: Self.lastSessionKey(self.folder))
+            }
             Task { await self.refresh() }
         }
         conversation = c

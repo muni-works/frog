@@ -7,6 +7,7 @@ struct TranscriptView: View {
     var jump: Binding<TurnState.ID?> = .constant(nil)
     /// Told which turns are on screen.
     var onVisibleTurns: ([TurnState.ID]) -> Void = { _ in }
+    @AppStorage("density") private var density = Density.comfortable.rawValue
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -21,7 +22,7 @@ struct TranscriptView: View {
 
     private var transcript: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 22) {
+            LazyVStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 12 : 22) {
                 ForEach(conversation.turns) { turn in
                     TurnView(turn: turn, conversation: conversation, actions: actions)
                 }
