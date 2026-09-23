@@ -63,5 +63,6 @@ pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         display: Some(render(&ctx.todos)),
         diff: None,
         diagram: None,
+        ..Default::default()
     })
 }

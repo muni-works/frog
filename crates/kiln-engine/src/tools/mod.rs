@@ -99,6 +99,7 @@ pub enum Kind {
     Exec,
 }
 
+#[derive(Default)]
 pub struct Output {
     /// What the model sees.
     pub content: String,
@@ -108,6 +109,10 @@ pub struct Output {
     pub diff: Option<crate::protocol::FileDiff>,
     /// A laid-out diagram, for Diagram.
     pub diagram: Option<Box<crate::diagram::Diagram>>,
+    /// Images to show the user (MCP results).
+    pub images: Vec<crate::protocol::Image>,
+    /// An MCP App to host for this result.
+    pub app: Option<Box<crate::protocol::AppView>>,
 }
 
 impl Output {
@@ -117,6 +122,8 @@ impl Output {
             display: None,
             diff: None,
             diagram: None,
+            images: Vec::new(),
+            app: None,
         }
     }
 }
@@ -141,6 +148,7 @@ pub fn kind(name: &str) -> Kind {
         "Write" | "Edit" => Kind::Edit,
         // MCP tools can do anything their server does: ask, like Bash.
         n if n.starts_with("mcp__") => Kind::Exec,
+        crate::mcp::SEARCH_TOOL => Kind::Read,
         _ => Kind::Read,
     }
 }

@@ -121,6 +121,12 @@ headers = { Authorization = "Bearer ${DOCS_TOKEN}" }
 - Their tools appear as `mcp__<server>__<tool>`, and every call asks permission.
 - If a tool's description looks like prompt injection or hides Unicode, kiln quarantines it and the model never sees it. Set `trust = true` on a server to skip this check.
 - `kiln --mcp` lists each server's status, its tools and anything quarantined. The Mac app shows the same list in Settings › MCP.
+- **Big servers:** past 40 tools, kiln loads tools on demand instead of sending every schema. It starts with the tools the server's own instructions mention. The model finds the rest with `McpTools` (keywords, or `select:name,name`).
+- **Richer servers:** kiln follows tool-list changes mid-session and shows progress on running calls. It also answers roots requests.
+- **In the Mac app:**
+  - Servers can ask you for input mid-call (elicitation), as a form or a link to open.
+  - Images returned by tools are shown.
+  - MCP Apps (`ui://` resources) run inline, e.g. vcad's 3D viewer. An app can call tools only on its own server.
 - MCP is opt-in. Bash alone is often cheaper.
 
 ## Diagrams

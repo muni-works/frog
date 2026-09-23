@@ -54,7 +54,7 @@ pub enum Decision {
 
 /// Client → engine.
 ///
-/// `Interrupt` and `Permission` take effect immediately. Everything else is queued
+/// `Interrupt`, `Permission`, `Elicit` and `AppCall` take effect immediately. Everything else is queued
 /// and handled in order; each queued op ends with [`Event::Idle`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -90,6 +90,22 @@ pub enum Op {
     /// Name the session (clients may generate this, e.g. with an on-device model).
     SetTitle {
         title: String,
+    },
+    /// Answer an [`Event::Elicitation`]. `action` is `accept`, `decline` or `cancel`;
+    /// `content` holds the form's values when accepting.
+    Elicit {
+        id: String,
+        action: String,
+        #[serde(default)]
+        content: Option<serde_json::Value>,
+    },
+    /// An MCP App calling a tool on its own server. Answered with [`Event::AppResult`].
+    AppCall {
+        id: String,
+        server: String,
+        tool: String,
+        #[serde(default)]
+        arguments: serde_json::Value,
     },
     Shutdown,
 }
@@ -168,6 +184,38 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         preview: Option<FileDiff>,
     },
+    /// An MCP server asks the user for input mid-call: a form (`schema`, a flat JSON Schema
+    /// object) or a URL to open. Reply with [`Op::Elicit`].
+    Elicitation {
+        id: String,
+        server: String,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        schema: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+    },
+    /// The elicitation was answered (by any client) or abandoned.
+    ElicitationDone {
+        id: String,
+    },
+    /// Progress reported by a running MCP tool.
+    ToolProgress {
+        id: String,
+        progress: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    /// Reply to [`Op::AppCall`]: the `CallToolResult` JSON, or an error.
+    AppResult {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// Something is in flight with nothing to show yet (a model request, a tool call's
     /// arguments streaming). Clients typically show a spinner.
     Progress {
@@ -220,6 +268,8 @@ pub enum ItemKind {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+// Serialized data, built once per item; boxing the big variant buys nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum Item {
     Message {
         text: String,
@@ -242,7 +292,34 @@ pub enum Item {
         /// Set for Diagram: validated and laid out, ready to draw.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diagram: Option<Box<crate::diagram::Diagram>>,
+        /// Images the tool returned (MCP servers), shown to the user.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<Image>,
+        /// An MCP App: the server's own UI for this result, for clients that can host it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        app: Option<Box<AppView>>,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Image {
+    pub mime: String,
+    /// Base64.
+    pub data: String,
+}
+
+/// An MCP App (`ui://` resource) to render for a tool result. The HTML and the raw
+/// `CallToolResult` can be large, so they live in files under the kiln data dir.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AppView {
+    pub server: String,
+    /// The tool's name on the server.
+    pub tool: String,
+    pub uri: String,
+    /// Path to the app's HTML.
+    pub html: String,
+    /// Path to the tool's `CallToolResult` as JSON.
+    pub result: String,
 }
 
 /// A file change as data, so clients can draw it however they like.

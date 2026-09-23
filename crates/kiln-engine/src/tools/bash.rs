@@ -141,6 +141,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         display,
         diff: None,
         diagram: None,
+        ..Default::default()
     })
 }
 

@@ -3,6 +3,8 @@ import SwiftUI
 struct ItemView: View {
     let item: ItemState
     let conversation: Conversation
+    /// False for an MCP App result that a later call in the turn superseded.
+    var showsApp = true
 
     var body: some View {
         switch item.kind {
@@ -17,6 +19,13 @@ struct ItemView: View {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text(arg.isEmpty ? "Drawing a diagram…" : "Drawing \(arg)…").font(.callout).foregroundStyle(.secondary)
+            }
+        case .tool(let name, _) where item.result?.app != nil && showsApp:
+            McpAppCard(name: name, item: item, app: item.result!.app!, conversation: conversation)
+        case .tool(let name, let arg) where !(item.result?.images ?? []).isEmpty:
+            VStack(alignment: .leading, spacing: 8) {
+                ToolCallView(name: name, arg: arg, item: item, conversation: conversation)
+                ToolImages(images: item.result!.images!)
             }
         case .tool(let name, let arg):
             ToolCallView(name: name, arg: arg, item: item, conversation: conversation)
@@ -163,6 +172,19 @@ struct ToolCallView: View {
                 } else {
                     TerminalView(text: result.display ?? result.output)
                 }
+            } else if !item.done, let p = item.progress {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let total = p.total, total > 0 {
+                        ProgressView(value: min(p.progress, total), total: total)
+                    } else {
+                        ProgressView().progressViewStyle(.linear)
+                    }
+                    if let m = p.message, !m.isEmpty {
+                        Text(m).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                .padding(.leading, 26)
+                .transition(.opacity)
             } else if !item.done, !item.output.isEmpty {
                 // Live tail of a running command.
                 TerminalView(text: String(item.output.suffix(6000)), live: true, maxHeight: 150)
@@ -313,7 +335,7 @@ struct PermissionCard: View {
             }
             if let diff = request.preview {
                 DiffView(diff: diff, maxLines: 40)
-            } else {
+            } else if !request.arg.isEmpty {
                 Text(request.arg)
                     .font(.system(.callout, design: .monospaced))
                     .textSelection(.enabled)

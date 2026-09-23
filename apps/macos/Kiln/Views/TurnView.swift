@@ -104,16 +104,28 @@ struct TurnParts {
 
     init(_ turn: TurnState) {
         // Messages after the last tool call are the answer; everything else is work. Diagrams
-        // are part of the answer wherever they come.
+        // (and MCP apps and images) are part of the answer wherever they come.
         func isDiagram(_ item: ItemState) -> Bool {
             if case .tool(let name, _) = item.kind, name == "Diagram" { true } else { false }
         }
+        // MCP results with their own UI (an app, or images) are shown like diagrams.
+        // Each call to an app's tools remounts the app, so only the latest per app is shown.
+        var latestApp: [String: String] = [:]
+        for item in turn.items {
+            if let app = item.result?.app { latestApp[app.server + app.uri] = item.id }
+        }
+        func isVisual(_ item: ItemState) -> Bool {
+            guard let r = item.result, r.outcome == .ok else { return false }
+            if let app = r.app { return latestApp[app.server + app.uri] == item.id }
+            return !(r.images ?? []).isEmpty
+        }
         let lastTool = turn.items.lastIndex { item in
-            if case .tool = item.kind { !isDiagram(item) } else { false }
+            if case .tool = item.kind { !isDiagram(item) && !isVisual(item) } else { false }
         }
         for (i, item) in turn.items.enumerated() {
             let isAnswer: Bool = {
                 if isDiagram(item) { return item.result?.diagram != nil || !item.done }
+                if isVisual(item) { return true }
                 guard item.kind == .message else { return false }
                 guard let lastTool else { return true }
                 return i > lastTool
@@ -229,7 +241,7 @@ struct WorkGroup: View {
     private func stepsList(_ items: [ItemState]) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(items) { item in
-                ItemView(item: item, conversation: conversation)
+                ItemView(item: item, conversation: conversation, showsApp: false)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }

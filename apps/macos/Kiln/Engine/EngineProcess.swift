@@ -91,7 +91,7 @@ final class EngineProcess {
 
     init(binary: URL, cwd: URL, arguments: [String]) {
         process.executableURL = binary
-        process.arguments = ["--serve"] + arguments
+        process.arguments = ["--serve", "--rich"] + arguments
         process.currentDirectoryURL = cwd
         process.environment = Kiln.environment
         process.standardInput = input

@@ -83,6 +83,7 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             display: Some("empty file".into()),
             diff: None,
             diagram: None,
+            ..Default::default()
         });
     }
     let start = int_arg(input, "offset").unwrap_or(1).max(1) as usize - 1;
@@ -116,6 +117,7 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         display: Some(format!("Read {shown} lines")),
         diff: None,
         diagram: None,
+        ..Default::default()
     })
 }
 
@@ -160,6 +162,7 @@ pub async fn write(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         display: Some(display),
         diff: Some(structured),
         diagram: None,
+        ..Default::default()
     })
 }
 
@@ -218,6 +221,7 @@ pub async fn edit(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         display: Some(diff(&text, &updated)),
         diff: Some(file_diff(&ctx.display(&path), Some(&text), &updated)),
         diagram: None,
+        ..Default::default()
     })
 }
 

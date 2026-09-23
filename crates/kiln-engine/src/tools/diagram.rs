@@ -91,6 +91,7 @@ pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         display: Some(d.to_ascii()),
         diff: None,
         diagram: Some(Box::new(d)),
+        ..Default::default()
     })
 }
 
@@ -148,5 +149,6 @@ pub fn run_map(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         }),
         diff: None,
         diagram: Some(Box::new(d)),
+        ..Default::default()
     })
 }

@@ -117,6 +117,8 @@ pub struct Options {
     pub store: Option<PathBuf>,
     /// Confine writes to `cwd` (and temp dirs).
     pub sandbox: bool,
+    /// The client can answer MCP elicitations and host MCP Apps (the Mac app).
+    pub rich: bool,
 }
 
 pub struct Handle {
@@ -129,6 +131,10 @@ pub struct Handle {
 struct Shared {
     cancel: Mutex<CancellationToken>,
     pending: Mutex<HashMap<String, oneshot::Sender<Decision>>>,
+    /// Connected MCP servers, for elicitation answers and app tool calls mid-turn.
+    mcp: Mutex<Option<crate::mcp::Hub>>,
+    /// The current session id, for events emitted outside the agent (MCP callbacks).
+    session: Mutex<String>,
 }
 
 /// Start the engine. It emits `Status` then `Idle` once ready, and exits after `Op::Shutdown`
@@ -154,6 +160,33 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     if let Some(tx) = router.pending.lock().unwrap().remove(&id) {
                         let _ = tx.send(decision);
                     }
+                }
+                Op::Elicit {
+                    id,
+                    action,
+                    content,
+                } => {
+                    if let Some(hub) = router.mcp.lock().unwrap().as_ref() {
+                        hub.host()
+                            .resolve(&id, crate::mcp::ElicitReply { action, content });
+                    }
+                }
+                Op::AppCall {
+                    id,
+                    server,
+                    tool,
+                    arguments,
+                } => {
+                    let Some(hub) = router.mcp.lock().unwrap().clone() else {
+                        continue;
+                    };
+                    tokio::spawn(async move {
+                        let (result, error) = match hub.app_call(&server, &tool, &arguments).await {
+                            Ok(v) => (Some(v), None),
+                            Err(e) => (None, Some(format!("{e:#}"))),
+                        };
+                        hub.host().emit(Event::AppResult { id, result, error });
+                    });
                 }
                 op => {
                     if work_tx.send(op).is_err() {
@@ -198,6 +231,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             agent.emit_status();
             agent.emit(Event::Idle);
         }
+        agent.mcp.shutdown();
         agent.sync_log();
     });
 
@@ -268,6 +302,7 @@ struct Agent {
     ctx: Ctx,
     mode: Mode,
     can_ask: bool,
+    rich: bool,
     store: Option<PathBuf>,
     /// Opened lazily on the first durable write, so idle launches leave no files behind.
     log: Mutex<Option<Log>>,
@@ -357,6 +392,7 @@ impl Agent {
             },
             mode: o.mode,
             can_ask: o.can_ask,
+            rich: o.rich,
             store: o.store,
             log: Mutex::new(log),
             usage: Usage::default(),
@@ -587,6 +623,7 @@ impl Agent {
                 self.ctx.sandbox = sandbox;
                 self.usage = Usage::default();
                 self.session_id = session::new_id();
+                *self.shared.session.lock().unwrap() = self.session_id.clone();
                 self.seq.store(0, Ordering::Relaxed);
                 self.turn = 0;
                 self.apply_harness();
@@ -599,7 +636,11 @@ impl Agent {
                 }
             }
             // Handled by the router, never queued.
-            Op::Interrupt | Op::Permission { .. } | Op::Shutdown => {}
+            Op::Interrupt
+            | Op::Permission { .. }
+            | Op::Elicit { .. }
+            | Op::AppCall { .. }
+            | Op::Shutdown => {}
         }
         Ok(())
     }
@@ -668,6 +709,10 @@ impl Agent {
             if steps > MAX_STEPS {
                 break EndReason::StepLimit;
             }
+            if self.mcp.refresh().await {
+                self.apply_harness();
+            }
+            self.sync_specs();
             self.fit_context(&mut compacted).await?;
             let sent = self.fixed_chars() + context::history_chars(&self.messages);
             let started = Instant::now();
@@ -740,6 +785,7 @@ impl Agent {
             prompt::system_prompt(&self.root, &self.cfg, &self.profile.model),
             harness::guidance(self.tier)
         );
+        self.system.push_str(&self.mcp.prompt());
     }
 
     /// Probe a local model's capabilities the first time it's used under `auto`.
@@ -939,8 +985,23 @@ impl Agent {
         self.emit(Event::Progress {
             label: format!("connecting {n} MCP server{}", if n == 1 { "" } else { "s" }),
         });
-        let hub = crate::mcp::Hub::connect(servers, &self.root).await;
-        for st in &hub.status {
+        *self.shared.session.lock().unwrap() = self.session_id.clone();
+        let emit = {
+            let (events, seq, shared) =
+                (self.events.clone(), self.seq.clone(), self.shared.clone());
+            move |event: Event| {
+                let seq = seq.fetch_add(1, Ordering::Relaxed) + 1;
+                let _ = events.send(Envelope {
+                    seq,
+                    session: shared.session.lock().unwrap().clone(),
+                    created: now_ms(),
+                    event,
+                });
+            }
+        };
+        let host = crate::mcp::Host::new(emit, self.rich && self.can_ask, &self.root);
+        let hub = crate::mcp::Hub::connect(servers, host).await;
+        for st in hub.status() {
             if let Some(e) = &st.error {
                 self.notice(
                     Level::Warn,
@@ -957,14 +1018,23 @@ impl Agent {
                 );
             }
         }
-        self.specs.extend(hub.specs().iter().cloned());
+        *self.shared.mcp.lock().unwrap() = Some(hub.clone());
         self.mcp = hub;
+        self.sync_specs();
+        self.apply_harness();
+    }
+
+    /// Built-in tools plus whatever MCP tools are live (and, with many, loaded).
+    fn sync_specs(&mut self) {
+        let mut specs = tools::specs();
+        specs.extend(self.mcp.specs());
+        self.specs = specs;
     }
 
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
     async fn run_tool(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
         if self.mcp.handles(name) {
-            return self.mcp.call(name, input).await;
+            return self.mcp.call(id, name, input).await;
         }
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         self.ctx.progress = Some(tx);
@@ -1033,25 +1103,31 @@ impl Agent {
                 },
             });
 
-            let (outcome, output, display, diff, diagram) = if seen >= LOOP_REFUSE {
+            let text = |outcome, content: String, display: Option<&str>| {
+                (
+                    outcome,
+                    tools::Output {
+                        content,
+                        display: display.map(String::from),
+                        ..Default::default()
+                    },
+                )
+            };
+            let (outcome, out) = if seen >= LOOP_REFUSE {
                 let msg = format!(
                     "Not run: this exact call already ran {} times this turn with the same result. \
 Don't repeat it. Change the arguments or try a different approach.",
                     seen - 1
                 );
-                (
+                text(
                     ToolOutcome::Error,
                     msg,
-                    Some("refused: repeated identical call".to_string()),
-                    None,
-                    None,
+                    Some("refused: repeated identical call"),
                 )
             } else if denied {
-                (
+                text(
                     ToolOutcome::Skipped,
                     "Skipped: an earlier tool call was rejected.".to_string(),
-                    None,
-                    None,
                     None,
                 )
             } else if self.permit(&id, &name, &arg, &input).await == Decision::Deny {
@@ -1061,20 +1137,15 @@ Don't repeat it. Change the arguments or try a different approach.",
                     "Not permitted in non-interactive mode (run with --yolo to allow)."
                 };
                 denied = self.can_ask;
-                (ToolOutcome::Denied, msg.to_string(), None, None, None)
+                text(ToolOutcome::Denied, msg.to_string(), None)
             } else {
                 self.snapshot(&name, &input);
                 match self.run_tool(&id, &name, &input).await {
-                    Ok(o) => (ToolOutcome::Ok, o.content, o.display, o.diff, o.diagram),
-                    Err(e) => (
-                        ToolOutcome::Error,
-                        format!("Error: {e:#}"),
-                        None,
-                        None,
-                        None,
-                    ),
+                    Ok(o) => (ToolOutcome::Ok, o),
+                    Err(e) => text(ToolOutcome::Error, format!("Error: {e:#}"), None),
                 }
             };
+            let output = out.content;
 
             self.extend_last(vec![Block::ToolResult {
                 id: id.clone(),
@@ -1090,9 +1161,11 @@ Don't repeat it. Change the arguments or try a different approach.",
                     input,
                     outcome,
                     output,
-                    display,
-                    diff,
-                    diagram,
+                    display: out.display,
+                    diff: out.diff,
+                    diagram: out.diagram,
+                    images: out.images,
+                    app: out.app,
                 },
             });
         }
@@ -1259,6 +1332,13 @@ Don't repeat it. Change the arguments or try a different approach.",
         }
         let always = match kind {
             Kind::Edit => "allow all edits this session".to_string(),
+            _ if mcp => {
+                let pretty = name
+                    .strip_prefix("mcp__")
+                    .unwrap_or(name)
+                    .replacen("__", " › ", 1);
+                format!("always allow {pretty} this session")
+            }
             _ => format!("always allow `{prefix}` this session"),
         };
         let id = new_id();
@@ -1395,6 +1475,8 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
                 display,
                 diff: None,
                 diagram: None,
+                images: Vec::new(),
+                app: None,
             },
         });
     }
@@ -1526,6 +1608,7 @@ mod tests {
             resume: None,
             store: None,
             sandbox: false,
+            rich: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
     }
@@ -1551,6 +1634,7 @@ mod tests {
             resume,
             store,
             sandbox: false,
+            rich: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
     }

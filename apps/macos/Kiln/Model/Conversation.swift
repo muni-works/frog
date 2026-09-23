@@ -18,6 +18,8 @@ struct ItemState: Identifiable {
     var result: Item.ToolResult?
     var done = false
     var needsPermission = false
+    /// Reported by a running MCP tool.
+    var progress: ToolProgress?
 }
 
 struct TurnState: Identifiable {
@@ -45,6 +47,9 @@ final class Conversation {
     private(set) var busy = true
     private(set) var progress: String?
     private(set) var permission: PermissionRequest?
+    /// An MCP server waiting on the user.
+    private(set) var elicitation: Elicitation?
+    @ObservationIgnored private var appCalls: [String: (JSONValue?, String?) -> Void] = [:]
     private(set) var failure: String?
     private(set) var replaying = false
     private(set) var title: String?
@@ -132,6 +137,21 @@ final class Conversation {
         engine?.send(.permission(id: p.id, decision: decision))
         permission = nil
         Notifier.shared.resolved(p.id)
+    }
+
+    /// Answer the pending MCP elicitation.
+    func elicit(_ action: String, content: JSONValue? = nil) {
+        guard let e = elicitation else { return }
+        engine?.send(.elicit(id: e.id, action: action, content: content))
+        elicitation = nil
+    }
+
+    /// An MCP App calling a tool on its server; `reply` gets the `CallToolResult` or an error.
+    func callAppTool(server: String, tool: String, arguments: JSONValue, reply: @escaping (JSONValue?, String?) -> Void) {
+        guard let engine else { return reply(nil, "the engine isn't running") }
+        let id = UUID().uuidString
+        appCalls[id] = reply
+        engine.send(.appCall(id: id, server: server, tool: tool, arguments: arguments))
     }
 
     func setMode(_ mode: Mode) {
@@ -229,6 +249,15 @@ final class Conversation {
             progress = nil
         case .permissionResolved:
             permission = nil
+        case .elicitation(let e):
+            elicitation = e
+            progress = nil
+        case .elicitationDone(let id):
+            if elicitation?.id == id { elicitation = nil }
+        case .toolProgress(let id, let p):
+            upsert(id) { $0.progress = p }
+        case .appResult(let id, let result, let error):
+            appCalls.removeValue(forKey: id)?(result, error)
         case .progress(let label):
             progress = label
         case .notice(let level, let message):
@@ -260,6 +289,7 @@ final class Conversation {
             busy = false
             progress = nil
             permission = nil
+            elicitation = nil
             if !queue.isEmpty {
                 submit(queue.removeFirst())
             }

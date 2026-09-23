@@ -47,10 +47,15 @@ enum Op: Encodable, Sendable {
     case subscribe(after: UInt64)
     case clear
     case setTitle(String)
+    /// Answer an MCP elicitation: `accept`, `decline` or `cancel`.
+    case elicit(id: String, action: String, content: JSONValue?)
+    /// An MCP App calling a tool on its own server.
+    case appCall(id: String, server: String, tool: String, arguments: JSONValue)
     case shutdown
 
     private enum Key: String, CodingKey {
         case op, text, command, id, decision, mode, spec, focus, after, title
+        case action, content, server, tool, arguments
     }
 
     func encode(to encoder: Encoder) throws {
@@ -85,6 +90,17 @@ enum Op: Encodable, Sendable {
         case .setTitle(let title):
             try c.encode("set_title", forKey: .op)
             try c.encode(title, forKey: .title)
+        case .elicit(let id, let action, let content):
+            try c.encode("elicit", forKey: .op)
+            try c.encode(id, forKey: .id)
+            try c.encode(action, forKey: .action)
+            try c.encodeIfPresent(content, forKey: .content)
+        case .appCall(let id, let server, let tool, let arguments):
+            try c.encode("app_call", forKey: .op)
+            try c.encode(id, forKey: .id)
+            try c.encode(server, forKey: .server)
+            try c.encode(tool, forKey: .tool)
+            try c.encode(arguments, forKey: .arguments)
         case .shutdown:
             try c.encode("shutdown", forKey: .op)
         }
@@ -209,6 +225,10 @@ enum Item: Decodable, Sendable {
         var display: String?
         var diff: FileDiff?
         var diagram: Diagram?
+        /// Images an MCP tool returned.
+        var images: [ToolImage]?
+        /// An MCP App to host for this result.
+        var app: AppView?
     }
 
     private enum Key: String, CodingKey { case type, text }
@@ -241,6 +261,36 @@ enum Delta: Decodable, Sendable {
     }
 }
 
+struct ToolImage: Decodable, Sendable, Hashable {
+    var mime: String
+    /// Base64.
+    var data: String
+}
+
+/// An MCP App (`ui://` resource): its HTML and the tool's raw result, saved by the engine.
+struct AppView: Decodable, Sendable, Hashable {
+    var server: String
+    var tool: String
+    var uri: String
+    var html: String
+    var result: String
+}
+
+/// An MCP server asking the user for input mid-call: a form, or a URL to open.
+struct Elicitation: Decodable, Sendable, Identifiable {
+    var id: String
+    var server: String
+    var message: String
+    var schema: JSONValue?
+    var url: String?
+}
+
+struct ToolProgress: Sendable, Equatable {
+    var progress: Double
+    var total: Double?
+    var message: String?
+}
+
 struct PermissionRequest: Decodable, Sendable, Identifiable {
     var id: String
     var item: String
@@ -265,6 +315,10 @@ enum Event: Sendable {
     case itemDelta(id: String, delta: Delta)
     case permissionRequest(PermissionRequest)
     case progress(String)
+    case elicitation(Elicitation)
+    case elicitationDone(id: String)
+    case toolProgress(id: String, ToolProgress)
+    case appResult(id: String, result: JSONValue?, error: String?)
     case notice(level: String, message: String)
     case error(EngineError)
     case status(Status)
@@ -283,6 +337,7 @@ struct Envelope: Decodable, Sendable {
         case seq, session, created, event
         case turn, input, reason, usage, id, kind, item, delta, decision
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title
+        case progress, total, result
     }
 
     init(from decoder: Decoder) throws {
@@ -326,6 +381,22 @@ struct Envelope: Decodable, Sendable {
             event = .permissionRequest(try PermissionRequest(from: decoder))
         case "progress":
             event = .progress(try c.decode(String.self, forKey: .label))
+        case "elicitation":
+            event = .elicitation(try Elicitation(from: decoder))
+        case "elicitation_done":
+            event = .elicitationDone(id: try c.decode(String.self, forKey: .id))
+        case "tool_progress":
+            event = .toolProgress(
+                id: try c.decode(String.self, forKey: .id),
+                ToolProgress(
+                    progress: try c.decode(Double.self, forKey: .progress),
+                    total: try c.decodeIfPresent(Double.self, forKey: .total),
+                    message: try c.decodeIfPresent(String.self, forKey: .message)))
+        case "app_result":
+            event = .appResult(
+                id: try c.decode(String.self, forKey: .id),
+                result: try c.decodeIfPresent(JSONValue.self, forKey: .result),
+                error: try c.decodeIfPresent(String.self, forKey: .error))
         case "notice":
             event = .notice(level: try c.decode(String.self, forKey: .level), message: try c.decode(String.self, forKey: .message))
         case "error":
@@ -342,8 +413,8 @@ struct Envelope: Decodable, Sendable {
     }
 }
 
-/// Arbitrary JSON (tool inputs).
-enum JSONValue: Decodable, Sendable, Hashable {
+/// Arbitrary JSON (tool inputs, MCP results).
+enum JSONValue: Codable, Sendable, Hashable {
     case null
     case bool(Bool)
     case number(Double)
@@ -359,6 +430,44 @@ enum JSONValue: Decodable, Sendable, Hashable {
         else if let s = try? c.decode(String.self) { self = .string(s) }
         else if let a = try? c.decode([JSONValue].self) { self = .array(a) }
         else { self = .object(try c.decode([String: JSONValue].self)) }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .null: try c.encodeNil()
+        case .bool(let b): try c.encode(b)
+        case .number(let n):
+            if n == n.rounded(), abs(n) < 1e15 { try c.encode(Int64(n)) } else { try c.encode(n) }
+        case .string(let s): try c.encode(s)
+        case .array(let a): try c.encode(a)
+        case .object(let o): try c.encode(o)
+        }
+    }
+
+    /// From JSONSerialization output (`[String: Any]`, `NSNumber`, …).
+    init(any: Any?) {
+        switch any {
+        case nil, is NSNull: self = .null
+        case let n as NSNumber where CFGetTypeID(n) == CFBooleanGetTypeID(): self = .bool(n.boolValue)
+        case let n as NSNumber: self = .number(n.doubleValue)
+        case let s as String: self = .string(s)
+        case let a as [Any]: self = .array(a.map { JSONValue(any: $0) })
+        case let o as [String: Any]: self = .object(o.mapValues { JSONValue(any: $0) })
+        default: self = .null
+        }
+    }
+
+    /// For JSONSerialization / JavaScript.
+    var any: Any {
+        switch self {
+        case .null: NSNull()
+        case .bool(let b): b
+        case .number(let n): n
+        case .string(let s): s
+        case .array(let a): a.map(\.any)
+        case .object(let o): o.mapValues(\.any)
+        }
     }
 
     subscript(key: String) -> JSONValue? {

@@ -26,8 +26,13 @@ struct TranscriptView: View {
                 ForEach(conversation.turns) { turn in
                     TurnView(turn: turn, conversation: conversation, actions: actions)
                 }
+                if let e = conversation.elicitation {
+                    ElicitationCard(request: e, conversation: conversation)
+                        .id(e.id)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
                 // The running turn's work group shows progress once there's something to show.
-                if conversation.busy, conversation.permission == nil,
+                if conversation.busy, conversation.permission == nil, conversation.elicitation == nil,
                    conversation.replaying || (conversation.turns.last?.items.isEmpty ?? true) {
                     WorkingIndicator(label: conversation.replaying ? "Loading session…" : conversation.progress)
                 }

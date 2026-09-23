@@ -71,6 +71,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         resume: None,
         store: Some(r.sessions.to_path_buf()),
         sandbox: true,
+        rich: false,
     })?;
     h.ops.send(Op::Submit {
         text: r.task.prompt.clone(),

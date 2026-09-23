@@ -28,6 +28,9 @@ struct Cli {
     /// Speak the engine protocol over stdio (Op JSON lines in, Event JSON lines out).
     #[arg(long, conflicts_with = "print")]
     serve: bool,
+    /// With --serve: the client can answer MCP elicitations and host MCP Apps.
+    #[arg(long, requires = "serve", hide = true)]
+    rich: bool,
     /// Profile name from config.toml, or provider/model (e.g. ollama/qwen3, lmstudio/qwen3-coder, anthropic/claude-sonnet-5)
     #[arg(short, long)]
     model: Option<String>,
@@ -159,16 +162,18 @@ async fn run() -> Result<bool> {
     }
     if cli.mcp {
         let servers = kiln_engine::mcp::configured(&cfg.mcp_servers, &cwd);
-        let mut hub = kiln_engine::mcp::Hub::connect(servers, &cwd).await;
+        let hub =
+            kiln_engine::mcp::Hub::connect(servers, kiln_engine::mcp::Host::headless(&cwd)).await;
+        let status = hub.status();
         if cli.json {
-            println!("{}", serde_json::to_string(&hub.status)?);
-        } else if hub.status.is_empty() {
+            println!("{}", serde_json::to_string(&status)?);
+        } else if status.is_empty() {
             println!(
                 "no MCP servers configured (add [mcp_servers.<name>] to config.toml, or a .mcp.json here)"
             );
         }
         if !cli.json {
-            for st in &hub.status {
+            for st in &status {
                 match &st.error {
                     Some(e) => println!("✗ {}  {e}", st.name),
                     None => println!(
@@ -183,7 +188,7 @@ async fn run() -> Result<bool> {
                 }
             }
         }
-        hub.shutdown().await;
+        hub.shutdown();
         return Ok(true);
     }
     if let Some(dir) = &cli.map {
@@ -249,6 +254,7 @@ async fn run() -> Result<bool> {
         resume,
         store: Some(store),
         sandbox: cli.sandbox,
+        rich: cli.rich,
     })?;
 
     let mut prompt = cli.prompt.join(" ");
