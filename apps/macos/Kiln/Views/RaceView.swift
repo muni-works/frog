@@ -235,6 +235,7 @@ private struct FlowChips: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(.quaternary.opacity(0.5), in: .capsule)
+                .fileActions(c.path)
             }
             if changes.count > 3 {
                 Text("+\(changes.count - 3) more").font(.caption).foregroundStyle(.secondary)

@@ -220,5 +220,24 @@ struct CodeBlock: View {
         }
         .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary, lineWidth: 0.5))
+        .contextMenu {
+            Button("Copy", systemImage: "doc.on.doc") { copy() }
+            Button("Save As…", systemImage: "square.and.arrow.down") { save() }
+        }
+        .draggable(code)
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+    }
+
+    private func save() {
+        let panel = NSSavePanel()
+        let ext = ["python": "py", "rust": "rs", "swift": "swift", "typescript": "ts", "javascript": "js",
+                   "bash": "sh", "sh": "sh", "json": "json", "toml": "toml", "go": "go", "c": "c"][language.lowercased()]
+        panel.nameFieldStringValue = "snippet" + (ext.map { ".\($0)" } ?? ".txt")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? code.write(to: url, atomically: true, encoding: .utf8)
     }
 }

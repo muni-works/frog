@@ -10,6 +10,7 @@ struct ComposerView: View {
     @State private var mention: String?
     @State private var picked = 0
     @State private var racing = false
+    @State private var dropTargeted = false
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -124,6 +125,21 @@ struct ComposerView: View {
             racing = true
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .overlay {
+            if dropTargeted {
+                RoundedRectangle(cornerRadius: 20).strokeBorder(.tint, lineWidth: 2)
+            }
+        }
+        // Drop files to mention them: `@path` relative to the project when inside it.
+        .dropDestination(for: URL.self) { urls, _ in
+            let root = conversation.folder.standardizedFileURL.path + "/"
+            let mentions = urls.map { url in
+                let p = url.standardizedFileURL.path
+                return "@" + (p.hasPrefix(root) ? String(p.dropFirst(root.count)) : p)
+            }
+            controller.insert(mentions.joined(separator: " ") + " ")
+            return !urls.isEmpty
+        } isTargeted: { dropTargeted = $0 }
         .padding(.horizontal, 20)
         .padding(.bottom, 16)
         .frame(maxWidth: 860)

@@ -333,6 +333,7 @@ struct ChangesStrip: View {
                         }
                         .buttonStyle(.plain)
                         .help(change.path)
+                        .fileActions(change.path)
                     }
                 }
             }

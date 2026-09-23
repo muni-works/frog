@@ -30,6 +30,13 @@ final class ComposerController {
         tv.insertText("@\(path) ", replacementRange: range)
     }
 
+    /// Insert text at the cursor (e.g. `@path` mentions for dropped files).
+    func insert(_ text: String) {
+        guard let tv = textView else { return }
+        tv.window?.makeFirstResponder(tv)
+        tv.insertText(text, replacementRange: tv.selectedRange())
+    }
+
     func focus() {
         guard let tv = textView else { return }
         tv.window?.makeFirstResponder(tv)

@@ -69,6 +69,7 @@ struct ChangesInspector: View {
                                     .contentShape(.rect)
                             }
                             .buttonStyle(.plain)
+                            .fileActions(change.path)
                         }
                     }
                     if let change = current {

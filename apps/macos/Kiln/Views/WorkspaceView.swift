@@ -104,6 +104,7 @@ struct WorkspaceView: View {
                 .contentMargins(.leading, insets.leading, for: .scrollContent)
                 .contentMargins(.trailing, insets.trailing, for: .scrollContent)
                 .environment(\.canvasInsets, insets)
+                .environment(\.projectFolder, workspace.folder)
 
             GeometryReader { geo in
                 let room = max(120, geo.size.height - Self.margin * 2)
@@ -138,6 +139,10 @@ struct WorkspaceView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { canvasWidth = $0 }
+        .environment(\.projectFolder, workspace.folder)
+        // The folder as the window's document: proxy icon in the title bar (⌘-click for its
+        // path, drag it anywhere).
+        .navigationDocument(workspace.folder)
         // One backdrop for the whole canvas, so the conversation reads as a single surface.
         .background(Color(nsColor: .windowBackgroundColor).ignoresSafeArea())
         .animation(Motion.panel(reduced: reduceMotion), value: sessionsVisible)
