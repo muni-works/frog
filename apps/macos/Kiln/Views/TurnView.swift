@@ -13,6 +13,7 @@ struct TurnView: View {
     let actions: TurnActions
     @State private var hovering = false
     @State private var confirmRewind = false
+    @AppStorage("showThinking") private var showThinking = true
 
     var body: some View {
         let parts = TurnParts(turn)
@@ -27,8 +28,9 @@ struct TurnView: View {
                     }
                     .contextMenu { menu(changes: parts.changes.count) }
             }
-            if !parts.work.isEmpty {
-                WorkGroup(turn: turn, steps: parts.work, plan: parts.plan, conversation: conversation)
+            let steps = showThinking ? parts.work : parts.work.filter { $0.kind != .reasoning }
+            if !steps.isEmpty {
+                WorkGroup(turn: turn, steps: steps, plan: parts.plan, conversation: conversation)
             }
             ForEach(parts.answer) { item in
                 ItemView(item: item, conversation: conversation)

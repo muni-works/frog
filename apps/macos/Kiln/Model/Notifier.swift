@@ -40,7 +40,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func turnFinished(project: String, text: String) {
-        guard inBackground else { return }
+        guard inBackground, UserDefaults.standard.object(forKey: "notifyWhenDone") as? Bool ?? true else { return }
         let c = UNMutableNotificationContent()
         c.title = project
         c.body = text

@@ -43,6 +43,7 @@ final class Workspace {
 
     init(folder: URL) {
         self.folder = folder
+        preferredModel = UserDefaults.standard.string(forKey: "defaultModel").flatMap { $0.isEmpty ? nil : $0 }
         start(arguments: Replay.arguments ?? [])
         Task { await refresh() }
     }
@@ -96,7 +97,14 @@ final class Workspace {
 
     private func start(arguments: [String]) {
         conversation?.stop()
-        let c = Conversation(folder: folder, arguments: arguments, model: preferredModel)
+        // The permission mode new sessions start in (Settings > Permissions).
+        let mode = UserDefaults.standard.string(forKey: "defaultMode").flatMap(Mode.init(rawValue:))
+        let modeFlag: [String] = switch mode {
+        case .yolo: ["--yolo"]
+        case .acceptEdits: ["--accept-edits"]
+        default: []
+        }
+        let c = Conversation(folder: folder, arguments: arguments + modeFlag, model: preferredModel)
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID

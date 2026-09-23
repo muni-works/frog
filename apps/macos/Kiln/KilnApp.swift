@@ -13,6 +13,10 @@ struct KilnApp: App {
         .defaultSize(width: 1100, height: 760)
         .windowToolbarStyle(.unified)
         .commands { KilnCommands() }
+
+        Settings {
+            SettingsView()
+        }
     }
 }
 
@@ -102,6 +106,8 @@ struct WelcomeView: View {
             .controlSize(.large)
             .help("Open Folder (⌘O)")
 
+            LocalModelCard()
+
             let recents = Recents.all
             if !recents.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -136,6 +142,45 @@ struct WelcomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { open(url) }
+        }
+    }
+}
+
+/// First run: if no open model is on this Mac yet, offer the recommended one right on the
+/// welcome screen. Once one is installed this shrinks to a line pointing at Settings.
+private struct LocalModelCard: View {
+    @Environment(\.openSettings) private var openSettings
+    @State private var downloads = ModelDownloads.shared
+
+    private var installed: [SuggestedModel] {
+        SuggestedModel.all.filter { ModelDownloads.isInstalled($0.repo) || downloads.states[$0.repo] == .done }
+    }
+
+    var body: some View {
+        if installed.isEmpty, let first = SuggestedModel.all.first {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Run a model on this Mac", systemImage: "cpu").font(.headline)
+                Text("kiln has its own inference engine. Download a model once and work fully offline.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                SuggestedModelRow(model: first)
+                Button("More models…") { openSettings() }
+                    .buttonStyle(.link)
+                    .font(.callout)
+            }
+            .frame(width: 420)
+            .padding(14)
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
+        } else if !installed.isEmpty {
+            Button {
+                openSettings()
+            } label: {
+                Label("\(installed.map(\.title).joined(separator: ", ")) ready on this Mac", systemImage: "checkmark.circle.fill")
+                    .font(.callout)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
     }
 }
