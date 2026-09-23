@@ -113,11 +113,22 @@ Shipped:
 - an OpenAI-compatible API: streaming, `reasoning_content`, `tool_calls` parsed from `<tool_call>`, `/props` for the context window
 - the model's own Jinja chat template
 
-Speed on M4 Max, decode: Qwen3-0.6B at 125 tok/s, Qwen3-4B at 39 tok/s (bf16).
+- 4-bit MLX checkpoints (`mlx-community/*-4bit`) loaded directly, plus `--q4` quantization at load. Logits match mlx-lm.
+- fused Q/K/V and gate/up projections, one-dispatch attention prologue (q/k norm, RoPE, KV write), tiled flash attention for prefill
+
+Speed on M4 Max:
+
+| model | decode | 2k-token prefill |
+|---|---|---|
+| Qwen3-0.6B bf16 | 202 tok/s | |
+| Qwen3-4B bf16 | 50 tok/s | |
+| Qwen3-4B 4-bit | ~105 tok/s | ~790 tok/s |
+| ollama qwen3:4b Q4_K_M | ~128 tok/s | |
+
+A second sidecar, `kiln-apple`, puts Apple's on-device Foundation Model behind the same API. kiln's JSON tool schema runs as guided generation (`DynamicGenerationSchema`), so every reply is a valid action.
 
 Next:
-- 4-bit weights. Decode is bandwidth-bound, so this is roughly 3x.
-- fused decode kernels: norm+GEMV, QKV in one pass, SwiGLU in the gate/up epilogue, residual in the down projection
-- grammar-constrained decoding for `json` tool mode
+- close the decode gap: fuse the residual add into the down/o GEMVs; f16 KV cache
+- bigger prefill tiles (64x64, bf16 in threadgroup memory)
+- grammar-constrained decoding in tang-llm for `json` tool mode
 - MoE (Qwen3-30B-A3B)
-- Apple Foundation Models as a second sidecar

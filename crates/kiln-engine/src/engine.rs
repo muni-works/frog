@@ -815,7 +815,7 @@ impl Agent {
         if let Some(model) = self.profile.sidecar.clone() {
             if !crate::sidecar::is_serving(&model).await {
                 self.emit(Event::Progress {
-                    label: format!("loading {model} in tang-llm"),
+                    label: format!("starting the inference sidecar for {model}"),
                 });
             }
             if let Err(e) = crate::sidecar::ensure(&self.profile).await {

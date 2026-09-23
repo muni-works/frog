@@ -7,7 +7,8 @@ cargo install --path crates/kiln
 kiln                                 # interactive, default model
 kiln -m ollama/qwen3-coder:30b       # any provider/model
 kiln -m lmstudio/qwen3-coder-30b
-kiln -m tang/Qwen/Qwen3-4B           # kiln's own inference sidecar, no ollama needed
+kiln -m tang/mlx-community/Qwen3-4B-4bit   # kiln's own inference sidecar, no ollama needed
+kiln -m apple/on-device              # Apple's on-device Foundation Model (macOS 26)
 kiln -m anthropic/claude-sonnet-5
 kiln -p "why does the build fail?"   # one-shot, prints to stdout
 kiln -c                              # continue the last session in this dir
@@ -74,6 +75,7 @@ The engine crate has no terminal dependencies, so the compiler enforces this bou
 | spec | backend |
 |---|---|
 | `tang/<hf-repo-or-dir>` | the bundled `tang-llm` sidecar (Metal): kiln starts it on `localhost:8911` and reuses it across sessions |
+| `apple/on-device` | the `kiln-apple` sidecar: Apple's on-device Foundation Model on `localhost:8912`, driven in `json` tool mode (guided generation) |
 | `ollama/<model>` | ollama native `/api/chat` (sets `num_ctx` from `context_window`) |
 | `lmstudio/<model>` | OpenAI-compatible, `localhost:1234/v1` |
 | `llamacpp/<model>`, `mlx/<model>` | OpenAI-compatible, `localhost:8080/v1` |
@@ -81,7 +83,9 @@ The engine crate has no terminal dependencies, so the compiler enforces this bou
 | `openai/<model>` | OpenAI, or `OPENAI_BASE_URL` / `--base-url` |
 | `anthropic/<model>` | Messages API with prompt caching |
 
-`tang/` runs safetensors checkpoints (Qwen3 family today) from the Hugging Face cache or a directory, on [tang](https://github.com/ecto/tang)'s Metal backend. It uses the checkpoint's own chat template, reuses the KV cache for the prefix a turn shares with the previous one, and logs to `~/.local/share/kiln/tang-llm.log`. The binary is found through `KILN_TANG_BIN`, then next to `kiln`, then on `PATH`.
+`tang/` runs safetensors checkpoints (Qwen3 family today) from the Hugging Face cache or a directory, on [tang](https://github.com/ecto/tang)'s Metal backend. It uses the checkpoint's own chat template, reuses the KV cache for the prefix a turn shares with the previous one, and logs to `~/.local/share/kiln/tang-llm.log`. `tang/` accepts bf16 checkpoints and `mlx-community` 4-bit ones. The binary is found through `KILN_TANG_BIN`, then next to `kiln`, then on `PATH`.
+
+`apple/` needs Apple Intelligence enabled. Build the sidecar with `swift build -c release --package-path sidecars/kiln-apple`; it's found through `KILN_APPLE_BIN`, next to `kiln`, or on `PATH`. The model has an 8k context and no native tool calling, so kiln sends tool calls as a JSON schema that runs as guided generation.
 
 Named profiles live in `~/.config/kiln/config.toml`. See [config.example.toml](config.example.toml).
 

@@ -142,7 +142,7 @@ impl Config {
             return Ok((spec, p.clone()));
         }
         let (prov, model) = spec.split_once('/').ok_or_else(|| {
-            anyhow!("unknown model `{spec}`: use a profile from config.toml or provider/model (ollama/, tang/, openai/, lmstudio/, llamacpp/, anthropic/)")
+            anyhow!("unknown model `{spec}`: use a profile from config.toml or provider/model (ollama/, tang/, apple/, openai/, lmstudio/, llamacpp/, anthropic/)")
         })?;
         let mut p = match prov {
             "ollama" => Profile::new(ProviderKind::Ollama, model),
@@ -155,6 +155,13 @@ impl Config {
                 p.sidecar = Some(model.to_string());
                 p
             }
+            // Apple's on-device model has no native tool calling; guided JSON is exact.
+            "apple" => {
+                let mut p = Profile::new(ProviderKind::Openai, crate::sidecar::APPLE);
+                p.sidecar = Some(crate::sidecar::APPLE.into());
+                p.tool_mode = ToolMode::Json;
+                p
+            }
             _ => bail!("unknown provider `{prov}`"),
         };
         p.base_url = match prov {
@@ -163,7 +170,7 @@ impl Config {
             "mlx" => Some("http://localhost:8080/v1".into()),
             "vllm" => Some("http://localhost:8000/v1".into()),
             "openai" => std::env::var("OPENAI_BASE_URL").ok(),
-            "tang" => Some(crate::sidecar::base_url()),
+            "tang" | "apple" => p.sidecar.as_deref().map(crate::sidecar::base_url),
             _ => None,
         };
         Ok((spec, p))

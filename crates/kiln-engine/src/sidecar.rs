@@ -1,6 +1,10 @@
-//! The bundled inference sidecar: `tang-llm serve`, an OpenAI-compatible server running models
-//! on tang's Metal backend. `tang/<model>` profiles start it on demand and share one instance:
-//! if it's already serving the requested model it's reused, otherwise it's restarted.
+//! Bundled inference sidecars, OpenAI-compatible servers kiln starts on demand:
+//!
+//! - `tang-llm serve`: open-weight models on tang's Metal backend (`tang/<model>` profiles).
+//!   One shared instance; reused if it's already serving the requested model, else restarted.
+//! - `kiln-apple`: Apple's on-device Foundation Model (`apple/...` profiles).
+//!
+//! Each outlives the engine that started it, so later sessions reuse it.
 
 use crate::config::{Profile, data_dir};
 use anyhow::{Context, Result, bail};
@@ -8,42 +12,64 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub const PORT: u16 = 8911;
+/// `Profile::sidecar` value for the Apple sidecar; anything else is a tang model.
+pub const APPLE: &str = "apple";
 
-pub fn base_url() -> String {
-    format!("http://127.0.0.1:{PORT}/v1")
+struct Kind {
+    bin: &'static str,
+    env: &'static str,
+    port: u16,
 }
 
-/// `KILN_TANG_BIN`, else `tang-llm` next to this executable (the app bundles it), else `$PATH`.
-fn binary() -> PathBuf {
-    if let Some(p) = std::env::var_os("KILN_TANG_BIN") {
+const TANG: Kind = Kind {
+    bin: "tang-llm",
+    env: "KILN_TANG_BIN",
+    port: 8911,
+};
+const APPLE_KIND: Kind = Kind {
+    bin: "kiln-apple",
+    env: "KILN_APPLE_BIN",
+    port: 8912,
+};
+
+fn kind(model: &str) -> &'static Kind {
+    if model == APPLE { &APPLE_KIND } else { &TANG }
+}
+
+pub fn base_url(model: &str) -> String {
+    format!("http://127.0.0.1:{}/v1", kind(model).port)
+}
+
+/// `$KILN_*_BIN`, else next to this executable (the app bundles them), else `$PATH`.
+fn binary(k: &Kind) -> PathBuf {
+    if let Some(p) = std::env::var_os(k.env) {
         return p.into();
     }
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
-        && dir.join("tang-llm").exists()
+        && dir.join(k.bin).exists()
     {
-        return dir.join("tang-llm");
+        return dir.join(k.bin);
     }
-    "tang-llm".into()
+    k.bin.into()
 }
 
-fn pid_file() -> PathBuf {
-    data_dir().join("tang-llm.pid")
+fn pid_file(k: &Kind) -> PathBuf {
+    data_dir().join(format!("{}.pid", k.bin))
 }
 
-pub fn log_file() -> PathBuf {
-    data_dir().join("tang-llm.log")
+pub fn log_file(model: &str) -> PathBuf {
+    data_dir().join(format!("{}.log", kind(model).bin))
 }
 
-/// The model the sidecar is serving right now, if it's up.
-async fn serving() -> Option<String> {
+/// The model the sidecar on `k`'s port is serving right now, if it's up.
+async fn serving(k: &Kind) -> Option<String> {
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
         .ok()?;
     let v: serde_json::Value = http
-        .get(format!("{}/models", base_url()))
+        .get(format!("http://127.0.0.1:{}/v1/models", k.port))
         .send()
         .await
         .ok()?
@@ -53,46 +79,51 @@ async fn serving() -> Option<String> {
     v["data"][0]["id"].as_str().map(String::from)
 }
 
-fn stop() {
-    if let Ok(pid) = std::fs::read_to_string(pid_file())
+fn stop(k: &Kind) {
+    if let Ok(pid) = std::fs::read_to_string(pid_file(k))
         && let Ok(pid) = pid.trim().parse::<i32>()
     {
         unsafe {
             libc::kill(pid, libc::SIGTERM);
         }
     }
-    let _ = std::fs::remove_file(pid_file());
+    let _ = std::fs::remove_file(pid_file(k));
 }
 
 pub async fn is_serving(model: &str) -> bool {
-    serving().await.as_deref() == Some(model)
+    serving(kind(model)).await.as_deref() == Some(model)
 }
 
-/// Make sure the sidecar is serving `p.sidecar`, starting or restarting it if needed.
+/// Make sure the sidecar for `p.sidecar` is up and serving it, starting or restarting it.
 pub async fn ensure(p: &Profile) -> Result<()> {
     let Some(model) = &p.sidecar else {
         return Ok(());
     };
-    match serving().await {
+    let k = kind(model);
+    match serving(k).await {
         Some(m) if &m == model => return Ok(()),
         Some(_) => {
-            stop();
+            stop(k);
             // Give the old one a moment to release the port.
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
         None => {}
     }
     std::fs::create_dir_all(data_dir())?;
-    let log = std::fs::File::create(log_file())?;
-    let mut cmd = Command::new(binary());
-    cmd.args(["serve", model, "--port", &PORT.to_string()])
+    let log = std::fs::File::create(log_file(model))?;
+    let bin = binary(k);
+    let mut cmd = Command::new(&bin);
+    if model != APPLE {
+        cmd.args(["serve", model]);
+        if let Some(n) = p.context_window {
+            cmd.args(["--ctx", &n.to_string()]);
+        }
+    }
+    cmd.args(["--port", &k.port.to_string()])
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
-    if let Some(n) = p.context_window {
-        cmd.args(["--ctx", &n.to_string()]);
-    }
-    // Its own session: it outlives this engine, and later engines reuse it.
+    // Its own session, so it outlives this engine.
     unsafe {
         use std::os::unix::process::CommandExt;
         cmd.pre_exec(|| {
@@ -102,27 +133,29 @@ pub async fn ensure(p: &Profile) -> Result<()> {
     }
     let mut child = cmd
         .spawn()
-        .with_context(|| format!("starting {} (set KILN_TANG_BIN?)", binary().display()))?;
-    std::fs::write(pid_file(), child.id().to_string())?;
+        .with_context(|| format!("starting {} (set {}?)", bin.display(), k.env))?;
+    std::fs::write(pid_file(k), child.id().to_string())?;
 
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(300) {
-        if serving().await.as_deref() == Some(model.as_str()) {
+        if serving(k).await.as_deref() == Some(model.as_str()) {
             return Ok(());
         }
         // Exited early: surface the reason from the log.
         if child.try_wait()?.is_some() {
-            let log = std::fs::read_to_string(log_file()).unwrap_or_default();
+            let log = std::fs::read_to_string(log_file(model)).unwrap_or_default();
             let tail: Vec<&str> = log.lines().rev().take(5).collect();
             bail!(
-                "tang-llm exited: {}",
+                "{} exited: {}",
+                k.bin,
                 tail.into_iter().rev().collect::<Vec<_>>().join("\n")
             );
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     bail!(
-        "tang-llm didn't come up within 5 minutes (see {})",
-        log_file().display()
+        "{} didn't come up within 5 minutes (see {})",
+        k.bin,
+        log_file(model).display()
     )
 }
