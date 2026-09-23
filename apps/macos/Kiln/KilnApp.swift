@@ -12,7 +12,7 @@ struct KilnApp: App {
         }
         .defaultSize(width: 1100, height: 760)
         .windowToolbarStyle(.unified)
-        .commands { PanelCommands() }
+        .commands { KilnCommands() }
     }
 }
 
@@ -27,6 +27,7 @@ struct RootView: View {
                 WorkspaceView(workspace: workspace)
             } else {
                 WelcomeView { folder = $0 }
+                    .focusedSceneValue(\.openFolderHere) { folder = $0 }
             }
         }
         .frame(minWidth: 720, minHeight: 480)
@@ -99,7 +100,7 @@ struct WelcomeView: View {
             }
             .buttonStyle(.glassProminent)
             .controlSize(.large)
-            .keyboardShortcut("o")
+            .help("Open Folder (⌘O)")
 
             let recents = Recents.all
             if !recents.isEmpty {

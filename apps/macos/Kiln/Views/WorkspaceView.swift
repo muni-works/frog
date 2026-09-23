@@ -9,10 +9,8 @@ struct WorkspaceView: View {
     @Bindable var workspace: Workspace
     @AppStorage("showSessions") private var showSessions = true
     @AppStorage("showChanges") private var showChanges = false
-    @State private var showPalette = false
     @State private var canvasWidth: CGFloat = 1100
-    @State private var jumpTo: TurnState.ID?
-    @State private var visibleTurns: Set<TurnState.ID> = []
+    @State private var ui = WindowState()
     /// A card shown floating over the conversation because the window is too narrow to dock it.
     @State private var peek: Peek?
     @Namespace private var glass
@@ -116,12 +114,19 @@ struct WorkspaceView: View {
                 .padding(Self.margin)
             }
 
-            if showPalette {
+            if ui.findShown, let conversation {
+                FindBar(state: ui, turns: conversation.turns)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, Self.margin)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            if ui.paletteShown {
                 ZStack(alignment: .top) {
                     Color.black.opacity(0.001)
-                        .onTapGesture { showPalette = false }
+                        .onTapGesture { ui.paletteShown = false }
                     CommandPalette(commands: workspace.commands(showChanges: $showChanges)) {
-                        showPalette = false
+                        ui.paletteShown = false
                     }
                     .padding(.top, 80)
                 }
@@ -136,29 +141,45 @@ struct WorkspaceView: View {
         .animation(.bouncy(duration: 0.4), value: changesVisible)
         .animation(.snappy(duration: 0.3), value: insets)
         .animation(.snappy(duration: 0.25), value: hasRail)
-        .animation(.snappy(duration: 0.18), value: showPalette)
-        .onChange(of: conversation.map(ObjectIdentifier.init)) { visibleTurns = []; peek = nil }
+        .animation(.snappy(duration: 0.18), value: ui.paletteShown)
+        .animation(.snappy(duration: 0.2), value: ui.findShown)
+        .onChange(of: conversation.map(ObjectIdentifier.init)) { ui.visibleTurns = []; peek = nil }
         .onChange(of: workspace.selection) { if peek == .sessions { peek = nil } }
-        .onExitCommand { peek = nil }
-        .focusedSceneValue(\.panelToggles, PanelToggles(sessions: toggleSessions, changes: toggleChanges))
+        .onExitCommand {
+            if ui.findShown { ui.findShown = false } else { peek = nil }
+        }
+        .focusedSceneValue(\.kilnWindow, KilnWindow(
+            workspace: workspace, state: ui,
+            toggleSessions: toggleSessions, toggleChanges: toggleChanges,
+            sessionsShown: sessionsVisible, changesShown: changesVisible
+        ))
+        .confirmationDialog(
+            undoTurn.flatMap(\.number).map { "Undo turn \($0)?" } ?? "Undo the last turn?",
+            isPresented: $ui.confirmUndo
+        ) {
+            Button("Undo Changes", role: .destructive) {
+                if let n = undoTurn?.number { Task { await workspace.rewind(toBefore: n) } }
+            }
+        } message: {
+            Text("Files kiln edited in that turn go back to how they were, and the conversation continues from just before it. The current session is kept, so you can go back to it.")
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Commands", systemImage: "command") { showPalette.toggle() }
-                    .keyboardShortcut("k")
-                    .help("Command palette (⌘K)")
+                Button("Commands", systemImage: "command") { ui.paletteShown.toggle() }
+                    .help("Command Palette (⌘K)")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button("New Session", systemImage: "square.and.pencil") {
                     workspace.newSession()
                 }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .help("New Session (⇧⌘N)")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button("Compact", systemImage: "arrow.down.right.and.arrow.up.left") {
                     workspace.conversation?.compact()
                 }
                 .disabled(workspace.conversation?.busy ?? true || workspace.conversation?.turns.isEmpty ?? true)
-                .help("Summarize the conversation to free up context")
+                .help("Compact Conversation: summarize to free up context (⇧⌘K)")
             }
         }
     }
@@ -222,9 +243,10 @@ struct WorkspaceView: View {
                 if hasRail {
                     TimelineRail(
                         conversation: conversation,
-                        visible: visibleTurns,
+                        visible: ui.visibleTurns,
+                        marked: ui.findShown ? Set(ui.matches(in: conversation.turns)) : [],
                         actions: turnActions,
-                        jump: { jumpTo = $0 }
+                        jump: { ui.jumpTo = $0 }
                     )
                     // Grows with the conversation instead of standing full height from turn one.
                     .frame(height: min(room, CGFloat(conversation.turns.count) * 22 + 28))
@@ -237,38 +259,16 @@ struct WorkspaceView: View {
         }
     }
 
+    /// The latest finished turn that changed files (what Edit > Undo Last Turn reverts).
+    private var undoTurn: TurnState? {
+        conversation?.turns.last { $0.finished && $0.number != nil && !TurnParts($0).changes.isEmpty }
+    }
+
     private var turnActions: TurnActions {
         TurnActions(
             fork: { workspace.fork(afterTurn: $0) },
             rewind: { turn in Task { await workspace.rewind(toBefore: turn) } }
         )
-    }
-}
-
-/// Toggles for the focused window's floating panels, for the menu bar.
-struct PanelToggles {
-    var sessions: () -> Void
-    var changes: () -> Void
-}
-
-extension FocusedValues {
-    @Entry var panelToggles: PanelToggles?
-}
-
-/// View-menu items (and their shortcuts) for the floating panels.
-struct PanelCommands: Commands {
-    @FocusedValue(\.panelToggles) private var toggles
-
-    var body: some Commands {
-        CommandGroup(before: .toolbar) {
-            Button("Toggle Sessions") { toggles?.sessions() }
-                .keyboardShortcut("s", modifiers: [.command, .control])
-                .disabled(toggles == nil)
-            Button("Toggle Changes") { toggles?.changes() }
-                .keyboardShortcut("0", modifiers: [.command, .option])
-                .disabled(toggles == nil)
-            Divider()
-        }
     }
 }
 
@@ -313,11 +313,11 @@ extension WorkspaceView {
             TranscriptView(
                 conversation: conversation,
                 actions: turnActions,
-                jump: $jumpTo,
-                onVisibleTurns: { visibleTurns = Set($0) }
+                jump: $ui.jumpTo,
+                onVisibleTurns: { ui.visibleTurns = Set($0) }
             )
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                ComposerView(workspace: workspace, conversation: conversation)
+                ComposerView(workspace: workspace, conversation: conversation, window: ui)
                     .id(ObjectIdentifier(conversation))
                     .padding(.leading, insets.leading)
                     .padding(.trailing, insets.trailing)
@@ -408,5 +408,48 @@ struct SessionRow: View {
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)
+    }
+}
+
+/// Find in the conversation: a glass bar under the toolbar. Matches are whole turns (prompt or
+/// output); Return / ⌘G steps through them, and they're marked on the timeline rail.
+struct FindBar: View {
+    @Bindable var state: WindowState
+    let turns: [TurnState]
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let matches = state.matches(in: turns)
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Find in conversation", text: $state.findQuery)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .frame(width: 220)
+                .onSubmit { state.find(1, in: turns) }
+            Text(matches.isEmpty ? (state.findQuery.isEmpty ? "" : "No matches") : "\(min(state.findIndex, matches.count - 1) + 1) of \(matches.count)")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 64, alignment: .trailing)
+            Button { state.find(-1, in: turns) } label: { Image(systemName: "chevron.up") }
+                .buttonStyle(.plain)
+                .disabled(matches.isEmpty)
+                .help("Find Previous (⇧⌘G)")
+            Button { state.find(1, in: turns) } label: { Image(systemName: "chevron.down") }
+                .buttonStyle(.plain)
+                .disabled(matches.isEmpty)
+                .help("Find Next (⌘G)")
+            Button("Done") { state.findShown = false }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .glassEffect(.regular, in: .capsule)
+        .onAppear { focused = true }
+        .onChange(of: state.findQuery) {
+            state.findIndex = -1
+            state.find(1, in: turns)
+        }
     }
 }

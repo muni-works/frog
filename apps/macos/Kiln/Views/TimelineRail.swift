@@ -6,6 +6,8 @@ import SwiftUI
 struct TimelineRail: View {
     let conversation: Conversation
     let visible: Set<TurnState.ID>
+    /// Turns to call out (find matches): drawn with a marker beside the tick.
+    var marked: Set<TurnState.ID> = []
     let actions: TurnActions
     let jump: (TurnState.ID) -> Void
 
@@ -115,6 +117,10 @@ struct TimelineRail: View {
             let rect = CGRect(x: (size.width - len) / 2, y: y(of: i, in: h) - 1.25, width: len, height: 2.5)
             let lit = visible.contains(t.id) || hovered == i
             ctx.fill(Path(roundedRect: rect, cornerRadius: 1.25), with: .color(color(t).opacity(lit ? 0.95 : 0.45)))
+            if marked.contains(t.id) {
+                let dot = CGRect(x: 3, y: y(of: i, in: h) - 2.5, width: 5, height: 5)
+                ctx.fill(Path(ellipseIn: dot), with: .color(.yellow))
+            }
         }
     }
 

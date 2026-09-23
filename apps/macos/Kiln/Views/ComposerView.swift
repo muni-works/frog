@@ -3,6 +3,7 @@ import SwiftUI
 struct ComposerView: View {
     let workspace: Workspace
     let conversation: Conversation
+    var window: WindowState?
     @State private var text = ""
     @State private var height: CGFloat = 22
     @State private var controller = ComposerController()
@@ -86,7 +87,7 @@ struct ComposerView: View {
                 .buttonBorderShape(.circle)
                 .disabled(!canSend || conversation.busy)
                 .accessibilityLabel("Race")
-                .help("Race: run this prompt as several parallel attempts")
+                .help("Race: run this prompt as several parallel attempts (⌥⌘R)")
                 .popover(isPresented: $racing, arrowEdge: .top) {
                     RaceSetup(workspace: workspace, prompt: text) { models, check in
                         racing = false
@@ -104,7 +105,7 @@ struct ComposerView: View {
                     }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
-                    .help("Interrupt (Esc)")
+                    .help("Interrupt (Esc or ⌘.)")
                 } else {
                     Button(action: send) {
                         Image(systemName: "arrow.up")
@@ -120,6 +121,11 @@ struct ComposerView: View {
         }
         .padding(12)
         .animation(.snappy, value: conversation.toast)
+        .onChange(of: window?.focusComposerRequest) { controller.focus() }
+        .onChange(of: window?.raceRequest) {
+            controller.focus()
+            racing = true
+        }
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .padding(.horizontal, 20)
         .padding(.bottom, 16)
