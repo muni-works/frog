@@ -46,7 +46,7 @@ struct RootView: View {
             } else {
                 StartView { url, prompt in
                     pending = prompt
-                    folder = url
+                    folder = url ?? Kiln.chatFolder
                 }
                 .navigationTitle("New Conversation")
             }
@@ -95,6 +95,7 @@ enum Recents {
     }
 
     static func add(_ url: URL) {
+        guard url.standardizedFileURL != Kiln.chatFolder.standardizedFileURL else { return }
         var paths = UserDefaults.standard.stringArray(forKey: key) ?? []
         paths.removeAll { $0 == url.path }
         paths.insert(url.path, at: 0)

@@ -155,7 +155,7 @@ struct EmptyTranscript: View {
             Image(systemName: "flame")
                 .font(.system(size: 44, weight: .light))
                 .foregroundStyle(.orange.gradient)
-            Text(conversation.folder.lastPathComponent)
+            Text(conversation.folder.standardizedFileURL == Kiln.chatFolder.standardizedFileURL ? "Chat" : conversation.folder.lastPathComponent)
                 .font(.title2.weight(.semibold))
             if let s = conversation.status {
                 Text("\(s.model) · \(s.toolMode) tools · \(s.tier) tier")

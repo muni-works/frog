@@ -53,6 +53,9 @@ struct Cli {
     /// Speak the Agent Client Protocol on stdio, for editors (Zed, JetBrains, Neovim).
     #[arg(long, conflicts_with_all = ["print", "serve"])]
     acp: bool,
+    /// A plain chat, not tied to a project: no file or shell tools.
+    #[arg(long)]
+    chat: bool,
     /// List the Agent Skills this folder sees (with --json for JSON).
     #[arg(long)]
     skills: bool,
@@ -313,6 +316,7 @@ async fn run() -> Result<bool> {
         sandbox: cli.sandbox,
         rich: cli.rich,
         subagent: false,
+        chat: cli.chat,
     })?;
 
     let mut prompt = cli.prompt.join(" ");

@@ -148,6 +148,7 @@ pub async fn serve(
                         sandbox,
                         rich: false,
                         subagent: false,
+                        chat: false,
                     };
                     match kiln_engine::spawn(opts) {
                         Ok(handle) => {

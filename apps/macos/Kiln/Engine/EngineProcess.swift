@@ -2,6 +2,13 @@ import Foundation
 
 /// Locating and running the `kiln` binary.
 enum Kiln {
+    /// Where plain chats (no folder) live, so their sessions are grouped together.
+    static let chatFolder: URL = {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/share/kiln/chat")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
     /// The bundled engine first; then an override; then a dev build; then PATH.
     static var binary: URL? {
         let fm = FileManager.default

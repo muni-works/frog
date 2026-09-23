@@ -73,6 +73,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         sandbox: true,
         rich: false,
         subagent: false,
+        chat: false,
     })?;
     h.ops.send(Op::Submit {
         text: r.task.prompt.clone(),

@@ -57,7 +57,10 @@ final class Workspace {
         Task { await refresh() }
     }
 
-    var name: String { folder.lastPathComponent }
+    var name: String { isChat ? "Chat" : folder.lastPathComponent }
+
+    /// A plain chat: no project folder, no file or shell tools.
+    var isChat: Bool { folder.standardizedFileURL == Kiln.chatFolder.standardizedFileURL }
 
     /// Set once the first window has restored its folder's last session.
     private static var restored = false
@@ -127,7 +130,8 @@ final class Workspace {
         default: []
         }
         let computerUse = UserDefaults.standard.bool(forKey: "computerUse") ? ["--computer-use"] : []
-        let c = Conversation(folder: folder, arguments: arguments + modeFlag + computerUse, model: preferredModel)
+        let chat = isChat ? ["--chat"] : []
+        let c = Conversation(folder: folder, arguments: arguments + modeFlag + computerUse + chat, model: preferredModel)
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID

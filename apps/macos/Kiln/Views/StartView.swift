@@ -4,13 +4,15 @@ import SwiftUI
 /// The folder a conversation works in, as a chip above the composer. The menu lists recent
 /// folders and a chooser. `choose` handles the pick; without it, a pick opens a new tab there.
 struct FolderChip: View {
+    /// Nil (or the chat folder): a plain chat, no folder.
     let folder: URL?
-    var choose: ((URL) -> Void)?
+    /// Handles a pick (nil = no folder). Without it, a pick opens a new tab there.
+    var choose: ((URL?) -> Void)?
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Menu {
-            let recents = Recents.all.filter { $0 != folder }
+            let recents = Recents.all.filter { $0 != current }
             if !recents.isEmpty {
                 Section("Recent") {
                     ForEach(recents.prefix(8), id: \.self) { url in
@@ -25,28 +27,36 @@ struct FolderChip: View {
             Button("Choose Folder…") {
                 if let url = FolderPanel.run() { pick(url) }
             }
-            if let folder {
+            if current != nil {
+                Button("No Folder (Plain Chat)") { pick(nil) }
+            }
+            if let folder = current {
                 Divider()
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: folder == nil ? "folder.badge.plus" : "folder")
-                Text(folder?.lastPathComponent ?? "Choose a folder")
+                Image(systemName: current == nil ? "bubble.left" : "folder")
+                Text(current?.lastPathComponent ?? "No folder")
                     .lineLimit(1)
             }
             .font(.callout)
-            .foregroundStyle(folder == nil ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            .foregroundStyle(.secondary)
         }
         .menuStyle(.button)
         .buttonStyle(.glass)
         .controlSize(.regular)
         .fixedSize()
-        .help(folder.map { $0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") } ?? "The folder kiln works in")
+        .help(current.map { $0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") } ?? "A plain chat, without a project folder. Pick a folder to let kiln work on code.")
     }
 
-    private func pick(_ url: URL) {
-        if let choose { choose(url) } else { openWindow(value: url) }
+    private var current: URL? {
+        guard let folder, folder.standardizedFileURL != Kiln.chatFolder.standardizedFileURL else { return nil }
+        return folder
+    }
+
+    private func pick(_ url: URL?) {
+        if let choose { choose(url) } else { openWindow(value: url ?? Kiln.chatFolder) }
     }
 }
 
@@ -65,8 +75,8 @@ enum FolderPanel {
 /// A new conversation before it has a folder: the composer, with the folder chip above it.
 /// Nothing starts until a folder is picked; sending without one asks for it first.
 struct StartView: View {
-    /// Called with the folder and the message to send once it's ready.
-    let start: (URL, String) -> Void
+    /// Called with the folder (nil for a plain chat) and the first message.
+    let start: (URL?, String) -> Void
     @State private var folder: URL?
     @State private var text = ""
     @State private var height: CGFloat = 22
@@ -91,7 +101,7 @@ struct StartView: View {
                     .foregroundStyle(.orange.gradient)
                 Text("What should we work on?")
                     .font(.title2.weight(.semibold))
-                Text(folder == nil ? "Pick a folder, then ask about the code or describe a change." : "Ask about the code in \(folder!.lastPathComponent), or describe a change.")
+                Text(folder == nil ? "Chat, or pick a folder to work on code." : "Ask about the code in \(folder!.lastPathComponent), or describe a change.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 LocalModelCard()
@@ -104,6 +114,17 @@ struct StartView: View {
     }
 
     private var composer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FolderChip(folder: folder) { folder = $0 }
+                .opacity(skillSuggestions.isEmpty ? 1 : 0)
+            box
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 16)
+        .frame(maxWidth: 860)
+    }
+
+    private var box: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
@@ -128,16 +149,13 @@ struct StartView: View {
                 .buttonStyle(.glassProminent)
                 .buttonBorderShape(.circle)
                 .disabled(!canSend)
-                .help(folder == nil ? "Choose a folder and send (Return)" : "Send (Return)")
+                .help("Send (Return)")
             }
         }
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .overlay(alignment: .topLeading) {
-            if skillSuggestions.isEmpty {
-                FolderChip(folder: folder) { folder = $0 }
-                    .alignmentGuide(.top) { $0[.bottom] + 8 }
-            } else {
+            if !skillSuggestions.isEmpty {
                 SkillList(skills: skillSuggestions, picked: picked) { controller.replaceAll("/\($0.name) ") }
                     .fixedSize()
                     .alignmentGuide(.top) { $0[.bottom] + 8 }
@@ -145,14 +163,9 @@ struct StartView: View {
             }
         }
         .task(id: folder) {
-            guard let folder else { return }
-            skills = (try? await Kiln.json([SkillInfo].self, args: ["--skills", "--json"], cwd: folder)) ?? []
+            skills = (try? await Kiln.json([SkillInfo].self, args: ["--skills", "--json"], cwd: folder ?? Kiln.chatFolder)) ?? []
         }
         .onChange(of: text) { picked = 0 }
-        .padding(.top, 36)
-        .padding(.horizontal, 20)
-        .padding(.bottom, 16)
-        .frame(maxWidth: 860)
     }
 
     private func handleKey(_ key: MentionKey) -> Bool {
@@ -169,8 +182,6 @@ struct StartView: View {
 
     private func send() {
         guard canSend else { return }
-        if folder == nil { folder = FolderPanel.run() }
-        guard let folder else { return }
         start(folder, text)
     }
 }

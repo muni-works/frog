@@ -33,6 +33,17 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            FolderChip(folder: workspace.folder)
+                .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
+            box
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 16)
+        .frame(maxWidth: 860)
+    }
+
+    private var box: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if let toast = conversation.toast {
                 Label(toast, systemImage: "info.circle")
                     .font(.callout)
@@ -143,11 +154,6 @@ struct ComposerView: View {
             .padding(.leading, 12)
             .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
-        .overlay(alignment: .topLeading) {
-            FolderChip(folder: workspace.folder)
-                .alignmentGuide(.top) { $0[.bottom] + 8 }
-                .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
-        }
         .overlay {
             if dropTargeted {
                 RoundedRectangle(cornerRadius: 20).strokeBorder(.tint, lineWidth: 2)
@@ -163,10 +169,6 @@ struct ComposerView: View {
             controller.insert(mentions.joined(separator: " ") + " ")
             return !urls.isEmpty
         } isTargeted: { dropTargeted = $0 }
-        .padding(.top, 36)
-        .padding(.horizontal, 20)
-        .padding(.bottom, 16)
-        .frame(maxWidth: 860)
     }
 
     private func send() {

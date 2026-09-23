@@ -121,6 +121,8 @@ pub struct Options {
     pub rich: bool,
     /// Run as a subagent: read-only tools, no MCP, no `Task`, a report at the end.
     pub subagent: bool,
+    /// A plain chat, not tied to a project: no file or shell tools, a chat system prompt.
+    pub chat: bool,
 }
 
 pub struct Handle {
@@ -314,6 +316,7 @@ struct Agent {
     can_ask: bool,
     rich: bool,
     subagent: bool,
+    chat: bool,
     store: Option<PathBuf>,
     /// Opened lazily on the first durable write, so idle launches leave no files behind.
     log: Mutex<Option<Log>>,
@@ -413,6 +416,7 @@ impl Agent {
             can_ask: o.can_ask,
             rich: o.rich,
             subagent: o.subagent,
+            chat: o.chat,
             store: o.store,
             log: Mutex::new(log),
             usage: Usage::default(),
@@ -819,11 +823,12 @@ impl Agent {
     fn apply_harness(&mut self) {
         self.tier = harness::tier(&self.profile, self.caps.as_ref());
         self.tool_mode = harness::choose_mode(&self.profile, self.caps.as_ref(), self.tier);
-        self.system = format!(
-            "{}{}",
-            prompt::system_prompt(&self.root, &self.cfg, &self.profile.model),
-            harness::guidance(self.tier)
-        );
+        let base = if self.chat {
+            prompt::chat_prompt(&self.cfg, &self.profile.model)
+        } else {
+            prompt::system_prompt(&self.root, &self.cfg, &self.profile.model)
+        };
+        self.system = format!("{base}{}", harness::guidance(self.tier));
         self.system.push_str(&self.mcp.prompt());
         if self.subagent {
             self.system.push_str(crate::subagent::PROMPT);
@@ -1073,6 +1078,10 @@ impl Agent {
     /// Built-in tools plus whatever MCP tools are live (and, with many, loaded).
     fn sync_specs(&mut self) {
         let mut specs = tools::specs();
+        if self.chat {
+            // No project to work in: only the tools that don't touch files or run commands.
+            specs.retain(|s| s.name == "Diagram");
+        }
         if self.subagent {
             specs.retain(|s| tools::kind(&s.name) == Kind::Read);
         } else {
@@ -1102,6 +1111,7 @@ impl Agent {
             sandbox: true,
             rich: false,
             subagent: true,
+            chat: false,
         };
         let stop = CancellationToken::new();
         self.shared
@@ -1719,6 +1729,7 @@ mod tests {
             sandbox: false,
             rich: false,
             subagent: false,
+            chat: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
     }
@@ -1746,6 +1757,7 @@ mod tests {
             sandbox: false,
             rich: false,
             subagent: false,
+            chat: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
     }

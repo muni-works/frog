@@ -73,6 +73,42 @@ pub fn system_prompt(cwd: &Path, cfg: &Config, model: &str) -> String {
     s
 }
 
+const CHAT: &str = "You are Kiln, a helpful assistant chatting with the user. \
+This conversation isn't tied to a project: you can't see or change their files or run commands here.
+
+# Communication
+- Answer directly and clearly. Use Markdown where it helps: lists, tables, code blocks.
+- Match the depth of your answer to the question; don't pad short answers.
+- When a picture explains better than prose (architecture, a process, a sequence of steps), draw it with the Diagram tool.
+- If a request is ambiguous in a way that matters, ask a short question.";
+
+/// The system prompt for a plain chat (no folder): no project, no coding tools. The user's own
+/// instructions (`~/.config/kiln/KILN.md`, and CLAUDE.md if enabled) still apply.
+pub fn chat_prompt(cfg: &Config, model: &str) -> String {
+    let mut s = format!(
+        "{CHAT}\n\n# Environment\n- Date: {}\n- Model: {model}\n",
+        chrono::Local::now().format("%Y-%m-%d"),
+    );
+    let mut files = vec![config_dir().join("KILN.md")];
+    if cfg.load_claude_md {
+        files.push(
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(".claude/CLAUDE.md"),
+        );
+    }
+    for f in files {
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            s.push_str(&format!(
+                "\n# Instructions from {}\n{}\n",
+                f.display(),
+                text.trim()
+            ));
+        }
+    }
+    s
+}
+
 // ---- text-mode tool calling, for models/servers without working native tools ----
 
 pub fn text_tools_prompt(tools: &[ToolSpec]) -> String {
