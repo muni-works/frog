@@ -160,7 +160,11 @@ struct MarkdownView: View {
                 .fontWeight(.semibold)
                 .padding(.top, 4)
         case .code(let lang, let s):
-            CodeBlock(language: lang, code: s)
+            if lang.lowercased() == "mermaid" {
+                MermaidBlock(code: s)
+            } else {
+                CodeBlock(language: lang, code: s)
+            }
         case .bullet(let indent, let marker, let s):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(marker).foregroundStyle(.secondary).monospacedDigit()

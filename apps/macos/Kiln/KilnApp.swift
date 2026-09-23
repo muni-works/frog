@@ -12,7 +12,18 @@ struct KilnApp: App {
         }
         .defaultSize(width: 1100, height: 760)
         .windowToolbarStyle(.unified)
+        .defaultLaunchBehavior(.presented)
         .commands { KilnCommands() }
+
+        WindowGroup("Diagram", for: DiagramDocument.self) { $doc in
+            if let doc {
+                DiagramWindow(document: doc)
+            }
+        }
+        .defaultSize(width: 960, height: 680)
+        // Only ever opened from a diagram card, never at launch or by restoration.
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
 
         Settings {
             SettingsView()

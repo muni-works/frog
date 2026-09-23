@@ -336,6 +336,13 @@ fn measure(n: &Node) -> (f32, f32) {
 }
 
 impl Diagram {
+    pub fn node_group(&self, id: &str) -> Option<&str> {
+        self.nodes
+            .iter()
+            .find(|n| n.id == id)
+            .and_then(|n| n.group.as_deref())
+    }
+
     pub fn layout(&self) -> Layout {
         match self.kind {
             Kind::Flow => flow_layout(self),
@@ -634,6 +641,51 @@ fn flow_layout(d: &Diagram) -> Layout {
             }
         }
     }
+    // 5b. Keep non-members out of group frames. A frame spans its members across layers, so
+    //     in any layer it covers, a node that isn't a member is pushed past the frame's edge,
+    //     along with everything further out in its row.
+    const FRAME_PAD: f32 = 14.0;
+    for gi in 0..d.groups.len() {
+        let members: Vec<usize> = (0..n).filter(|&v| v_group[v] == Some(gi)).collect();
+        if members.is_empty() {
+            continue;
+        }
+        let lo_l = members.iter().map(|&v| v_layer[v]).min().unwrap();
+        let hi_l = members.iter().map(|&v| v_layer[v]).max().unwrap();
+        for row in order.iter().take(hi_l + 1).skip(lo_l) {
+            let cmin = members
+                .iter()
+                .map(|&v| cross[v] - v_size[v].0 / 2.0)
+                .fold(f32::MAX, f32::min)
+                - FRAME_PAD;
+            let cmax = members
+                .iter()
+                .map(|&v| cross[v] + v_size[v].0 / 2.0)
+                .fold(f32::MIN, f32::max)
+                + FRAME_PAD;
+            let row = row.clone();
+            for (i, &v) in row.iter().enumerate() {
+                if v >= n || v_group[v] == Some(gi) {
+                    continue;
+                }
+                let (lo, hi) = (cross[v] - v_size[v].0 / 2.0, cross[v] + v_size[v].0 / 2.0);
+                if hi <= cmin - NODE_GAP / 2.0 || lo >= cmax + NODE_GAP / 2.0 {
+                    continue;
+                }
+                if cross[v] < (cmin + cmax) / 2.0 {
+                    let delta = hi - (cmin - NODE_GAP / 2.0);
+                    for &u in &row[..=i] {
+                        cross[u] -= delta;
+                    }
+                } else {
+                    let delta = (cmax + NODE_GAP / 2.0) - lo;
+                    for &u in &row[i..] {
+                        cross[u] += delta;
+                    }
+                }
+            }
+        }
+    }
     let min_cross = (0..vn)
         .map(|v| cross[v] - v_size[v].0 / 2.0)
         .fold(f32::MAX, f32::min);
@@ -687,25 +739,38 @@ fn flow_layout(d: &Diagram) -> Layout {
             });
             continue;
         }
+        // Parallel edges (same pair, either direction) fan out side by side.
+        let pair = (a.min(b), a.max(b));
+        let siblings: Vec<usize> = edges
+            .iter()
+            .filter(|&&(_, x, y)| (x.min(y), x.max(y)) == pair)
+            .map(|&(k2, _, _)| k2)
+            .collect();
+        let slot = siblings.iter().position(|&k2| k2 == k).unwrap_or(0) as f32;
+        let fan = (slot - (siblings.len() as f32 - 1.0) / 2.0) * 16.0;
         let chain = chains.get(&k).cloned().unwrap_or_else(|| vec![a, b]);
         let (from, to) = (chain[0], *chain.last().unwrap());
         let mut pts = Vec::new();
         let (fc, fm) = center(from);
-        pts.push(to_xy(fc, fm + v_size[from].1 / 2.0));
+        pts.push(to_xy(fc + fan, fm + v_size[from].1 / 2.0));
         for &v in &chain[1..chain.len() - 1] {
             let (c, m) = center(v);
-            pts.push(to_xy(c, m));
+            pts.push(to_xy(c + fan, m));
         }
         let (tc, tm) = center(to);
-        pts.push(to_xy(tc, tm - v_size[to].1 / 2.0));
+        pts.push(to_xy(tc + fan, tm - v_size[to].1 / 2.0));
         if reversed.contains(&k) {
             pts.reverse();
         }
-        let label_at = d.edges[k].label.as_ref().map(|_| {
-            let mid = pts.len() / 2;
-            let (p, q) = (pts[mid - 1], pts[mid]);
-            [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0]
-        });
+        // Parallel edges' labels sit at staggered points along their paths so they don't
+        // stack on the shared midpoint.
+        // Measured in one direction for the whole pair, so opposite edges don't cancel out.
+        let t = 0.5 + (slot - (siblings.len() as f32 - 1.0) / 2.0) * 0.3;
+        let t = if a <= b { t } else { 1.0 - t };
+        let label_at = d.edges[k]
+            .label
+            .as_ref()
+            .map(|_| point_along(&pts, t.clamp(0.2, 0.8)));
         paths.push(EdgePath {
             edge: k,
             points: pts,
@@ -789,6 +854,25 @@ fn flow_layout(d: &Diagram) -> Layout {
         groups,
         lifeline_end: None,
     }
+}
+
+/// The point a fraction `t` of the way along a polyline.
+fn point_along(pts: &[[f32; 2]], t: f32) -> [f32; 2] {
+    let seg = |a: [f32; 2], b: [f32; 2]| ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+    let total: f32 = pts.windows(2).map(|w| seg(w[0], w[1])).sum();
+    let mut left = total * t;
+    for w in pts.windows(2) {
+        let l = seg(w[0], w[1]);
+        if left <= l && l > 0.0 {
+            let f = left / l;
+            return [
+                w[0][0] + (w[1][0] - w[0][0]) * f,
+                w[0][1] + (w[1][1] - w[0][1]) * f,
+            ];
+        }
+        left -= l;
+    }
+    *pts.last().unwrap_or(&[0.0, 0.0])
 }
 
 fn sequence_layout(d: &Diagram) -> Layout {
@@ -1757,6 +1841,34 @@ mod tests {
             art.contains("hi") && art.contains('▶') && art.contains('◀'),
             "{art}"
         );
+    }
+
+    #[test]
+    fn non_members_stay_outside_group_frames_and_parallel_edges_fan_out() {
+        let src = "flowchart TD\n subgraph e [Engine]\n loop[Agent loop] --> tools[Tools]\n loop -.-> log[(Log)]\n end\n app[App] --> loop\n loop ==>|chat| model[/Model/]\n model -->|stream| loop\n";
+        let mut d = Diagram::from_mermaid(src).unwrap();
+        d.finish(Path::new("/"));
+        let l = d.layout.as_ref().unwrap();
+        let frame = &l.groups[0];
+        for b in &l.nodes {
+            let member = d.node_group(&b.id) == Some("e");
+            let inside = b.x < frame.x + frame.w
+                && frame.x < b.x + b.w
+                && b.y < frame.y + frame.h
+                && frame.y < b.y + b.h;
+            assert!(member || !inside, "{} overlaps the group frame", b.id);
+        }
+        let chat = l
+            .edges
+            .iter()
+            .find(|p| d.edges[p.edge].label.as_deref() == Some("chat"))
+            .unwrap();
+        let stream = l
+            .edges
+            .iter()
+            .find(|p| d.edges[p.edge].label.as_deref() == Some("stream"))
+            .unwrap();
+        assert_ne!(chat.label_at, stream.label_at);
     }
 
     #[test]

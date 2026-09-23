@@ -103,10 +103,17 @@ struct TurnParts {
     var changes: [FileChange] = []
 
     init(_ turn: TurnState) {
-        // Messages after the last tool call are the answer; everything else is work.
-        let lastTool = turn.items.lastIndex { if case .tool = $0.kind { true } else { false } }
+        // Messages after the last tool call are the answer; everything else is work. Diagrams
+        // are part of the answer wherever they come.
+        func isDiagram(_ item: ItemState) -> Bool {
+            if case .tool(let name, _) = item.kind, name == "Diagram" { true } else { false }
+        }
+        let lastTool = turn.items.lastIndex { item in
+            if case .tool = item.kind { !isDiagram(item) } else { false }
+        }
         for (i, item) in turn.items.enumerated() {
             let isAnswer: Bool = {
+                if isDiagram(item) { return item.result?.diagram != nil || !item.done }
                 guard item.kind == .message else { return false }
                 guard let lastTool else { return true }
                 return i > lastTool

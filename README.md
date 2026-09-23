@@ -91,7 +91,7 @@ Named profiles live in `~/.config/kiln/config.toml`. See [config.example.toml](c
 
 ## Tools
 
-`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite`
+`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Diagram`
 
 The tools behave like Claude Code's: Edit replaces an exact string that must be unique, and a file has to be Read before it can be edited, with a check that it hasn't changed since. Bash keeps its working directory between calls.
 
@@ -104,6 +104,26 @@ The tools behave like Claude Code's: Edit replaces an exact string that must be 
 - **Fallback during a session.** Under `auto`, if the model botches the format twice (writing tool calls as text in native mode, invalid argument JSON, or JSON mode not honored), kiln switches to text mode for the rest of the session and updates the cache.
 - **Loop guard.** The 3rd identical tool call in a turn is refused with a nudge to change approach. The 5th ends the turn (`looping`). A turn also stops after 60 model calls (`step_limit`).
 - **Forgiving argument parsing.** Numbers sent as strings and arguments sent as a JSON string are accepted. Invalid JSON is sent back to the model so it can retry.
+
+## Diagrams
+
+The agent draws when a picture explains better than prose: architecture, data flow, a request's path through the code, or the order of calls between parts.
+
+It uses the `Diagram` tool, which takes typed JSON rather than a diagram language, so local models produce valid diagrams. The input is:
+- `kind`: `flow` or `sequence`
+- `nodes`: with shapes (box, rounded, store, actor, decision, external), groups, and optional `file`/`line` links to source
+- `edges`: with labels and styles (solid, dashed, thick)
+
+The engine validates the diagram and lays it out:
+- It creates nodes that edges mention but the model forgot to declare.
+- It keeps a file link only if the file exists.
+- Flows get a layered layout, with crossing reduction that keeps groups together. Sequence diagrams get columns spaced to fit their message labels.
+
+Every client draws the same layout:
+- **Mac app:** a native card in the answer. Hover a node for its detail, click it to open its file, pop the diagram out into its own zoomable window, or export PNG, SVG or Mermaid.
+- **Terminal:** box-drawing art.
+
+```` ```mermaid ```` blocks in answers render the same way. `kiln --mermaid < diagram.mmd` lays out Mermaid from the command line, and `kiln --session-tree` draws a folder's sessions and their forks. The Mac app shows the same tree from the Sessions card.
 
 ## Context budget
 

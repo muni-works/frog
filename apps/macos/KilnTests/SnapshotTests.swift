@@ -89,3 +89,56 @@ final class SnapshotTests: XCTestCase {
         print("snapshots: \(outDir.path)")
     }
 }
+
+extension SnapshotTests {
+    /// Diagram cards, in dark and light: the model's diagrams from recent sessions (when
+    /// present) and one laid out from Mermaid by the engine.
+    func testRenderDiagrams() async throws {
+        var diagrams: [(String, Diagram)] = []
+        let sessions = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/share/kiln/sessions")
+        for id in ["20260923-092701-d2c9", "20260923-091914-5a1c"] {
+            let url = sessions.appending(path: "\(id).jsonl")
+            guard let all = try? events(url) else { continue }
+            for env in all {
+                if case .itemCompleted(_, .toolCall(let r)) = env.event, let d = r.diagram {
+                    diagrams.append(("diagram-\(id)", d))
+                }
+            }
+        }
+        let mermaid = """
+        flowchart TD
+          subgraph clients [Clients]
+            app([Mac app])
+            tui[Terminal UI]
+          end
+          subgraph engine [kiln-engine]
+            loop[Agent loop] --> tools[Tools]
+            loop -.->|append| log[(Session log)]
+          end
+          app -->|ops| loop
+          tui -->|ops| loop
+          loop ==>|chat| model[/Model provider/]
+          model -->|stream| loop
+          tools --> check{Needs permission?}
+        """
+        if let d = await Diagram.fromMermaid(mermaid, cwd: URL(fileURLWithPath: "/")) {
+            diagrams.append(("diagram-mermaid", d))
+        } else {
+            XCTFail("kiln --mermaid failed")
+        }
+        XCTAssertFalse(diagrams.isEmpty)
+        for (name, d) in diagrams {
+            for dark in [true, false] {
+                let view = DiagramCard(diagram: d)
+                    .environment(\.diagramStatic, true)
+                    .padding(20)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .environment(\.colorScheme, dark ? .dark : .light)
+                let w = min(900, (d.layout?.width ?? 400) + 60)
+                let h = min(900, (d.layout?.height ?? 300) + 120)
+                try render(view, size: CGSize(width: w, height: h), to: name + (dark ? "" : "-light"))
+            }
+        }
+    }
+}
+

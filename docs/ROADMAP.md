@@ -132,3 +132,15 @@ Next:
 - bigger prefill tiles (64x64, bf16 in threadgroup memory)
 - grammar-constrained decoding in tang-llm for `json` tool mode
 - MoE (Qwen3-30B-A3B)
+
+## 10. Diagrams: first pass done
+
+Shipped:
+- The `Diagram` tool: typed JSON, validated and laid out in the engine (layered flows, sequences), with Mermaid in and out.
+- Native rendering in the Mac app: cards, pop-out windows, exports, and the session tree. Box art in the terminal.
+
+Next:
+- Code-derived maps with no model in the loop: module and crate dependency graphs, callers of a function, git hot spots.
+- State and ER diagram kinds.
+- Diagrams that update in place across turns, pinned as a card.
+- Hold weak models to the schema with grammar-constrained generation when they call Diagram.

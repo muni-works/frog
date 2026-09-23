@@ -351,6 +351,7 @@ struct SessionList: View {
     @Bindable var workspace: Workspace
     let maxHeight: CGFloat
     var collapse: (() -> Void)?
+    @State private var showTree = false
 
     var body: some View {
         HuggingScroll(maxHeight: maxHeight) {
@@ -360,6 +361,13 @@ struct SessionList: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
+                    Button { showTree = true } label: { Image(systemName: "arrow.triangle.branch") }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Session tree: sessions and their forks")
+                        .popover(isPresented: $showTree, arrowEdge: .trailing) {
+                            SessionTree(workspace: workspace) { showTree = false }
+                        }
                     if let collapse {
                         Button(action: collapse) {
                             Image(systemName: "sidebar.left")
@@ -469,6 +477,38 @@ struct FindBar: View {
         .onChange(of: state.findQuery) {
             state.findIndex = -1
             state.find(1, in: turns)
+        }
+    }
+}
+
+/// Sessions as a tree: forks hang off the session they branched from. Click one to open it.
+struct SessionTree: View {
+    let workspace: Workspace
+    let dismiss: () -> Void
+    @State private var diagram: Diagram?
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Session tree", systemImage: "arrow.triangle.branch").font(.headline)
+            if let diagram, !diagram.nodes.isEmpty {
+                ScrollView([.horizontal, .vertical]) {
+                    DiagramCanvas(diagram: diagram) { node in
+                        workspace.selection = node.id
+                        dismiss()
+                    }
+                }
+                .frame(width: min(720, (diagram.layout?.width ?? 300) + 4), height: min(520, (diagram.layout?.height ?? 200) + 4))
+            } else if loaded {
+                Text("No sessions yet").foregroundStyle(.secondary)
+            } else {
+                ProgressView().frame(width: 200, height: 80)
+            }
+        }
+        .padding(16)
+        .task {
+            diagram = await Diagram.sessionTree(in: workspace.folder)
+            loaded = true
         }
     }
 }

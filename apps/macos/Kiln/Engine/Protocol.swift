@@ -208,6 +208,7 @@ enum Item: Decodable, Sendable {
         var output: String
         var display: String?
         var diff: FileDiff?
+        var diagram: Diagram?
     }
 
     private enum Key: String, CodingKey { case type, text }

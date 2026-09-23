@@ -11,6 +11,13 @@ struct ItemView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .reasoning:
             ReasoningView(text: item.text, done: item.done)
+        case .tool("Diagram", _) where item.result?.diagram != nil:
+            DiagramCard(diagram: item.result!.diagram!)
+        case .tool("Diagram", let arg) where !item.done:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(arg.isEmpty ? "Drawing a diagram…" : "Drawing \(arg)…").font(.callout).foregroundStyle(.secondary)
+            }
         case .tool(let name, let arg):
             ToolCallView(name: name, arg: arg, item: item, conversation: conversation)
         case .notice(let warning):
