@@ -124,7 +124,9 @@ pub fn choose_mode(p: &Profile, caps: Option<&Caps>, tier: Tier) -> ToolMode {
     } else if c.json_mode {
         ToolMode::Json
     } else {
-        ToolMode::Native
+        // Nothing passed. Text mode can't be rejected by the server (native tools can: ollama
+        // 400s for models without tool support), and at worst the model just answers.
+        ToolMode::Text
     }
 }
 
