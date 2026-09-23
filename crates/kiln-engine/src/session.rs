@@ -258,13 +258,14 @@ pub fn events_after(dir: &Path, id: &str, after: u64) -> Result<Vec<Envelope>> {
 /// Summary for listings.
 pub struct Info {
     pub id: String,
+    /// Last conversation activity (a turn starting or ending), or when the session was created.
     pub modified: std::time::SystemTime,
     pub header: Header,
     pub first_input: Option<String>,
     pub title: Option<String>,
 }
 
-/// Sessions started in `cwd`, newest first.
+/// Sessions started in `cwd`, most recently active first.
 pub fn list(dir: &Path, cwd: &Path) -> Result<Vec<Info>> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(Vec::new());
@@ -288,15 +289,33 @@ pub fn list(dir: &Path, cwd: &Path) -> Result<Vec<Info>> {
             continue;
         }
         let (mut first_input, mut title) = (None, None);
+        // Last conversation activity: when a turn last started or ended. Not the file's mtime,
+        // since merely resuming a session appends bookkeeping records, which would reorder the
+        // list every time you open one.
+        let mut active = header.created;
         for l in lines {
             match serde_json::from_str(&l) {
                 Ok(Record::Event {
                     env:
                         Envelope {
                             event: Event::TurnStarted { input, .. },
+                            created,
                             ..
                         },
-                }) if first_input.is_none() => first_input = Some(input),
+                }) => {
+                    active = active.max(created);
+                    if first_input.is_none() {
+                        first_input = Some(input);
+                    }
+                }
+                Ok(Record::Event {
+                    env:
+                        Envelope {
+                            event: Event::TurnEnded { .. },
+                            created,
+                            ..
+                        },
+                }) => active = active.max(created),
                 Ok(Record::Event {
                     env:
                         Envelope {
@@ -307,7 +326,8 @@ pub fn list(dir: &Path, cwd: &Path) -> Result<Vec<Info>> {
                 _ => {}
             }
         }
-        let modified = e.metadata()?.modified()?;
+        let modified =
+            std::time::UNIX_EPOCH + std::time::Duration::from_millis(active.max(0) as u64);
         out.push(Info {
             id: id.to_string(),
             modified,

@@ -181,6 +181,8 @@ struct WorkspaceView: View {
                     ActivityViewer(conversation: c)
                 }
             }
+            // The viewer draws its own glass capsule; without this the toolbar adds a second.
+            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .primaryAction) {
                 Button("Commands", systemImage: "command") { ui.paletteShown.toggle() }
                     .help("Command Palette (⌘K)")
