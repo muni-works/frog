@@ -18,6 +18,8 @@ struct SuggestedModel: Identifiable, Hashable {
                        detail: "Stronger, needs 16 GB of memory", approxGB: 4.6),
         SuggestedModel(repo: "mlx-community/Qwen3-1.7B-4bit", title: "Qwen3 1.7B",
                        detail: "Fastest, for quick questions", approxGB: 1.0),
+        SuggestedModel(repo: "mlx-community/gemma-3-4b-it-4bit", title: "Gemma 3 4B",
+                       detail: "Sees images: screenshots, diagrams, photos", approxGB: 3.4),
     ]
 }
 

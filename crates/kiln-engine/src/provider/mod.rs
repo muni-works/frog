@@ -142,7 +142,12 @@ impl Provider {
                 .ok()
                 .flatten(),
             Self::Anthropic(_) => Some(true),
-            Self::OpenAi(c) => c.is_openai().then_some(true),
+            Self::OpenAi(c) if c.is_openai() => Some(true),
+            Self::OpenAi(c) => tokio::time::timeout(Duration::from_secs(3), c.capabilities())
+                .await
+                .ok()
+                .flatten()
+                .map(|caps| caps.iter().any(|c| c == "vision")),
             #[cfg(test)]
             Self::Scripted(_) => None,
         }

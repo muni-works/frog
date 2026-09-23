@@ -15,6 +15,10 @@ swift build -c release --package-path "$REPO/sidecars/kiln-apple"
 rm -f "$DEST/kiln-apple"; cp "$REPO/sidecars/kiln-apple/.build/release/kiln-apple" "$DEST/kiln-apple"
 swift build -c release --package-path "$REPO/sidecars/kiln-desktop"
 rm -f "$DEST/kiln-desktop"; cp "$REPO/sidecars/kiln-desktop/.build/release/kiln-desktop" "$DEST/kiln-desktop"
+# tang-llm lives on tang's kiln-llm branch; prefer its worktree when the main checkout lacks it.
+if [ -z "$TANG_DIR" ] && [ ! -f "$REPO/../tang/crates/tang-llm/Cargo.toml" ] && [ -f "$REPO/../tang-kiln/crates/tang-llm/Cargo.toml" ]; then
+    TANG_DIR="$REPO/../tang-kiln"
+fi
 TANG_DIR="${TANG_DIR:-$REPO/../tang}"
 if [ -f "$TANG_DIR/crates/tang-llm/Cargo.toml" ]; then
     cargo build --manifest-path "$TANG_DIR/Cargo.toml" --release -p tang-llm

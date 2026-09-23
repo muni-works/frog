@@ -57,6 +57,29 @@ impl Client {
         self.base.contains("api.openai.com")
     }
 
+    /// Capabilities the server lists for this model in `/v1/models` (tang-llm and ollama's /v1
+    /// say `vision`), if any.
+    pub async fn capabilities(&self) -> Option<Vec<String>> {
+        let url = format!("{}/models", self.base.trim_end_matches('/'));
+        let mut rb = self.http.get(url);
+        if let Some(k) = &self.key {
+            rb = rb.bearer_auth(k);
+        }
+        let v: Value = rb.send().await.ok()?.json().await.ok()?;
+        let models = v["data"].as_array()?;
+        let m = models
+            .iter()
+            .find(|m| m["id"].as_str() == Some(self.model.as_str()))
+            .or_else(|| (models.len() == 1).then(|| &models[0]))?;
+        Some(
+            m["capabilities"]
+                .as_array()?
+                .iter()
+                .filter_map(|c| c.as_str().map(String::from))
+                .collect(),
+        )
+    }
+
     fn body(&self, req: &Request) -> Value {
         let mut messages = vec![json!({ "role": "system", "content": req.system })];
         for m in req.messages {
