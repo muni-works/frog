@@ -258,6 +258,7 @@ fn list_sessions(store: &std::path::Path, cwd: &std::path::Path, json: bool) -> 
 
 async fn probe(name: &str, profile: &kiln_engine::config::Profile) -> Result<bool> {
     use kiln_engine::harness;
+    kiln_engine::sidecar::ensure(profile).await?;
     let provider = kiln_engine::provider::Provider::new(profile)?;
     eprintln!("probing {name}…");
     let caps = harness::probe(&provider, &kiln_engine::tools::specs()).await?;

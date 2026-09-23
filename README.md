@@ -7,6 +7,7 @@ cargo install --path crates/kiln
 kiln                                 # interactive, default model
 kiln -m ollama/qwen3-coder:30b       # any provider/model
 kiln -m lmstudio/qwen3-coder-30b
+kiln -m tang/Qwen/Qwen3-4B           # kiln's own inference sidecar, no ollama needed
 kiln -m anthropic/claude-sonnet-5
 kiln -p "why does the build fail?"   # one-shot, prints to stdout
 kiln -c                              # continue the last session in this dir
@@ -72,12 +73,15 @@ The engine crate has no terminal dependencies, so the compiler enforces this bou
 
 | spec | backend |
 |---|---|
+| `tang/<hf-repo-or-dir>` | the bundled `tang-llm` sidecar (Metal): kiln starts it on `localhost:8911` and reuses it across sessions |
 | `ollama/<model>` | ollama native `/api/chat` (sets `num_ctx` from `context_window`) |
 | `lmstudio/<model>` | OpenAI-compatible, `localhost:1234/v1` |
 | `llamacpp/<model>`, `mlx/<model>` | OpenAI-compatible, `localhost:8080/v1` |
 | `vllm/<model>` | OpenAI-compatible, `localhost:8000/v1` |
 | `openai/<model>` | OpenAI, or `OPENAI_BASE_URL` / `--base-url` |
 | `anthropic/<model>` | Messages API with prompt caching |
+
+`tang/` runs safetensors checkpoints (Qwen3 family today) from the Hugging Face cache or a directory, on [tang](https://github.com/ecto/tang)'s Metal backend. It uses the checkpoint's own chat template, reuses the KV cache for the prefix a turn shares with the previous one, and logs to `~/.local/share/kiln/tang-llm.log`. The binary is found through `KILN_TANG_BIN`, then next to `kiln`, then on `PATH`.
 
 Named profiles live in `~/.config/kiln/config.toml`. See [config.example.toml](config.example.toml).
 

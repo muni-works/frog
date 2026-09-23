@@ -812,6 +812,16 @@ impl Agent {
     /// Settle the context window: configured value, bounded by what the server reports.
     /// Ollama allocates memory per `num_ctx`, so an unconfigured window stays at 32k.
     async fn resolve_window(&mut self) {
+        if let Some(model) = self.profile.sidecar.clone() {
+            if !crate::sidecar::is_serving(&model).await {
+                self.emit(Event::Progress {
+                    label: format!("loading {model} in tang-llm"),
+                });
+            }
+            if let Err(e) = crate::sidecar::ensure(&self.profile).await {
+                self.notice(Level::Warn, format!("{e:#}"));
+            }
+        }
         let configured = self.profile.context_window;
         let probed = self.provider.probe_context().await;
         self.window = match (configured, probed) {

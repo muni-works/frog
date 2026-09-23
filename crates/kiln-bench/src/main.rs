@@ -143,6 +143,7 @@ async fn run_suite(
                 continue;
             }
             eprintln!("profiling {m}…");
+            kiln_engine::sidecar::ensure(&profile).await?;
             let provider = kiln_engine::provider::Provider::new(&profile)?;
             match harness::probe(&provider, &kiln_engine::tools::specs()).await {
                 Ok(caps) => harness::save(&profile, &caps),

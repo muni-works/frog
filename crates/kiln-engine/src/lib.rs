@@ -11,6 +11,7 @@ pub mod prompt;
 pub mod protocol;
 pub mod provider;
 pub mod session;
+pub mod sidecar;
 mod text_filter;
 pub mod tools;
 

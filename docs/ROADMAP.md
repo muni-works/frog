@@ -102,3 +102,22 @@ Still to do:
 - report idle turns (a model call with no tool call and no progress) as a cost ([2607.22585](https://arxiv.org/abs/2607.22585))
 - best-of-N selection using structured trajectory summaries ([2604.16529](https://arxiv.org/abs/2604.16529), [2601.22129](https://arxiv.org/abs/2601.22129))
 - a Linux sandbox using bubblewrap
+
+## 9. Our own inference: `tang-llm` sidecar, first pass done
+
+Instead of depending on ollama, kiln can run models itself through `tang-llm serve`, which is built on tang's compute stack (`tang-compute` Metal kernels). `tang/<model>` profiles start it on demand.
+
+Shipped:
+- Qwen3 dense models from safetensors, in bf16. Logits match transformers to 3e-4 on 0.6B and 4B.
+- flash-decoding attention, a device-resident KV cache, and prefix reuse across turns
+- an OpenAI-compatible API: streaming, `reasoning_content`, `tool_calls` parsed from `<tool_call>`, `/props` for the context window
+- the model's own Jinja chat template
+
+Speed on M4 Max, decode: Qwen3-0.6B at 125 tok/s, Qwen3-4B at 39 tok/s (bf16).
+
+Next:
+- 4-bit weights. Decode is bandwidth-bound, so this is roughly 3x.
+- fused decode kernels: norm+GEMV, QKV in one pass, SwiGLU in the gate/up epilogue, residual in the down projection
+- grammar-constrained decoding for `json` tool mode
+- MoE (Qwen3-30B-A3B)
+- Apple Foundation Models as a second sidecar

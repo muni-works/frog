@@ -41,6 +41,10 @@ pub struct Profile {
     pub tool_mode: ToolMode,
     /// Merged into the request body verbatim (e.g. `think = true`, `temperature = 0.2`).
     pub extra: Option<Value>,
+    /// Serve this model (a Hugging Face repo id or a directory) with the bundled tang-llm
+    /// sidecar, started on demand. Implies an OpenAI-compatible provider on its port.
+    #[serde(default)]
+    pub sidecar: Option<String>,
 }
 
 impl Profile {
@@ -55,6 +59,7 @@ impl Profile {
             max_tokens: None,
             tool_mode: ToolMode::Auto,
             extra: None,
+            sidecar: None,
         }
     }
 
@@ -137,7 +142,7 @@ impl Config {
             return Ok((spec, p.clone()));
         }
         let (prov, model) = spec.split_once('/').ok_or_else(|| {
-            anyhow!("unknown model `{spec}`: use a profile from config.toml or provider/model (ollama/, openai/, lmstudio/, llamacpp/, anthropic/)")
+            anyhow!("unknown model `{spec}`: use a profile from config.toml or provider/model (ollama/, tang/, openai/, lmstudio/, llamacpp/, anthropic/)")
         })?;
         let mut p = match prov {
             "ollama" => Profile::new(ProviderKind::Ollama, model),
@@ -145,6 +150,11 @@ impl Config {
             "anthropic" | "claude" => Profile::new(ProviderKind::Anthropic, model),
             "lmstudio" => Profile::new(ProviderKind::Openai, model),
             "llamacpp" | "mlx" | "vllm" => Profile::new(ProviderKind::Openai, model),
+            "tang" => {
+                let mut p = Profile::new(ProviderKind::Openai, model);
+                p.sidecar = Some(model.to_string());
+                p
+            }
             _ => bail!("unknown provider `{prov}`"),
         };
         p.base_url = match prov {
@@ -153,6 +163,7 @@ impl Config {
             "mlx" => Some("http://localhost:8080/v1".into()),
             "vllm" => Some("http://localhost:8000/v1".into()),
             "openai" => std::env::var("OPENAI_BASE_URL").ok(),
+            "tang" => Some(crate::sidecar::base_url()),
             _ => None,
         };
         Ok((spec, p))
