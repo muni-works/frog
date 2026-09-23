@@ -137,6 +137,8 @@ struct Shared {
     mcp: Mutex<Option<crate::mcp::Hub>>,
     /// The current session id, for events emitted outside the agent (MCP callbacks).
     session: Mutex<String>,
+    /// Running subagents by `Task` tool call id, so a client can stop one.
+    subagents: Mutex<HashMap<String, CancellationToken>>,
 }
 
 /// Start the engine. It emits `Status` then `Idle` once ready, and exits after `Op::Shutdown`
@@ -171,6 +173,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     if let Some(hub) = router.mcp.lock().unwrap().as_ref() {
                         hub.host()
                             .resolve(&id, crate::mcp::ElicitReply { action, content });
+                    }
+                }
+                Op::StopSubagent { id } => {
+                    if let Some(t) = router.subagents.lock().unwrap().get(&id) {
+                        t.cancel();
                     }
                 }
                 Op::AppCall {
@@ -646,6 +653,7 @@ impl Agent {
             | Op::Permission { .. }
             | Op::Elicit { .. }
             | Op::AppCall { .. }
+            | Op::StopSubagent { .. }
             | Op::Shutdown => {}
         }
         Ok(())
@@ -1071,25 +1079,33 @@ impl Agent {
             rich: false,
             subagent: true,
         };
-        let (events, seq, session, id) = (
+        let stop = CancellationToken::new();
+        self.shared
+            .subagents
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), stop.clone());
+        let (events, seq, session, item) = (
             self.events.clone(),
             self.seq.clone(),
             self.session_id.clone(),
             id.to_string(),
         );
-        crate::subagent::run(opts, input, move |text| {
+        let out = crate::subagent::run(opts, input, stop, move |inner| {
             let seq = seq.fetch_add(1, Ordering::Relaxed) + 1;
             let _ = events.send(Envelope {
                 seq,
                 session: session.clone(),
                 created: now_ms(),
-                event: Event::ItemDelta {
-                    id: id.clone(),
-                    delta: Delta::Output { text },
+                event: Event::Subagent {
+                    item: item.clone(),
+                    inner: Box::new(inner),
                 },
             });
         })
-        .await
+        .await;
+        self.shared.subagents.lock().unwrap().remove(id);
+        out
     }
 
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.

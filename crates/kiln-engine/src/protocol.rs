@@ -54,7 +54,7 @@ pub enum Decision {
 
 /// Client → engine.
 ///
-/// `Interrupt`, `Permission`, `Elicit` and `AppCall` take effect immediately. Everything else is queued
+/// `Interrupt`, `Permission`, `Elicit`, `AppCall` and `StopSubagent` take effect immediately. Everything else is queued
 /// and handled in order; each queued op ends with [`Event::Idle`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -98,6 +98,11 @@ pub enum Op {
         action: String,
         #[serde(default)]
         content: Option<serde_json::Value>,
+    },
+    /// Stop a running subagent (`id` is its `Task` tool call). The parent keeps going with
+    /// whatever the subagent found so far.
+    StopSubagent {
+        id: String,
     },
     /// An MCP App calling a tool on its own server. Answered with [`Event::AppResult`].
     AppCall {
@@ -198,6 +203,12 @@ pub enum Event {
     /// The elicitation was answered (by any client) or abandoned.
     ElicitationDone {
         id: String,
+    },
+    /// An event from the subagent running as tool call `item`: its own items, deltas and
+    /// status, for a live view. Only its report is kept (as the tool call's output).
+    Subagent {
+        item: String,
+        inner: Box<Event>,
     },
     /// Progress reported by a running MCP tool.
     ToolProgress {

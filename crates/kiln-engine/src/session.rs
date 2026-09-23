@@ -126,6 +126,15 @@ impl Log {
         Ok(log)
     }
 
+    /// Whether another kiln process has this session open.
+    pub fn in_use(dir: &Path, id: &str) -> bool {
+        let Ok(file) = OpenOptions::new().append(true).open(path(dir, id)) else {
+            return false;
+        };
+        // SAFETY: flock on a valid fd we own; the probe lock is released when `file` drops.
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) != 0 }
+    }
+
     pub fn open(dir: &Path, id: &str) -> Result<Self> {
         let file = OpenOptions::new()
             .append(true)

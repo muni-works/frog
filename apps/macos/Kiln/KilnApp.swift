@@ -31,7 +31,8 @@ struct KilnApp: App {
     }
 }
 
-/// A window is either the welcome screen or one project folder.
+/// A window is one project folder. A new window or tab opens straight into a conversation:
+/// in the launch folder, else the most recent one, else the home folder.
 struct RootView: View {
     @Binding var folder: URL?
     @State private var workspace: Workspace?
@@ -41,13 +42,14 @@ struct RootView: View {
             if let workspace {
                 WorkspaceView(workspace: workspace)
             } else {
-                WelcomeView { folder = $0 }
-                    .focusedSceneValue(\.openFolderHere) { folder = $0 }
+                Color.clear
             }
         }
         .frame(minWidth: 720, minHeight: 480)
         .onAppear {
-            if folder == nil, let launched = LaunchFolder.take() { folder = launched }
+            if folder == nil {
+                folder = LaunchFolder.take() ?? Recents.all.first ?? FileManager.default.homeDirectoryForCurrentUser
+            }
         }
         .onChange(of: folder, initial: true) { _, url in
             workspace?.stop()
@@ -92,74 +94,9 @@ enum Recents {
     }
 }
 
-struct WelcomeView: View {
-    let open: (URL) -> Void
-    @State private var picking = false
-
-    var body: some View {
-        VStack(spacing: 28) {
-            VStack(spacing: 8) {
-                Image(systemName: "flame.fill")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.orange.gradient)
-                Text("Kiln").font(.largeTitle.weight(.bold))
-                Text("A local-first coding agent")
-                    .foregroundStyle(.secondary)
-            }
-            Button {
-                picking = true
-            } label: {
-                Label("Open Folder…", systemImage: "folder")
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-            }
-            .buttonStyle(.glassProminent)
-            .controlSize(.large)
-            .help("Open Folder (⌘O)")
-
-            LocalModelCard()
-
-            let recents = Recents.all
-            if !recents.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Recent").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        .padding(.leading, 10)
-                    ForEach(recents, id: \.self) { url in
-                        Button {
-                            open(url)
-                        } label: {
-                            HStack {
-                                Image(systemName: "folder").foregroundStyle(.secondary)
-                                Text(url.lastPathComponent).fontWeight(.medium)
-                                Spacer()
-                                Text(url.deletingLastPathComponent().path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(1)
-                                    .truncationMode(.head)
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .contentShape(.rect)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .frame(width: 420)
-                .padding(8)
-                .glassEffect(.regular, in: .rect(cornerRadius: 14))
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
-            if case .success(let url) = result { open(url) }
-        }
-    }
-}
-
-/// First run: if no open model is on this Mac yet, offer the recommended one right on the
-/// welcome screen. Once one is installed this shrinks to a line pointing at Settings.
-private struct LocalModelCard: View {
+/// First run: if no open model is on this Mac yet, offer the recommended one right in the empty
+/// conversation. Once one is installed this shrinks to a line pointing at Settings.
+struct LocalModelCard: View {
     @Environment(\.openSettings) private var openSettings
     @State private var downloads = ModelDownloads.shared
 

@@ -159,6 +159,23 @@ impl Renderer {
                 };
                 println!("\n{} {}{}", "⏺".green(), name.bold(), arg);
             }
+            // A subagent's steps, indented under its Task call; its report arrives as the
+            // call's output.
+            Event::Subagent { inner, .. } => {
+                if let Event::ItemStarted {
+                    kind: ItemKind::ToolCall { name, arg },
+                    ..
+                } = *inner
+                {
+                    self.idle();
+                    println!(
+                        "  {} {} {}",
+                        "↳".dark_grey(),
+                        name.dark_grey(),
+                        arg.dark_grey()
+                    );
+                }
+            }
             Event::ItemDelta { id, delta } => {
                 self.streamed.insert(id);
                 match delta {

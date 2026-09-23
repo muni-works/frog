@@ -13,8 +13,6 @@ struct KilnWindow {
 
 extension FocusedValues {
     @Entry var kilnWindow: KilnWindow?
-    /// Set by a window showing the welcome screen: open a folder in that window.
-    @Entry var openFolderHere: ((URL) -> Void)?
 }
 
 /// The menu bar. Everything the app can do lives here with its shortcut, acting on the
@@ -22,7 +20,6 @@ extension FocusedValues {
 /// reference for what exists.
 struct KilnCommands: Commands {
     @FocusedValue(\.kilnWindow) private var window
-    @FocusedValue(\.openFolderHere) private var openHere
     @Environment(\.openWindow) private var openWindow
 
     private var conversation: Conversation? { window?.workspace.conversation }
@@ -174,6 +171,6 @@ struct KilnCommands: Commands {
         panel.canChooseFiles = false
         panel.prompt = "Open"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        if let openHere { openHere(url) } else { openWindow(value: url) }
+        openWindow(value: url)
     }
 }

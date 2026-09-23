@@ -8,6 +8,8 @@ struct TranscriptView: View {
     /// Told which turns are on screen.
     var onVisibleTurns: ([TurnState.ID]) -> Void = { _ in }
     @AppStorage("density") private var density = Density.comfortable.rawValue
+    /// The toolbar's height over the transcript, for the fade under it.
+    @State private var topInset: CGFloat = 0
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -51,6 +53,18 @@ struct TranscriptView: View {
             .background(ScrollBackdropClear())
         }
         .scrollContentBackground(.hidden)
+        // The system's scroll-edge blur is hidden (see ScrollBackdropClear), so fade the
+        // content out under the toolbar instead of letting it run into the title.
+        .onGeometryChange(for: CGFloat.self, of: { $0.safeAreaInsets.top }) { topInset = $0 }
+        .mask {
+            VStack(spacing: 0) {
+                Color.clear.frame(height: max(0, topInset - 12))
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 28)
+                Color.black
+            }
+            .ignoresSafeArea()
+        }
         .onScrollTargetVisibilityChange(idType: TurnState.ID.self, threshold: 0.05) { onVisibleTurns($0) }
         // Start at the bottom, and stay pinned there as streamed content grows.
         .defaultScrollAnchor(.bottom)
@@ -152,6 +166,8 @@ struct EmptyTranscript: View {
                 .font(.callout)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 4)
+            LocalModelCard()
+                .padding(.top, 14)
         }
         .multilineTextAlignment(.center)
         .padding()

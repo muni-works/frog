@@ -49,6 +49,8 @@ enum Op: Encodable, Sendable {
     case setTitle(String)
     /// Answer an MCP elicitation: `accept`, `decline` or `cancel`.
     case elicit(id: String, action: String, content: JSONValue?)
+    /// Stop a running subagent (its `Task` tool call id); the parent keeps going.
+    case stopSubagent(id: String)
     /// An MCP App calling a tool on its own server.
     case appCall(id: String, server: String, tool: String, arguments: JSONValue)
     case shutdown
@@ -95,6 +97,9 @@ enum Op: Encodable, Sendable {
             try c.encode(id, forKey: .id)
             try c.encode(action, forKey: .action)
             try c.encodeIfPresent(content, forKey: .content)
+        case .stopSubagent(let id):
+            try c.encode("stop_subagent", forKey: .op)
+            try c.encode(id, forKey: .id)
         case .appCall(let id, let server, let tool, let arguments):
             try c.encode("app_call", forKey: .op)
             try c.encode(id, forKey: .id)
@@ -301,7 +306,7 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
     var preview: FileDiff?
 }
 
-enum Event: Sendable {
+enum Event: Decodable, Sendable {
     case turnStarted(turn: UInt64, input: String)
     case turnEnded(turn: UInt64, reason: EndReason, usage: TurnUsage)
     case itemStarted(id: String, kind: ItemKind)
@@ -319,6 +324,8 @@ enum Event: Sendable {
     case elicitationDone(id: String)
     case toolProgress(id: String, ToolProgress)
     case appResult(id: String, result: JSONValue?, error: String?)
+    /// An event from the subagent running as tool call `item`.
+    indirect case subagent(item: String, inner: Event)
     case notice(level: String, message: String)
     case error(EngineError)
     case status(Status)
@@ -333,82 +340,93 @@ struct Envelope: Decodable, Sendable {
     var created: Int64
     var event: Event
 
-    private enum Key: String, CodingKey {
-        case seq, session, created, event
-        case turn, input, reason, usage, id, kind, item, delta, decision
-        case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title
-        case progress, total, result
-    }
+    private enum Key: String, CodingKey { case seq, session, created }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         seq = try c.decode(UInt64.self, forKey: .seq)
         session = try c.decode(String.self, forKey: .session)
         created = try c.decode(Int64.self, forKey: .created)
+        event = try Event(from: decoder)
+    }
+}
+
+extension Event {
+    private enum Key: String, CodingKey {
+        case event
+        case turn, input, reason, usage, id, kind, item, delta, decision
+        case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title
+        case progress, total, result, inner
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
         let name = try c.decode(String.self, forKey: .event)
         switch name {
         case "turn_started":
-            event = .turnStarted(turn: try c.decode(UInt64.self, forKey: .turn), input: try c.decode(String.self, forKey: .input))
+            self = .turnStarted(turn: try c.decode(UInt64.self, forKey: .turn), input: try c.decode(String.self, forKey: .input))
         case "turn_ended":
-            event = .turnEnded(
+            self = .turnEnded(
                 turn: try c.decode(UInt64.self, forKey: .turn),
                 reason: try c.decode(EndReason.self, forKey: .reason),
                 usage: try c.decode(TurnUsage.self, forKey: .usage))
         case "item_started":
-            event = .itemStarted(id: try c.decode(String.self, forKey: .id), kind: try c.decode(ItemKind.self, forKey: .kind))
+            self = .itemStarted(id: try c.decode(String.self, forKey: .id), kind: try c.decode(ItemKind.self, forKey: .kind))
         case "item_completed":
-            event = .itemCompleted(id: try c.decode(String.self, forKey: .id), item: try c.decode(Item.self, forKey: .item))
+            self = .itemCompleted(id: try c.decode(String.self, forKey: .id), item: try c.decode(Item.self, forKey: .item))
         case "item_delta":
-            event = .itemDelta(id: try c.decode(String.self, forKey: .id), delta: try c.decode(Delta.self, forKey: .delta))
+            self = .itemDelta(id: try c.decode(String.self, forKey: .id), delta: try c.decode(Delta.self, forKey: .delta))
         case "permission_resolved":
-            event = .permissionResolved(id: try c.decode(String.self, forKey: .id), decision: try c.decode(Decision.self, forKey: .decision))
+            self = .permissionResolved(id: try c.decode(String.self, forKey: .id), decision: try c.decode(Decision.self, forKey: .decision))
         case "compacted":
-            event = .compacted(
+            self = .compacted(
                 tokensBefore: try c.decode(UInt64.self, forKey: .tokensBefore),
                 tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter))
         case "context_pruned":
-            event = .contextPruned(
+            self = .contextPruned(
                 results: try c.decode(Int.self, forKey: .results),
                 tokensBefore: try c.decode(UInt64.self, forKey: .tokensBefore),
                 tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter))
         case "model_changed":
-            event = .modelChanged(try c.decode(String.self, forKey: .model))
+            self = .modelChanged(try c.decode(String.self, forKey: .model))
         case "titled":
-            event = .titled(try c.decode(String.self, forKey: .title))
+            self = .titled(try c.decode(String.self, forKey: .title))
         case "mode_changed":
-            event = .modeChanged(try c.decode(Mode.self, forKey: .mode))
+            self = .modeChanged(try c.decode(Mode.self, forKey: .mode))
         case "permission_request":
-            event = .permissionRequest(try PermissionRequest(from: decoder))
+            self = .permissionRequest(try PermissionRequest(from: decoder))
         case "progress":
-            event = .progress(try c.decode(String.self, forKey: .label))
+            self = .progress(try c.decode(String.self, forKey: .label))
         case "elicitation":
-            event = .elicitation(try Elicitation(from: decoder))
+            self = .elicitation(try Elicitation(from: decoder))
         case "elicitation_done":
-            event = .elicitationDone(id: try c.decode(String.self, forKey: .id))
+            self = .elicitationDone(id: try c.decode(String.self, forKey: .id))
         case "tool_progress":
-            event = .toolProgress(
+            self = .toolProgress(
                 id: try c.decode(String.self, forKey: .id),
                 ToolProgress(
                     progress: try c.decode(Double.self, forKey: .progress),
                     total: try c.decodeIfPresent(Double.self, forKey: .total),
                     message: try c.decodeIfPresent(String.self, forKey: .message)))
+        case "subagent":
+            self = .subagent(item: try c.decode(String.self, forKey: .item), inner: try c.decode(Event.self, forKey: .inner))
         case "app_result":
-            event = .appResult(
+            self = .appResult(
                 id: try c.decode(String.self, forKey: .id),
                 result: try c.decodeIfPresent(JSONValue.self, forKey: .result),
                 error: try c.decodeIfPresent(String.self, forKey: .error))
         case "notice":
-            event = .notice(level: try c.decode(String.self, forKey: .level), message: try c.decode(String.self, forKey: .message))
+            self = .notice(level: try c.decode(String.self, forKey: .level), message: try c.decode(String.self, forKey: .message))
         case "error":
-            event = .error(try c.decode(EngineError.self, forKey: .error))
+            self = .error(try c.decode(EngineError.self, forKey: .error))
         case "status":
-            event = .status(try Status(from: decoder))
+            self = .status(try Status(from: decoder))
         case "synced":
-            event = .synced(upto: try c.decode(UInt64.self, forKey: .upto))
+            self = .synced(upto: try c.decode(UInt64.self, forKey: .upto))
         case "idle":
-            event = .idle
+            self = .idle
         default:
-            event = .unknown(name)
+            self = .unknown(name)
         }
     }
 }

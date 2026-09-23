@@ -20,6 +20,8 @@ struct ItemView: View {
                 ProgressView().controlSize(.small)
                 Text(arg.isEmpty ? "Drawing a diagram…" : "Drawing \(arg)…").font(.callout).foregroundStyle(.secondary)
             }
+        case .tool("Task", let arg):
+            SubagentCard(arg: arg, item: item, conversation: conversation)
         case .tool(let name, _) where item.result?.app != nil && showsApp:
             McpAppCard(name: name, item: item, app: item.result!.app!, conversation: conversation)
         case .tool(let name, let arg) where !(item.result?.images ?? []).isEmpty:

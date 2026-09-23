@@ -20,6 +20,79 @@ struct ItemState: Identifiable {
     var needsPermission = false
     /// Reported by a running MCP tool.
     var progress: ToolProgress?
+    /// For a `Task` call: the subagent's own run, live.
+    var subagent: SubagentRun?
+}
+
+/// A subagent's run as it streams in: its items (thinking, tool calls, the report being
+/// written) and its speed.
+struct SubagentRun {
+    var items: [ItemState] = []
+    var startedAt = Date()
+    var endedAt: Date?
+    var tokensPerSec: Double?
+    var contextTokens: UInt64?
+    var stopping = false
+
+    var steps: Int { items.filter { if case .tool = $0.kind { true } else { false } }.count }
+
+    /// What it's doing right now, for headers and the activity viewer.
+    var activity: String {
+        guard let last = items.last else { return "Starting" }
+        switch last.kind {
+        case .tool(let name, let arg):
+            let verb = ["Read": "Reading", "Grep": "Searching", "Glob": "Finding", "CodeMap": "Mapping"][name] ?? ToolIcon.title(name)
+            return last.done ? "Thinking" : (arg.isEmpty ? verb : "\(verb) \((arg as NSString).lastPathComponent)")
+        case .reasoning: return "Thinking"
+        case .message: return last.done ? "Reporting" : "Writing the report"
+        case .notice: return last.text
+        }
+    }
+
+    /// Fold one of the subagent's events in.
+    mutating func apply(_ event: Event) {
+        switch event {
+        case .itemStarted(let id, let kind):
+            upsert(id) { item in
+                switch kind {
+                case .message: item.kind = .message
+                case .reasoning: item.kind = .reasoning
+                case .toolCall(let name, let arg): item.kind = .tool(name: name, arg: arg)
+                }
+            }
+        case .itemDelta(let id, let delta):
+            upsert(id) { item in
+                switch delta {
+                case .text(let t), .reasoning(let t): item.text += t
+                case .output(let t): item.output += t
+                }
+            }
+        case .itemCompleted(let id, let item):
+            upsert(id) { state in
+                state.done = true
+                switch item {
+                case .message(let t): state.kind = .message; state.text = t
+                case .reasoning(let t): state.kind = .reasoning; state.text = t
+                case .toolCall(let r): state.kind = .tool(name: r.name, arg: r.arg); state.result = r
+                }
+            }
+        case .status(let s):
+            tokensPerSec = s.tokensPerSec
+            contextTokens = s.contextTokens
+        default:
+            break
+        }
+    }
+
+    private mutating func upsert(_ id: String, _ update: (inout ItemState) -> Void) {
+        if let i = items.firstIndex(where: { $0.id == id }) {
+            update(&items[i])
+        } else {
+            var item = ItemState(id: id, kind: .message)
+            update(&item)
+            items.append(item)
+        }
+    }
 }
 
 struct TurnState: Identifiable {
@@ -154,6 +227,12 @@ final class Conversation {
         engine.send(.appCall(id: id, server: server, tool: tool, arguments: arguments))
     }
 
+    /// Stop one subagent; the turn goes on with what it found so far.
+    func stopSubagent(_ item: String) {
+        engine?.send(.stopSubagent(id: item))
+        upsert(item) { $0.subagent?.stopping = true }
+    }
+
     func setMode(_ mode: Mode) {
         engine?.send(.setMode(mode))
         status?.mode = mode
@@ -236,6 +315,7 @@ final class Conversation {
                 case .toolCall(let r):
                     state.kind = .tool(name: r.name, arg: r.arg)
                     state.result = r
+                    if state.subagent?.endedAt == nil { state.subagent?.endedAt = Date() }
                 }
             }
         case .permissionRequest(let req):
@@ -256,6 +336,12 @@ final class Conversation {
             if elicitation?.id == id { elicitation = nil }
         case .toolProgress(let id, let p):
             upsert(id) { $0.progress = p }
+        case .subagent(let item, let inner):
+            upsert(item) { state in
+                if state.subagent == nil { state.subagent = SubagentRun() }
+                state.subagent?.apply(inner)
+            }
+            progress = nil
         case .appResult(let id, let result, let error):
             appCalls.removeValue(forKey: id)?(result, error)
         case .progress(let label):

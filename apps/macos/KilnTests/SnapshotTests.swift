@@ -91,6 +91,39 @@ final class SnapshotTests: XCTestCase {
 }
 
 extension SnapshotTests {
+    /// A subagent mid-run (steps, thinking, the report being written) and finished.
+    func testRenderSubagent() throws {
+        func sub(_ inner: String) -> String {
+            #"{"seq":0,"session":"s","created":0,"event":"subagent","item":"t1","inner":\#(inner)}"#
+        }
+        let lines = [
+            #"{"seq":1,"session":"s","created":0,"event":"turn_started","turn":1,"input":"Where are MCP descriptions quarantined?"}"#,
+            #"{"seq":2,"session":"s","created":0,"event":"item_started","id":"t1","kind":{"type":"tool_call","name":"Task","arg":"Find MCP quarantine"}}"#,
+            sub(#"{"event":"item_started","id":"a","kind":{"type":"tool_call","name":"Grep","arg":"quarantine|suspicious"}}"#),
+            sub(#"{"event":"item_completed","id":"a","item":{"type":"tool_call","name":"Grep","arg":"quarantine|suspicious","input":{},"outcome":"ok","output":"","display":null}}"#),
+            sub(#"{"event":"item_started","id":"b","kind":{"type":"tool_call","name":"Read","arg":"crates/kiln-engine/src/mcp.rs"}}"#),
+            sub(#"{"event":"item_completed","id":"b","item":{"type":"tool_call","name":"Read","arg":"crates/kiln-engine/src/mcp.rs","input":{},"outcome":"ok","output":"","display":null}}"#),
+            sub(#"{"event":"item_started","id":"c","kind":{"type":"tool_call","name":"Grep","arg":"fn status"}}"#),
+            sub(#"{"event":"status","model":"tang/Qwen/Qwen3-4B","mode":"default","cwd":"/tmp","messages":4,"context_tokens":5100,"context_window":32768,"tool_mode":"native","tier":"medium","tokens_per_sec":71.0,"todos":[]}"#),
+            sub(#"{"event":"item_completed","id":"c","item":{"type":"tool_call","name":"Grep","arg":"fn status","input":{},"outcome":"ok","output":"","display":null}}"#),
+            sub(#"{"event":"item_started","id":"d","kind":{"type":"message"}}"#),
+            sub(#"{"event":"item_delta","id":"d","delta":{"type":"text","text":"Suspicious descriptions are caught by `suspicious()` in `crates/kiln-engine/src/mcp.rs:836`, which checks"}}"#),
+        ]
+        let events = try lines.map { try JSONDecoder.kiln.decode(Envelope.self, from: Data($0.utf8)) }
+        let live = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        events.forEach(live.ingest)
+        try render(transcript(live), size: CGSize(width: 900, height: 560), to: "subagent-live")
+
+        let end = [
+            #"{"seq":3,"session":"s","created":0,"event":"item_completed","id":"t1","item":{"type":"tool_call","name":"Task","arg":"Find MCP quarantine","input":{},"outcome":"ok","output":"Suspicious descriptions are caught by `suspicious()` in `crates/kiln-engine/src/mcp.rs:836`, which checks each tool's description and schema against injection patterns and hidden Unicode. `Hub::status` and `Hub::catalog` leave quarantined tools out unless the server has `trust = true`.","display":null}}"#,
+            #"{"seq":4,"session":"s","created":0,"event":"item_started","id":"m","kind":{"type":"message"}}"#,
+            #"{"seq":5,"session":"s","created":0,"event":"item_completed","id":"m","item":{"type":"message","text":"In `mcp.rs`, `suspicious()` (line 836)."}}"#,
+        ]
+        try end.map { try JSONDecoder.kiln.decode(Envelope.self, from: Data($0.utf8)) }.forEach(live.ingest)
+        try render(transcript(live), size: CGSize(width: 900, height: 560), to: "subagent-done")
+        print("snapshots: \(outDir.path)")
+    }
+
     /// Diagram cards, in dark and light: the model's diagrams from recent sessions (when
     /// present) and one laid out from Mermaid by the engine.
     func testRenderDiagrams() async throws {

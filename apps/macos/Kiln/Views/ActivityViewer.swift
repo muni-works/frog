@@ -76,6 +76,8 @@ struct ActivityViewer: View {
         if conversation.permission != nil { return "Waiting for your permission" }
         guard let last = turn.items.last else { return "Thinking" }
         switch last.kind {
+        case .tool("Task", _):
+            return "Subagent: \(last.subagent?.activity ?? "Starting")"
         case .tool(let name, let arg):
             let verb = ["Bash": "Running", "Read": "Reading", "Edit": "Editing", "Write": "Writing",
                         "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "CodeMap": "Mapping",

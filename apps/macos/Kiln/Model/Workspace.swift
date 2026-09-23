@@ -44,8 +44,10 @@ final class Workspace {
     init(folder: URL) {
         self.folder = folder
         preferredModel = UserDefaults.standard.string(forKey: "defaultModel").flatMap { $0.isEmpty ? nil : $0 }
-        // Pick up where you left off: reopen this folder's last session.
-        let last = UserDefaults.standard.string(forKey: Self.lastSessionKey(folder))
+        // Pick up where you left off: the first window reopens this folder's last session.
+        // Windows and tabs opened after that start a fresh conversation.
+        let last = Self.restored ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder))
+        Self.restored = true
         let replay = Replay.arguments
         isReplay = replay != nil
         start(arguments: replay ?? last.map { ["-r", $0] } ?? [])
@@ -53,6 +55,9 @@ final class Workspace {
     }
 
     var name: String { folder.lastPathComponent }
+
+    /// Set once the first window has restored its folder's last session.
+    private static var restored = false
 
     /// Showing a recorded session (`-KilnReplay`): don't remember it as this folder's last one.
     @ObservationIgnored private var isReplay = false

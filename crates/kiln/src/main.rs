@@ -243,6 +243,15 @@ async fn run() -> Result<bool> {
     } else {
         cli.resume.clone()
     };
+    // A client (another window, say) that asks for a session already open elsewhere gets a
+    // fresh one rather than an engine that exits.
+    let resume = match resume {
+        Some(id) if cli.serve && session::Log::in_use(&store, &id) => {
+            eprintln!("session {id} is open in another kiln process; starting a new one");
+            None
+        }
+        r => r,
+    };
     let mode = match (cli.yolo, cli.accept_edits) {
         (true, _) => Mode::Yolo,
         (_, true) => Mode::AcceptEdits,
