@@ -15,6 +15,8 @@ struct Diagram: Codable, Hashable, Sendable {
         var file: String?
         var line: UInt32?
         var detail: String?
+        /// 0...1 recent activity (code maps).
+        var heat: Double?
     }
 
     struct Edge: Codable, Hashable, Sendable {
@@ -64,6 +66,7 @@ struct Diagram: Codable, Hashable, Sendable {
     var mermaid: String?
 
     var isSequence: Bool { kind == .sequence }
+    var hasHeat: Bool { nodes.contains { ($0.heat ?? 0) > 0 } }
     var displayTitle: String { (title?.isEmpty == false) ? title! : (isSequence ? "Sequence" : "Diagram") }
 
     func node(_ id: String) -> Node? { nodes.first { $0.id == id } }
@@ -93,13 +96,22 @@ struct Diagram: Codable, Hashable, Sendable {
         }.value
     }
 
+    /// The project's structure from its code (`kiln --map --json`).
+    static func codeMap(in folder: URL) async -> Diagram? {
+        await run(["--map", "--json"], in: folder)
+    }
+
     /// Sessions and their forks in `folder` (`kiln --session-tree --json`).
     static func sessionTree(in folder: URL) async -> Diagram? {
+        await run(["--session-tree", "--json"], in: folder)
+    }
+
+    private static func run(_ args: [String], in folder: URL) async -> Diagram? {
         guard let binary = Kiln.binary else { return nil }
         return await Task.detached {
             let p = Process()
             p.executableURL = binary
-            p.arguments = ["--session-tree", "--json"]
+            p.arguments = args
             p.currentDirectoryURL = folder
             p.environment = Kiln.environment
             let out = Pipe()

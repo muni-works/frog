@@ -89,6 +89,9 @@ struct KilnCommands: Commands {
             Button("Race…") { window?.state.requestRace() }
                 .keyboardShortcut("r", modifiers: [.command, .option])
                 .disabled(conversation?.busy ?? true)
+            Button("Map Project") { mapProject() }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+                .disabled(window == nil)
             Button("Compact Conversation") { conversation?.compact() }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
                 .disabled(conversation.map { $0.busy || $0.turns.isEmpty } ?? true)
@@ -151,6 +154,18 @@ struct KilnCommands: Commands {
     private func find(_ delta: Int) {
         guard let c = conversation else { return }
         window?.state.find(delta, in: c.turns)
+    }
+
+    /// The project's structure from its code, in a diagram window.
+    private func mapProject() {
+        guard let folder = window?.workspace.folder else { return }
+        Task {
+            if let d = await Diagram.codeMap(in: folder), !d.nodes.isEmpty {
+                openWindow(value: DiagramDocument(diagram: d, folder: folder))
+            } else {
+                window?.workspace.conversation?.flash("Couldn't map this folder: no source files that depend on each other.", warning: true)
+            }
+        }
     }
 
     private func openFolder() {

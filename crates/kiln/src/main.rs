@@ -81,6 +81,10 @@ struct Cli {
     /// Read Mermaid from stdin, lay it out, and print the diagram (JSON with --json) and exit.
     #[arg(long)]
     mermaid: bool,
+    /// Map this project's (or a subdirectory's) structure from its code and print it (JSON with
+    /// --json) and exit.
+    #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = ".")]
+    map: Option<String>,
     /// List available models (configured profiles and installed ollama models) and exit.
     #[arg(long)]
     models: bool,
@@ -147,6 +151,20 @@ async fn run() -> Result<bool> {
     }
     if cli.session_tree {
         print_diagram(session_tree(&store, &cwd)?, &cwd, cli.json)?;
+        return Ok(true);
+    }
+    if let Some(dir) = &cli.map {
+        let focus = (dir != ".").then(|| std::path::PathBuf::from(dir));
+        let opts = kiln_engine::codemap::Options {
+            focus,
+            ..Default::default()
+        };
+        let (d, summary) = kiln_engine::codemap::map_with_summary(&cwd, &opts);
+        if cli.json || d.nodes.len() <= 12 {
+            print_diagram(d, &cwd, cli.json)?;
+        } else {
+            print!("{summary}");
+        }
         return Ok(true);
     }
     if cli.mermaid {

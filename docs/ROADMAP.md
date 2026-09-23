@@ -140,7 +140,7 @@ Shipped:
 - Native rendering in the Mac app: cards, pop-out windows, exports, and the session tree. Box art in the terminal.
 
 Next:
-- Code-derived maps with no model in the loop: module and crate dependency graphs, callers of a function, git hot spots.
+- ~~Code-derived maps~~: done (`CodeMap`, `kiln --map`, Map Project), with git churn heat. Still to do: callers of a single function, and edge bundling for very dense maps.
 - State and ER diagram kinds.
 - Diagrams that update in place across turns, pinned as a card.
 - Hold weak models to the schema with grammar-constrained generation when they call Diagram.

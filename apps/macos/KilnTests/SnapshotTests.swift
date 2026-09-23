@@ -126,6 +126,18 @@ extension SnapshotTests {
         } else {
             XCTFail("kiln --mermaid failed")
         }
+        let engine = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appending(path: "crates/kiln-engine")
+        if let d = await Diagram.codeMap(in: engine) {
+            diagrams.append(("diagram-codemap", d))
+            let full = DiagramCanvas(diagram: d)
+                .environment(\.diagramStatic, true)
+                .padding(10)
+                .background(Color(nsColor: .windowBackgroundColor))
+            try render(full, size: CGSize(width: (d.layout?.width ?? 400) + 20, height: (d.layout?.height ?? 300) + 20), to: "codemap-full")
+        } else {
+            XCTFail("kiln --map failed")
+        }
         XCTAssertFalse(diagrams.isEmpty)
         for (name, d) in diagrams {
             for dark in [true, false] {
@@ -134,8 +146,8 @@ extension SnapshotTests {
                     .padding(20)
                     .background(Color(nsColor: .windowBackgroundColor))
                     .environment(\.colorScheme, dark ? .dark : .light)
-                let w = min(900, (d.layout?.width ?? 400) + 60)
-                let h = min(900, (d.layout?.height ?? 300) + 120)
+                let w = min(1400, (d.layout?.width ?? 400) + 60)
+                let h = min(1400, (d.layout?.height ?? 300) + 160)
                 try render(view, size: CGSize(width: w, height: h), to: name + (dark ? "" : "-light"))
             }
         }

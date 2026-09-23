@@ -131,6 +131,7 @@ pub fn specs() -> Vec<ToolSpec> {
         search::grep_spec(),
         todo::spec(),
         diagram::spec(),
+        diagram::map_spec(),
     ]
 }
 
@@ -155,8 +156,9 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "Grep" => search::grep(input, ctx).await,
         "TodoWrite" => todo::run(input, ctx),
         "Diagram" => diagram::run(input, ctx),
+        "CodeMap" => diagram::run_map(input, ctx),
         _ => bail!(
-            "unknown tool `{name}`. Available: Bash, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram"
+            "unknown tool `{name}`. Available: Bash, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, CodeMap"
         ),
     }
 }
@@ -169,6 +171,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "Read" | "Write" | "Edit" => ctx.display(&ctx.resolve(&s("file_path"))),
         "Glob" | "Grep" => s("pattern"),
         "Diagram" => s("title"),
+        "CodeMap" => s("path"),
         _ => String::new(),
     };
     let arg = if arg.chars().count() > 100 {

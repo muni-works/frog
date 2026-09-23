@@ -68,6 +68,9 @@ pub struct Node {
     /// A sentence shown on hover.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// 0..1 activity (code maps: recent git churn), drawn as a warm tint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat: Option<f32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -320,8 +323,15 @@ fn measure(n: &Node) -> (f32, f32) {
         (widest * CHAR_W + 32.0).clamp(72.0, 240.0),
         20.0 + lines.len() as f32 * LINE_H,
     );
-    if n.file.is_some() {
-        h += 12.0; // file caption
+    // File caption, shown unless the label already names the file.
+    if let Some(f) = &n.file {
+        let name = Path::new(f)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(f);
+        if !n.label.ends_with(name) || n.line.is_some() {
+            h += 12.0;
+        }
     }
     match n.shape {
         Shape::Decision => {
@@ -805,15 +815,20 @@ fn flow_layout(d: &Diagram) -> Layout {
     }
 
     // Shift so group frames (which extend above/left of nodes) stay inside the margin.
+    // Edge routes count too: they bend through spacer points that can lie outside the nodes.
+    let route_xs = || paths.iter().flat_map(|p| p.points.iter().map(|q| q[0]));
+    let route_ys = || paths.iter().flat_map(|p| p.points.iter().map(|q| q[1]));
     let min_x = nodes
         .iter()
         .map(|b| b.x)
         .chain(groups.iter().map(|g| g.x))
+        .chain(route_xs())
         .fold(f32::MAX, f32::min);
     let min_y = nodes
         .iter()
         .map(|b| b.y)
         .chain(groups.iter().map(|g| g.y))
+        .chain(route_ys())
         .fold(f32::MAX, f32::min);
     let (dx, dy) = (MARGIN - min_x, MARGIN - min_y);
     for b in &mut nodes {
@@ -838,12 +853,22 @@ fn flow_layout(d: &Diagram) -> Layout {
         .iter()
         .map(|b| b.x + b.w)
         .chain(groups.iter().map(|g| g.x + g.w))
+        .chain(
+            paths
+                .iter()
+                .flat_map(|p| p.points.iter().map(|q| q[0] + 8.0)),
+        )
         .fold(0f32, f32::max)
         + MARGIN;
     let height = nodes
         .iter()
         .map(|b| b.y + b.h)
         .chain(groups.iter().map(|g| g.y + g.h))
+        .chain(
+            paths
+                .iter()
+                .flat_map(|p| p.points.iter().map(|q| q[1] + 8.0)),
+        )
         .fold(0f32, f32::max)
         + MARGIN;
     Layout {

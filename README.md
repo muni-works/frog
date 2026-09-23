@@ -91,7 +91,7 @@ Named profiles live in `~/.config/kiln/config.toml`. See [config.example.toml](c
 
 ## Tools
 
-`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Diagram`
+`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Diagram` · `CodeMap`
 
 The tools behave like Claude Code's: Edit replaces an exact string that must be unique, and a file has to be Read before it can be edited, with a check that it hasn't changed since. Bash keeps its working directory between calls.
 
@@ -122,6 +122,14 @@ The engine validates the diagram and lays it out:
 Every client draws the same layout:
 - **Mac app:** a native card in the answer. Hover a node for its detail, click it to open its file, pop the diagram out into its own zoomable window, or export PNG, SVG or Mermaid.
 - **Terminal:** box-drawing art.
+
+**Code maps.** `CodeMap` (and `kiln --map [dir]`, or Session › Map Project in the Mac app) draws the project's structure from the code itself, with no model involved:
+- **Rust:** modules and crate paths across a workspace.
+- **TS/JS and Python:** imports.
+- **Go:** packages.
+- **Swift:** type references within a module.
+
+The map collapses files into directories when there are too many to read, frames subdirectories, and drops dependencies that are implied by others. It keeps every edge within a cycle, and tints hot spots by git churn over the last 90 days. The model gets the full dependency list as text, so it's a cheap way for the agent to learn a codebase. In the Mac app, dense maps draw edges faintly, and hovering a node lights up its own edges.
 
 ```` ```mermaid ```` blocks in answers render the same way. `kiln --mermaid < diagram.mmd` lays out Mermaid from the command line, and `kiln --session-tree` draws a folder's sessions and their forks. The Mac app shows the same tree from the Sessions card.
 

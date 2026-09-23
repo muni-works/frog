@@ -48,6 +48,8 @@ struct DiagramCanvas: View {
     /// Fully drawn: after the entrance, or from the start when static.
     private var on: Bool { shown || isStatic || !animated }
 
+    private var dense: Bool { diagram.edges.count > diagram.nodes.count * 3 / 2 && diagram.edges.count > 16 }
+
     private var maxRank: Int { diagram.layout?.nodes.map(\.rank).max() ?? 0 }
 
     /// Stagger by layer: earlier layers land first.
@@ -86,7 +88,9 @@ struct DiagramCanvas: View {
         let pts = path.cgPoints
         let s = style(path.edge)
         let hot = isHot(path.edge)
-        let color: Color = hot ? .accentColor : (s == .thick ? .primary.opacity(0.75) : .secondary)
+        // Dense diagrams (code maps) draw edges faintly; hovering a node brings its own forward.
+        let faint = dense && !hot
+        let color: Color = hot ? .accentColor : faint ? .secondary.opacity(0.28) : (s == .thick ? .primary.opacity(0.75) : .secondary)
         let width: CGFloat = s == .thick ? 2.4 : (hot ? 1.8 : 1.3)
         let from = diagram.edges[safe: path.edge].flatMap { e in layout.nodes.first { $0.id == e.from } }
         return ZStack {
@@ -128,9 +132,13 @@ struct DiagramCanvas: View {
     private func nodeView(_ node: Diagram.Node, _ b: Diagram.Layout.NodeBox) -> some View {
         let hot = hovered == node.id
         let shape = node.shape ?? .box
+        let heat = node.heat ?? 0
         return NodeBody(node: node, hot: hot)
             .frame(width: b.w, height: b.h)
             .background { NodeShape(shape: shape).fill(fill(shape, hot)) }
+            // Activity: a warm wash and edge, stronger for hotter nodes.
+            .background { if heat > 0 { NodeShape(shape: shape).fill(.orange.opacity(0.06 + 0.22 * heat)) } }
+            .overlay { if heat > 0.5 { NodeShape(shape: shape).stroke(.orange.opacity(0.35 + 0.4 * heat), lineWidth: 1.2) } }
             .overlay {
                 NodeShape(shape: shape)
                     .stroke(hot ? Color.accentColor : .primary.opacity(0.22),
@@ -138,7 +146,7 @@ struct DiagramCanvas: View {
             }
             .contentShape(NodeShape(shape: shape))
             .scaleEffect(on ? 1 : 0.92)
-            .opacity(on ? 1 : 0)
+            .opacity(on ? (dense && hovered != nil && !related(node.id) ? 0.35 : 1) : 0)
             .animation(.spring(duration: 0.45, bounce: 0.25).delay(delay(b.rank)), value: shown)
             .position(x: b.x + b.w / 2, y: b.y + b.h / 2)
             .onHover { inside in
@@ -147,6 +155,12 @@ struct DiagramCanvas: View {
             .onTapGesture { tap(node) }
             .help(node.detail ?? node.file.map { "Open \($0)" } ?? node.label)
             .pointerStyle(node.file != nil || onNode != nil ? .link : nil)
+    }
+
+    /// The hovered node and its direct neighbors.
+    private func related(_ id: String) -> Bool {
+        guard let h = hovered else { return true }
+        return id == h || diagram.edges.contains { ($0.from == h && $0.to == id) || ($0.to == h && $0.from == id) }
     }
 
     private func fill(_ shape: Diagram.Shape, _ hot: Bool) -> Color {
@@ -188,7 +202,8 @@ private struct NodeBody: View {
                     .lineLimit(3)
                     .minimumScaleFactor(0.85)
             }
-            if let file = node.file {
+            // The file, unless the label already says it (code maps label nodes by file).
+            if let file = node.file, !node.label.hasSuffix((file as NSString).lastPathComponent) || node.line != nil {
                 Text((file as NSString).lastPathComponent + (node.line.map { ":\($0)" } ?? ""))
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(hot ? Color.accentColor : .secondary)
@@ -313,6 +328,7 @@ struct DiagramCard: View {
             } else {
                 FittedDiagram(diagram: diagram, maxHeight: 520)
                     .padding(8)
+                if diagram.hasHeat { HeatLegend().padding([.horizontal, .bottom], 12) }
             }
         }
         .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: 14))
@@ -371,6 +387,20 @@ struct FittedDiagram: View {
             .frame(maxHeight: min(h * scale, maxHeight))
             .clipped()
             .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+    }
+}
+
+/// Explains the warm tint on code maps.
+struct HeatLegend: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            LinearGradient(colors: [.orange.opacity(0.08), .orange.opacity(0.6)], startPoint: .leading, endPoint: .trailing)
+                .frame(width: 40, height: 8)
+                .clipShape(.capsule)
+            Text("warmer = more commits in the last 90 days")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -523,6 +553,9 @@ struct DiagramWindow: View {
                 .padding(24)
         }
         .gesture(MagnifyGesture().updating($pinch) { v, s, _ in s = v.magnification }.onEnded { zoom = min(4, max(0.25, zoom * $0.magnification)) })
+        .overlay(alignment: .bottomLeading) {
+            if d.hasHeat { HeatLegend().padding(10).glassEffect(.regular, in: .capsule).padding(14) }
+        }
         .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.projectFolder, document.folder)
         .navigationTitle(d.displayTitle)
