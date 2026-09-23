@@ -85,14 +85,15 @@ struct UserPrompt: View {
         VStack(alignment: .trailing, spacing: 6) {
             if !images.isEmpty {
                 HStack(spacing: 6) {
-                    ForEach(images, id: \.self) { img in
-                        if let data = Data(base64Encoded: img.data), let ns = NSImage(data: data) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { i, img in
+                        if let ns = img.nsImage {
                             Image(nsImage: ns)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
                                 .frame(width: images.count == 1 ? 220 : 110, height: images.count == 1 ? 150 : 80)
                                 .clipShape(.rect(cornerRadius: 12))
                                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+                                .opensInLightbox(images, at: i)
                         }
                     }
                 }

@@ -201,6 +201,16 @@ final class PastingTextView: NSTextView {
     var pasteImages: (([ToolImage]) -> Void)?
     var acceptsImages: () -> Bool = { false }
 
+    /// A plain-text view only reads strings, so it greys out Paste when the clipboard holds just
+    /// an image (a screenshot copied with ⌃⇧⌘4) and ⌘V never reaches `paste`.
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), acceptsImages(),
+           NSPasteboard.general.canReadObject(forClasses: [NSImage.self], options: nil) {
+            return true
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
     override func paste(_ sender: Any?) {
         let pb = NSPasteboard.general
         if acceptsImages() {
@@ -214,5 +224,19 @@ final class PastingTextView: NSTextView {
             }
         }
         super.paste(sender)
+    }
+
+    /// A text view takes file drops as their paths; an image file dropped here attaches instead.
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        let files = (pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        if acceptsImages(), files.contains(where: Attachments.isImage) {
+            let images = Attachments.images(on: pb)
+            if !images.isEmpty {
+                pasteImages?(images)
+                return true
+            }
+        }
+        return super.performDragOperation(sender)
     }
 }

@@ -126,6 +126,8 @@ final class Conversation {
     private(set) var permission: PermissionRequest?
     /// An MCP server waiting on the user.
     private(set) var elicitation: Elicitation?
+    /// Files dropped anywhere on the conversation, for the composer to attach or mention.
+    var dropped: [URL] = []
     @ObservationIgnored private var appCalls: [String: (JSONValue?, String?) -> Void] = [:]
     private(set) var failure: String?
     private(set) var replaying = false

@@ -173,15 +173,15 @@ struct ElicitationCard: View {
 
 // MARK: - Images
 
-/// Images an MCP tool returned (renders, plots). Click one to open it in Preview.
+/// Images a tool returned (renders, plots, screenshots). Click one to see it large.
 struct ToolImages: View {
     let images: [ToolImage]
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 10) {
-                ForEach(images, id: \.self) { img in
-                    if let data = Data(base64Encoded: img.data), let ns = NSImage(data: data) {
+                ForEach(Array(images.enumerated()), id: \.offset) { i, img in
+                    if let data = img.bytes, let ns = NSImage(data: data) {
                         Image(nsImage: ns)
                             .resizable()
                             .interpolation(.high)
@@ -189,7 +189,7 @@ struct ToolImages: View {
                             .frame(maxWidth: images.count == 1 ? 560 : 320, maxHeight: 360)
                             .clipShape(.rect(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
-                            .onTapGesture(count: 2) { open(data, mime: img.mime) }
+                            .opensInLightbox(images, at: i)
                             .draggable(Image(nsImage: ns))
                             .contextMenu {
                                 Button("Open in Preview") { open(data, mime: img.mime) }
@@ -198,7 +198,6 @@ struct ToolImages: View {
                                     NSPasteboard.general.writeObjects([ns])
                                 }
                             }
-                            .help("Double-click to open")
                     }
                 }
             }

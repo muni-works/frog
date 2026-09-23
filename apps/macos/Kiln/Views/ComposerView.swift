@@ -11,7 +11,6 @@ struct ComposerView: View {
     @State private var mention: String?
     @State private var picked = 0
     @State private var racing = false
-    @State private var dropTargeted = false
     /// Images to send with the message.
     @State private var attachments: [ToolImage] = []
     @Environment(\.switchFolder) private var switchFolder
@@ -184,26 +183,25 @@ struct ComposerView: View {
             .padding(.leading, 12)
             .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
-        .overlay {
-            if dropTargeted {
-                RoundedRectangle(cornerRadius: 20).strokeBorder(.tint, lineWidth: 2)
-            }
+        // Drops land on the whole conversation (see `ConversationDropZone`) and arrive here.
+        .onChange(of: conversation.dropped) { _, urls in
+            guard !urls.isEmpty else { return }
+            conversation.dropped = []
+            accept(urls)
         }
-        // Drop files to mention them: `@path` relative to the project when inside it.
-        .dropDestination(for: URL.self) { urls, _ in
-            // Images attach; other files become @mentions.
-            let images = urls.filter(Attachments.isImage)
-            attachments += images.compactMap(Attachments.image(at:))
-            let files = urls.filter { !Attachments.isImage($0) }
-            guard !files.isEmpty else { return !images.isEmpty }
-            let root = conversation.folder.standardizedFileURL.path + "/"
-            let mentions = files.map { url in
-                let p = url.standardizedFileURL.path
-                return "@" + (p.hasPrefix(root) ? String(p.dropFirst(root.count)) : p)
-            }
-            controller.insert(mentions.joined(separator: " ") + " ")
-            return !urls.isEmpty
-        } isTargeted: { dropTargeted = $0 }
+    }
+
+    /// Images attach; other files become `@` mentions, relative to the project when inside it.
+    private func accept(_ urls: [URL]) {
+        attachments += urls.filter(Attachments.isImage).compactMap(Attachments.image(at:))
+        let files = urls.filter { !Attachments.isImage($0) }
+        guard !files.isEmpty else { return }
+        let root = conversation.folder.standardizedFileURL.path + "/"
+        let mentions = files.map { url in
+            let p = url.standardizedFileURL.path
+            return "@" + (p.hasPrefix(root) ? String(p.dropFirst(root.count)) : p)
+        }
+        controller.insert(mentions.joined(separator: " ") + " ")
     }
 
     private func send() {
@@ -391,6 +389,7 @@ struct AttachmentStrip: View {
                                 .frame(width: 56, height: 56)
                                 .clipShape(.rect(cornerRadius: 10))
                                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+                                .opensInLightbox(images, at: i)
                                 .overlay(alignment: .topTrailing) {
                                     Button {
                                         images.remove(at: i)
