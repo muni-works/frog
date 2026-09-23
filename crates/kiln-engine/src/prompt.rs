@@ -175,6 +175,11 @@ pub fn strip_answer_tags(text: &str) -> String {
 static TOOL_CALL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<tool_call>\s*(.*?)\s*(?:</tool_call>|$)").unwrap());
 
+/// Gemma (and others trained on markdown) fence the call instead: ```tool_call {...} ```.
+static FENCED_CALL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)```(?:tool_call|tool_code)\s*(\{.*?\})\s*(?:```|$)").unwrap()
+});
+
 fn parse_call(raw: &str) -> Option<(String, Value)> {
     let raw = raw
         .trim()
@@ -195,17 +200,31 @@ fn parse_call(raw: &str) -> Option<(String, Value)> {
 /// Pull `<tool_call>` blocks out of text. Also catches models that emit them
 /// as text even in native mode (common with Qwen/Hermes templates on some servers).
 pub fn extract_tool_calls(text: &str) -> Option<(String, Vec<(String, Value)>)> {
-    if !text.contains("<tool_call>") {
+    let re: &Regex = if text.contains("<tool_call>") {
+        &TOOL_CALL
+    } else if text.contains("```") {
+        &FENCED_CALL
+    } else {
         return None;
-    }
-    let calls: Vec<_> = TOOL_CALL
+    };
+    let calls: Vec<_> = re
         .captures_iter(text)
         .filter_map(|c| parse_call(&c[1]))
         .collect();
     if calls.is_empty() {
         return None;
     }
-    let clean = TOOL_CALL.replace_all(text, "").trim().to_string();
+    // Only strip the blocks that were calls; a fenced JSON example stays.
+    let clean = re
+        .replace_all(text, |c: &regex::Captures| {
+            if parse_call(&c[1]).is_some() {
+                String::new()
+            } else {
+                c[0].to_string()
+            }
+        })
+        .trim()
+        .to_string();
     Some((clean, calls))
 }
 
@@ -339,6 +358,15 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].0, "Read");
         assert_eq!(calls[1].1["command"], "ls");
+    }
+
+    #[test]
+    fn extracts_fenced_calls_and_leaves_other_fences() {
+        let t = "```tool_call\n{\"name\": \"Read\", \"arguments\": {\"file_path\": \"a.rs\"}}\n```";
+        let (clean, calls) = extract_tool_calls(t).unwrap();
+        assert_eq!(clean, "");
+        assert_eq!(calls[0].0, "Read");
+        assert!(extract_tool_calls("```json\n{\"name\": \"my-pkg\"}\n```").is_none());
     }
 
     #[test]

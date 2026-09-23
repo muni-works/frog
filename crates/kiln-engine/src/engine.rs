@@ -722,7 +722,10 @@ impl Agent {
         }
     }
 
-    async fn turn(&mut self, input: &str, images: Vec<crate::protocol::Image>) -> Result<()> {
+    async fn turn(&mut self, input: &str, mut images: Vec<crate::protocol::Image>) -> Result<()> {
+        let (input, named) = crate::image_paths::attach(input);
+        let input = input.as_str();
+        images.extend(named);
         self.turn += 1;
         let turn = self.turn;
         self.emit(Event::TurnStarted {

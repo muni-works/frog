@@ -8,6 +8,7 @@ pub mod context;
 pub mod diagram;
 pub mod engine;
 pub mod harness;
+pub mod image_paths;
 pub mod mcp;
 pub mod message;
 pub mod models;
