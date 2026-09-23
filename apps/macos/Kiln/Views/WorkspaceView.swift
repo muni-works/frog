@@ -18,14 +18,16 @@ struct WorkspaceView: View {
     /// This view's window, so the sidebar can bring an already-open conversation forward.
     @State private var window: NSWindow?
     @Environment(\.controlActiveState) private var activeState
+    @State private var renamingTitle = false
+    @State private var newTitle = ""
 
     enum Peek { case sessions, changes }
 
     static let sessionsWidth: CGFloat = 250
     static let changesWidth: CGFloat = 380
     static let button: CGFloat = 36
-    /// Estimated width of the collapsed changes pill ("± 12").
-    static let changesPill: CGFloat = 64
+    /// Estimated width of the collapsed changes pill ("+42 −7").
+    static let changesPill: CGFloat = 96
     static let margin: CGFloat = 12
     /// Clearance between a card and the conversation.
     static let gap: CGFloat = 16
@@ -159,6 +161,8 @@ struct WorkspaceView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { canvasWidth = $0 }
+        // Over everything in the window: sidebar, rail, and (hidden meanwhile) the toolbar.
+        .modifier(LightboxHost())
         .environment(\.projectFolder, workspace.folder)
         // The folder as the window's document: proxy icon in the title bar (⌘-click for its
         // path, drag it anywhere).
@@ -186,6 +190,15 @@ struct WorkspaceView: View {
             toggleSessions: toggleSessions, toggleChanges: toggleChanges,
             sessionsShown: sessionsVisible, changesShown: changesVisible
         ))
+        .alert("Rename Conversation", isPresented: $renamingTitle) {
+            TextField("Title", text: $newTitle)
+            Button("Rename") {
+                if let id = workspace.conversation?.sessionID {
+                    Task { await Library.shared.rename(id, to: newTitle) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .confirmationDialog(
             undoTurn.flatMap(\.number).map { "Undo turn \($0)?" } ?? "Undo the last turn?",
             isPresented: $ui.confirmUndo
@@ -203,7 +216,9 @@ struct WorkspaceView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 if let c = workspace.conversation, workspace.race == nil {
-                    ActivityViewer(conversation: c)
+                    ActivityViewer(conversation: c) {
+                        if let last = c.turns.last { ui.jumpTo = last.id }
+                    }
                 }
             }
             // The viewer draws its own glass capsule; without this the toolbar adds a second.
@@ -211,19 +226,6 @@ struct WorkspaceView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button("Commands", systemImage: "command") { ui.paletteShown.toggle() }
                     .help("Command Palette (⌘K)")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button("New Session", systemImage: "square.and.pencil") {
-                    workspace.newSession()
-                }
-                .help("New Session (⇧⌘N)")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button("Compact", systemImage: "arrow.down.right.and.arrow.up.left") {
-                    workspace.conversation?.compact()
-                }
-                .disabled(workspace.conversation?.busy ?? true || workspace.conversation?.turns.isEmpty ?? true)
-                .help("Compact Conversation: summarize to free up context (⇧⌘K)")
             }
         }
     }
@@ -269,10 +271,13 @@ struct WorkspaceView: View {
                         .shadow(color: .black.opacity(peek == .changes ? 0.35 : 0), radius: 24, y: 10)
                     } else {
                         Button(action: toggleChanges) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "plusminus")
-                                Text("\(changeCount)").monospacedDigit()
+                            let changes = conversation.sessionChanges
+                            HStack(spacing: 6) {
+                                Text("+\(changes.reduce(0) { $0 + $1.added })").foregroundStyle(.green)
+                                Text("−\(changes.reduce(0) { $0 + $1.removed })").foregroundStyle(.red)
                             }
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
                             .font(.callout.weight(.medium))
                             .padding(.horizontal, 12)
                             .frame(height: Self.button)
@@ -347,6 +352,35 @@ struct HuggingScroll<Content: View>: View {
 }
 
 extension WorkspaceView {
+    /// Where the conversation lives: the project and its branch; nothing for a plain chat.
+    private var place: String {
+        guard !workspace.isChat else { return "" }
+        return [workspace.name, workspace.git?.branch].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func titleMenu(_ conversation: Conversation) -> some View {
+        Button("Rename…") {
+            newTitle = conversation.title ?? ""
+            renamingTitle = true
+        }
+        .disabled(conversation.sessionID == nil)
+        if !workspace.isChat {
+            Button("Show Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([workspace.folder]) }
+        }
+        if let id = conversation.sessionID {
+            Button("Copy Session ID") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(id, forType: .string)
+            }
+            Divider()
+            Button("Archive") {
+                Library.shared.setArchived(id, true)
+                workspace.newSession()
+            }
+        }
+    }
+
     @ViewBuilder
     private func detail(insets: EdgeInsets) -> some View {
         if let race = workspace.race {
@@ -366,9 +400,44 @@ extension WorkspaceView {
                     .padding(.leading, insets.leading)
                     .padding(.trailing, insets.trailing)
             }
-            .navigationTitle(workspace.name)
-            .navigationSubtitle(conversation.title ?? "New session")
+            .modifier(ConversationDropZone(conversation: conversation))
+            .navigationTitle(conversation.title ?? (workspace.isChat ? "New Chat" : "New Conversation"))
+            .navigationSubtitle(place)
+            .toolbarTitleMenu { titleMenu(conversation) }
         }
+    }
+}
+
+/// The whole conversation takes dropped files, not just the composer: images attach to the
+/// next message and other files are mentioned.
+struct ConversationDropZone: ViewModifier {
+    let conversation: Conversation
+    @State private var targeted = false
+
+    func body(content: Content) -> some View {
+        content
+            .dropDestination(for: URL.self) { urls, _ in
+                guard !urls.isEmpty else { return false }
+                conversation.dropped = urls
+                return true
+            } isTargeted: { targeted = $0 }
+            .overlay {
+                if targeted {
+                    RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(.tint, lineWidth: 2)
+                        .background(.tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+                        .overlay {
+                            Label("Drop to attach", systemImage: "paperclip")
+                                .font(.headline)
+                                .padding(.horizontal, 14).padding(.vertical, 8)
+                                .glassEffect(.regular, in: .capsule)
+                        }
+                        .padding(8)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: targeted)
     }
 }
 

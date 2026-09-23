@@ -6,11 +6,33 @@ import SwiftUI
 /// how full the context is, and generation speed.
 struct ActivityViewer: View {
     let conversation: Conversation
+    /// Scroll to where the conversation is waiting on the user.
+    var jump: () -> Void = {}
+
+    /// A permission prompt or a server's question: the pill turns amber and takes you there.
+    private var waiting: String? {
+        if let p = conversation.permission { return "Needs approval: \(ToolIcon.title(p.name))" }
+        if conversation.elicitation != nil { return "Waiting for your answer" }
+        return nil
+    }
 
     var body: some View {
         HStack(spacing: 10) {
-            activity
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if let waiting {
+                Button(action: jump) {
+                    HStack(spacing: 7) {
+                        Image(systemName: "hand.raised.fill").frame(width: 14)
+                        Text(waiting).fontWeight(.medium).lineLimit(1)
+                        Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
+                    }
+                    .foregroundStyle(.orange)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("Show the request")
+            } else {
+                activity
+            }
             if let s = conversation.status {
                 Divider().frame(height: 14)
                 readout(s)
@@ -18,13 +40,15 @@ struct ActivityViewer: View {
         }
         .font(.callout)
         .padding(.horizontal, 14)
-        .frame(minWidth: 360, idealWidth: 460, maxWidth: 560)
+        // Hugs its content: a short state reads as a small pill, not a mostly empty bar.
+        .fixedSize()
         .frame(height: 30)
         .overlay(alignment: .bottom) {
-            if conversation.busy { WorkingLine().padding(.horizontal, 16) }
+            if conversation.busy, waiting == nil { WorkingLine().padding(.horizontal, 16) }
         }
-        .glassEffect(.regular, in: .capsule)
+        .glassEffect(waiting == nil ? .regular : .regular.tint(.orange.opacity(0.18)), in: .capsule)
         .animation(.snappy(duration: 0.2), value: conversation.busy)
+        .animation(.snappy(duration: 0.2), value: waiting)
     }
 
     // MARK: Left: what's happening
@@ -36,7 +60,7 @@ struct ActivityViewer: View {
                 HStack(spacing: 7) {
                     Image(systemName: symbol(turn)).foregroundStyle(.orange).frame(width: 14)
                     Text(live(turn)).lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 4)
+                        .frame(maxWidth: 300, alignment: .leading)
                     Text(elapsed(turn)).foregroundStyle(.secondary).monospacedDigit()
                 }
             }
@@ -49,9 +73,13 @@ struct ActivityViewer: View {
         } else if let turn = conversation.turns.last, let end = turn.end {
             HStack(spacing: 7) {
                 Image(systemName: done(end).symbol).foregroundStyle(done(end).color).frame(width: 14)
-                Text(done(end).text).lineLimit(1)
-                if let d = duration(turn) {
-                    Text(d).foregroundStyle(.secondary).monospacedDigit()
+                if case .complete = end, let d = duration(turn) {
+                    Text("Done in \(d)").monospacedDigit()
+                } else {
+                    Text(done(end).text).lineLimit(1)
+                    if let d = duration(turn) {
+                        Text(d).foregroundStyle(.secondary).monospacedDigit()
+                    }
                 }
             }
         } else {
@@ -122,7 +150,7 @@ struct ActivityViewer: View {
                 .fontWeight(.medium)
                 .lineLimit(1)
                 .help("\(s.model) · \(s.toolMode) tool calls · \(s.tier) tier")
-            ContextRing(status: s)
+            ContextButton(conversation: conversation, status: s)
             if let tps = s.tokensPerSec, tps > 0 {
                 Text("\(Int(tps)) tok/s")
                     .foregroundStyle(.secondary)
@@ -135,6 +163,57 @@ struct ActivityViewer: View {
     private func shortModel(_ spec: String) -> String {
         let name = spec.split(separator: "/").last.map(String.init) ?? spec
         return name.replacingOccurrences(of: "-4bit", with: " 4-bit")
+    }
+}
+
+/// The context ring; click it for how full the context is and to compact it.
+private struct ContextButton: View {
+    let conversation: Conversation
+    let status: Status
+    @State private var shown = false
+
+    private var fraction: Double {
+        guard let used = status.contextTokens, status.contextWindow > 0 else { return 0 }
+        return min(1, Double(used) / Double(status.contextWindow))
+    }
+
+    var body: some View {
+        Button { shown.toggle() } label: {
+            ContextRing(status: status).contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $shown, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Context").font(.headline)
+                    Spacer()
+                    Text("\(Int(fraction * 100))%").font(.headline.monospacedDigit())
+                        .foregroundStyle(fraction > 0.8 ? .red : fraction > 0.6 ? .orange : .primary)
+                }
+                ProgressView(value: fraction)
+                    .tint(fraction > 0.8 ? .red : fraction > 0.6 ? .orange : .accentColor)
+                Text("\((status.contextTokens ?? 0).tokens) of \(status.contextWindow.tokens) tokens")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Divider()
+                Button {
+                    shown = false
+                    conversation.compact()
+                } label: {
+                    Label("Compact Now", systemImage: "arrow.down.right.and.arrow.up.left")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glass)
+                .disabled(conversation.busy || conversation.turns.isEmpty)
+                Text("Summarizes the conversation so far to free up room (⇧⌘K).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            .frame(width: 260)
+        }
+        .help("Context: \(Int(fraction * 100))% used")
     }
 }
 
