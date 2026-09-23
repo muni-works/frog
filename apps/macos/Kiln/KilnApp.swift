@@ -31,38 +31,35 @@ struct KilnApp: App {
     }
 }
 
-/// A window is one project folder. A new window or tab starts with the composer and a folder
-/// chip (nothing is assumed); the conversation starts once a folder is picked.
+/// A window is one conversation, in a project folder or (with no folder) a plain chat. A new
+/// window or tab starts as an empty chat; its composer's folder chip points it at a folder
+/// before the first message.
 struct RootView: View {
     @Binding var folder: URL?
     @State private var workspace: Workspace?
-    /// The first message, typed before the folder was picked.
-    @State private var pending: String?
+    /// Start a new conversation rather than reopening the folder's last one.
+    @State private var fresh = false
 
     var body: some View {
         Group {
             if let workspace {
                 WorkspaceView(workspace: workspace)
             } else {
-                StartView { url, prompt in
-                    pending = prompt
-                    folder = url ?? Kiln.chatFolder
-                }
-                .navigationTitle("New Conversation")
+                Color.clear
             }
         }
         .frame(minWidth: 720, minHeight: 480)
+        .environment(\.switchFolder) { url in
+            fresh = true
+            folder = url ?? Kiln.chatFolder
+        }
         .onAppear {
-            if folder == nil, let launched = LaunchFolder.take() { folder = launched }
+            if folder == nil { folder = LaunchFolder.take() ?? Kiln.chatFolder }
         }
         .onChange(of: folder, initial: true) { _, url in
             workspace?.stop()
-            workspace = url.map { Workspace(folder: $0, fresh: pending != nil) }
+            workspace = url.map { Workspace(folder: $0, fresh: fresh) }
             if let url { Recents.add(url) }
-            if let prompt = pending {
-                workspace?.conversation?.submit(prompt)
-                pending = nil
-            }
         }
         .onDisappear { workspace?.stop() }
     }
@@ -95,7 +92,7 @@ enum Recents {
     }
 
     static func add(_ url: URL) {
-        guard url.standardizedFileURL != Kiln.chatFolder.standardizedFileURL else { return }
+        guard !Kiln.isChat(url) else { return }
         var paths = UserDefaults.standard.stringArray(forKey: key) ?? []
         paths.removeAll { $0 == url.path }
         paths.insert(url.path, at: 0)

@@ -174,3 +174,9 @@ struct KilnCommands: Commands {
         openWindow(value: url)
     }
 }
+
+extension EnvironmentValues {
+    /// Set by a window: point its (still empty) conversation at another folder, or nil for a
+    /// plain chat.
+    @Entry var switchFolder: ((URL?) -> Void)?
+}

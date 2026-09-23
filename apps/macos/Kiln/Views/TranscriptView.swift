@@ -150,19 +150,21 @@ struct EmptyTranscript: View {
     let conversation: Conversation
     @Environment(\.canvasInsets) private var insets
 
+    private var isChat: Bool { Kiln.isChat(conversation.folder) }
+
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: "flame")
                 .font(.system(size: 44, weight: .light))
                 .foregroundStyle(.orange.gradient)
-            Text(conversation.folder.standardizedFileURL == Kiln.chatFolder.standardizedFileURL ? "Chat" : conversation.folder.lastPathComponent)
+            Text(isChat ? "What should we work on?" : conversation.folder.lastPathComponent)
                 .font(.title2.weight(.semibold))
             if let s = conversation.status {
                 Text("\(s.model) · \(s.toolMode) tools · \(s.tier) tier")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            Text("Ask about the code, or describe a change.  Use @file to attach a file, !cmd to run a command.")
+            Text(isChat ? "Ask anything, or pick a folder below to work on code." : "Ask about the code, or describe a change.  Use @file to attach a file, !cmd to run a command.")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 4)

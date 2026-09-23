@@ -11,6 +11,7 @@ struct ComposerView: View {
     @State private var picked = 0
     @State private var racing = false
     @State private var dropTargeted = false
+    @Environment(\.switchFolder) private var switchFolder
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -33,13 +34,26 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            FolderChip(folder: workspace.folder)
+            topRow
                 .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
             box
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 16)
         .frame(maxWidth: 860)
+    }
+
+    /// Before the first message: where the conversation works (a folder, or none for a plain
+    /// chat). After it: the repository's branch and changes, for a folder in git.
+    @ViewBuilder
+    private var topRow: some View {
+        if conversation.turns.isEmpty, !conversation.replaying {
+            FolderChip(folder: workspace.folder, choose: switchFolder)
+        } else if !workspace.isChat, let git = workspace.git {
+            GitBar(folder: workspace.folder, git: git, busy: conversation.busy) {
+                conversation.submit("Commit the current changes: review the diff, stage only files related to our work, and write a clear, concise commit message.")
+            }
+        }
     }
 
     private var box: some View {
@@ -288,6 +302,42 @@ struct ContextRing: View {
         let window = status.contextWindow.tokens
         guard let used = status.contextTokens else { return "Context window: \(window) tokens" }
         return "\(used.tokens) of \(window) tokens (\(Int(fraction * 100))%)"
+    }
+}
+
+/// The repository a conversation works in: folder, branch, and a shortcut to commit what's
+/// changed.
+struct GitBar: View {
+    let folder: URL
+    let git: GitInfo
+    let busy: Bool
+    let commit: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Label(folder.lastPathComponent, systemImage: "folder")
+            Label(git.branch, systemImage: "arrow.triangle.branch")
+            if git.changed > 0 {
+                Text("\(git.changed) changed").foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 8)
+            if git.changed > 0 {
+                Button("Commit changes", action: commit)
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .disabled(busy)
+                    .help("Ask kiln to commit the current changes")
+            }
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .labelStyle(.titleAndIcon)
+        .padding(.horizontal, 14)
+        .frame(height: 34)
+        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
+        .contextMenu {
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+        }
     }
 }
 

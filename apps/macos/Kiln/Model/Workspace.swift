@@ -33,6 +33,8 @@ final class Workspace {
 
     /// Project files for `@` mentions, loaded on first use.
     private(set) var files: [String] = []
+    /// The folder's git branch and uncommitted changes (nil outside a repository, and for chats).
+    private(set) var git: GitInfo?
     /// Agent Skills this folder sees, for `/skill` completion.
     private(set) var skills: [SkillInfo] = []
     @ObservationIgnored private var filesLoaded = false
@@ -49,7 +51,8 @@ final class Workspace {
         preferredModel = UserDefaults.standard.string(forKey: "defaultModel").flatMap { $0.isEmpty ? nil : $0 }
         // Pick up where you left off: the first window reopens this folder's last session.
         // Windows and tabs opened after that start a fresh conversation.
-        let last = Self.restored || fresh ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder))
+        let chat = Kiln.isChat(folder)
+        let last = Self.restored || fresh || chat ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder))
         Self.restored = true
         let replay = Replay.arguments
         isReplay = replay != nil
@@ -60,7 +63,7 @@ final class Workspace {
     var name: String { isChat ? "Chat" : folder.lastPathComponent }
 
     /// A plain chat: no project folder, no file or shell tools.
-    var isChat: Bool { folder.standardizedFileURL == Kiln.chatFolder.standardizedFileURL }
+    var isChat: Bool { Kiln.isChat(folder) }
 
     /// Set once the first window has restored its folder's last session.
     private static var restored = false
@@ -73,6 +76,7 @@ final class Workspace {
     }
 
     func refresh() async {
+        if !isChat { git = await Git.status(folder) }
         if skills.isEmpty, let k = try? await Kiln.json([SkillInfo].self, args: ["--skills", "--json"], cwd: folder) {
             skills = k
         }

@@ -9,6 +9,12 @@ enum Kiln {
         return dir
     }()
 
+    /// Whether `url` is the chat folder (compared by path: a restored URL may carry a trailing
+    /// slash or a symlinked prefix).
+    static func isChat(_ url: URL) -> Bool {
+        url.resolvingSymlinksInPath().standardizedFileURL.path == chatFolder.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
     /// The bundled engine first; then an override; then a dev build; then PATH.
     static var binary: URL? {
         let fm = FileManager.default
