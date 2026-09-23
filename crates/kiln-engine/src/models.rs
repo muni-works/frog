@@ -85,5 +85,61 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
             out.push(entry(spec, "ollama", &p));
         }
     }
+    let sidecars = local_checkpoints()
+        .into_iter()
+        .map(|repo| format!("tang/{repo}"))
+        .filter(|_| crate::sidecar::available("tang"))
+        .chain(
+            crate::sidecar::available(crate::sidecar::APPLE).then(|| "apple/on-device".to_string()),
+        );
+    for spec in sidecars {
+        if let Ok((_, p)) = cfg.resolve(Some(&spec)) {
+            let source = if p.sidecar.as_deref() == Some(crate::sidecar::APPLE) {
+                "apple"
+            } else {
+                "tang"
+            };
+            out.push(entry(spec, source, &p));
+        }
+    }
+    out
+}
+
+/// Hugging Face repos in the local cache that tang-llm can run (Qwen3 dense, bf16 or MLX
+/// 4-bit), as `org/name`.
+fn local_checkpoints() -> Vec<String> {
+    let hub = std::env::var_os("HF_HUB_CACHE")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HF_HOME").map(|h| std::path::PathBuf::from(h).join("hub")))
+        .or_else(|| dirs::home_dir().map(|h| h.join(".cache/huggingface/hub")))
+        .unwrap_or_default();
+    let Ok(entries) = std::fs::read_dir(&hub) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e
+                .file_name()
+                .to_string_lossy()
+                .strip_prefix("models--")?
+                .replace("--", "/");
+            let snaps = std::fs::read_dir(e.path().join("snapshots")).ok()?;
+            let runnable = snaps.filter_map(|s| s.ok()).any(|s| {
+                let dir = s.path();
+                let has_weights = std::fs::read_dir(&dir).is_ok_and(|mut d| {
+                    d.any(|f| {
+                        f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "safetensors"))
+                    })
+                });
+                let cfg: Option<serde_json::Value> = std::fs::read(dir.join("config.json"))
+                    .ok()
+                    .and_then(|b| serde_json::from_slice(&b).ok());
+                has_weights && cfg.is_some_and(|c| c["model_type"] == "qwen3")
+            });
+            runnable.then_some(name)
+        })
+        .collect();
+    out.sort();
     out
 }

@@ -54,6 +54,23 @@ fn binary(k: &Kind) -> PathBuf {
     k.bin.into()
 }
 
+/// Whether the sidecar for `model` can be started (its binary is configured, bundled, or on
+/// `PATH`, and for Apple's model, this is macOS 26+ where the framework exists).
+pub fn available(model: &str) -> bool {
+    let k = kind(model);
+    if model == APPLE
+        && !std::path::Path::new("/System/Library/Frameworks/FoundationModels.framework").exists()
+    {
+        return false;
+    }
+    let bin = binary(k);
+    if bin.is_absolute() {
+        return bin.exists();
+    }
+    std::env::var_os("PATH")
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(&bin).exists()))
+}
+
 fn pid_file(k: &Kind) -> PathBuf {
     data_dir().join(format!("{}.pid", k.bin))
 }
