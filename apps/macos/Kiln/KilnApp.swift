@@ -3,12 +3,16 @@ import SwiftUI
 @main
 struct KilnApp: App {
     init() {
+        // Keep kiln's windows neutral gray: no wallpaper tint on window chrome, grouped settings
+        // cards and materials (the per-app form of System Settings' "Allow wallpaper tinting").
+        UserDefaults.standard.set(true, forKey: "AppleReduceDesktopTinting")
         Notifier.shared.setup()
     }
 
     var body: some Scene {
         WindowGroup("Kiln", for: URL.self) { $folder in
             RootView(folder: $folder)
+                .containerBackground(KilnCanvas.color, for: .window)
         }
         .defaultSize(width: 1100, height: 760)
         .windowToolbarStyle(.unified)
@@ -27,6 +31,7 @@ struct KilnApp: App {
 
         Settings {
             SettingsView()
+                .containerBackground(KilnCanvas.color, for: .window)
         }
     }
 }

@@ -144,7 +144,7 @@ struct WorkspaceView: View {
         // path, drag it anywhere).
         .navigationDocument(workspace.folder)
         // One backdrop for the whole canvas, so the conversation reads as a single surface.
-        .background(Color(nsColor: .windowBackgroundColor).ignoresSafeArea())
+        .background(KilnCanvas.color.ignoresSafeArea())
         .animation(Motion.panel(reduced: reduceMotion), value: sessionsVisible)
         .animation(Motion.panel(reduced: reduceMotion), value: changesVisible)
         .animation(Motion.panel(reduced: reduceMotion), value: insets)

@@ -437,7 +437,7 @@ enum DiagramExport {
     static func image(_ d: Diagram, scale: CGFloat = 2) -> NSImage? {
         let view = DiagramCanvas(diagram: d, animated: false)
             .padding(8)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(KilnCanvas.color)
         let r = ImageRenderer(content: view)
         r.scale = scale
         return r.nsImage
@@ -556,7 +556,7 @@ struct DiagramWindow: View {
         .overlay(alignment: .bottomLeading) {
             if d.hasHeat { HeatLegend().padding(10).glassEffect(.regular, in: .capsule).padding(14) }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(KilnCanvas.color)
         .environment(\.projectFolder, document.folder)
         .navigationTitle(d.displayTitle)
         .toolbar {
