@@ -45,14 +45,15 @@ final class Workspace {
         Task { files = await FileIndex.load(folder) }
     }
 
-    /// `fresh` starts a new conversation instead of reopening the folder's last one.
-    init(folder: URL, fresh: Bool = false) {
+    /// `fresh` starts a new conversation instead of reopening the folder's last one; `resume`
+    /// opens that session.
+    init(folder: URL, fresh: Bool = false, resume: String? = nil) {
         self.folder = folder
         preferredModel = UserDefaults.standard.string(forKey: "defaultModel").flatMap { $0.isEmpty ? nil : $0 }
         // Pick up where you left off: the first window reopens this folder's last session.
         // Windows and tabs opened after that start a fresh conversation.
         let chat = Kiln.isChat(folder)
-        let last = Self.restored || fresh || chat ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder))
+        let last = resume ?? (Self.restored || fresh || chat ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder)))
         Self.restored = true
         let replay = Replay.arguments
         isReplay = replay != nil
@@ -76,6 +77,7 @@ final class Workspace {
     }
 
     func refresh() async {
+        Library.shared.refresh()
         if !isChat { git = await Git.status(folder) }
         if skills.isEmpty, let k = try? await Kiln.json([SkillInfo].self, args: ["--skills", "--json"], cwd: folder) {
             skills = k

@@ -15,6 +15,9 @@ struct WorkspaceView: View {
     /// A card shown floating over the conversation because the window is too narrow to dock it.
     @State private var peek: Peek?
     @Namespace private var glass
+    /// This view's window, so the sidebar can bring an already-open conversation forward.
+    @State private var window: NSWindow?
+    @Environment(\.controlActiveState) private var activeState
 
     enum Peek { case sessions, changes }
 
@@ -54,8 +57,16 @@ struct WorkspaceView: View {
         canvasWidth - 2 * max(left, right) >= Self.minColumn
     }
 
+    /// Room for the column between the cards, even if it can't be centered.
+    private func fitsBeside(_ left: CGFloat, _ right: CGFloat) -> Bool {
+        canvasWidth - left - right >= Self.minColumn
+    }
+
+    /// The conversation list is a full-height column, so floating it over the conversation
+    /// would cover the composer: it docks whenever the column still fits beside it (off
+    /// center if it must), and only peeks in windows too narrow for that.
     private var sessionsDocked: Bool {
-        showSessions && fits(extent(sessions: true), extent(changes: false))
+        showSessions && fitsBeside(extent(sessions: true), extent(changes: false))
     }
 
     private var changesDocked: Bool {
@@ -76,7 +87,7 @@ struct WorkspaceView: View {
 
     private func toggleSessions() {
         Haptics.settle()
-        if fits(extent(sessions: true), extent(changes: changesDocked)) {
+        if fitsBeside(extent(sessions: true), extent(changes: changesDocked)) {
             peek = nil
             showSessions.toggle()
         } else {
@@ -91,6 +102,15 @@ struct WorkspaceView: View {
             showChanges.toggle()
         } else {
             peek = peek == .changes ? nil : .changes
+        }
+    }
+
+    private func noteSession() {
+        guard let id = workspace.conversation?.sessionID else { return }
+        Library.shared.register(window: window, for: id)
+        if activeState == .key {
+            Library.shared.focused = id
+            Library.shared.markRead(id)
         }
     }
 
@@ -145,6 +165,11 @@ struct WorkspaceView: View {
         .navigationDocument(workspace.folder)
         // One backdrop for the whole canvas, so the conversation reads as a single surface.
         .background(KilnCanvas.color.ignoresSafeArea())
+        .background(WindowReader { window = $0 })
+        // Tell the sidebar which window shows which conversation, and what's in front.
+        .onChange(of: workspace.conversation?.sessionID, initial: true) { _, _ in noteSession() }
+        .onChange(of: window) { _, _ in noteSession() }
+        .onChange(of: activeState, initial: true) { _, _ in noteSession() }
         .animation(Motion.panel(reduced: reduceMotion), value: sessionsVisible)
         .animation(Motion.panel(reduced: reduceMotion), value: changesVisible)
         .animation(Motion.panel(reduced: reduceMotion), value: insets)
@@ -347,94 +372,276 @@ extension WorkspaceView {
     }
 }
 
+/// Every conversation, newest first: pinned ones, then by day. Search, start a new one, and
+/// rename, pin, reveal or archive any of them. Rows show where each lives (a folder, or a chat)
+/// and whether it's running, waiting on you, or finished while you were away.
 struct SessionList: View {
     @Bindable var workspace: Workspace
     let maxHeight: CGFloat
     var collapse: (() -> Void)?
+    @State private var library = Library.shared
+    @State private var query = ""
+    @State private var showArchived = false
     @State private var showTree = false
+    @State private var renaming: SessionInfo?
+    @State private var newTitle = ""
+    @Environment(\.openSession) private var openSession
+    @Environment(\.switchFolder) private var switchFolder
+
+    private var current: String? { workspace.conversation?.sessionID }
+
+    private var visible: [SessionInfo] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return library.sessions.filter { s in
+            guard library.archived.contains(s.id) == showArchived else { return false }
+            guard !q.isEmpty else { return true }
+            let hay = [s.title, s.firstInput, s.folder?.lastPathComponent].compactMap { $0?.lowercased() }
+            return hay.contains { $0.contains(q) }
+        }
+    }
+
+    private var groups: [(String, [SessionInfo])] {
+        let cal = Calendar.current
+        let now = Date()
+        var out: [(String, [SessionInfo])] = []
+        func add(_ title: String, _ items: [SessionInfo]) { if !items.isEmpty { out.append((title, items)) } }
+        let all = visible
+        let pinned = showArchived ? [] : all.filter { library.pinned.contains($0.id) }
+        let rest = all.filter { showArchived || !library.pinned.contains($0.id) }
+        add("Pinned", pinned)
+        add("Today", rest.filter { cal.isDateInToday($0.modifiedDate) })
+        add("Yesterday", rest.filter { cal.isDateInYesterday($0.modifiedDate) })
+        let week = cal.date(byAdding: .day, value: -7, to: now)!
+        let month = cal.date(byAdding: .day, value: -30, to: now)!
+        let older = rest.filter { !cal.isDateInToday($0.modifiedDate) && !cal.isDateInYesterday($0.modifiedDate) }
+        add("Previous 7 Days", older.filter { $0.modifiedDate >= week })
+        add("Previous 30 Days", older.filter { $0.modifiedDate < week && $0.modifiedDate >= month })
+        add("Older", older.filter { $0.modifiedDate < month })
+        return out
+    }
 
     var body: some View {
-        HuggingScroll(maxHeight: maxHeight) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text("Sessions")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button { showTree = true } label: { Image(systemName: "arrow.triangle.branch") }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Session tree: sessions and their forks")
-                        .popover(isPresented: $showTree, arrowEdge: .trailing) {
-                            SessionTree(workspace: workspace) { showTree = false }
+        VStack(spacing: 0) {
+            header
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(groups, id: \.0) { title, items in
+                        Text(title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 12)
+                            .padding(.bottom, 3)
+                        ForEach(items) { s in
+                            ConversationRow(
+                                session: s,
+                                selected: s.id == current,
+                                pinned: library.pinned.contains(s.id),
+                                live: library.live[s.id]
+                            ) {
+                                openSession?(s)
+                            } menu: {
+                                rowMenu(s)
+                            }
                         }
-                    if let collapse {
-                        Button(action: collapse) {
-                            Image(systemName: "sidebar.left")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Hide sessions (⌃⌘S)")
+                    }
+                    if groups.isEmpty {
+                        Text(query.isEmpty ? (showArchived ? "Nothing archived" : "No conversations yet") : "No matches")
+                            .font(.callout)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 24)
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 4)
-                if workspace.sessions.isEmpty {
-                    Text("No sessions yet")
-                        .font(.callout)
+                .padding(.horizontal, 6)
+                .padding(.bottom, 8)
+            }
+            .scrollIndicators(.never)
+            footer
+        }
+        .frame(height: maxHeight)
+        .onAppear { library.refresh() }
+        .alert("Rename Conversation", isPresented: Binding { renaming != nil } set: { if !$0 { renaming = nil } }) {
+            TextField("Title", text: $newTitle)
+            Button("Rename") {
+                if let s = renaming { Task { await library.rename(s.id, to: newTitle) } }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        }
+        .popover(isPresented: $showTree, arrowEdge: .trailing) {
+            SessionTree(workspace: workspace) { showTree = false }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
+                TextField("Search", text: $query)
+                    .textFieldStyle(.plain)
+                if !query.isEmpty {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain)
                         .foregroundStyle(.tertiary)
-                        .padding(8)
-                }
-                ForEach(workspace.sessions) { s in
-                    let selected = workspace.selection == s.id
-                    Button {
-                        workspace.selection = s.id
-                    } label: {
-                        SessionRow(session: s)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                selected ? AnyShapeStyle(.tint.opacity(0.22)) : AnyShapeStyle(.clear),
-                                in: .rect(cornerRadius: 10)
-                            )
-                            .contentShape(.rect)
-                    }
-                    .buttonStyle(.plain)
                 }
             }
-            .padding(10)
+            .font(.callout)
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 8))
+            Button {
+                switchFolder?(nil)
+            } label: {
+                Image(systemName: "square.and.pencil").frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("New conversation")
+            if let collapse {
+                Button(action: collapse) {
+                    Image(systemName: "sidebar.left").frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Hide conversations (⌃⌘S)")
+            }
         }
-        .onChange(of: workspace.selection) { _, id in
-            if let id { workspace.open(id) }
+        .padding(10)
+    }
+
+    private var footer: some View {
+        let count = library.archived.count
+        return HStack {
+            if showArchived {
+                Button { showArchived = false } label: { Label("Back to conversations", systemImage: "chevron.left") }
+            } else if count > 0 {
+                Button { showArchived = true } label: { Label("Archived (\(count))", systemImage: "archivebox") }
+            }
+            Spacer()
+        }
+        .buttonStyle(.plain)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, count > 0 || showArchived ? 9 : 0)
+    }
+
+    @ViewBuilder
+    private func rowMenu(_ s: SessionInfo) -> some View {
+        Button("Rename…") {
+            newTitle = s.displayTitle
+            renaming = s
+        }
+        Button(library.pinned.contains(s.id) ? "Unpin" : "Pin") { library.togglePin(s.id) }
+        if let folder = s.folder, !s.isChat {
+            Button("Reveal Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+        }
+        if s.id == current {
+            Button("Session Tree…") { showTree = true }
+        }
+        Divider()
+        if library.archived.contains(s.id) {
+            Button("Unarchive") { library.setArchived(s.id, false) }
+        } else {
+            Button("Archive") { library.setArchived(s.id, true) }
         }
     }
 }
 
-struct SessionRow: View {
+/// One conversation: its title, where it lives and when, and whether it's live.
+struct ConversationRow<Menu: View>: View {
     let session: SessionInfo
+    let selected: Bool
+    let pinned: Bool
+    let live: Library.Live?
+    let open: () -> Void
+    @ViewBuilder let menu: () -> Menu
+    @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
-                if session.forkedFrom != nil {
-                    Image(systemName: "arrow.triangle.branch")
-                        .foregroundStyle(.secondary)
-                        .help("Forked from \(session.forkedFrom!.session)")
+        Button(action: open) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        if session.forkedFrom != nil {
+                            Image(systemName: "arrow.triangle.branch").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text(session.displayTitle)
+                            .lineLimit(1)
+                            .fontWeight(live == .unread ? .semibold : .regular)
+                    }
+                    HStack(spacing: 4) {
+                        Image(systemName: session.isChat ? "bubble.left" : "folder")
+                        Text(session.isChat ? "Chat" : session.folder?.lastPathComponent ?? "")
+                            .lineLimit(1)
+                        Text("·")
+                        Text(Self.ago(session.modifiedDate))
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
-                Text(session.displayTitle)
-                    .lineLimit(2)
+                Spacer(minLength: 0)
+                trailing
             }
-            HStack(spacing: 6) {
-                Text(session.modifiedDate, format: .relative(presentation: .named))
-                Text("·")
-                Text(session.model.replacingOccurrences(of: "ollama/", with: ""))
-                    .lineLimit(1)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(background, in: .rect(cornerRadius: 9))
+            .contentShape(.rect)
         }
-        .padding(.vertical, 3)
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .contextMenu { menu() }
+        .help(helpText)
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if hovering {
+            SwiftUI.Menu {
+                menu()
+            } label: {
+                Image(systemName: "ellipsis").frame(width: 18, height: 18)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .foregroundStyle(.secondary)
+        } else {
+            switch live {
+            case .running: ProgressView().controlSize(.mini)
+            case .waiting: Image(systemName: "hand.raised.fill").font(.caption).foregroundStyle(.orange)
+            case .unread: Circle().fill(.tint).frame(width: 7, height: 7)
+            case nil: if pinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary) }
+            }
+        }
+    }
+
+    private var background: AnyShapeStyle {
+        if selected { return AnyShapeStyle(.tint.opacity(0.22)) }
+        if hovering { return AnyShapeStyle(.quaternary.opacity(0.6)) }
+        return AnyShapeStyle(.clear)
+    }
+
+    private var helpText: String {
+        var parts = [session.displayTitle]
+        if let f = session.folder, !session.isChat { parts.append(f.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
+        parts.append(session.model)
+        return parts.joined(separator: "\n")
+    }
+
+    /// "now", "5m", "3h", "2d", "4w", then a date.
+    static func ago(_ date: Date) -> String {
+        let s = Int(Date().timeIntervalSince(date))
+        switch s {
+        case ..<60: return "now"
+        case ..<3600: return "\(s / 60)m"
+        case ..<86400: return "\(s / 3600)h"
+        case ..<(86400 * 7): return "\(s / 86400)d"
+        case ..<(86400 * 30): return "\(s / (86400 * 7))w"
+        default: return date.formatted(.dateTime.month(.abbreviated).day())
+        }
     }
 }
 
@@ -510,5 +717,20 @@ struct SessionTree: View {
             diagram = await Diagram.sessionTree(in: workspace.folder)
             loaded = true
         }
+    }
+}
+
+/// Hands a SwiftUI view its NSWindow.
+struct WindowReader: NSViewRepresentable {
+    let found: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        DispatchQueue.main.async { found(v.window) }
+        return v
+    }
+
+    func updateNSView(_ v: NSView, context: Context) {
+        DispatchQueue.main.async { found(v.window) }
     }
 }

@@ -88,6 +88,12 @@ struct Cli {
     /// During replay, stop at each edit or command for a permission answer.
     #[arg(long, requires = "replay")]
     replay_ask: bool,
+    /// With --sessions: every folder's sessions, not just this directory's.
+    #[arg(long, requires = "sessions")]
+    all: bool,
+    /// Name a session that isn't open: --rename <ID> <TITLE>.
+    #[arg(long, num_args = 2, value_names = ["ID", "TITLE"])]
+    rename: Option<Vec<String>>,
     /// List sessions started in this directory and exit.
     #[arg(long)]
     sessions: bool,
@@ -166,8 +172,12 @@ async fn run() -> Result<bool> {
     }
     let cwd = std::env::current_dir()?;
     let store = session::default_dir();
+    if let Some(r) = &cli.rename {
+        session::retitle(&store, &r[0], &r[1])?;
+        return Ok(true);
+    }
     if cli.sessions {
-        list_sessions(&store, &cwd, cli.json)?;
+        list_sessions(&store, &cwd, cli.all, cli.json)?;
         return Ok(true);
     }
     if cli.session_tree {
@@ -372,7 +382,7 @@ fn session_tree(
     cwd: &std::path::Path,
 ) -> Result<kiln_engine::diagram::Diagram> {
     use kiln_engine::diagram::{Diagram, Edge, Node, Shape};
-    let mut sessions = session::list(store, cwd)?;
+    let mut sessions = session::list(store, Some(cwd))?;
     sessions.sort_by_key(|s| s.header.created);
     let ids: std::collections::HashSet<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
     let mut d = Diagram {
@@ -410,8 +420,13 @@ fn session_tree(
     Ok(d)
 }
 
-fn list_sessions(store: &std::path::Path, cwd: &std::path::Path, json: bool) -> Result<()> {
-    let sessions = session::list(store, cwd)?;
+fn list_sessions(
+    store: &std::path::Path,
+    cwd: &std::path::Path,
+    all: bool,
+    json: bool,
+) -> Result<()> {
+    let sessions = session::list(store, (!all).then_some(cwd))?;
     if json {
         let rows: Vec<serde_json::Value> = sessions
             .iter()
@@ -424,6 +439,7 @@ fn list_sessions(store: &std::path::Path, cwd: &std::path::Path, json: bool) -> 
                     "first_input": s.first_input,
                     "title": s.title,
                     "forked_from": s.header.forked_from,
+                    "cwd": s.header.cwd,
                 })
             })
             .collect();

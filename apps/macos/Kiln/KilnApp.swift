@@ -44,6 +44,8 @@ struct RootView: View {
     @State private var workspace: Workspace?
     /// Start a new conversation rather than reopening the folder's last one.
     @State private var fresh = false
+    /// A session to open when the folder changes (picked in the sidebar).
+    @State private var resume: String?
 
     var body: some View {
         Group {
@@ -58,12 +60,24 @@ struct RootView: View {
             fresh = true
             folder = url ?? Kiln.chatFolder
         }
+        .environment(\.openSession) { s in
+            guard let url = s.folder, workspace?.conversation?.sessionID != s.id else { return }
+            if let w = Library.shared.window(for: s.id) {
+                w.makeKeyAndOrderFront(nil)
+            } else if let workspace, workspace.folder.standardizedFileURL.path == url.standardizedFileURL.path {
+                workspace.open(s.id)
+            } else {
+                resume = s.id
+                folder = url
+            }
+        }
         .onAppear {
             if folder == nil { folder = LaunchFolder.take() ?? Kiln.chatFolder }
         }
         .onChange(of: folder, initial: true) { _, url in
             workspace?.stop()
-            workspace = url.map { Workspace(folder: $0, fresh: fresh) }
+            workspace = url.map { Workspace(folder: $0, fresh: fresh, resume: resume) }
+            resume = nil
             if let url { Recents.add(url) }
         }
         .onDisappear { workspace?.stop() }

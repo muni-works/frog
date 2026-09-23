@@ -227,6 +227,12 @@ final class Conversation {
         engine.send(.appCall(id: id, server: server, tool: tool, arguments: arguments))
     }
 
+    /// Name the session (the engine records it).
+    func rename(_ title: String) {
+        engine?.send(.setTitle(title))
+        self.title = title
+    }
+
     /// Stop one subagent; the turn goes on with what it found so far.
     func stopSubagent(_ item: String) {
         engine?.send(.stopSubagent(id: item))
@@ -269,6 +275,7 @@ final class Conversation {
             sessionID = env.session
             onSessionChange?()
         }
+        defer { reportLive() }
         switch env.event {
         case .turnStarted(let n, let input):
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
@@ -285,6 +292,7 @@ final class Conversation {
                 turns[i].usage = usage
                 turns[i].endedAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
                 if !replaying {
+                    if let id = sessionID { Library.shared.turnEnded(id) }
                     Notifier.shared.turnFinished(project: folder.lastPathComponent, text: Self.summary(turns[i]))
                     if title == nil, case .complete = reason { nameSession(from: turns[i]) }
                 }
@@ -385,6 +393,13 @@ final class Conversation {
         case .modelChanged, .modeChanged, .unknown:
             break
         }
+    }
+
+    /// Tell the sidebar whether this conversation is running or waiting on the user.
+    private func reportLive() {
+        guard let id = sessionID, !replaying else { return }
+        let running = turns.last.map { !$0.finished } ?? false
+        Library.shared.report(id, conversation: self, running: running && busy, waiting: permission != nil || elicitation != nil)
     }
 
     /// One line for a notification: the start of the answer, or how the turn ended.

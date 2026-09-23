@@ -179,4 +179,7 @@ extension EnvironmentValues {
     /// Set by a window: point its (still empty) conversation at another folder, or nil for a
     /// plain chat.
     @Entry var switchFolder: ((URL?) -> Void)?
+    /// Set by a window: show this session, in this window (switching folders if needed) unless
+    /// another window already has it open.
+    @Entry var openSession: ((SessionInfo) -> Void)?
 }

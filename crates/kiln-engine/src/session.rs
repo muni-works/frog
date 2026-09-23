@@ -275,8 +275,8 @@ pub struct Info {
     pub title: Option<String>,
 }
 
-/// Sessions started in `cwd`, most recently active first.
-pub fn list(dir: &Path, cwd: &Path) -> Result<Vec<Info>> {
+/// Sessions started in `cwd` (every folder's, with `None`), most recently active first.
+pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(Vec::new());
     };
@@ -295,7 +295,7 @@ pub fn list(dir: &Path, cwd: &Path) -> Result<Vec<Info>> {
         else {
             continue;
         };
-        if header.cwd != cwd {
+        if cwd.is_some_and(|c| header.cwd != c) {
             continue;
         }
         let (mut first_input, mut title) = (None, None);
@@ -348,6 +348,24 @@ pub fn list(dir: &Path, cwd: &Path) -> Result<Vec<Info>> {
     }
     out.sort_by_key(|i| std::cmp::Reverse(i.modified));
     Ok(out)
+}
+
+/// Name a session that isn't open (an open one takes `Op::SetTitle`).
+pub fn retitle(dir: &Path, id: &str, title: &str) -> Result<()> {
+    let title: String = title.trim().chars().take(80).collect();
+    if title.is_empty() {
+        anyhow::bail!("the title is empty");
+    }
+    let seq = load(dir, id)?.last_seq() + 1;
+    let mut log = Log::open(dir, id)?;
+    log.append(&Record::Event {
+        env: Envelope {
+            seq,
+            session: id.to_string(),
+            created: chrono::Utc::now().timestamp_millis(),
+            event: Event::Titled { title },
+        },
+    })
 }
 
 /// The seq of the `TurnEnded` for `turn`, for forking "after turn N".
@@ -414,7 +432,7 @@ pub fn rewind(dir: &Path, id: &str, turn: u64) -> Result<Rewound> {
 }
 
 pub fn latest_for(dir: &Path, cwd: &Path) -> Result<String> {
-    list(dir, cwd)?
+    list(dir, Some(cwd))?
         .into_iter()
         .next()
         .map(|i| i.id)

@@ -46,6 +46,22 @@ enum Kiln {
         return env
     }
 
+    /// Run a one-shot `kiln` command for its effect.
+    static func run(args: [String], cwd: URL) async throws {
+        guard let binary else { throw KilnError.missingBinary }
+        try await Task.detached {
+            let p = Process()
+            p.executableURL = binary
+            p.arguments = args
+            p.currentDirectoryURL = cwd
+            p.environment = environment
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            try p.run()
+            p.waitUntilExit()
+        }.value
+    }
+
     /// Run a one-shot `kiln` command and decode its JSON output.
     static func json<T: Decodable & Sendable>(_ type: T.Type, args: [String], cwd: URL) async throws -> T {
         guard let binary else { throw KilnError.missingBinary }

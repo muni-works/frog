@@ -526,8 +526,15 @@ struct SessionInfo: Decodable, Sendable, Identifiable, Hashable {
     var firstInput: String?
     var title: String?
     var forkedFrom: ForkPoint?
+    /// The folder it works in (the chat folder for plain chats).
+    var cwd: String?
 
-    var displayTitle: String { title ?? firstInput ?? "Untitled" }
+    var displayTitle: String {
+        let t = (title ?? firstInput ?? "Untitled").trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.split(separator: "\n").first.map(String.init) ?? "Untitled"
+    }
+    var folder: URL? { cwd.map { URL(fileURLWithPath: $0) } }
+    var isChat: Bool { folder.map(Kiln.isChat) ?? false }
 
     var modifiedDate: Date { Date(timeIntervalSince1970: Double(modified) / 1000) }
 }
