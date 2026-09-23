@@ -31,30 +31,38 @@ struct KilnApp: App {
     }
 }
 
-/// A window is one project folder. A new window or tab opens straight into a conversation:
-/// in the launch folder, else the most recent one, else the home folder.
+/// A window is one project folder. A new window or tab starts with the composer and a folder
+/// chip (nothing is assumed); the conversation starts once a folder is picked.
 struct RootView: View {
     @Binding var folder: URL?
     @State private var workspace: Workspace?
+    /// The first message, typed before the folder was picked.
+    @State private var pending: String?
 
     var body: some View {
         Group {
             if let workspace {
                 WorkspaceView(workspace: workspace)
             } else {
-                Color.clear
+                StartView { url, prompt in
+                    pending = prompt
+                    folder = url
+                }
+                .navigationTitle("New Conversation")
             }
         }
         .frame(minWidth: 720, minHeight: 480)
         .onAppear {
-            if folder == nil {
-                folder = LaunchFolder.take() ?? Recents.all.first ?? FileManager.default.homeDirectoryForCurrentUser
-            }
+            if folder == nil, let launched = LaunchFolder.take() { folder = launched }
         }
         .onChange(of: folder, initial: true) { _, url in
             workspace?.stop()
-            workspace = url.map(Workspace.init)
+            workspace = url.map { Workspace(folder: $0, fresh: pending != nil) }
             if let url { Recents.add(url) }
+            if let prompt = pending {
+                workspace?.conversation?.submit(prompt)
+                pending = nil
+            }
         }
         .onDisappear { workspace?.stop() }
     }

@@ -43,12 +43,13 @@ final class Workspace {
         Task { files = await FileIndex.load(folder) }
     }
 
-    init(folder: URL) {
+    /// `fresh` starts a new conversation instead of reopening the folder's last one.
+    init(folder: URL, fresh: Bool = false) {
         self.folder = folder
         preferredModel = UserDefaults.standard.string(forKey: "defaultModel").flatMap { $0.isEmpty ? nil : $0 }
         // Pick up where you left off: the first window reopens this folder's last session.
         // Windows and tabs opened after that start a fresh conversation.
-        let last = Self.restored ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder))
+        let last = Self.restored || fresh ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder))
         Self.restored = true
         let replay = Replay.arguments
         isReplay = replay != nil

@@ -70,17 +70,6 @@ struct ComposerView: View {
                 )
                 .frame(height: height)
             }
-            .overlay(alignment: .topLeading) {
-                if !suggestions.isEmpty {
-                    MentionList(files: suggestions, picked: picked) { controller.insertMention($0) }
-                        .alignmentGuide(.top) { $0[.bottom] + 14 }
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                } else if !skillSuggestions.isEmpty {
-                    SkillList(skills: skillSuggestions, picked: picked) { controller.replaceAll("/\($0.name) ") }
-                        .alignmentGuide(.top) { $0[.bottom] + 14 }
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-            }
 
             HStack(spacing: 10) {
                 ModePicker(conversation: conversation)
@@ -134,11 +123,31 @@ struct ComposerView: View {
         .padding(12)
         .animation(.snappy, value: conversation.toast)
         .onChange(of: window?.focusComposerRequest) { controller.focus() }
+        .onChange(of: skillSuggestions.map(\.name)) { picked = 0 }
         .onChange(of: window?.raceRequest) {
             controller.focus()
             racing = true
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        // Completions float above the composer, outside its glass (which would clip them).
+        .overlay(alignment: .topLeading) {
+            Group {
+                if !suggestions.isEmpty {
+                    MentionList(files: suggestions, picked: picked) { controller.insertMention($0) }
+                } else if !skillSuggestions.isEmpty {
+                    SkillList(skills: skillSuggestions, picked: picked) { controller.replaceAll("/\($0.name) ") }
+                }
+            }
+            .fixedSize()
+            .alignmentGuide(.top) { $0[.bottom] + 8 }
+            .padding(.leading, 12)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+        .overlay(alignment: .topLeading) {
+            FolderChip(folder: workspace.folder)
+                .alignmentGuide(.top) { $0[.bottom] + 8 }
+                .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
+        }
         .overlay {
             if dropTargeted {
                 RoundedRectangle(cornerRadius: 20).strokeBorder(.tint, lineWidth: 2)
@@ -154,6 +163,7 @@ struct ComposerView: View {
             controller.insert(mentions.joined(separator: " ") + " ")
             return !urls.isEmpty
         } isTargeted: { dropTargeted = $0 }
+        .padding(.top, 36)
         .padding(.horizontal, 20)
         .padding(.bottom, 16)
         .frame(maxWidth: 860)
