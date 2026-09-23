@@ -154,7 +154,6 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             text
         }
     };
-    let mut raw = raw;
     if jail.is_some() && blocked(&raw) {
         raw.push_str("\n(This ran in kiln's sandbox, which allows writes only inside the project, temp folders and toolchain caches, and hides credentials. If the command genuinely needs more, run it again with unsandboxed: true; the user will be asked.)");
     }
