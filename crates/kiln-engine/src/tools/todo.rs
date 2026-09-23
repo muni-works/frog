@@ -12,9 +12,9 @@ pub struct Todo {
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "TodoWrite",
+        name: "TodoWrite".into(),
         description: "Create or update the task list for multi-step work (3+ steps). Always send the full list. \
-Keep exactly one item in_progress while working, and mark items completed as soon as they're done.",
+Keep exactly one item in_progress while working, and mark items completed as soon as they're done.".into(),
         schema: json!({
             "type": "object",
             "properties": {

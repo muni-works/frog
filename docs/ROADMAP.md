@@ -68,7 +68,7 @@ Still to do:
 
 | | verdict |
 |---|---|
-| MCP client (2026-07-28 spec, rmcp 3.x; also accept 2025-11-25 servers) | must |
+| MCP client (2026-07-28 spec, rmcp 3.x; also accept 2025-11-25 servers) | done |
 | ACP adapter (`kiln-acp`) for Zed, JetBrains, and Neovim | must |
 | Agent Skills (`SKILL.md`), loaded progressively | must |
 | AGENTS.md | done |
@@ -81,7 +81,7 @@ The MCP-vs-CLI study found that harnesses using only bash were 5–28x cheaper (
 
 - **Enforce at dispatch, in deterministic code, not in the prompt.** Track where each value came from, and only let values from trusted sources flow into tools with side effects ([2503.18813](https://arxiv.org/abs/2503.18813), [2608.27496](https://arxiv.org/abs/2608.27496), [2607.24625](https://arxiv.org/abs/2607.24625)).
 - **Add an OS sandbox,** using seatbelt on macOS and bubblewrap on Linux (the codex-rs approach). Matching command strings is not a security boundary ([opencode#49948](https://github.com/anomalyco/opencode/issues/49948)).
-- **Quarantine suspicious MCP tool descriptions** ([2606.20922](https://arxiv.org/abs/2606.20922)).
+- **Quarantine suspicious MCP tool descriptions** ([2606.20922](https://arxiv.org/abs/2606.20922)). Done: descriptions that look like injection, or that hide Unicode, are withheld unless the server has `trust = true`.
 
 ## 7. Sub-agents for context folding, not role-play
 

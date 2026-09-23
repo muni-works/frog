@@ -139,6 +139,8 @@ pub fn kind(name: &str) -> Kind {
     match name {
         "Bash" => Kind::Exec,
         "Write" | "Edit" => Kind::Edit,
+        // MCP tools can do anything their server does: ask, like Bash.
+        n if n.starts_with("mcp__") => Kind::Exec,
         _ => Kind::Read,
     }
 }
@@ -172,6 +174,11 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "Glob" | "Grep" => s("pattern"),
         "Diagram" => s("title"),
         "CodeMap" => s("path"),
+        // MCP: the first string argument is usually the interesting one (a query, a path).
+        n if n.starts_with("mcp__") => input
+            .as_object()
+            .and_then(|o| o.values().find_map(|v| v.as_str().map(String::from)))
+            .unwrap_or_default(),
         _ => String::new(),
     };
     let arg = if arg.chars().count() > 100 {

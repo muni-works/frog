@@ -105,6 +105,24 @@ The tools behave like Claude Code's: Edit replaces an exact string that must be 
 - **Loop guard.** The 3rd identical tool call in a turn is refused with a nudge to change approach. The 5th ends the turn (`looping`). A turn also stops after 60 model calls (`step_limit`).
 - **Forgiving argument parsing.** Numbers sent as strings and arguments sent as a JSON string are accepted. Invalid JSON is sent back to the model so it can retry.
 
+**MCP servers.** kiln connects to Model Context Protocol servers over stdio or streamable HTTP. It reads them from `config.toml` and from the project's `.mcp.json` (Claude Code's format), and `config.toml` wins when both name the same server:
+
+```toml
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
+
+[mcp_servers.docs]
+url = "https://example.com/mcp"
+headers = { Authorization = "Bearer ${DOCS_TOKEN}" }
+```
+
+- Their tools appear as `mcp__<server>__<tool>`, and every call asks permission.
+- If a tool's description looks like prompt injection or hides Unicode, kiln quarantines it and the model never sees it. Set `trust = true` on a server to skip this check.
+- `kiln --mcp` lists each server's status, its tools and anything quarantined. The Mac app shows the same list in Settings › MCP.
+- MCP is opt-in. Bash alone is often cheaper.
+
 ## Diagrams
 
 The agent draws when a picture explains better than prose: architecture, data flow, a request's path through the code, or the order of calls between parts.

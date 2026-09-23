@@ -12,9 +12,11 @@ use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+#[derive(Clone, Debug)]
 pub struct ToolSpec {
-    pub name: &'static str,
-    pub description: &'static str,
+    /// Owned so tools discovered at runtime (MCP servers) fit alongside the built-ins.
+    pub name: std::borrow::Cow<'static, str>,
+    pub description: std::borrow::Cow<'static, str>,
     pub schema: Value,
 }
 

@@ -103,6 +103,10 @@ pub struct Config {
     /// Also load ~/.claude/CLAUDE.md and CLAUDE.md files as instructions.
     #[serde(default = "default_true")]
     pub load_claude_md: bool,
+    /// MCP servers (`[mcp_servers.<name>]`: `command`/`args`/`env`, or `url`/`headers`). A
+    /// project's `.mcp.json` adds more.
+    #[serde(default)]
+    pub mcp_servers: BTreeMap<String, crate::mcp::ServerConfig>,
 }
 
 impl Default for Config {

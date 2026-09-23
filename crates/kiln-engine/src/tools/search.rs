@@ -9,9 +9,11 @@ use std::path::{Path, PathBuf};
 
 pub fn glob_spec() -> ToolSpec {
     ToolSpec {
-        name: "Glob",
-        description: "Find files by glob pattern (e.g. `**/*.rs`, `src/**/test_*.py`). Respects .gitignore. \
-Returns paths sorted by modification time, newest first.",
+        name: "Glob".into(),
+        description:
+            "Find files by glob pattern (e.g. `**/*.rs`, `src/**/test_*.py`). Respects .gitignore. \
+Returns paths sorted by modification time, newest first."
+                .into(),
         schema: json!({
             "type": "object",
             "properties": {
@@ -25,9 +27,9 @@ Returns paths sorted by modification time, newest first.",
 
 pub fn grep_spec() -> ToolSpec {
     ToolSpec {
-        name: "Grep",
+        name: "Grep".into(),
         description: "Search file contents with a regex (Rust regex syntax). Respects .gitignore. \
-output_mode: `files_with_matches` (default, lists files), `content` (matching lines as path:line:text), or `count`.",
+output_mode: `files_with_matches` (default, lists files), `content` (matching lines as path:line:text), or `count`.".into(),
         schema: json!({
             "type": "object",
             "properties": {

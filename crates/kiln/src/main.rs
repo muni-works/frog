@@ -78,6 +78,10 @@ struct Cli {
     /// Draw this directory's sessions and their forks as a diagram (JSON with --json) and exit.
     #[arg(long)]
     session_tree: bool,
+    /// Connect the configured MCP servers (config.toml and ./.mcp.json), list their tools, and
+    /// exit (JSON with --json).
+    #[arg(long)]
+    mcp: bool,
     /// Read Mermaid from stdin, lay it out, and print the diagram (JSON with --json) and exit.
     #[arg(long)]
     mermaid: bool,
@@ -151,6 +155,35 @@ async fn run() -> Result<bool> {
     }
     if cli.session_tree {
         print_diagram(session_tree(&store, &cwd)?, &cwd, cli.json)?;
+        return Ok(true);
+    }
+    if cli.mcp {
+        let servers = kiln_engine::mcp::configured(&cfg.mcp_servers, &cwd);
+        let mut hub = kiln_engine::mcp::Hub::connect(servers, &cwd).await;
+        if cli.json {
+            println!("{}", serde_json::to_string(&hub.status)?);
+        } else if hub.status.is_empty() {
+            println!(
+                "no MCP servers configured (add [mcp_servers.<name>] to config.toml, or a .mcp.json here)"
+            );
+        }
+        if !cli.json {
+            for st in &hub.status {
+                match &st.error {
+                    Some(e) => println!("✗ {}  {e}", st.name),
+                    None => println!(
+                        "✓ {}  {} tools: {}",
+                        st.name,
+                        st.tools.len(),
+                        st.tools.join(", ")
+                    ),
+                }
+                for q in &st.quarantined {
+                    println!("  ⚠ withheld {}: its description {}", q.tool, q.reason);
+                }
+            }
+        }
+        hub.shutdown().await;
         return Ok(true);
     }
     if let Some(dir) = &cli.map {

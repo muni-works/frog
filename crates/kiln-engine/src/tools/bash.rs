@@ -8,10 +8,10 @@ use tokio::io::AsyncReadExt;
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "Bash",
+        name: "Bash".into(),
         description: "Run a shell command and return its combined stdout/stderr. The working directory persists \
 between calls (cd works). Use for builds, tests, git, and other terminal operations. Prefer Read/Edit/Glob/Grep \
-over cat/sed/find/grep. Avoid interactive commands; they will hang until the timeout.",
+over cat/sed/find/grep. Avoid interactive commands; they will hang until the timeout.".into(),
         schema: json!({
             "type": "object",
             "properties": {

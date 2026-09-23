@@ -102,8 +102,19 @@ enum ToolIcon {
         case "Glob": "folder.badge.questionmark"
         case "Grep": "text.magnifyingglass"
         case "TodoWrite": "checklist"
+        case "Diagram": "point.3.connected.trianglepath.dotted"
+        case "CodeMap": "map"
+        case let n where n.hasPrefix("mcp__"): "puzzlepiece.extension"
         default: "wrench.and.screwdriver"
         }
+    }
+
+    /// `mcp__github__list_issues` reads as `github › list_issues`.
+    static func title(_ name: String) -> String {
+        if name == "!" { return "Shell" }
+        guard name.hasPrefix("mcp__") else { return name }
+        let parts = name.dropFirst(5).components(separatedBy: "__")
+        return parts.count >= 2 ? "\(parts[0]) › \(parts.dropFirst().joined(separator: "__"))" : String(name.dropFirst(5))
     }
 }
 
@@ -126,7 +137,7 @@ struct ToolCallView: View {
                     Image(systemName: ToolIcon.symbol(name))
                         .frame(width: 18)
                         .foregroundStyle(failed ? .red : .secondary)
-                    Text(name == "!" ? "Shell" : name)
+                    Text(ToolIcon.title(name))
                         .fontWeight(.medium)
                         .font(.callout)
                     Text(arg)
@@ -340,6 +351,7 @@ struct PermissionCard: View {
             ? "Allow creating \((request.arg as NSString).lastPathComponent)?"
             : "Allow rewriting \((request.arg as NSString).lastPathComponent)?"
         case "Bash": "Allow this command?"
+        case let n where n.hasPrefix("mcp__"): "Allow \(ToolIcon.title(n))?"
         default: "Allow \(request.name)?"
         }
     }

@@ -165,6 +165,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     });
 
     tokio::spawn(async move {
+        agent.connect_mcp().await;
         agent.resolve_window().await;
         agent.emit_status();
         agent.emit(Event::Idle);
@@ -292,6 +293,8 @@ struct Agent {
     root: PathBuf,
     system: String,
     specs: Vec<ToolSpec>,
+    /// Connected MCP servers, whose tools are appended to `specs`.
+    mcp: crate::mcp::Hub,
     session_allow: HashSet<String>,
     /// Context from `Op::Shell`, attached to the next message.
     pending: Vec<String>,
@@ -373,6 +376,7 @@ impl Agent {
             root: o.cwd,
             system,
             specs: tools::specs(),
+            mcp: crate::mcp::Hub::empty(),
             session_allow: HashSet::new(),
             pending: Vec::new(),
             events,
@@ -924,8 +928,44 @@ impl Agent {
         });
     }
 
+    /// Connect the configured MCP servers (config.toml and the project's `.mcp.json`) and add
+    /// their tools. Failures and quarantined tools become notices; nothing here is fatal.
+    async fn connect_mcp(&mut self) {
+        let servers = crate::mcp::configured(&self.cfg.mcp_servers, &self.root);
+        if servers.is_empty() {
+            return;
+        }
+        let n = servers.len();
+        self.emit(Event::Progress {
+            label: format!("connecting {n} MCP server{}", if n == 1 { "" } else { "s" }),
+        });
+        let hub = crate::mcp::Hub::connect(servers, &self.root).await;
+        for st in &hub.status {
+            if let Some(e) = &st.error {
+                self.notice(
+                    Level::Warn,
+                    format!("MCP `{}` didn't connect: {e}", st.name),
+                );
+            }
+            for q in &st.quarantined {
+                self.notice(
+                    Level::Warn,
+                    format!(
+                        "MCP `{}`: withheld tool `{}` because its description {}. Set `trust = true` for this server to allow it.",
+                        st.name, q.tool, q.reason
+                    ),
+                );
+            }
+        }
+        self.specs.extend(hub.specs().iter().cloned());
+        self.mcp = hub;
+    }
+
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
     async fn run_tool(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
+        if self.mcp.handles(name) {
+            return self.mcp.call(name, input).await;
+        }
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         self.ctx.progress = Some(tx);
         // The tool holds `ctx` mutably, so deltas go out through a detached emitter.
@@ -1200,12 +1240,15 @@ Don't repeat it. Change the arguments or try a different approach.",
         }
         let cmd = input["command"].as_str().unwrap_or("").trim();
         let prefix = cmd.split_whitespace().next().unwrap_or("").to_string();
+        let mcp = name.starts_with("mcp__");
         let key = match kind {
             Kind::Edit => "edits".to_string(),
+            _ if mcp => format!("mcp:{name}"),
             _ => format!("bash:{prefix}"),
         };
         let auto = match kind {
             Kind::Edit => self.mode == Mode::AcceptEdits,
+            _ if mcp => false,
             _ => bash_allowed(cmd, &self.cfg.allow_bash),
         };
         if auto || self.session_allow.contains(&key) {

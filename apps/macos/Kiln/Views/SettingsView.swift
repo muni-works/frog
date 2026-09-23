@@ -7,6 +7,7 @@ struct SettingsView: View {
             Tab("General", systemImage: "gearshape") { GeneralSettings() }
             Tab("Models", systemImage: "cpu") { ModelSettings() }
             Tab("Permissions", systemImage: "hand.raised") { PermissionSettings() }
+            Tab("MCP", systemImage: "puzzlepiece.extension") { MCPSettings() }
             Tab("Appearance", systemImage: "paintbrush") { AppearanceSettings() }
             Tab("Shortcuts", systemImage: "keyboard") { ShortcutSettings() }
         }
@@ -267,5 +268,108 @@ private struct ShortcutSettings: View {
         }
         .formStyle(.grouped)
         .frame(minHeight: 460)
+    }
+}
+
+// MARK: - MCP
+
+struct MCPStatus: Decodable, Identifiable {
+    struct Quarantined: Decodable {
+        let tool: String
+        let reason: String
+    }
+    let name: String
+    let connected: Bool
+    let error: String?
+    let tools: [String]
+    let quarantined: [Quarantined]
+    var id: String { name }
+}
+
+/// Servers from config.toml (every project) and how they're doing. Projects add their own
+/// with a `.mcp.json` (Claude Code's format), which sessions in that folder pick up.
+private struct MCPSettings: View {
+    @State private var servers: [MCPStatus] = []
+    @State private var loading = true
+
+    private var configURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/kiln/config.toml")
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                if loading {
+                    HStack { ProgressView().controlSize(.small); Text("Connecting…").foregroundStyle(.secondary) }
+                } else if servers.isEmpty {
+                    Text("No servers yet.").foregroundStyle(.secondary)
+                }
+                ForEach(servers) { s in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Image(systemName: s.connected ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                                .foregroundStyle(s.connected ? .green : .red)
+                            Text(s.name).fontWeight(.medium)
+                            Spacer()
+                            if s.connected {
+                                Text("\(s.tools.count) tool\(s.tools.count == 1 ? "" : "s")").foregroundStyle(.secondary)
+                            }
+                        }
+                        if let e = s.error {
+                            Text(e).font(.caption).foregroundStyle(.red).lineLimit(3)
+                        } else if !s.tools.isEmpty {
+                            Text(s.tools.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                        }
+                        ForEach(s.quarantined, id: \.tool) { q in
+                            Label("Withheld \(q.tool): its description \(q.reason)", systemImage: "exclamationmark.shield")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            } header: {
+                Text("Servers in config.toml")
+            } footer: {
+                Text("Tools from MCP servers ask before running, like shell commands. Tools whose descriptions look like prompt injection are withheld unless the server has `trust = true`. A project can add servers with a `.mcp.json` file (the same format as Claude Code).")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Button("Open config.toml…") {
+                    if !FileManager.default.fileExists(atPath: configURL.path) {
+                        try? FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                        try? "# kiln configuration\n".write(to: configURL, atomically: true, encoding: .utf8)
+                    }
+                    Editor.open([configURL])
+                }
+                Text(example)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .foregroundStyle(.secondary)
+                Button("Refresh") { Task { await load() } }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(minHeight: 460)
+        .task { await load() }
+    }
+
+    private var example: String {
+        """
+        [mcp_servers.github]
+        command = "npx"
+        args = ["-y", "@modelcontextprotocol/server-github"]
+        env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
+
+        [mcp_servers.docs]
+        url = "https://example.com/mcp"
+        """
+    }
+
+    private func load() async {
+        loading = true
+        servers = (try? await Kiln.json([MCPStatus].self, args: ["--mcp", "--json"],
+                                         cwd: FileManager.default.homeDirectoryForCurrentUser)) ?? []
+        loading = false
     }
 }

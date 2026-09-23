@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+rmcp = { version = "3.4", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
 anyhow.workspace = true
 chrono.workspace = true
 dirs.workspace = true

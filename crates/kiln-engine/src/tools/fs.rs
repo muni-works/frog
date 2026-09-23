@@ -9,9 +9,9 @@ use std::path::Path;
 
 pub fn read_spec() -> ToolSpec {
     ToolSpec {
-        name: "Read",
+        name: "Read".into(),
         description: "Read a text file. Returns lines prefixed with 1-based line numbers (cat -n style). \
-Reads up to 2000 lines by default; use offset/limit for large files. You must Read a file before editing it.",
+Reads up to 2000 lines by default; use offset/limit for large files. You must Read a file before editing it.".into(),
         schema: json!({
             "type": "object",
             "properties": {
@@ -26,9 +26,9 @@ Reads up to 2000 lines by default; use offset/limit for large files. You must Re
 
 pub fn write_spec() -> ToolSpec {
     ToolSpec {
-        name: "Write",
+        name: "Write".into(),
         description: "Create a new file or completely overwrite an existing one. Prefer Edit for changing existing files. \
-Existing files must be Read first.",
+Existing files must be Read first.".into(),
         schema: json!({
             "type": "object",
             "properties": {
@@ -42,10 +42,10 @@ Existing files must be Read first.",
 
 pub fn edit_spec() -> ToolSpec {
     ToolSpec {
-        name: "Edit",
+        name: "Edit".into(),
         description: "Replace an exact string in a file. old_string must match the file exactly (including whitespace and \
 indentation, without the line-number prefix from Read) and be unique unless replace_all is true. \
-Include enough surrounding lines to make it unique. The file must be Read first.",
+Include enough surrounding lines to make it unique. The file must be Read first.".into(),
         schema: json!({
             "type": "object",
             "properties": {

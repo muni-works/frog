@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
-        name: "Diagram",
+        name: "Diagram".into(),
         description: "Show the user a diagram. Use it when a picture explains better than prose: \
 architecture (components and how they connect), data or control flow, a request's path through \
 the code, or the order of calls between parts (kind \"sequence\"). Prefer it when the user asks \
@@ -14,7 +14,8 @@ how something works or fits together. Keep diagrams small (usually 4-15 nodes) a
 with what flows along them. Link nodes to source with `file` (a path relative to the project) \
 and optional `line` when a node is a specific file or function. The user sees the drawing; you \
 get a short confirmation. For sequence diagrams, nodes are the participants in order and edges \
-are the messages in time order (style \"dashed\" for replies).",
+are the messages in time order (style \"dashed\" for replies)."
+            .into(),
         schema: json!({
             "type": "object",
             "properties": {
@@ -95,12 +96,13 @@ pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
 
 pub fn map_spec() -> ToolSpec {
     ToolSpec {
-        name: "CodeMap",
+        name: "CodeMap".into(),
         description: "Map the project's structure from its code: which files or directories \
 depend on which (Rust modules and crates, TS/JS and Python imports, Go packages, Swift type \
 references), with recently changed areas marked [hot]. Shows the user a diagram and returns a \
 compact dependency list to you. Use it to get oriented in an unfamiliar codebase or when the user \
-asks how the project is organized. Pass `path` to map one subdirectory in more detail.",
+asks how the project is organized. Pass `path` to map one subdirectory in more detail."
+            .into(),
         schema: json!({
             "type": "object",
             "properties": {
