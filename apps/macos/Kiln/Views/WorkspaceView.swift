@@ -222,9 +222,7 @@ struct WorkspaceView: View {
             }
             ToolbarItem(placement: .principal) {
                 if let c = workspace.conversation, workspace.race == nil {
-                    ActivityViewer(conversation: c) {
-                        if let last = c.turns.last { ui.jumpTo = last.id }
-                    }
+                    ActivityViewer(workspace: workspace, conversation: c) { ui.jumpTo = $0 }
                 }
             }
             // The viewer draws its own glass capsule; without this the toolbar adds a second.

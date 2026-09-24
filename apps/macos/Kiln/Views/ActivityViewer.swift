@@ -5,9 +5,14 @@ import SwiftUI
 /// doing right now (or how the last turn went), with the model readout on the right: the model,
 /// how full the context is, and generation speed.
 struct ActivityViewer: View {
+    let workspace: Workspace
     let conversation: Conversation
-    /// Scroll to where the conversation is waiting on the user.
-    var jump: () -> Void = {}
+    /// Scroll the conversation to a turn.
+    var jump: (TurnState.ID) -> Void = { _ in }
+    @State private var showActivity = false
+    @State private var hovering = false
+    @State private var library = Library.shared
+    @Environment(\.openSession) private var openSession
 
     /// A permission prompt or a server's question: the pill turns amber and takes you there.
     private var waiting: String? {
@@ -16,10 +21,24 @@ struct ActivityViewer: View {
         return nil
     }
 
+    /// Other conversations that are running, waiting on you, or finished unseen.
+    private var others: [(session: SessionInfo, live: Library.Live)] {
+        library.live
+            .filter { $0.key != conversation.sessionID }
+            .compactMap { id, live in library.sessions.first { $0.id == id }.map { ($0, live) } }
+            .sorted { rank($0.live) < rank($1.live) }
+    }
+
+    private func rank(_ l: Library.Live) -> Int {
+        switch l { case .waiting: 0; case .running: 1; case .unread: 2 }
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             if let waiting {
-                Button(action: jump) {
+                Button {
+                    if let last = conversation.turns.last { jump(last.id) }
+                } label: {
                     HStack(spacing: 7) {
                         Image(systemName: "hand.raised.fill").frame(width: 14)
                         Text(waiting).fontWeight(.medium).lineLimit(1)
@@ -31,11 +50,35 @@ struct ActivityViewer: View {
                 .buttonStyle(.plain)
                 .help("Show the request")
             } else {
-                activity
+                Button { showActivity.toggle() } label: {
+                    activity.contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("Activity")
+                .popover(isPresented: $showActivity, arrowEdge: .bottom) {
+                    ActivityPanel(conversation: conversation) { id in
+                        showActivity = false
+                        jump(id)
+                    }
+                }
+                if conversation.busy, hovering {
+                    Button { conversation.interrupt() } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .contentShape(.circle)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Interrupt (Esc or ⌘.)")
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                }
             }
             if let s = conversation.status {
                 Divider().frame(height: 14)
                 readout(s)
+            }
+            if !others.isEmpty {
+                Divider().frame(height: 14)
+                othersMenu
             }
         }
         .font(.callout)
@@ -46,16 +89,73 @@ struct ActivityViewer: View {
         .overlay(alignment: .bottom) {
             if conversation.busy, waiting == nil { WorkingLine().padding(.horizontal, 16) }
         }
-        .glassEffect(waiting == nil ? .regular : .regular.tint(.orange.opacity(0.18)), in: .capsule)
+        .glassEffect(tint, in: .capsule)
+        .onHover { hovering = $0 }
         .animation(.snappy(duration: 0.2), value: conversation.busy)
         .animation(.snappy(duration: 0.2), value: waiting)
+        .animation(.snappy(duration: 0.15), value: hovering)
+        .animation(.snappy(duration: 0.2), value: others.count)
+    }
+
+    private var tint: Glass {
+        if conversation.failure != nil { return .regular.tint(.red.opacity(0.18)) }
+        if waiting != nil { return .regular.tint(.orange.opacity(0.18)) }
+        return .regular
+    }
+
+    /// A dot per state and a count; the menu opens any of them.
+    private var othersMenu: some View {
+        let list = others
+        let color: Color = list.contains { $0.live == .waiting } ? .orange : list.contains { $0.live == .running } ? .blue : .secondary
+        return Menu {
+            ForEach(list, id: \.session.id) { entry in
+                Button {
+                    openSession?(entry.session)
+                } label: {
+                    Label(entry.session.displayTitle, systemImage: symbol(entry.live))
+                    Text(caption(entry.live))
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Circle().fill(color).frame(width: 7, height: 7)
+                Text("\(list.count)").monospacedDigit()
+            }
+            .contentShape(.rect)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(helpForOthers(list))
+    }
+
+    private func symbol(_ l: Library.Live) -> String {
+        switch l { case .waiting: "hand.raised.fill"; case .running: "circle.dotted"; case .unread: "circle.fill" }
+    }
+
+    private func caption(_ l: Library.Live) -> String {
+        switch l { case .waiting: "Waiting on you"; case .running: "Working"; case .unread: "Finished" }
+    }
+
+    private func helpForOthers(_ list: [(session: SessionInfo, live: Library.Live)]) -> String {
+        let n = { (l: Library.Live) in list.filter { $0.live == l }.count }
+        return [(n(.waiting), "waiting on you"), (n(.running), "working"), (n(.unread), "finished")]
+            .filter { $0.0 > 0 }
+            .map { "\($0.0) \($0.1)" }
+            .joined(separator: " · ") + " in other conversations"
     }
 
     // MARK: Left: what's happening
 
     @ViewBuilder
     private var activity: some View {
-        if conversation.busy, let turn = conversation.turns.last, !turn.finished {
+        if conversation.failure != nil {
+            HStack(spacing: 7) {
+                Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red).frame(width: 14)
+                Text("Engine stopped").fontWeight(.medium)
+            }
+        } else if conversation.busy, let turn = conversation.turns.last, !turn.finished {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 HStack(spacing: 7) {
                     Image(systemName: symbol(turn)).foregroundStyle(.orange).frame(width: 14)
@@ -146,10 +246,33 @@ struct ActivityViewer: View {
 
     private func readout(_ s: Status) -> some View {
         HStack(spacing: 8) {
-            Text(shortModel(s.model))
-                .fontWeight(.medium)
-                .lineLimit(1)
-                .help("\(s.model) · \(s.toolMode) tool calls · \(s.tier) tier")
+            Menu {
+                Section("Switch Model") {
+                    ForEach(workspace.models) { m in
+                        Button {
+                            workspace.preferredModel = m.spec
+                            conversation.setModel(m.spec)
+                        } label: {
+                            if m.spec == s.model {
+                                Label(m.spec, systemImage: "checkmark")
+                            } else {
+                                Text(m.spec)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Text(shortModel(s.model))
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .contentShape(.rect)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(conversation.busy)
+            .help("\(s.model) · \(s.toolMode) tool calls · \(s.tier) tier")
             ContextButton(conversation: conversation, status: s)
             if let tps = s.tokensPerSec, tps > 0 {
                 Text("\(Int(tps)) tok/s")
@@ -163,6 +286,144 @@ struct ActivityViewer: View {
     private func shortModel(_ spec: String) -> String {
         let name = spec.split(separator: "/").last.map(String.init) ?? spec
         return name.replacingOccurrences(of: "-4bit", with: " 4-bit")
+    }
+}
+
+/// What the latest turn did, live: its steps and how each went, time, calls and tokens, and
+/// anything queued. Stop it, or jump to it in the conversation.
+private struct ActivityPanel: View {
+    let conversation: Conversation
+    let jump: (TurnState.ID) -> Void
+    static let shown = 8
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let failure = conversation.failure {
+                Label(failure, systemImage: "exclamationmark.octagon.fill")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .lineLimit(6)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let turn = conversation.turns.last {
+                header(turn)
+                steps(turn)
+                if let u = turn.usage { stats(u) }
+            } else {
+                Text("Nothing yet. Send a message and its steps show up here.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !conversation.queue.isEmpty {
+                Label("\(conversation.queue.count) message\(conversation.queue.count == 1 ? "" : "s") queued", systemImage: "tray.full")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            if let turn = conversation.turns.last {
+                Divider()
+                HStack {
+                    if conversation.busy {
+                        Button(role: .destructive) { conversation.interrupt() } label: {
+                            Label("Stop", systemImage: "stop.fill")
+                        }
+                        .help("Interrupt (Esc or ⌘.)")
+                    }
+                    Spacer()
+                    Button("Show in Conversation") { jump(turn.id) }
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+    }
+
+    private func header(_ turn: TurnState) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(turn.number.map { "Turn \($0)" } ?? "This turn").font(.headline)
+                Spacer()
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    Text(elapsed(turn)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }
+            if !turn.input.isEmpty {
+                Text(turn.input)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func steps(_ turn: TurnState) -> some View {
+        let tools = turn.items.filter { if case .tool = $0.kind { true } else { false } }
+        if tools.isEmpty {
+            Text(turn.finished ? "Answered without tools." : "Thinking…")
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                if tools.count > Self.shown {
+                    Text("\(tools.count - Self.shown) earlier step\(tools.count - Self.shown == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                ForEach(tools.suffix(Self.shown)) { item in
+                    StepRow(item: item)
+                }
+            }
+        }
+    }
+
+    private func stats(_ u: TurnUsage) -> some View {
+        var parts = ["\(u.modelCalls) call\(u.modelCalls == 1 ? "" : "s")", "\(u.inputTokens.tokens) in", "\(u.outputTokens.tokens) out"]
+        if let tps = u.tokensPerSec, tps > 0 { parts.append("\(Int(tps)) tok/s") }
+        return Text(parts.joined(separator: " · "))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+    }
+
+    private func elapsed(_ turn: TurnState) -> String {
+        guard let a = turn.startedAt else { return "" }
+        let s = Int((turn.endedAt ?? .now).timeIntervalSince(a))
+        return s < 60 ? "\(s)s" : "\(s / 60)m \(s % 60)s"
+    }
+}
+
+private struct StepRow: View {
+    let item: ItemState
+
+    var body: some View {
+        if case .tool(let name, let arg) = item.kind {
+            HStack(spacing: 8) {
+                Image(systemName: ToolIcon.symbol(name))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                Text(arg.isEmpty ? ToolIcon.title(name) : "\(ToolIcon.title(name)) \(arg)")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 6)
+                outcome
+            }
+            .font(.callout)
+        }
+    }
+
+    @ViewBuilder
+    private var outcome: some View {
+        if !item.done {
+            ProgressView().controlSize(.mini)
+        } else {
+            switch item.result?.outcome {
+            case .error: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+            case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
+            case .skipped: Image(systemName: "minus.circle").foregroundStyle(.secondary)
+            default: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            }
+        }
     }
 }
 
