@@ -32,6 +32,10 @@ pub struct Request<'a> {
     /// servers (tang-llm, vLLM, llama.cpp, SGLang), never to OpenAI's own API. A profile's
     /// `extra` still wins.
     pub think: Option<bool>,
+    /// Most reasoning tokens before the server closes the thinking block and makes the model
+    /// answer. Sent as `thinking_budget` to OpenAI-compatible servers other than OpenAI's own;
+    /// only set for servers that list the `thinking_budget` capability (tang-llm).
+    pub think_budget: Option<u32>,
 }
 
 pub enum StreamEvent {
@@ -155,6 +159,21 @@ impl Provider {
                 .map(|caps| caps.iter().any(|c| c == "vision")),
             #[cfg(test)]
             Self::Scripted(_) => None,
+        }
+    }
+
+    /// Whether the server caps reasoning per request (tang-llm lists `thinking_budget` among
+    /// the model's capabilities). Bounded by a short timeout.
+    pub async fn supports_thinking_budget(&self) -> bool {
+        match self {
+            Self::OpenAi(c) if !c.is_openai() => {
+                tokio::time::timeout(Duration::from_secs(3), c.capabilities())
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some_and(|caps| caps.iter().any(|c| c == "thinking_budget"))
+            }
+            _ => false,
         }
     }
 

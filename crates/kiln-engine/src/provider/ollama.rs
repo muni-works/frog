@@ -231,6 +231,7 @@ mod tests {
             max_tokens: None,
             format: None,
             think: None,
+            think_budget: None,
         };
         let body = c.body(&req);
         let m = &body["messages"][1];
@@ -255,6 +256,7 @@ mod tests {
             max_tokens: None,
             format: None,
             think,
+            think_budget: None,
         };
         assert_eq!(c.body(&req(Some(false)))["think"], false);
         assert!(c.body(&req(None)).get("think").is_none());

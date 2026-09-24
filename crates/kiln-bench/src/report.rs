@@ -30,12 +30,16 @@ fn ends(runs: &[&RunResult]) -> String {
         .join(", ")
 }
 
-/// The tool mode, plus the thinking setting when the run set one.
+/// The tool mode, plus the thinking setting and budget when the run set them.
 fn label(r: &RunResult) -> String {
-    match &r.thinking {
+    let mut l = match &r.thinking {
         Some(t) => format!("{}/{t}", r.mode),
         None => r.mode.clone(),
+    };
+    if let Some(n) = r.thinking_budget {
+        l.push_str(&format!("/b{n}"));
     }
+    l
 }
 
 /// One row per model × mode, then a task × config pass grid.

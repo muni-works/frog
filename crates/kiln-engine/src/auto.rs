@@ -144,6 +144,7 @@ impl Classifier {
             max_tokens: Some(1_500),
             format: Some(&schema),
             think: self.think,
+            think_budget: None,
         };
         let mut ignore = |_| {};
         let answer = tokio::time::timeout(

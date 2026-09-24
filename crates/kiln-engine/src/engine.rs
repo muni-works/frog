@@ -311,6 +311,8 @@ struct Streamed {
     think: Duration,
     /// Thinking was switched off for this call.
     no_think: bool,
+    /// The reasoning-token cap sent with this call.
+    think_budget: Option<u32>,
 }
 
 struct Agent {
@@ -368,6 +370,8 @@ struct Agent {
     notes_omitted: usize,
     /// The model can see images (probed, or `vision` in the profile).
     vision: bool,
+    /// The server takes a per-call reasoning budget (probed).
+    budget_ok: bool,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
     session_allow: HashSet<String>,
@@ -485,6 +489,7 @@ impl Agent {
             notes_omitted: 0,
             classifier: None,
             vision: false,
+            budget_ok: false,
             session_allow: HashSet::new(),
             pending: Vec::new(),
             events,
@@ -632,6 +637,7 @@ impl Agent {
             decode_ms: decode,
             think_ms: think,
             no_think: streamed.no_think,
+            think_budget: streamed.think_budget,
             compact,
         });
     }
@@ -865,8 +871,11 @@ impl Agent {
             } else {
                 0
             };
+            let budget = self.think_budget(think);
             let started = Instant::now();
-            let (resp, streamed) = self.call("thinking", &self.messages, false, think).await?;
+            let (resp, streamed) = self
+                .call("thinking", &self.messages, false, think, budget)
+                .await?;
             self.last_call = started.elapsed();
             self.usage = resp.usage;
             self.count_call(resp.usage, &streamed, false);
@@ -987,6 +996,19 @@ impl Agent {
         thinking::switch(self.thinking_mode(), can_switch, want)
     }
 
+    /// The reasoning-token cap for the next call, given its thinking switch: only for servers
+    /// that take one, and only where the model thinks.
+    fn think_budget(&self, think: Option<bool>) -> Option<u32> {
+        if !self.budget_ok || self.thinking_mode() == Thinking::Never {
+            return None;
+        }
+        let base = self
+            .profile
+            .thinking_budget
+            .unwrap_or(self.cfg.thinking_budget);
+        thinking::budget(base, think, &self.messages)
+    }
+
     /// Probe a local model's capabilities the first time it's used under `auto`.
     async fn ensure_profiled(&mut self) {
         if harness::is_hosted(&self.profile) {
@@ -1088,6 +1110,7 @@ impl Agent {
             Some(v) => v,
             None => self.provider.supports_vision().await.unwrap_or(false),
         };
+        self.budget_ok = self.provider.supports_thinking_budget().await;
         let configured = self.profile.context_window;
         let probed = self.provider.probe_context().await;
         self.window = match (configured, probed) {
@@ -1542,6 +1565,7 @@ Don't repeat it. Change the arguments or try a different approach.",
         messages: &[Message],
         quiet: bool,
         think: Option<bool>,
+        think_budget: Option<u32>,
     ) -> Result<(Response, Streamed)> {
         let json_mode = self.tool_mode == ToolMode::Json;
         let with_images = self.prepare_images(messages);
@@ -1571,6 +1595,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             max_tokens: self.profile.max_tokens,
             format,
             think,
+            think_budget,
         };
         let mut attempt = 0;
         loop {
@@ -1580,6 +1605,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             let mut started = false;
             let mut streamed = Streamed {
                 no_think: think == Some(false),
+                think_budget,
                 ..Default::default()
             };
             let sent = Instant::now();
@@ -1867,7 +1893,7 @@ Don't repeat it. Change the arguments or try a different approach.",
         }
         // A summary needs no reasoning.
         let think = self.think_switch(false);
-        let (resp, streamed) = self.call("compacting", &msgs, true, think).await?;
+        let (resp, streamed) = self.call("compacting", &msgs, true, think, None).await?;
         self.count_call(resp.usage, &streamed, true);
         let summary = resp.message.text();
         if summary.trim().is_empty() {

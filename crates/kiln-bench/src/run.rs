@@ -34,6 +34,9 @@ pub struct RunResult {
     /// The `thinking` setting, when the run set one.
     #[serde(default)]
     pub thinking: Option<String>,
+    /// The `thinking_budget` setting, when the run set one.
+    #[serde(default)]
+    pub thinking_budget: Option<u32>,
     /// Reasoning time over the turn's model calls, and how many calls ran with it off.
     #[serde(default)]
     pub think_ms: u64,
@@ -109,6 +112,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         pruned: 0,
         compacted: 0,
         thinking: None,
+        thinking_budget: None,
         think_ms: 0,
         no_think_calls: 0,
         session: String::new(),

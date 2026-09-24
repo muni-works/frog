@@ -66,6 +66,9 @@ pub struct Profile {
     /// Overrides the global `thinking` for this model.
     #[serde(default)]
     pub thinking: Option<Thinking>,
+    /// Overrides the global `thinking_budget` for this model.
+    #[serde(default)]
+    pub thinking_budget: Option<u32>,
 }
 
 impl Profile {
@@ -83,6 +86,7 @@ impl Profile {
             sidecar: None,
             vision: None,
             thinking: None,
+            thinking_budget: None,
         }
     }
 
@@ -113,6 +117,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_thinking_budget() -> u32 {
+    crate::thinking::DEFAULT_BUDGET
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     pub default_model: Option<String>,
@@ -127,6 +135,11 @@ pub struct Config {
     /// `thinking` overrides it.
     #[serde(default)]
     pub thinking: Thinking,
+    /// Most reasoning tokens per call where the model thinks (twice this on a turn's first
+    /// call); 0 is unlimited. Only sent to servers that take it (tang-llm). A profile's
+    /// `thinking_budget` overrides it.
+    #[serde(default = "default_thinking_budget")]
+    pub thinking_budget: u32,
     /// Also load ~/.claude/CLAUDE.md and CLAUDE.md files as instructions.
     #[serde(default = "default_true")]
     pub load_claude_md: bool,

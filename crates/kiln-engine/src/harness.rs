@@ -178,6 +178,7 @@ async fn ask(
         max_tokens: Some(2048),
         format,
         think: None,
+        think_budget: None,
     };
     let mut ignore = |_| {};
     let call = provider.complete(&req, &mut ignore);
@@ -254,6 +255,7 @@ pub async fn probe_think_off(provider: &Provider) -> bool {
         max_tokens: Some(256),
         format: None,
         think: Some(false),
+        think_budget: None,
     };
     let mut ignore = |_| {};
     let call = provider.complete(&req, &mut ignore);

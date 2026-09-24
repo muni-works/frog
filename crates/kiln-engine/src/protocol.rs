@@ -526,6 +526,9 @@ pub struct CallTiming {
     /// Thinking was switched off for this call (see `thinking.rs`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_think: bool,
+    /// The cap on reasoning tokens sent with this call, if any (see `thinking::budget`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think_budget: Option<u32>,
     /// A compaction summary rather than a step of the turn.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub compact: bool,

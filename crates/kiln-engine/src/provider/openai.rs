@@ -156,6 +156,11 @@ impl Client {
         {
             body["chat_template_kwargs"] = json!({ "enable_thinking": think });
         }
+        if let Some(n) = req.think_budget
+            && !self.is_openai()
+        {
+            body["thinking_budget"] = json!(n);
+        }
         if let Some(extra) = &self.extra {
             deep_merge(&mut body, extra);
         }
@@ -298,6 +303,7 @@ mod tests {
             max_tokens: None,
             format: None,
             think: None,
+            think_budget: None,
         };
         let body = c.body(&req);
         let m = body["messages"].as_array().unwrap();
@@ -306,6 +312,37 @@ mod tests {
         assert_eq!(
             m[2]["content"][1]["image_url"]["url"],
             "data:image/png;base64,AAAA"
+        );
+    }
+
+    #[test]
+    fn thinking_budget_is_a_top_level_field_but_not_for_openai() {
+        let client = |base: &str| Client {
+            http: reqwest::Client::new(),
+            base: base.into(),
+            model: "m".into(),
+            key: None,
+            extra: None,
+        };
+        let msgs = vec![Message::user("hi")];
+        let req = |think_budget| Request {
+            system: "s",
+            messages: &msgs,
+            tools: &[],
+            max_tokens: None,
+            format: None,
+            think: None,
+            think_budget,
+        };
+        let tang = client("http://192.168.2.12:8420/v1");
+        assert_eq!(tang.body(&req(Some(1024)))["thinking_budget"], 1024);
+        assert!(tang.body(&req(None)).get("thinking_budget").is_none());
+        let openai = client("https://api.openai.com/v1");
+        assert!(
+            openai
+                .body(&req(Some(1024)))
+                .get("thinking_budget")
+                .is_none()
         );
     }
 
@@ -326,6 +363,7 @@ mod tests {
             max_tokens: None,
             format: None,
             think,
+            think_budget: None,
         };
         let local = client("http://localhost:8911/v1", None);
         assert_eq!(

@@ -50,6 +50,10 @@ enum Cmd {
         /// Override the `thinking` setting: auto, always or never.
         #[arg(long)]
         thinking: Option<String>,
+        /// Override `thinking_budget`: most reasoning tokens per call (0 = unlimited). Only
+        /// servers that take a budget (tang-llm) apply it.
+        #[arg(long)]
+        thinking_budget: Option<u32>,
     },
     /// Summarize a results file from an earlier run.
     Report { results: PathBuf },
@@ -71,7 +75,20 @@ async fn main() -> Result<()> {
             repeat,
             out,
             thinking,
-        } => run_suite(models, modes, tasks, filter, repeat, out, thinking).await,
+            thinking_budget,
+        } => {
+            run_suite(
+                models,
+                modes,
+                tasks,
+                filter,
+                repeat,
+                out,
+                thinking,
+                thinking_budget,
+            )
+            .await
+        }
         Cmd::Report { results } => {
             let text = std::fs::read_to_string(&results)?;
             let rows: Vec<RunResult> = text
@@ -103,6 +120,7 @@ fn slug(s: &str) -> String {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_suite(
     models: Vec<String>,
     modes: Vec<String>,
@@ -111,11 +129,18 @@ async fn run_suite(
     repeat: u32,
     out: Option<PathBuf>,
     thinking: Option<String>,
+    thinking_budget: Option<u32>,
 ) -> Result<()> {
     let mut cfg = Config::load()?;
     if let Some(t) = &thinking {
         cfg.thinking = serde_json::from_value(serde_json::json!(t))
             .with_context(|| format!("unknown thinking setting `{t}`"))?;
+    }
+    if let Some(n) = thinking_budget {
+        cfg.thinking_budget = n;
+        for p in cfg.models.values_mut() {
+            p.thinking_budget = None;
+        }
     }
     let tasks = task::load_all(&tasks_dir, filter.as_deref())?;
     let models = if models.is_empty() {
@@ -203,6 +228,7 @@ async fn run_suite(
                     })
                     .await?;
                     r.thinking = thinking.clone();
+                    r.thinking_budget = thinking_budget;
                     eprintln!(
                         "{} {:.1}s ({}{})",
                         if r.pass { "pass" } else { "FAIL" },
