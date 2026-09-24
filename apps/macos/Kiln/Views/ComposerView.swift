@@ -220,6 +220,9 @@ struct ComposerView: View {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
             }
             ModelPicker(workspace: workspace, conversation: conversation)
+            if let status = conversation.status {
+                ContextButton(conversation: conversation, status: status)
+            }
         }
         .font(.callout)
         .foregroundStyle(.secondary)

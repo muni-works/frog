@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 /// The toolbar's center, like Xcode's activity viewer: one glass capsule that says what kiln is
-/// doing right now (or how the last turn went), with the model readout on the right: the model,
-/// how full the context is, and generation speed.
+/// doing right now (or how the last turn went), with the model readout on the right: the model
+/// and generation speed. How full the context is shows by the composer (`ContextButton`).
 struct ActivityViewer: View {
     let workspace: Workspace
     let conversation: Conversation
@@ -269,7 +269,6 @@ struct ActivityViewer: View {
                     pickingModel = false
                 }
             }
-            ContextButton(conversation: conversation, status: s)
             if let tps = s.tokensPerSec, tps > 0 {
                 Text("\(Int(tps)) tok/s")
                     .foregroundStyle(.secondary)
@@ -419,7 +418,7 @@ private struct StepRow: View {
 }
 
 /// The context ring; click it for how full the context is and to compact it.
-private struct ContextButton: View {
+struct ContextButton: View {
     let conversation: Conversation
     let status: Status
     @State private var shown = false
@@ -431,10 +430,10 @@ private struct ContextButton: View {
 
     var body: some View {
         Button { shown.toggle() } label: {
-            ContextRing(status: status).contentShape(.rect)
+            ContextRing(status: status).hoverPlate(h: 4, v: 4)
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $shown, arrowEdge: .bottom) {
+        .popover(isPresented: $shown, arrowEdge: .top) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Context").font(.headline)
