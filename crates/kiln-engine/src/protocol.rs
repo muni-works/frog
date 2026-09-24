@@ -470,7 +470,7 @@ pub enum Level {
     Warn,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct TurnUsage {
     /// Tokens in the context window after the last model call. `None` if the provider didn't say.
     pub context_tokens: Option<u64>,
@@ -480,6 +480,70 @@ pub struct TurnUsage {
     pub model_calls: u32,
     /// Generation speed of the last call.
     pub tokens_per_sec: Option<f64>,
+    /// Where the turn's wall time went. Absent in logs from before it was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing: Option<TurnTiming>,
+}
+
+/// A turn's wall time split by what it was waiting on, in milliseconds. `other` is whatever
+/// the rest don't cover (context fitting, MCP refresh, profiling, retries, the engine itself).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct TurnTiming {
+    pub wall_ms: u64,
+    /// Request sent → first streamed token, summed over the turn's model calls.
+    pub prefill_ms: u64,
+    /// First streamed token → response done.
+    pub decode_ms: u64,
+    /// The part of `decode_ms` spent streaming reasoning before any answer or tool call.
+    #[serde(default)]
+    pub think_ms: u64,
+    /// Tools running (not counting permission prompts or the auto-mode classifier).
+    pub tool_ms: u64,
+    /// Waiting for the user to answer permission prompts.
+    pub user_ms: u64,
+    /// Auto mode's classifier deciding whether a tool call may run.
+    pub classifier_ms: u64,
+    /// Summarizing the conversation when the context filled up (its model call).
+    pub compact_ms: u64,
+    pub other_ms: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calls: Vec<CallTiming>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolTiming>,
+}
+
+/// One model request.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct CallTiming {
+    /// Prompt tokens as the provider reported them (including cache reads).
+    pub prompt_tokens: u64,
+    pub output_tokens: u64,
+    pub ttft_ms: u64,
+    pub decode_ms: u64,
+    /// Reasoning streamed before the first answer text or tool call.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub think_ms: u64,
+    /// A compaction summary rather than a step of the turn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub compact: bool,
+}
+
+/// One tool call that got as far as the permission check.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct ToolTiming {
+    /// The tool call's item id.
+    pub id: String,
+    pub name: String,
+    /// Running the tool; zero if it was denied.
+    pub ms: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub user_ms: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub classifier_ms: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -502,6 +566,15 @@ pub struct Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turn_usage_without_timing_still_parses() {
+        let old = r#"{"context_tokens":5,"input_tokens":1,"output_tokens":2,"model_calls":1,"tokens_per_sec":null}"#;
+        let u: TurnUsage = serde_json::from_str(old).unwrap();
+        assert_eq!((u.model_calls, &u.timing), (1, &None));
+        // And it serializes back without the new field.
+        assert_eq!(serde_json::to_string(&u).unwrap(), old);
+    }
 
     #[test]
     fn envelope_round_trips_flat() {

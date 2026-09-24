@@ -3,7 +3,7 @@
 use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::Stylize;
 use crossterm::terminal;
-use kiln_engine::protocol::TurnUsage;
+use kiln_engine::protocol::{TurnTiming, TurnUsage};
 use kiln_engine::{Decision, Delta, EndReason, Event, Item, ItemKind, Level, ToolOutcome};
 use std::collections::HashSet;
 use std::io::{IsTerminal, Write};
@@ -459,5 +459,20 @@ pub fn footer(u: &TurnUsage, window: u64) {
         ),
         None => format!("?/{} (provider didn't report usage)", fmt_tokens(window)),
     };
-    info(&format!("\n  ctx {ctx}{speed}"));
+    let time = u.timing.as_ref().map(time_split).unwrap_or_default();
+    info(&format!("\n  ctx {ctx}{speed}{time}"));
+}
+
+/// ` · model 12.3s (ttft 3.1s) · tools 4.2s`: where the turn's time went.
+fn time_split(t: &TurnTiming) -> String {
+    let secs = |ms: u64| format!("{:.1}s", ms as f64 / 1000.0);
+    let mut out = format!(
+        " · model {} (ttft {})",
+        secs(t.prefill_ms + t.decode_ms),
+        secs(t.prefill_ms)
+    );
+    if t.tool_ms > 0 {
+        out.push_str(&format!(" · tools {}", secs(t.tool_ms)));
+    }
+    out
 }

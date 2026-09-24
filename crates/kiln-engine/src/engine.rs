@@ -7,8 +7,8 @@ use crate::harness::{self, Caps, Tier};
 use crate::message::{Block, Message, Role, Usage};
 use crate::prompt;
 use crate::protocol::{
-    Decision, Delta, EndReason, EngineError, Envelope, Event, Item, ItemKind, Level, Mode, Op,
-    Status, ToolOutcome, TurnUsage,
+    CallTiming, Decision, Delta, EndReason, EngineError, Envelope, Event, Item, ItemKind, Level,
+    Mode, Op, Status, ToolOutcome, ToolTiming, TurnTiming, TurnUsage,
 };
 use crate::provider::{
     HttpError, Provider, Request, Response, Stop, StreamEvent, ToolSpec, new_id,
@@ -303,6 +303,11 @@ struct Streamed {
     reasoning: Option<String>,
     /// The reply didn't follow the requested tool-call format.
     format_failed: bool,
+    /// Request sent → first streamed event, and first event → done (the attempt that succeeded).
+    ttft: Duration,
+    decode: Duration,
+    /// Reasoning streamed before the first answer text or tool call.
+    think: Duration,
 }
 
 struct Agent {
@@ -339,6 +344,9 @@ struct Agent {
     mode_failures: u32,
     /// Running totals for the current turn.
     turn_usage: TurnUsage,
+    /// Where the current turn's time went, and when it started.
+    timing: TurnTiming,
+    turn_clock: Option<Instant>,
     root: PathBuf,
     system: String,
     specs: Vec<ToolSpec>,
@@ -456,6 +464,8 @@ impl Agent {
             caps,
             mode_failures: 0,
             turn_usage: TurnUsage::default(),
+            timing: TurnTiming::default(),
+            turn_clock: None,
             root: o.cwd,
             system,
             specs: tools::specs(),
@@ -594,17 +604,43 @@ impl Agent {
         }));
     }
 
-    fn count_call(&mut self, u: Usage) {
+    fn count_call(&mut self, u: Usage, streamed: &Streamed, compact: bool) {
         self.turn_usage.input_tokens += u.input + u.cache_read;
         self.turn_usage.output_tokens += u.output;
         self.turn_usage.model_calls += 1;
+        let (ttft, decode, think) = (ms(streamed.ttft), ms(streamed.decode), ms(streamed.think));
+        let t = &mut self.timing;
+        if compact {
+            t.compact_ms += ttft + decode;
+        } else {
+            t.prefill_ms += ttft;
+            t.decode_ms += decode;
+            t.think_ms += think;
+        }
+        t.calls.push(CallTiming {
+            prompt_tokens: u.input + u.cache_read,
+            output_tokens: u.output,
+            ttft_ms: ttft,
+            decode_ms: decode,
+            think_ms: think,
+            compact,
+        });
     }
 
     fn end_turn(&self, turn: u64, reason: EndReason) {
+        let timing = self.turn_clock.map(|start| {
+            let mut t = self.timing.clone();
+            t.wall_ms = ms(start.elapsed());
+            t.other_ms = t.wall_ms.saturating_sub(
+                t.prefill_ms + t.decode_ms + t.tool_ms + t.user_ms + t.classifier_ms + t.compact_ms,
+            );
+            t
+        });
         let usage = TurnUsage {
             tokens_per_sec: self.tokens_per_sec(),
             context_tokens: self.context_tokens(),
-            ..self.turn_usage
+            timing,
+            ..self.turn_usage.clone()
         };
         self.emit(Event::TurnEnded {
             turn,
@@ -757,6 +793,8 @@ impl Agent {
         });
         self.active_turn = Some(turn);
         self.inputs.push(input.to_string());
+        self.turn_clock = Some(Instant::now());
+        self.timing = TurnTiming::default();
         self.checkpoint(turn);
         self.turn_usage = TurnUsage::default();
 
@@ -811,7 +849,7 @@ impl Agent {
             let (resp, streamed) = self.call("thinking", &self.messages, false).await?;
             self.last_call = started.elapsed();
             self.usage = resp.usage;
-            self.count_call(resp.usage);
+            self.count_call(resp.usage, &streamed, false);
             self.est
                 .calibrate(sent, resp.usage.input + resp.usage.cache_read);
             let (msg, recovered) = normalize(resp.message);
@@ -1328,7 +1366,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                     "Skipped: an earlier tool call was rejected.".to_string(),
                     None,
                 )
-            } else if self.permit(&id, &name, &arg, &input).await == Decision::Deny {
+            } else if self.timed_permit(&id, &name, &arg, &input).await == Decision::Deny {
                 let msg = if self.can_ask {
                     "The user rejected this tool call. Stop and wait for their instructions."
                 } else {
@@ -1337,8 +1375,15 @@ Don't repeat it. Change the arguments or try a different approach.",
                 denied = self.can_ask;
                 text(ToolOutcome::Denied, msg.to_string(), None)
             } else {
+                let started = Instant::now();
                 self.snapshot(&name, &input);
-                match self.run_tool(&id, &name, &input).await {
+                let r = self.run_tool(&id, &name, &input).await;
+                let took = ms(started.elapsed());
+                self.timing.tool_ms += took;
+                if let Some(t) = self.timing.tools.last_mut() {
+                    t.ms = took;
+                }
+                match r {
                     Ok(o) => (ToolOutcome::Ok, o),
                     Err(e) => text(ToolOutcome::Error, format!("Error: {e:#}"), None),
                 }
@@ -1480,6 +1525,9 @@ Don't repeat it. Change the arguments or try a different approach.",
             });
             let mut started = false;
             let mut streamed = Streamed::default();
+            let sent = Instant::now();
+            // When the first event arrived, and the first that wasn't reasoning.
+            let (mut first, mut answer) = (None::<Instant>, None::<Instant>);
             let mut filter = TagFilter::default();
             let text = |streamed: &mut Streamed, text: String| {
                 let id = streamed.message.get_or_insert_with(|| {
@@ -1499,6 +1547,11 @@ Don't repeat it. Change the arguments or try a different approach.",
                 .provider
                 .complete(&req, &mut |e| {
                     started = true;
+                    let now = Instant::now();
+                    first.get_or_insert(now);
+                    if !matches!(e, StreamEvent::Thinking(_)) {
+                        answer.get_or_insert(now);
+                    }
                     if quiet {
                         return;
                     }
@@ -1541,6 +1594,11 @@ Don't repeat it. Change the arguments or try a different approach.",
             if !quiet && !rest.is_empty() {
                 text(&mut streamed, rest);
             }
+            let done = Instant::now();
+            let first = first.unwrap_or(done);
+            streamed.ttft = first - sent;
+            streamed.decode = done - first;
+            streamed.think = answer.unwrap_or(done) - first;
             match r {
                 Ok(resp) if resp.stop == Stop::Incomplete => return Err(IncompleteStream.into()),
                 // Unparseable JSON-mode output is kept as a plain answer and counted as a failure.
@@ -1565,6 +1623,23 @@ Don't repeat it. Change the arguments or try a different approach.",
                 Err(e) => return Err(e),
             }
         }
+    }
+
+    /// [`Self::permit`], recording a [`ToolTiming`] with how long the user and the
+    /// classifier took (the tool's own time is filled in once it runs).
+    async fn timed_permit(&mut self, item: &str, name: &str, arg: &str, input: &Value) -> Decision {
+        let (user, classifier) = (self.timing.user_ms, self.timing.classifier_ms);
+        let decision = self.permit(item, name, arg, input).await;
+        let t = &self.timing;
+        let timing = ToolTiming {
+            id: item.to_string(),
+            name: name.to_string(),
+            ms: 0,
+            user_ms: t.user_ms - user,
+            classifier_ms: t.classifier_ms - classifier,
+        };
+        self.timing.tools.push(timing);
+        decision
     }
 
     async fn permit(&mut self, item: &str, name: &str, arg: &str, input: &Value) -> Decision {
@@ -1610,7 +1685,10 @@ Don't repeat it. Change the arguments or try a different approach.",
                 (true, false) => crate::auto::Sandbox::In,
                 (false, false) => crate::auto::Sandbox::Off,
             };
-            match self.auto_judge(item, name, input, sandbox).await {
+            let started = Instant::now();
+            let verdict = self.auto_judge(item, name, input, sandbox).await;
+            self.timing.classifier_ms += ms(started.elapsed());
+            match verdict {
                 Ok(()) => return Decision::Allow,
                 Err(why) => {
                     reason = Some(format!(
@@ -1650,7 +1728,9 @@ Don't repeat it. Change the arguments or try a different approach.",
             preview,
             reason,
         });
+        let asked = Instant::now();
         let decision = rx.await.unwrap_or(Decision::Deny);
+        self.timing.user_ms += ms(asked.elapsed());
         self.emit(Event::PermissionResolved { id, decision });
         if decision == Decision::AllowAlways {
             self.session_allow.insert(key);
@@ -1714,8 +1794,8 @@ Don't repeat it. Change the arguments or try a different approach.",
             Some(m) if m.role == Role::User => m.content.push(Block::Text { text: instr }),
             _ => msgs.push(Message::user(instr)),
         }
-        let (resp, _) = self.call("compacting", &msgs, true).await?;
-        self.count_call(resp.usage);
+        let (resp, streamed) = self.call("compacting", &msgs, true).await?;
+        self.count_call(resp.usage, &streamed, true);
         let summary = resp.message.text();
         if summary.trim().is_empty() {
             anyhow::bail!("compaction produced an empty summary; keeping the full history");
@@ -1821,6 +1901,10 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
             },
         });
     }
+}
+
+fn ms(d: Duration) -> u64 {
+    d.as_millis() as u64
 }
 
 /// Memory notes sit next to the session store: `~/.local/share/kiln/memory`.
@@ -2523,6 +2607,97 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[tokio::test]
+    async fn turn_timing_keeps_permission_waits_out_of_tool_time() {
+        let bash = Block::ToolUse {
+            id: "b".into(),
+            name: "Bash".into(),
+            // Leaving the sandbox always asks.
+            input: json!({ "command": "sleep 0.2", "unsandboxed": true }),
+        };
+        let script = vec![
+            reply(vec![bash], Stop::ToolUse),
+            reply(vec![text("slept")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "nap".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        loop {
+            if let Event::PermissionRequest { id, .. } = h.events.recv().await.unwrap().event {
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                h.ops
+                    .send(Op::Permission {
+                        id,
+                        decision: Decision::Allow,
+                    })
+                    .unwrap();
+                break;
+            }
+        }
+        let evs = until_idle(&mut h).await;
+        let t = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnEnded { usage, .. } => usage.timing.clone(),
+                _ => None,
+            })
+            .expect("turn_ended carries timing");
+        assert!(t.user_ms >= 400, "user wait {}", t.user_ms);
+        assert!(
+            (200..400).contains(&t.tool_ms),
+            "tool time excludes the prompt: {}",
+            t.tool_ms
+        );
+        assert_eq!(t.classifier_ms, 0);
+        assert!(t.wall_ms >= t.user_ms + t.tool_ms);
+        assert_eq!(
+            t.other_ms,
+            t.wall_ms - t.prefill_ms - t.decode_ms - t.tool_ms - t.user_ms
+        );
+        assert_eq!(t.calls.len(), 2);
+        assert!(
+            t.calls
+                .iter()
+                .all(|c| (c.prompt_tokens, c.output_tokens, c.compact) == (100, 10, false))
+        );
+        assert_eq!(t.tools.len(), 1);
+        assert_eq!(
+            (t.tools[0].id.as_str(), t.tools[0].name.as_str()),
+            ("b", "Bash")
+        );
+        assert_eq!((t.tools[0].ms, t.tools[0].user_ms), (t.tool_ms, t.user_ms));
+    }
+
+    #[tokio::test]
+    async fn denied_tools_are_timed_as_waiting_not_running() {
+        let bash = Block::ToolUse {
+            id: "b".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "touch nope", "unsandboxed": true }),
+        };
+        let mut h = engine(
+            vec![
+                reply(vec![bash], Stop::ToolUse),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            false,
+        );
+        let evs = run(&mut h, "make a file").await;
+        let t = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnEnded { usage, .. } => usage.timing.clone(),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!((t.tool_ms, t.tools.len(), t.tools[0].ms), (0, 1, 0));
     }
 
     #[tokio::test]
