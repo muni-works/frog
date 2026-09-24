@@ -38,11 +38,23 @@ struct ComposerView: View {
         VStack(alignment: .leading, spacing: 8) {
             topRow
                 .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
-            box
+            field
+            controls
         }
         .padding(.horizontal, 20)
-        .padding(.bottom, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
         .frame(maxWidth: 860)
+        .frame(maxWidth: .infinity)
+        // The transcript scrolls under the composer; the canvas fades in behind it.
+        .background {
+            LinearGradient(
+                stops: [.init(color: KilnCanvas.color.opacity(0), location: 0), .init(color: KilnCanvas.color, location: 0.25)],
+                startPoint: .top, endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+        }
     }
 
     /// Before the first message: where the conversation works (a folder, or none for a plain
@@ -50,7 +62,12 @@ struct ComposerView: View {
     @ViewBuilder
     private var topRow: some View {
         if conversation.turns.isEmpty, !conversation.replaying {
-            FolderChip(folder: workspace.folder, choose: switchFolder)
+            ContextBar {
+                // Its hover plate's margin, so the text lines up with the git bar's.
+                FolderChip(folder: workspace.folder, choose: switchFolder)
+                    .padding(.leading, -7)
+                Spacer(minLength: 0)
+            }
         } else if !workspace.isChat, let git = workspace.git {
             GitBar(folder: workspace.folder, git: git, busy: conversation.busy) {
                 conversation.submit("Commit the current changes: review the diff, stage only files related to our work, and write a clear, concise commit message.")
@@ -58,7 +75,9 @@ struct ComposerView: View {
         }
     }
 
-    private var box: some View {
+    private static let fieldShape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+
+    private var field: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let toast = conversation.toast {
                 Label(toast, systemImage: "info.circle")
@@ -73,94 +92,46 @@ struct ComposerView: View {
             if !attachments.isEmpty {
                 AttachmentStrip(images: $attachments, blind: conversation.status?.vision == false ? conversation.status?.model : nil)
             }
-            ZStack(alignment: .topLeading) {
-                if text.isEmpty {
-                    Text(conversation.busy ? "Working… Esc interrupts · Return queues a follow-up" : workspace.skills.isEmpty ? "Ask kiln to do something · @ to mention a file" : "Ask kiln to do something · @ to mention a file · / for skills")
-                        .foregroundStyle(.tertiary)
-                        .padding(.leading, 5)
-                        .padding(.top, 1)
-                        .allowsHitTesting(false)
-                }
-                ComposerTextView(
-                    text: $text,
-                    height: $height,
-                    controller: controller,
-                    onSubmit: send,
-                    onEscape: {
-                        guard conversation.busy else { return false }
-                        conversation.interrupt()
-                        return true
-                    },
-                    onMention: { query in
-                        if query != nil { workspace.loadFiles() }
-                        if query != mention { picked = 0 }
-                        mention = query
-                    },
-                    onMentionKey: handleMentionKey,
-                    onPasteImages: { attachments += $0 }
-                )
-                .frame(height: height)
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    attachFromPanel()
-                } label: {
-                    Image(systemName: "photo.badge.plus")
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Attach images (or paste, or drop them here)")
-                ModePicker(conversation: conversation)
-                ModelPicker(workspace: workspace, conversation: conversation)
-                Spacer()
-                if let e = workspace.raceError {
-                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
-                }
-                Button {
-                    racing = true
-                } label: {
-                    Image(systemName: "square.stack.3d.up")
-                        .frame(width: 26, height: 26)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .disabled(!canSend || conversation.busy)
-                .accessibilityLabel("Race")
-                .help("Race: run this prompt as several parallel attempts (⌥⌘R)")
-                .popover(isPresented: $racing, arrowEdge: .top) {
-                    RaceSetup(workspace: workspace, prompt: text) { models, check in
-                        racing = false
-                        workspace.startRace(prompt: text, models: models, check: check)
-                        text = ""
+            HStack(alignment: .bottom, spacing: 10) {
+                ZStack(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text(placeholder)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .padding(.leading, 5)
+                            .padding(.top, 1)
+                            .allowsHitTesting(false)
                     }
+                    ComposerTextView(
+                        text: $text,
+                        height: $height,
+                        controller: controller,
+                        onSubmit: send,
+                        onEscape: {
+                            guard conversation.busy else { return false }
+                            conversation.interrupt()
+                            return true
+                        },
+                        onMention: { query in
+                            if query != nil { workspace.loadFiles() }
+                            if query != mention { picked = 0 }
+                            mention = query
+                        },
+                        onMentionKey: handleMentionKey,
+                        onPasteImages: { attachments += $0 }
+                    )
+                    .frame(height: height)
                 }
-                if conversation.busy, !canSend {
-                    Button {
-                        conversation.interrupt()
-                    } label: {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 11, weight: .bold))
-                            .frame(width: 26, height: 26)
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .help("Interrupt (Esc or ⌘.)")
-                } else {
-                    Button(action: send) {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 13, weight: .bold))
-                            .frame(width: 26, height: 26)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .buttonBorderShape(.circle)
-                    .disabled(!canSend)
-                    .help(conversation.busy ? "Queue (Return)" : "Send (Return)")
-                }
+                sendButton
             }
         }
-        .padding(12)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(KilnCanvas.color, in: Self.fieldShape)
+        .overlay(Self.fieldShape.fill(Color.primary.opacity(0.045)).allowsHitTesting(false))
+        .overlay(Self.fieldShape.strokeBorder(Color.primary.opacity(0.14), lineWidth: 1))
+        .contentShape(Self.fieldShape)
+        .onTapGesture { controller.focus() }
         .animation(.snappy, value: conversation.toast)
         .onChange(of: window?.focusComposerRequest) { controller.focus() }
         .onChange(of: skillSuggestions.map(\.name)) { picked = 0 }
@@ -168,7 +139,6 @@ struct ComposerView: View {
             controller.focus()
             racing = true
         }
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
         // Completions float above the composer, outside its glass (which would clip them).
         .overlay(alignment: .topLeading) {
             Group {
@@ -188,6 +158,95 @@ struct ComposerView: View {
             guard !urls.isEmpty else { return }
             conversation.dropped = []
             accept(urls)
+        }
+    }
+
+    private var placeholder: String {
+        if conversation.busy { return "Working… Esc interrupts · Return queues a follow-up" }
+        return workspace.isChat ? "Ask anything" : "Ask kiln to do something · @ mentions a file"
+    }
+
+    /// Send while there's something to send; stop while a turn runs and the field is empty.
+    @ViewBuilder
+    private var sendButton: some View {
+        if conversation.busy, !canSend {
+            Button { conversation.interrupt() } label: {
+                Image(systemName: "stop.circle.fill")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                    .hoverPlate(h: 3, v: 3)
+            }
+            .buttonStyle(.plain)
+            .help("Interrupt (Esc or ⌘.)")
+        } else {
+            Button(action: send) {
+                Image(systemName: "return")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+                    .frame(width: 22, height: 22)
+                    .hoverPlate(h: 3, v: 3)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .help(conversation.busy ? "Queue (Return)" : "Send (Return)")
+        }
+    }
+
+    /// Under the field, without chrome: add things on the left, how kiln works on the right.
+    private var controls: some View {
+        HStack(spacing: 8) {
+            plusMenu
+            ModePicker(conversation: conversation)
+            Spacer()
+            if let e = workspace.raceError {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
+            }
+            ModelPicker(workspace: workspace, conversation: conversation)
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 5)
+    }
+
+    private var plusMenu: some View {
+        Menu {
+            Button("Attach Images…", systemImage: "photo") { attachFromPanel() }
+            if !workspace.isChat {
+                Button("Mention a File", systemImage: "at") {
+                    controller.focus()
+                    controller.insert("@")
+                }
+            }
+            if !workspace.skills.isEmpty {
+                Button("Use a Skill", systemImage: "wand.and.stars") {
+                    controller.focus()
+                    controller.replaceAll("/")
+                }
+                .disabled(!text.isEmpty)
+            }
+            if !workspace.isChat {
+                Divider()
+                Button("Race Attempts…", systemImage: "square.stack.3d.up") { racing = true }
+                    .disabled(!canSend || conversation.busy)
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 22, height: 22)
+                .hoverPlate(h: 3, v: 3)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Attach images, mention a file, use a skill, or race attempts")
+        .popover(isPresented: $racing, arrowEdge: .top) {
+            RaceSetup(workspace: workspace, prompt: text) { models, check in
+                racing = false
+                workspace.startRace(prompt: text, models: models, check: check)
+                text = ""
+            }
         }
     }
 
@@ -258,13 +317,17 @@ struct ModePicker: View {
                 }
             }
         } label: {
-            Label(mode.label, systemImage: mode.symbol)
-                .font(.callout)
+            HStack(spacing: 4) {
+                Text(mode.label)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundStyle(mode == .yolo ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            .hoverPlate()
         }
         .menuStyle(.button)
-        .buttonStyle(.glass)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
-        .tint(mode == .yolo ? .orange : nil)
         .help("Permission mode")
     }
 }
@@ -285,13 +348,22 @@ struct ModelPicker: View {
                 }
             }
         } label: {
-            Label(conversation.status?.model ?? "Model", systemImage: "cpu")
-                .font(.callout)
+            HStack(spacing: 4) {
+                Text(conversation.status.map { short($0.model) } ?? "Model")
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
+            .hoverPlate()
         }
         .menuStyle(.button)
-        .buttonStyle(.glass)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
         .help(conversation.status.map { "\($0.toolMode) tool calls · \($0.tier) tier" } ?? "Model")
+    }
+
+    /// "ollama/qwen3:4b" → "qwen3:4b"; the full spec is in the menu.
+    private func short(_ spec: String) -> String {
+        spec.split(separator: "/").last.map(String.init) ?? spec
     }
 
     private func detail(_ m: ModelEntry) -> String {
@@ -343,30 +415,56 @@ struct GitBar: View {
     let commit: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Label(folder.lastPathComponent, systemImage: "folder")
-            Label(git.branch, systemImage: "arrow.triangle.branch")
-            if git.changed > 0 {
-                Text("\(git.changed) changed").foregroundStyle(.tertiary)
-            }
+        ContextBar {
+            Text(folder.lastPathComponent)
+            Text(git.branch).foregroundStyle(.tertiary)
             Spacer(minLength: 8)
             if git.changed > 0 {
-                Button("Commit changes", action: commit)
-                    .buttonStyle(.glass)
-                    .controlSize(.small)
-                    .disabled(busy)
-                    .help("Ask kiln to commit the current changes")
+                HStack(spacing: 6) {
+                    if git.added + git.removed > 0 {
+                        Text("+\(git.added)").foregroundStyle(.green)
+                        Text("−\(git.removed)").foregroundStyle(.red)
+                    } else {
+                        Text("\(git.changed) new").foregroundStyle(.secondary)
+                    }
+                }
+                .monospacedDigit()
+                .padding(.horizontal, 10)
+                .frame(height: 26)
+                .background(Color.primary.opacity(0.07), in: .rect(cornerRadius: 7))
+                .help("\(git.changed) file\(git.changed == 1 ? "" : "s") with uncommitted changes")
+                Button(action: commit) {
+                    Text("Commit changes")
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(Color.primary.opacity(0.07), in: .rect(cornerRadius: 7))
+                        .hoverPlate(h: 0, v: 0)
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+                .help("Ask kiln to commit the current changes")
             }
         }
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .labelStyle(.titleAndIcon)
-        .padding(.horizontal, 14)
-        .frame(height: 34)
-        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
         .contextMenu {
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
         }
+    }
+}
+
+/// The flat bar above the composer: where the conversation works, and what's changed there.
+struct ContextBar<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(spacing: 12) { content }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.leading, 14)
+            .padding(.trailing, 7)
+            .frame(height: 38)
+            .background(KilnCanvas.color, in: .rect(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.055)).allowsHitTesting(false))
     }
 }
 
@@ -451,7 +549,7 @@ struct SkillList: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(i == picked ? AnyShapeStyle(.tint.opacity(0.22)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
-                    .contentShape(.rect)
+                    .hoverPlate(h: 0, v: 0)
                 }
                 .buttonStyle(.plain)
             }
@@ -484,7 +582,7 @@ struct MentionList: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(i == picked ? AnyShapeStyle(.tint.opacity(0.22)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
-                    .contentShape(.rect)
+                    .hoverPlate(h: 0, v: 0)
                 }
                 .buttonStyle(.plain)
             }
@@ -514,5 +612,31 @@ struct QueuedMessages: View {
             }
         }
         .padding(.horizontal, 4)
+    }
+}
+
+extension View {
+    /// A soft rounded plate behind a plain control while the pointer is over it, so chromeless
+    /// buttons and menus still answer the pointer. The padding is the plate's margin.
+    func hoverPlate(h: CGFloat = 7, v: CGFloat = 3, radius: CGFloat = 7) -> some View {
+        modifier(HoverPlate(h: h, v: v, radius: radius))
+    }
+}
+
+private struct HoverPlate: ViewModifier {
+    let h: CGFloat
+    let v: CGFloat
+    let radius: CGFloat
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, h)
+            .padding(.vertical, v)
+            .background(Color.primary.opacity(hovering && enabled ? 0.08 : 0), in: .rect(cornerRadius: radius, style: .continuous))
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }

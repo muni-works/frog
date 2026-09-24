@@ -39,13 +39,15 @@ struct FolderChip: View {
                 Image(systemName: current == nil ? "bubble.left" : "folder")
                 Text(current?.lastPathComponent ?? "No folder")
                     .lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
             }
             .font(.callout)
             .foregroundStyle(.secondary)
+            .hoverPlate()
         }
         .menuStyle(.button)
-        .buttonStyle(.glass)
-        .controlSize(.regular)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
         .help(current.map { $0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") } ?? "A plain chat, without a project folder. Pick a folder to let kiln work on code.")
     }
