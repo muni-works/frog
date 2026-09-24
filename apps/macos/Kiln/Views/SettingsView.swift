@@ -193,6 +193,8 @@ private struct ProviderRow: View {
             }
             Spacer()
             if provider.custom {
+                Button(provider.key == nil ? "Set Key…" : "Change Key…", action: setKey)
+                    .help("For a server that asks for one, like vLLM started with --api-key")
                 Button("Remove", role: .destructive, action: remove)
             } else if !provider.local, provider.key != "env" {
                 Button(provider.connected ? "Change Key…" : "Add Key…", action: setKey)
