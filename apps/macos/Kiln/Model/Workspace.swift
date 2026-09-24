@@ -90,6 +90,13 @@ final class Workspace {
         }
     }
 
+    /// Reload the model list (after providers or enabled models change).
+    func reloadModels() async {
+        if let m = try? await Kiln.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
+            models = m
+        }
+    }
+
     func newSession() {
         start(arguments: [])
     }

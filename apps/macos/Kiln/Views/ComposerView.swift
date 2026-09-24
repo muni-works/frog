@@ -332,47 +332,6 @@ struct ModePicker: View {
     }
 }
 
-struct ModelPicker: View {
-    let workspace: Workspace
-    let conversation: Conversation
-
-    var body: some View {
-        Menu {
-            ForEach(workspace.models) { m in
-                Button {
-                    workspace.preferredModel = m.spec
-                    conversation.setModel(m.spec)
-                } label: {
-                    Text(m.spec)
-                    Text(detail(m))
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(conversation.status.map { short($0.model) } ?? "Model")
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
-            }
-            .hoverPlate()
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(conversation.status.map { "\($0.toolMode) tool calls · \($0.tier) tier" } ?? "Model")
-    }
-
-    /// "ollama/qwen3:4b" → "qwen3:4b"; the full spec is in the menu.
-    private func short(_ spec: String) -> String {
-        spec.split(separator: "/").last.map(String.init) ?? spec
-    }
-
-    private func detail(_ m: ModelEntry) -> String {
-        var parts = ["\(m.toolMode) tools", "\(m.tier) tier"]
-        if let b = m.caps?.paramsB { parts.insert(String(format: "%.1fB", b), at: 0) }
-        if m.caps == nil, m.source == "ollama" { parts.append("not profiled yet") }
-        return parts.joined(separator: " · ")
-    }
-}
 
 struct ContextRing: View {
     let status: Status

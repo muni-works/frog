@@ -2,14 +2,17 @@ import SwiftUI
 
 /// ⌘, : General, Models, Permissions, Appearance, Shortcuts.
 struct SettingsView: View {
+    /// The open tab; "Manage models…" in the model picker sets it to "models".
+    @AppStorage("settingsTab") private var tab = "general"
+
     var body: some View {
-        TabView {
-            Tab("General", systemImage: "gearshape") { GeneralSettings() }
-            Tab("Models", systemImage: "cpu") { ModelSettings() }
-            Tab("Permissions", systemImage: "hand.raised") { PermissionSettings() }
-            Tab("MCP", systemImage: "puzzlepiece.extension") { MCPSettings() }
-            Tab("Appearance", systemImage: "paintbrush") { AppearanceSettings() }
-            Tab("Shortcuts", systemImage: "keyboard") { ShortcutSettings() }
+        TabView(selection: $tab) {
+            Tab("General", systemImage: "gearshape", value: "general") { GeneralSettings() }
+            Tab("Models", systemImage: "cpu", value: "models") { ModelSettings() }
+            Tab("Permissions", systemImage: "hand.raised", value: "permissions") { PermissionSettings() }
+            Tab("MCP", systemImage: "puzzlepiece.extension", value: "mcp") { MCPSettings() }
+            Tab("Appearance", systemImage: "paintbrush", value: "appearance") { AppearanceSettings() }
+            Tab("Shortcuts", systemImage: "keyboard", value: "shortcuts") { ShortcutSettings() }
         }
         .frame(width: 620)
         .scenePadding()
@@ -60,18 +63,81 @@ enum Models {
 // MARK: - Models
 
 private struct ModelSettings: View {
+    @State private var store = ProviderStore.shared
     @State private var models: [ModelEntry] = []
     @State private var loading = true
+    @State private var keyFor: ProviderInfo?
+    @State private var addingServer = false
+    @State private var query = ""
 
     private let sources: [(key: String, title: String)] = [
         ("tang", "Local: tang (open models on this Mac)"),
         ("apple", "Local: Apple Intelligence"),
         ("ollama", "Local: Ollama"),
+        ("server", "Your servers"),
         ("config", "Configured in config.toml"),
     ]
 
+    /// Catalog matches for the search: every word must appear in the name or spec.
+    private var matches: [CatalogModel] {
+        let words = query.lowercased().split(separator: " ")
+        guard !words.isEmpty else { return store.catalog.filter { $0.enabled == true } }
+        return store.catalog.filter { m in
+            let hay = (m.name + " " + m.spec).lowercased()
+            return words.allSatisfy { hay.contains($0) }
+        }
+    }
+
     var body: some View {
         Form {
+            Section {
+                ForEach(store.providers) { p in
+                    ProviderRow(provider: p) { keyFor = p } remove: {
+                        Task { await store.remove(p.id); models = await Models.load() }
+                    }
+                }
+                Button("Add Server…") { addingServer = true }
+            } header: {
+                Text("Providers")
+            } footer: {
+                Text("Keys are kept in your Keychain. A server of your own, like a GPU box running Ollama, vLLM or llama.cpp, offers everything it serves.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                TextField("Search \(store.catalog.count) models", text: $query)
+                    .textFieldStyle(.roundedBorder)
+                let list = Array(matches.prefix(150))
+                if list.isEmpty {
+                    Text(query.isEmpty ? "Search to find models from OpenRouter, Vercel AI Gateway and the providers you've connected, and turn on the ones you want in the picker." : "No models match.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(list) { m in
+                    CatalogRow(model: m, provider: store.provider(m.provider)) { on in
+                        Task { await store.setEnabled(m.spec, on) }
+                    }
+                }
+                if matches.count > list.count {
+                    Text("\(matches.count - list.count) more; narrow the search.").foregroundStyle(.secondary)
+                }
+            } header: {
+                HStack {
+                    Text(query.isEmpty ? "Models you've turned on" : "Models")
+                    Spacer()
+                    if store.loadingCatalog {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Refresh", systemImage: "arrow.clockwise") {
+                            Task { await store.loadCatalog(refresh: true) }
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help("Fetch the latest model lists")
+                    }
+                }
+            }
+            if let error = store.error {
+                Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+            }
             Section {
                 ForEach(SuggestedModel.all) { m in
                     SuggestedModelRow(model: m) { Task { models = await Models.load() } }
@@ -95,11 +161,181 @@ private struct ModelSettings: View {
             }
         }
         .formStyle(.grouped)
-        .frame(minHeight: 460)
+        .frame(minHeight: 560)
+        .sheet(item: $keyFor) { p in KeySheet(provider: p) }
+        .sheet(isPresented: $addingServer) {
+            ServerSheet { Task { models = await Models.load() } }
+        }
         .task {
+            await store.load()
+            async let catalog: () = store.loadCatalog()
             models = await Models.load()
             loading = false
+            await catalog
         }
+        .onChange(of: store.generation) { Task { models = await Models.load() } }
+    }
+}
+
+private struct ProviderRow: View {
+    let provider: ProviderInfo
+    let setKey: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(provider.connected ? Color.green : Color.secondary.opacity(0.4))
+                .frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(provider.name)
+                Text(status).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if provider.custom {
+                Button("Remove", role: .destructive, action: remove)
+            } else if !provider.local, provider.key != "env" {
+                Button(provider.connected ? "Change Key…" : "Add Key…", action: setKey)
+            }
+        }
+    }
+
+    private var status: String {
+        if provider.custom { return provider.baseUrl }
+        if provider.local { return "On this Mac, when it's running" }
+        switch provider.key {
+        case "env": return "Connected (key from the environment)"
+        case "keychain": return "Connected"
+        default: return "Not connected"
+        }
+    }
+}
+
+private struct CatalogRow: View {
+    let model: CatalogModel
+    let provider: ProviderInfo?
+    let toggle: (Bool) -> Void
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { model.enabled ?? false }, set: toggle)) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.name)
+                Text(details).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .disabled(!(provider?.connected ?? false) && model.enabled != true)
+        .help(provider?.connected == false ? "Add a \(provider?.name ?? "provider") key to use this model" : model.spec)
+    }
+
+    private var details: String {
+        var parts = [provider?.name ?? model.provider]
+        if let c = model.contextLabel { parts.append("\(c) context") }
+        if model.vision { parts.append("images") }
+        if model.reasoning { parts.append("reasoning") }
+        if !model.tools { parts.append("no tools") }
+        if let p = model.price { parts.append(p) }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// Paste a provider's API key; it goes to the Keychain through kiln, never to disk.
+private struct KeySheet: View {
+    let provider: ProviderInfo
+    @State private var key = ""
+    @State private var saving = false
+    @State private var store = ProviderStore.shared
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Connect \(provider.name)").font(.headline)
+            SecureField("API key", text: $key)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(save)
+            if let url = URL(string: provider.keyUrl), !provider.keyUrl.isEmpty {
+                Link("Get a key from \(provider.name)", destination: url).font(.callout)
+            }
+            Text("Stored in your Keychain. kiln sends it only to \(provider.name).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let e = store.error { Text(e).font(.caption).foregroundStyle(.red) }
+            HStack {
+                if provider.key == "keychain" {
+                    Button("Remove Key", role: .destructive) {
+                        Task { await store.setKey("", for: provider.id); dismiss() }
+                    }
+                }
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Save", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+
+    private func save() {
+        guard !key.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        saving = true
+        Task {
+            await store.setKey(key, for: provider.id)
+            saving = false
+            if store.error == nil { dismiss() }
+        }
+    }
+}
+
+/// Add a server on your network (a GPU box running Ollama, vLLM, llama.cpp or LM Studio).
+private struct ServerSheet: View {
+    let added: () -> Void
+    @State private var name = ""
+    @State private var url = ""
+    @State private var ollama = true
+    @State private var saving = false
+    @State private var store = ProviderStore.shared
+    @Environment(\.dismiss) private var dismiss
+
+    /// "GPU Box" → "gpu-box".
+    private var id: String {
+        let slug = name.lowercased().map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+        return slug.split(separator: "-").joined(separator: "-")
+    }
+
+    var body: some View {
+        Form {
+            TextField("Name", text: $name, prompt: Text("GPU Box"))
+            Picker("Runs", selection: $ollama) {
+                Text("Ollama").tag(true)
+                Text("OpenAI-compatible (vLLM, llama.cpp, LM Studio)").tag(false)
+            }
+            TextField("URL", text: $url, prompt: Text(ollama ? "http://gpu-box.local:11434" : "http://gpu-box.local:8000/v1"))
+            if !id.isEmpty {
+                LabeledContent("Models appear as", value: "\(id)/<model>")
+                    .foregroundStyle(.secondary)
+            }
+            if let e = store.error { Text(e).foregroundStyle(.red) }
+        }
+        .formStyle(.grouped)
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Add") {
+                    saving = true
+                    Task {
+                        let ok = await store.addServer(id: id, name: name, url: url.trimmingCharacters(in: .whitespaces), ollama: ollama)
+                        saving = false
+                        if ok { added(); dismiss() }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(id.isEmpty || url.isEmpty || saving)
+            }
+            .padding()
+        }
+        .frame(width: 460, height: 300)
     }
 }
 

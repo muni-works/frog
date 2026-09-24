@@ -62,6 +62,32 @@ enum Kiln {
         }.value
     }
 
+    /// Run a one-shot `kiln` command, feeding it `input` on stdin (for secrets, which never go
+    /// on the command line); throws kiln's own error message if it fails.
+    static func command(_ args: [String], input: String? = nil) async throws {
+        guard let binary else { throw KilnError.missingBinary }
+        try await Task.detached {
+            let p = Process()
+            p.executableURL = binary
+            p.arguments = args
+            p.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+            p.environment = environment
+            let stdin = Pipe(), err = Pipe()
+            p.standardInput = stdin
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = err
+            try p.run()
+            if let input { stdin.fileHandleForWriting.write(Data(input.utf8)) }
+            try? stdin.fileHandleForWriting.close()
+            let message = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            p.waitUntilExit()
+            guard p.terminationStatus == 0 else {
+                let line = message.split(separator: "\n").last.map(String.init) ?? "kiln failed"
+                throw KilnError.failed(line.replacingOccurrences(of: "Error: ", with: ""))
+            }
+        }.value
+    }
+
     /// Run a one-shot `kiln` command and decode its JSON output.
     static func json<T: Decodable & Sendable>(_ type: T.Type, args: [String], cwd: URL) async throws -> T {
         guard let binary else { throw KilnError.missingBinary }
@@ -84,9 +110,13 @@ enum Kiln {
 
 enum KilnError: LocalizedError {
     case missingBinary
+    case failed(String)
 
     var errorDescription: String? {
-        "Couldn't find the kiln engine. Build it with `cargo build --release -p kiln` or set KILN_BIN."
+        switch self {
+        case .missingBinary: "Couldn't find the kiln engine. Build it with `cargo build --release -p kiln` or set KILN_BIN."
+        case .failed(let message): message
+        }
     }
 }
 

@@ -576,8 +576,44 @@ struct ModelEntry: Decodable, Sendable, Identifiable, Hashable {
     var caps: Caps?
     var tier: String
     var toolMode: String
+    /// The provider's catalog entry, for models turned on from a provider.
+    var info: CatalogModel?
 
     var id: String { spec }
+}
+
+/// A model a provider offers, with what's worth knowing to pick it.
+struct CatalogModel: Decodable, Sendable, Hashable, Identifiable {
+    var spec: String
+    var provider: String
+    var id: String
+    var name: String
+    var context: UInt64?
+    var maxOutput: UInt64?
+    var inputs: [String]
+    var reasoning: Bool
+    var tools: Bool
+    /// Dollars per million tokens.
+    var costIn: Double?
+    var costOut: Double?
+    /// Shown in the model list (only in `--catalog` output).
+    var enabled: Bool?
+
+    var vision: Bool { inputs.contains("image") }
+}
+
+/// A provider: a preset gateway or API, a local server, or one you added.
+struct ProviderInfo: Decodable, Sendable, Hashable, Identifiable {
+    var id: String
+    var name: String
+    var kind: String
+    var baseUrl: String
+    var local: Bool
+    var custom: Bool
+    /// "keychain" or "env" when it has a key.
+    var key: String?
+    var keyUrl: String
+    var connected: Bool
 }
 
 extension JSONDecoder {
