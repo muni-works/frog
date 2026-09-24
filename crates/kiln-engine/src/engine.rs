@@ -799,6 +799,88 @@ impl Agent {
         }
     }
 
+    /// Project files the user named without `@` ("calc.py has a bug"), which small models often
+    /// ask the user to paste instead of reading. Below the strong tier, small text files are
+    /// inlined like `@` mentions (within a slice of the window); otherwise a short note says
+    /// they exist and can be Read. Returns the text to append and the files named.
+    fn attach_named(&mut self, input: &str) -> (String, Vec<PathBuf>) {
+        if self.chat || self.subagent {
+            return (String::new(), Vec::new());
+        }
+        let files = crate::named_files::named(input, &self.root);
+        let mut budget = if self.tier == Tier::Strong {
+            0
+        } else {
+            (self.est.chars(self.window) / 10).min(24_000)
+        };
+        let (mut inlined, mut noted) = (String::new(), Vec::new());
+        for path in &files {
+            let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+            // Already inlined or read, and unchanged since.
+            if self.ctx.read_files.get(path).is_some_and(|t| *t == mtime) {
+                continue;
+            }
+            let shown = self.ctx.display(path);
+            let text = std::fs::metadata(path)
+                .is_ok_and(|m| budget > 0 && (m.len() as usize) <= budget)
+                .then(|| std::fs::read_to_string(path).ok())
+                .flatten()
+                .filter(|t| !t.contains('\0'));
+            match text {
+                Some(text) => {
+                    budget -= text.len();
+                    inlined.push_str(&format!("\n<file path=\"{shown}\">\n{text}\n</file>"));
+                    self.ctx.mark_read(path);
+                }
+                None => noted.push(shown),
+            }
+        }
+        let mut extra = inlined;
+        if !noted.is_empty() {
+            extra.push_str(&format!(
+                "\n(In this project: {}. Use Read to open them.)",
+                noted.join(", ")
+            ));
+        }
+        (extra, files)
+    }
+
+    /// A nudge for a reply that asked the user for code it could Read, or said it can't see
+    /// files. `None` when the reply is fine, or asks for a named file that isn't here.
+    fn file_nudge(&self, reply: &str, named: &[PathBuf]) -> Option<String> {
+        if self.chat || !self.specs.iter().any(|s| s.name == "Read") {
+            return None;
+        }
+        if !crate::named_files::asks_for_files(reply) {
+            return None;
+        }
+        let mut files = crate::named_files::named(reply, &self.root);
+        for p in named {
+            if !files.contains(p) {
+                files.push(p.clone());
+            }
+        }
+        if files.is_empty()
+            && !crate::named_files::claims_no_access(reply)
+            && !crate::named_files::candidates(reply).is_empty()
+        {
+            return None;
+        }
+        let how = match files.as_slice() {
+            [] => "use Glob or Grep to find the relevant files and Read to open them".to_string(),
+            fs => format!(
+                "use Read to open {}",
+                fs.iter()
+                    .map(|p| self.ctx.display(p))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        Some(format!(
+            "You have tools and can open this project's files yourself, so don't ask me for them: {how}, then continue with the task."
+        ))
+    }
+
     async fn turn(&mut self, input: &str, mut images: Vec<crate::protocol::Image>) -> Result<()> {
         let (input, named) = crate::image_paths::attach(input);
         let input = input.as_str();
@@ -824,6 +906,7 @@ impl Agent {
         if !text.is_empty() {
             text.push('\n');
         }
+        let typed = input.to_string();
         // `/skill-name ...` loads that skill ahead of the request.
         let input = match crate::skills::expand_command(&self.skills, input) {
             Some((expanded, name)) => {
@@ -833,6 +916,9 @@ impl Agent {
             None => input.to_string(),
         };
         text.push_str(&self.expand_mentions(&input));
+        // Only the user's own words: not skill text or shell output.
+        let (extra, named) = self.attach_named(&typed);
+        text.push_str(&extra);
         self.push_user(text);
         if !images.is_empty() {
             self.extend_last(
@@ -849,6 +935,8 @@ impl Agent {
         let mut compacted = false;
         let mut repeats: HashMap<String, u32> = HashMap::new();
         let mut steps = 0;
+        // A reply asking for files it could Read is nudged once, before any tool has run.
+        let (mut nudged, mut used_tools) = (false, false);
         let reason = loop {
             steps += 1;
             let limit = if self.subagent {
@@ -906,6 +994,9 @@ impl Agent {
                 );
             }
             let answer = msg.text();
+            let nudge = (!nudged && !used_tools && resp.stop != Stop::Length)
+                .then(|| self.file_nudge(&answer, &named))
+                .flatten();
             if !answer.is_empty() {
                 self.complete_item(
                     streamed.message,
@@ -916,6 +1007,15 @@ impl Agent {
 
             let uses = msg.tool_uses();
             self.push_msg(msg);
+            if let (true, Some(nudge)) = (uses.is_empty(), nudge) {
+                nudged = true;
+                self.notice(
+                    Level::Info,
+                    "the model asked for files it can read; reminded it to use its tools",
+                );
+                self.push_user(nudge);
+                continue;
+            }
             if uses.is_empty() {
                 break if resp.stop == Stop::Length {
                     EndReason::MaxTokens
@@ -924,6 +1024,7 @@ impl Agent {
                 };
             }
 
+            used_tools = true;
             match self.run_tools(uses, &mut repeats).await? {
                 Batch::Continue => {}
                 Batch::Denied => break EndReason::Denied,
@@ -2572,6 +2673,133 @@ mod tests {
             .collect();
         assert!(contents[0].starts_with("[stale: big.rs"));
         assert!(contents[1].contains("fn line_799"));
+    }
+
+    /// Every block the session log holds, in order.
+    fn logged_blocks(dir: &std::path::Path, sid: &str) -> Vec<(Role, Block)> {
+        session::load(dir, sid)
+            .unwrap()
+            .messages
+            .into_iter()
+            .flat_map(|m| m.content.into_iter().map(move |b| (m.role, b)))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn named_files_are_inlined_and_count_as_read() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("calc.py"), "def sub(a, b):\n    return a + b\n").unwrap();
+        let edit = Block::ToolUse {
+            id: "e1".into(),
+            name: "Edit".into(),
+            input: json!({
+                "file_path": "calc.py",
+                "old_string": "return a + b",
+                "new_string": "return a - b"
+            }),
+        };
+        let script = vec![
+            reply(vec![edit], Stop::ToolUse),
+            reply(vec![text("fixed")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, Some(dir.clone()), None, None, dir.clone());
+        h.ops
+            .send(Op::SetMode {
+                mode: Mode::AcceptEdits,
+            })
+            .unwrap();
+        let evs = run(&mut h, "calc.py has a bug in sub(); fix it.").await;
+        let sid = evs[0].session.clone();
+        shutdown(h).await;
+        let blocks = logged_blocks(&dir, &sid);
+        let Block::Text { text: first } = &blocks[0].1 else {
+            panic!("expected the user's text first");
+        };
+        assert!(first.starts_with("calc.py has a bug in sub(); fix it."));
+        assert!(first.contains("<file path=\"calc.py\">\ndef sub(a, b):"));
+        // Edit without a Read call: the inlined file counts as read.
+        assert!(blocks.iter().any(|(_, b)| matches!(
+            b,
+            Block::ToolResult { id, is_error: false, .. } if id == "e1"
+        )));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("calc.py")).unwrap(),
+            "def sub(a, b):\n    return a - b\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn asking_for_a_file_is_nudged_once_toward_read() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("calc.py"), "def sub(a, b):\n    return a + b\n").unwrap();
+        let read = Block::ToolUse {
+            id: "r1".into(),
+            name: "Read".into(),
+            input: json!({ "file_path": "calc.py" }),
+        };
+        let ask = "Could you please share the contents of calc.py?";
+        let script = vec![
+            reply(vec![text(ask)], Stop::End),
+            reply(vec![read], Stop::ToolUse),
+            reply(vec![text(ask)], Stop::End),
+        ];
+        let mut h = engine_with(script, true, Some(dir.clone()), None, None, dir.clone());
+        let evs = run(&mut h, "the subtraction helper is broken; fix it.").await;
+        let sid = evs[0].session.clone();
+        let notices: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { message, .. } => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("reminded it to use its tools"));
+        // After tools have run, the same ask ends the turn: nudged at most once.
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+        shutdown(h).await;
+        let blocks = logged_blocks(&dir, &sid);
+        let nudge = blocks.iter().find_map(|(role, b)| match (role, b) {
+            (Role::User, Block::Text { text }) if text.contains("don't ask me") => Some(text),
+            _ => None,
+        });
+        assert!(
+            nudge
+                .expect("expected a nudge")
+                .contains("use Read to open calc.py")
+        );
+        assert!(blocks.iter().any(|(_, b)| matches!(
+            b,
+            Block::ToolResult { id, is_error: false, .. } if id == "r1"
+        )));
+    }
+
+    #[tokio::test]
+    async fn plain_questions_are_not_nudged() {
+        let mut h = engine(
+            vec![reply(
+                vec![text(
+                    "Could you share more details about the expected behavior?",
+                )],
+                Stop::End,
+            )],
+            true,
+        );
+        let evs = run(&mut h, "something is off").await;
+        assert!(!evs.iter().any(|e| matches!(e.event, Event::Notice { .. })));
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
     }
 
     #[tokio::test]
