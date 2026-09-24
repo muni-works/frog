@@ -182,11 +182,28 @@ Ideas discussed but not built yet. Research behind them is in `docs/research/` (
 - **Width instead of length.** Batched decode in tang, so subagents, best-of-n and race attempts run in one engine at about 1x cost per stream.
 
 ### Your devices
-- **Route to your devices (rung 1).** `kiln node` for Linux, Bonjour discovery, pairing codes and Keychain keys, a Devices section in Settings, "fits in your pool" in the picker. Whole models on whole machines; nothing is split.
-- **Splitting a model across devices** (M0 in one process, M1 localhost, M2 Mac↔3090, M3 drafting, M4 discovery). Shelved until the latency experiment says it's worth it. LAN or Thunderbolt only.
+**Principle: additive. Two nodes are strictly better than one.** Adding a machine may never make any task slower or less reliable.
+- **Models add up:** anything any node has, or can load, is available. The picker lists models, not machines.
+- **Speed never goes down:** every request goes to the node with the lowest *estimated finish time* (queue wait + uncached prompt ÷ measured prefill rate + expected output ÷ measured decode rate + round trip, plus load time if the model isn't loaded). The node holding the session's KV wins ties.
+- **Throughput adds up:** parallel work (subagents, the auto-mode classifier, compaction, race attempts, best-of-n, background agents) spreads over idle capacity. Nodes keep priority queues: the interactive loop goes first, and background work gets paused.
+- **Memory adds up:** KV slots across nodes. A model too big for any single node can be split across nodes, over LAN or Thunderbolt only, and only when measured to beat the best single node.
+- **Failure never makes things worse:** kiln owns the transcript and KV is only a cache, so a lost node means re-prefilling on another one, not a lost session.
+- **No configuration burden:** automatic by default, pinning optional.
+- **Proof:** a `kiln bench` mode comparing 1 node with 2. No task's median or p95 may get worse, parallel workloads must scale, and killing a node mid-task must still finish. Run it in CI.
+
+**`kiln node`** turns what we set up by hand on mew (a CUDA build of tang, a systemd unit, an API key, a custom provider, SearXNG in Docker) into one install and one pairing click.
+- One daemon: a `node` subcommand of `tang-llm`, embedding the server. It serves `/v1/*` for inference, `/node` for telemetry (hardware, VRAM, loaded models, measured rates, queue, which sessions' KV it holds), and `/models` to pull, load and unload (with fit checks, several models loaded, oldest unloaded first). It's compute only: no shell, no file access.
+- Install: one command, a `.deb` or a Docker image. It detects the GPU (CUDA, Metal or CPU) and runs as an unprivileged systemd, launchd or Windows service.
+- Discovery: Bonjour `_kiln-node._tcp` with a minimal TXT record, plus adding by address for Tailscale.
+- Pairing: a 6-digit code in a time-limited window, SPAKE2, then pinned Ed25519 keys and mutual TLS (which also encrypts LAN traffic). Keys live in the Keychain. Each client can be revoked, and pairing is rate-limited.
+- kiln side: a `node` provider kind, a scheduler in the engine using node telemetry, a Devices pane (status, VRAM, tok/s, download, load), and local fallback with a notice when a node drops.
+- Optional modules: SearXNG, later image generation.
+- Milestones: **N0** `tang-llm node` (serve, telemetry, pull/load, priority queue) · **N1** installer, service, GPU detection · **N2** discovery and the Devices pane · **N3** pairing · **N4** the scheduler (estimated-finish-time routing, KV affinity, spreading parallel work, failover, the additivity bench) · **N5** model management from the Mac · **N6** splitting a model across nodes, and the remote relay (Pro).
+
+Also:
 - **Pool latency experiment.** A shim in the provider path that fakes a pool's time to first token, tokens/s cap and node failures, run over 10–20 real tasks.
-- **Friend pools ("Crews").** Invite-only shared devices and credits.
-- **mew.** Use its Tailscale name instead of the LAN IP. Put TLS in front if it's ever reachable beyond the LAN or tailnet.
+- **Friend pools ("Crews").** Invite-only shared devices and credits, built on the same scheduler.
+- **mew today:** the provider uses the LAN IP (use the Tailscale name), and `--add-provider` plus the API key stand in until pairing exists.
 - **Decided against:** a public "contribute a GPU, get big models free" network. Datacenter prices, the speed of links over home internet, and privacy (nodes can recover prompts) all lose. See [inference networks](research/inference-network.md).
 
 ### Business (solo devs, no enterprise)
