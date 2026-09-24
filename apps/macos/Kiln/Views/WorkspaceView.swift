@@ -46,7 +46,7 @@ struct WorkspaceView: View {
     // its button, and the button floats it over the conversation instead ("peek").
 
     private func extent(sessions open: Bool) -> CGFloat {
-        Self.margin + (open ? Self.sessionsWidth : Self.button) + Self.gap
+        open ? Self.margin + Self.sessionsWidth + Self.gap : Self.gap
     }
 
     private func extent(changes open: Bool) -> CGFloat {
@@ -214,6 +214,12 @@ struct WorkspaceView: View {
         }
         .onDisappear { DockActivity.shared.set(ObjectIdentifier(workspace), busy: false) }
         .toolbar {
+            if !sessionsVisible {
+                ToolbarItem(placement: .navigation) {
+                    Button("Show Conversations", systemImage: "sidebar.left", action: toggleSessions)
+                        .help("Show conversations (⌃⌘S)")
+                }
+            }
             ToolbarItem(placement: .principal) {
                 if let c = workspace.conversation, workspace.race == nil {
                     ActivityViewer(conversation: c) {
@@ -232,7 +238,7 @@ struct WorkspaceView: View {
 
     // MARK: Glass
 
-    /// The session list, or the button it folds into. Same glass ID, so one morphs into the other.
+    /// The session list, when shown.
     @ViewBuilder
     private func sessions(room: CGFloat) -> some View {
         if sessionsVisible {
@@ -241,18 +247,8 @@ struct WorkspaceView: View {
                 .glassEffect(.regular, in: .rect(cornerRadius: 18))
                 .glassEffectID("sessions", in: glass)
                 .shadow(color: .black.opacity(peek == .sessions ? 0.35 : 0), radius: 24, y: 10)
-        } else {
-            Button(action: toggleSessions) {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 14, weight: .medium))
-                    .frame(width: Self.button, height: Self.button)
-                    .contentShape(.circle)
-            }
-            .buttonStyle(.plain)
-            .glassEffect(.regular.interactive(), in: .circle)
-            .glassEffectID("sessions", in: glass)
-            .help("Show sessions (⌃⌘S)")
         }
+        // Folded, its toggle lives in the title bar, beside the traffic lights.
     }
 
     /// The right-hand column: changes (card or pill) above the timeline rail.
