@@ -1823,7 +1823,6 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
     }
 }
 
-/// Prompt chars that don't live in the history: system prompt and tool schemas.
 /// Memory notes sit next to the session store: `~/.local/share/kiln/memory`.
 fn memory_root(store: &std::path::Path) -> PathBuf {
     store
@@ -1832,6 +1831,7 @@ fn memory_root(store: &std::path::Path) -> PathBuf {
         .unwrap_or_else(crate::memory::default_root)
 }
 
+/// Prompt chars that don't live in the history: system prompt and tool schemas.
 fn fixed_chars(system: &str, specs: &[ToolSpec]) -> usize {
     let tools: usize = specs
         .iter()
