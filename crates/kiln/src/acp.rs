@@ -71,6 +71,8 @@ struct Session {
     ops: mpsc::UnboundedSender<kiln_engine::protocol::Op>,
     /// The running prompt, answered when its turn ends.
     turn: Arc<Mutex<Option<oneshot::Sender<StopReason>>>>,
+    /// A memory command (`/remember` …), answered by the engine's notice instead of a turn.
+    command: Arc<Mutex<Option<oneshot::Sender<StopReason>>>>,
 }
 
 pub async fn serve(
@@ -156,6 +158,7 @@ pub async fn serve(
                         Ok(handle) => {
                             let session_id = kiln_engine::session::new_id();
                             let turn = Arc::new(Mutex::new(None));
+                            let command = Arc::new(Mutex::new(None));
                             let ops = handle.ops.clone();
                             tokio::spawn(pump(
                                 handle,
@@ -163,8 +166,9 @@ pub async fn serve(
                                 req.cwd.clone(),
                                 conn.clone(),
                                 turn.clone(),
+                                command.clone(),
                             ));
-                            sessions.insert(session_id.clone(), Session { ops, turn });
+                            sessions.insert(session_id.clone(), Session { ops, turn, command });
                             conn.respond(
                                 &id,
                                 NewSessionResponse::new(session_id).modes(modes(Mode::Default)),
@@ -188,9 +192,15 @@ pub async fn serve(
                     continue;
                 };
                 let (tx, rx) = oneshot::channel();
-                *s.turn.lock().unwrap() = Some(tx);
+                let text = prompt_text(&req.prompt);
+                let slot = if kiln_engine::memory::is_command(&text) {
+                    &s.command
+                } else {
+                    &s.turn
+                };
+                *slot.lock().unwrap() = Some(tx);
                 let _ = s.ops.send(kiln_engine::protocol::Op::Submit {
-                    text: prompt_text(&req.prompt),
+                    text,
                     images: prompt_images(&req.prompt),
                 });
                 let conn = conn.clone();
@@ -334,6 +344,7 @@ async fn pump(
     cwd: PathBuf,
     conn: Arc<Conn>,
     turn: Arc<Mutex<Option<oneshot::Sender<StopReason>>>>,
+    command: Arc<Mutex<Option<oneshot::Sender<StopReason>>>>,
 ) {
     let finish = |reason: StopReason| {
         if let Some(tx) = turn.lock().unwrap().take() {
@@ -342,6 +353,18 @@ async fn pump(
     };
     while let Some(env) = handle.events.recv().await {
         match env.event {
+            // A memory command's whole answer is one notice.
+            Event::Notice { message, .. } if command.lock().unwrap().is_some() => {
+                conn.update(
+                    &session,
+                    SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
+                        TextContent::new(message),
+                    ))),
+                );
+                if let Some(tx) = command.lock().unwrap().take() {
+                    let _ = tx.send(StopReason::EndTurn);
+                }
+            }
             Event::ItemDelta { delta, .. } => match delta {
                 Delta::Text { text } => conn.update(
                     &session,
@@ -485,6 +508,9 @@ async fn pump(
         }
     }
     finish(StopReason::Cancelled);
+    if let Some(tx) = command.lock().unwrap().take() {
+        let _ = tx.send(StopReason::Cancelled);
+    }
 }
 
 fn capitalize(s: &str) -> String {

@@ -148,6 +148,8 @@ final class Conversation {
     @ObservationIgnored private let replayOnStart: Bool
     @ObservationIgnored private var sawFirstIdle = false
     @ObservationIgnored private var stopping = false
+    /// A memory command (`/remember` …) is waiting for its answer, which arrives as a notice.
+    @ObservationIgnored private var awaitingCommand = false
     /// A notice to show once the transcript has loaded.
     @ObservationIgnored private var pendingFlash: (String, Bool)?
     /// Called when the session id changes or a turn ends, so the sidebar can refresh.
@@ -203,9 +205,22 @@ final class Conversation {
             engine?.send(.shell(command))
             return
         }
+        if Self.isMemoryCommand(text) {
+            // The engine answers these itself: no turn, just a notice.
+            turns.append(TurnState(number: nil, input: text, end: .complete))
+            busy = true
+            awaitingCommand = true
+            engine?.send(.submit(text, images: []))
+            return
+        }
         turns.append(TurnState(number: nil, input: text, images: images))
         busy = true
         engine?.send(.submit(text, images: images))
+    }
+
+    private static func isMemoryCommand(_ text: String) -> Bool {
+        let name = text.split(whereSeparator: \.isWhitespace).first ?? ""
+        return ["/remember", "/forget", "/memory"].contains(String(name))
     }
 
     func unqueue(at index: Int) {
@@ -369,8 +384,11 @@ final class Conversation {
         case .progress(let label):
             progress = label
         case .notice(let level, let message):
-            // Warnings belong in the transcript; info is transient.
-            if level == "warn" { note(message, warning: true) } else { show(message) }
+            // Warnings and command answers belong in the transcript; other info is transient.
+            if awaitingCommand {
+                awaitingCommand = false
+                note(message, warning: level == "warn")
+            } else if level == "warn" { note(message, warning: true) } else { show(message) }
         case .error(let e):
             note(e.description, warning: true)
         case .compacted(let before, let after):
@@ -395,6 +413,7 @@ final class Conversation {
                 }
             }
             busy = false
+            awaitingCommand = false
             progress = nil
             permission = nil
             elicitation = nil

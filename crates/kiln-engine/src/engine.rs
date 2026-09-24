@@ -347,6 +347,12 @@ struct Agent {
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
     skills_loaded: HashSet<String>,
+    /// The user's memory notes (none for subagents or in-memory engines), loaded when the
+    /// session starts and after `/remember` or `/forget`, so the system prompt stays put.
+    memory: Option<crate::memory::Store>,
+    notes: Vec<crate::memory::Note>,
+    /// Notes that didn't fit the current model's index.
+    notes_omitted: usize,
     /// The model can see images (probed, or `vision` in the profile).
     vision: bool,
     /// Auto mode's classifier, started on first use.
@@ -401,6 +407,14 @@ impl Agent {
         } else {
             crate::skills::discover(&o.cwd)
         };
+        let memory = match (&o.store, o.subagent) {
+            (Some(store), false) => Some(crate::memory::Store::new(
+                &memory_root(store),
+                (!o.chat).then_some(o.cwd.as_path()),
+            )),
+            _ => None,
+        };
+        let notes = memory.as_ref().map(|m| m.load()).unwrap_or_default();
         let shell_sandbox = o.cfg.sandbox_shell && tools::bash::available() && !o.chat;
         let window = o.profile.context_window();
         let resumed = o.resume.is_some();
@@ -448,6 +462,9 @@ impl Agent {
             mcp: crate::mcp::Hub::empty(),
             skills,
             skills_loaded: HashSet::new(),
+            memory,
+            notes,
+            notes_omitted: 0,
             classifier: None,
             vision: false,
             session_allow: HashSet::new(),
@@ -613,7 +630,11 @@ impl Agent {
 
     async fn handle(&mut self, op: Op) -> Result<()> {
         match op {
-            Op::Submit { text, images } => self.turn(&text, images).await?,
+            Op::Submit { text, images } => {
+                if !self.memory_command(&text) {
+                    self.turn(&text, images).await?
+                }
+            }
             Op::Shell { command } => self.shell(&command).await,
             Op::SetMode { mode } => {
                 self.mode = mode;
@@ -667,6 +688,7 @@ impl Agent {
                 *self.shared.session.lock().unwrap() = self.session_id.clone();
                 self.seq.store(0, Ordering::Relaxed);
                 self.turn = 0;
+                self.notes = self.memory.as_ref().map(|m| m.load()).unwrap_or_default();
                 self.apply_harness();
                 self.notice(Level::Info, "started a new conversation");
             }
@@ -861,6 +883,34 @@ impl Agent {
             self.system.push_str(crate::subagent::PROMPT);
         }
         self.system.push_str(&crate::skills::catalog(&self.skills));
+        let (index, omitted) = crate::memory::index(&self.notes, self.tier, self.window);
+        self.system.push_str(&index);
+        self.notes_omitted = omitted;
+    }
+
+    /// `/remember`, `/forget` and `/memory`: answered with a notice, no model call. Returns
+    /// false if `text` isn't one of them.
+    fn memory_command(&mut self, text: &str) -> bool {
+        if self.subagent || !crate::memory::is_command(text) {
+            return false;
+        }
+        let Some(store) = &self.memory else {
+            self.notice(
+                Level::Warn,
+                "memory isn't available without a session store",
+            );
+            return true;
+        };
+        let Some(reply) = crate::memory::command(store, &self.notes, text, self.notes_omitted)
+        else {
+            return false;
+        };
+        if reply.changed {
+            self.notes = store.load();
+            self.apply_harness();
+        }
+        self.notice(reply.level, reply.message);
+        true
     }
 
     /// Probe a local model's capabilities the first time it's used under `auto`.
@@ -1774,6 +1824,14 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
 }
 
 /// Prompt chars that don't live in the history: system prompt and tool schemas.
+/// Memory notes sit next to the session store: `~/.local/share/kiln/memory`.
+fn memory_root(store: &std::path::Path) -> PathBuf {
+    store
+        .parent()
+        .map(|p| p.join("memory"))
+        .unwrap_or_else(crate::memory::default_root)
+}
+
 fn fixed_chars(system: &str, specs: &[ToolSpec]) -> usize {
     let tools: usize = specs
         .iter()
@@ -2211,6 +2269,44 @@ mod tests {
                 .iter()
                 .any(|b| matches!(b, Block::ToolResult { id, is_error: true, .. } if id == "t1"))
         );
+    }
+
+    #[tokio::test]
+    async fn memory_commands_answer_without_a_model_call() {
+        let root = tmp_store();
+        let project = root.join("repo");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        // No scripted replies: a model call would fail the turn.
+        let mut h = engine_with(
+            vec![],
+            true,
+            Some(root.join("sessions")),
+            None,
+            None,
+            project,
+        );
+        let notices = |evs: &[Envelope]| -> Vec<String> {
+            evs.iter()
+                .filter_map(|e| match &e.event {
+                    Event::Notice { message, .. } => Some(message.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let evs = run(&mut h, "/remember use npm, not pnpm").await;
+        assert!(!names(&evs).contains(&"turn_started".to_string()));
+        assert!(notices(&evs)[0].starts_with("remembered for this project as `use-npm-not-pnpm`"));
+        assert!(root.join("memory/global").read_dir().is_err());
+
+        h.ops
+            .send(Op::Submit {
+                text: "/memory".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(notices(&evs)[0].contains("[project] use-npm-not-pnpm: use npm, not pnpm"));
+        shutdown(h).await;
     }
 
     #[tokio::test]

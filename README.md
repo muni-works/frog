@@ -296,6 +296,7 @@ cargo run -p kiln-bench -- report ~/.local/share/kiln/bench/<timestamp>/results.
 ## REPL
 
 - `/model` `/mode` `/compact` `/clear` `/context` `/todos` `/exit`
+- `/remember <note>` keeps a note for this project (`--global` for every project), `/forget <id or text>` deletes one, `/memory` lists them
 - `!cmd` runs a shell command and attaches its output to your next message
 - `@path` attaches a file to your message
 - alt+enter inserts a newline
@@ -304,3 +305,7 @@ cargo run -p kiln-bench -- report ~/.local/share/kiln/bench/<timestamp>/results.
 ## Instructions
 
 Loaded from `~/.config/kiln/KILN.md`, `~/.claude/CLAUDE.md`, and any `AGENTS.md`, `KILN.md`, or `CLAUDE.md` in the working directory and its parent directories.
+
+## Memory
+
+`/remember` saves a note as a markdown file under `~/.local/share/kiln/memory/` (`global/`, or `projects/<path>/` for one project, shared by its worktrees), readable only by you and easy to edit by hand. Obvious secrets (API keys, tokens, private keys, `password=` values) are redacted before anything is written. Each session starts with a short index of your notes in the system prompt, framed as possibly out-of-date data rather than instructions and sized to the model: about 400 tokens for small models, 1k for mid-size and 2.5k for large ones. Notes that mention files that have since disappeared are marked possibly stale.

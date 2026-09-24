@@ -11,6 +11,7 @@ pub mod engine;
 pub mod harness;
 pub mod image_paths;
 pub mod mcp;
+pub mod memory;
 pub mod message;
 pub mod models;
 pub mod prompt;

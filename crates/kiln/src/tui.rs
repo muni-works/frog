@@ -59,6 +59,9 @@ const HELP: &str = "\
   /clear            start a fresh conversation
   /context          show context usage
   /todos            show the todo list
+  /remember <note>  keep a note for this project (--global for every project)
+  /forget <id|text> delete a note
+  /memory           list notes
   /exit             quit
   !<cmd>            run a shell command; output goes to the model with your next message
   @<path>           attach a file to your message";
@@ -229,6 +232,11 @@ impl Tui {
                 focus: (!arg.is_empty()).then(|| arg.into()),
             },
             "clear" | "new" => Op::Clear,
+            // The engine answers these itself, without the model.
+            "remember" | "forget" | "memory" => Op::Submit {
+                text: format!("/{cmd}"),
+                images: Vec::new(),
+            },
             _ => {
                 render::warn(&format!("  unknown command /{name} — try /help"));
                 return true;
