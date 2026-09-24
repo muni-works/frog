@@ -38,7 +38,9 @@ enum ModelName {
     }
 }
 
-private struct ModelMenu: View {
+/// The model list itself: search, models grouped by where they run, and a card for the one
+/// under the pointer. Shared by the composer and the toolbar readout.
+struct ModelMenu: View {
     let workspace: Workspace
     let current: String?
     let pick: (String) -> Void

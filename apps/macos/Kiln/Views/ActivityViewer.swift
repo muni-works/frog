@@ -11,6 +11,7 @@ struct ActivityViewer: View {
     var jump: (TurnState.ID) -> Void = { _ in }
     @State private var showActivity = false
     @State private var hovering = false
+    @State private var pickingModel = false
     @State private var library = Library.shared
     @Environment(\.openSession) private var openSession
 
@@ -246,33 +247,27 @@ struct ActivityViewer: View {
 
     private func readout(_ s: Status) -> some View {
         HStack(spacing: 8) {
-            Menu {
-                Section("Switch Model") {
-                    ForEach(workspace.models) { m in
-                        Button {
-                            workspace.preferredModel = m.spec
-                            conversation.setModel(m.spec)
-                        } label: {
-                            if m.spec == s.model {
-                                Label(m.spec, systemImage: "checkmark")
-                            } else {
-                                Text(m.spec)
-                            }
-                        }
-                    }
-                }
-            } label: {
-                Text(shortModel(s.model))
+            Button { pickingModel.toggle() } label: {
+                Text(ModelName.short(s.model, in: workspace.models).replacingOccurrences(of: "-4bit", with: " 4-bit"))
                     .fontWeight(.medium)
                     .lineLimit(1)
-                    .contentShape(.rect)
+                    .hoverPlate(h: 4, v: 2)
+                    .padding(.horizontal, -4)
+                    .padding(.vertical, -2)
             }
-            .menuStyle(.button)
             .buttonStyle(.plain)
-            .menuIndicator(.hidden)
             .fixedSize()
             .disabled(conversation.busy)
             .help("\(s.model) · \(s.toolMode) tool calls · \(s.tier) tier")
+            .popover(isPresented: $pickingModel, arrowEdge: .bottom) {
+                ModelMenu(workspace: workspace, current: s.model) { spec in
+                    workspace.preferredModel = spec
+                    conversation.setModel(spec)
+                    pickingModel = false
+                } close: {
+                    pickingModel = false
+                }
+            }
             ContextButton(conversation: conversation, status: s)
             if let tps = s.tokensPerSec, tps > 0 {
                 Text("\(Int(tps)) tok/s")
@@ -281,11 +276,6 @@ struct ActivityViewer: View {
                     .contentTransition(.numericText())
             }
         }
-    }
-
-    private func shortModel(_ spec: String) -> String {
-        let name = spec.split(separator: "/").last.map(String.init) ?? spec
-        return name.replacingOccurrences(of: "-4bit", with: " 4-bit")
     }
 }
 
