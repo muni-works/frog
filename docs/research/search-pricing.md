@@ -1,4 +1,4 @@
-# Hosted search for kiln Pro: APIs, costs, and a docs index
+# Hosted search for frog Pro: APIs, costs, and a docs index
 
 Research date: 2026-09-23. Prices come from vendor pricing pages fetched that day unless noted. Anything I couldn't confirm on a primary page is marked **[unverified]**. Anything that is only the vendor's own claim is marked **[vendor claim]**. Numbers I derived are marked **[calc]**.
 
@@ -11,9 +11,9 @@ Usage assumption from the brief: a heavy user runs **50–200 searches/day**, so
 - **Primary: Brave Search API** at $5/1k. It has its own index, handles 50 QPS, came top of the one independent agent-search benchmark I found, and its **LLM Context** endpoint returns token-budgeted page extracts for the same $5. That lets many queries skip the fetch entirely. The terms are the main constraint: no storage beyond "transient", no resale, flow-down terms for end users, and no using results to train or benchmark models.
 - **Fallback and cheap tier: Parallel Search (Fast/Turbo)** at $1/1k with excerpts. It is 5x cheaper, runs on a different index (so outages don't overlap) and allows 600 req/min. Its terms explicitly ban sharing one user's results with another.
 - **Don't build on SERP scrapers** (Serper, SerpApi and similar). They are cheap ($0.30–1/1k), but Google v. SerpApi is still being litigated, and a paid product built on scraped Google is the thing we already ruled out for SearXNG.
-- **Keep page fetches local.** WebFetch already runs on the user's machine, which costs kiln nothing, puts no provider terms on kiln, and keeps browsing private. Only the search call needs to be hosted. That cuts the heavy-user bill to **$7.50–30/month on Brave, or $1.50–6 on Parallel** [calc].
+- **Keep page fetches local.** WebFetch already runs on the user's machine, which costs frog nothing, puts no provider terms on frog, and keeps browsing private. Only the search call needs to be hosted. That cuts the heavy-user bill to **$7.50–30/month on Brave, or $1.50–6 on Parallel** [calc].
 - **$15–20/month doesn't cover unlimited heavy search on Brave.** The 200/day user costs $30. Include about **1,000 searches/month (~$5 COGS)**, send overflow to Parallel or metered credits, and keep BYOK. A user's own Brave key gets its own $5/month credit.
-- **Docs index: don't build the full thing yet.** The infra is cheap: roughly **$50–100/month for 2k packages, $100–250 for 10k, $200–500 for 50k**, plus a one-time embedding bill of **$5–300**. The real cost is engineering: parsers for each doc system, keeping versions fresh, and license hygiene. Kiln's local `Docs` tool already covers the most valuable case, the API of an *installed* dependency at its exact version. Run a zero-infra MVP first (llms.txt awareness plus logging), then a small hosted pilot with kill criteria (§3.2).
+- **Docs index: don't build the full thing yet.** The infra is cheap: roughly **$50–100/month for 2k packages, $100–250 for 10k, $200–500 for 50k**, plus a one-time embedding bill of **$5–300**. The real cost is engineering: parsers for each doc system, keeping versions fresh, and license hygiene. Frog's local `Docs` tool already covers the most valuable case, the API of an *installed* dependency at its exact version. Run a zero-infra MVP first (llms.txt awareness plus logging), then a small hosted pilot with kill criteria (§3.2).
 - **No cross-user caching of search results.** Brave's and Parallel's terms forbid it, and agent queries leak code identifiers and error text. The docs index is the right place for cross-user sharing, because its content is public.
 
 ---
@@ -30,7 +30,7 @@ Columns:
 | Provider | $/1k searches | Heavy user/mo (1.5k / 6k) | Content? | Own index? | Rate limit | Terms that matter | Notes |
 |---|---|---|---|---|---|---|---|
 | **Brave Search** (web or LLM Context) | **$5** ($5/mo free credit, with attribution) | **$7.50 / $30** | LLM Context: extracted chunks, 1k–32k tokens per call | Yes | 50 QPS | Transient storage only. No resale or sublicensing. End users bound by similar terms. No training or benchmarking of AI on results. "Powered by Brave" if results are displayed. | Free tier removed Feb 2026. AI-inference rights are now in the standard plan. |
-| Brave Answers | $4 + $5/M tokens | n/a | Answer text | Yes | 2 QPS | Same | Not useful: kiln brings its own model. |
+| Brave Answers | $4 + $5/M tokens | n/a | Answer text | Yes | 2 QPS | Same | Not useful: frog brings its own model. |
 | **Exa** | $7 (search) + $1/1k pages per content type | $10.50 / $42 search only. **$18 / $72** with text for 5 results | Yes (text, highlights, summary) | Yes (neural) | 10 QPS search, 100 QPS contents | Standard ToS bans copying or caching except browser cache, and resale without consent. **Needs an MSA** for a paid product. | $10/mo free credit. Deep search $12–15/1k. |
 | **Tavily** | $8 PAYG, $5–7.50 on plans (basic = 1 credit, advanced = 2) | $7.50–12 / $30–48 (basic) | Snippets, optional raw content | Mixed **[unverified]** | Not published | No sublicensing. **Tavily may train on your inputs.** | Acquired by Nebius, Feb 2026 ($275M). 1k free credits/mo. |
 | **Perplexity Search API** | $5 | $7.50 / $30 | Extracted snippets, `max_tokens_per_page` | Yes **[vendor claim]** | Not captured | API ToS returned 403 **[unverified]** | Top quality score (80) in the Artificial Analysis agent benchmark, Sept 2026. |
@@ -51,7 +51,7 @@ Columns:
 
 **Brave.** The pricing restructure of **2026-02-13** dropped the free tier and the separate "Data for Search / Data for AI / Data with storage rights" plans. They were replaced by Search at $5/1k with $5/month credit "when attribution is provided", 50 QPS, and AI inference rights folded in ([Brave API page](https://brave.com/search/api/), [pricing docs](https://api-dashboard.search.brave.com/documentation/pricing), [AlternativeTo, 2026-02-13](https://alternativeto.net/news/2026/2/brave-updates-its-search-api-with-a-new-llm-context-endpoint-for-ai-and-new-pricing), [Implicator, Feb 2026](https://www.implicator.ai/brave-drops-free-search-api-tier-puts-all-developers-on-metered-billing/)).
 
-The **LLM Context** endpoint (`/res/v1/llm/context`) is priced like web search. It returns ranked extracted chunks (text, tables, code, forum posts) with `maximum_number_of_tokens` from 1,024 to 32,768, default 8,192 ([Brave blog](https://brave.com/blog/most-powerful-search-api-for-ai/), [docs](https://api-dashboard.search.brave.com/documentation/services/llm-context)). For kiln's small local models, a budgeted 2–4k-token extract is often better than a full page.
+The **LLM Context** endpoint (`/res/v1/llm/context`) is priced like web search. It returns ranked extracted chunks (text, tables, code, forum posts) with `maximum_number_of_tokens` from 1,024 to 32,768, default 8,192 ([Brave blog](https://brave.com/blog/most-powerful-search-api-for-ai/), [docs](https://api-dashboard.search.brave.com/documentation/services/llm-context)). For frog's small local models, a budgeted 2–4k-token extract is often better than a full page.
 
 Terms, effective **2026-09-01** ([ToS](https://api-dashboard.search.brave.com/terms-of-service)):
 - §3.2: no storing, caching or building a database of results "other than transient storage required for operation of Customer Applications".
@@ -59,9 +59,9 @@ Terms, effective **2026-09-01** ([ToS](https://api-dashboard.search.brave.com/te
 - No using results to "create, evaluate, train, re-train, fine-tune, benchmark or otherwise improve artificial intelligence models".
 - §4.3: each end user must be bound by a written agreement with substantially similar restrictions.
 
-Using results inside kiln Pro, with kiln as the Customer Application, is the intended use. Kiln Pro's own ToS needs the flow-down clause.
+Using results inside frog Pro, with frog as the Customer Application, is the intended use. Frog Pro's own ToS needs the flow-down clause.
 
-**The training/benchmark ban matters for kiln.** Session logs that contain Brave results must be kept out of any fine-tuning or eval corpus. That includes `kiln bench` fixtures and any replay work like draft-replay. The alternative is to negotiate enterprise terms.
+**The training/benchmark ban matters for frog.** Session logs that contain Brave results must be kept out of any fine-tuning or eval corpus. That includes `frog bench` fixtures and any replay work like draft-replay. The alternative is to negotiate enterprise terms.
 
 **Exa.** $7/1k search, $1/1k pages per content type, answer $5/1k, 10 QPS, and more than 25 QPS by contract ([pricing](https://exa.ai/pricing), [rate limits](https://exa.ai/docs/reference/rate-limits)). The public ToS is written for a website user. It bans copying "except for temporary files that are automatically cached by your web browser" and resale "without our prior consent" ([ToS PDF](https://exa.ai/assets/Exa_Labs_Terms_of_Service.pdf)). Embedding it in a paid product needs its MSA. It is good for semantic "find pages like this" queries, and costs the most once contents are included.
 
@@ -77,22 +77,22 @@ Using results inside kiln Pro, with kiln as the Customer Application, is the int
 
 **Jina.** Search requests cost "starting from 10,000 tokens" each. Keys get 10M free tokens, with a limit of 100 RPM for search ([Reader page](https://jina.ai/reader/)). I couldn't load the top-up price page (404) [unverified]. Elastic now owns Jina ([Elastic/Jina](https://www.elastic.co/search-labs/integrations/jina)).
 
-**SERP scrapers.** Google sued SerpApi on 2025-12-19. The DMCA claims were dismissed on **2026-07-20** ([Search Engine Land](https://searchengineland.com/google-loses-key-dmca-claims-against-serpapi-in-scraping-lawsuit-483185)). Google refiled on **2026-08-10** on the basis of its content licensing deals, Reddit's among them, and SerpApi has moved to dismiss again ([MediaPost, 2026-08-12](https://www.mediapost.com/publications/article/417185/google-renews-battle-with-serpapi-over-scraping.html), [SerpApi blog](https://serpapi.com/blog/google-tried-again-were-moving-to-dismiss-their-claims-a-second-time/), [docket](https://www.courtlistener.com/docket/72059948/google-llc-v-serpapi-llc/)). Even if SerpApi wins, kiln would be building a paid feature on results that Google's terms prohibit. The legal-shield product exists because the risk is real. Serper pricing is from third-party write-ups ([coldiq](https://coldiq.com/blog/serper-pricing)) and SerpApi's is from its [pricing page](https://serpapi.com/pricing).
+**SERP scrapers.** Google sued SerpApi on 2025-12-19. The DMCA claims were dismissed on **2026-07-20** ([Search Engine Land](https://searchengineland.com/google-loses-key-dmca-claims-against-serpapi-in-scraping-lawsuit-483185)). Google refiled on **2026-08-10** on the basis of its content licensing deals, Reddit's among them, and SerpApi has moved to dismiss again ([MediaPost, 2026-08-12](https://www.mediapost.com/publications/article/417185/google-renews-battle-with-serpapi-over-scraping.html), [SerpApi blog](https://serpapi.com/blog/google-tried-again-were-moving-to-dismiss-their-claims-a-second-time/), [docket](https://www.courtlistener.com/docket/72059948/google-llc-v-serpapi-llc/)). Even if SerpApi wins, frog would be building a paid feature on results that Google's terms prohibit. The legal-shield product exists because the risk is real. Serper pricing is from third-party write-ups ([coldiq](https://coldiq.com/blog/serper-pricing)) and SerpApi's is from its [pricing page](https://serpapi.com/pricing).
 
-**Google and Bing.** Custom Search JSON is closed to new customers and ends on 2027-01-01 ([dev.to summary](https://dev.to/nexgendata/google-kills-custom-search-api-on-jan-1-2027-you-have-9-months-1jg1)) [unverified against a Google page]. Gemini grounding is $14/1k on 3.x ([Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing)). Bing Search APIs were retired on 2025-08-11 ([Microsoft Learn](https://learn.microsoft.com/en-us/lifecycle/announcements/bing-search-api-retirement)). Grounding with Bing is $14/1k and works only inside Azure AI Foundry agents ([Microsoft](https://www.microsoft.com/en-us/bing/apis/grounding-pricing)). Neither fits kiln.
+**Google and Bing.** Custom Search JSON is closed to new customers and ends on 2027-01-01 ([dev.to summary](https://dev.to/nexgendata/google-kills-custom-search-api-on-jan-1-2027-you-have-9-months-1jg1)) [unverified against a Google page]. Gemini grounding is $14/1k on 3.x ([Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing)). Bing Search APIs were retired on 2025-08-11 ([Microsoft Learn](https://learn.microsoft.com/en-us/lifecycle/announcements/bing-search-api-retirement)). Grounding with Bing is $14/1k and works only inside Azure AI Foundry agents ([Microsoft](https://www.microsoft.com/en-us/bing/apis/grounding-pricing)). Neither fits frog.
 
 ### 1.3 Quality evidence (thin)
 
 - **AIMultiple** ([agentic search](https://aimultiple.com/agentic-search)) ran 100 AI/LLM-topic queries across 8 APIs with an LLM judge. Agent scores: **Brave 14.89** (669 ms), Firecrawl 14.58, Exa 14.39, Parallel Pro 14.21, Tavily 13.67, Parallel Base 13.50, Perplexity 12.96, SerpAPI 12.28. The authors say the top 4 are statistically tied, and only Brave beat Tavily measurably. The query topics are close to developer queries, but it's one small study.
 - **Artificial Analysis** (2026-09-08, via [TinyFish summary](https://www.tinyfish.ai/blog/search-api-benchmark)) ran a full agent loop on DeepSearchQA, BrowseComp and Omniscience. **Perplexity Search came first (80)**. That is research QA, not coding.
 - Exa and Parallel each publish benchmarks that favor themselves ([Exa vs Parallel](https://exa.ai/versus/parallel), [Parallel](https://parallel.ai/benchmarks)) **[vendor claim]**.
-- **No benchmark I found targets coding-agent queries** such as error strings, API names or version-specific migration questions. Firecrawl's DevDex (1,179 developer queries, [launch post](https://www.firecrawl.dev/blog/developer-index-launch)) is the closest, and it comes from a vendor. **Kiln should build its own 200-query eval from real session logs** before committing to anything (§3.1).
+- **No benchmark I found targets coding-agent queries** such as error strings, API names or version-specific migration questions. Firecrawl's DevDex (1,179 developer queries, [launch post](https://www.firecrawl.dev/blog/developer-index-launch)) is the closest, and it comes from a vendor. **Frog should build its own 200-query eval from real session logs** before committing to anything (§3.1).
 
 ---
 
 ## 2. A hosted developer-docs index
 
-### 2.1 What kiln already has
+### 2.1 What frog already has
 
 `Docs` reads installed dependencies at exact versions, offline: the cargo registry, node_modules and site-packages. That is the highest-value case, the API of the version you actually use. A hosted index adds three things:
 1. Packages **not yet installed**, e.g. when choosing a library or before `npm install`.
@@ -179,9 +179,9 @@ That is realistically **a person-month to build, then ongoing maintenance** [est
 
 1. **Primary: Brave Search API.** Use the web endpoint for link lists and the **LLM Context** endpoint when the agent wants an answer. Cap it at 2–4k tokens for small models, so that a search often replaces 1–2 fetches.
 2. **Fallback and overflow: Parallel Search Fast** ($1/1k). Use it when Brave errors, rate-limits or times out, and once the user has used up their included Brave searches.
-3. **Before launch:** build a **200-query eval from real kiln session logs** covering error strings, API names, "how do I X in lib@version" and migration questions. Score Brave, Brave LLM Context, Parallel Fast, Exa and Perplexity with the same judge. Budget ~$10 [calc]. If Parallel Fast ties Brave, flip the default and save 80%. **Don't put any Brave-derived results into eval fixtures** (training/benchmark clause). Record the eval on the non-Brave providers, or get written permission.
+3. **Before launch:** build a **200-query eval from real frog session logs** covering error strings, API names, "how do I X in lib@version" and migration questions. Score Brave, Brave LLM Context, Parallel Fast, Exa and Perplexity with the same judge. Budget ~$10 [calc]. If Parallel Fast ties Brave, flip the default and save 80%. **Don't put any Brave-derived results into eval fixtures** (training/benchmark clause). Record the eval on the non-Brave providers, or get written permission.
 4. **Keep BYOK and SearXNG** for free-tier users. A personal Brave key comes with its own $5/month credit, about 1,000 searches.
-5. **Legal:** accept Brave's standard terms. Add flow-down restrictions to kiln Pro's ToS (§4.3). Show "Powered by Brave" wherever results appear in the UI. Ask for Brave ZDR/enterprise terms once volume justifies it. Exa needs an MSA before it can be used at all.
+5. **Legal:** accept Brave's standard terms. Add flow-down restrictions to frog Pro's ToS (§4.3). Show "Powered by Brave" wherever results appear in the UI. Ask for Brave ZDR/enterprise terms once volume justifies it. Exa needs an MSA before it can be used at all.
 
 ### 3.2 Docs index: MVP that tests value cheaply
 
@@ -195,7 +195,7 @@ That is realistically **a person-month to build, then ongoing maintenance** [est
   - Placement: a fallback inside `Docs` for packages that aren't installed.
   - Also run Firecrawl Developer Index and Mintlify Index (if their terms allow) through the same eval.
 - **Go/kill criteria.** Keep building if at least one holds:
-  - more than ~25% of Pro users' searches are docs lookups, **and** the pilot answers most of them with a measurable `kiln bench` gain over web search alone;
+  - more than ~25% of Pro users' searches are docs lookups, **and** the pilot answers most of them with a measurable `frog bench` gain over web search alone;
   - it saves more web-search spend than it costs.
 
   Otherwise stop, and use a bought index or plain web search.

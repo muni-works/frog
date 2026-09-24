@@ -9,7 +9,7 @@ Ordered by leverage. Each item cites the evidence behind it.
 - **Give items a lifecycle `started → delta* → completed`,** following the Thread > Turn > Item model in codex-rs's app-server.
 - **Report a typed turn-end reason:** `complete | length | overflow | incomplete | cancelled`. Never accept an incomplete stream as done, and never retry after a tool has had side effects ([opencode#48454](https://github.com/anomalyco/opencode/issues/48454)).
 - **Use a closed error enum** instead of free-form strings ([opencode#35021](https://github.com/anomalyco/opencode/issues/35021)).
-- **Keep the item shapes compatible with ACP v2's patch semantics,** so a `kiln-acp` adapter can map to them without losing anything.
+- **Keep the item shapes compatible with ACP v2's patch semantics,** so a `frog-acp` adapter can map to them without losing anything.
 
 ## 2. Event-log sessions: done
 
@@ -26,7 +26,7 @@ Shipped:
 Still to do:
 - a `/fork` command in the TUI
 - pruning or compacting old logs
-- exporting logs as `kiln bench` datasets
+- exporting logs as `frog bench` datasets
 
 ## 3. Context as a budget: done
 
@@ -42,7 +42,7 @@ Shipped:
 Evidence: [2609.20804](https://arxiv.org/abs/2609.20804), [2606.11213](https://arxiv.org/abs/2606.11213), [2606.22528](https://arxiv.org/abs/2606.22528), [2608.22752](https://arxiv.org/abs/2608.22752), [opencode#49965](https://github.com/anomalyco/opencode/issues/49965), [#40908](https://github.com/anomalyco/opencode/issues/40908).
 
 Still to do:
-- measure how often pruning fires, and how much it saves, in `kiln bench`
+- measure how often pruning fires, and how much it saves, in `frog bench`
 - try evicting whole finished sub-tasks (the episode eviction from 2606.11213) once sub-agents exist
 
 ## 4. Adapt the harness to the model: first pass done
@@ -59,7 +59,7 @@ Shipped:
 Observed: `qwen2.5:3b` produces perfectly valid JSON-mode output but still picks the wrong tools, as 2609.23742 predicts. The loop guard turned a 5-minute hang into a 26-second `looping` stop.
 
 Still to do:
-- **Validate with a capable local model** such as `qwen3-coder:30b` through `kiln bench`. Tier thresholds and prompt guidance are guesses until measured.
+- **Validate with a capable local model** such as `qwen3-coder:30b` through `frog bench`. Tier thresholds and prompt guidance are guesses until measured.
 - **Choose tools by tier.** Strong models do as well or better with bash alone.
 - **Shorter system prompt for the weak tier.** Global `CLAUDE.md` files add a lot of tokens.
 - **Stay on JSON for arguments.** Compact formats cost 9–14 points of accuracy ([2605.29676](https://arxiv.org/abs/2605.29676)).
@@ -69,7 +69,7 @@ Still to do:
 | | verdict |
 |---|---|
 | MCP client (2026-07-28 spec, rmcp 3.x; also accept 2025-11-25 servers) | done |
-| ACP adapter (`kiln --acp`, v1) for Zed, JetBrains, and Neovim | done |
+| ACP adapter (`frog --acp`, v1) for Zed, JetBrains, and Neovim | done |
 | Agent Skills (`SKILL.md`), loaded progressively | done |
 | AGENTS.md | done |
 | OpenTelemetry GenAI spans (behind a feature flag) | nice |
@@ -94,10 +94,10 @@ Next:
 
 A sub-agent works in its own branch and returns only a summary to the parent. Context-Folding got a 10x smaller context with equal or better results ([2510.11967](https://arxiv.org/abs/2510.11967)). Sub-agents need an `Op::Cancel{id}`, step and token budgets, and detection of repeated calls. opencode had a sub-agent make 364 identical grep calls ([opencode#45442](https://github.com/anomalyco/opencode/issues/45442)). Multi-agent teams by default are not supported by the evidence ([2503.13657](https://arxiv.org/abs/2503.13657), [2609.13890](https://arxiv.org/abs/2609.13890)).
 
-## 8. `kiln bench`: first pass done (moved up because every other item needs measuring)
+## 8. `frog bench`: first pass done (moved up because every other item needs measuring)
 
 Shipped:
-- the `kiln-bench` crate, which drives the engine protocol headless
+- the `frog-bench` crate, which drives the engine protocol headless
 - a suite of 6 tasks, each check verified to fail untouched and to pass with a reference fix
 - the matrix: models × modes × repeats
 - JSONL results, a summary table, a task grid, and session logs for replay
@@ -112,7 +112,7 @@ Still to do:
 
 ## 9. Our own inference: `tang-llm` sidecar, first pass done
 
-Instead of depending on ollama, kiln can run models itself through `tang-llm serve`, which is built on tang's compute stack (`tang-compute` Metal kernels). `tang/<model>` profiles start it on demand.
+Instead of depending on ollama, frog can run models itself through `tang-llm serve`, which is built on tang's compute stack (`tang-compute` Metal kernels). `tang/<model>` profiles start it on demand.
 
 Shipped:
 - Qwen3 dense models from safetensors, in bf16. Logits match transformers to 3e-4 on 0.6B and 4B.
@@ -132,7 +132,7 @@ Speed on M4 Max:
 | Qwen3-4B 4-bit | ~105 tok/s | ~790 tok/s |
 | ollama qwen3:4b Q4_K_M | ~128 tok/s | |
 
-A second sidecar, `kiln-apple`, puts Apple's on-device Foundation Model behind the same API. kiln's JSON tool schema runs as guided generation (`DynamicGenerationSchema`), so every reply is a valid action.
+A second sidecar, `frog-apple`, puts Apple's on-device Foundation Model behind the same API. frog's JSON tool schema runs as guided generation (`DynamicGenerationSchema`), so every reply is a valid action.
 
 Next:
 - close the decode gap: fuse the residual add into the down/o GEMVs; f16 KV cache
@@ -147,14 +147,14 @@ Shipped:
 - Native rendering in the Mac app: cards, pop-out windows, exports, and the session tree. Box art in the terminal.
 
 Next:
-- ~~Code-derived maps~~: done (`CodeMap`, `kiln --map`, Map Project), with git churn heat. Still to do: callers of a single function, and edge bundling for very dense maps.
+- ~~Code-derived maps~~: done (`CodeMap`, `frog --map`, Map Project), with git churn heat. Still to do: callers of a single function, and edge bundling for very dense maps.
 - State and ER diagram kinds.
 - Diagrams that update in place across turns, pinned as a card.
 - Hold weak models to the schema with grammar-constrained generation when they call Diagram.
 
 ## Computer use
 
-First pass done: the `kiln-desktop` MCP sidecar.
+First pass done: the `frog-desktop` MCP sidecar.
 - It reads windows as Accessibility elements first and uses screenshots as a fallback.
 - Actions go to elements in the background.
 - Every action returns the refreshed element list and how much changed.
@@ -172,7 +172,7 @@ Next:
 Ideas discussed but not built yet. Research behind them is in `docs/research/` ([inference speed](research/inference-speed.md), [inference networks](research/inference-network.md), [knowledge systems](research/knowledge-systems.md)). In progress on 2026-09-23 and not listed: `WebFetch`/`WebSearch`/`Docs`, composer voice input, per-step timing (`scripts/time_split.py`), and the suffix-drafting replay (`scripts/draft_replay.py`).
 
 ### Speed
-Shipped on 2026-09-24 (tang `kiln-llm`, deployed to mew and bundled in the app): TF32 prefill on CUDA; small-k split-KV attention and batched GEMV kernels (verifying k=8 tokens costs about 2x one decode, down from 9–19x; faster Metal decode); a thinking budget (`thinking_budget`, default 1024, tang only); **speculative decoding with a suffix drafter** (per-request and global suffix automata, adaptive draft length from measured verify costs, output-exact; about 1.67x on the 3090 and 1.47x on Mac on replayed kiln sessions, about 3.3x on edits, no change on chat); unique tool-call ids. kiln side: the thinking policy (`thinking = auto`), per-step timing in session logs, and named files attached plus a nudge (calc.py task 15/15, up from about 50%).
+Shipped on 2026-09-24 (tang `kiln-llm`, deployed to mew and bundled in the app): TF32 prefill on CUDA; small-k split-KV attention and batched GEMV kernels (verifying k=8 tokens costs about 2x one decode, down from 9–19x; faster Metal decode); a thinking budget (`thinking_budget`, default 1024, tang only); **speculative decoding with a suffix drafter** (per-request and global suffix automata, adaptive draft length from measured verify costs, output-exact; about 1.67x on the 3090 and 1.47x on Mac on replayed frog sessions, about 3.3x on edits, no change on chat); unique tool-call ids. frog side: the thinking policy (`thinking = auto`), per-step timing in session logs, and named files attached plus a nudge (calc.py task 15/15, up from about 50%).
 
 - **Zero-prefill turns.** Multiple KV slots in tang with a session hint (M1), bf16 KV sized on demand (M2), a disk tier with `/v1/prefill` warming on launch and focus (M3), type-ahead prefill from the composer (M4), paged content-addressed blocks (M5). Pruning moves to turn boundaries with a background re-prefill, and prompts stay byte-stable.
 - **Speculative decoding, next steps.** Grammar-forced JSON tokens as free drafts, MTP heads when nothing matches, and warming the global store from past sessions. Also find why single-token forwards run 3–7% slower on Metal with drafting on.
@@ -189,16 +189,16 @@ Shipped on 2026-09-24 (tang `kiln-llm`, deployed to mew and bundled in the app):
 - **Speed never goes down:** every request goes to the node with the lowest *estimated finish time* (queue wait + uncached prompt ÷ measured prefill rate + expected output ÷ measured decode rate + round trip, plus load time if the model isn't loaded). The node holding the session's KV wins ties.
 - **Throughput adds up:** parallel work (subagents, the auto-mode classifier, compaction, race attempts, best-of-n, background agents) spreads over idle capacity. Nodes keep priority queues: the interactive loop goes first, and background work gets paused.
 - **Memory adds up:** KV slots across nodes. A model too big for any single node can be split across nodes, over LAN or Thunderbolt only, and only when measured to beat the best single node.
-- **Failure never makes things worse:** kiln owns the transcript and KV is only a cache, so a lost node means re-prefilling on another one, not a lost session.
+- **Failure never makes things worse:** frog owns the transcript and KV is only a cache, so a lost node means re-prefilling on another one, not a lost session.
 - **No configuration burden:** automatic by default, pinning optional.
-- **Proof:** a `kiln bench` mode comparing 1 node with 2. No task's median or p95 may get worse, parallel workloads must scale, and killing a node mid-task must still finish. Run it in CI.
+- **Proof:** a `frog bench` mode comparing 1 node with 2. No task's median or p95 may get worse, parallel workloads must scale, and killing a node mid-task must still finish. Run it in CI.
 
-**`kiln node`** turns what we set up by hand on mew (a CUDA build of tang, a systemd unit, an API key, a custom provider, SearXNG in Docker) into one install and one pairing click.
+**`frog node`** turns what we set up by hand on mew (a CUDA build of tang, a systemd unit, an API key, a custom provider, SearXNG in Docker) into one install and one pairing click.
 - One daemon: a `node` subcommand of `tang-llm`, embedding the server. It serves `/v1/*` for inference, `/node` for telemetry (hardware, VRAM, loaded models, measured rates, queue, which sessions' KV it holds), and `/models` to pull, load and unload (with fit checks, several models loaded, oldest unloaded first). It's compute only: no shell, no file access.
 - Install: one command, a `.deb` or a Docker image. It detects the GPU (CUDA, Metal or CPU) and runs as an unprivileged systemd, launchd or Windows service.
-- Discovery: Bonjour `_kiln-node._tcp` with a minimal TXT record, plus adding by address for Tailscale.
+- Discovery: Bonjour `_frog-node._tcp` with a minimal TXT record, plus adding by address for Tailscale.
 - Pairing: a 6-digit code in a time-limited window, SPAKE2, then pinned Ed25519 keys and mutual TLS (which also encrypts LAN traffic). Keys live in the Keychain. Each client can be revoked, and pairing is rate-limited.
-- kiln side: a `node` provider kind, a scheduler in the engine using node telemetry, a Devices pane (status, VRAM, tok/s, download, load), and local fallback with a notice when a node drops.
+- frog side: a `node` provider kind, a scheduler in the engine using node telemetry, a Devices pane (status, VRAM, tok/s, download, load), and local fallback with a notice when a node drops.
 - Optional modules: SearXNG, later image generation.
 - Milestones: **N0** `tang-llm node` (serve, telemetry, pull/load, priority queue) · **N1** installer, service, GPU detection · **N2** discovery and the Devices pane · **N3** pairing · **N4** the scheduler (estimated-finish-time routing, KV affinity, spreading parallel work, failover, the additivity bench) · **N5** model management from the Mac · **N6** splitting a model across nodes, and the remote relay (Pro).
 
@@ -209,9 +209,9 @@ Also:
 - **Decided against:** a public "contribute a GPU, get big models free" network. Datacenter prices, the speed of links over home internet, and privacy (nodes can recover prompts) all lose. See [inference networks](research/inference-network.md).
 
 ### Business (solo devs, no enterprise)
-- **kiln Pro.** Credits for escalating to frontier models (never "unlimited"), reaching your GPU from anywhere through a relay, session sync, approving from your phone, background agents. Local stays free.
-- **A gateway with tang behind it.** Sessions pinned to one server with their KV kept hot (logs show about 79% of input is cacheable, about 4.8x less prefill), prompt-lookup drafting (about 1.6x), handing a hot session from local to cloud without re-sending it, a model tuned on kiln traces, privacy you can prove. Pitch cost per finished task, not price per token.
-- **Measure the escalation rate** (what fraction of steps needs a frontier model) with `kiln bench`. A waitlist to test demand.
+- **frog Pro.** Credits for escalating to frontier models (never "unlimited"), reaching your GPU from anywhere through a relay, session sync, approving from your phone, background agents. Local stays free.
+- **A gateway with tang behind it.** Sessions pinned to one server with their KV kept hot (logs show about 79% of input is cacheable, about 4.8x less prefill), prompt-lookup drafting (about 1.6x), handing a hot session from local to cloud without re-sending it, a model tuned on frog traces, privacy you can prove. Pitch cost per finished task, not price per token.
+- **Measure the escalation rate** (what fraction of steps needs a frontier model) with `frog bench`. A waitlist to test demand.
 
 ### Knowledge (phase 1 shipped: `/remember`, `/forget`, `/memory`)
 - Phase 2: session summaries, a read-only `Recall` tool, path-scoped rules, a ranked repo map for small models.
@@ -236,6 +236,6 @@ Also:
 - **Dev-server preview pane** with console logs, which the agent can screenshot and inspect.
 - **Global quick-ask hotkey**, plus capture a region and ask.
 - **Menu bar extra** for running and waiting agents, with approve and deny.
-- **Shortcuts, App Intents and the Services menu** ("Ask kiln about the selection").
+- **Shortcuts, App Intents and the Services menu** ("Ask frog about the selection").
 - **Share a session** as an HTML page or a gist.
 - **Small polish.** The lightbox zooms in from the thumbnail, focus returns to the composer after the lightbox closes, and the title lines up with the sidebar.

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""How much agent-aware speculative decoding could speed up decode, replayed on real kiln sessions.
+"""How much agent-aware speculative decoding could speed up decode, replayed on real frog sessions.
 
-Replays kiln session logs (JSONL) into model calls, as gateway_stats.py does, and simulates
+Replays frog session logs (JSONL) into model calls, as gateway_stats.py does, and simulates
 drafting strategies on what each call actually generated: its text and its tool calls, written
 the way Qwen3 emits them (`<tool_call>\\n{"name": ..., "arguments": {...}}\\n</tool_call>`, which
-is what the chat template renders for native calls and what kiln's text mode asks for). The
+is what the chat template renders for native calls and what frog's text mode asks for). The
 context each call sees is its prompt as logged, with earlier tool calls in the same format.
 Thinking is left out unless --thinking; earlier thinking is never part of later prompts.
 
@@ -30,7 +30,7 @@ Thinking is left out unless --thinking; earlier thinking is never part of later 
                 forced tokens. An oracle bound on copying, not a bound on drafting: shorter
                 matches (which suffix drafting also exploits) don't count.
 
-What counts as forced (conservative). Kiln's tool schemas are read from crates/kiln-engine/src,
+What counts as forced (conservative). Frog's tool schemas are read from crates/frog-engine/src,
 unioned with every tool name and argument key seen in the logs (a bigger set forces less).
 Forced: `\\n{"name": "` after `<tool_call>`; the rest of a tool name once its prefix is
 unique among known tools; `", "arguments": {`; ` "` after a comma between arguments; the
@@ -64,7 +64,7 @@ matches for tool names and keys than a real prompt would give).
     scripts/draft_replay.py [DIR ...] [--json] [--thinking] [--tokenizer auto|approx|PATH]
                             [--verify-cost [NAME=]K:COST,...] ...
 
-DIR defaults to ~/.local/share/kiln/sessions. Name a group with LABEL=DIR.
+DIR defaults to ~/.local/share/frog/sessions. Name a group with LABEL=DIR.
 """
 
 import argparse
@@ -207,7 +207,7 @@ def find_qwen_tokenizer():
 
 
 def load_schemas(src):
-    """{tool name: {key: json type or None}} from kiln's own ToolSpecs (best effort)."""
+    """{tool name: {key: json type or None}} from frog's own ToolSpecs (best effort)."""
     tools = {}
     for f in glob.glob(os.path.join(src, "**", "*.rs"), recursive=True):
         text = open(f).read()
@@ -703,7 +703,7 @@ def main():
         path = find_qwen_tokenizer() if a.tokenizer == "auto" else a.tokenizer
         tok = QwenBPE(path) if path else Approx()
 
-    specs = a.dirs or [f"interactive={os.path.expanduser('~/.local/share/kiln/sessions')}"]
+    specs = a.dirs or [f"interactive={os.path.expanduser('~/.local/share/frog/sessions')}"]
     sessions = []
     for spec in specs:
         label, _, d = spec.rpartition("=")
@@ -730,7 +730,7 @@ def main():
                 if b.get("type") == "tool_use" and isinstance(b.get("input"), dict):
                     for k in b["input"]:
                         observed[b.get("name", "")].setdefault(k, None)
-    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "crates", "kiln-engine", "src")
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "crates", "frog-engine", "src")
     render = Renderer(load_schemas(src), observed)
 
     glob_sam = SAM()

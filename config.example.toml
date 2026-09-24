@@ -1,4 +1,4 @@
-# Copy to ~/.config/kiln/config.toml
+# Copy to ~/.config/frog/config.toml
 
 default_model = "qwen"
 
@@ -9,7 +9,7 @@ show_thinking = true
 # Also load ~/.claude/CLAUDE.md and CLAUDE.md files as project instructions.
 load_claude_md = true
 
-# WebSearch backend: "searxng", "brave", "exa" or "tavily". Keys: `kiln --set-key brave` (stdin),
+# WebSearch backend: "searxng", "brave", "exa" or "tavily". Keys: `frog --set-key brave` (stdin),
 # or BRAVE_SEARCH_API_KEY / EXA_API_KEY / TAVILY_API_KEY. Unconfigured, WebSearch isn't offered.
 # web_search = "searxng"
 # searxng_url = "http://localhost:8888"

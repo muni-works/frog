@@ -1,0 +1,18 @@
+[package]
+name = "frog"
+description = "A local-first coding agent for your terminal"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agent-client-protocol-schema = { version = "1.9", default-features = false }
+serde = { workspace = true }
+frog-engine.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+dirs.workspace = true
+reedline.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Where kiln's turn time goes, measured on real sessions.
+"""Where frog's turn time goes, measured on real sessions.
 
-Reads kiln session logs (JSONL) and splits each turn's wall time, per model, into:
+Reads frog session logs (JSONL) and splits each turn's wall time, per model, into:
 
   prefill      request sent → first streamed token (time to first token), per model call
   decode       first token → response done (of which: think, reasoning before any answer)
@@ -13,15 +13,15 @@ Reads kiln session logs (JSONL) and splits each turn's wall time, per model, int
 
 Also: median TTFT, median prefill and decode speed per model call, and the tool types that
 take the most time. Prompt tokens include cached ones, so prefill tok/s is the effective rate:
-a warm KV cache makes it look far higher than a cold prefill. Calls where kiln switched thinking
+a warm KV cache makes it look far higher than a cold prefill. Calls where frog switched thinking
 off (`thinking = "auto"`, recorded as `no_think`) are compared with the rest.
 
-Timing comes from `turn_ended` usage (`usage.timing`); turns logged by a kiln too old to
+Timing comes from `turn_ended` usage (`usage.timing`); turns logged by a frog too old to
 record it are skipped and counted. A subagent's (`Task`) own model time counts as tool time.
 
     scripts/time_split.py [DIR ...] [--json] [--tools N]
 
-DIR defaults to ~/.local/share/kiln/sessions. Name a group with LABEL=DIR.
+DIR defaults to ~/.local/share/frog/sessions. Name a group with LABEL=DIR.
 """
 
 import argparse
@@ -170,7 +170,7 @@ def main():
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--tools", type=int, default=8, help="how many tool types to list")
     a = ap.parse_args()
-    specs = a.dirs or [f"interactive={os.path.expanduser('~/.local/share/kiln/sessions')}"]
+    specs = a.dirs or [f"interactive={os.path.expanduser('~/.local/share/frog/sessions')}"]
     rows = defaultdict(Stats)
     sessions, untimed_turns, untimed_sessions = 0, 0, 0
     for spec in specs:

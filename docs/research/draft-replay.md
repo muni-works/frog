@@ -1,10 +1,10 @@
-# Draft replay: agent-aware speculative decoding on real kiln logs
+# Draft replay: agent-aware speculative decoding on real frog logs
 
 Written 2026-09-23. Script: `scripts/draft_replay.py` (stdlib only; it reuses gateway_stats.py's parsing helpers). Raw output: `dr_default.txt` and `dr_thinking.txt` in this scratchpad.
 
 ```
 scripts/draft_replay.py bench=/private/tmp/claude-501/bench-tang-vs-ollama/sessions \
-                        interactive=~/.local/share/kiln/sessions [--thinking]
+                        interactive=~/.local/share/frog/sessions [--thinking]
 ```
 
 **Data.** 96 sessions and about 380 model calls:
@@ -79,10 +79,10 @@ scripts/draft_replay.py bench=/private/tmp/claude-501/bench-tang-vs-ollama/sessi
 - **Small models.** Qwen3-4B-class outputs are short and template-like. Larger models write more novel text, so acceptance likely drops.
 - **Verify-cost curves are assumed, not measured.** The 3090 curve is a placeholder, and the Mac curve extrapolates one MLX prototype (8B, M3 Ultra) linearly. Bet #1's step 2 (time a forward pass at k=1..32 at 2K and 20K context on both backends) is still needed. Drafting CPU time is assumed free.
 - **Tokenization.** The Qwen3 BPE is exact on real text, though the pre-tokenizer uses Python `re` approximations of \p{L} and \p{N}. Non-Qwen models (Gemma, Apple, qwen2.5) are scored with Qwen3 tokens and Qwen3's tool-call format. The approximate word split gives higher numbers across the board: lookup 1.77, suffix/G+gram 3.10 tok/step.
-- **Rendering.** Tool calls are serialized as Qwen3 generates them (`<tool_call>\n{"name": "X", "arguments": {...}}\n</tool_call>`, json.dumps spacing). Kiln's text-mode history uses compact JSON, and native mode goes through the server's template.
+- **Rendering.** Tool calls are serialized as Qwen3 generates them (`<tool_call>\n{"name": "X", "arguments": {...}}\n</tool_call>`, json.dumps spacing). Frog's text-mode history uses compact JSON, and native mode goes through the server's template.
 - **Context is incomplete.** The system prompt and tool schemas aren't logged, so they're missing from the context. That understates matches on tool names and keys.
 - **Grammar forcing is deliberately conservative.**
   - Never forced: the first token of names and keys, values, `,` vs `}`, nested JSON, and tools without a known schema.
   - A token counts as forced only if every character in it is forced.
   - Key order is assumed free.
-- **Interactive logs are live.** The interactive folder changes as kiln runs, so call counts drift slightly between runs.
+- **Interactive logs are live.** The interactive folder changes as frog runs, so call counts drift slightly between runs.

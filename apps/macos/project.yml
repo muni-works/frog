@@ -1,4 +1,4 @@
-name: Kiln
+name: Frog
 options:
   bundleIdPrefix: com.campedersen
   deploymentTarget:
@@ -16,51 +16,51 @@ settings:
     ENABLE_HARDENED_RUNTIME: NO
     DEAD_CODE_STRIPPING: YES
 targets:
-  Kiln:
+  Frog:
     type: application
     platform: macOS
     sources:
-      - path: Kiln
+      - path: Frog
     info:
-      path: Kiln/Info.plist
+      path: Frog/Info.plist
       properties:
-        CFBundleDisplayName: Kiln
+        CFBundleDisplayName: Frog
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: "© 2026 Cam Pedersen"
-        NSMicrophoneUsageDescription: "Kiln listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it."
-        NSSpeechRecognitionUsageDescription: "Kiln turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else."
+        NSMicrophoneUsageDescription: "Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it."
+        NSSpeechRecognitionUsageDescription: "Frog turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else."
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.campedersen.kiln
+        PRODUCT_BUNDLE_IDENTIFIER: com.campedersen.frog
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     preBuildScripts:
-      - name: Build kiln engine
+      - name: Build frog engine
         script: '"$SRCROOT/scripts/build-engine.sh"'
         basedOnDependencyAnalysis: false
-  KilnTests:
+  FrogTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - path: KilnTests
+      - path: FrogTests
         buildPhase: sources
         excludes: ["*.jsonl"]
-      - path: KilnTests/events.jsonl
+      - path: FrogTests/events.jsonl
         buildPhase: resources
     dependencies:
-      - target: Kiln
+      - target: Frog
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.campedersen.kiln.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.campedersen.frog.tests
         GENERATE_INFOPLIST_FILE: YES
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Kiln.app/Contents/MacOS/Kiln"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Frog.app/Contents/MacOS/Frog"
         BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:
-  Kiln:
+  Frog:
     build:
       targets:
-        Kiln: all
-        KilnTests: [test]
+        Frog: all
+        FrogTests: [test]
     test:
       targets:
-        - KilnTests
+        - FrogTests

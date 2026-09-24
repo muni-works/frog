@@ -1,34 +1,34 @@
-# kiln
+# frog
 
 A terminal coding agent in the style of Claude Code, built for local models.
 
 ```
-cargo install --path crates/kiln
-kiln                                 # interactive, default model
-kiln -m ollama/qwen3-coder:30b       # any provider/model
-kiln -m lmstudio/qwen3-coder-30b
-kiln -m tang/mlx-community/Qwen3-4B-4bit   # kiln's own inference sidecar, no ollama needed
-kiln -m apple/on-device              # Apple's on-device Foundation Model (macOS 26)
-kiln -m anthropic/claude-sonnet-5
-kiln -p "why does the build fail?"   # one-shot, prints to stdout
-kiln -c                              # continue the last session in this dir
-kiln --sessions                      # list sessions started in this dir
-kiln --fork <id>@3                   # branch a session right after turn 3
-kiln --sandbox                       # confine writes to this directory (bash too, on macOS)
-kiln -p --json "..."                 # one-shot, every engine event as a JSON line
-kiln --serve                         # speak the engine protocol over stdio
+cargo install --path crates/frog
+frog                                 # interactive, default model
+frog -m ollama/qwen3-coder:30b       # any provider/model
+frog -m lmstudio/qwen3-coder-30b
+frog -m tang/mlx-community/Qwen3-4B-4bit   # frog's own inference sidecar, no ollama needed
+frog -m apple/on-device              # Apple's on-device Foundation Model (macOS 26)
+frog -m anthropic/claude-sonnet-5
+frog -p "why does the build fail?"   # one-shot, prints to stdout
+frog -c                              # continue the last session in this dir
+frog --sessions                      # list sessions started in this dir
+frog --fork <id>@3                   # branch a session right after turn 3
+frog --sandbox                       # confine writes to this directory (bash too, on macOS)
+frog -p --json "..."                 # one-shot, every engine event as a JSON line
+frog --serve                         # speak the engine protocol over stdio
 ```
 
 ## Architecture
 
 ```
-crates/kiln-engine   headless agent: providers, tools, sessions, the agent loop
-crates/kiln          clients: TUI (tui.rs/render.rs), -p and --serve (headless.rs)
-crates/kiln-bench    another client: runs task suites across models and harness settings
+crates/frog-engine   headless agent: providers, tools, sessions, the agent loop
+crates/frog          clients: TUI (tui.rs/render.rs), -p and --serve (headless.rs)
+crates/frog-bench    another client: runs task suites across models and harness settings
 apps/macos           the native Mac app, another client (SwiftUI, speaks --serve)
 ```
 
-The engine runs as a background task. Clients talk to it only through `kiln_engine::protocol`, which has two types:
+The engine runs as a background task. Clients talk to it only through `frog_engine::protocol`, which has two types:
 - `Op` goes from client to engine. `Interrupt` and `Permission` take effect immediately. Every other op is queued and ends with `Event::Idle`.
 - `Event` goes from engine to client.
 
@@ -53,7 +53,7 @@ The protocol follows a few rules:
 
 ## Sessions
 
-Each session is an append-only JSONL log in `~/.local/share/kiln/sessions/<id>.jsonl`:
+Each session is an append-only JSONL log in `~/.local/share/frog/sessions/<id>.jsonl`:
 
 ```
 {"type":"header","version":1,"id":"…","cwd":"…","model":"…","created":…}
@@ -66,7 +66,7 @@ Each session is an append-only JSONL log in `~/.local/share/kiln/sessions/<id>.j
 - **Resuming** folds the `push`, `extend` and `reset` records back into the message history and continues the `seq` numbering where it left off.
 - **Durability:** records are appended as they happen, the file is fsynced at the end of each turn, and a half-written last line from a crash is ignored.
 - **Crash recovery:** if a session died in the middle of a turn, resuming it gives any tool calls that never finished an "interrupted" result.
-- **One writer at a time:** `flock` stops two kiln processes from writing the same session.
+- **One writer at a time:** `flock` stops two frog processes from writing the same session.
 
 The engine crate has no terminal dependencies, so the compiler enforces this boundary.
 
@@ -74,8 +74,8 @@ The engine crate has no terminal dependencies, so the compiler enforces this bou
 
 | spec | backend |
 |---|---|
-| `tang/<hf-repo-or-dir>` | the bundled `tang-llm` sidecar (Metal): kiln starts it on `localhost:8911` and reuses it across sessions |
-| `apple/on-device` | the `kiln-apple` sidecar: Apple's on-device Foundation Model on `localhost:8912`, driven in `json` tool mode (guided generation) |
+| `tang/<hf-repo-or-dir>` | the bundled `tang-llm` sidecar (Metal): frog starts it on `localhost:8911` and reuses it across sessions |
+| `apple/on-device` | the `frog-apple` sidecar: Apple's on-device Foundation Model on `localhost:8912`, driven in `json` tool mode (guided generation) |
 | `ollama/<model>` | ollama native `/api/chat` (sets `num_ctx` from `context_window`) |
 | `lmstudio/<model>` | OpenAI-compatible, `localhost:1234/v1` |
 | `llamacpp/<model>`, `mlx/<model>` | OpenAI-compatible, `localhost:8080/v1` |
@@ -83,11 +83,11 @@ The engine crate has no terminal dependencies, so the compiler enforces this bou
 | `openai/<model>` | OpenAI, or `OPENAI_BASE_URL` / `--base-url` |
 | `anthropic/<model>` | Messages API with prompt caching |
 
-`tang/` runs safetensors checkpoints (Qwen3 family today) from the Hugging Face cache or a directory, on [tang](https://github.com/ecto/tang)'s Metal backend. It uses the checkpoint's own chat template, reuses the KV cache for the prefix a turn shares with the previous one, and logs to `~/.local/share/kiln/tang-llm.log`. `tang/` accepts bf16 checkpoints and `mlx-community` 4-bit ones. The binary is found through `KILN_TANG_BIN`, then next to `kiln`, then on `PATH`.
+`tang/` runs safetensors checkpoints (Qwen3 family today) from the Hugging Face cache or a directory, on [tang](https://github.com/ecto/tang)'s Metal backend. It uses the checkpoint's own chat template, reuses the KV cache for the prefix a turn shares with the previous one, and logs to `~/.local/share/frog/tang-llm.log`. `tang/` accepts bf16 checkpoints and `mlx-community` 4-bit ones. The binary is found through `FROG_TANG_BIN`, then next to `frog`, then on `PATH`.
 
-`apple/` needs Apple Intelligence enabled. Build the sidecar with `swift build -c release --package-path sidecars/kiln-apple`; it's found through `KILN_APPLE_BIN`, next to `kiln`, or on `PATH`. The model has an 8k context and no native tool calling, so kiln sends tool calls as a JSON schema that runs as guided generation.
+`apple/` needs Apple Intelligence enabled. Build the sidecar with `swift build -c release --package-path sidecars/frog-apple`; it's found through `FROG_APPLE_BIN`, next to `frog`, or on `PATH`. The model has an 8k context and no native tool calling, so frog sends tool calls as a JSON schema that runs as guided generation.
 
-Named profiles live in `~/.config/kiln/config.toml`. See [config.example.toml](config.example.toml).
+Named profiles live in `~/.config/frog/config.toml`. See [config.example.toml](config.example.toml).
 
 ## Tools
 
@@ -100,13 +100,13 @@ The tools behave like Claude Code's: Edit replaces an exact string that must be 
   - `native` uses the API's own tool calling.
   - `text` describes the tools in the system prompt and parses `<tool_call>` blocks out of the reply.
   - `json` constrains the whole reply with a grammar to `{thought, action}`, where the action is exactly one tool call with schema-checked arguments or a plain answer. It works on ollama (`format`) and OpenAI-compatible servers (`response_format`). There's always an answer branch, because forcing a tool choice hurts a model's ability to decline.
-- **Profiling for `auto`.** The first time a local model is used, kiln sends four small probe requests. They check native tools, text tools, JSON mode, and whether the model answers directly when no tool is needed. The results are cached in `~/.local/share/kiln/models.json`. Together with the parameter count, they set a tier (strong, medium or weak) and pick the mode: weak models whose server supports grammars get `json`. Weaker tiers also get planning guidance in the system prompt. To profile a model on demand, run `kiln --probe -m <model>`.
-- **Fallback during a session.** Under `auto`, if the model botches the format twice (writing tool calls as text in native mode, invalid argument JSON, or JSON mode not honored), kiln switches to text mode for the rest of the session and updates the cache.
-- **Thinking budget.** Reasoning is most of what a small local model generates. With `thinking = "auto"` (the default; set it globally or per model), kiln lets the model think on the first call of a turn, after reading, and after an error or a failed command, and switches thinking off for routine follow-ups: after an edit, a write, a successful command or a todo update, for at most 3 calls in a row. Compaction summaries and auto mode's classifier don't think either. It only applies to models that pass a probe for answering without thinking (hybrid Qwen3 does; reasoning-only models such as Qwen3-2507-Thinking don't), and it's sent as `think` to ollama and `chat_template_kwargs.enable_thinking` to OpenAI-compatible servers. `always` leaves the model alone; `never` switches thinking off on every call. Where the model does think, `thinking_budget` (default 1024 tokens, doubled on a turn's first call; 0 is unlimited; global or per model) caps the reasoning: servers that take it (tang-llm, which lists the `thinking_budget` capability) close the thinking block after that many tokens and make the model answer. Session logs mark the calls that ran without thinking (`no_think`) and the budget each call was sent (`think_budget`), and `scripts/time_split.py` compares them.
+- **Profiling for `auto`.** The first time a local model is used, frog sends four small probe requests. They check native tools, text tools, JSON mode, and whether the model answers directly when no tool is needed. The results are cached in `~/.local/share/frog/models.json`. Together with the parameter count, they set a tier (strong, medium or weak) and pick the mode: weak models whose server supports grammars get `json`. Weaker tiers also get planning guidance in the system prompt. To profile a model on demand, run `frog --probe -m <model>`.
+- **Fallback during a session.** Under `auto`, if the model botches the format twice (writing tool calls as text in native mode, invalid argument JSON, or JSON mode not honored), frog switches to text mode for the rest of the session and updates the cache.
+- **Thinking budget.** Reasoning is most of what a small local model generates. With `thinking = "auto"` (the default; set it globally or per model), frog lets the model think on the first call of a turn, after reading, and after an error or a failed command, and switches thinking off for routine follow-ups: after an edit, a write, a successful command or a todo update, for at most 3 calls in a row. Compaction summaries and auto mode's classifier don't think either. It only applies to models that pass a probe for answering without thinking (hybrid Qwen3 does; reasoning-only models such as Qwen3-2507-Thinking don't), and it's sent as `think` to ollama and `chat_template_kwargs.enable_thinking` to OpenAI-compatible servers. `always` leaves the model alone; `never` switches thinking off on every call. Where the model does think, `thinking_budget` (default 1024 tokens, doubled on a turn's first call; 0 is unlimited; global or per model) caps the reasoning: servers that take it (tang-llm, which lists the `thinking_budget` capability) close the thinking block after that many tokens and make the model answer. Session logs mark the calls that ran without thinking (`no_think`) and the budget each call was sent (`think_budget`), and `scripts/time_split.py` compares them.
 - **Loop guard.** The 3rd identical tool call in a turn is refused with a nudge to change approach. The 5th ends the turn (`looping`). A turn also stops after 60 model calls (`step_limit`).
 - **Forgiving argument parsing.** Numbers sent as strings and arguments sent as a JSON string are accepted. Invalid JSON is sent back to the model so it can retry.
 
-**MCP servers.** kiln connects to Model Context Protocol servers over stdio or streamable HTTP. It reads them from `config.toml` and from the project's `.mcp.json` (Claude Code's format), and `config.toml` wins when both name the same server:
+**MCP servers.** frog connects to Model Context Protocol servers over stdio or streamable HTTP. It reads them from `config.toml` and from the project's `.mcp.json` (Claude Code's format), and `config.toml` wins when both name the same server:
 
 ```toml
 [mcp_servers.github]
@@ -120,19 +120,19 @@ headers = { Authorization = "Bearer ${DOCS_TOKEN}" }
 ```
 
 - Their tools appear as `mcp__<server>__<tool>`, and every call asks permission.
-- If a tool's description looks like prompt injection or hides Unicode, kiln quarantines it and the model never sees it. Set `trust = true` on a server to skip this check.
-- `kiln --mcp` lists each server's status, its tools and anything quarantined. The Mac app shows the same list in Settings › MCP.
-- **Big servers:** past 40 tools, kiln loads tools on demand instead of sending every schema. It starts with the tools the server's own instructions mention. The model finds the rest with `McpTools` (keywords, or `select:name,name`).
-- **Richer servers:** kiln follows tool-list changes mid-session and shows progress on running calls. It also answers roots requests.
+- If a tool's description looks like prompt injection or hides Unicode, frog quarantines it and the model never sees it. Set `trust = true` on a server to skip this check.
+- `frog --mcp` lists each server's status, its tools and anything quarantined. The Mac app shows the same list in Settings › MCP.
+- **Big servers:** past 40 tools, frog loads tools on demand instead of sending every schema. It starts with the tools the server's own instructions mention. The model finds the rest with `McpTools` (keywords, or `select:name,name`).
+- **Richer servers:** frog follows tool-list changes mid-session and shows progress on running calls. It also answers roots requests.
 - **In the Mac app:**
   - Servers can ask you for input mid-call (elicitation), as a form or a link to open.
   - Images returned by tools are shown.
   - MCP Apps (`ui://` resources) run inline, e.g. vcad's 3D viewer. An app can call tools only on its own server.
 - MCP is opt-in. Bash alone is often cheaper.
 
-**Agent Skills.** kiln loads [Agent Skills](https://agentskills.io) (a folder with a `SKILL.md`) from these places:
-- **In the project:** `.kiln/skills`, `.agents/skills` and `.claude/skills`.
-- **In your home folder:** `~/.config/kiln/skills`, `~/.agents/skills` and `~/.claude/skills`.
+**Agent Skills.** frog loads [Agent Skills](https://agentskills.io) (a folder with a `SKILL.md`) from these places:
+- **In the project:** `.frog/skills`, `.agents/skills` and `.claude/skills`.
+- **In your home folder:** `~/.config/frog/skills`, `~/.agents/skills` and `~/.claude/skills`.
 
 A project skill wins over a user skill with the same name.
 
@@ -141,7 +141,7 @@ The skills load in stages:
 - **Loading one:** when a task matches, the model loads the skill's instructions with `Skill`. These are kept when old tool output is trimmed to save context.
 - **Extra files:** the skill's other files (scripts, references) are listed but only read if the instructions call for them.
 
-Starting a message with `/skill-name` loads that skill directly; the Mac app autocompletes these. `kiln --skills` lists what a folder sees.
+Starting a message with `/skill-name` loads that skill directly; the Mac app autocompletes these. `frog --skills` lists what a folder sees.
 
 **Subagents.** `Task` hands a self-contained investigation to a subagent: a child engine with its own context and read-only tools (Read, Grep, Glob, CodeMap).
 - Only its final report comes back, so a search through many files costs the parent a few hundred tokens.
@@ -161,12 +161,12 @@ web_search = "searxng"                  # or "brave", "exa", "tavily"
 searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=json)
 ```
 
-- **Keys:** `echo $KEY | kiln --set-key brave` (or `exa`, `tavily`) stores one in the Keychain. `BRAVE_SEARCH_API_KEY`, `EXA_API_KEY` and `TAVILY_API_KEY` work too. With no `web_search` set, kiln uses `searxng_url` or a key found in the environment. With nothing configured, `WebSearch` isn't offered.
+- **Keys:** `echo $KEY | frog --set-key brave` (or `exa`, `tavily`) stores one in the Keychain. `BRAVE_SEARCH_API_KEY`, `EXA_API_KEY` and `TAVILY_API_KEY` work too. With no `web_search` set, frog uses `searxng_url` or a key found in the environment. With nothing configured, `WebSearch` isn't offered.
 - **Untrusted content:** results come back wrapped as untrusted data, and the model is told not to follow instructions in them.
 - **Private addresses:** `WebFetch` only reaches public addresses. Loopback, RFC 1918, CGNAT (100.64/10), link-local, ULA and other special ranges are refused. Every address a name resolves to is checked when connecting, which covers redirects and DNS rebinding. Set `web_allow_private = true` to reach your LAN or localhost.
 - **Permissions:** the web tools work in plain chats too. They don't ask in `default`/`accept-edits` mode, just as reads and sandboxed commands (which can already reach the network) don't, and each fetch shows its URL on the tool card. In auto mode the classifier sees the URL or query first, and "always allow" is per host.
 
-**Computer use.** Turn it on with `computer_use = true` in `config.toml`, `--computer-use`, or Settings › Permissions in the Mac app. kiln then starts the bundled `kiln-desktop` MCP server.
+**Computer use.** Turn it on with `computer_use = true` in `config.toml`, `--computer-use`, or Settings › Permissions in the Mac app. frog then starts the bundled `frog-desktop` MCP server.
 - **How it sees:** it reads an app's window through Accessibility as a list of indexed elements, and shows you a screenshot.
 - **How it acts:** it presses and types into elements by index, which usually works without taking over your screen. Coordinates and keystrokes are the fallback.
 - **Checking its work:** every action returns the refreshed list and how much changed, so the model can tell whether it worked.
@@ -174,20 +174,20 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
 
 ## Editors (ACP)
 
-`kiln --acp` makes kiln an [Agent Client Protocol](https://agentclientprotocol.com) agent, so it runs inside Zed, JetBrains IDEs and Neovim (CodeCompanion, avante). In Zed's `settings.json`:
+`frog --acp` makes frog an [Agent Client Protocol](https://agentclientprotocol.com) agent, so it runs inside Zed, JetBrains IDEs and Neovim (CodeCompanion, avante). In Zed's `settings.json`:
 
 ```json
 "agent_servers": {
-  "kiln": { "command": "kiln", "args": ["--acp", "-m", "tang/Qwen/Qwen3-4B"] }
+  "frog": { "command": "frog", "args": ["--acp", "-m", "tang/Qwen/Qwen3-4B"] }
 }
 ```
 
 What the editor gets:
-- **Sessions:** each ACP session is a kiln session, saved like any other.
+- **Sessions:** each ACP session is a frog session, saved like any other.
 - **Live output:** answers and thinking stream, and tool calls show up with their kind and the file they touch. Edits come back as diffs, and the todo list as the plan.
-- **Permissions:** kiln's prompts become the editor's permission dialog (allow, always allow, deny).
+- **Permissions:** frog's prompts become the editor's permission dialog (allow, always allow, deny).
 - **Modes:** Ask, Accept Edits and Yolo are session modes.
-- **MCP:** servers the editor passes in are added to kiln's own.
+- **MCP:** servers the editor passes in are added to frog's own.
 
 ## Images
 
@@ -220,7 +220,7 @@ Every client draws the same layout:
 - **Mac app:** a native card in the answer. Hover a node for its detail, click it to open its file, pop the diagram out into its own zoomable window, or export PNG, SVG or Mermaid.
 - **Terminal:** box-drawing art.
 
-**Code maps.** `CodeMap` (and `kiln --map [dir]`, or Session › Map Project in the Mac app) draws the project's structure from the code itself, with no model involved:
+**Code maps.** `CodeMap` (and `frog --map [dir]`, or Session › Map Project in the Mac app) draws the project's structure from the code itself, with no model involved:
 - **Rust:** modules and crate paths across a workspace.
 - **TS/JS and Python:** imports.
 - **Go:** packages.
@@ -228,11 +228,11 @@ Every client draws the same layout:
 
 The map collapses files into directories when there are too many to read, frames subdirectories, and drops dependencies that are implied by others. It keeps every edge within a cycle, and tints hot spots by git churn over the last 90 days. The model gets the full dependency list as text, so it's a cheap way for the agent to learn a codebase. In the Mac app, dense maps draw edges faintly, and hovering a node lights up its own edges.
 
-```` ```mermaid ```` blocks in answers render the same way. `kiln --mermaid < diagram.mmd` lays out Mermaid from the command line, and `kiln --session-tree` draws a folder's sessions and their forks. The Mac app shows the same tree from the Sessions card.
+```` ```mermaid ```` blocks in answers render the same way. `frog --mermaid < diagram.mmd` lays out Mermaid from the command line, and `frog --session-tree` draws a folder's sessions and their forks. The Mac app shows the same tree from the Sessions card.
 
 ## Context budget
 
-Local models often run with a 32k window, and ollama silently cuts off anything that doesn't fit. So kiln checks the budget before every model call rather than reacting after an overflow:
+Local models often run with a 32k window, and ollama silently cuts off anything that doesn't fit. So frog checks the budget before every model call rather than reacting after an overflow:
 
 1. **Probe the real window.** It asks the server: ollama `/api/show`, llama.cpp `/props`, LM Studio `/api/v0/models`, vLLM `max_model_len`. A configured `context_window` is lowered to fit what the server reports. If you don't configure one, ollama's window is capped at 32k, since ollama allocates memory for the whole window.
 2. **Estimate the prompt.** Characters are converted to tokens using a ratio calibrated against the token counts the provider reports.
@@ -245,11 +245,11 @@ Every pruning step is written to the session log, so a resumed session sees exac
 
 ```bash
 brew install xcodegen
-cd apps/macos && xcodegen generate && open Kiln.xcodeproj
+cd apps/macos && xcodegen generate && open Frog.xcodeproj
 ```
 
 **How it works:**
-- The app is a SwiftUI client that launches the bundled `kiln --serve` and speaks the same JSON-lines protocol as every other client. [Protocol.swift](apps/macos/Kiln/Engine/Protocol.swift) mirrors `protocol.rs`.
+- The app is a SwiftUI client that launches the bundled `frog --serve` and speaks the same JSON-lines protocol as every other client. [Protocol.swift](apps/macos/Frog/Engine/Protocol.swift) mirrors `protocol.rs`.
 - The protocol tests decode events captured from a real engine run, so the two sides can't drift apart.
 - A build phase compiles the Rust engine and copies it into the app bundle.
 
@@ -257,25 +257,25 @@ cd apps/macos && xcodegen generate && open Kiln.xcodeproj
 - **Outcome-first turns.** The work collapses to one line, like "Worked 42s · read 3 files · edited 1 file". While a turn runs you see a live tail of its steps and the plan checklist. Below that come the answer and a strip of the files it changed.
 - **Changes inspector (⌥⌘0):** every file the session touched, with syntax-highlighted diffs.
 - **Rewind** on any finished turn, and continue on a new branch; the old session is kept. **Fork** and **Copy** are there too, on hover.
-  - In a git repo, every turn starts with a checkpoint of the whole working tree, pinned under `refs/kiln/`. Rewind restores it, so it also undoes what shell commands did. Your index, stash and HEAD are never touched.
-  - Outside git, rewind restores the files kiln edited with Edit and Write.
-- **Race.** One prompt runs as 2–4 parallel attempts, each with its own engine in its own git worktree. Every worktree starts from your current files, uncommitted changes included, and runs unattended but sandboxed to that worktree. An optional check command, like your tests, scores each attempt. You apply the one you want; the others are thrown away. The same steps are available from the CLI: `kiln --attempts N`, `--apply-attempt DIR --base COMMIT`, and `--discard-attempt DIR`.
+  - In a git repo, every turn starts with a checkpoint of the whole working tree, pinned under `refs/frog/`. Rewind restores it, so it also undoes what shell commands did. Your index, stash and HEAD are never touched.
+  - Outside git, rewind restores the files frog edited with Edit and Write.
+- **Race.** One prompt runs as 2–4 parallel attempts, each with its own engine in its own git worktree. Every worktree starts from your current files, uncommitted changes included, and runs unattended but sandboxed to that worktree. An optional check command, like your tests, scores each attempt. You apply the one you want; the others are thrown away. The same steps are available from the CLI: `frog --attempts N`, `--apply-attempt DIR --base COMMIT`, and `--discard-attempt DIR`.
 - **Session titles** come from Apple's on-device model after the first turn.
 - **Permission cards** show exactly what an edit will change before you allow it (⌘↩ to allow, ⌘. to deny).
 - **Live, ANSI-colored output** from running commands.
-- **Composer:** `@` file picker with fuzzy search, follow-ups queued while kiln is working, Esc to interrupt, and pickers for mode and model.
+- **Composer:** `@` file picker with fuzzy search, follow-ups queued while frog is working, Esc to interrupt, and pickers for mode and model.
 - **⌘K command palette:** sessions, models, modes, fork, compact.
 - **Notifications** when a turn finishes or needs permission while you're in another app. You can Allow or Deny straight from the notification.
 
-**Designing without a model.** `open Kiln.app --args -KilnFolder <dir> -KilnReplay <session.jsonl> -KilnReplaySpeed 4 [-KilnReplayAsk YES]` plays back a recorded session. Some fixtures live in [apps/macos/Fixtures](apps/macos/Fixtures). The snapshot tests render them through the real views into `$TMPDIR/kiln-snapshots/*.png`.
+**Designing without a model.** `open Frog.app --args -FrogFolder <dir> -FrogReplay <session.jsonl> -FrogReplaySpeed 4 [-FrogReplayAsk YES]` plays back a recorded session. Some fixtures live in [apps/macos/Fixtures](apps/macos/Fixtures). The snapshot tests render them through the real views into `$TMPDIR/frog-snapshots/*.png`.
 
-**Opening a folder from the command line:** `open Kiln.app --args -KilnFolder <path>`. Engine stderr is logged to `~/Library/Logs/Kiln/engine.log`.
+**Opening a folder from the command line:** `open Frog.app --args -FrogFolder <path>`. Engine stderr is logged to `~/Library/Logs/Frog/engine.log`.
 
 ## Bench
 
 ```bash
-cargo run -p kiln-bench -- run -m ollama/qwen3:4b,lmstudio/qwen3-coder-30b --modes auto,native,json -r 3
-cargo run -p kiln-bench -- report ~/.local/share/kiln/bench/<timestamp>/results.jsonl
+cargo run -p frog-bench -- run -m ollama/qwen3:4b,lmstudio/qwen3-coder-30b --modes auto,native,json -r 3
+cargo run -p frog-bench -- report ~/.local/share/frog/bench/<timestamp>/results.jsonl
 ```
 
 **Tasks.** Each task lives in [bench/tasks](bench/tasks) and has two parts:
@@ -292,7 +292,7 @@ cargo run -p kiln-bench -- report ~/.local/share/kiln/bench/<timestamp>/results.
 - how each turn ended (`complete`, `looping`, `timeout`, …)
 - a per-task pass grid
 
-**What gets saved:** every run's session log, so any failure can be replayed with `kiln -r`. Every task's check is verified to fail on the untouched repo and to pass with a reference fix.
+**What gets saved:** every run's session log, so any failure can be replayed with `frog -r`. Every task's check is verified to fail on the untouched repo and to pass with a reference fix.
 
 ## Permissions
 
@@ -323,8 +323,8 @@ cargo run -p kiln-bench -- report ~/.local/share/kiln/bench/<timestamp>/results.
 
 ## Instructions
 
-Loaded from `~/.config/kiln/KILN.md`, `~/.claude/CLAUDE.md`, and any `AGENTS.md`, `KILN.md`, or `CLAUDE.md` in the working directory and its parent directories.
+Loaded from `~/.config/frog/FROG.md`, `~/.claude/CLAUDE.md`, and any `AGENTS.md`, `FROG.md`, or `CLAUDE.md` in the working directory and its parent directories.
 
 ## Memory
 
-`/remember` saves a note as a markdown file under `~/.local/share/kiln/memory/` (`global/`, or `projects/<path>/` for one project, shared by its worktrees), readable only by you and easy to edit by hand. Obvious secrets (API keys, tokens, private keys, `password=` values) are redacted before anything is written. Each session starts with a short index of your notes in the system prompt, framed as possibly out-of-date data rather than instructions and sized to the model: about 400 tokens for small models, 1k for mid-size and 2.5k for large ones. Notes that mention files that have since disappeared are marked possibly stale.
+`/remember` saves a note as a markdown file under `~/.local/share/frog/memory/` (`global/`, or `projects/<path>/` for one project, shared by its worktrees), readable only by you and easy to edit by hand. Obvious secrets (API keys, tokens, private keys, `password=` values) are redacted before anything is written. Each session starts with a short index of your notes in the system prompt, framed as possibly out-of-date data rather than instructions and sized to the model: about 400 tokens for small models, 1k for mid-size and 2.5k for large ones. Notes that mention files that have since disappeared are marked possibly stale.

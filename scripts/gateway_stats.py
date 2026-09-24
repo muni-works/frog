@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""What a harness-aware inference gateway could save, measured on real kiln sessions.
+"""What a harness-aware inference gateway could save, measured on real frog sessions.
 
-Reads kiln session logs (JSONL) and estimates, per model:
+Reads frog session logs (JSONL) and estimates, per model:
 
   cacheable input   With a session pinned to one server that keeps its KV cache between
                     steps, each model call only has to prefill what's new since the last
@@ -14,16 +14,16 @@ Reads kiln session logs (JSONL) and estimates, per model:
                     constrained decoding would prevent), contract (e.g. editing a file it
                     hasn't read), repeat (loops), other. Permission denials are left out.
 
-Token counts are estimates: characters become tokens at 3.5 chars/token (kiln's own default,
+Token counts are estimates: characters become tokens at 3.5 chars/token (frog's own default,
 with the cache estimate also shown at 3 and 4), and each session's fixed prompt size (system
-prompt and tool schemas) is fitted to the real per-turn usage kiln logs (turn_ended). Context
+prompt and tool schemas) is fitted to the real per-turn usage frog logs (turn_ended). Context
 pruning isn't logged, so long sessions are treated as if never pruned; each prune would cost
 one full re-prefill. Output tokens for prompt lookup are approximated by a word/punctuation
 split.
 
     scripts/gateway_stats.py [DIR ...] [--json]
 
-DIR defaults to ~/.local/share/kiln/sessions. Name a group with LABEL=DIR.
+DIR defaults to ~/.local/share/frog/sessions. Name a group with LABEL=DIR.
 """
 
 import argparse
@@ -35,7 +35,7 @@ import sys
 from collections import defaultdict
 
 TOKEN = re.compile(r"\w+|[^\w\s]|\s+")
-# Why a tool call failed, from kiln's own messages. "denied" isn't the model's fault and is left
+# Why a tool call failed, from frog's own messages. "denied" isn't the model's fault and is left
 # out of error rates; "schema" is what constrained decoding would prevent.
 ERRORS = [
     ("denied", re.compile(r"Not permitted|rejected this tool call|Interrupted by user", re.I)),
@@ -265,7 +265,7 @@ def main():
     ap.add_argument("dirs", nargs="*", help="session folders, optionally LABEL=DIR")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
-    specs = a.dirs or [f"interactive={os.path.expanduser('~/.local/share/kiln/sessions')}"]
+    specs = a.dirs or [f"interactive={os.path.expanduser('~/.local/share/frog/sessions')}"]
     groups = []
     for spec in specs:
         label, _, d = spec.rpartition("=")

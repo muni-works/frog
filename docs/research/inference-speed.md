@@ -1,6 +1,6 @@
-# LLM inference speed frontier, and what tang/kiln should bet on
+# LLM inference speed frontier, and what tang/frog should bet on
 
-Written 2026-09-23. Scope: single-user (batch-1) decode speed, time-to-first-token (TTFT), and wall-clock time per finished agent task on consumer hardware (Apple Silicon, RTX 3090), plus a possible hosted "kiln Pro" tier.
+Written 2026-09-23. Scope: single-user (batch-1) decode speed, time-to-first-token (TTFT), and wall-clock time per finished agent task on consumer hardware (Apple Silicon, RTX 3090), plus a possible hosted "frog Pro" tier.
 
 How to read the labels: **[vendor]** means a vendor's own claim that nobody independent has checked. **[unverified]** means I only saw it in secondary coverage or search snippets and did not read the primary source. **[calc]** means my own arithmetic. Everything else links to the primary source I read, or to a close second-hand source.
 
@@ -12,8 +12,8 @@ How to read the labels: **[vendor]** means a vendor's own claim that nobody inde
 2. **In agent contexts, the KV cache is half of the memory traffic.** Qwen3-8B stores about 147 KB of fp16 KV per context token. At 20K tokens of context, each decoded token reads about 2.9 GB of KV on top of 4.3 GB of weights, so the ceiling drops from about 206 to about 130 tok/s on a 3090 **[calc]**. Quantizing KV and using hybrid-attention models are decode-speed work, not just memory work.
 3. **The largest proven algorithmic win for this workload is model-free drafting from session history.** SuffixDecoding reached up to 5.3x on agentic SQL and 1.8–4.5x end-to-end on SWE-Bench agent subtasks. It beats EAGLE-3 on these workloads and runs on the CPU. A learned drafter should be layered on top for novel text: native MTP heads measured +33–60% on a 3090, and DFlash block diffusion is another option.
 4. **Apple Silicon behaves differently.** Verifying extra tokens is not nearly free on Metal the way it is on CUDA at batch 1. EAGLE-3 in MLX gave only 1.05x on M3 Ultra. Drafting on Mac only pays when acceptance is very high, which is the copy-heavy spans that suffix/prompt lookup catch. Prefill is what hurts on Mac: an M4 Max prefills an 8B model at roughly 0.5–1K tok/s. M5 Neural Accelerators give about 4x on TTFT, and KV reuse (in memory, then on disk) is the main lever.
-5. **The speed hardware frontier is 1–17K tok/s per user, served from the cloud.** Cerebras reports about 2K tok/s on Qwen3-Coder-480B. Nvidia/Groq LPX reports about 3.4K tok/s. Taalas HC1 claims about 17K tok/s on a hard-wired Llama-3.1-8B, and AMD agreed to buy Taalas in August 2026. Diffusion LLMs (Mercury 2/2.5) serve about 1K tok/s. None of this transfers to local hardware. It matters for a "kiln Pro" speed tier.
-6. **Agent wall-clock depends on the tool setup.** Measured LLM share of runtime ranges from 71–98% in one study to 40% in another (tools were 60% for coding in PASTE). Cutting steps (parallel tool calls, speculative tool execution) produced 20–48% task-time reductions in papers. Kiln should measure its own split before choosing between faster tokens and fewer, overlapped steps.
+5. **The speed hardware frontier is 1–17K tok/s per user, served from the cloud.** Cerebras reports about 2K tok/s on Qwen3-Coder-480B. Nvidia/Groq LPX reports about 3.4K tok/s. Taalas HC1 claims about 17K tok/s on a hard-wired Llama-3.1-8B, and AMD agreed to buy Taalas in August 2026. Diffusion LLMs (Mercury 2/2.5) serve about 1K tok/s. None of this transfers to local hardware. It matters for a "frog Pro" speed tier.
+6. **Agent wall-clock depends on the tool setup.** Measured LLM share of runtime ranges from 71–98% in one study to 40% in another (tools were 60% for coding in PASTE). Cutting steps (parallel tool calls, speculative tool execution) produced 20–48% task-time reductions in papers. Frog should measure its own split before choosing between faster tokens and fewer, overlapped steps.
 
 ---
 
@@ -70,7 +70,7 @@ An 8B dense model costs about 2 × 8e9 = 16 GFLOP per prompt token, plus attenti
 - **M4 Max GPU:** about 17–18 TFLOPS FP16, with no tensor cores before M5. That gives roughly 0.5–1K tok/s for 8B. A 20K cold prompt takes 20–40 s; a 3K suffix takes about 3–6 s [calc]. **On a Mac, the uncached suffix of each turn is the main TTFT cost.**
 - **M5 GPU Neural Accelerators:** Qwen3-14B-4bit TTFT was 4.06x faster than M4, while decode was only 1.19x faster ([Apple ML Research, "Exploring LLMs with MLX and the Neural Accelerators in the M5 GPU", late 2025](https://machinelearning.apple.com/research/exploring-llms-mlx-m5)). BaseRT reports prefill up to 6.4x faster than llama.cpp and 3.9x faster than MLX on an M5 Pro ([arXiv 2607.19438](https://arxiv.org/abs/2607.19438)).
 
-**Implication for kiln.** With 75–80% prefix reuse, a 20K-token turn still has 4–5K new tokens. On an M4 Max that is about 5–8 s TTFT per turn; on a 3090 it is about 2 s. Over 30–60 turns per task, prefill alone costs minutes on a Mac.
+**Implication for frog.** With 75–80% prefix reuse, a 20K-token turn still has 4–5K new tokens. On an M4 Max that is about 5–8 s TTFT per turn; on a 3090 it is about 2 s. Over 30–60 turns per task, prefill alone costs minutes on a Mac.
 
 ---
 
@@ -143,7 +143,7 @@ On Mac, only drafts with very high acceptance pay. Suffix/prompt-lookup copies a
 
 ---
 
-## 5. Model-side levers, ranked for kiln
+## 5. Model-side levers, ranked for frog
 
 1. **Architecture: hybrid-attention MoE** (Qwen3.5/3.6-35B-A3B class). This gives 2–3x the decode ceiling of a dense 8B at better quality, and KV growth is about 4x slower. Cost for tang: Gated DeltaNet kernels. Also, prefix caching now needs *recurrent-state checkpoints* at reusable boundaries, because you cannot truncate a linear-attention state to an arbitrary prefix. This is the non-obvious engineering tax.
 2. **KV quantization** (int8 now; 4-bit or TurboQuant-style 3–4 bit later). At 20K context this lifts the 3090 ceiling from about 130 to about 165 tok/s with int8 KV, and toward about 185 with 4-bit [calc]. It also doubles or quadruples how many sessions can stay pinned.
@@ -170,7 +170,7 @@ On Mac, only drafts with very high acceptance pay. Suffix/prompt-lookup copies a
 - SPORK: tools are 16% (tau2), 19% (GAIA), 37% (BrowseComp); only 15–25% of tool calls can run in parallel with their predecessor.
 - TraceLab ([arXiv 2606.30560](https://arxiv.org/abs/2606.30560), Jun 2026): 4,300 coding sessions, 350K LLM steps. The pattern is long contexts with short outputs, prefix hit rates that are high but imperfect, and heavy-tailed tool latency. It recommends "append-length-aware prefill" and KV management around human-paced gaps.
 
-**Reading these for kiln.** Local inference at about 90 tok/s is 10–30x slower than frontier cloud APIs. That pushes kiln's split toward LLM-dominated: decode for outputs, plus uncached-suffix prefill on Mac. So per-token speed matters more for kiln than for a cloud agent. But step count multiplies everything:
+**Reading these for frog.** Local inference at about 90 tok/s is 10–30x slower than frontier cloud APIs. That pushes frog's split toward LLM-dominated: decode for outputs, plus uncached-suffix prefill on Mac. So per-token speed matters more for frog than for a cloud agent. But step count multiplies everything:
 - Parallel tool calls (−40% wall-clock in W&D) and speculative read-only tool execution (−20% to −48%) are *orthogonal* to token speed.
 - They also cut prefill, because fewer turns means fewer uncached suffixes.
 
@@ -178,17 +178,17 @@ On Mac, only drafts with very high acceptance pay. Suffix/prompt-lookup copies a
 
 ---
 
-## 8. Hardware frontier: what it means for kiln Pro
+## 8. Hardware frontier: what it means for frog Pro
 
 - **Available now for rent:** Cerebras (1.5–3K tok/s on big open coders; TTFT has historically been the weak spot, and that matters for agents with many short turns), Groq/Nvidia LPX (about 1.5–3.4K), SambaNova (hundreds to low thousands; no fresh 2026 data found), Mercury 2.5 (about 1.1K, own model).
 - **Announced:** Taalas HC2 (20B-class, FP4, "summer 2026"; now under AMD), Etched Sohu (shipping claims, unverified), Groq 3 racks paired with Vera Rubin in late 2026. d-Matrix: I found no 2026 per-user numbers; treat it as batch-throughput-oriented.
-- **Kiln Pro options:**
+- **Frog Pro options:**
   - (a) Resell a speed provider (Cerebras/Groq) for a "turbo" tier. Fastest path to about 1–2K tok/s, but no control over prefix KV pinning.
   - (b) Self-host on B200/H200 with SGLang or vLLM, NVFP4, EAGLE 3.1 + Arctic suffix decoding, and session-affinity routing with HiCache/LMCache. Realistic per-user decode is about 300–600 tok/s on an A3B-class MoE, and it keeps session KV hot. For agent tasks, (b) with near-100% prefix hits may beat (a) end-to-end despite lower tok/s, because TTFT dominates short-output turns.
 
 ---
 
-## 9. Ranked bets for tang/kiln (months, not years)
+## 9. Ranked bets for tang/frog (months, not years)
 
 Gains are relative to today's tang unless stated. "Smallest experiment" is meant to be a day or two of work.
 
@@ -202,7 +202,7 @@ Gains are relative to today's tang unless stated. "Smallest experiment" is meant
 - **Depends on:** a cheap multi-token verify path. On Metal, measure the cost curve first.
 - **Risk:** low on CUDA. Medium on Metal: verify cost may cap it, as with the MLX EAGLE 1.05x result.
 - **Smallest experiment:**
-  1. Offline: replay kiln logs through a suffix-tree drafter vs current prompt lookup, and plot the accepted-length histogram (no GPU needed).
+  1. Offline: replay frog logs through a suffix-tree drafter vs current prompt lookup, and plot the accepted-length histogram (no GPU needed).
   2. On both backends, time a forward pass at k = 1, 2, 4, 8, 16, 32 tokens at 2K and 20K context.
   3. Multiply the two to predict speedup per backend before building anything.
 
@@ -226,7 +226,7 @@ Gains are relative to today's tang unless stated. "Smallest experiment" is meant
   4. Prompt and train toward parallel tool calls.
 - **Depends on:** tool side-effect classification. Only read-only or sandboxed calls should run speculatively.
 - **Risk:** low for read-only tools; medium for mutating tools (keep them off).
-- **Smallest experiment:** from kiln logs, compute (a) the fraction of wall-clock in tools, (b) the idle gaps between a tool call's arguments closing and generation ending, and (c) how often the next call is predictable from the current output (file mentioned → read). That gives an upper bound in an afternoon.
+- **Smallest experiment:** from frog logs, compute (a) the fraction of wall-clock in tools, (b) the idle gaps between a tool call's arguments closing and generation ending, and (c) how often the next call is predictable from the current output (file mentioned → read). That gives an upper bound in an afternoon.
 
 ### #4. CUDA decode megakernel (or near-megakernel) for the 3090
 - **Expected gain:** 1.3–1.7x on 8B dense at short context, taking bandwidth utilization from about 45% to 70–78%. For A3B MoE the upside is bigger, since MoE engines sit at 35–40% of ceiling.
@@ -245,13 +245,13 @@ Gains are relative to today's tang unless stated. "Smallest experiment" is meant
 - **Expected gain:** +30–60% on novel text (measured with MTP on a 3090); higher with DFlash on short outputs.
 - **Depends on:** the model shipping MTP heads, or an available DFlash checkpoint (Qwen3-8B, Qwen3-Coder-30B-A3B, and Qwen3.5 checkpoints exist).
 - **Risk:** medium. The drafter's KV bandwidth can erase gains on long outputs (seen with DFlash in llama.cpp). Also, MTP may not reproduce greedy output byte for byte (the 3090 study).
-- **Smallest experiment:** run the z-lab DFlash MLX backend and llama.cpp MTP on kiln-like prompts, and record tok/s at 100/500/2000 output tokens.
+- **Smallest experiment:** run the z-lab DFlash MLX backend and llama.cpp MTP on frog-like prompts, and record tok/s at 100/500/2000 output tokens.
 
 ### #7. Move the default local model to a hybrid-attention A3B MoE, with int8 KV
 - **Expected gain:** 2–3x decode ceiling at equal or better quality; context-length slowdown about 4x smaller.
 - **Depends on:** Gated DeltaNet kernels in tang, recurrent-state prefix checkpoints (ties to #2), MoE kernels.
 - **Risk:** medium to high engineering. The memory footprint (about 17–20 GB at 4-bit) rules out 16 GB Macs.
-- **Smallest experiment:** run Qwen3.5-35B-A3B in MLX / llama.cpp on the same kiln tasks. Compare wall-clock and pass rate against Qwen3-8B.
+- **Smallest experiment:** run Qwen3.5-35B-A3B in MLX / llama.cpp on the same frog tasks. Compare wall-clock and pass rate against Qwen3-8B.
 
 ### #8. Free-batch parallelism: subagents, forks and best-of-n
 - **Expected gain:** 2–4 parallel streams at about 1x per-stream cost on memory-bound hardware. It turns "more steps" into "wider steps".

@@ -1,4 +1,4 @@
-# Knowledge systems for coding agents, and what kiln should build
+# Knowledge systems for coding agents, and what frog should build
 
 Research date: 2026-09-23. The sources are primary where I could get them: vendor docs, engineering blogs, source code and arXiv. Anything that comes only from a vendor's own claim, or only from third-party write-ups, is marked **[vendor claim]** or **[unverified]**.
 
@@ -20,12 +20,12 @@ Research date: 2026-09-23. The sources are primary where I could get them: vendo
   - raw transcript memory
   - retrieved memory that is irrelevant or only loosely related
   - anything that grows the always-loaded prefix
-- Small models are hit twice. They have less effective context and weaker agentic search. So kiln should do more of the knowledge work **in deterministic harness code** (budgets, ranking, verification, redaction) and **offline with the strongest available model** (extraction, consolidation), and less in the 4B model's turn loop.
-- Recommendation for kiln, in short:
+- Small models are hit twice. They have less effective context and weaker agentic search. So frog should do more of the knowledge work **in deterministic harness code** (budgets, ranking, verification, redaction) and **offline with the strongest available model** (extraction, consolidation), and less in the 4B model's turn loop.
+- Recommendation for frog, in short:
   - **Instructions**: exists today; add a tier budget.
   - **Memory notes**: markdown with frontmatter, a budgeted index, provenance and citations, stored locally outside the repo.
   - **Episodic recall**: session summaries plus a keyword/file recall tool.
-  - **Code knowledge**: CodeMap, plus a ranked symbol map for the weak tier; embeddings only if `kiln bench` shows a gain.
+  - **Code knowledge**: CodeMap, plus a ranked symbol map for the weak tier; embeddings only if `frog bench` shows a gain.
   - **Procedures**: skills, with consolidation *proposing* new ones.
   - Automatic learning goes through a **review inbox**, not straight into the prompt.
 
@@ -111,7 +111,7 @@ Sources:
 
 ### 2.2 Taxonomy of architectures
 
-**A. Static instruction files** (AGENTS.md, CLAUDE.md, KILN.md, rules; always loaded; human-written)
+**A. Static instruction files** (AGENTS.md, CLAUDE.md, FROG.md, rules; always loaded; human-written)
 - Pros:
   - zero infrastructure
   - portable and reviewable in PRs
@@ -178,7 +178,7 @@ Sources:
   - no coding-specific evidence
 - Where it breaks: local-first and solo developers; small models as the extractor.
 
-**G. Code indexes** (Aider PageRank repo map, kiln CodeMap, Cursor/Roo embeddings, Sourcegraph/SCIP/LSP)
+**G. Code indexes** (Aider PageRank repo map, frog CodeMap, Cursor/Roo embeddings, Sourcegraph/SCIP/LSP)
 - Pros:
   - derived from code, so never stale if recomputed
   - no trust issue
@@ -197,7 +197,7 @@ Sources:
 - Cons:
   - costs tokens and turns ("trades time for intelligence")
   - needs a model that can plan searches
-- Where it breaks: 4B models that loop or pick the wrong tools. kiln's own bench saw `qwen2.5:3b` 0/18, and the ROADMAP notes it "picks the wrong tools".
+- Where it breaks: 4B models that loop or pick the wrong tools. frog's own bench saw `qwen2.5:3b` 0/18, and the ROADMAP notes it "picks the wrong tools".
 
 **I. Episodic memory** (session logs, summaries, experience replay)
 - Pros:
@@ -223,7 +223,7 @@ The architectures are **layers, not alternatives**. Every serious harness combin
 - The paper concludes that context files should contain only what *isn't already discoverable from the code*.
 - The Claude Code docs agree independently: aim for under 200 lines, contradictions get resolved arbitrarily, and adherence falls with length.
 
-**Implication for kiln:**
+**Implication for frog:**
 - Never auto-generate AGENTS.md content into the always-loaded prefix.
 - Budget the instruction block per model tier. The ROADMAP already notes that global CLAUDE.md files "add a lot of tokens" for the weak tier.
 
@@ -301,7 +301,7 @@ The Claude Code evidence is **practitioner reports, not a published ablation**.
 **[Agent Retrieval Bench, arXiv 2607.24882, Jul 2026](https://arxiv.org/abs/2607.24882)** (427 samples, 25 repos):
 - **No single method wins.**
 - Qwen3-Embedding-4B/8B led recall.
-- **RepoMap was best for context efficiency at an 8K-token budget**, which is exactly kiln's weak-tier regime.
+- **RepoMap was best for context efficiency at an 8K-token budget**, which is exactly frog's weak-tier regime.
 - Better retrieved context meant less exploratory searching.
 
 **[SWE-Explore, arXiv 2606.07297, 2026](https://arxiv.org/html/2606.07297v1)**: one-shot BM25 and light dense retrievers are "close to random" on exploration metrics, and agentic explorers do much better.
@@ -316,12 +316,12 @@ Net:
 - **[RULER, arXiv 2404.06654, 2024](https://arxiv.org/abs/2404.06654)**: effective context is often **at most half the claimed length**. Only about half of the models that claim 32k or more pass at 32k. For Qwen3-4B or Gemma-3-4B at 8–32k, assume roughly 4–16k of *useful* context.
 - **[Chroma, "Context Rot", Jul 2025](https://www.trychroma.com/research/context-rot)**: all 18 models tested degraded as input grew, even on simple tasks.
 - **VibeMemBench** found memory utility depends on the solver's competence. Weak solvers gain more from *good* experience, but they are also least able to *filter* bad memory or write good memory.
-- **kiln's own data** (memory file, 2026-09-22):
+- **frog's own data** (memory file, 2026-09-22):
   - qwen3:4b native scored 5/6
   - qwen2.5:3b scored 0/18
   - the ROADMAP notes weak models "still pick the wrong tools"
   - Anything that relies on a 4B model choosing to call `Recall` or `Skill` will under-deliver.
-- Cost framing for a 4B model on tang, where the prefix cache matters: a stable, always-loaded memory block is cheap *after the first turn* because it is cached. Mutating it mid-session invalidates the cache (kiln's context.rs already reasons this way about pruning).
+- Cost framing for a 4B model on tang, where the prefix cache matters: a stable, always-loaded memory block is cheap *after the first turn* because it is cached. Mutating it mid-session invalidates the cache (frog's context.rs already reasons this way about pruning).
 
 ### 3.6 What is hype
 
@@ -354,18 +354,18 @@ Net:
 - git history for rollback (Codex, Letta)
 - redaction
 - machine-local storage (Claude Code, Windsurf)
-- enforcement in hooks or dispatch rather than prompts (Claude Code docs; kiln ROADMAP §6)
+- enforcement in hooks or dispatch rather than prompts (Claude Code docs; frog ROADMAP §6)
 
 ---
 
-## 5. Recommendation for kiln
+## 5. Recommendation for frog
 
 ### 5.1 Design principles
 
 1. **Files, not databases.** Use markdown with YAML frontmatter, which matches SKILL.md, Claude Code memory and Codex. It is inspectable, diffable, greppable and portable.
 2. **Push for weak models, pull for strong ones.** The harness picks and budgets what goes into the prompt. The model gets tools to go deeper only if its tier handles tools well.
 3. **The harness does the thinking that doesn't need an LLM**: budgets, ranking, dedupe, secret redaction, citation checks, decay.
-4. **Extraction and consolidation run offline, on the best available model**: a cloud model if configured, otherwise the local model with a grammar-constrained schema (kiln already has JSON-grammar mode).
+4. **Extraction and consolidation run offline, on the best available model**: a cloud model if configured, otherwise the local model with a grammar-constrained schema (frog already has JSON-grammar mode).
 5. **Nothing agent-written reaches the always-loaded prefix without provenance, and nothing derived from tool output does so without user approval.**
 6. **Don't store what the code can tell you.** No architecture, file lists or fixes, which CodeMap and grep already provide.
 7. **Freeze the prompt prefix for the whole session** to protect tang's prefix cache. Memory writes land on disk and show up next session.
@@ -374,7 +374,7 @@ Net:
 
 ```
                          always loaded (budgeted per tier)          on demand
-L0 Instructions   KILN.md / AGENTS.md / CLAUDE.md (+ path rules)   path-scoped rules on file read
+L0 Instructions   FROG.md / AGENTS.md / CLAUDE.md (+ path rules)   path-scoped rules on file read
 L1 Memory         memory/INDEX.md  (one line per entry)              memory/*.md bodies (Read/Recall)
 L2 Episodes       —                                                  sessions/*.jsonl + summaries (Recall)
 L3 Code           CodeMap/ranked repo map (weak tier only, ≤~800 tok) CodeMap tool, grep, [embeddings later]
@@ -382,7 +382,7 @@ L4 Procedures     skills catalog (existing, 6k-char budget)          Skill tool 
 ```
 
 **L0: Instructions** (exists in `prompt.rs::memory_files`)
-- Keep the AGENTS.md → KILN.md → CLAUDE.md walk.
+- Keep the AGENTS.md → FROG.md → CLAUDE.md walk.
 - Add a **per-tier instruction budget**:
   - weak: about 1.5k tokens
   - medium: about 4k
@@ -391,12 +391,12 @@ L4 Procedures     skills catalog (existing, 6k-char budget)          Skill tool 
   - Project files beat global ones.
   - Nearer files beat farther ones.
   - Truncate with a visible note: "N lines of ~/.claude/CLAUDE.md omitted for this model".
-- Later: `.kiln/rules/*.md` with `paths:` frontmatter (Claude Code-compatible, and also read from `.claude/rules/`), injected as a message when a matching file is first read. That is cheap, deterministic and cache-safe.
+- Later: `.frog/rules/*.md` with `paths:` frontmatter (Claude Code-compatible, and also read from `.claude/rules/`), injected as a message when a matching file is first read. That is cheap, deterministic and cache-safe.
 
 **L1: Memory notes** (new)
 - Location, local-only and outside the repo:
-  - `~/.local/share/kiln/projects/<repo-id>/memory/` per project. `<repo-id>` is the git root's hashed path, shared across worktrees, like Claude Code.
-  - `~/.config/kiln/memory/` for the user.
+  - `~/.local/share/frog/projects/<repo-id>/memory/` per project. `<repo-id>` is the git root's hashed path, shared across worktrees, like Claude Code.
+  - `~/.config/frog/memory/` for the user.
 - One file per entry, `memory/<slug>.md`:
   ```markdown
   ---
@@ -440,14 +440,14 @@ L4 Procedures     skills catalog (existing, 6k-char budget)          Skill tool 
 - Add a **ranked text repo map**: personalized PageRank over the existing `Graph`, seeded by files mentioned in the prompt, git-dirty files and recent churn. Emit top symbols and signatures within a token budget, like Aider (default 1k).
 - Weak tier: inject it once at session start, capped at about 600–800 tokens. This is the one piece of code knowledge worth pushing, because RepoMap was the most budget-efficient method at 8K in Agent Retrieval Bench.
 - Strong tier: leave it as a tool.
-- **Defer embeddings.** If `kiln bench` shows grep plus map failing on large repos:
+- **Defer embeddings.** If `frog bench` shows grep plus map failing on large repos:
   - add a local index built with tang, e.g. a small Qwen3-Embedding, using tree-sitter chunks
   - store it in a single file under the data dir, updated incrementally by mtime and hash
   - expose it as a `SemanticSearch` tool *alongside* grep, never instead of it (Cursor's result)
 
 **L4: Procedures** (skills, which exist)
 - Consolidation may **propose** a new skill when the same multi-step procedure recurs in 3 or more session summaries.
-- Proposed skills are written to `memory/proposed-skills/`, not to `.kiln/skills`, until the user accepts them.
+- Proposed skills are written to `memory/proposed-skills/`, not to `.frog/skills`, until the user accepts them.
 
 ### 5.3 Write and consolidation path
 
@@ -463,24 +463,24 @@ L4 Procedures     skills catalog (existing, 6k-char budget)          Skill tool 
      - drop anything containing URLs, shell commands or imperative "always/never run…" aimed at tools, unless `source: user`
      - drop anything matching secret patterns
      - dedupe against existing entries
-   - Results land in an **inbox** (`memory/inbox/`). The TUI and the Mac app show "3 things kiln learned. Keep, edit or discard?" at the next session start. Items from `user` corrections can be set to auto-accept by config; items from agent behavior never are.
+   - Results land in an **inbox** (`memory/inbox/`). The TUI and the Mac app show "3 things frog learned. Keep, edit or discard?" at the next session start. Items from `user` corrections can be set to auto-accept by config; items from agent behavior never are.
 3. **Consolidation (phase 4)**:
    - runs weekly, or when the index exceeds its budget, or on `/consolidate`
    - uses the memory directory as a **git repo** (Codex and Letta pattern) and presents the diff for approval
    - merges duplicates, resolves contradictions (newest `source: user` wins), archives entries unused for 60 days (the `uses` and `last_used` counters are bumped when an entry is cited in an answer or read via Recall), and converts relative dates to absolute ones
-4. **Promotion**: `/memory promote <slug>` moves an entry into the project's AGENTS.md (or a `.kiln/rules` file). That makes it a team-visible, committed instruction, and is the durable, portable tier.
+4. **Promotion**: `/memory promote <slug>` moves an entry into the project's AGENTS.md (or a `.frog/rules` file). That makes it a team-visible, committed instruction, and is the durable, portable tier.
 
 ### 5.4 Interop
 
 - **Read**:
-  - AGENTS.md, KILN.md, CLAUDE.md (exists)
+  - AGENTS.md, FROG.md, CLAUDE.md (exists)
   - `.claude/rules` and `.cursor/rules` with `paths:` (phase 2)
   - SKILL.md (exists)
-- **Import, one-way and on request only** (`kiln memory import claude|codex`):
+- **Import, one-way and on request only** (`frog memory import claude|codex`):
   - Claude Code: `~/.claude/projects/<proj>/memory/*.md`, whose frontmatter `type` already matches
   - Codex: `~/.codex/memories/MEMORY.md`
   - Imported entries get `source: imported:*` and go through the inbox.
-- **Write**: only to kiln's own directories, plus AGENTS.md on explicit promotion. Never write CLAUDE.md or another tool's store.
+- **Write**: only to frog's own directories, plus AGENTS.md on explicit promotion. Never write CLAUDE.md or another tool's store.
 - Keep the memory file format a strict superset of the Claude Code auto-memory frontmatter (`type`), so a user can symlink or share by hand.
 
 ### 5.5 Small-model specifics
@@ -495,7 +495,7 @@ L4 Procedures     skills catalog (existing, 6k-char budget)          Skill tool 
 | Extraction model | best configured provider; else local with JSON grammar and deterministic filters | same | self |
 
 - Total always-loaded knowledge for the weak tier is about 2.7k tokens, and all of it is cached by tang after the first turn.
-- Measure it in `kiln bench` with an A/B for each layer, following VibeMemBench's advice to gate on headroom.
+- Measure it in `frog bench` with an A/B for each layer, following VibeMemBench's advice to gate on headroom.
 - Add a bench fixture of repeat tasks on one repo to measure the memory-on vs memory-off delta per tier.
 
 ### 5.6 Phased plan
@@ -512,7 +512,7 @@ L4 Procedures     skills catalog (existing, 6k-char budget)          Skill tool 
 **Phase 2: episodes and scoped rules** (days)
 - session-end summaries: deterministic fallback plus an LLM-generated version
 - a `Recall` tool over summaries and memory by keyword and file touched
-- path-scoped rules (`.kiln/rules`, read `.claude/rules`)
+- path-scoped rules (`.frog/rules`, read `.claude/rules`)
 - the ranked text repo map from CodeMap's graph, pushed for the weak tier
 
 **Phase 3: learned memory with guardrails** (a week)
@@ -541,7 +541,7 @@ L4 Procedures     skills catalog (existing, 6k-char budget)          Skill tool 
 | **Weak models ignoring or misusing memory tools** | Push instead of pull on the weak tier. No write tool below the strong tier. User-invoked `/recall`. |
 | **Prefix-cache invalidation** | Memory is snapshotted at session start and never mutated mid-session. Compaction keeps the memory block as-is (it's in the system prompt, not in history). |
 | **Contradictions with AGENTS.md** | The memory framing line says instruction files win when a note conflicts with them. Consolidation flags memory that conflicts with L0 text. Promotion removes the memory entry. |
-| **Over-engineering** | Phases 1–2 need no model calls beyond the existing compaction path. Measure every later layer in `kiln bench` before making it a default. |
+| **Over-engineering** | Phases 1–2 need no model calls beyond the existing compaction path. Measure every later layer in `frog bench` before making it a default. |
 
 ---
 
@@ -573,10 +573,10 @@ L4 Procedures     skills catalog (existing, 6k-char budget)          Skill tool 
 - MINJA (2025): https://arxiv.org/abs/2503.03704; Memory poisoning defense (Jan 2026): https://arxiv.org/abs/2601.05504; Promptware kill chain (Jan 2026): https://arxiv.org/abs/2601.09625
 - LoCoMo audit (third party, unverified): https://dev.to/penfieldlabs/we-audited-locomo-64-of-the-answer-key-is-wrong-and-the-judge-accepts-up-to-63-of-intentionally-33lg
 
-Kiln code read for grounding:
-- `crates/kiln-engine/src/prompt.rs`: the `memory_files` walk and `system_prompt`
+Frog code read for grounding:
+- `crates/frog-engine/src/prompt.rs`: the `memory_files` walk and `system_prompt`
 - `skills.rs`: the 6k-char catalog budget and project-first discovery
 - `codemap.rs`: the file graph with churn heat
-- `session.rs`: JSONL sessions under `~/.local/share/kiln/sessions`
+- `session.rs`: JSONL sessions under `~/.local/share/frog/sessions`
 - `context.rs`: staged pruning and compaction with cache-aware hysteresis
 - `docs/ROADMAP.md` §3–6

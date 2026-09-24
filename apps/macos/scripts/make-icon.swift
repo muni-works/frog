@@ -1,4 +1,4 @@
-// Renders the Kiln app icon at every macOS size: an ember-gradient flame on a warm dark squircle.
+// Renders the Frog app icon at every macOS size: an ember-gradient flame on a warm dark squircle.
 // Usage: swift scripts/make-icon.swift <output.appiconset>
 import AppKit
 
@@ -26,7 +26,7 @@ func render(_ px: Int) -> Data {
     squircle.fill()
     ctx.restoreGState()
 
-    // Background: warm charcoal, lit from below like a kiln mouth.
+    // Background: warm charcoal, lit from below like a frog mouth.
     squircle.addClip()
     NSGradient(colors: [
         NSColor(srgbRed: 0.33, green: 0.13, blue: 0.06, alpha: 1),
