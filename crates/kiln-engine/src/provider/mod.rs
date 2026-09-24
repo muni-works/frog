@@ -27,6 +27,11 @@ pub struct Request<'a> {
     pub max_tokens: Option<u32>,
     /// JSON schema the whole response must match (grammar-constrained decoding).
     pub format: Option<&'a Value>,
+    /// Turn the model's reasoning on or off for this call; `None` leaves its default. Sent as
+    /// ollama's `think` and as `chat_template_kwargs.enable_thinking` to OpenAI-compatible
+    /// servers (tang-llm, vLLM, llama.cpp, SGLang), never to OpenAI's own API. A profile's
+    /// `extra` still wins.
+    pub think: Option<bool>,
 }
 
 pub enum StreamEvent {

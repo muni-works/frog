@@ -23,6 +23,7 @@ pub mod sidecar;
 pub mod skills;
 pub mod subagent;
 mod text_filter;
+pub mod thinking;
 pub mod tools;
 
 pub use engine::{Handle, Options, spawn};

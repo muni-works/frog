@@ -149,6 +149,13 @@ impl Client {
                 "json_schema": { "name": "kiln_action", "schema": schema },
             });
         }
+        // Only the generation prompt changes, so the server's cached prefix still matches.
+        // OpenAI's own API rejects unknown fields.
+        if let Some(think) = req.think
+            && !self.is_openai()
+        {
+            body["chat_template_kwargs"] = json!({ "enable_thinking": think });
+        }
         if let Some(extra) = &self.extra {
             deep_merge(&mut body, extra);
         }
@@ -290,6 +297,7 @@ mod tests {
             tools: &[],
             max_tokens: None,
             format: None,
+            think: None,
         };
         let body = c.body(&req);
         let m = body["messages"].as_array().unwrap();
@@ -298,6 +306,48 @@ mod tests {
         assert_eq!(
             m[2]["content"][1]["image_url"]["url"],
             "data:image/png;base64,AAAA"
+        );
+    }
+
+    #[test]
+    fn thinking_switch_goes_in_template_kwargs_but_not_to_openai() {
+        let client = |base: &str, extra: Option<Value>| Client {
+            http: reqwest::Client::new(),
+            base: base.into(),
+            model: "m".into(),
+            key: None,
+            extra,
+        };
+        let msgs = vec![Message::user("hi")];
+        let req = |think| Request {
+            system: "s",
+            messages: &msgs,
+            tools: &[],
+            max_tokens: None,
+            format: None,
+            think,
+        };
+        let local = client("http://localhost:8911/v1", None);
+        assert_eq!(
+            local.body(&req(Some(false)))["chat_template_kwargs"]["enable_thinking"],
+            false
+        );
+        assert!(local.body(&req(None)).get("chat_template_kwargs").is_none());
+        let openai = client("https://api.openai.com/v1", None);
+        assert!(
+            openai
+                .body(&req(Some(false)))
+                .get("chat_template_kwargs")
+                .is_none()
+        );
+        // The profile's own `extra` wins.
+        let pinned = client(
+            "http://localhost:8911/v1",
+            Some(json!({ "chat_template_kwargs": { "enable_thinking": true } })),
+        );
+        assert_eq!(
+            pinned.body(&req(Some(false)))["chat_template_kwargs"]["enable_thinking"],
+            true
         );
     }
 }

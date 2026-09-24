@@ -1,7 +1,7 @@
 //! The agent loop. Runs as a background task; clients drive it with [`Op`]s and receive
 //! [`Envelope`]s. See `protocol.rs` for the event lifecycle.
 
-use crate::config::{Config, Profile, ProviderKind, ToolMode};
+use crate::config::{Config, Profile, ProviderKind, Thinking, ToolMode};
 use crate::context::{self, Estimator};
 use crate::harness::{self, Caps, Tier};
 use crate::message::{Block, Message, Role, Usage};
@@ -15,6 +15,7 @@ use crate::provider::{
 };
 use crate::session::{self, Header, Log, Record};
 use crate::text_filter::TagFilter;
+use crate::thinking;
 use crate::tools::{self, Ctx, Kind};
 use anyhow::Result;
 use serde_json::Value;
@@ -308,6 +309,8 @@ struct Streamed {
     decode: Duration,
     /// Reasoning streamed before the first answer text or tool call.
     think: Duration,
+    /// Thinking was switched off for this call.
+    no_think: bool,
 }
 
 struct Agent {
@@ -342,6 +345,8 @@ struct Agent {
     caps: Option<Caps>,
     /// Tool-call format failures under `auto`; enough of them switches modes.
     mode_failures: u32,
+    /// Model calls in a row this turn with thinking switched off.
+    quiet: u32,
     /// Running totals for the current turn.
     turn_usage: TurnUsage,
     /// Where the current turn's time went, and when it started.
@@ -465,6 +470,7 @@ impl Agent {
             tier,
             caps,
             mode_failures: 0,
+            quiet: 0,
             turn_usage: TurnUsage::default(),
             timing: TurnTiming::default(),
             turn_clock: None,
@@ -625,6 +631,7 @@ impl Agent {
             ttft_ms: ttft,
             decode_ms: decode,
             think_ms: think,
+            no_think: streamed.no_think,
             compact,
         });
     }
@@ -801,6 +808,7 @@ impl Agent {
         self.inputs.push(input.to_string());
         self.turn_clock = Some(Instant::now());
         self.timing = TurnTiming::default();
+        self.quiet = 0;
         self.checkpoint(turn);
         self.turn_usage = TurnUsage::default();
 
@@ -851,8 +859,14 @@ impl Agent {
             self.sync_specs();
             self.fit_context(&mut compacted).await?;
             let sent = self.fixed_chars() + context::history_chars(&self.messages);
+            let think = self.think_switch(thinking::wanted(&self.messages, self.quiet));
+            self.quiet = if think == Some(false) {
+                self.quiet + 1
+            } else {
+                0
+            };
             let started = Instant::now();
-            let (resp, streamed) = self.call("thinking", &self.messages, false).await?;
+            let (resp, streamed) = self.call("thinking", &self.messages, false, think).await?;
             self.last_call = started.elapsed();
             self.usage = resp.usage;
             self.count_call(resp.usage, &streamed, false);
@@ -957,12 +971,41 @@ impl Agent {
         true
     }
 
+    /// The `thinking` setting in effect: the profile's, else the global one.
+    fn thinking_mode(&self) -> Thinking {
+        self.profile.thinking.unwrap_or(self.cfg.thinking)
+    }
+
+    /// The thinking switch for the next call, given whether [`thinking::wanted`] it.
+    fn think_switch(&self, want: bool) -> Option<bool> {
+        let can_switch = match &self.caps {
+            // Nothing to switch off.
+            Some(c) if !c.thinks => return None,
+            Some(c) => c.think_off,
+            None => None,
+        };
+        thinking::switch(self.thinking_mode(), can_switch, want)
+    }
+
     /// Probe a local model's capabilities the first time it's used under `auto`.
     async fn ensure_profiled(&mut self) {
-        if self.profile.tool_mode != ToolMode::Auto
-            || harness::is_hosted(&self.profile)
-            || self.caps.is_some()
-        {
+        if harness::is_hosted(&self.profile) {
+            return;
+        }
+        // Profiled before kiln knew to ask whether thinking can be switched off.
+        if let Some(c) = &self.caps {
+            if c.thinks && c.think_off.is_none() && self.thinking_mode() != Thinking::Always {
+                let think_off = harness::probe_think_off(&self.provider).await;
+                if let Some(c) = self.caps.as_mut() {
+                    c.think_off = Some(think_off);
+                    if self.store.is_some() {
+                        harness::save(&self.profile, c);
+                    }
+                }
+            }
+            return;
+        }
+        if self.profile.tool_mode != ToolMode::Auto {
             return;
         }
         self.emit(Event::Progress {
@@ -1498,6 +1541,7 @@ Don't repeat it. Change the arguments or try a different approach.",
         label: &str,
         messages: &[Message],
         quiet: bool,
+        think: Option<bool>,
     ) -> Result<(Response, Streamed)> {
         let json_mode = self.tool_mode == ToolMode::Json;
         let with_images = self.prepare_images(messages);
@@ -1526,6 +1570,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             tools,
             max_tokens: self.profile.max_tokens,
             format,
+            think,
         };
         let mut attempt = 0;
         loop {
@@ -1533,7 +1578,10 @@ Don't repeat it. Change the arguments or try a different approach.",
                 label: label.into(),
             });
             let mut started = false;
-            let mut streamed = Streamed::default();
+            let mut streamed = Streamed {
+                no_think: think == Some(false),
+                ..Default::default()
+            };
             let sent = Instant::now();
             // When the first event arrived, and the first that wasn't reasoning.
             let (mut first, mut answer) = (None::<Instant>, None::<Instant>);
@@ -1817,7 +1865,9 @@ Don't repeat it. Change the arguments or try a different approach.",
             Some(m) if m.role == Role::User => m.content.push(Block::Text { text: instr }),
             _ => msgs.push(Message::user(instr)),
         }
-        let (resp, streamed) = self.call("compacting", &msgs, true).await?;
+        // A summary needs no reasoning.
+        let think = self.think_switch(false);
+        let (resp, streamed) = self.call("compacting", &msgs, true, think).await?;
         self.count_call(resp.usage, &streamed, true);
         let summary = resp.message.text();
         if summary.trim().is_empty() {
@@ -2616,6 +2666,62 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[tokio::test]
+    async fn thinking_is_switched_off_for_routine_steps_and_back_on_after_errors() {
+        let thought = |t: &str| Block::Thinking {
+            text: t.into(),
+            signature: None,
+        };
+        let todo = |id: &str, what: &str| Block::ToolUse {
+            id: id.into(),
+            name: "TodoWrite".into(),
+            input: json!({ "todos": [{ "content": what, "status": "in_progress" }] }),
+        };
+        let script = vec![
+            // Probes: a thinking model with native tools that answers directly when asked not
+            // to think.
+            reply(vec![thought("hmm"), text("I'd read it.")], Stop::End),
+            reply(
+                vec![
+                    thought("read it"),
+                    Block::ToolUse {
+                        id: "p".into(),
+                        name: "Read".into(),
+                        input: json!({ "file_path": "probe.txt" }),
+                    },
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![thought("add"), text("42")], Stop::End),
+            reply(vec![text("not json")], Stop::End),
+            reply(vec![text("42")], Stop::End),
+            // The turn.
+            reply(vec![thought("plan"), todo("t1", "a")], Stop::ToolUse),
+            reply(vec![todo("t2", "b")], Stop::ToolUse),
+            reply(
+                vec![Block::ToolUse {
+                    id: "t3".into(),
+                    name: "Read".into(),
+                    input: json!({ "file_path": "/nonexistent/kiln-thinking-test.txt" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![thought("it's missing"), text("done")], Stop::End),
+        ];
+        let mut h = engine_mode(script, ToolMode::Auto);
+        let evs = run(&mut h, "plan it").await;
+        let calls = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnEnded { usage, .. } => usage.timing.as_ref().map(|t| t.calls.clone()),
+                _ => None,
+            })
+            .expect("turn timing");
+        let no_think: Vec<bool> = calls.iter().map(|c| c.no_think).collect();
+        // Plan, then skip after the first TodoWrite and the second, then think after the error.
+        assert_eq!(no_think, [false, true, true, false]);
     }
 
     #[tokio::test]

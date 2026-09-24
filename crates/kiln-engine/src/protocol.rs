@@ -523,6 +523,9 @@ pub struct CallTiming {
     /// Reasoning streamed before the first answer text or tool call.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub think_ms: u64,
+    /// Thinking was switched off for this call (see `thinking.rs`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_think: bool,
     /// A compaction summary rather than a step of the turn.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub compact: bool,

@@ -5,7 +5,7 @@ Reads kiln session logs (JSONL) and splits each turn's wall time, per model, int
 
   prefill      request sent → first streamed token (time to first token), per model call
   decode       first token → response done (of which: think, reasoning before any answer)
-  tools        tools running, not counting permission prompts
+  tools       tools running, not counting permission prompts
   user         waiting on the user to answer permission prompts
   classifier   auto mode's classifier deciding whether a tool call may run
   compact      summarizing the conversation when the context filled up
@@ -13,7 +13,8 @@ Reads kiln session logs (JSONL) and splits each turn's wall time, per model, int
 
 Also: median TTFT, median prefill and decode speed per model call, and the tool types that
 take the most time. Prompt tokens include cached ones, so prefill tok/s is the effective rate:
-a warm KV cache makes it look far higher than a cold prefill.
+a warm KV cache makes it look far higher than a cold prefill. Calls where kiln switched thinking
+off (`thinking = "auto"`, recorded as `no_think`) are compared with the rest.
 
 Timing comes from `turn_ended` usage (`usage.timing`); turns logged by a kiln too old to
 record it are skipped and counted. A subagent's (`Task`) own model time counts as tool time.
@@ -79,6 +80,9 @@ class Stats:
         self.prefill_tps = []
         self.decode_tps = []
         self.calls = 0
+        # Per model call, split by whether thinking was switched off (`no_think`):
+        # [calls, output tokens, decode ms, think ms]
+        self.by_think = {True: [0, 0, 0, 0], False: [0, 0, 0, 0]}
         self.tools = defaultdict(list)  # name -> [ms]
 
     def add(self, t):
@@ -92,6 +96,11 @@ class Stats:
                 continue
             self.calls += 1
             ttft, decode = c.get("ttft_ms", 0), c.get("decode_ms", 0)
+            b = self.by_think[bool(c.get("no_think"))]
+            b[0] += 1
+            b[1] += c.get("output_tokens", 0)
+            b[2] += decode
+            b[3] += c.get("think_ms", 0)
             self.ttft.append(ttft)
             if ttft > 0 and c.get("prompt_tokens"):
                 self.prefill_tps.append(c["prompt_tokens"] / (ttft / 1000))
@@ -112,6 +121,8 @@ class Stats:
         self.prefill_tps += other.prefill_tps
         self.decode_tps += other.decode_tps
         self.calls += other.calls
+        for k in self.by_think:
+            self.by_think[k] = [a + b for a, b in zip(self.by_think[k], other.by_think[k])]
         for k, v in other.tools.items():
             self.tools[k] += v
 
@@ -134,6 +145,15 @@ class Stats:
         return {
             "turns": self.turns,
             "model_calls": self.calls,
+            "thinking": {
+                ("off" if off else "on"): {
+                    "calls": n,
+                    "output_tokens_per_call": out / n if n else 0,
+                    "decode_s_per_call": dec / n / 1000 if n else 0,
+                    "think_s_per_call": th / n / 1000 if n else 0,
+                }
+                for off, (n, out, dec, th) in self.by_think.items()
+            },
             "wall_s": wall / 1000,
             "share": share,
             "think_share": self.think / wall if wall else 0,
@@ -186,7 +206,14 @@ def main():
         extra = f"   (think {o['think_share']:.1%})" if p == "decode" and o["think_share"] else ""
         print(f"  {p:<11} {o['share'][p]:6.1%}{extra}")
     print(f"\nmedian ttft {o['median_ttft_s']:.2f}s · prefill {tps(o['median_prefill_tps'])} tok/s"
-          f" · decode {tps(o['median_decode_tps'])} tok/s\n")
+          f" · decode {tps(o['median_decode_tps'])} tok/s")
+    off = o["thinking"]["off"]
+    if off["calls"]:
+        on = o["thinking"]["on"]
+        print(f"thinking off for {off['calls']} of {o['model_calls']} calls · per call, on vs off:"
+              f" {on['output_tokens_per_call']:.0f} vs {off['output_tokens_per_call']:.0f} output tokens,"
+              f" {on['decode_s_per_call']:.1f}s vs {off['decode_s_per_call']:.1f}s decode")
+    print()
     head = "".join(f"{p[:7]:>8}" for p in PARTS)
     print(f"{'group':<12} {'model':<34} {'turns':>5}{head} {'ttft':>6} {'pf t/s':>7} {'dec t/s':>7}")
     for r in per:

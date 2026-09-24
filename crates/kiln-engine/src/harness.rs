@@ -38,6 +38,11 @@ pub struct Caps {
     /// schema suppresses the reasoning and hurt them in the bench (qwen3:4b: native 5/6, json 2/6).
     #[serde(default)]
     pub thinks: bool,
+    /// A thinking model that answers directly when asked not to think (hybrid Qwen3 does;
+    /// reasoning-only models like Qwen3-2507-Thinking reason anyway, into the answer). `None`
+    /// until probed.
+    #[serde(default)]
+    pub think_off: Option<bool>,
     /// Parameter count in billions, when the server says.
     pub params_b: Option<f64>,
     /// Unix milliseconds.
@@ -172,6 +177,7 @@ async fn ask(
         tools,
         max_tokens: Some(2048),
         format,
+        think: None,
     };
     let mut ignore = |_| {};
     let call = provider.complete(&req, &mut ignore);
@@ -218,15 +224,51 @@ pub async fn probe(provider: &Provider, specs: &[ToolSpec]) -> anyhow::Result<Ca
                 Some((_, Action::Tool { name, args })) if reads_probe(&name, &args))
         });
 
+    let think_off = if thinks {
+        Some(probe_think_off(provider).await)
+    } else {
+        None
+    };
+
     Ok(Caps {
         native_tools,
         text_tools,
         json_mode,
         abstains,
         thinks,
+        think_off,
         params_b: provider.params_b().await,
         probed: chrono::Utc::now().timestamp_millis(),
     })
+}
+
+/// Whether the model honors "don't think": asked a one-number question with thinking off, a
+/// model that can switch answers in a few tokens with no reasoning. One that can't reasons
+/// anyway (ollama then puts it in the answer), or the server rejects the switch.
+pub async fn probe_think_off(provider: &Provider) -> bool {
+    let msgs = vec![Message::user(PROBE_MATH)];
+    let req = Request {
+        system: PROBE_SYSTEM,
+        messages: &msgs,
+        tools: &[],
+        max_tokens: Some(256),
+        format: None,
+        think: Some(false),
+    };
+    let mut ignore = |_| {};
+    let call = provider.complete(&req, &mut ignore);
+    let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(60), call).await else {
+        return false;
+    };
+    answered_directly(&r)
+}
+
+fn answered_directly(r: &Response) -> bool {
+    let reasoned = r.message.content.iter().any(
+        |b| matches!(b, crate::message::Block::Thinking { text, .. } if !text.trim().is_empty()),
+    );
+    let text = r.message.text();
+    !reasoned && text.contains("42") && text.trim().len() <= 40
 }
 
 #[cfg(test)]
@@ -244,6 +286,7 @@ mod tests {
             json_mode: json,
             abstains: true,
             thinks: false,
+            think_off: None,
             params_b: params,
             probed: 0,
         }
@@ -293,6 +336,33 @@ mod tests {
             choose_mode(&p, Some(&caps(true, true, Some(3.0))), Tier::Weak),
             ToolMode::Native
         );
+    }
+
+    #[test]
+    fn think_off_means_a_short_direct_answer() {
+        use crate::message::Block;
+        use crate::provider::Stop;
+        let reply = |content: Vec<Block>| Response {
+            message: Message {
+                role: crate::message::Role::Assistant,
+                content,
+            },
+            usage: Default::default(),
+            stop: Stop::End,
+        };
+        let text = |t: &str| Block::Text { text: t.into() };
+        assert!(answered_directly(&reply(vec![text("42")])));
+        // Reasoning-only models keep reasoning: in a thinking block, or in the answer.
+        assert!(!answered_directly(&reply(vec![
+            Block::Thinking {
+                text: "17 plus 25…".into(),
+                signature: None,
+            },
+            text("42"),
+        ])));
+        assert!(!answered_directly(&reply(vec![text(
+            "Okay, the user wants 17 + 25. Let me add: 10 + 20 is 30, 7 + 5 is 12, so 42."
+        )])));
     }
 
     #[test]

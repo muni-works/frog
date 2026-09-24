@@ -30,19 +30,37 @@ fn ends(runs: &[&RunResult]) -> String {
         .join(", ")
 }
 
+/// The tool mode, plus the thinking setting when the run set one.
+fn label(r: &RunResult) -> String {
+    match &r.thinking {
+        Some(t) => format!("{}/{t}", r.mode),
+        None => r.mode.clone(),
+    }
+}
+
 /// One row per model × mode, then a task × config pass grid.
 pub fn print(results: &[RunResult]) {
     let mut groups: BTreeMap<Config, Vec<&RunResult>> = BTreeMap::new();
     for r in results {
         groups
-            .entry((r.model.clone(), r.mode.clone()))
+            .entry((r.model.clone(), label(r)))
             .or_default()
             .push(r);
     }
 
     println!(
-        "\n{:<28} {:<7} {:<9} {:>6} {:>7} {:>6} {:>10} {:>6} {:>6}  ends",
-        "model", "mode", "resolved", "pass", "avg s", "calls", "tok/solve", "tools", "errs"
+        "\n{:<28} {:<12} {:<9} {:>6} {:>7} {:>6} {:>10} {:>7} {:>7} {:>6} {:>6}  ends",
+        "model",
+        "mode",
+        "resolved",
+        "pass",
+        "avg s",
+        "calls",
+        "tok/solve",
+        "out tok",
+        "think s",
+        "tools",
+        "errs"
     );
     for ((model, mode), runs) in &groups {
         let n = runs.len();
@@ -56,7 +74,7 @@ pub fn print(results: &[RunResult]) {
         };
         let resolved = most_common(runs.iter().filter_map(|r| r.resolved_mode.as_deref()));
         println!(
-            "{:<28} {:<7} {:<9} {:>6} {:>7.1} {:>6.1} {:>10} {:>6.1} {:>6.1}  {}",
+            "{:<28} {:<12} {:<9} {:>6} {:>7.1} {:>6.1} {:>10} {:>7.0} {:>7.1} {:>6.1} {:>6.1}  {}",
             model,
             mode,
             resolved,
@@ -64,6 +82,8 @@ pub fn print(results: &[RunResult]) {
             avg(|r| r.secs),
             avg(|r| r.model_calls as f64),
             per_solve,
+            avg(|r| r.output_tokens as f64),
+            avg(|r| r.think_ms as f64 / 1000.0),
             avg(|r| r.tool_calls as f64),
             avg(|r| r.tool_errors as f64),
             ends(runs),
@@ -75,7 +95,7 @@ pub fn print(results: &[RunResult]) {
     for r in results {
         let key = configs
             .iter()
-            .find(|k| k.0 == r.model && k.1 == r.mode)
+            .find(|k| k.0 == r.model && k.1 == label(r))
             .unwrap();
         let cell = tasks.entry(&r.task).or_default().entry(key).or_default();
         cell.1 += 1;

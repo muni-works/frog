@@ -114,6 +114,9 @@ impl Client {
         if let Some(schema) = req.format {
             body["format"] = schema.clone();
         }
+        if let Some(think) = req.think {
+            body["think"] = json!(think);
+        }
         if let Some(extra) = &self.extra {
             deep_merge(&mut body, extra);
         }
@@ -227,10 +230,33 @@ mod tests {
             tools: &[],
             max_tokens: None,
             format: None,
+            think: None,
         };
         let body = c.body(&req);
         let m = &body["messages"][1];
         assert_eq!(m["content"], "what's this?");
         assert_eq!(m["images"][0], "AAAA");
+    }
+
+    #[test]
+    fn thinking_switch_is_the_think_flag() {
+        let c = Client {
+            http: reqwest::Client::new(),
+            base: "http://localhost:1".into(),
+            model: "m".into(),
+            num_ctx: 4096,
+            extra: None,
+        };
+        let msgs = vec![Message::user("hi")];
+        let req = |think| Request {
+            system: "s",
+            messages: &msgs,
+            tools: &[],
+            max_tokens: None,
+            format: None,
+            think,
+        };
+        assert_eq!(c.body(&req(Some(false)))["think"], false);
+        assert!(c.body(&req(None)).get("think").is_none());
     }
 }

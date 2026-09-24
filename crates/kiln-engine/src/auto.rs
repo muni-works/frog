@@ -85,6 +85,8 @@ pub struct Classifier {
     pub profile_name: String,
     profile: Profile,
     started: bool,
+    /// Switch the model's thinking off: the schema already gives it a reason to write first.
+    think: Option<bool>,
 }
 
 impl Classifier {
@@ -98,9 +100,15 @@ impl Classifier {
             }
             None => (session.0.to_string(), session.1.clone()),
         };
+        let mode = profile.thinking.unwrap_or(cfg.thinking);
+        let think = match crate::harness::cached(&profile) {
+            Some(c) if !c.thinks => None,
+            c => crate::thinking::switch(mode, c.and_then(|c| c.think_off), false),
+        };
         Ok(Self {
             provider: Provider::new(&profile)?,
             profile_name: name,
+            think,
             profile,
             started: false,
         })
@@ -135,6 +143,7 @@ impl Classifier {
             // Room for a thinking model (the fallback is the session's own) to reason first.
             max_tokens: Some(1_500),
             format: Some(&schema),
+            think: self.think,
         };
         let mut ignore = |_| {};
         let answer = tokio::time::timeout(

@@ -47,6 +47,9 @@ enum Cmd {
         /// Where results, sessions and workspaces go. Defaults to ~/.local/share/kiln/bench/<timestamp>.
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Override the `thinking` setting: auto, always or never.
+        #[arg(long)]
+        thinking: Option<String>,
     },
     /// Summarize a results file from an earlier run.
     Report { results: PathBuf },
@@ -67,7 +70,8 @@ async fn main() -> Result<()> {
             filter,
             repeat,
             out,
-        } => run_suite(models, modes, tasks, filter, repeat, out).await,
+            thinking,
+        } => run_suite(models, modes, tasks, filter, repeat, out, thinking).await,
         Cmd::Report { results } => {
             let text = std::fs::read_to_string(&results)?;
             let rows: Vec<RunResult> = text
@@ -106,8 +110,13 @@ async fn run_suite(
     filter: Option<String>,
     repeat: u32,
     out: Option<PathBuf>,
+    thinking: Option<String>,
 ) -> Result<()> {
-    let cfg = Config::load()?;
+    let mut cfg = Config::load()?;
+    if let Some(t) = &thinking {
+        cfg.thinking = serde_json::from_value(serde_json::json!(t))
+            .with_context(|| format!("unknown thinking setting `{t}`"))?;
+    }
     let tasks = task::load_all(&tasks_dir, filter.as_deref())?;
     let models = if models.is_empty() {
         vec![cfg.resolve(None)?.0]
@@ -139,7 +148,17 @@ async fn run_suite(
     if modes.contains(&ToolMode::Auto) {
         for m in &models {
             let (_, profile) = cfg.resolve(Some(m))?;
-            if harness::is_hosted(&profile) || harness::cached(&profile).is_some() {
+            if harness::is_hosted(&profile) {
+                continue;
+            }
+            if let Some(mut caps) = harness::cached(&profile) {
+                // Profiled before kiln asked whether thinking can be switched off.
+                if caps.thinks && caps.think_off.is_none() {
+                    kiln_engine::sidecar::ensure(&profile).await?;
+                    let provider = kiln_engine::provider::Provider::new(&profile)?;
+                    caps.think_off = Some(harness::probe_think_off(&provider).await);
+                    harness::save(&profile, &caps);
+                }
                 continue;
             }
             eprintln!("profiling {m}…");
@@ -173,7 +192,7 @@ async fn run_suite(
                     let workspace = out
                         .join("work")
                         .join(slug(&format!("{}-{model}-{mode_name}-{rep}", t.name)));
-                    let r = run::run(run::Run {
+                    let mut r = run::run(run::Run {
                         cfg: &cfg,
                         model,
                         mode,
@@ -183,6 +202,7 @@ async fn run_suite(
                         sessions: &sessions,
                     })
                     .await?;
+                    r.thinking = thinking.clone();
                     eprintln!(
                         "{} {:.1}s ({}{})",
                         if r.pass { "pass" } else { "FAIL" },

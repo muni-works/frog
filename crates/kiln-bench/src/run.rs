@@ -31,6 +31,14 @@ pub struct RunResult {
     pub refused_repeats: u32,
     pub pruned: u32,
     pub compacted: u32,
+    /// The `thinking` setting, when the run set one.
+    #[serde(default)]
+    pub thinking: Option<String>,
+    /// Reasoning time over the turn's model calls, and how many calls ran with it off.
+    #[serde(default)]
+    pub think_ms: u64,
+    #[serde(default)]
+    pub no_think_calls: u32,
     pub session: String,
     pub workspace: PathBuf,
     pub check_output: String,
@@ -100,6 +108,9 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         refused_repeats: 0,
         pruned: 0,
         compacted: 0,
+        thinking: None,
+        think_ms: 0,
+        no_think_calls: 0,
         session: String::new(),
         workspace: r.workspace.clone(),
         check_output: String::new(),
@@ -156,6 +167,10 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
                 out.model_calls = usage.model_calls;
                 out.input_tokens = usage.input_tokens;
                 out.output_tokens = usage.output_tokens;
+                if let Some(t) = &usage.timing {
+                    out.think_ms = t.think_ms;
+                    out.no_think_calls = t.calls.iter().filter(|c| c.no_think).count() as u32;
+                }
             }
             Event::Error { error } => out.error = Some(error.to_string()),
             _ => {}

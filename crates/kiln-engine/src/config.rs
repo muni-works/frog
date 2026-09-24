@@ -28,6 +28,20 @@ pub enum ToolMode {
     Json,
 }
 
+/// When a reasoning model thinks before answering (see `thinking.rs`).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Thinking {
+    /// Think where it pays (planning, after errors, after reading); answer directly on routine
+    /// follow-ups. Only for models that can switch thinking off.
+    #[default]
+    Auto,
+    /// Leave the model's default (a reasoning model thinks on every call).
+    Always,
+    /// Ask the model not to think on any call.
+    Never,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Profile {
     pub provider: ProviderKind,
@@ -49,6 +63,9 @@ pub struct Profile {
     /// OpenAI's own models do).
     #[serde(default)]
     pub vision: Option<bool>,
+    /// Overrides the global `thinking` for this model.
+    #[serde(default)]
+    pub thinking: Option<Thinking>,
 }
 
 impl Profile {
@@ -65,6 +82,7 @@ impl Profile {
             extra: None,
             sidecar: None,
             vision: None,
+            thinking: None,
         }
     }
 
@@ -105,6 +123,10 @@ pub struct Config {
     pub allow_bash: Vec<String>,
     #[serde(default = "default_true")]
     pub show_thinking: bool,
+    /// When reasoning models think: "auto" (default), "always" or "never". A profile's
+    /// `thinking` overrides it.
+    #[serde(default)]
+    pub thinking: Thinking,
     /// Also load ~/.claude/CLAUDE.md and CLAUDE.md files as instructions.
     #[serde(default = "default_true")]
     pub load_claude_md: bool,
