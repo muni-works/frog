@@ -117,6 +117,36 @@ struct Cli {
     /// List available models (configured profiles and installed ollama models) and exit.
     #[arg(long)]
     models: bool,
+    /// List providers (presets and servers you added) and whether each is connected, and exit.
+    #[arg(long)]
+    providers: bool,
+    /// List every model the connected providers offer, and which are on, and exit.
+    #[arg(long)]
+    catalog: bool,
+    /// With --catalog: fetch fresh lists instead of using cached ones.
+    #[arg(long, requires = "catalog")]
+    refresh: bool,
+    /// Show these provider/model specs in the model list.
+    #[arg(long, value_name = "SPEC", num_args = 1..)]
+    enable_model: Vec<String>,
+    /// Stop showing these specs in the model list.
+    #[arg(long, value_name = "SPEC", num_args = 1..)]
+    disable_model: Vec<String>,
+    /// Store a provider's API key in the Keychain, read from stdin (empty removes it).
+    #[arg(long, value_name = "PROVIDER")]
+    set_key: Option<String>,
+    /// Add a server as a provider: --add-provider <ID> <URL> (e.g. gpu-box http://box:11434).
+    #[arg(long, num_args = 2, value_names = ["ID", "URL"])]
+    add_provider: Option<Vec<String>>,
+    /// With --add-provider: "ollama" or "openai" (any OpenAI-compatible server; the default).
+    #[arg(long, requires = "add_provider", default_value = "openai")]
+    provider_kind: String,
+    /// With --add-provider: a display name.
+    #[arg(long, requires = "add_provider")]
+    provider_name: Option<String>,
+    /// Remove a server you added.
+    #[arg(long, value_name = "ID")]
+    remove_provider: Option<String>,
     /// Never ask for permission.
     #[arg(long)]
     yolo: bool,
@@ -165,6 +195,9 @@ async fn run() -> Result<bool> {
     }
     if cli.models {
         return list_models(&cfg, cli.json).await;
+    }
+    if let Some(done) = manage_providers(&cli).await? {
+        return Ok(done);
     }
     let (profile_name, mut profile) = cfg.resolve(cli.model.as_deref())?;
     if let Some(b) = cli.base_url {
@@ -352,6 +385,101 @@ async fn run() -> Result<bool> {
     }
     tui::run(handle, cfg, (!prompt.is_empty()).then_some(prompt)).await?;
     Ok(true)
+}
+
+/// Provider and model-list commands (`--providers`, `--catalog`, `--set-key`, ...); None if
+/// the command line has none.
+async fn manage_providers(cli: &Cli) -> Result<Option<bool>> {
+    use kiln_engine::providers::{self, Custom, State};
+    if let Some(id) = &cli.set_key {
+        let mut key = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut key)?;
+        providers::set_key(id, &key)?;
+        return Ok(Some(true));
+    }
+    if let Some(a) = &cli.add_provider {
+        let kind = match cli.provider_kind.as_str() {
+            "ollama" => kiln_engine::config::ProviderKind::Ollama,
+            "openai" => kiln_engine::config::ProviderKind::Openai,
+            other => anyhow::bail!("--provider-kind is ollama or openai, not `{other}`"),
+        };
+        let mut state = State::load();
+        let custom = Custom {
+            name: cli.provider_name.clone().unwrap_or_else(|| a[0].clone()),
+            kind,
+            base_url: a[1].trim_end_matches('/').to_string(),
+        };
+        providers::add_custom(&mut state, &a[0], custom)?;
+        state.save()?;
+        return Ok(Some(true));
+    }
+    if let Some(id) = &cli.remove_provider {
+        let mut state = State::load();
+        state.custom.remove(id);
+        state.enabled.retain(|s| !s.starts_with(&format!("{id}/")));
+        state.save()?;
+        let _ = providers::set_key(id, "");
+        return Ok(Some(true));
+    }
+    if !cli.enable_model.is_empty() || !cli.disable_model.is_empty() {
+        let mut state = State::load();
+        state.enabled.extend(cli.enable_model.iter().cloned());
+        for s in &cli.disable_model {
+            state.enabled.remove(s);
+        }
+        state.save()?;
+        return Ok(Some(true));
+    }
+    if cli.providers {
+        let list = providers::list(&State::load());
+        if cli.json {
+            println!("{}", serde_json::to_string(&list)?);
+        } else {
+            for p in list {
+                let status = if p.connected { "connected" } else { "no key" };
+                println!("{:<12} {:<20} {:<10} {}", p.id, p.name, status, p.base_url);
+            }
+        }
+        return Ok(Some(true));
+    }
+    if cli.catalog {
+        let state = State::load();
+        let models = kiln_engine::catalog::all(cli.refresh).await;
+        if cli.json {
+            #[derive(serde::Serialize)]
+            struct Row<'a> {
+                #[serde(flatten)]
+                model: &'a kiln_engine::catalog::Model,
+                enabled: bool,
+            }
+            let rows: Vec<Row> = models
+                .iter()
+                .map(|m| Row {
+                    model: m,
+                    enabled: state.enabled.contains(&m.spec),
+                })
+                .collect();
+            println!("{}", serde_json::to_string(&rows)?);
+        } else {
+            for (provider, list) in kiln_engine::catalog::by_provider(&models) {
+                println!("{provider} ({} models)", list.len());
+                for m in list {
+                    let on = if state.enabled.contains(&m.spec) {
+                        "●"
+                    } else {
+                        " "
+                    };
+                    let ctx = m
+                        .context
+                        .map(|c| format!("{}k", c / 1000))
+                        .unwrap_or_default();
+                    println!("  {on} {:<56} {ctx:>6}", m.spec);
+                }
+            }
+        }
+        return Ok(Some(true));
+    }
+    Ok(None)
 }
 
 async fn list_models(cfg: &Config, json: bool) -> Result<bool> {

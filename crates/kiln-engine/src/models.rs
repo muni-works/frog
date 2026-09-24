@@ -11,12 +11,15 @@ pub struct ModelEntry {
     pub spec: String,
     pub provider: ProviderKind,
     pub model: String,
-    /// "config" or "ollama".
+    /// "config", "ollama", "tang", "apple", "server" (yours) or "remote" (turned on from a
+    /// provider's catalog).
     pub source: &'static str,
     pub caps: Option<Caps>,
     pub tier: Tier,
     /// What `auto` would pick, given what's known.
     pub tool_mode: ToolMode,
+    /// The provider's catalog entry (name, context, inputs, price), for remote models.
+    pub info: Option<crate::catalog::Model>,
 }
 
 fn entry(spec: String, source: &'static str, p: &Profile) -> ModelEntry {
@@ -30,11 +33,12 @@ fn entry(spec: String, source: &'static str, p: &Profile) -> ModelEntry {
         tool_mode: harness::choose_mode(p, caps.as_ref(), tier),
         caps,
         tier,
+        info: None,
     }
 }
 
-async fn ollama_tags() -> Vec<String> {
-    let base = std::env::var("OLLAMA_HOST")
+fn local_ollama() -> String {
+    std::env::var("OLLAMA_HOST")
         .map(|h| {
             if h.starts_with("http") {
                 h
@@ -42,7 +46,33 @@ async fn ollama_tags() -> Vec<String> {
                 format!("http://{h}")
             }
         })
-        .unwrap_or_else(|_| "http://localhost:11434".into());
+        .unwrap_or_else(|_| "http://localhost:11434".into())
+}
+
+/// An OpenAI-compatible server's model ids (`GET /models`).
+async fn server_models(base: &str, key: Option<String>) -> Vec<String> {
+    let fetch = async {
+        let mut req = reqwest::Client::new().get(format!("{}/models", base.trim_end_matches('/')));
+        if let Some(k) = key {
+            req = req.bearer_auth(k);
+        }
+        let v: serde_json::Value = req.send().await.ok()?.json().await.ok()?;
+        Some(
+            v["data"]
+                .as_array()?
+                .iter()
+                .filter_map(|m| m["id"].as_str().map(String::from))
+                .collect::<Vec<_>>(),
+        )
+    };
+    tokio::time::timeout(Duration::from_secs(3), fetch)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
+async fn ollama_tags(base: &str) -> Vec<String> {
     let fetch = async {
         let v: serde_json::Value = reqwest::get(format!("{base}/api/tags"))
             .await
@@ -60,7 +90,7 @@ async fn ollama_tags() -> Vec<String> {
                 .collect(),
         )
     };
-    tokio::time::timeout(Duration::from_secs(2), fetch)
+    tokio::time::timeout(Duration::from_secs(3), fetch)
         .await
         .ok()
         .flatten()
@@ -73,7 +103,7 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
         .iter()
         .map(|(name, p)| entry(name.clone(), "config", p))
         .collect();
-    for tag in ollama_tags().await {
+    for tag in ollama_tags(&local_ollama()).await {
         let spec = format!("ollama/{tag}");
         if out
             .iter()
@@ -83,6 +113,38 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
         }
         if let Ok((_, p)) = cfg.resolve(Some(&spec)) {
             out.push(entry(spec, "ollama", &p));
+        }
+    }
+    // Servers you added (a GPU box's ollama, vLLM, llama.cpp): everything they serve.
+    let state = crate::providers::State::load();
+    let servers = state.custom.iter().map(|(id, c)| async move {
+        let names = match c.kind {
+            ProviderKind::Ollama => ollama_tags(&c.base_url).await,
+            _ => server_models(&c.base_url, crate::providers::key(id)).await,
+        };
+        names
+            .into_iter()
+            .map(|n| format!("{id}/{n}"))
+            .collect::<Vec<_>>()
+    });
+    for spec in futures_util::future::join_all(servers)
+        .await
+        .into_iter()
+        .flatten()
+    {
+        if let Ok((_, p)) = cfg.resolve(Some(&spec)) {
+            out.push(entry(spec, "server", &p));
+        }
+    }
+    // Models you turned on from connected providers, described by their catalogs.
+    for spec in &state.enabled {
+        if out.iter().any(|e| &e.spec == spec) {
+            continue;
+        }
+        if let Ok((_, p)) = cfg.resolve(Some(spec)) {
+            let mut e = entry(spec.clone(), "remote", &p);
+            e.info = crate::catalog::cached(spec);
+            out.push(e);
         }
     }
     let sidecars = local_checkpoints()

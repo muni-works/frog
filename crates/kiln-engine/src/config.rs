@@ -182,7 +182,17 @@ impl Config {
                 p.tool_mode = ToolMode::Json;
                 p
             }
-            _ => bail!("unknown provider `{prov}`"),
+            "openrouter" | "vercel" => Profile::new(ProviderKind::Openai, model),
+            _ => match crate::providers::State::load().custom.remove(prov) {
+                // A server you added: another machine's ollama, or any OpenAI-compatible one.
+                Some(c) => {
+                    let mut p = Profile::new(c.kind, model);
+                    p.base_url = Some(c.base_url);
+                    p.api_key = crate::providers::key(prov);
+                    return Ok((spec.clone(), with_catalog(p, &spec)));
+                }
+                None => bail!("unknown provider `{prov}`"),
+            },
         };
         p.base_url = match prov {
             "lmstudio" => Some("http://localhost:1234/v1".into()),
@@ -191,8 +201,31 @@ impl Config {
             "vllm" => Some("http://localhost:8000/v1".into()),
             "openai" => std::env::var("OPENAI_BASE_URL").ok(),
             "tang" | "apple" => p.sidecar.as_deref().map(crate::sidecar::base_url),
+            "openrouter" | "vercel" => {
+                crate::providers::preset(prov).map(|x| x.base_url.to_string())
+            }
             _ => None,
         };
-        Ok((spec, p))
+        // Keys set in kiln (the Keychain) or the provider's own variable.
+        // OpenAI's key goes only to OpenAI itself, never to an OPENAI_BASE_URL elsewhere.
+        let elsewhere = prov == "openai" && p.base_url.is_some();
+        if matches!(
+            prov,
+            "openrouter" | "vercel" | "anthropic" | "claude" | "openai"
+        ) && !elsewhere
+        {
+            let id = if prov == "claude" { "anthropic" } else { prov };
+            p.api_key = crate::providers::key(id);
+        }
+        Ok((spec.clone(), with_catalog(p, &spec)))
     }
+}
+
+/// What the catalog knows about a model (context size, images), unless the profile says.
+fn with_catalog(mut p: Profile, spec: &str) -> Profile {
+    if let Some(m) = crate::catalog::cached(spec) {
+        p.context_window = p.context_window.or(m.context);
+        p.vision = p.vision.or(Some(m.vision()));
+    }
+    p
 }
