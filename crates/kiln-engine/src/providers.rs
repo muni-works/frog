@@ -189,12 +189,15 @@ fn key_source(id: &str) -> Option<&'static str> {
 }
 
 /// A provider's key: the Keychain first (what you set in kiln), then its environment variable.
+/// Web search services (`brave`, `exa`, `tavily`) keep their keys the same way.
 pub fn key(id: &str) -> Option<String> {
-    keychain::get(id).or_else(|| {
-        preset(id)?
-            .key_env
+    let env = |v: &str| std::env::var(v).ok().filter(|k| !k.is_empty());
+    keychain::get(id).or_else(|| match preset(id) {
+        Some(p) => p.key_env.iter().find_map(|v| env(v)),
+        None => crate::tools::websearch::KEYED
             .iter()
-            .find_map(|v| std::env::var(v).ok().filter(|k| !k.is_empty()))
+            .find(|(k, _)| *k == id)
+            .and_then(|(_, v)| env(v)),
     })
 }
 

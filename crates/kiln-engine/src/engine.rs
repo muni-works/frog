@@ -425,6 +425,7 @@ impl Agent {
         let notes = memory.as_ref().map(|m| m.load()).unwrap_or_default();
         let shell_sandbox = o.cfg.sandbox_shell && tools::bash::available() && !o.chat;
         let window = o.profile.context_window();
+        let web = Arc::new(tools::web::Web::from_config(&o.cfg));
         let resumed = o.resume.is_some();
         let mut agent = Self {
             cfg: o.cfg,
@@ -434,6 +435,7 @@ impl Agent {
             messages,
             ctx: {
                 let mut ctx = Ctx::new(o.cwd.clone());
+                ctx.web = web;
                 if o.sandbox {
                     ctx.sandbox = Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
                 }
@@ -717,8 +719,10 @@ impl Agent {
                 self.inputs.clear();
                 self.skills_loaded.clear();
                 let sandbox = self.ctx.sandbox.take();
+                let web = self.ctx.web.clone();
                 self.ctx = Ctx::new(self.root.clone());
                 self.ctx.sandbox = sandbox;
+                self.ctx.web = web;
                 self.usage = Usage::default();
                 self.session_id = session::new_id();
                 *self.shared.session.lock().unwrap() = self.session_id.clone();
@@ -1197,9 +1201,12 @@ impl Agent {
     /// Built-in tools plus whatever MCP tools are live (and, with many, loaded).
     fn sync_specs(&mut self) {
         let mut specs = tools::specs();
+        if self.ctx.web.search.is_some() {
+            specs.push(tools::websearch::spec());
+        }
         if self.chat {
             // No project to work in: only the tools that don't touch files or run commands.
-            specs.retain(|s| s.name == "Diagram");
+            specs.retain(|s| matches!(&*s.name, "Diagram" | "WebFetch" | "WebSearch"));
         }
         if self.subagent {
             specs.retain(|s| tools::kind(&s.name) == Kind::Read);
@@ -1647,6 +1654,11 @@ Don't repeat it. Change the arguments or try a different approach.",
         if kind == Kind::Read || self.mode == Mode::Yolo {
             return Decision::Allow;
         }
+        // Web reads change nothing and show on their tool card, like reads. Auto mode runs
+        // unwatched, so there the classifier sees the URL first (a query string can carry data).
+        if kind == Kind::Net && self.mode != Mode::Auto {
+            return Decision::Allow;
+        }
         let cmd = input["command"].as_str().unwrap_or("").trim();
         let prefix = cmd.split_whitespace().next().unwrap_or("").to_string();
         let mcp = name.starts_with("mcp__");
@@ -1658,6 +1670,7 @@ Don't repeat it. Change the arguments or try a different approach.",
         }
         let key = match kind {
             Kind::Edit => "edits".to_string(),
+            Kind::Net => format!("web:{}", web_host(name, input)),
             _ if mcp => format!("mcp:{name}"),
             _ if leaves_sandbox => format!("bash-unsandboxed:{prefix}"),
             _ => format!("bash:{prefix}"),
@@ -1669,6 +1682,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                     || (self.mode == Mode::Auto
                         && crate::auto::hard_rule(name, input, &self.root).is_none())
             }
+            Kind::Net => false,
             _ if mcp || leaves_sandbox => false,
             _ => bash_allowed(cmd, &self.cfg.allow_bash),
         };
@@ -1703,6 +1717,13 @@ Don't repeat it. Change the arguments or try a different approach.",
         }
         let always = match kind {
             Kind::Edit => "allow all edits this session".to_string(),
+            Kind::Net if name == "WebSearch" => {
+                "always allow web searches this session".to_string()
+            }
+            Kind::Net => format!(
+                "always allow fetching from {} this session",
+                web_host(name, input)
+            ),
             _ if mcp => {
                 let pretty = name
                     .strip_prefix("mcp__")
@@ -1976,6 +1997,18 @@ fn normalize(mut msg: Message) -> (Message, bool) {
         });
     }
     (msg, true)
+}
+
+/// The host a web call reaches, for "always allow" (searches share one key).
+fn web_host(name: &str, input: &Value) -> String {
+    if name == "WebSearch" {
+        return "search".into();
+    }
+    input["url"]
+        .as_str()
+        .and_then(|u| tools::web::parse_url(u).ok())
+        .and_then(|u| u.host_str().map(String::from))
+        .unwrap_or_default()
 }
 
 fn bash_allowed(cmd: &str, extra: &[String]) -> bool {

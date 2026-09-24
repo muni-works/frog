@@ -91,7 +91,7 @@ Named profiles live in `~/.config/kiln/config.toml`. See [config.example.toml](c
 
 ## Tools
 
-`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Diagram` · `CodeMap`
+`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Diagram` · `CodeMap` · `Docs` · `WebFetch` · `WebSearch`
 
 The tools behave like Claude Code's: Edit replaces an exact string that must be unique, and a file has to be Read before it can be edited, with a check that it hasn't changed since. Bash keeps its working directory between calls.
 
@@ -146,6 +146,24 @@ Starting a message with `/skill-name` loads that skill directly; the Mac app aut
 - Only its final report comes back, so a search through many files costs the parent a few hundred tokens.
 - Its steps stream live into the parent's tool card.
 - Interrupting the parent stops the child.
+
+**Docs.** `Docs` answers "how does this API work" from the dependencies the project actually has installed, at their exact versions, offline. The model is told to try it before the web.
+- **Rust:** the version in `Cargo.lock`, read from `~/.cargo/registry/src` (README, `//!` module docs, `///` item docs with signatures).
+- **JS/TS:** `node_modules/<pkg>` (README and `.d.ts` files, or `@types/<pkg>`).
+- **Python:** the project's `.venv`/`venv` site-packages, else the system `python3`'s (run isolated, so no project code runs): docstrings and the package description.
+- `package` alone gives the overview; add `query` for matching items with `file:line`; `query` alone searches the direct dependencies. Ranking is grep-like, with no model calls. Only offered with a project folder.
+
+**Web.** `WebFetch` reads an http(s) page as markdown. It keeps the page's `<main>`/`<article>` and drops navigation, scripts and media. With a `query` it returns only the matching sections, so an 8k-context model isn't flooded. Pages are cached for 15 minutes per session. `WebSearch` returns title, URL and snippet lines from the backend you configure:
+
+```toml
+web_search = "searxng"                  # or "brave", "exa", "tavily"
+searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=json)
+```
+
+- **Keys:** `echo $KEY | kiln --set-key brave` (or `exa`, `tavily`) stores one in the Keychain. `BRAVE_SEARCH_API_KEY`, `EXA_API_KEY` and `TAVILY_API_KEY` work too. With no `web_search` set, kiln uses `searxng_url` or a key found in the environment. With nothing configured, `WebSearch` isn't offered.
+- **Untrusted content:** results come back wrapped as untrusted data, and the model is told not to follow instructions in them.
+- **Private addresses:** `WebFetch` only reaches public addresses. Loopback, RFC 1918, CGNAT (100.64/10), link-local, ULA and other special ranges are refused. Every address a name resolves to is checked when connecting, which covers redirects and DNS rebinding. Set `web_allow_private = true` to reach your LAN or localhost.
+- **Permissions:** the web tools work in plain chats too. They don't ask in `default`/`accept-edits` mode, just as reads and sandboxed commands (which can already reach the network) don't, and each fetch shows its URL on the tool card. In auto mode the classifier sees the URL or query first, and "always allow" is per host.
 
 **Computer use.** Turn it on with `computer_use = true` in `config.toml`, `--computer-use`, or Settings › Permissions in the Mac app. kiln then starts the bundled `kiln-desktop` MCP server.
 - **How it sees:** it reads an app's window through Accessibility as a list of indexed elements, and shows you a screenshot.

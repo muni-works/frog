@@ -132,7 +132,8 @@ struct Cli {
     /// Stop showing these specs in the model list.
     #[arg(long, value_name = "SPEC", num_args = 1..)]
     disable_model: Vec<String>,
-    /// Store a provider's API key in the Keychain, read from stdin (empty removes it).
+    /// Store a provider's API key in the Keychain, read from stdin (empty removes it). Web
+    /// search keys go here too: brave, exa, tavily.
     #[arg(long, value_name = "PROVIDER")]
     set_key: Option<String>,
     /// Add a server as a provider: --add-provider <ID> <URL> (e.g. gpu-box http://box:11434).

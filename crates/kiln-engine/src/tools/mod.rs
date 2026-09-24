@@ -1,8 +1,12 @@
 pub mod bash;
 pub mod diagram;
+pub mod docs;
 pub mod fs;
+pub mod rank;
 pub mod search;
 pub mod todo;
+pub mod web;
+pub mod websearch;
 
 use crate::provider::ToolSpec;
 use anyhow::{Result, anyhow, bail};
@@ -24,6 +28,8 @@ pub struct Ctx {
     pub shell_sandbox: Option<PathBuf>,
     /// Live output from the running tool, if someone is listening.
     pub progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    /// Web settings, the page cache and the search backend.
+    pub web: std::sync::Arc<web::Web>,
 }
 
 impl Ctx {
@@ -35,6 +41,7 @@ impl Ctx {
             sandbox: None,
             shell_sandbox: None,
             progress: None,
+            web: Default::default(),
         }
     }
 
@@ -101,6 +108,8 @@ pub enum Kind {
     Read,
     Edit,
     Exec,
+    /// Reaches the network without changing anything (WebFetch, WebSearch).
+    Net,
 }
 
 #[derive(Default)]
@@ -143,6 +152,8 @@ pub fn specs() -> Vec<ToolSpec> {
         todo::spec(),
         diagram::spec(),
         diagram::map_spec(),
+        web::spec(),
+        docs::spec(),
     ]
 }
 
@@ -150,6 +161,7 @@ pub fn kind(name: &str) -> Kind {
     match name {
         "Bash" => Kind::Exec,
         "Write" | "Edit" => Kind::Edit,
+        "WebFetch" | "WebSearch" => Kind::Net,
         // MCP tools can do anything their server does: ask, like Bash.
         n if n.starts_with("mcp__") => Kind::Exec,
         crate::mcp::SEARCH_TOOL => Kind::Read,
@@ -174,8 +186,11 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "TodoWrite" => todo::run(input, ctx),
         "Diagram" => diagram::run(input, ctx),
         "CodeMap" => diagram::run_map(input, ctx),
+        "WebFetch" => web::run(input, ctx).await,
+        "WebSearch" => websearch::run(input, ctx).await,
+        "Docs" => docs::run(input, ctx).await,
         _ => bail!(
-            "unknown tool `{name}`. Available: Bash, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, CodeMap"
+            "unknown tool `{name}`. Available: Bash, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, CodeMap, WebFetch, Docs"
         ),
     }
 }
@@ -189,6 +204,13 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "Glob" | "Grep" => s("pattern"),
         "Diagram" => s("title"),
         "CodeMap" => s("path"),
+        "WebFetch" => s("url"),
+        "WebSearch" => s("query"),
+        "Docs" => [s("package"), s("query")]
+            .into_iter()
+            .filter(|x| !x.is_empty())
+            .collect::<Vec<_>>()
+            .join(": "),
         "Task" => s("description"),
         "Skill" => {
             let n = s("name");

@@ -123,6 +123,16 @@ pub struct Config {
     /// on-device model when available, else the session's model.
     #[serde(default)]
     pub auto_classifier: Option<String>,
+    /// The WebSearch backend: "searxng", "brave", "exa" or "tavily". Unset: a configured
+    /// `searxng_url`, else a search key in the environment, else no WebSearch.
+    #[serde(default)]
+    pub web_search: Option<String>,
+    /// Your SearXNG instance, e.g. `http://localhost:8888`.
+    #[serde(default)]
+    pub searxng_url: Option<String>,
+    /// Let WebFetch reach localhost and private networks (off: public addresses only).
+    #[serde(default)]
+    pub web_allow_private: bool,
 }
 
 impl Default for Config {
