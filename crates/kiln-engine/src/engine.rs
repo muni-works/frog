@@ -719,9 +719,11 @@ impl Agent {
                 self.inputs.clear();
                 self.skills_loaded.clear();
                 let sandbox = self.ctx.sandbox.take();
+                let shell_sandbox = self.ctx.shell_sandbox.take();
                 let web = self.ctx.web.clone();
                 self.ctx = Ctx::new(self.root.clone());
                 self.ctx.sandbox = sandbox;
+                self.ctx.shell_sandbox = shell_sandbox;
                 self.ctx.web = web;
                 self.usage = Usage::default();
                 self.session_id = session::new_id();
