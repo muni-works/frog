@@ -27,6 +27,8 @@ targets:
         CFBundleDisplayName: Kiln
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: "© 2026 Cam Pedersen"
+        NSMicrophoneUsageDescription: "Kiln listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it."
+        NSSpeechRecognitionUsageDescription: "Kiln turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.campedersen.kiln

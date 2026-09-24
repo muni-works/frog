@@ -13,6 +13,7 @@ struct ComposerView: View {
     @State private var racing = false
     /// Images to send with the message.
     @State private var attachments: [ToolImage] = []
+    @State private var dictation = Dictation()
     @Environment(\.switchFolder) private var switchFolder
 
     private var canSend: Bool {
@@ -86,6 +87,10 @@ struct ComposerView: View {
                     .lineLimit(1)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+            if let problem = dictation.problem {
+                DictationProblemView(problem: problem) { dictation.problem = nil }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             if !conversation.queue.isEmpty {
                 QueuedMessages(conversation: conversation)
             }
@@ -108,6 +113,10 @@ struct ComposerView: View {
                         controller: controller,
                         onSubmit: send,
                         onEscape: {
+                            if dictation.isActive {
+                                dictation.stop()
+                                return true
+                            }
                             guard conversation.busy else { return false }
                             conversation.interrupt()
                             return true
@@ -133,7 +142,14 @@ struct ComposerView: View {
         .contentShape(Self.fieldShape)
         .onTapGesture { controller.focus() }
         .animation(.snappy, value: conversation.toast)
+        .animation(.snappy, value: dictation.problem)
         .onChange(of: window?.focusComposerRequest) { controller.focus() }
+        .onChange(of: window?.dictationRequest) { toggleDictation() }
+        // Nothing listens once the conversation or window goes away, or Kiln isn't in front.
+        .onDisappear { dictation.cancel() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            dictation.stop()
+        }
         .onChange(of: skillSuggestions.map(\.name)) { picked = 0 }
         .onChange(of: window?.raceRequest) {
             controller.focus()
@@ -197,6 +213,7 @@ struct ComposerView: View {
     private var controls: some View {
         HStack(spacing: 8) {
             plusMenu
+            DictationButton(dictation: dictation, toggle: toggleDictation)
             ModePicker(conversation: conversation)
             Spacer()
             if let e = workspace.raceError {
@@ -244,6 +261,7 @@ struct ComposerView: View {
         .popover(isPresented: $racing, arrowEdge: .top) {
             RaceSetup(workspace: workspace, prompt: text) { models, check in
                 racing = false
+                dictation.cancel()
                 workspace.startRace(prompt: text, models: models, check: check)
                 text = ""
             }
@@ -265,10 +283,22 @@ struct ComposerView: View {
 
     private func send() {
         guard canSend else { return }
+        // What's in the field is what goes, words still settling included.
+        dictation.cancel()
         conversation.submit(text, images: attachments)
         text = ""
         attachments = []
         mention = nil
+    }
+
+    private func toggleDictation() {
+        if dictation.isActive {
+            dictation.stop()
+            return
+        }
+        controller.focus()
+        controller.beginDictation()
+        dictation.start(show: { controller.showDictation($0) }, done: { controller.endDictation() })
     }
 
     private func attachFromPanel() {
@@ -300,6 +330,97 @@ struct ComposerView: View {
         case .cancel: mention = nil
         }
         return true
+    }
+}
+
+/// The mic beside +: starts dictation; while listening, a live level meter that stops it.
+struct DictationButton: View {
+    let dictation: Dictation
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            Group {
+                switch dictation.phase {
+                case .idle:
+                    Image(systemName: "mic")
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(width: 22, height: 22)
+                case .starting:
+                    ProgressView().controlSize(.small).frame(width: 22, height: 22)
+                case .downloading(let p):
+                    HStack(spacing: 5) {
+                        ProgressView(value: p).progressViewStyle(.circular).controlSize(.small)
+                        Text("Getting speech model… \(Int(p * 100))%").monospacedDigit()
+                    }
+                    .frame(height: 22)
+                case .listening, .finishing:
+                    HStack(spacing: 5) {
+                        LevelMeter(level: dictation.phase == .listening ? dictation.level : 0)
+                        Image(systemName: "stop.fill").font(.system(size: 8))
+                    }
+                    .foregroundStyle(.red)
+                    .frame(height: 22)
+                    .padding(.horizontal, 4)
+                    .background(Color.red.opacity(0.12), in: .capsule)
+                }
+            }
+            .hoverPlate(h: 3, v: 3)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help(help)
+        .accessibilityLabel(dictation.isActive ? "Stop dictation" : "Dictate")
+    }
+
+    private var help: String {
+        switch dictation.phase {
+        case .idle: "Dictate (⌥⌘V). Transcribed on this Mac."
+        case .downloading: "Downloading the on-device speech model"
+        case .finishing: "Finishing…"
+        default: "Stop dictation (⌥⌘V or Esc)"
+        }
+    }
+}
+
+/// A few bars that rise and fall with the microphone's level.
+private struct LevelMeter: View {
+    let level: Float
+    private let weights: [CGFloat] = [0.55, 1, 0.75, 0.4]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(weights.indices, id: \.self) { i in
+                Capsule()
+                    .frame(width: 2.5, height: 4 + 12 * weights[i] * CGFloat(level))
+            }
+        }
+        .frame(height: 16)
+        .animation(.easeOut(duration: 0.1), value: level)
+    }
+}
+
+/// Why dictation couldn't run, with a way to fix it when System Settings can.
+private struct DictationProblemView: View {
+    let problem: DictationProblem
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Label(problem.message, systemImage: "mic.slash")
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+            if let url = problem.settings {
+                Button("Open System Settings") { NSWorkspace.shared.open(url) }
+                    .buttonStyle(.link)
+            }
+            Button("Dismiss", systemImage: "xmark.circle.fill", action: dismiss)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+        }
+        .font(.callout)
     }
 }
 

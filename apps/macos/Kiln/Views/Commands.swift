@@ -79,6 +79,9 @@ struct KilnCommands: Commands {
         CommandMenu("Session") {
             Button("Focus Composer") { window?.state.focusComposer() }
                 .keyboardShortcut("l")
+            Button("Start or Stop Dictation") { window?.state.toggleDictation() }
+                .keyboardShortcut("v", modifiers: [.command, .option])
+                .disabled(conversation == nil)
             // Not while a permission card is up: there ⌘. is Deny.
             Button("Interrupt") { conversation?.interrupt() }
                 .keyboardShortcut(".")

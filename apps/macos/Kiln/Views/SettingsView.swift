@@ -490,7 +490,7 @@ private struct ShortcutSettings: View {
     private let groups: [(String, [(String, String)])] = [
         ("Conversation", [
             ("Send", "↩"), ("New line", "⇧↩"), ("Interrupt", "Esc  ·  ⌘."), ("Focus composer", "⌘L"),
-            ("Mention a file", "@"), ("Run a shell command", "!cmd"),
+            ("Dictate", "⌥⌘V"), ("Mention a file", "@"), ("Run a shell command", "!cmd"),
         ]),
         ("Navigate", [
             ("Previous / next turn", "⌥⌘↑  ⌥⌘↓"), ("Find in conversation", "⌘F"), ("Find next / previous", "⌘G  ⇧⌘G"),

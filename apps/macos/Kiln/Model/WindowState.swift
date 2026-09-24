@@ -17,12 +17,15 @@ final class WindowState {
     var findQuery = ""
     var findIndex = 0
 
-    /// Bumped to ask the composer to take focus / open the race popover.
+    /// Bumped to ask the composer to take focus / open the race popover / start or stop
+    /// dictation.
     private(set) var focusComposerRequest = 0
     private(set) var raceRequest = 0
+    private(set) var dictationRequest = 0
 
     func focusComposer() { focusComposerRequest += 1 }
     func requestRace() { raceRequest += 1 }
+    func toggleDictation() { dictationRequest += 1 }
 
     /// The top-most turn on screen, as an index into `turns`.
     func topVisible(in turns: [TurnState]) -> Int? {

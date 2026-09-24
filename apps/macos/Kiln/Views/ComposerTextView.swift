@@ -47,6 +47,82 @@ final class ComposerController {
         guard let tv = textView else { return }
         tv.window?.makeFirstResponder(tv)
     }
+
+    // MARK: Dictation
+
+    /// Where dictated text sits in the field, and what was last put there.
+    private var dictated: (range: NSRange, text: String)?
+    /// Set while dictation writes to the field, so its own edits don't move `dictated`.
+    private var dictating = false
+
+    /// Dictated text goes at the cursor (after any selection), leaving what's typed alone.
+    func beginDictation() {
+        guard let tv = textView else { return }
+        let length = (tv.string as NSString).length
+        let sel = tv.selectedRange()
+        let at = sel.location == NSNotFound ? length : min(sel.location + sel.length, length)
+        dictated = (NSRange(location: at, length: 0), "")
+    }
+
+    /// Put the transcript where the previous one was, the unsettled words dimmed. False when the
+    /// field changed under it (sent, cleared or typed over), so dictation should stop.
+    func showDictation(_ transcript: DictationTranscript) -> Bool {
+        guard let tv = textView, let storage = tv.textStorage, let d = dictated else { return false }
+        let s = tv.string as NSString
+        guard d.range.location + d.range.length <= s.length, s.substring(with: d.range) == d.text else {
+            endDictation()
+            return false
+        }
+        let (final, volatile) = transcript.parts
+        let body = final + volatile
+        let before = d.range.location > 0 ? s.character(at: d.range.location - 1) : nil
+        let after = d.range.location + d.range.length < s.length ? s.character(at: d.range.location + d.range.length) : nil
+        let pad = DictationTranscript.padding(before: before, after: after, empty: body.isEmpty)
+        let text = pad.lead + body + pad.trail
+        let sel = tv.selectedRange()
+        dictating = true
+        if tv.shouldChangeText(in: d.range, replacementString: text) {
+            storage.replaceCharacters(in: d.range, with: NSAttributedString(string: text, attributes: tv.typingAttributes))
+            tv.didChangeText()
+        }
+        dictating = false
+        let range = NSRange(location: d.range.location, length: (text as NSString).length)
+        dictated = (range, text)
+        // The cursor follows the words when it was at their end; elsewhere it stays put.
+        let end = d.range.location + d.range.length
+        let bodyEnd = range.location + (pad.lead + body as NSString).length
+        if sel.location >= end, sel.location != NSNotFound {
+            let moved = sel.location == end ? bodyEnd : sel.location + range.length - d.range.length
+            tv.setSelectedRange(NSRange(location: moved, length: sel.location == end ? 0 : sel.length))
+        } else if sel.location > d.range.location {
+            tv.setSelectedRange(NSRange(location: bodyEnd, length: 0))
+        }
+        if let layout = tv.layoutManager {
+            layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: range)
+            let dim = NSRange(location: range.location + (pad.lead + final as NSString).length, length: (volatile as NSString).length)
+            layout.addTemporaryAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, forCharacterRange: dim)
+        }
+        tv.scrollRangeToVisible(NSRange(location: bodyEnd, length: 0))
+        return true
+    }
+
+    /// Dictation is over: whatever it left in the field is ordinary text now.
+    func endDictation() {
+        dictated = nil
+        guard let tv = textView else { return }
+        tv.layoutManager?.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (tv.string as NSString).length))
+    }
+
+    /// Someone edited the field: keep track of where dictated text went, or let it go if they
+    /// edited it.
+    fileprivate func noteEdit(_ range: NSRange, replacement: Int) {
+        guard !dictating, let d = dictated else { return }
+        guard let moved = DictationTranscript.shift(d.range, byEdit: range, replacement: replacement) else {
+            endDictation()
+            return
+        }
+        dictated = (moved, d.text)
+    }
 }
 
 enum MentionKey {
@@ -139,6 +215,13 @@ struct ComposerTextView: NSViewRepresentable {
             parent.text = tv.string
             updateHeight(tv)
             reportMention(tv)
+        }
+
+        func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
+            if let replacementString {
+                parent.controller.noteEdit(range, replacement: (replacementString as NSString).length)
+            }
+            return true
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {

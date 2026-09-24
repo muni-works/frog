@@ -24,5 +24,9 @@
 	<string>public.app-category.developer-tools</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Cam Pedersen</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Kiln listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Kiln turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else.</string>
 </dict>
 </plist>
