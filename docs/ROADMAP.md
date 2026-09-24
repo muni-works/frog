@@ -166,3 +166,57 @@ Next:
 - LocalLSTC-style subgoal state kept outside the context ([2608.25777](https://arxiv.org/abs/2608.25777)).
 - Running computer use as a subagent.
 - An optional macOS VM sandbox.
+
+## Ideas backlog (2026-09-23)
+
+Ideas discussed but not built yet. Research behind them is in `docs/research/` ([inference speed](research/inference-speed.md), [inference networks](research/inference-network.md), [knowledge systems](research/knowledge-systems.md)). In progress on 2026-09-23 and not listed: `WebFetch`/`WebSearch`/`Docs`, composer voice input, per-step timing (`scripts/time_split.py`), and the suffix-drafting replay (`scripts/draft_replay.py`).
+
+### Speed
+- **Zero-prefill turns.** Multiple KV slots in tang with a session hint (M1), bf16 KV sized on demand (M2), a disk tier with `/v1/prefill` warming on launch and focus (M3), type-ahead prefill from the composer (M4), paged content-addressed blocks (M5). Pruning moves to turn boundaries with a background re-prefill, and prompts stay byte-stable.
+- **Agent-aware speculative decoding.** A per-session suffix tree (prompts, outputs, files read), JSON tokens the grammar forces for free, MTP heads when nothing matches. Expected 1.8–3x on CUDA and 1.3–2x on Mac (to be checked with `draft_replay.py`).
+- **Streaming and speculative tool execution.** Start read-only tools as soon as their arguments parse, prefetch files the output mentions, encourage parallel tool calls. Expected 15–45% off task time.
+- **Kernels.** CUDA graphs, then a decode megakernel on the 3090 (1.3–1.7x). One command buffer per token on Metal, and Metal 4 tensor-API prefill on M5 (3–4x time to first token).
+- **tang CUDA follow-ups.** Merge `kiln-llm-cuda` into `kiln-llm`. Stop the buffer pool querying free memory on every allocation. Fuse dequantization into the prefill GEMMs. Tensor-core attention for long prompts.
+- **MTP / DFlash drafting** for new text (CUDA first).
+- **A faster default local model.** A hybrid-attention A3B MoE coder with int8 KV (2–3x decode ceiling; needs Gated DeltaNet and MoE kernels in tang; won't fit 16 GB Macs).
+- **Width instead of length.** Batched decode in tang, so subagents, best-of-n and race attempts run in one engine at about 1x cost per stream.
+
+### Your devices
+- **Route to your devices (rung 1).** `kiln node` for Linux, Bonjour discovery, pairing codes and Keychain keys, a Devices section in Settings, "fits in your pool" in the picker. Whole models on whole machines; nothing is split.
+- **Splitting a model across devices** (M0 in one process, M1 localhost, M2 Mac↔3090, M3 drafting, M4 discovery). Shelved until the latency experiment says it's worth it. LAN or Thunderbolt only.
+- **Pool latency experiment.** A shim in the provider path that fakes a pool's time to first token, tokens/s cap and node failures, run over 10–20 real tasks.
+- **Friend pools ("Crews").** Invite-only shared devices and credits.
+- **mew.** Use its Tailscale name instead of the LAN IP. Put TLS in front if it's ever reachable beyond the LAN or tailnet.
+- **Decided against:** a public "contribute a GPU, get big models free" network. Datacenter prices, the speed of links over home internet, and privacy (nodes can recover prompts) all lose. See [inference networks](research/inference-network.md).
+
+### Business (solo devs, no enterprise)
+- **kiln Pro.** Credits for escalating to frontier models (never "unlimited"), reaching your GPU from anywhere through a relay, session sync, approving from your phone, background agents. Local stays free.
+- **A gateway with tang behind it.** Sessions pinned to one server with their KV kept hot (logs show about 79% of input is cacheable, about 4.8x less prefill), prompt-lookup drafting (about 1.6x), handing a hot session from local to cloud without re-sending it, a model tuned on kiln traces, privacy you can prove. Pitch cost per finished task, not price per token.
+- **Measure the escalation rate** (what fraction of steps needs a frontier model) with `kiln bench`. A waitlist to test demand.
+
+### Knowledge (phase 1 shipped: `/remember`, `/forget`, `/memory`)
+- Phase 2: session summaries, a read-only `Recall` tool, path-scoped rules, a ranked repo map for small models.
+- Phase 3: memories extracted after a session, going into a review inbox.
+- Phase 4: consolidation into a git-tracked folder, and promoting a note into AGENTS.md.
+- Phase 5: embeddings, only if the bench shows grep failing on large repos.
+- Smaller items: a memory editor in the Mac app, noticing "remember that…" in messages, a `memory.cloud` setting, budgeting instruction files by tier, checking that cited anchors still exist.
+
+### Harness quality (from the bench and the logs)
+- Fix contract errors in the harness (editing before reading, `old_string` mismatches) and repeat loops. These, not malformed calls, are most tool failures.
+- Count text-mode tool calls that fail to parse; they're invisible in the logs today.
+- Investigate why tang had more tool errors than ollama in the bench (1.3 vs 0.4).
+- Earlier follow-ups: ACP `loadSession`, a Linux bubblewrap sandbox, worktree subagents that do work, KV fork, parallel subagents, faster Gemma decode in tang (34 tok/s) and fp16 vision encode.
+
+### Models and providers
+- More presets: Groq, Cerebras, Together, Fireworks, DeepSeek, Mistral, xAI, Cloudflare. Later Bedrock, Vertex, Azure.
+- Per-model overrides in Settings (context, tool mode, vision, extra params).
+- Show whether local providers (LM Studio, ollama) are actually running, not just "connected".
+
+### Niceties
+- **Images.** SVG first, then Apple's Image Playground (`ImageCreator`) on device, FLUX on mew, and remote image models. One `Image` tool that shows results in the lightbox.
+- **Dev-server preview pane** with console logs, which the agent can screenshot and inspect.
+- **Global quick-ask hotkey**, plus capture a region and ask.
+- **Menu bar extra** for running and waiting agents, with approve and deny.
+- **Shortcuts, App Intents and the Services menu** ("Ask kiln about the selection").
+- **Share a session** as an HTML page or a gist.
+- **Small polish.** The lightbox zooms in from the thumbnail, focus returns to the composer after the lightbox closes, and the title lines up with the sidebar.
