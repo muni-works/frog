@@ -8,6 +8,12 @@ enum MarkdownBlock: Hashable {
     case bullet(indent: Int, marker: String, text: String)
     case quote(String)
     case rule
+    /// A pipe table: header cells, per-column alignment, then rows (ragged rows are padded).
+    case table(header: [String], align: [TableAlign], rows: [[String]])
+}
+
+enum TableAlign: Hashable {
+    case leading, center, trailing
 }
 
 enum Markdown {
@@ -16,11 +22,16 @@ enum Markdown {
         var blocks: [MarkdownBlock] = []
         var paragraph: [String] = []
         var fence: (lang: String, lines: [String])?
+        var table: (header: [String], align: [TableAlign], rows: [[String]])?
 
         func flush() {
             if !paragraph.isEmpty {
                 blocks.append(.paragraph(paragraph.joined(separator: "\n")))
                 paragraph = []
+            }
+            if let t = table {
+                blocks.append(.table(header: t.header, align: t.align, rows: t.rows))
+                table = nil
             }
         }
 
@@ -44,6 +55,19 @@ enum Markdown {
             if trimmed.isEmpty {
                 flush()
                 continue
+            }
+            // A pipe row continues a table; a header row plus an alignment row starts one.
+            if let cells = tableRow(trimmed) {
+                if var t = table {
+                    t.rows.append(cells)
+                    table = t
+                    continue
+                }
+                if paragraph.count == 1, let header = tableRow(paragraph[0]), let align = alignmentRow(cells, columns: header.count) {
+                    paragraph = []
+                    table = (header, align, [])
+                    continue
+                }
             }
             if let heading = headingLevel(trimmed) {
                 flush()
@@ -73,6 +97,41 @@ enum Markdown {
             blocks.append(.code(language: f.lang, text: f.lines.joined(separator: "\n")))
         }
         return blocks
+    }
+
+    /// The cells of a `| a | b |` line, or nil if it isn't one. Pipes inside inline code stay.
+    static func tableRow(_ s: String) -> [String]? {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        guard t.hasPrefix("|"), t.count > 1 else { return nil }
+        var cells: [String] = []
+        var cell = ""
+        var inCode = false
+        var escaped = false
+        for ch in t.dropFirst() {
+            if escaped { cell.append(ch); escaped = false; continue }
+            if ch == "\\" { escaped = true; continue }
+            if ch == "`" { inCode.toggle() }
+            if ch == "|" && !inCode { cells.append(cell); cell = "" } else { cell.append(ch) }
+        }
+        if !cell.trimmingCharacters(in: .whitespaces).isEmpty { cells.append(cell) }
+        return cells.map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// `|---|:--:|--:|` under a header: one alignment per column, padded to `columns`.
+    static func alignmentRow(_ cells: [String], columns: Int) -> [TableAlign]? {
+        guard !cells.isEmpty, cells.allSatisfy({ c in
+            let core = c.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+            return !core.isEmpty && core.allSatisfy { $0 == "-" }
+        }) else { return nil }
+        var align: [TableAlign] = cells.map { c in
+            switch (c.hasPrefix(":"), c.hasSuffix(":")) {
+            case (true, true): .center
+            case (false, true): .trailing
+            default: .leading
+            }
+        }
+        while align.count < columns { align.append(.leading) }
+        return align
     }
 
     private static func headingLevel(_ s: String) -> Int? {
@@ -180,7 +239,57 @@ struct MarkdownView: View {
                 }
         case .rule:
             Divider()
+        case .table(let header, let align, let rows):
+            MarkdownTable(header: header, align: align, rows: rows)
         }
+    }
+}
+
+/// A pipe table as a grid: a bold header, hairlines between rows, columns sized to content.
+struct MarkdownTable: View {
+    let header: [String]
+    let align: [TableAlign]
+    let rows: [[String]]
+
+    private var columns: Int { max(header.count, rows.map(\.count).max() ?? 0) }
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(0..<columns, id: \.self) { c in
+                        cell(header[safe: c] ?? "", column: c)
+                            .fontWeight(.semibold)
+                    }
+                }
+                .background(Color.primary.opacity(0.05))
+                ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
+                    Divider().gridCellColumns(columns)
+                    GridRow {
+                        ForEach(0..<columns, id: \.self) { c in
+                            cell(row[safe: c] ?? "", column: c)
+                        }
+                    }
+                }
+            }
+            .padding(1)
+        }
+        .scrollIndicators(.automatic)
+        .background(Color.primary.opacity(0.02), in: .rect(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+        .padding(.vertical, 2)
+    }
+
+    private func cell(_ text: String, column: Int) -> some View {
+        let a = align[safe: column] ?? .leading
+        return Text(Markdown.inline(text))
+            .font(.callout)
+            .multilineTextAlignment(a == .center ? .center : a == .trailing ? .trailing : .leading)
+            .frame(maxWidth: 360, alignment: a == .center ? .center : a == .trailing ? .trailing : .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .gridColumnAlignment(a == .center ? .center : a == .trailing ? .trailing : .leading)
     }
 }
 
