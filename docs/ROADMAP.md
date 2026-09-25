@@ -220,6 +220,9 @@ Also:
 - Phase 5: embeddings, only if the bench shows grep failing on large repos.
 - Smaller items: a memory editor in the Mac app, noticing "remember that…" in messages, a `memory.cloud` setting, budgeting instruction files by tier, checking that cited anchors still exist.
 
+### Code review with local models
+See [local code review](research/local-code-review.md): `frog review` as a gate, not an oracle. Deterministic tools first, the model explains failures and checks intent, a per-hunk voting pass on 8B+, findings reported only after verification (a failing test in a worktree, or an opt-in cloud check), at most 3 findings by default, a `bench/review` set with clean diffs to count false positives. Also: bring reviewers' PR comments into the app inline on the diff with Reply / Resolve / Send to Frog, like Claude Code Desktop, so a review round-trip never leaves the conversation.
+
 ### Harness quality (from the bench and the logs)
 - Fix contract errors in the harness (editing before reading, `old_string` mismatches) and repeat loops. These, not malformed calls, are most tool failures.
 - Count text-mode tool calls that fail to parse; they're invisible in the logs today.
