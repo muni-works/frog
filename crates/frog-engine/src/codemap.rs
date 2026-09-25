@@ -173,7 +173,7 @@ fn scc(adj: &[Vec<usize>]) -> Vec<usize> {
 
 // MARK: - Scanning
 
-fn source_files(root: &Path, focus: Option<&Path>) -> Vec<String> {
+pub(crate) fn source_files(root: &Path, focus: Option<&Path>) -> Vec<String> {
     let start = focus
         .map(|f| root.join(f))
         .unwrap_or_else(|| root.to_path_buf());

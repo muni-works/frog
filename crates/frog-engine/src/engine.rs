@@ -20,7 +20,7 @@ use crate::tools::{self, Ctx, Kind};
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -246,6 +246,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         agent.mcp.shutdown();
         shared.mcp.lock().unwrap().take();
         agent.sync_log();
+        agent.write_summary();
     });
 
     Ok(Handle {
@@ -368,6 +369,14 @@ struct Agent {
     notes: Vec<crate::memory::Note>,
     /// Notes that didn't fit the current model's index.
     notes_omitted: usize,
+    /// Rule files for this project, and the scoped ones already shown this session.
+    rules: Vec<crate::rules::Rule>,
+    rules_seen: HashSet<PathBuf>,
+    /// The ranked repo map in the system prompt (small and mid-size models only), rebuilt
+    /// between turns when files change.
+    repo_map: crate::repomap::Map,
+    /// Files edited this session, relative to the root, for ranking the map.
+    edited: Vec<String>,
     /// The model can see images (probed, or `vision` in the profile).
     vision: bool,
     /// The server takes a per-call reasoning budget (probed).
@@ -429,9 +438,20 @@ impl Agent {
                 &memory_root(store),
                 (!o.chat).then_some(o.cwd.as_path()),
             )),
+            // A subagent has no session store, but reads the same notes and summaries
+            // for `Recall`.
+            (None, true) => Some(crate::memory::Store::new(
+                &crate::memory::default_root(),
+                Some(o.cwd.as_path()),
+            )),
             _ => None,
         };
         let notes = memory.as_ref().map(|m| m.load()).unwrap_or_default();
+        let rules = if o.chat {
+            Vec::new()
+        } else {
+            crate::rules::discover(&o.cwd)
+        };
         let shell_sandbox = o.cfg.sandbox_shell && tools::bash::available() && !o.chat;
         let window = o.profile.context_window();
         let web = Arc::new(tools::web::Web::from_config(&o.cfg));
@@ -487,6 +507,10 @@ impl Agent {
             memory,
             notes,
             notes_omitted: 0,
+            rules,
+            rules_seen: HashSet::new(),
+            repo_map: Default::default(),
+            edited: Vec::new(),
             classifier: None,
             vision: false,
             budget_ok: false,
@@ -500,6 +524,7 @@ impl Agent {
             agent.repair();
         }
         agent.sync_specs();
+        agent.refresh_repo_map(&[]);
         agent.apply_harness();
         Ok(agent)
     }
@@ -663,6 +688,36 @@ impl Agent {
             usage,
         });
         self.sync_log();
+        self.write_summary();
+    }
+
+    /// "Remember that …" in an ordinary message saves a note (and the turn still runs).
+    fn remember_from(&mut self, text: &str) {
+        if self.subagent {
+            return;
+        }
+        let Some(note) = crate::memory::detect_remember(text) else {
+            return;
+        };
+        let Some(store) = &self.memory else { return };
+        let scope = if self.chat {
+            crate::memory::Scope::Global
+        } else {
+            crate::memory::Scope::Project
+        };
+        match store.add(scope, &note) {
+            Ok((saved, redacted)) => {
+                let mut msg = format!("remembered as `{}`: {}", saved.id, saved.first_line());
+                if !redacted.is_empty() {
+                    msg.push_str(&format!(" (redacted: {})", redacted.join(", ")));
+                }
+                msg.push_str(" — /forget removes it");
+                self.notes = store.load();
+                self.apply_harness();
+                self.notice(Level::Info, msg);
+            }
+            Err(e) => self.notice(Level::Warn, format!("couldn't save the note: {e:#}")),
+        }
     }
 
     fn complete_item(&self, streamed: Option<String>, kind: ItemKind, item: Item) {
@@ -683,6 +738,7 @@ impl Agent {
         match op {
             Op::Submit { text, images } => {
                 if !self.memory_command(&text) {
+                    self.remember_from(&text);
                     self.turn(&text, images).await?
                 }
             }
@@ -727,10 +783,13 @@ impl Agent {
             }
             Op::Clear => {
                 self.sync_log();
+                self.write_summary();
                 *self.log.lock().unwrap() = None;
                 self.messages.clear();
                 self.inputs.clear();
                 self.skills_loaded.clear();
+                self.rules_seen.clear();
+                self.edited.clear();
                 let sandbox = self.ctx.sandbox.take();
                 let shell_sandbox = self.ctx.shell_sandbox.take();
                 let web = self.ctx.web.clone();
@@ -744,6 +803,7 @@ impl Agent {
                 self.seq.store(0, Ordering::Relaxed);
                 self.turn = 0;
                 self.notes = self.memory.as_ref().map(|m| m.load()).unwrap_or_default();
+                self.refresh_repo_map(&[]);
                 self.apply_harness();
                 self.notice(Level::Info, "started a new conversation");
             }
@@ -919,6 +979,23 @@ impl Agent {
         // Only the user's own words: not skill text or shell output.
         let (extra, named) = self.attach_named(&typed);
         text.push_str(&extra);
+        // Files the user pointed at (`@path` or by name): their scoped rules, and a fresh
+        // repo map if they aren't on it. Both happen before the first model call of the turn.
+        let pointed: Vec<PathBuf> = typed
+            .split_whitespace()
+            .filter_map(|t| t.strip_prefix('@'))
+            .map(|t| {
+                self.ctx
+                    .resolve(t.trim_end_matches([',', ')', ':', ';', '?', '!', '.']))
+            })
+            .chain(named.iter().cloned())
+            .collect();
+        for p in &pointed {
+            text.push_str(&self.rules_for(p));
+        }
+        let mentioned: Vec<String> = pointed.iter().filter_map(|p| self.rel(p)).collect();
+        self.refresh_repo_map(&mentioned);
+        self.apply_harness();
         self.push_user(text);
         if !images.is_empty() {
             self.extend_last(
@@ -1045,7 +1122,9 @@ impl Agent {
         } else {
             prompt::system_prompt(&self.root, &self.cfg, &self.profile.model)
         };
-        self.system = format!("{base}{}", harness::guidance(self.tier));
+        let rules =
+            crate::rules::prompt_section(&self.rules, crate::rules::prompt_budget(self.tier));
+        self.system = format!("{base}{rules}{}", harness::guidance(self.tier));
         self.system.push_str(&self.mcp.prompt());
         if self.subagent {
             self.system.push_str(crate::subagent::PROMPT);
@@ -1054,10 +1133,110 @@ impl Agent {
         let (index, omitted) = crate::memory::index(&self.notes, self.tier, self.window);
         self.system.push_str(&index);
         self.notes_omitted = omitted;
+        if self.has_recall() {
+            self.system
+                .push_str("\nRecall searches your notes and past sessions in this project.\n");
+        }
+        // Last, since it's the one part that changes between turns.
+        self.system.push_str(&self.repo_map.text);
     }
 
-    /// `/remember`, `/forget` and `/memory`: answered with a notice, no model call. Returns
-    /// false if `text` isn't one of them.
+    /// Whether `Recall` is offered: there's a project with notes and summaries to search.
+    fn has_recall(&self) -> bool {
+        !self.chat
+            && self
+                .memory
+                .as_ref()
+                .is_some_and(|m| m.sessions_dir().is_some())
+    }
+
+    /// Notes and this project's session summaries, for `Recall`.
+    fn recall_sources(&self) -> Vec<crate::summary::Stored> {
+        self.memory
+            .as_ref()
+            .and_then(|m| m.sessions_dir())
+            .map(|d| crate::summary::load(&d))
+            .unwrap_or_default()
+    }
+
+    /// Rebuild the repo map for small and mid-size models if files changed (or `mentioned`
+    /// names a source file it doesn't show). Only called between turns, so the prompt prefix
+    /// holds while a turn runs.
+    fn refresh_repo_map(&mut self, mentioned: &[String]) {
+        if self.chat || self.subagent || self.memory.is_none() {
+            return;
+        }
+        let budget = crate::repomap::budget(self.tier);
+        let have = !self.repo_map.text.is_empty();
+        if budget == 0 {
+            if have {
+                self.repo_map = Default::default();
+            }
+            return;
+        }
+        if have && !self.repo_map.stale(&self.root, mentioned) {
+            return;
+        }
+        let cache = self
+            .memory
+            .as_ref()
+            .and_then(|m| m.project_file(crate::repomap::CACHE_FILE));
+        let seeds = crate::repomap::Seeds {
+            mentioned,
+            edited: &self.edited,
+        };
+        self.repo_map = crate::repomap::build(&self.root, cache.as_deref(), &seeds, budget);
+    }
+
+    /// `path` relative to the project root, for rules and the repo map.
+    fn rel(&self, path: &Path) -> Option<String> {
+        let p = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.root.join(path)
+        };
+        p.strip_prefix(&self.root)
+            .ok()
+            .map(|r| r.to_string_lossy().into_owned())
+    }
+
+    /// The scoped rules `path` matches that haven't been shown this session, as a block.
+    fn rules_for(&mut self, path: &Path) -> String {
+        let Some(rel) = self.rel(path) else {
+            return String::new();
+        };
+        let due = crate::rules::due(&self.rules, &rel, &mut self.rules_seen);
+        crate::rules::block(&due, &rel, crate::rules::inject_budget(self.tier))
+    }
+
+    /// Write or update this session's summary from its log. No model call.
+    fn write_summary(&self) {
+        let (Some(dir), Some(out)) = (
+            &self.store,
+            self.memory.as_ref().and_then(|m| m.sessions_dir()),
+        ) else {
+            return;
+        };
+        if self.log.lock().unwrap().is_none() {
+            return;
+        }
+        let Ok(loaded) = session::load(dir, &self.session_id) else {
+            return;
+        };
+        if loaded.events.is_empty() {
+            return;
+        }
+        let summary = crate::summary::build(&loaded.header, &loaded.events, None);
+        if let Err(e) = crate::summary::write(&out, &summary) {
+            self.notice(
+                Level::Warn,
+                format!("couldn't write the session summary: {e:#}"),
+            );
+        }
+    }
+
+    /// `/remember`, `/forget`, `/memory` and `/recall`: answered with a notice, no model call.
+    /// Returns false if `text` isn't one of them.
     fn memory_command(&mut self, text: &str) -> bool {
         if self.subagent || !crate::memory::is_command(text) {
             return false;
@@ -1069,6 +1248,16 @@ impl Agent {
             );
             return true;
         };
+        if let Some(query) = crate::memory::recall_query(text) {
+            let sessions = self.recall_sources();
+            let sources = crate::recall::Sources {
+                notes: &self.notes,
+                sessions: &sessions,
+            };
+            let reply = crate::recall::command(&sources, query, self.tier);
+            self.notice(Level::Info, reply);
+            return true;
+        }
         let Some(reply) = crate::memory::command(store, &self.notes, text, self.notes_omitted)
         else {
             return false;
@@ -1386,6 +1575,9 @@ impl Agent {
             }
             specs.extend(self.mcp.specs());
         }
+        if self.has_recall() {
+            specs.push(crate::recall::spec());
+        }
         self.specs = specs;
     }
 
@@ -1441,6 +1633,14 @@ impl Agent {
     async fn run_tool(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
         if name == crate::skills::TOOL {
             return crate::skills::run(&self.skills, &mut self.skills_loaded, input);
+        }
+        if name == crate::recall::TOOL && self.has_recall() {
+            let sessions = self.recall_sources();
+            let sources = crate::recall::Sources {
+                notes: &self.notes,
+                sessions: &sessions,
+            };
+            return crate::recall::run(&sources, input, self.tier);
         }
         if name == crate::subagent::TOOL {
             return self.run_task(id, input).await;
@@ -1565,11 +1765,27 @@ Don't repeat it. Change the arguments or try a different approach.",
                 }
             };
             let output = out.content;
+            // Rules scoped to the file just read or edited go in front of its result, the
+            // first time this session.
+            let rules = match (&*name, outcome == ToolOutcome::Ok) {
+                ("Read" | "Edit" | "Write", true) => input["file_path"]
+                    .as_str()
+                    .map(|p| self.ctx.resolve(p))
+                    .map(|p| self.rules_for(&p))
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
+            if let Some(d) = &out.diff
+                && let Some(rel) = self.rel(Path::new(&d.path))
+                && !self.edited.contains(&rel)
+            {
+                self.edited.push(rel);
+            }
 
             self.extend_last(vec![Block::ToolResult {
                 id: id.clone(),
                 name: name.clone(),
-                content: output.clone(),
+                content: format!("{rules}{output}"),
                 is_error: outcome != ToolOutcome::Ok,
             }]);
             // Images a tool returned (a render, a screenshot) go to the model too, after the
@@ -2603,6 +2819,216 @@ mod tests {
         let evs = until_idle(&mut h).await;
         assert!(notices(&evs)[0].contains("[project] use-npm-not-pnpm: use npm, not pnpm"));
         shutdown(h).await;
+    }
+
+    fn notices(evs: &[Envelope]) -> Vec<String> {
+        evs.iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { message, .. } => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every `.md` under `dir`, recursively.
+    fn md_files(dir: &std::path::Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return out;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(md_files(&p));
+            } else if p.extension().is_some_and(|x| x == "md") {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn turns_write_a_summary_that_recall_and_remember_that_find() {
+        let root = tmp_store();
+        let project = root.join("repo");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(project.join("src/widget.rs"), "pub fn draw() {}\n").unwrap();
+        let edit = Block::ToolUse {
+            id: "e1".into(),
+            name: "Edit".into(),
+            input: json!({
+                "file_path": "src/widget.rs",
+                "old_string": "draw() {}",
+                "new_string": "draw() { paint(); }"
+            }),
+        };
+        let read = Block::ToolUse {
+            id: "r1".into(),
+            name: "Read".into(),
+            input: json!({ "file_path": "src/widget.rs" }),
+        };
+        let script = vec![
+            reply(vec![read, edit], Stop::ToolUse),
+            reply(vec![text("Fixed the widget paint call.")], Stop::End),
+            reply(vec![text("hi")], Stop::End),
+        ];
+        let mut h = engine_with(
+            script,
+            true,
+            Some(root.join("sessions")),
+            None,
+            None,
+            project.clone(),
+        );
+        h.ops
+            .send(Op::SetMode {
+                mode: Mode::AcceptEdits,
+            })
+            .unwrap();
+        // Startup, then the mode change.
+        until_idle(&mut h).await;
+        until_idle(&mut h).await;
+        h.ops
+            .send(Op::Submit {
+                text: "fix the widget\nit doesn't paint".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        let sid = evs[0].session.clone();
+
+        let sessions = root.join("memory/projects");
+        let files = md_files(&sessions);
+        assert_eq!(files.len(), 1, "{files:?} {:?}", notices(&evs));
+        let path = &files[0];
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            format!("{sid}.md")
+        );
+        assert!(path.parent().unwrap().ends_with("sessions"));
+        let summary = std::fs::read_to_string(path).unwrap();
+        assert!(summary.contains("title: \"fix the widget\"\n"), "{summary}");
+        assert!(
+            summary.contains("files: [\"src/widget.rs (+1/-1)\"]\n"),
+            "{summary}"
+        );
+        assert!(summary.contains("outcome: complete\n"));
+        assert!(summary.contains(
+            "1. User: fix the widget Ran Read, Edit; edited src/widget.rs (+1/-1). Reply: Fixed the widget paint call."
+        ), "{summary}");
+
+        // /recall answers from the summary without a model call, by keyword and by file.
+        h.ops
+            .send(Op::Submit {
+                text: "/recall widget paint".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(!names(&evs).contains(&"turn_started".to_string()));
+        let n = &notices(&evs)[0];
+        assert!(
+            n.starts_with("1 hit for \"widget paint\":\n- [session "),
+            "{n}"
+        );
+        assert!(n.contains(&sid));
+        assert!(n.contains("files: src/widget.rs"));
+        h.ops
+            .send(Op::Submit {
+                text: "/recall file:widget.rs".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(notices(&evs)[0].contains(&sid));
+
+        // "Remember that …" saves a note and the turn still runs.
+        h.ops
+            .send(Op::Submit {
+                text: "Remember that widgets paint lazily. Now say hi".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(names(&evs).contains(&"turn_started".to_string()));
+        assert!(notices(&evs)[0].starts_with("remembered as `widgets-paint-lazily`"));
+        assert!(
+            root.join("memory/projects")
+                .join(
+                    md_files(&root.join("memory/projects"))
+                        .iter()
+                        .find(|p| p.ends_with("widgets-paint-lazily.md"))
+                        .unwrap()
+                )
+                .exists()
+        );
+        // The note is in the next turn's system prompt and Recall finds both sources.
+        h.ops
+            .send(Op::Submit {
+                text: "/recall lazily".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(notices(&evs)[0].contains("[note "), "{}", notices(&evs)[0]);
+        shutdown(h).await;
+        // The summary now has both turns.
+        let summary = std::fs::read_to_string(path).unwrap();
+        assert!(
+            summary.contains("2. User: Remember that widgets paint lazily. Now say hi"),
+            "{summary}"
+        );
+    }
+
+    #[tokio::test]
+    async fn scoped_rules_go_before_the_first_matching_read() {
+        let dir = tmp_store();
+        std::fs::create_dir_all(dir.join(".frog/rules")).unwrap();
+        std::fs::create_dir_all(dir.join("src/api")).unwrap();
+        std::fs::write(
+            dir.join(".frog/rules/api.md"),
+            "---\npaths: [\"src/api/**\"]\n---\nHandlers return Result.\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join(".frog/rules/style.md"), "Two-space indent.\n").unwrap();
+        std::fs::write(dir.join("src/api/a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(dir.join("src/api/b.rs"), "fn b() {}\n").unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "fn lib() {}\n").unwrap();
+        let read = |id: &str, path: &str| Block::ToolUse {
+            id: id.into(),
+            name: "Read".into(),
+            input: json!({ "file_path": path }),
+        };
+        let script = vec![
+            reply(
+                vec![read("r1", "src/lib.rs"), read("r2", "src/api/a.rs")],
+                Stop::ToolUse,
+            ),
+            reply(vec![read("r3", "src/api/b.rs")], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, Some(dir.clone()), None, None, dir.clone());
+        let evs = run(&mut h, "look around").await;
+        let sid = evs[0].session.clone();
+        shutdown(h).await;
+        let results: Vec<(String, String)> = logged_blocks(&dir, &sid)
+            .into_iter()
+            .filter_map(|(_, b)| match b {
+                Block::ToolResult { id, content, .. } => Some((id, content)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results.len(), 3);
+        assert!(!results[0].1.contains("<rules"), "lib.rs matches no rule");
+        assert!(
+            results[1].1.starts_with(
+                "<rules for src/api/a.rs>\n## api (src/api/**)\nHandlers return Result.\n</rules>\n"
+            ),
+            "{}",
+            results[1].1
+        );
+        assert!(!results[2].1.contains("<rules"), "shown once per session");
     }
 
     #[tokio::test]
