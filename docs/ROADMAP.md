@@ -1,5 +1,18 @@
 # Roadmap
 
+## The five bets (2026-09-24)
+
+Everything below follows from one fact: frog owns the whole loop, the engine, the harness and the screen. In shipping order:
+
+1. **Zero-prefill turns.** KV slots per session, disk-backed, prefill while typing. Everything in speed compounds on it.
+2. **Frog can see what it builds.** Live panes (a shared terminal, a preview) that stream errors, tests and requests into the turn; before/after of the running app per checkpoint; click an element to mention it. Cheap for small models, impossible without owning the process. The story and the demo.
+3. **Your devices, additive.** `frog node` with pairing and finish-time scheduling: a second machine only ever makes frog faster.
+4. **The gate, not the oracle.** Verification wherever small models are weak: tools first, intent checks, voting, a failing test before a finding is shown.
+5. **Frog Pro on a tang-backed gateway.** Pinned KV, the drafter, local↔cloud handoff, a frog-tuned model, included search.
+
+Researched and shelved, with reasons in `docs/research/`: a public GPU marketplace, IR-first tang-llm, a hosted docs index.
+
+
 Ordered by leverage. Each item cites the evidence behind it.
 
 ## 1. Protocol hardening: done
