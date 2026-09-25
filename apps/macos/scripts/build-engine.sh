@@ -21,7 +21,7 @@ if [ -z "$TANG_DIR" ] && [ ! -f "$REPO/../tang/crates/tang-llm/Cargo.toml" ] && 
 fi
 TANG_DIR="${TANG_DIR:-$REPO/../tang}"
 if [ -f "$TANG_DIR/crates/tang-llm/Cargo.toml" ]; then
-    cargo build --manifest-path "$TANG_DIR/Cargo.toml" --release -p tang-llm
+    cargo build --manifest-path "$TANG_DIR/Cargo.toml" --release -p tang-llm --features metal
     rm -f "$DEST/tang-llm"; cp "$TANG_DIR/target/release/tang-llm" "$DEST/tang-llm"
 else
     echo "warning: no tang checkout at $TANG_DIR; tang/ models won't be available" >&2
