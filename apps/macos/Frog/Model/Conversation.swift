@@ -321,6 +321,7 @@ final class Conversation {
                 if !replaying {
                     if let id = sessionID { Library.shared.turnEnded(id) }
                     Notifier.shared.turnFinished(project: folder.lastPathComponent, text: Self.summary(turns[i]))
+                    if case .complete = reason { FrogSounds.shared.play(.ribbit) }
                     if title == nil, case .complete = reason { nameSession(from: turns[i]) }
                 }
             }
@@ -356,6 +357,7 @@ final class Conversation {
         case .permissionRequest(let req):
             permission = req
             if !replaying {
+                FrogSounds.shared.play(.drip)
                 Notifier.shared.needsPermission(project: folder.lastPathComponent, request: req) { [weak self] d in
                     self?.answer(d)
                 }

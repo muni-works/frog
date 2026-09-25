@@ -91,6 +91,32 @@ final class SnapshotTests: XCTestCase {
 }
 
 extension SnapshotTests {
+    /// Every frog mood, and the frog on its lily pad.
+    func testRenderFrogFaces() throws {
+        let moods: [(String, FrogMood)] = [
+            ("idle", .idle), ("reading", .reading), ("thinking", .thinking), ("working", .working),
+            ("done", .done), ("waiting", .waiting), ("sad", .sad),
+        ]
+        try render(
+            VStack(spacing: 24) {
+                HStack(spacing: 24) {
+                    ForEach(moods, id: \.0) { name, mood in
+                        VStack(spacing: 6) {
+                            FrogFace(mood: mood, size: 48)
+                            Text(name).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                ZStack(alignment: .bottom) {
+                    LilyPad().fill(Color.accentColor.opacity(0.22)).frame(width: 76, height: 26).offset(y: 4)
+                    FrogFace(mood: .idle, size: 48)
+                }
+            }
+            .padding(40)
+            .background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 620, height: 240), to: "frog-faces")
+    }
+
     /// A subagent mid-run (steps, thinking, the report being written) and finished.
     func testRenderSubagent() throws {
         func sub(_ inner: String) -> String {

@@ -407,6 +407,7 @@ extension WorkspaceView {
 struct ConversationDropZone: ViewModifier {
     let conversation: Conversation
     @State private var targeted = false
+    @AppStorage("playfulFrog") private var playful = true
 
     func body(content: Content) -> some View {
         content
@@ -415,23 +416,64 @@ struct ConversationDropZone: ViewModifier {
                 conversation.dropped = urls
                 return true
             } isTargeted: { targeted = $0 }
-            .overlay {
+            .overlayPreferenceValue(FrogAnchorKey.self) { frog in
                 if targeted {
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(.tint, lineWidth: 2)
-                        .background(.tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
-                        .overlay {
-                            Label("Drop to attach", systemImage: "paperclip")
-                                .font(.headline)
-                                .padding(.horizontal, 14).padding(.vertical, 8)
-                                .glassEffect(.regular, in: .capsule)
-                        }
+                    DropOverlay(playful: playful, frog: frog)
                         .padding(8)
                         .allowsHitTesting(false)
                         .transition(.opacity)
                 }
             }
             .animation(.easeOut(duration: 0.15), value: targeted)
+    }
+}
+
+/// "Drop to attach", over a green lily pad tint. With the playful frog on, the frog's tongue
+/// reaches from its mouth to the label: the empty-state frog's if it's on screen, else a small
+/// frog that appears just above the label.
+private struct DropOverlay: View {
+    let playful: Bool
+    let frog: Anchor<CGRect>?
+    @State private var out = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { geo in
+            let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+            let mouth = frog.map { a in
+                let r = geo[a]
+                return CGPoint(x: r.midX, y: r.maxY - r.height * 0.18)
+            } ?? CGPoint(x: center.x, y: center.y - 46)
+            ZStack {
+                RoundedRectangle(cornerRadius: playful ? 24 : 16)
+                    .strokeBorder(.tint, lineWidth: 2)
+                    .background(.tint.opacity(playful ? 0.1 : 0.06), in: RoundedRectangle(cornerRadius: playful ? 24 : 16))
+                if playful {
+                    Path { p in
+                        p.move(to: mouth)
+                        p.addLine(to: CGPoint(x: center.x, y: center.y - 18))
+                    }
+                    .trim(from: 0, to: out ? 1 : 0)
+                    .stroke(.tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    if frog == nil {
+                        FrogFace(mood: .waiting, size: 28)
+                            .position(x: mouth.x, y: mouth.y - 8)
+                    }
+                }
+                Label("Drop to attach", systemImage: "paperclip")
+                    .font(.headline)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .glassEffect(.regular, in: .capsule)
+                    .position(center)
+            }
+        }
+        .onAppear {
+            if reduceMotion {
+                out = true
+            } else {
+                withAnimation(.easeOut(duration: 0.25)) { out = true }
+            }
+        }
     }
 }
 

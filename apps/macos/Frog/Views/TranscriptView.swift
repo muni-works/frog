@@ -169,16 +169,24 @@ struct WorkingIndicator: View {
 struct EmptyTranscript: View {
     let conversation: Conversation
     @Environment(\.canvasInsets) private var insets
+    @AppStorage("playfulFrog") private var playful = true
+    @State private var hovering = false
+    @State private var line = 0
+    @State private var hop = 0
 
     private var isChat: Bool { Frog.isChat(conversation.folder) }
 
     var body: some View {
         VStack(spacing: 10) {
-            Image("FrogMark")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 48, height: 48)
-                .foregroundStyle(Color.accentColor.gradient)
+            if playful {
+                mascot
+            } else {
+                Image("FrogMark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 48, height: 48)
+                    .foregroundStyle(Color.accentColor.gradient)
+            }
             Text(isChat ? "What should we work on?" : conversation.folder.lastPathComponent)
                 .font(.title2.weight(.semibold))
             if let s = conversation.status {
@@ -197,6 +205,41 @@ struct EmptyTranscript: View {
         .padding()
         .padding(.leading, insets.leading)
         .padding(.trailing, insets.trailing)
+    }
+
+    /// The frog on its lily pad. Hover and it says something; drop a file and it hops.
+    private var mascot: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .bottom) {
+                LilyPad()
+                    .fill(Color.accentColor.opacity(0.22))
+                    .frame(width: 76, height: 26)
+                    .offset(y: 4)
+                FrogFace(mood: .idle, size: 48, hop: hop)
+                    .anchorPreference(key: FrogAnchorKey.self, value: .bounds) { $0 }
+            }
+            .padding(.top, 4)
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+            Text(FrogCopy.hovers[line % FrogCopy.hovers.count])
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .opacity(hovering ? 1 : 0)
+                .animation(.easeInOut(duration: 0.2), value: hovering)
+                .animation(.easeInOut(duration: 0.2), value: line)
+                .contentTransition(.opacity)
+        }
+        .task(id: hovering) {
+            guard hovering else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2.4))
+                guard !Task.isCancelled else { return }
+                line += 1
+            }
+        }
+        .onChange(of: conversation.dropped) { _, urls in
+            if !urls.isEmpty { hop += 1 }
+        }
     }
 }
 

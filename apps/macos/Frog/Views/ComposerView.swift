@@ -6,6 +6,7 @@ struct ComposerView: View {
     let conversation: Conversation
     var window: WindowState?
     @State private var text = ""
+    @AppStorage("playfulFrog") private var playful = true
     @State private var height: CGFloat = 22
     @State private var controller = ComposerController()
     @State private var mention: String?
@@ -179,7 +180,11 @@ struct ComposerView: View {
 
     private var placeholder: String {
         if conversation.busy { return "Working… Esc interrupts · Return queues a follow-up" }
-        return workspace.isChat ? "Ask anything" : "Ask frog to do something · @ mentions a file"
+        guard workspace.isChat else { return "Ask frog to do something · @ mentions a file" }
+        guard playful, conversation.turns.isEmpty else { return "Ask anything" }
+        // One of a few lines per new chat, fixed by the session so it doesn't flicker.
+        let seed = conversation.sessionID ?? String(ObjectIdentifier(conversation).hashValue)
+        return FrogCopy.placeholders[FrogCopy.pick(seed, of: FrogCopy.placeholders.count)]
     }
 
     /// Send while there's something to send; stop while a turn runs and the field is empty.
@@ -289,6 +294,7 @@ struct ComposerView: View {
         // What's in the field is what goes, words still settling included.
         dictation.cancel()
         conversation.submit(text, images: attachments)
+        FrogSounds.shared.play(.plip)
         text = ""
         attachments = []
         mention = nil

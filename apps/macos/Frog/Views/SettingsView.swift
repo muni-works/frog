@@ -471,6 +471,8 @@ enum Density: String, CaseIterable, Identifiable {
 private struct AppearanceSettings: View {
     @AppStorage("density") private var density = Density.comfortable.rawValue
     @AppStorage("showThinking") private var showThinking = true
+    @AppStorage("playfulFrog") private var playfulFrog = true
+    @AppStorage("playfulSounds") private var playfulSounds = false
 
     var body: some View {
         Form {
@@ -479,6 +481,12 @@ private struct AppearanceSettings: View {
             }
             .pickerStyle(.segmented)
             Toggle("Show the model's thinking", isOn: $showThinking)
+            Section {
+                Toggle("Playful frog", isOn: $playfulFrog)
+                    .help("The frog blinks, reads and hops along with the conversation.")
+                Toggle("Frog sounds", isOn: $playfulSounds)
+                    .help("A quiet plip when you send, a ribbit when a turn finishes, a drip when it needs permission.")
+            }
         }
         .formStyle(.grouped)
     }

@@ -13,6 +13,9 @@ struct ActivityViewer: View {
     @State private var hovering = false
     @State private var pickingModel = false
     @State private var library = Library.shared
+    /// The turn just ended: the frog hops and the pill says "Caught it" for a moment.
+    @State private var caught = false
+    @AppStorage("playfulFrog") private var playful = true
     @Environment(\.openSession) private var openSession
 
     /// A permission prompt or a server's question: the pill turns amber and takes you there.
@@ -41,7 +44,7 @@ struct ActivityViewer: View {
                     if let last = conversation.turns.last { jump(last.id) }
                 } label: {
                     HStack(spacing: 7) {
-                        Image(systemName: "hand.raised.fill").frame(width: 14)
+                        icon(.waiting) { Image(systemName: "hand.raised.fill") }
                         Text(waiting).fontWeight(.medium).lineLimit(1)
                         Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
                     }
@@ -96,6 +99,39 @@ struct ActivityViewer: View {
         .animation(.snappy(duration: 0.2), value: waiting)
         .animation(.snappy(duration: 0.15), value: hovering)
         .animation(.snappy(duration: 0.2), value: others.count)
+        .onChange(of: conversation.turns.last?.endedAt) { _, end in
+            guard playful, let end, Date.now.timeIntervalSince(end) < 3 else { return }
+            caught = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                caught = false
+            }
+        }
+    }
+
+    /// The frog in the pill, or the plain symbol when the playful frog is off.
+    @ViewBuilder
+    private func icon(_ mood: FrogMood, @ViewBuilder plain: () -> some View) -> some View {
+        if playful {
+            FrogFace(mood: mood, size: 16).frame(width: 16)
+        } else {
+            plain().frame(width: 14)
+        }
+    }
+
+    /// What the frog is doing, from the conversation's state.
+    private func mood(_ turn: TurnState?) -> FrogMood {
+        if conversation.failure != nil { return .sad }
+        if waiting != nil { return .waiting }
+        if conversation.busy, let turn, !turn.finished {
+            switch turn.items.last?.kind {
+            case .tool(let name, _) where ["Read", "Grep", "Glob", "WebFetch", "Docs"].contains(name): return .reading
+            case .reasoning, nil: return .thinking
+            default: return .working
+            }
+        }
+        if conversation.busy { return .working }
+        return caught ? .done : .idle
     }
 
     private var tint: Glass {
@@ -153,13 +189,13 @@ struct ActivityViewer: View {
     private var activity: some View {
         if conversation.failure != nil {
             HStack(spacing: 7) {
-                Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red).frame(width: 14)
-                Text("Engine stopped").fontWeight(.medium)
+                icon(.sad) { Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red) }
+                Text(playful ? "Croak. Engine stopped" : "Engine stopped").fontWeight(.medium)
             }
         } else if conversation.busy, let turn = conversation.turns.last, !turn.finished {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 HStack(spacing: 7) {
-                    Image(systemName: symbol(turn)).foregroundStyle(.tint).frame(width: 14)
+                    icon(mood(turn)) { Image(systemName: symbol(turn)).foregroundStyle(.tint) }
                     Text(live(turn)).lineLimit(1).truncationMode(.middle)
                         .frame(maxWidth: 300, alignment: .leading)
                     Text(elapsed(turn)).foregroundStyle(.secondary).monospacedDigit()
@@ -167,15 +203,15 @@ struct ActivityViewer: View {
             }
         } else if conversation.busy {
             HStack(spacing: 7) {
-                Image(systemName: "hourglass").foregroundStyle(.secondary).frame(width: 14)
-                Text(conversation.progress.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Starting…")
+                icon(.working) { Image(systemName: "hourglass").foregroundStyle(.secondary) }
+                Text(conversation.progress.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? (playful ? "Hopping to it" : "Starting…"))
                     .lineLimit(1)
             }
         } else if let turn = conversation.turns.last, let end = turn.end {
             HStack(spacing: 7) {
-                Image(systemName: done(end).symbol).foregroundStyle(done(end).color).frame(width: 14)
+                icon(mood(turn)) { Image(systemName: done(end).symbol).foregroundStyle(done(end).color) }
                 if case .complete = end, let d = duration(turn) {
-                    Text("Done in \(d)").monospacedDigit()
+                    Text(caught ? "Caught it" : "Done in \(d)").monospacedDigit()
                 } else {
                     Text(done(end).text).lineLimit(1)
                     if let d = duration(turn) {
@@ -185,7 +221,7 @@ struct ActivityViewer: View {
             }
         } else {
             HStack(spacing: 7) {
-                Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(.green).frame(width: 14)
+                icon(.idle) { Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(.green) }
                 Text("Ready").foregroundStyle(.secondary)
             }
         }
