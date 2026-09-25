@@ -160,6 +160,8 @@ pub fn specs() -> Vec<ToolSpec> {
 pub fn kind(name: &str) -> Kind {
     match name {
         "Bash" => Kind::Exec,
+        // Their read actions are exempted per call (`panes::is_read`).
+        crate::panes::TERMINAL | crate::panes::PREVIEW => Kind::Exec,
         "Write" | "Edit" => Kind::Edit,
         "WebFetch" | "WebSearch" => Kind::Net,
         // MCP tools can do anything their server does: ask, like Bash.
@@ -192,7 +194,7 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "WebSearch" => websearch::run(input, ctx).await,
         "Docs" => docs::run(input, ctx).await,
         _ => bail!(
-            "unknown tool `{name}`. Available: Bash, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, CodeMap, WebFetch, Docs"
+            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, CodeMap, WebFetch, Docs"
         ),
     }
 }
@@ -219,6 +221,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
             let q = s("query");
             if q.is_empty() { s("file") } else { q }
         }
+        crate::panes::TERMINAL | crate::panes::PREVIEW => crate::panes::label(name, input),
         "Skill" => {
             let n = s("name");
             if n.is_empty() { s("query") } else { n }
@@ -264,7 +267,10 @@ pub fn bool_arg(input: &Value, key: &str) -> bool {
 /// Remove ANSI escape sequences (colors, cursor movement) so the model sees plain text.
 pub fn strip_ansi(s: &str) -> String {
     static ANSI: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-B]|\r").unwrap()
+        regex::Regex::new(
+            r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-B]|\x1b[=>78cDEHM]|\r",
+        )
+        .unwrap()
     });
     ANSI.replace_all(s, "").into_owned()
 }

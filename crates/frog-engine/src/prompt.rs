@@ -82,6 +82,15 @@ pub fn system_prompt(cwd: &Path, cfg: &Config, model: &str) -> String {
     s
 }
 
+/// How Terminal (and, with a client that hosts them, Preview) panes fit next to Bash.
+pub fn panes_prompt(preview: bool) -> &'static str {
+    if preview {
+        "\n\n# Panes\n- Bash is for one-shot commands. Terminal is a persistent shell in a pane the user can see and type into: use it for dev servers, watchers, REPLs and anything stateful (cd, env, venvs persist between calls). If a command is still running there, open another pane rather than typing over it.\n- Preview opens a browser view of what you're building (`open` with a URL) and lets you read it as text, click, type and take screenshots. Console errors from it reach you automatically; check `console` after changes that could break the page.\n"
+    } else {
+        "\n\n# Panes\n- Bash is for one-shot commands. Terminal is a persistent shell in a pane the user can see and type into: use it for dev servers, watchers, REPLs and anything stateful (cd, env, venvs persist between calls). If a command is still running there, open another pane rather than typing over it.\n"
+    }
+}
+
 const CHAT: &str = "You are Frog, a helpful assistant chatting with the user. \
 This conversation isn't tied to a project: you can't see or change their files or run commands here.
 If the user wants something that needs their files or a shell command, don't guess at why you can't: \
