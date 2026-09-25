@@ -632,7 +632,8 @@ private struct ShortcutSettings: View {
             ("Undo last turn", "⌥⌘Z"), ("Allow / deny a request", "⌘↩  ·  ⌘."),
         ]),
         ("Window", [
-            ("Sessions", "⌃⌘S"), ("Changes", "⌥⌘0"), ("Permission mode", "⌃⌘1  ⌃⌘2  ⌃⌘3"), ("Open folder", "⌘O"),
+            ("Sessions", "⌃⌘S"), ("Changes", "⌥⌘0"), ("Terminal", "⇧⌘T"), ("Preview", "⇧⌘P"),
+            ("Inspect an element in the preview", "⇧⌘I"), ("Permission mode", "⌃⌘1  ⌃⌘2  ⌃⌘3"), ("Open folder", "⌘O"),
         ]),
     ]
 

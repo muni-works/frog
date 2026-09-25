@@ -7,6 +7,9 @@ struct FrogWindow {
     let state: WindowState
     let toggleSessions: () -> Void
     let toggleChanges: () -> Void
+    let showTerminal: () -> Void
+    let showPreview: () -> Void
+    let toggleInspect: () -> Void
     let sessionsShown: Bool
     let changesShown: Bool
     /// Start a plain chat in the focused pane.
@@ -103,6 +106,15 @@ struct FrogCommands: Commands {
             Button((window?.changesShown ?? false) ? "Hide Changes" : "Show Changes") { window?.toggleChanges() }
                 .keyboardShortcut("0", modifiers: [.command, .option])
                 .disabled(window == nil)
+            Button("Terminal") { window?.showTerminal() }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(conversation == nil)
+            Button("Preview") { window?.showPreview() }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .disabled(conversation == nil)
+            Button("Inspect Element in Preview") { window?.toggleInspect() }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+                .disabled(conversation == nil)
             Divider()
             Button("Split Right") { window?.split?(.horizontal) }
                 .keyboardShortcut("\\")

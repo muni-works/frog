@@ -56,11 +56,26 @@ enum Op: Encodable, Sendable {
     case stopSubagent(id: String)
     /// An MCP App calling a tool on its own server.
     case appCall(id: String, server: String, tool: String, arguments: JSONValue)
+    /// Open a pane the engine can drive: a shell, or a web preview.
+    case paneOpen(kind: PaneKind, cwd: String? = nil, url: String? = nil, cols: Int? = nil, rows: Int? = nil)
+    /// Keystrokes (or pasted text) for a terminal pane.
+    case paneInput(id: String, data: String)
+    case paneResize(id: String, cols: Int, rows: Int)
+    case paneClose(id: String)
+    /// Something the preview saw: a console line, a failed request, an error, a navigation.
+    case paneReport(PaneReport)
+    /// The answer to a `paneRequest`.
+    case paneReply(call: String, result: JSONValue?, error: String? = nil)
+    /// The user clicked an element in inspect mode and mentioned it in the composer.
+    case paneMention(id: String, mention: String, context: String? = nil)
+    /// What this client can do, sent once after the engine starts.
+    case setClientCaps(panes: Bool)
     case shutdown
 
     private enum Key: String, CodingKey {
         case op, text, command, id, decision, mode, spec, focus, after, title
         case action, content, server, tool, arguments, images
+        case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes
     }
 
     func encode(to encoder: Encoder) throws {
@@ -110,10 +125,91 @@ enum Op: Encodable, Sendable {
             try c.encode(server, forKey: .server)
             try c.encode(tool, forKey: .tool)
             try c.encode(arguments, forKey: .arguments)
+        case .paneOpen(let kind, let cwd, let url, let cols, let rows):
+            try c.encode("pane_open", forKey: .op)
+            try c.encode(kind, forKey: .kind)
+            try c.encodeIfPresent(cwd, forKey: .cwd)
+            try c.encodeIfPresent(url, forKey: .url)
+            try c.encodeIfPresent(cols, forKey: .cols)
+            try c.encodeIfPresent(rows, forKey: .rows)
+        case .paneInput(let id, let data):
+            try c.encode("pane_input", forKey: .op)
+            try c.encode(id, forKey: .id)
+            try c.encode(data, forKey: .data)
+        case .paneResize(let id, let cols, let rows):
+            try c.encode("pane_resize", forKey: .op)
+            try c.encode(id, forKey: .id)
+            try c.encode(cols, forKey: .cols)
+            try c.encode(rows, forKey: .rows)
+        case .paneClose(let id):
+            try c.encode("pane_close", forKey: .op)
+            try c.encode(id, forKey: .id)
+        case .paneReport(let r):
+            try c.encode("pane_report", forKey: .op)
+            try c.encode(r.id, forKey: .id)
+            try c.encode(r.kind, forKey: .kind)
+            try c.encodeIfPresent(r.level, forKey: .level)
+            try c.encode(r.message, forKey: .message)
+            try c.encodeIfPresent(r.url, forKey: .url)
+            try c.encodeIfPresent(r.status, forKey: .status)
+        case .paneReply(let call, let result, let error):
+            try c.encode("pane_reply", forKey: .op)
+            try c.encode(call, forKey: .call)
+            try c.encode(result ?? .null, forKey: .result)
+            try c.encodeIfPresent(error, forKey: .error)
+        case .paneMention(let id, let mention, let context):
+            try c.encode("pane_mention", forKey: .op)
+            try c.encode(id, forKey: .id)
+            try c.encode(mention, forKey: .mention)
+            try c.encodeIfPresent(context, forKey: .context)
+        case .setClientCaps(let panes):
+            try c.encode("set_client_caps", forKey: .op)
+            try c.encode(panes, forKey: .panes)
         case .shutdown:
             try c.encode("shutdown", forKey: .op)
         }
     }
+}
+
+// MARK: - Panes
+
+/// A pane the app hosts for the engine: a shell it runs, or a web preview it can read.
+enum PaneKind: String, Codable, Sendable {
+    case terminal, preview
+}
+
+/// One thing the preview saw, reported to the engine so the model can see what it built.
+struct PaneReport: Sendable, Equatable {
+    enum Kind: String, Codable, Sendable { case console, network, error, navigated, title }
+    var id: String
+    var kind: Kind
+    /// "info", "warn" or "error".
+    var level: String?
+    var message: String
+    var url: String?
+    var status: Int?
+}
+
+/// The engine asking the preview to do something; answered with `paneReply` within 20s.
+struct PaneRequest: Sendable, Equatable {
+    var call: String
+    var id: String
+    /// "read", "click", "type", "screenshot", "navigate", "eval" or "console".
+    var action: String
+    var args: JSONValue
+}
+
+/// A terminal pane's screen: the visible grid as plain text lines and the cursor's [row, col].
+struct PaneScreen: Sendable, Equatable {
+    var id: String
+    var cols: Int
+    var rows: Int
+    var lines: [String]
+    var cursor: [Int]
+    var seq: UInt64
+
+    var cursorRow: Int { cursor.first ?? 0 }
+    var cursorCol: Int { cursor.count > 1 ? cursor[1] : 0 }
 }
 
 // MARK: - Engine → client
@@ -361,6 +457,14 @@ enum Event: Decodable, Sendable {
     case status(Status)
     case synced(upto: UInt64)
     case idle
+    case paneOpened(id: String, kind: PaneKind, title: String, cwd: String?, url: String?)
+    case paneScreen(PaneScreen)
+    case paneClosed(id: String, exit: Int?)
+    case paneRequest(PaneRequest)
+    case paneNotice(id: String, level: String, message: String)
+    /// A screenshot of the preview the engine kept for a turn (`panes/turn-N.png` in the session
+    /// folder), for before/after. Recognized by shape, since its event name isn't fixed yet.
+    case paneCheckpoint(turn: UInt64, path: String)
     case unknown(String)
 }
 
@@ -387,7 +491,8 @@ extension Event {
         case turn, input, reason, usage, id, kind, item, delta, decision
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner
-            case images
+        case images
+        case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image
     }
 
     init(from decoder: Decoder) throws {
@@ -463,8 +568,43 @@ extension Event {
             self = .synced(upto: try c.decode(UInt64.self, forKey: .upto))
         case "idle":
             self = .idle
+        case "pane_opened":
+            self = .paneOpened(
+                id: try c.decode(String.self, forKey: .id),
+                kind: try c.decode(PaneKind.self, forKey: .kind),
+                title: try c.decodeIfPresent(String.self, forKey: .title) ?? "",
+                cwd: try c.decodeIfPresent(String.self, forKey: .cwd),
+                url: try c.decodeIfPresent(String.self, forKey: .url))
+        case "pane_screen":
+            self = .paneScreen(PaneScreen(
+                id: try c.decode(String.self, forKey: .id),
+                cols: try c.decode(Int.self, forKey: .cols),
+                rows: try c.decode(Int.self, forKey: .rows),
+                lines: try c.decode([String].self, forKey: .lines),
+                cursor: try c.decodeIfPresent([Int].self, forKey: .cursor) ?? [0, 0],
+                seq: try c.decodeIfPresent(UInt64.self, forKey: .seq) ?? 0))
+        case "pane_closed":
+            self = .paneClosed(id: try c.decode(String.self, forKey: .id), exit: try c.decodeIfPresent(Int.self, forKey: .exit))
+        case "pane_request":
+            self = .paneRequest(PaneRequest(
+                call: try c.decode(String.self, forKey: .call),
+                id: try c.decode(String.self, forKey: .id),
+                action: try c.decode(String.self, forKey: .action),
+                args: try c.decodeIfPresent(JSONValue.self, forKey: .args) ?? .object([:])))
+        case "pane_notice":
+            self = .paneNotice(
+                id: try c.decodeIfPresent(String.self, forKey: .id) ?? "",
+                level: try c.decodeIfPresent(String.self, forKey: .level) ?? "info",
+                message: try c.decode(String.self, forKey: .message))
         default:
-            self = .unknown(name)
+            // A checkpoint screenshot record, whatever it's called: a turn and a PNG path.
+            if let turn = try? c.decodeIfPresent(UInt64.self, forKey: .turn),
+               let path = (try? c.decodeIfPresent(String.self, forKey: .path)) ?? (try? c.decodeIfPresent(String.self, forKey: .image)),
+               path.lowercased().hasSuffix(".png") {
+                self = .paneCheckpoint(turn: turn, path: path)
+            } else {
+                self = .unknown(name)
+            }
         }
     }
 }
