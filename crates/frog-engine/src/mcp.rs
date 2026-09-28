@@ -58,7 +58,8 @@ struct McpJson {
 }
 
 /// Every configured server: config.toml first, then the project's `.mcp.json` (which can't
-/// override a config.toml server of the same name), plus `desktop` (computer use) when it's on.
+/// override a config.toml server of the same name), then Claude Code's servers once you've
+/// said to use them (docs/onboarding.md), plus `desktop` (computer use) when it's on.
 pub fn configured(cfg: &crate::config::Config, cwd: &Path) -> BTreeMap<String, ServerConfig> {
     let mut all = cfg.mcp_servers.clone();
     if cfg.computer_use
@@ -75,6 +76,11 @@ pub fn configured(cfg: &crate::config::Config, cwd: &Path) -> BTreeMap<String, S
         && let Ok(file) = serde_json::from_str::<McpJson>(&text)
     {
         for (name, s) in file.servers {
+            all.entry(name).or_insert(s);
+        }
+    }
+    if crate::imports::claude_mcp_on() {
+        for (name, s) in crate::imports::claude_servers(cwd) {
             all.entry(name).or_insert(s);
         }
     }

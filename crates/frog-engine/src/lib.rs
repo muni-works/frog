@@ -10,6 +10,7 @@ pub mod diagram;
 pub mod engine;
 pub mod harness;
 pub mod image_paths;
+pub mod imports;
 pub mod mcp;
 pub mod memory;
 pub mod message;

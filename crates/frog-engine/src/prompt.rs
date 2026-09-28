@@ -26,6 +26,11 @@ You help with software engineering tasks: fixing bugs, adding features, refactor
 - Reference code as path:line.
 - When the task is done, stop. Don't start unrequested work.";
 
+/// The instruction files a session in `cwd` reads (FROG.md, CLAUDE.md, AGENTS.md), in order.
+pub fn instruction_files(cwd: &Path, cfg: &Config) -> Vec<PathBuf> {
+    memory_files(cwd, cfg)
+}
+
 fn memory_files(cwd: &Path, cfg: &Config) -> Vec<PathBuf> {
     let mut files = vec![config_dir().join("FROG.md")];
     if cfg.load_claude_md {
