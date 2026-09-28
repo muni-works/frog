@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Every conversation, as tabs: pinned ones as tiles on top, then one group per project folder
 /// (newest activity first), then plain chats, which archive themselves once they go quiet.
-/// Searching or browsing the archive falls back to a flat list by day. Rows show whether a
+/// The view options (the header's filter button) group by project, by date or not at all, and
+/// sort by last activity, creation or name. Searching or browsing the archive is by day. Rows show whether a
 /// conversation is running, waiting on you, or finished while you were away; a folded group
 /// still counts its live ones.
 struct SessionList: View {
@@ -19,6 +20,45 @@ struct SessionList: View {
     @State private var expanded: Set<String> = []
     /// Folded project groups, by folder path (newline-separated).
     @AppStorage("foldedGroups") private var foldedRaw = ""
+    @AppStorage("sidebarGrouping") private var grouping = Grouping.project
+    @AppStorage("sidebarSort") private var sort = Sort.activity
+
+    /// How rows are grouped: by project folder (pins, folders, chats), by day, or not at all.
+    enum Grouping: String, CaseIterable {
+        case project, date, none
+        var title: String {
+            switch self {
+            case .project: "Project"
+            case .date: "Date"
+            case .none: "None"
+            }
+        }
+    }
+
+    enum Sort: String, CaseIterable {
+        case activity, created, name
+        var title: String {
+            switch self {
+            case .activity: "Last Activity"
+            case .created: "Date Created"
+            case .name: "Name"
+            }
+        }
+    }
+
+    /// Whether `a` comes before `b` in the chosen order.
+    private func before(_ a: SessionInfo, _ b: SessionInfo) -> Bool {
+        switch sort {
+        case .activity: a.modified > b.modified
+        case .created: a.created > b.created
+        case .name: a.displayTitle.localizedStandardCompare(b.displayTitle) == .orderedAscending
+        }
+    }
+
+    /// The date a row is filed under when grouping by date.
+    private func day(_ s: SessionInfo) -> Date {
+        sort == .created ? Date(timeIntervalSince1970: Double(s.created) / 1000) : s.modifiedDate
+    }
     @Environment(\.openSession) private var openSession
     @Environment(\.openSessionInSplit) private var openInSplit
     @Environment(\.paneNumbers) private var paneNumbers
@@ -44,14 +84,24 @@ struct SessionList: View {
         let byPath = Dictionary(grouping: unpinned) { $0.folder!.standardizedFileURL.path }
         return byPath.values
             .map { items in
-                let sorted = items.sorted { $0.modified > $1.modified }
+                let sorted = items.sorted(by: before)
                 return (sorted[0].folder!, sorted)
             }
-            .sorted { $0.items[0].modified > $1.items[0].modified }
+            // Folders follow their first conversation, or their own name when sorting by name.
+            .sorted { a, b in
+                sort == .name
+                    ? a.folder.lastPathComponent.localizedStandardCompare(b.folder.lastPathComponent) == .orderedAscending
+                    : before(a.items[0], b.items[0])
+            }
     }
 
     private var chats: [SessionInfo] {
-        active.filter { $0.isChat && !library.pinned.contains($0.id) }
+        active.filter { $0.isChat && !library.pinned.contains($0.id) }.sorted(by: before)
+    }
+
+    /// Everything that isn't pinned, for grouping by date or not at all.
+    private var unpinned: [SessionInfo] {
+        active.filter { !library.pinned.contains($0.id) }
     }
 
     var body: some View {
@@ -62,7 +112,13 @@ struct SessionList: View {
                     if filtering {
                         flat
                     } else {
-                        tabs
+                        switch grouping {
+                        case .project: tabs
+                        case .date: pinTiles; dated(unpinned)
+                        case .none:
+                            pinTiles
+                            ForEach(unpinned.sorted(by: before)) { row($0, showPlace: true) }
+                        }
                     }
                 }
                 .padding(.horizontal, 6)
@@ -90,23 +146,7 @@ struct SessionList: View {
 
     @ViewBuilder
     private var tabs: some View {
-        if !pins.isEmpty {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                ForEach(pins) { s in
-                    Button { open(s) } label: {
-                        Monogram(session: s, size: 38, selected: s.id == current, live: library.live[s.id])
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu { rowMenu(s) }
-                    .paneDraggable(.session(s), title: s.displayTitle)
-                    .help(s.displayTitle)
-                }
-            }
-            .padding(.horizontal, 4)
-            .padding(.top, 4)
-            .padding(.bottom, 6)
-        }
+        pinTiles
         ForEach(projects, id: \.folder) { folder, items in
             projectGroup(folder, items)
         }
@@ -123,6 +163,28 @@ struct SessionList: View {
         }
         if projects.isEmpty && chats.isEmpty && pins.isEmpty {
             empty("No conversations yet")
+        }
+    }
+
+    /// Pinned conversations, as tiles above everything else in every grouping.
+    @ViewBuilder
+    private var pinTiles: some View {
+        if !pins.isEmpty {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+                ForEach(pins) { s in
+                    Button { open(s) } label: {
+                        Monogram(session: s, size: 38, selected: s.id == current, live: library.live[s.id])
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu { rowMenu(s) }
+                    .paneDraggable(.session(s), title: s.displayTitle)
+                    .help(s.displayTitle)
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, 4)
+            .padding(.bottom, 6)
         }
     }
 
@@ -193,26 +255,26 @@ struct SessionList: View {
         }
     }
 
-    private var byDay: [(String, [SessionInfo])] {
+    private func byDay(_ list: [SessionInfo]) -> [(String, [SessionInfo])] {
         let cal = Calendar.current
         let now = Date()
         var out: [(String, [SessionInfo])] = []
-        func add(_ title: String, _ items: [SessionInfo]) { if !items.isEmpty { out.append((title, items)) } }
-        let all = visible
-        add("Today", all.filter { cal.isDateInToday($0.modifiedDate) })
-        add("Yesterday", all.filter { cal.isDateInYesterday($0.modifiedDate) })
+        func add(_ title: String, _ items: [SessionInfo]) { if !items.isEmpty { out.append((title, items.sorted(by: before))) } }
+        add("Today", list.filter { cal.isDateInToday(day($0)) })
+        add("Yesterday", list.filter { cal.isDateInYesterday(day($0)) })
         let week = cal.date(byAdding: .day, value: -7, to: now)!
         let month = cal.date(byAdding: .day, value: -30, to: now)!
-        let older = all.filter { !cal.isDateInToday($0.modifiedDate) && !cal.isDateInYesterday($0.modifiedDate) }
-        add("Previous 7 Days", older.filter { $0.modifiedDate >= week })
-        add("Previous 30 Days", older.filter { $0.modifiedDate < week && $0.modifiedDate >= month })
-        add("Older", older.filter { $0.modifiedDate < month })
+        let older = list.filter { !cal.isDateInToday(day($0)) && !cal.isDateInYesterday(day($0)) }
+        add("Previous 7 Days", older.filter { day($0) >= week })
+        add("Previous 30 Days", older.filter { day($0) < week && day($0) >= month })
+        add("Older", older.filter { day($0) < month })
         return out
     }
 
+    /// Rows under day headings.
     @ViewBuilder
-    private var flat: some View {
-        ForEach(byDay, id: \.0) { title, items in
+    private func dated(_ list: [SessionInfo]) -> some View {
+        ForEach(byDay(list), id: \.0) { title, items in
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -221,9 +283,38 @@ struct SessionList: View {
                 .padding(.bottom, 3)
             ForEach(items) { row($0, showPlace: true) }
         }
-        if byDay.isEmpty {
+    }
+
+    @ViewBuilder
+    private var flat: some View {
+        dated(visible)
+        if visible.isEmpty {
             empty(query.isEmpty ? "Nothing archived" : "No matches")
         }
+    }
+
+    /// How the list is grouped, sorted and filtered, like Finder's View menu.
+    private var viewOptions: some View {
+        Menu {
+            Picker("Show", selection: $showArchived) {
+                Text("Active").tag(false)
+                Text("Archived").tag(true)
+            }
+            Divider()
+            Picker("Group By", selection: $grouping) {
+                ForEach(Grouping.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            Picker("Sort By", selection: $sort) {
+                ForEach(Sort.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease").frame(width: 24, height: 24)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .foregroundStyle(.secondary)
+        .help("Group and sort conversations")
     }
 
     // MARK: Pieces
@@ -288,6 +379,7 @@ struct SessionList: View {
             .padding(.horizontal, 8)
             .frame(height: 26)
             .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 8))
+            viewOptions
             Button {
                 switchFolder?(nil)
             } label: {
