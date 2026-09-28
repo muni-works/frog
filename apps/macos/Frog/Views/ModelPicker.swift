@@ -46,37 +46,63 @@ struct ModelMenu: View {
     /// Keyboard selection, an index into the flattened, filtered list.
     @State private var selected = 0
     @State private var store = ProviderStore.shared
+    @State private var downloads = ModelDownloads.shared
+    /// A provider whose key is being added, in a sheet over the list.
+    @State private var keyFor: ProviderInfo?
     @AppStorage("settingsTab") private var settingsTab = "general"
     @Environment(\.openSettings) private var openSettings
     @FocusState private var searching: Bool
 
-    /// Groups by where models run: this Mac, then your servers, then each cloud provider.
-    private var groups: [(title: String, models: [ModelEntry])] {
+    /// Every model to offer: the ones frog can use, then the ones recommended for this Mac that
+    /// aren't downloaded yet (a download in progress counts as not yet).
+    private var candidates: [ModelIdentity] {
+        let usable = workspace.models.map(ModelIdentity.init)
+        let have = Set(usable.map(\.spec))
+        return usable + SuggestedModel.all.filter { !have.contains($0.spec) }.map(ModelIdentity.init)
+    }
+
+    /// Groups by where models run: this Mac, then your servers, then each cloud provider. Within
+    /// a group: ready first, then ones to get, then ones that won't fit.
+    private var groups: [(title: String, models: [ModelIdentity])] {
         let words = query.lowercased().split(separator: " ")
-        let shown = workspace.models.filter { m in
-            let hay = (ModelIdentity(m).name + " " + m.spec).lowercased()
+        let shown = candidates.filter { m in
+            let hay = (m.name + " " + m.spec).lowercased()
             return words.allSatisfy { hay.contains($0) }
         }
-        var out: [(String, [ModelEntry])] = []
         let order: (ModelIdentity.Place) -> Int = { p in
             switch p { case .mac, .apple: 0; case .server: 1; case .cloud: 2 }
         }
-        let byPlace = Dictionary(grouping: shown) { ModelIdentity($0).place.label }
-        for (label, rows) in byPlace.sorted(by: { a, b in
-            let pa = order(ModelIdentity(a.value[0]).place), pb = order(ModelIdentity(b.value[0]).place)
-            return pa != pb ? pa < pb : a.key < b.key
-        }) {
-            out.append((label, rows))
+        let rank: (ModelIdentity.State) -> Int = { s in
+            switch s { case .ready: 0; case .wontFit: 2; default: 1 }
         }
-        return out
+        return Dictionary(grouping: shown) { $0.place.label }
+            .sorted { a, b in
+                let pa = order(a.value[0].place), pb = order(b.value[0].place)
+                return pa != pb ? pa < pb : a.key < b.key
+            }
+            .map { ($0.key, $0.value.enumerated().sorted { (rank($0.element.state), $0.offset) < (rank($1.element.state), $1.offset) }.map(\.element)) }
     }
 
-    private var flat: [ModelEntry] { groups.flatMap(\.models) }
+    private var flat: [ModelIdentity] { groups.flatMap(\.models) }
 
-    private var focus: ModelEntry? {
-        if let hovered, let m = workspace.models.first(where: { $0.spec == hovered }) { return m }
+    private var focus: ModelIdentity? {
+        if let hovered, let m = flat.first(where: { $0.spec == hovered }) { return m }
         let list = flat
         return list.indices.contains(selected) ? list[selected] : nil
+    }
+
+    /// Ready models are picked; the rest do what makes them ready.
+    private func choose(_ m: ModelIdentity) {
+        switch m.state {
+        case .ready: pick(m.spec)
+        case .notDownloaded, .downloadFailed: if let r = m.repo { downloads.download(r) }
+        case .needsKey: addKey(m.providerID)
+        case .downloading, .wontFit: break
+        }
+    }
+
+    private func addKey(_ provider: String) {
+        keyFor = store.providers.first { $0.id == provider }
     }
 
     var body: some View {
@@ -87,7 +113,7 @@ struct ModelMenu: View {
                     TextField("Search models", text: $query)
                         .textFieldStyle(.plain)
                         .focused($searching)
-                        .onSubmit { if let m = flat[safe: selected] { pick(m.spec) } }
+                        .onSubmit { if let m = flat[safe: selected] { choose(m) } }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -106,18 +132,23 @@ struct ModelMenu: View {
                 .buttonStyle(.plain)
                 .padding(6)
             }
-            .frame(width: 290)
+            .frame(width: 310)
             if let m = focus {
                 Divider()
-                ModelCard(model: ModelIdentity(m))
+                ModelCard(model: m)
                     .frame(width: 250)
             }
         }
+        .environment(\.addProviderKey) { addKey($0) }
+        .sheet(item: $keyFor) { p in KeySheet(provider: p) }
         .onAppear { searching = true }
         .task {
             await store.load()
             await workspace.reloadModels()
         }
+        // A finished download, or a key added, makes more models usable.
+        .onChange(of: downloads.states) { Task { await workspace.reloadModels() } }
+        .onChange(of: store.generation) { Task { await workspace.reloadModels() } }
         .onChange(of: query) { selected = 0 }
         .onKeyPress(.downArrow) { selected = min(selected + 1, max(flat.count - 1, 0)); hovered = nil; return .handled }
         .onKeyPress(.upArrow) { selected = max(selected - 1, 0); hovered = nil; return .handled }
@@ -139,7 +170,7 @@ struct ModelMenu: View {
                             .padding(.horizontal, 12)
                             .padding(.top, 10)
                             .padding(.bottom, 4)
-                        ForEach(group.models) { m in
+                        ForEach(group.models, id: \.spec) { m in
                             row(m).id(m.spec)
                         }
                     }
@@ -152,23 +183,30 @@ struct ModelMenu: View {
         }
     }
 
-    private func row(_ m: ModelEntry) -> some View {
+    private func row(_ m: ModelIdentity) -> some View {
         let lit = hovered == m.spec || (hovered == nil && flat[safe: selected]?.spec == m.spec)
-        return Button { pick(m.spec) } label: {
-            HStack(spacing: 8) {
-                ModelLabel(model: ModelIdentity(m))
-                AbilityIcons(abilities: ModelIdentity(m).abilities)
-                Spacer(minLength: 4)
-                if m.spec == current {
-                    Image(systemName: "checkmark").font(.caption.weight(.semibold)).foregroundStyle(.tint)
+        return HStack(spacing: 8) {
+            Button { choose(m) } label: {
+                HStack(spacing: 8) {
+                    if m.state.isReady {
+                        ModelLabel(model: m)
+                        AbilityIcons(abilities: m.abilities)
+                    } else {
+                        ModelLabel(model: m, size: .row)
+                    }
+                    Spacer(minLength: 4)
                 }
+                .contentShape(.rect)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color.primary.opacity(lit ? 0.08 : 0), in: .rect(cornerRadius: 7, style: .continuous))
-            .contentShape(.rect)
+            .buttonStyle(.plain)
+            if m.spec == current {
+                Image(systemName: "checkmark").font(.caption.weight(.semibold)).foregroundStyle(.tint)
+            }
+            ModelStateAction(model: m)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.primary.opacity(lit ? 0.08 : 0), in: .rect(cornerRadius: 7, style: .continuous))
         .onHover { inside in
             if inside { hovered = m.spec } else if hovered == m.spec { hovered = nil }
         }

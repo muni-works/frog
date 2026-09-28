@@ -92,6 +92,46 @@ final class SnapshotTests: XCTestCase {
 
 extension SnapshotTests {
     /// Every frog mood, and the frog on its lily pad.
+    /// Every model label size in every state and place, for docs/models.md review:
+    /// `model-labels.png`.
+    func testRenderModelLabels() throws {
+        func m(_ name: String, _ place: ModelIdentity.Place, _ state: ModelIdentity.State,
+               _ abilities: ModelIdentity.Abilities = [.usesTools]) -> ModelIdentity {
+            ModelIdentity(spec: "x/\(name)", name: name, variant: nil, place: place, abilities: abilities,
+                          paramsB: nil, context: nil, price: nil, state: state, repo: "r/\(name)", downloadGB: 4.6)
+        }
+        let models = [
+            m("Qwen3 8B", .mac, .ready),
+            m("Apple Intelligence", .apple, .ready, []),
+            m("Qwen3 8B", .server("mew (RTX 3090)"), .ready),
+            m("Claude Sonnet 5", .cloud("Anthropic"), .ready, [.usesTools, .seesImages, .reasons]),
+            m("Gemma 3 4B", .mac, .notDownloaded(gb: 3.4), [.seesImages]),
+            m("Qwen3 8B", .mac, .downloading(fraction: 0.45)),
+            m("Qwen3 8B", .mac, .downloadFailed("offline")),
+            m("GPT-5", .cloud("OpenAI"), .needsKey(provider: "OpenAI")),
+            m("Qwen3 Coder 30B", .mac, .wontFit(needsGB: 32, hasGB: 24)),
+        ]
+        let sheet = VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(models.enumerated()), id: \.offset) { _, model in
+                HStack(spacing: 24) {
+                    ModelLabel(model: model).frame(width: 190, alignment: .leading)
+                    HStack {
+                        ModelLabel(model: model, size: .row, detail: "38 words/s")
+                        Spacer()
+                        ModelStateAction(model: model)
+                    }
+                    .frame(width: 360, alignment: .leading)
+                    ModelLabel(model: model, size: .caption).frame(width: 300, alignment: .leading)
+                }
+                .padding(.vertical, 8)
+                Divider()
+            }
+        }
+        .padding(16)
+        .background(Color(nsColor: .windowBackgroundColor))
+        try render(sheet, size: CGSize(width: 960, height: 520), to: "model-labels")
+    }
+
     func testRenderFrogFaces() throws {
         let moods: [(String, FrogMood)] = [
             ("idle", .idle), ("reading", .reading), ("thinking", .thinking), ("working", .working),

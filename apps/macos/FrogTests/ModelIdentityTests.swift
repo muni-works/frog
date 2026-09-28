@@ -31,6 +31,23 @@ final class ModelIdentityTests: XCTestCase {
         XCTAssertEqual(ModelIdentity.of("ollama/qwen3:4b", in: []).spoken, "Qwen3 4B, on this Mac")
     }
 
+    func testFitAndStateLines() {
+        // Weights, a fifth more, and 2 GB of context room.
+        XCTAssertEqual(ModelIdentity.neededGB(weights: 4.6), 8)
+        XCTAssertEqual(ModelIdentity.neededGB(weights: 17), 23)
+        func m(_ s: ModelIdentity.State) -> ModelIdentity {
+            ModelIdentity(spec: "x/y", name: "Y", variant: nil, place: .mac, abilities: [], paramsB: nil,
+                          context: nil, price: nil, state: s, downloadGB: 4.6)
+        }
+        XCTAssertNil(m(.ready).stateLine)
+        XCTAssertEqual(m(.notDownloaded(gb: 4.6)).stateLine, "4.6 GB download")
+        XCTAssertEqual(m(.downloading(fraction: 0.5)).stateLine, "2.3 GB of 4.6 GB")
+        XCTAssertEqual(m(.needsKey(provider: "Anthropic")).stateLine, "Add an Anthropic key to use it")
+        XCTAssertEqual(m(.needsKey(provider: "OpenAI")).stateLine, "Add an OpenAI key to use it")
+        XCTAssertEqual(m(.wontFit(needsGB: 32, hasGB: 24)).stateLine, "Needs 32 GB, this Mac has 24")
+        XCTAssertTrue(m(.wontFit(needsGB: 32, hasGB: 24)).state.dimmed)
+    }
+
     /// Views don't show raw specs or engine words; `ModelLabel` does the talking. Lines that
     /// are meant to (Settings' engine details, the detail card) end with `// advanced`.
     func testViewsNameModelsOneWay() throws {

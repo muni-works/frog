@@ -43,6 +43,22 @@ struct ModelIdentity: Hashable, Sendable {
         static let reasons = Abilities(rawValue: 1 << 2)
     }
 
+    /// Whether it can be used now, and if not, what would make it usable. See the States
+    /// table in docs/models.md.
+    enum State: Hashable, Sendable {
+        case ready
+        /// Recommended for this Mac, not downloaded yet.
+        case notDownloaded(gb: Double)
+        case downloading(fraction: Double)
+        case downloadFailed(String)
+        /// A cloud model whose provider has no key.
+        case needsKey(provider: String)
+        /// Too big for this Mac's memory.
+        case wontFit(needsGB: Int, hasGB: Int)
+
+        var isReady: Bool { self == .ready }
+    }
+
     /// For the engine, ⌥-hover and the detail card only. Never shown as a name.
     let spec: String
     /// "Qwen3 8B", "Claude Sonnet 5", "Apple Intelligence".
@@ -57,6 +73,12 @@ struct ModelIdentity: Hashable, Sendable {
     let context: UInt64?
     /// The provider's price line ("$3 / $15 per M"), for cloud models.
     let price: String?
+    var state: State = .ready
+    /// The provider id (the spec's first part), for adding a key.
+    var providerID: String { String(spec.split(separator: "/", maxSplits: 1).first ?? "") }
+    /// A model frog downloads itself: its Hugging Face repo, and its size.
+    var repo: String? = nil
+    var downloadGB: Double? = nil
 
     /// What VoiceOver and hover tips say: "Qwen3 8B, on this Mac", "Claude Sonnet 5, cloud, Anthropic".
     var spoken: String {
@@ -101,6 +123,63 @@ extension ModelIdentity {
             context: entry.info?.context,
             price: entry.info?.price
         )
+        if entry.source == "tang" {
+            repo = String(entry.spec.dropFirst("tang/".count))
+            downloadGB = SuggestedModel.all.first { $0.repo == repo }?.approxGB ?? entry.caps?.paramsB.map { $0 * 0.56 }
+        }
+        state = Self.state(place: place, provider: providerID, repo: repo, gb: downloadGB, installed: true)
+    }
+
+    /// A model frog recommends downloading.
+    @MainActor
+    init(_ suggested: SuggestedModel) {
+        let cleaned = Self.cleanName(suggested.repo)
+        var abilities: Abilities = [.usesTools]
+        if suggested.repo.lowercased().contains("gemma") { abilities = [.seesImages] }
+        self.init(
+            spec: suggested.spec,
+            name: suggested.title,
+            variant: cleaned.variant,
+            place: .mac,
+            abilities: abilities,
+            paramsB: nil,
+            context: nil,
+            price: nil
+        )
+        repo = suggested.repo
+        downloadGB = suggested.approxGB
+        state = Self.state(place: .mac, provider: "tang", repo: suggested.repo, gb: suggested.approxGB,
+                           installed: ModelDownloads.isInstalled(suggested.repo))
+    }
+
+    // MARK: State
+
+    /// Physical memory, in whole GB.
+    static var memoryGB: Int { Int((Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824).rounded()) }
+
+    /// Memory a model needs to run well: its weights, a fifth more, and room for context.
+    static func neededGB(weights gb: Double) -> Int { Int((gb * 1.2 + 2).rounded(.up)) }
+
+    @MainActor
+    private static func state(place: Place, provider: String, repo: String?, gb: Double?, installed: Bool) -> State {
+        if case .cloud(let name) = place,
+           let p = ProviderStore.shared.providers.first(where: { $0.id == provider }), !p.connected {
+            return .needsKey(provider: name)
+        }
+        if let repo {
+            switch ModelDownloads.shared.states[repo] {
+            case .downloading(let f): return .downloading(fraction: f)
+            case .failed(let e): return .downloadFailed(e)
+            case .done: return .ready
+            case nil: break
+            }
+        }
+        if let gb, case .mac = place {
+            let needs = neededGB(weights: gb), has = memoryGB
+            if needs > has { return .wontFit(needsGB: needs, hasGB: has) }
+        }
+        if !installed, let gb { return .notDownloaded(gb: gb) }
+        return .ready
     }
 
     /// The identity for a spec, from the listed models if it's there, else from the spec alone

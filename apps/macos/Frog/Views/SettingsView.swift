@@ -240,7 +240,7 @@ private struct CatalogRow: View {
 }
 
 /// Paste a provider's API key; it goes to the Keychain through frog, never to disk.
-private struct KeySheet: View {
+struct KeySheet: View {
     let provider: ProviderInfo
     @State private var key = ""
     @State private var saving = false
@@ -366,33 +366,16 @@ struct SuggestedModelRow: View {
     @State private var downloads = ModelDownloads.shared
 
     var body: some View {
+        let id = ModelIdentity(model)
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.title).fontWeight(.medium)
-                Text("\(model.detail) · \(String(format: "%.1f", model.approxGB)) GB")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            ModelLabel(model: id, size: .row, detail: model.detail)
             Spacer()
-            switch downloads.states[model.repo] {
-            case .downloading(let f):
-                ProgressView(value: f).frame(width: 120)
-                Text("\(Int(f * 100))%").monospacedDigit().foregroundStyle(.secondary).frame(width: 36, alignment: .trailing)
-                Button { downloads.cancel(model.repo) } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Cancel")
-            case .failed(let e):
-                Text(e).font(.caption).foregroundStyle(.red).lineLimit(1)
-                Button("Retry") { downloads.download(model.repo) }
-            case .done:
-                Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-            case nil:
-                if ModelDownloads.isInstalled(model.repo) {
-                    Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                } else {
-                    Button("Download") { downloads.download(model.repo) }
-                }
+            if id.state.isReady {
+                Label("Ready", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.callout)
+            } else {
+                ModelStateAction(model: id)
             }
         }
         .onChange(of: downloads.states[model.repo]) { _, s in if s == .done { onInstalled() } }

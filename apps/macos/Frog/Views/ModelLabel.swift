@@ -22,7 +22,7 @@ struct ModelLabel: View {
     var body: some View {
         content
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(model.spoken)
+            .accessibilityLabel([model.spoken, model.stateLine].compactMap { $0 }.joined(separator: ", "))
     }
 
     @ViewBuilder
@@ -32,18 +32,19 @@ struct ModelLabel: View {
             HStack(spacing: 5) {
                 PlaceIcon(place: model.place)
                 Text(model.name).lineLimit(1)
+                StateBadge(state: model.state)
             }
         case .caption:
             HStack(spacing: 5) {
                 PlaceIcon(place: model.place)
-                Text("\(model.name) · \(model.place.label)").lineLimit(1)
+                Text("\(model.name) · \(model.stateLine ?? model.place.label)").lineLimit(1)
             }
             .foregroundStyle(.secondary)
         case .menu:
             // Menus draw a title and subtitle from two texts.
             Label {
                 Text(model.name)
-                Text(model.place.label)
+                Text(model.stateLine ?? model.place.label)
             } icon: {
                 Image(systemName: model.place.symbol)
             }
@@ -57,13 +58,93 @@ struct ModelLabel: View {
                         Text(model.name).lineLimit(1)
                         AbilityIcons(abilities: model.abilities)
                     }
-                    Text([model.place.label, detail].compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Group {
+                        if let line = model.stateLine {
+                            let text = [line, detail].compactMap { $0 }.joined(separator: " · ")
+                            if let symbol = model.state.symbol {
+                                Label(text, systemImage: symbol).labelStyle(StateLineStyle())
+                            } else {
+                                Text(text)
+                            }
+                        } else {
+                            Text([model.place.label, detail].compactMap { $0 }.joined(separator: " · "))
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
             }
+            .opacity(model.state.dimmed ? 0.5 : 1)
         }
+    }
+}
+
+/// A state's icon before its line, when it has one.
+private struct StateLineStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon
+            configuration.title
+        }
+    }
+}
+
+/// A model that isn't ready, as a small mark after its name: a ring while it downloads, a key
+/// when it needs one.
+struct StateBadge: View {
+    let state: ModelIdentity.State
+
+    var body: some View {
+        switch state {
+        case .downloading(let f):
+            ProgressView(value: f)
+                .progressViewStyle(.circular)
+                .controlSize(.mini)
+        case .ready:
+            EmptyView()
+        default:
+            if let symbol = state.symbol {
+                Image(systemName: symbol)
+                    .imageScale(.small)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// What makes a model usable, done in place: Get, Stop, Retry, or Add key….
+struct ModelStateAction: View {
+    let model: ModelIdentity
+    @State private var downloads = ModelDownloads.shared
+    @Environment(\.addProviderKey) private var addKey
+
+    var body: some View {
+        switch model.state {
+        case .notDownloaded:
+            button("Get") { if let r = model.repo { downloads.download(r) } }
+        case .downloading(let f):
+            HStack(spacing: 6) {
+                ProgressView(value: f).frame(width: 60)
+                Button { if let r = model.repo { downloads.cancel(r) } } label: {
+                    Image(systemName: "stop.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Stop downloading")
+            }
+        case .downloadFailed:
+            button("Retry") { if let r = model.repo { downloads.download(r) } }
+        case .needsKey:
+            if let addKey { button("Add Key…") { addKey(model.providerID) } }
+        case .ready, .wontFit:
+            EmptyView()
+        }
+    }
+
+    private func button(_ title: String, _ action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .controlSize(.small)
     }
 }
 
@@ -102,6 +183,40 @@ struct AbilityIcons: View {
 extension EnvironmentValues {
     /// The models a view's folder can use, for views that name one without a workspace.
     @Entry var models: [ModelEntry] = []
+    /// Ask for a provider's key (by provider id), in a sheet over whatever asked.
+    @Entry var addProviderKey: ((String) -> Void)?
+}
+
+extension ModelIdentity {
+    /// One line saying why a model isn't ready, or nil when it is.
+    var stateLine: String? {
+        switch state {
+        case .ready: nil
+        case .notDownloaded(let gb): "\(Self.gb(gb)) download"
+        case .downloading(let f):
+            downloadGB.map { "\(Self.gb($0 * f)) of \(Self.gb($0))" } ?? "Downloading, \(Int(f * 100))%"
+        case .downloadFailed: "Download failed"
+        case .needsKey(let p): "Add \(p.first.map { "AEIOU".contains($0) } == true ? "an" : "a") \(p) key to use it"
+        case .wontFit(let needs, let has): "Needs \(needs) GB, this Mac has \(has)"
+        }
+    }
+
+    private static func gb(_ v: Double) -> String { String(format: "%.1f GB", v) }
+}
+
+extension ModelIdentity.State {
+    var symbol: String? {
+        switch self {
+        case .ready, .downloading: nil
+        case .notDownloaded: "arrow.down.circle"
+        case .downloadFailed: "exclamationmark.triangle"
+        case .needsKey: "key"
+        case .wontFit: "memorychip"
+        }
+    }
+
+    /// Shown, but not something you can pick.
+    var dimmed: Bool { if case .wontFit = self { true } else { false } }
 }
 
 extension Workspace {

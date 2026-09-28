@@ -1,6 +1,6 @@
 # Models: local and cloud
 
-Spec, written 2026-09-28. Status: step 1 built (`ModelIdentity`, `ModelLabel`, guardrail tests); steps 2–6 proposed.
+Spec, written 2026-09-28. Status: steps 1–2 built (`ModelIdentity`, `ModelLabel`, states, guardrail tests); steps 3–6 proposed.
 
 frog runs models on your Mac and in the cloud. This spec makes that difference visible and deliberate everywhere a model appears, and makes every appearance of a model look, read and behave the same.
 
@@ -95,7 +95,9 @@ A model is in exactly one state. Each state has one badge, one line, one action,
 | Unreachable | `cloud.slash` / `bolt.horizontal.circle` | "Anthropic isn't responding" / "Ollama isn't running" | Use a model on this Mac |
 | Not allowed here | `lock` | "kiln keeps code on this Mac" | Allow for this project… |
 
-Actions happen in place: Get downloads right there in the row, and Add key opens a sheet over the picker, not Settings.
+Actions happen in place: Get downloads right there in the row, and Add key opens a sheet over the picker, not Settings. One control, `ModelStateAction`, does them wherever a row appears (the picker, Settings, first run).
+
+Built so far: Ready, Not downloaded, Downloading, Download failed (Retry), Needs a key, Won't fit. **Unreachable** waits on the engine: `frog --models` leaves out models it can't reach, so the app can't tell "not running" from "not there". It needs the engine to list them with a reachability flag. **Not allowed here** comes with project permission (step 4). `SnapshotTests.testRenderModelLabels` renders every size × state × place to `$TMPDIR/frog-snapshots/model-labels.png` for review.
 
 ## The picker
 
