@@ -147,6 +147,7 @@ struct Shared {
 /// Start the engine. It emits `Status` then `Idle` once ready, and exits after `Op::Shutdown`
 /// (or when every `ops` sender is dropped), closing the event stream.
 pub fn spawn(opts: Options) -> Result<Handle> {
+    crate::policy::check(&opts.cwd, &opts.profile_name, &opts.profile)?;
     let provider = Provider::new(&opts.profile)?;
     start(opts, provider)
 }
@@ -751,6 +752,8 @@ impl Agent {
                 let (name, profile) = self
                     .cfg
                     .resolve(Some(&spec))
+                    .map_err(|e| ConfigError(format!("{e:#}")))?;
+                crate::policy::check(&self.root, &name, &profile)
                     .map_err(|e| ConfigError(format!("{e:#}")))?;
                 self.provider =
                     Provider::new(&profile).map_err(|e| ConfigError(format!("{e:#}")))?;
@@ -2165,7 +2168,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             return Err(format!("it {why}"));
         }
         if self.classifier.is_none() {
-            match crate::auto::Classifier::new(&self.cfg, (&self.profile_name, &self.profile)) {
+            match crate::auto::Classifier::new(&self.cfg, (&self.profile_name, &self.profile), &self.root) {
                 Ok(c) => self.classifier = Some(c),
                 Err(e) => return Err(format!("the classifier couldn't start ({e:#})")),
             }

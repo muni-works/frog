@@ -148,6 +148,10 @@ struct Cli {
     /// Remove a server you added.
     #[arg(long, value_name = "ID")]
     remove_provider: Option<String>,
+    /// Whether this folder's code may go to cloud models: allow, deny (keep it on your
+    /// devices), or ask (forget the answer). Without a value, print the answer; then exit.
+    #[arg(long, value_name = "ANSWER", num_args = 0..=1, default_missing_value = "")]
+    cloud_policy: Option<String>,
     /// Never ask for permission.
     #[arg(long)]
     yolo: bool,
@@ -200,6 +204,27 @@ async fn run() -> Result<bool> {
     }
     if let Some(done) = manage_providers(&cli).await? {
         return Ok(done);
+    }
+    if let Some(answer) = &cli.cloud_policy {
+        use frog_engine::policy::{self, Cloud};
+        let here = std::env::current_dir()?;
+        let set = match answer.as_str() {
+            "" => None,
+            "allow" => Some(Cloud::Allow),
+            "deny" => Some(Cloud::Deny),
+            "ask" => Some(Cloud::Ask),
+            other => anyhow::bail!("--cloud-policy takes allow, deny or ask, not `{other}`"),
+        };
+        if let Some(c) = set {
+            policy::set_cloud(&here, c)?;
+        }
+        let c = serde_json::to_value(policy::cloud(&here))?;
+        if cli.json {
+            println!("{}", serde_json::json!({ "cloud": c }));
+        } else {
+            println!("{}", c.as_str().unwrap_or("ask"));
+        }
+        return Ok(true);
     }
     let (profile_name, mut profile) = cfg.resolve(cli.model.as_deref())?;
     if let Some(b) = cli.base_url {

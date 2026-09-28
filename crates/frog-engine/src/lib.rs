@@ -14,6 +14,7 @@ pub mod mcp;
 pub mod memory;
 pub mod message;
 pub mod models;
+pub mod policy;
 pub mod named_files;
 pub mod prompt;
 pub mod protocol;
