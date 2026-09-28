@@ -18,6 +18,8 @@ final class FrogSounds {
     private var buffers: [Cue: AVAudioPCMBuffer] = [:]
 
     func play(_ cue: Cue) {
+        // Test hosts replay recorded sessions; they're never heard.
+        guard !SingleInstance.isTesting else { return }
         let defaults = UserDefaults.standard
         guard defaults.bool(forKey: "playfulSounds") else { return }
         guard NSApp.isActive || defaults.object(forKey: "notifyWhenDone") as? Bool ?? true else { return }

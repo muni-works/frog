@@ -135,6 +135,15 @@ final class Conversation {
     private(set) var failure: String?
     /// A reopened session's history is on its way (until the engine's `synced`).
     private(set) var replaying = false
+    /// When this conversation was opened: only what happens after makes a sound, posts a
+    /// notification or counts in the stats. Nil for previews, which never do.
+    @ObservationIgnored private var openedLive: Date?
+
+    /// Whether an event (by its timestamp) is news: live, not history coming back.
+    private func isNews(_ env: Envelope) -> Bool {
+        guard !replaying, let opened = openedLive else { return false }
+        return Date(timeIntervalSince1970: Double(env.created) / 1000) >= opened.addingTimeInterval(-2)
+    }
     /// When this conversation was opened, so a slow load can say so and a quick one doesn't.
     @ObservationIgnored let opened = Date.now
     /// Events that arrived while replaying, folded in together once the history is all here.
@@ -168,6 +177,7 @@ final class Conversation {
     /// `arguments` are extra CLI flags, e.g. `["-r", id]` or `["--fork", "id@3"]`.
     init(folder: URL, arguments: [String], model: String?) {
         self.folder = folder
+        openedLive = Date()
         replayOnStart = arguments.contains("-r") || arguments.contains("--fork")
         // A reopened session is known before the engine says so: the sidebar selects it now.
         if let i = arguments.firstIndex(of: "-r"), arguments.indices.contains(i + 1) {
@@ -371,7 +381,7 @@ final class Conversation {
                 turns[i].end = reason
                 turns[i].usage = usage
                 turns[i].endedAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
-                if !replaying {
+                if isNews(env) {
                     if let id = sessionID { Library.shared.turnEnded(id) }
                     ModelStats.shared.record(usage, model: status?.model)
                     Notifier.shared.turnFinished(project: folder.lastPathComponent, text: Self.summary(turns[i]))
@@ -417,7 +427,7 @@ final class Conversation {
             }
         case .permissionRequest(let req):
             permission = req
-            if !replaying {
+            if isNews(env) {
                 FrogSounds.shared.play(.drip)
                 Notifier.shared.needsPermission(project: folder.lastPathComponent, request: req) { [weak self] d in
                     self?.answer(d)

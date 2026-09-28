@@ -40,7 +40,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func turnFinished(project: String, text: String) {
-        guard inBackground, UserDefaults.standard.object(forKey: "notifyWhenDone") as? Bool ?? true else { return }
+        guard !SingleInstance.isTesting, inBackground, UserDefaults.standard.object(forKey: "notifyWhenDone") as? Bool ?? true else { return }
         let c = UNMutableNotificationContent()
         c.title = project
         c.body = text
@@ -51,7 +51,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     func needsPermission(project: String, request: PermissionRequest, answer: @escaping (Decision) -> Void) {
         answers[request.id] = answer
         updateBadge()
-        guard inBackground else { return }
+        guard !SingleInstance.isTesting, inBackground else { return }
         let c = UNMutableNotificationContent()
         c.title = "\(project) needs permission"
         c.body = "\(request.name): \(request.arg)"
