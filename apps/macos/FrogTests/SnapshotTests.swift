@@ -204,6 +204,10 @@ extension SnapshotTests {
         .padding(24)
         .background(Color(nsColor: .windowBackgroundColor))
         try render(sheet, size: CGSize(width: 760, height: 220), to: "message-actions")
+        try render(
+            HStack { Spacer(); ActionTooltip(text: "Fork a new conversation from here") }
+                .padding(24).background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 420, height: 80), to: "action-tooltip")
     }
 
     func testRenderFrogFaces() throws {

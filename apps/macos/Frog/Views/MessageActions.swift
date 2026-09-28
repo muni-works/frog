@@ -8,6 +8,8 @@ struct MessageAction: View {
     let symbol: String
     let action: () -> Void
     @State private var hovering = false
+    /// The label shows after a short pause, so passing over the row doesn't flash labels.
+    @State private var labeled = false
 
     var body: some View {
         Button(action: action) {
@@ -20,9 +22,37 @@ struct MessageAction: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(title)
+        .task(id: hovering) {
+            guard hovering else { labeled = false; return }
+            try? await Task.sleep(for: .milliseconds(350))
+            if !Task.isCancelled { labeled = true }
+        }
+        // Actions sit at the column's right edge: the label grows leftward, not off the edge.
+        .overlay(alignment: .topTrailing) {
+            if labeled { ActionTooltip(text: title).offset(y: -30).transition(.opacity) }
+        }
+        .zIndex(labeled ? 1 : 0)
         .accessibilityLabel(title)
         .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: 0.12), value: labeled)
+    }
+}
+
+/// A quick label over a small control: dark, rounded, one line.
+struct ActionTooltip: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.primary)
+            .fixedSize()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.regularMaterial, in: .rect(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+            .allowsHitTesting(false)
     }
 }
 
@@ -47,10 +77,10 @@ struct PromptActions: View {
                         .padding(.trailing, 6)
                 }
             }
-            MessageAction(title: "Copy", symbol: "doc.on.doc", action: copy)
+            MessageAction(title: "Copy message", symbol: "doc.on.doc", action: copy)
             if turn.number != nil, turn.finished {
-                MessageAction(title: "Rewind to before this", symbol: "arrow.uturn.backward", action: rewind)
-                MessageAction(title: "Fork from here", symbol: "arrow.triangle.branch", action: fork)
+                MessageAction(title: "Rewind: undo from here", symbol: "arrow.uturn.backward", action: rewind)
+                MessageAction(title: "Fork a new conversation from here", symbol: "arrow.triangle.branch", action: fork)
             }
         }
         .frame(height: 22)
