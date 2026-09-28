@@ -120,6 +120,9 @@ struct PaneView: View {
                 jump: Bindable(ui).jumpTo,
                 onVisibleTurns: { ui.visibleTurns = Set($0) }
             )
+            // Another conversation is a fresh scroll view, starting at its end, not this one's
+            // offset over different content.
+            .id(ObjectIdentifier(conversation))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ComposerView(workspace: workspace, conversation: conversation, window: ui)
                     .id(ObjectIdentifier(conversation))

@@ -142,6 +142,9 @@ struct Shared {
     session: Mutex<String>,
     /// Running subagents by `Task` tool call id, so a client can stop one.
     subagents: Mutex<HashMap<String, CancellationToken>>,
+    /// Set (under the lock) just before the first `Idle`; until then the router answers
+    /// `Subscribe` itself.
+    ready: Mutex<bool>,
 }
 
 /// Start the engine. It emits `Status` then `Idle` once ready, and exits after `Op::Shutdown`
@@ -157,12 +160,49 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     let (ev_tx, ev_rx) = mpsc::unbounded_channel();
     let (work_tx, mut work_rx) = mpsc::unbounded_channel::<Op>();
     let shared = Arc::new(Shared::default());
+    // Weak: the event stream still ends when the agent does.
+    let early = ev_tx.downgrade();
     let mut agent = Agent::new(opts, provider, ev_tx, shared.clone())?;
+    // What's running, before anything slow (MCP servers, a local model loading, probing the
+    // provider), so a client can name the model as soon as a conversation opens.
+    agent.emit_status();
+    // A resumed session's log, for answering `Subscribe` while the engine starts up.
+    let resumed = match (&agent.store, agent.log.lock().unwrap().is_some()) {
+        (Some(dir), true) => Some((dir.clone(), agent.session_id.clone(), agent.seq.clone())),
+        _ => None,
+    };
 
     let router = shared.clone();
     tokio::spawn(async move {
         while let Some(op) = op_rx.recv().await {
             match op {
+                // Replaying the log needs nothing that starting up does, so a reopened
+                // conversation's transcript doesn't wait on it. Holding `ready` keeps the whole
+                // replay ahead of the first `Idle`, and so of any turn; once started up, the
+                // agent answers, in order with its turns.
+                Op::Subscribe { after } if resumed.is_some() => {
+                    let ready = router.ready.lock().unwrap();
+                    let Some((dir, id, seq)) = resumed.as_ref().filter(|_| !*ready) else {
+                        drop(ready);
+                        if work_tx.send(op).is_err() {
+                            break;
+                        }
+                        continue;
+                    };
+                    let Some(events) = early.upgrade() else {
+                        continue;
+                    };
+                    for env in session::events_after(dir, id, after).unwrap_or_default() {
+                        let _ = events.send(env);
+                    }
+                    let upto = seq.load(Ordering::Relaxed);
+                    let _ = events.send(Envelope {
+                        seq: seq.fetch_add(1, Ordering::Relaxed) + 1,
+                        session: id.clone(),
+                        created: now_ms(),
+                        event: Event::Synced { upto },
+                    });
+                }
                 Op::Interrupt => router.cancel.lock().unwrap().cancel(),
                 Op::Permission { id, decision } => {
                     if let Some(tx) = router.pending.lock().unwrap().remove(&id) {
@@ -214,7 +254,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         agent.connect_mcp().await;
         agent.resolve_window().await;
         agent.emit_status();
-        agent.emit(Event::Idle);
+        {
+            let mut ready = shared.ready.lock().unwrap();
+            *ready = true;
+            agent.emit(Event::Idle);
+        }
         while let Some(op) = work_rx.recv().await {
             if let Op::Shutdown = op {
                 break;
@@ -2770,6 +2814,64 @@ mod tests {
             Event::TurnStarted { turn: 2, .. }
         ));
         assert!(second[0].seq > last_seq, "seq continues across restarts");
+        shutdown(h).await;
+    }
+
+    #[tokio::test]
+    async fn subscribe_while_starting_replays_before_the_first_idle() {
+        let dir = tmp_store();
+        let mut h = engine_at(
+            vec![reply(vec![text("hello")], Stop::End)],
+            true,
+            Some(dir.clone()),
+            None,
+        );
+        let sid = run(&mut h, "hi").await[0].session.clone();
+        shutdown(h).await;
+
+        let mut h = engine_at(
+            vec![reply(vec![text("again")], Stop::End)],
+            true,
+            Some(dir),
+            Some(sid.clone()),
+        );
+        // Asked for straight away, as the app does: answered without waiting to start up.
+        h.ops.send(Op::Subscribe { after: 0 }).unwrap();
+        let boot = until_idle(&mut h).await;
+        assert!(
+            matches!(&boot[0].event, Event::Status(_)),
+            "the model is named first"
+        );
+        let synced = boot
+            .iter()
+            .position(|e| matches!(e.event, Event::Synced { .. }))
+            .expect("the replay finishes before the first Idle");
+        let replayed: Vec<_> = boot[..synced]
+            .iter()
+            .filter(|e| e.event.is_durable())
+            .collect();
+        assert_eq!(
+            replayed.len(),
+            4,
+            "turn_started, item_started, item_completed, turn_ended"
+        );
+        assert!(matches!(&replayed[0].event, Event::TurnStarted { input, .. } if input == "hi"));
+
+        h.ops
+            .send(Op::Submit {
+                text: "more".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let second = until_idle(&mut h).await;
+        assert!(matches!(
+            second[0].event,
+            Event::TurnStarted { turn: 2, .. }
+        ));
+        assert!(
+            second[0].seq > boot[synced].seq,
+            "seq continues past the replay"
+        );
         shutdown(h).await;
     }
 

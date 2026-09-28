@@ -14,6 +14,8 @@ final class Pane: Identifiable {
     /// The changes card: asked for, and floated over the conversation because it didn't fit.
     var showChanges = false
     var peekChanges = false
+    /// Another folder's workspace on its way in (see `Panes.open`).
+    @ObservationIgnored var incoming: Workspace?
 
     init(workspace: Workspace) {
         self.workspace = workspace
@@ -260,6 +262,9 @@ final class Panes {
 
     func setWorkspace(_ workspace: Workspace, in pane: Pane) {
         guard workspace !== pane.workspace else { return }
+        // Anything else on its way in has been overtaken.
+        if pane.incoming !== workspace { pane.incoming?.stop() }
+        pane.incoming = nil
         pane.workspace.stop()
         pane.workspace = workspace
         pane.peekChanges = false
@@ -276,18 +281,33 @@ final class Panes {
     /// does, bring that window forward.
     func open(_ s: SessionInfo, in pane: Pane, window: NSWindow?) {
         if let p = paneShowing(s.id) {
+            // Back to what it shows: drop anything still on its way in.
+            p.incoming?.stop()
+            p.incoming = nil
+            p.workspace.open(s.id)
             focus(p)
             return
         }
-        guard let url = s.folder else { return }
+        guard let url = s.folder, pane.incoming?.conversation?.sessionID != s.id else { return }
         if let w = Library.shared.window(for: s.id), w !== window {
             w.makeKeyAndOrderFront(nil)
             return
         }
+        pane.incoming?.stop()
+        pane.incoming = nil
         if pane.workspace.folder.standardizedFileURL.path == url.standardizedFileURL.path {
             pane.workspace.open(s.id)
         } else {
-            setWorkspace(Workspace(folder: url, resume: s.id), in: pane)
+            // The new folder takes the pane once its conversation is in, so the pane cuts from
+            // one conversation to the next instead of emptying and filling in.
+            let workspace = Workspace(folder: url, resume: s.id)
+            pane.workspace.opening = s.id
+            pane.incoming = workspace
+            Task {
+                await workspace.settled(within: .milliseconds(300))
+                guard pane.incoming === workspace else { return }
+                Motion.cut { setWorkspace(workspace, in: pane) }
+            }
         }
         focus(pane)
     }
@@ -365,6 +385,7 @@ final class Panes {
     func close(_ pane: Pane) {
         guard isSplit, let rest = layout.removing(pane.id) else { return }
         let wasFirst = pane === items.first
+        pane.incoming?.stop()
         pane.workspace.stop()
         items.removeAll { $0 === pane }
         setLayout(rest)
@@ -382,7 +403,10 @@ final class Panes {
     }
 
     func stopAll() {
-        items.forEach { $0.workspace.stop() }
+        items.forEach {
+            $0.incoming?.stop()
+            $0.workspace.stop()
+        }
     }
 }
 

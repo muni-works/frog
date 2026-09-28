@@ -88,6 +88,13 @@ final class SnapshotTests: XCTestCase {
             size: CGSize(width: 660, height: 420), to: "palette")
         print("snapshots: \(outDir.path)")
     }
+
+    /// Opening a conversation that's slow to load: "Loading session…" (after a beat), never the
+    /// new-conversation page.
+    func testRenderReopening() throws {
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"), reopened: true)
+        try render(transcript(c), size: CGSize(width: 900, height: 500), to: "reopening", settle: 0.6)
+    }
 }
 
 extension SnapshotTests {

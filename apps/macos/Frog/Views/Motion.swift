@@ -13,6 +13,15 @@ enum Motion {
     static func quick(reduced: Bool) -> Animation {
         reduced ? .easeInOut(duration: 0.12) : .snappy(duration: 0.22)
     }
+
+    /// A cut: the change lands at once, whatever the views showing it would animate. Switching
+    /// conversations is one, not a string of rails, pills and rows sliding into place.
+    @MainActor
+    static func cut(_ change: () -> Void) {
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t, change)
+    }
 }
 
 /// Force Touch trackpad feedback, used sparingly: where a gesture crosses a boundary.

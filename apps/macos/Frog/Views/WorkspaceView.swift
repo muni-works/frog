@@ -45,6 +45,8 @@ struct WorkspaceView: View {
 
     private struct PaneInputs: Equatable {
         var id: Pane.ID
+        /// What it shows: another conversation is a cut, so the cards it brings don't animate in.
+        var shows: ObjectIdentifier?
         var changes: Bool
         var hasChanges: Bool
         var hasRail: Bool
@@ -133,7 +135,7 @@ struct WorkspaceView: View {
 
     private var layoutInputs: LayoutInputs {
         LayoutInputs(size: canvasSize, sessions: showSessions, layout: panes.layout, panes: panes.items.map {
-            PaneInputs(id: $0.id, changes: $0.showChanges, hasChanges: $0.changeCount > 0, hasRail: $0.hasRail)
+            PaneInputs(id: $0.id, shows: $0.conversation.map(ObjectIdentifier.init), changes: $0.showChanges, hasChanges: $0.changeCount > 0, hasRail: $0.hasRail)
         })
     }
 
@@ -351,7 +353,9 @@ struct WorkspaceView: View {
         .environment(\.paneDragger, dragger)
         .onAppear { dragger.onDrop = { perform($0, at: $1) } }
         .animation(.easeOut(duration: 0.15), value: dragger.active)
-        .onChange(of: layoutInputs, initial: true) { relayout() }
+        .onChange(of: layoutInputs, initial: true) { old, new in
+            if old.panes.map(\.shows) != new.panes.map(\.shows) { Motion.cut(relayout) } else { relayout() }
+        }
         // Over everything in the window: sidebar, rail, and (hidden meanwhile) the toolbar.
         .modifier(LightboxHost())
         .environment(\.projectFolder, workspace.folder)

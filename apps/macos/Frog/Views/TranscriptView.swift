@@ -34,9 +34,11 @@ struct TranscriptView: View {
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 // The running turn's work group shows progress once there's something to show.
-                if conversation.busy, conversation.permission == nil, conversation.elicitation == nil,
-                   conversation.replaying || (conversation.turns.last?.items.isEmpty ?? true) {
-                    WorkingIndicator(label: conversation.replaying ? "Loading session…" : conversation.progress)
+                if conversation.replaying {
+                    LoadingIndicator(since: conversation.opened)
+                } else if conversation.busy, conversation.permission == nil, conversation.elicitation == nil,
+                   conversation.turns.last?.items.isEmpty ?? true {
+                    WorkingIndicator(label: conversation.progress)
                 }
                 if let failure = conversation.failure {
                     Label(failure, systemImage: "exclamationmark.octagon")
@@ -73,7 +75,7 @@ struct TranscriptView: View {
         .defaultScrollAnchor(.bottom)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .overlay {
-            if conversation.turns.isEmpty, !conversation.busy, conversation.failure == nil {
+            if conversation.turns.isEmpty, !conversation.busy, !conversation.replaying, conversation.failure == nil {
                 EmptyTranscript(conversation: conversation)
             }
         }
@@ -173,6 +175,23 @@ struct WorkingIndicator: View {
                 .contentTransition(.opacity)
         }
         .animation(.default, value: label)
+    }
+}
+
+/// "Loading session…", once opening a conversation has taken long enough to notice: a quick
+/// open shows nothing between one conversation and the next.
+struct LoadingIndicator: View {
+    let since: Date
+    @State private var shown = false
+
+    var body: some View {
+        WorkingIndicator(label: "Loading session…")
+            .opacity(shown ? 1 : 0)
+            .task {
+                let wait = 0.3 - Date.now.timeIntervalSince(since)
+                if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                withAnimation(.easeIn(duration: 0.2)) { shown = true }
+            }
     }
 }
 
