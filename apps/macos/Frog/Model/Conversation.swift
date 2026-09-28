@@ -24,6 +24,9 @@ struct ItemState: Identifiable {
     var subagent: SubagentRun?
     /// Why auto mode let this call run without asking.
     var autoReason: String?
+    /// When the engine started and finished it, for "Thought for 2s" and the live line.
+    var startedAt: Date?
+    var endedAt: Date?
 }
 
 /// A subagent's run as it streams in: its items (thinking, tool calls, the report being
@@ -332,7 +335,11 @@ final class Conversation {
             progress = nil
             onSessionChange?()
         case .itemStarted(let id, let kind):
-            upsert(id) { $0.kind = Self.kind(kind) }
+            let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
+            upsert(id) { item in
+                item.kind = Self.kind(kind)
+                if item.startedAt == nil { item.startedAt = at }
+            }
         case .itemDelta(let id, let delta):
             upsert(id) { item in
                 switch delta {
@@ -342,8 +349,10 @@ final class Conversation {
             }
             progress = nil
         case .itemCompleted(let id, let item):
+            let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             upsert(id) { state in
                 state.done = true
+                state.endedAt = at
                 state.needsPermission = false
                 switch item {
                 case .message(let t):

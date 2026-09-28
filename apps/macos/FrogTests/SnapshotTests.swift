@@ -205,6 +205,43 @@ extension SnapshotTests {
             size: CGSize(width: 620, height: 240), to: "frog-faces")
     }
 
+    /// Activity lines opened: a group's steps, one step's diff, and a long thought streaming.
+    /// `activity-open.png`, `activity-thinking.png`.
+    func testRenderActivity() throws {
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Fixtures")
+        let all = try events(dir.appending(path: "text-tools-text.jsonl"))
+        let done = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        all.forEach(done.ingest)
+        let groups = TurnFlow(try XCTUnwrap(done.turns.first).items).segments.compactMap { s -> ActivityGroup? in
+            if case .activity(let g) = s { g } else { nil }
+        }
+        let edit = try XCTUnwrap(groups.flatMap(\.steps).first { $0.arg.hasSuffix("PaneView.swift") && $0.result?.diff != nil })
+        try render(
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(Array(groups.enumerated()), id: \.offset) { _, g in
+                    ActivityLine(group: g, conversation: done, expanded: true)
+                }
+                ActivitySteps(steps: [edit], conversation: done)
+                ActivityStepRow(item: edit, conversation: done, expanded: true)
+            }
+            .padding(28)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 900, height: 900), to: "activity-open")
+
+        // A long thought streaming, after the reads.
+        let cut = try XCTUnwrap(all.firstIndex {
+            if case .itemStarted("r2", _) = $0.event { true } else { false }
+        })
+        let live = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        all[...cut].forEach(live.ingest)
+        let delta = #"{"seq":999,"session":"s","created":1790600005000,"event":"item_delta","id":"r2","delta":{"type":"reasoning","text":"Two places use the title as identity: the row's .id and the selection binding in PaneView.\n\nBoth need the stable session id. The selection binding compares titles when it restores the selection after the library reloads, so after a rename it finds nothing and clears.\n\nKeying both on the id fixes the rename"}}"#
+        live.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(delta.utf8)))
+        try render(transcript(live), size: CGSize(width: 900, height: 700), to: "activity-thinking")
+        print("snapshots: \(outDir.path)")
+    }
+
     /// A subagent mid-run (steps, thinking, the report being written) and finished.
     func testRenderSubagent() throws {
         func sub(_ inner: String) -> String {
