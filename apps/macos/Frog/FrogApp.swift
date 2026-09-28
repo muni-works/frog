@@ -3,6 +3,12 @@ import SwiftUI
 @main
 struct FrogApp: App {
     init() {
+        // One frog: a second copy hands its folder to the running one and quits.
+        SingleInstance.handOff()
+        if SingleInstance.isTesting {
+            // A test host: no Dock icon, no windows of its own (tests render offscreen).
+            NSApplication.shared.setActivationPolicy(.accessory)
+        }
         LegacyKiln.migrate()
         // Keep frog's windows neutral gray: no wallpaper tint on window chrome, grouped settings
         // cards and materials (the per-app form of System Settings' "Allow wallpaper tinting").
@@ -17,7 +23,8 @@ struct FrogApp: App {
         }
         .defaultSize(width: 1100, height: 760)
         .windowToolbarStyle(.unified)
-        .defaultLaunchBehavior(.presented)
+        .defaultLaunchBehavior(SingleInstance.isTesting ? .suppressed : .presented)
+        .restorationBehavior(SingleInstance.isTesting ? .disabled : .automatic)
         .commands { FrogCommands() }
 
         WindowGroup("Diagram", for: DiagramDocument.self) { $doc in
@@ -43,6 +50,7 @@ struct FrogApp: App {
 /// scene value, so relaunching reopens it.
 struct RootView: View {
     @Binding var folder: URL?
+    @Environment(\.openWindow) private var openWindow
     @State private var panes: Panes?
 
     var body: some View {
@@ -56,6 +64,12 @@ struct RootView: View {
         .frame(minWidth: 720, minHeight: 480)
         .onAppear {
             if folder == nil { folder = LaunchFolder.take() ?? Frog.chatFolder }
+        }
+        // A second copy of frog handed over its folder: open it here, in a window of its own.
+        .onReceive(DistributedNotificationCenter.default().publisher(for: SingleInstance.openFolder)) { note in
+            guard let token = note.object as? String, SingleInstance.answered.insert(token).inserted,
+                  let path = token.split(separator: "|", maxSplits: 1).last.map(String.init) else { return }
+            openWindow(value: URL(fileURLWithPath: path))
         }
         .onChange(of: folder, initial: true) { _, url in
             guard let url else { return }
@@ -74,6 +88,35 @@ struct RootView: View {
         }
         .onDisappear { panes?.stopAll() }
     }
+}
+
+/// There's one frog, with many windows. Launching another copy (a second build, or `open -n`)
+/// passes its `-FrogFolder` to the one that's running, brings that forward, and quits. Test
+/// hosts (XCTest launches the app to run its tests) are left alone and kept out of sight.
+enum SingleInstance {
+    static var isTesting: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
+    static let openFolder = Notification.Name("com.campedersen.frog.openFolder")
+
+    static func handOff() {
+        guard !isTesting, let id = Bundle.main.bundleIdentifier else { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        guard let running = NSRunningApplication.runningApplications(withBundleIdentifier: id)
+            .first(where: { $0.processIdentifier != me && !$0.isTerminated })
+        else { return }
+        if let path = UserDefaults.standard.string(forKey: "FrogFolder") {
+            // A token, so only one of the running copy's windows answers it.
+            DistributedNotificationCenter.default().postNotificationName(
+                openFolder, object: "\(UUID().uuidString)|\(path)", deliverImmediately: true)
+        }
+        running.activate()
+        exit(0)
+    }
+
+    /// Tokens already answered, across the running copy's windows.
+    @MainActor static var answered: Set<String> = []
 }
 
 /// `open Frog.app --args -FrogFolder <path>` opens that folder in the first window.
