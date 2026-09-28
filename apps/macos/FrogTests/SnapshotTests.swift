@@ -170,6 +170,16 @@ extension SnapshotTests {
             size: CGSize(width: 640, height: 1500), to: "settings-models", settle: 5)
     }
 
+    /// A new chat's empty page on this Mac: recent projects, what frog found. `new-chat.png`.
+    func testRenderNewChat() throws {
+        let c = Conversation(preview: Frog.chatFolder)
+        try render(
+            EmptyTranscript(conversation: c)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 820, height: 460), to: "new-chat", settle: 4)
+    }
+
     func testRenderFrogFaces() throws {
         let moods: [(String, FrogMood)] = [
             ("idle", .idle), ("reading", .reading), ("thinking", .thinking), ("working", .working),

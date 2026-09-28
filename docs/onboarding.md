@@ -1,6 +1,6 @@
 # Onboarding
 
-Spec, written 2026-09-28. Status: proposed; build order at the end.
+Spec, written 2026-09-28. Status: steps 1 and 2 built (what frog found, recent projects); the rest proposed.
 
 frog has no onboarding screens. No welcome window, no tour, no account. The product is the onboarding: the first message gets an answer in about a second, frog notices what's already on the Mac, and it asks a question only at the moment the answer matters.
 
@@ -18,7 +18,7 @@ frog has no onboarding screens. No welcome window, no tour, no account. The prod
 
 **2s: the first answer.** New conversations start on Apple Intelligence where the Mac has it, so the first reply takes a second or two.
 
-**10s: what frog found.** Under the question, at most one setup line:
+**10s: what frog found.** Under the question, at most one line at a time (this one first, then the model suggestion from docs/models.md):
 
 > Using your Claude Code setup: CLAUDE.md, 14 skills. Also found 2 MCP servers. **Use them**
 

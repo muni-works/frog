@@ -213,7 +213,7 @@ struct EmptyTranscript: View {
             Text(isChat ? "What should we work on?" : conversation.folder.lastPathComponent)
                 .font(.title2.weight(.semibold))
             if card {
-                ModelSuggestion(conversation: conversation)
+                EmptyPageExtras(conversation: conversation)
                     .padding(.top, 6)
             }
         }
