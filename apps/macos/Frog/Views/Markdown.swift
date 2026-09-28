@@ -63,8 +63,13 @@ enum Markdown {
                     table = t
                     continue
                 }
-                if paragraph.count == 1, let header = tableRow(paragraph[0]), let align = alignmentRow(cells, columns: header.count) {
-                    paragraph = []
+                // The header can follow paragraph text directly (as in GitHub): what came before
+                // it stays a paragraph of its own.
+                if let last = paragraph.last,
+                   let header = tableRow(last.trimmingCharacters(in: .whitespaces)),
+                   let align = alignmentRow(cells, columns: header.count) {
+                    paragraph.removeLast()
+                    flush()
                     table = (header, align, [])
                     continue
                 }
