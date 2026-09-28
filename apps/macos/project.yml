@@ -1,6 +1,6 @@
 name: Frog
 options:
-  bundleIdPrefix: com.campedersen
+  bundleIdPrefix: eco.frog
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
@@ -31,9 +31,14 @@ targets:
         NSSpeechRecognitionUsageDescription: "Frog turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else."
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.campedersen.frog
+        PRODUCT_BUNDLE_IDENTIFIER: eco.frog
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      # Debug builds (this checkout, worktrees, agents) are their own app, so macOS never
+      # hands the installed frog's notifications, URLs or relaunches to a stray build.
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: eco.frog.dev
     preBuildScripts:
       - name: Build frog engine
         script: '"$SRCROOT/scripts/build-engine.sh"'
@@ -51,7 +56,7 @@ targets:
       - target: Frog
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.campedersen.frog.tests
+        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.tests
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Frog.app/Contents/MacOS/Frog"
         BUNDLE_LOADER: "$(TEST_HOST)"

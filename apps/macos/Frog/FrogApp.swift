@@ -103,7 +103,8 @@ enum SingleInstance {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 
-    static let openFolder = Notification.Name("com.campedersen.frog.openFolder")
+    /// Per bundle id, so a debug frog and the installed one don't open each other's folders.
+    static let openFolder = Notification.Name("\(Bundle.main.bundleIdentifier ?? "eco.frog").openFolder")
 
     static func handOff() {
         guard !isTesting, let id = Bundle.main.bundleIdentifier else { return }
@@ -239,7 +240,7 @@ struct ModelSuggestion: View {
 
 /// frog was called kiln. Before anything touches frog's folders or settings, move kiln's over:
 /// config and data (the old paths become symlinks, so paths in old sessions still resolve) and
-/// the app's preferences (pins, archive, settings) from kiln's bundle id.
+/// the app's preferences (pins, archive, settings) from frog's and kiln's old bundle ids.
 enum LegacyKiln {
     static func migrate() {
         let fm = FileManager.default
@@ -254,15 +255,19 @@ enum LegacyKiln {
                 try? fm.createSymbolicLink(at: from, withDestinationURL: to)
             }
         }
+        // Then the preferences, newest bundle id first: frog was com.campedersen.frog before
+        // eco.frog, and com.campedersen.kiln before that.
         let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: "importedKilnDefaults") else { return }
-        let oldID = "com.campedersen.kiln" as CFString
-        let keys = CFPreferencesCopyKeyList(oldID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? [String] ?? []
-        for key in keys where defaults.object(forKey: key) == nil {
-            if let value = CFPreferencesCopyAppValue(key as CFString, oldID) {
-                defaults.set(value, forKey: key)
+        guard !defaults.bool(forKey: "importedLegacyDefaults") else { return }
+        for oldID in ["com.campedersen.frog", "com.campedersen.kiln"] {
+            let id = oldID as CFString
+            let keys = CFPreferencesCopyKeyList(id, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? [String] ?? []
+            for key in keys where defaults.object(forKey: key) == nil {
+                if let value = CFPreferencesCopyAppValue(key as CFString, id) {
+                    defaults.set(value, forKey: key)
+                }
             }
         }
-        defaults.set(true, forKey: "importedKilnDefaults")
+        defaults.set(true, forKey: "importedLegacyDefaults")
     }
 }

@@ -27,7 +27,7 @@ enum Frog {
         }
         let home = fm.homeDirectoryForCurrentUser
         candidates += [
-            home.appending(path: "Developer/kiln/target/release/frog"),
+            home.appending(path: "Developer/frog/target/release/frog"),
             home.appending(path: ".cargo/bin/frog"),
             URL(fileURLWithPath: "/opt/homebrew/bin/frog"),
             URL(fileURLWithPath: "/usr/local/bin/frog"),
