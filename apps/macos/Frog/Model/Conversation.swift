@@ -507,10 +507,10 @@ final class Conversation {
     }
 
     private func note(_ text: String, warning: Bool) {
+        // Before anything's been said there's no turn to attach it to: a status line, not an
+        // empty "Worked" group.
+        guard !turns.isEmpty else { return show(text) }
         let item = ItemState(id: UUID().uuidString, kind: .notice(warning: warning), text: text, done: true)
-        if turns.isEmpty {
-            turns.append(TurnState(number: nil, input: "", end: .complete))
-        }
         turns[turns.count - 1].items.append(item)
     }
 }

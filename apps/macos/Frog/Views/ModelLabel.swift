@@ -33,15 +33,16 @@ struct ModelLabel: View {
         case .pill:
             HStack(spacing: 5) {
                 PlaceIcon(place: model.place)
-                Text(model.name).lineLimit(1)
+                Text(model.name).lineLimit(1).foregroundStyle(model.place.color)
                 StateBadge(state: model.state)
             }
         case .caption:
             HStack(spacing: 5) {
                 PlaceIcon(place: model.place)
-                Text("\(model.name) · \(model.stateLine ?? model.place.label)").lineLimit(1)
+                Text(model.name).foregroundStyle(model.place.color.opacity(0.85))
+                Text("· \(model.stateLine ?? model.place.label)").foregroundStyle(.secondary)
             }
-            .foregroundStyle(.secondary)
+            .lineLimit(1)
         case .menu:
             // Menus draw a title and subtitle from two texts.
             Label {
@@ -160,17 +161,22 @@ struct ModelStateAction: View {
     }
 }
 
-/// Where a model runs, as its icon. Cloud carries a faint tint; everything that stays on your
-/// own hardware is neutral, like Safari's lock: small, always in the same place, never loud.
+/// Where a model runs, as its icon, in its place's color.
 struct PlaceIcon: View {
     let place: ModelIdentity.Place
 
     var body: some View {
         Image(systemName: place.symbol)
-            .foregroundStyle(place.isCloud ? AnyShapeStyle(Color.cyan.opacity(0.85)) : AnyShapeStyle(.secondary))
+            .foregroundStyle(place.color)
             .imageScale(.small)
             .help(place.label)
     }
+}
+
+extension ModelIdentity.Place {
+    /// Blue for your own devices (this Mac, your servers), green for the cloud: the model's
+    /// name and icon say where your code goes at a glance.
+    var color: Color { isCloud ? .green : .blue }
 }
 
 /// What a model can do beyond text: uses tools, sees images, reasons.
