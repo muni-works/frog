@@ -188,8 +188,7 @@ struct LocalModelCard: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            // The card says what it's for; the row just names the model and its size.
-            SuggestedModelRow(model: recommended, describe: false)
+            SuggestedModelRow(model: recommended)
             Button("More models…") {
                 settingsTab = "models"
                 openSettings()

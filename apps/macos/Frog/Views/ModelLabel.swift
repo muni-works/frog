@@ -16,8 +16,10 @@ struct ModelLabel: View {
 
     let model: ModelIdentity
     var size: Size = .pill
-    /// Extra detail for `.row` (fit, speed, price); the place is always included.
+    /// Extra detail for `.row` (fit, speed, price).
     var detail: String? = nil
+    /// Whether `.row` names the place. Lists grouped by place leave it to the section.
+    var showsPlace = true
 
     var body: some View {
         content
@@ -67,7 +69,7 @@ struct ModelLabel: View {
                                 Text(text)
                             }
                         } else {
-                            Text([model.place.label, detail].compactMap { $0 }.joined(separator: " · "))
+                            Text([showsPlace ? model.place.label : nil, detail].compactMap { $0 }.joined(separator: " · "))
                         }
                     }
                     .font(.caption)

@@ -35,7 +35,7 @@ Use these words, and only these, in every string about models.
 |---|---|---|
 | Runs locally | **On this Mac** | local, tang, ollama, MLX, sidecar |
 | Runs on your own server | **On mew** (the server's name) | server, remote, LAN, custom provider |
-| This Mac and your servers together | **Your Devices** (the picker's lane) | local, self-hosted, on-prem |
+| This Mac and your servers together | **Your devices** ("Keep It on Your Devices") | local, self-hosted, on-prem |
 | Runs remotely | **Cloud · Anthropic** (the provider's name) | API, remote, hosted, provider id |
 | Apple's on-device model | **Apple Intelligence** | apple, foundation model |
 | Can call tools | **Uses tools** | native tools, text tools, tool mode |
@@ -100,17 +100,21 @@ Actions happen in place: Get downloads right there in the row, and Add key opens
 
 Built so far: Ready, Not downloaded, Downloading, Download failed (Retry), Needs a key, Won't fit. **Unreachable** waits on the engine: `frog --models` leaves out models it can't reach, so the app can't tell "not running" from "not there". It needs the engine to list them with a reachability flag. **Not allowed here** comes with project permission (step 4). `SnapshotTests.testRenderModelLabels` renders every size × state × place to `$TMPDIR/frog-snapshots/model-labels.png` for review.
 
+## One list
+
+The picker and Settings > Models show the same list, built by `ModelSections` and drawn by `ModelListRow` (`ModelList.swift`):
+
+- **Sections say where models run,** in one order everywhere: On this Mac, then each of your servers ("On mew (RTX 3090)"), then each cloud provider ("Cloud · Anthropic"), then **Get more** (recommended downloads). Within a section: ready, then ones that need something, then ones that can't be used.
+- **One row:** the name and ability icons over one line of detail (measured speed, estimated cost per turn, size, or the state line), then a checkmark for the current model, then the list's accessory. The section names the place, so the row doesn't. Hovering shows the details (abilities, context, price, spec).
+- **The current model is always listed,** even when frog didn't report it (an Ollama model with Ollama not running).
+
 ## The picker
 
-Opened from the composer's pill (⌃⌘M, or click). A popover, top to bottom:
+A menu over that list, 340pt wide: no lane switch and no side card. The search field appears once you type (or when there are more than ten models). Ready models are picked; the rest do what makes them ready (Get, Add Key…, Allow…). With no cloud model set up, a single Cloud row offers Add Key…. Auto will sit on top once the engine can switch models (see "Not built yet"). Manage Models… opens Settings.
 
-1. **Auto:** "On this Mac for routine steps, cloud for hard ones", with its two models named in the detail line. Hidden until a cloud model is ready and the project allows cloud.
-2. **A segmented control: Your Devices | Cloud.** Opens on the lane of the current model. Your Devices holds this Mac and your own servers, each its own group ("On this Mac", "On mew (RTX 3090)"): code leaves the Mac for a server, but not your hardware. Searching looks in both lanes and hides the control.
-3. **A lane caption,** one line: "Private and free: nothing leaves your devices. This Mac has 24 GB." or "Code you send is processed by the provider." (plus the project's permission, with step 4). With no provider set up, Cloud lists the providers with Add Key… instead of an empty list.
-4. **Rows (`ModelLabel.row`).** Ready models first, then models you can get, then ones that won't fit. The current model is checked. Hovering a row shows the detail card: abilities, context length, prices per million tokens, the spec.
-5. **Footer:** "Manage models…" (Settings > Models), and disk used (On this Mac) or spend this week (Cloud).
+## Settings > Models
 
-The grouping by engine (tang / Apple / ollama / config.toml) goes away. Engines show only in the detail card.
+The same list, with managing instead of choosing: models downloaded to this Mac have Show in Finder and Remove from This Mac; cloud models have Hide. Below it: Providers (keys, Add Server…, and Choose Cloud Models…, a sheet over the catalog), Spending once a cloud provider is connected, and Advanced.
 
 ## Where code goes
 
@@ -143,14 +147,6 @@ The empty conversation's "Run a model on this Mac" card becomes a choice, and ch
   - **Cloud:** "The strongest models, from about 4¢ a turn." [Sign in to Frog Pro] [Add a key…]
 - **When the download finishes:** the conversation switches to it if it's still empty, and the transcript says once: "Qwen3 8B is ready and now your default."
 - **Afterwards:** the card shrinks to a single line in the empty state, "Qwen3 8B on this Mac · Change", then goes away once there are two ready models.
-
-## Settings > Models
-
-Two tabs matching the picker's lanes.
-
-- **On this Mac:** installed models with disk used and measured speed (Remove, Show in Finder), downloads in progress, and "Also fits this Mac" with Get buttons. Ollama and config.toml models appear here like any other, with their engine in the detail card.
-- **Cloud:** providers (key status, Add / Replace / Remove key, Keychain-backed via `ProviderStore`), and which models appear in the picker (the catalog, searchable, with toggles). Also spending this week and month, and the cap.
-- **Advanced** (disclosure): engine details, specs, tool mode and tier, probes, and config.toml. The only place those words appear.
 
 ## Motion and feel
 

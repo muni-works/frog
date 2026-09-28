@@ -78,6 +78,13 @@ final class ModelDownloads {
         }
     }
 
+    /// Delete a downloaded model from the cache.
+    func remove(_ repo: String) {
+        cancel(repo)
+        try? FileManager.default.removeItem(at: Self.repoDir(repo))
+        states[repo] = nil
+    }
+
     func cancel(_ repo: String) {
         tasks[repo]?.cancel()
     }

@@ -146,6 +146,20 @@ extension SnapshotTests {
         }
     }
 
+    /// The model picker over a real folder's model list: `model-menu.png`.
+    func testRenderModelMenu() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "frog-menu-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let w = Workspace(folder: dir, fresh: true)
+        defer { w.stop() }
+        await w.reloadModels()
+        await ProviderStore.shared.load()
+        try render(
+            ModelMenu(workspace: w, current: w.models.first?.spec, pick: { _ in }, close: {})
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 340, height: 520), to: "model-menu")
+    }
+
     func testRenderFrogFaces() throws {
         let moods: [(String, FrogMood)] = [
             ("idle", .idle), ("reading", .reading), ("thinking", .thinking), ("working", .working),
