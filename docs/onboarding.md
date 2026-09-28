@@ -1,6 +1,6 @@
 # Onboarding
 
-Spec, written 2026-09-28. Status: steps 1 and 2 built (what frog found, recent projects); the rest proposed.
+Spec, written 2026-09-28. Status: steps 1–3 built (what frog found, recent projects, a bigger model when needed); the rest proposed.
 
 frog has no onboarding screens. No welcome window, no tour, no account. The product is the onboarding: the first message gets an answer in about a second, frog notices what's already on the Mac, and it asks a question only at the moment the answer matters.
 
@@ -39,6 +39,8 @@ and three starting points you can click, made from what it found (failing tests,
 > This needs a bigger model. **Get Qwen3 8B** (4.6 GB) or **use Claude**
 
 It keeps going on Apple Intelligence until you pick, then switches without losing the conversation.
+
+Built as one line above the composer (`BiggerModelLine`). It shows when the model has a small window (under 16k tokens) and the last turn overflowed it, looped, hit the step limit or ran out of tokens, or when it's a project conversation with a finished turn. The device option is a ready model on this Mac or a server if there is one, else the download that suits this Mac; the cloud option is a ready cloud model (through the project's cloud sheet when it asks) or "add a cloud key", which opens Settings > Models. × hides it for that conversation.
 
 **Permissions, in context:**
 - Notifications: the first time a task takes more than 30 seconds, "Ping you when it's done?".

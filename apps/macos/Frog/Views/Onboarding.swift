@@ -200,3 +200,116 @@ struct SetupLine: View {
         }
     }
 }
+
+// MARK: - A bigger model, when it's needed
+
+/// One line above the composer when a small model (Apple Intelligence's 8k window) is out of
+/// its depth: the conversation outgrew it, it went in circles, or it's working in a project.
+/// It offers the next step up on your devices (use it if it's ready, get it if not) and in the
+/// cloud, and picking switches the conversation without losing it (docs/onboarding.md).
+struct BiggerModelLine: View {
+    let workspace: Workspace
+    let conversation: Conversation
+    @State private var closed = false
+    @State private var asking: ModelIdentity?
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("settingsTab") private var settingsTab = "general"
+
+    /// Windows under this are small (see the engine's compact mode).
+    static let smallWindow: UInt64 = 16_384
+
+    private var current: ModelIdentity? {
+        conversation.status.map { workspace.identity($0.model) }
+    }
+
+    private var reason: String? {
+        guard !closed, !conversation.busy, let s = conversation.status, let name = current?.name else { return nil }
+        return Self.reason(model: name, window: s.contextWindow, turns: conversation.turns, inProject: !workspace.isChat)
+    }
+
+    /// Why it's showing, in words; nil when it shouldn't: the model is small and the
+    /// conversation outgrew it, it went in circles, or it's doing work in a project.
+    static func reason(model name: String, window: UInt64, turns: [TurnState], inProject: Bool) -> String? {
+        guard window < smallWindow else { return nil }
+        switch turns.last?.end {
+        case .error(let e) where e.description.localizedCaseInsensitiveContains("context"):
+            return "This conversation outgrew \(name)."
+        case .looping, .stepLimit, .maxTokens:
+            return "\(name) is struggling with this."
+        default:
+            let worked = turns.contains { $0.finished && $0.number != nil }
+            return inProject && worked ? "\(name) is small for work in a project." : nil
+        }
+    }
+
+    /// The next step up on your devices: one that's ready (a server's, a download), else the
+    /// download that suits this Mac.
+    private var onDevices: ModelIdentity {
+        let ready = workspace.models.map(ModelIdentity.init)
+            .filter { $0.state.isReady && !$0.place.isCloud && $0.place != .apple && $0.spec != current?.spec }
+        if let m = ready.first { return m }
+        return ModelIdentity(SuggestedModel.forThisMac)
+    }
+
+    private var inCloud: ModelIdentity? {
+        workspace.models.map { workspace.allowing(ModelIdentity($0)) }.first { $0.place.isCloud && $0.state.isReady }
+    }
+
+    var body: some View {
+        if let reason {
+            HStack(spacing: 4) {
+                Text(reason)
+                let local = onDevices
+                Button(local.state.isReady ? "Use \(local.name)" : "Get \(local.name)") { pick(local) }
+                    .buttonStyle(.link)
+                    .foregroundStyle(local.place.color)
+                if !local.state.isReady, let gb = local.downloadGB {
+                    Text("(\(String(format: "%.1f GB", gb)))")
+                }
+                Text("or")
+                if let cloud = inCloud {
+                    Button("use \(cloud.name)") { pick(cloud) }
+                        .buttonStyle(.link)
+                        .foregroundStyle(cloud.place.color)
+                } else {
+                    Button("add a cloud key") {
+                        settingsTab = "models"
+                        openSettings()
+                    }
+                    .buttonStyle(.link)
+                }
+                Button { closed = true } label: {
+                    Image(systemName: "xmark").font(.caption2.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 4)
+                .help("Keep using \(current?.name ?? "this model")")
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 6)
+            .transition(.opacity)
+            .sheet(item: Binding(get: { asking.map(AskingCloudModel.init) }, set: { if $0 == nil { asking = nil } })) { a in
+                CloudPermissionSheet(workspace: workspace, model: a.model) { allowed in
+                    asking = nil
+                    if allowed { workspace.use(a.model.spec) }
+                }
+            }
+        }
+    }
+
+    /// Like picking it in the picker: a download switches over when it's done, a cloud model
+    /// asks the project first.
+    private func pick(_ m: ModelIdentity) {
+        if m.place.isCloud && workspace.mustAskForCloud { asking = m; return }
+        if m.state.isReady { workspace.use(m.spec) } else { workspace.useWhenReady(m) }
+    }
+}
+
+private struct AskingCloudModel: Identifiable {
+    let model: ModelIdentity
+    var id: String { model.spec }
+}

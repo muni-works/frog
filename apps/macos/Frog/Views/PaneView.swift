@@ -124,12 +124,16 @@ struct PaneView: View {
             // offset over different content.
             .id(ObjectIdentifier(conversation))
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                ComposerView(workspace: workspace, conversation: conversation, window: ui)
-                    .id(ObjectIdentifier(conversation))
-                    .padding(.leading, insets.leading)
-                    .padding(.trailing, insets.trailing)
-                    // The panes you're not typing into step back a little.
-                    .opacity(focused ? 1 : 0.72)
+                VStack(spacing: 0) {
+                    BiggerModelLine(workspace: workspace, conversation: conversation)
+                        .id(ObjectIdentifier(conversation))
+                    ComposerView(workspace: workspace, conversation: conversation, window: ui)
+                        .id(ObjectIdentifier(conversation))
+                        // The panes you're not typing into step back a little.
+                        .opacity(focused ? 1 : 0.72)
+                }
+                .padding(.leading, insets.leading)
+                .padding(.trailing, insets.trailing)
             }
             .modifier(ConversationDropZone(conversation: conversation))
         }
