@@ -19,6 +19,14 @@ struct TranscriptView: View {
                     withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(id, anchor: .top) }
                     jump.wrappedValue = nil
                 }
+                // A new turn goes below one that may be taller than the window. The lazy stack
+                // guesses that turn's height, and the bottom anchor alone can land past the real
+                // content: a blank transcript until you scroll. Scrolling to the new turn lays
+                // it out for real.
+                .onChange(of: conversation.turns.last?.id) { _, id in
+                    guard let id else { return }
+                    proxy.scrollTo(id, anchor: .bottom)
+                }
         }
     }
 
