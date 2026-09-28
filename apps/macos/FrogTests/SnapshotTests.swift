@@ -156,7 +156,9 @@ extension SnapshotTests {
         await ProviderStore.shared.load()
         try render(
             ModelMenu(workspace: w, current: w.models.first?.spec, pick: { _ in }, close: {})
-                .background(Color(nsColor: .windowBackgroundColor)),
+                .background(Color(nsColor: .windowBackgroundColor))
+                // The canvas's margins, as a popover from the composer inherits them.
+                .contentMargins(.leading, 200, for: .scrollContent),
             size: CGSize(width: 340, height: 520), to: "model-menu")
     }
 

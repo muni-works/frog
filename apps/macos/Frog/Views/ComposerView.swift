@@ -48,6 +48,9 @@ struct ComposerView: View {
         .padding(.bottom, 10)
         .frame(maxWidth: 860)
         .frame(maxWidth: .infinity)
+        // The canvas's margins keep the transcript clear of the cards; popovers opened from
+        // here (the model picker, suggestions) mustn't inherit them.
+        .contentMargins(0, for: .scrollContent)
         // The transcript scrolls under the composer; the canvas fades in behind it.
         .background {
             LinearGradient(

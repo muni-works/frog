@@ -138,6 +138,8 @@ struct ModelMenu: View {
             .padding(6)
         }
         .frame(width: 340)
+        // Opened from inside the canvas, it would inherit its scroll margins.
+        .contentMargins(0, for: .scrollContent)
         .environment(\.addProviderKey) { addKey($0) }
         .environment(\.askCloudPermission) { asking = $0 }
         .sheet(item: $keyFor) { p in KeySheet(provider: p) }

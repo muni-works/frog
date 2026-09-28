@@ -51,6 +51,9 @@ struct TranscriptView: View {
             .padding(.bottom, 12)
             .frame(maxWidth: .infinity)
             .background(ScrollBackdropClear())
+            // The canvas's margins are for this scroll view, not for ones inside it (code
+            // blocks) or popovers opened from it.
+            .contentMargins(0, for: .scrollContent)
         }
         .scrollContentBackground(.hidden)
         // The system's scroll-edge blur is hidden (see ScrollBackdropClear), so fade the
