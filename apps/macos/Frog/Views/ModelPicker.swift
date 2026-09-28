@@ -49,6 +49,24 @@ struct ModelMenu: View {
     @State private var downloads = ModelDownloads.shared
     /// A provider whose key is being added, in a sheet over the list.
     @State private var keyFor: ProviderInfo?
+    /// Which lane is showing; starts on the current model's.
+    @State private var lane: Lane?
+
+    /// Where code goes: your own hardware, or a provider's.
+    enum Lane: String, CaseIterable, Identifiable {
+        case devices, cloud
+        var id: Self { self }
+        var title: String { self == .devices ? "Your Devices" : "Cloud" }
+        var symbol: String { self == .devices ? "laptopcomputer" : "cloud" }
+
+        init(_ place: ModelIdentity.Place) {
+            self = place.isCloud ? .cloud : .devices
+        }
+    }
+
+    private var shownLane: Lane {
+        lane ?? current.map { Lane(workspace.identity($0).place) } ?? .devices
+    }
     @AppStorage("settingsTab") private var settingsTab = "general"
     @Environment(\.openSettings) private var openSettings
     @FocusState private var searching: Bool
@@ -65,9 +83,10 @@ struct ModelMenu: View {
     /// a group: ready first, then ones to get, then ones that won't fit.
     private var groups: [(title: String, models: [ModelIdentity])] {
         let words = query.lowercased().split(separator: " ")
+        // Searching looks in both lanes.
         let shown = candidates.filter { m in
             let hay = (m.name + " " + m.spec).lowercased()
-            return words.allSatisfy { hay.contains($0) }
+            return words.allSatisfy { hay.contains($0) } && (!words.isEmpty || Lane(m.place) == shownLane)
         }
         let order: (ModelIdentity.Place) -> Int = { p in
             switch p { case .mac, .apple: 0; case .server: 1; case .cloud: 2 }
@@ -118,6 +137,9 @@ struct ModelMenu: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 Divider()
+                if query.isEmpty {
+                    lanePicker
+                }
                 list
                 Divider()
                 Button {
@@ -154,14 +176,56 @@ struct ModelMenu: View {
         .onKeyPress(.upArrow) { selected = max(selected - 1, 0); hovered = nil; return .handled }
     }
 
+    /// The two lanes, and what choosing one means.
+    private var lanePicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Where models run", selection: Binding(get: { shownLane }, set: { lane = $0; selected = 0 })) {
+                ForEach(Lane.allCases) { l in
+                    Label(l.title, systemImage: l.symbol).tag(l)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            Text(shownLane == .devices
+                 ? "Private and free: nothing leaves your devices. This Mac has \(ModelIdentity.memoryGB) GB."
+                 : "Code you send is processed by the provider.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+    }
+
+    /// Cloud with nothing set up yet: the providers you could add a key for.
+    private var cloudSetup: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Add a key to use a provider's models.")
+                .foregroundStyle(.secondary)
+            ForEach(store.providers.filter { !$0.local && !$0.custom && !$0.connected }) { p in
+                HStack {
+                    Label(p.name, systemImage: "cloud")
+                    Spacer()
+                    Button("Add Key…") { keyFor = p }.controlSize(.small)
+                }
+            }
+        }
+        .font(.callout)
+        .padding(12)
+    }
+
     private var list: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     if flat.isEmpty {
-                        Text(query.isEmpty ? "No models yet." : "No models match.")
-                            .foregroundStyle(.secondary)
-                            .padding(12)
+                        if query.isEmpty && shownLane == .cloud {
+                            cloudSetup
+                        } else {
+                            Text(query.isEmpty ? "No models yet." : "No models match.")
+                                .foregroundStyle(.secondary)
+                                .padding(12)
+                        }
                     }
                     ForEach(groups, id: \.title) { group in
                         Text(group.title)

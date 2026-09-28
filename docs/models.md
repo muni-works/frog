@@ -1,6 +1,6 @@
 # Models: local and cloud
 
-Spec, written 2026-09-28. Status: steps 1–2 built (`ModelIdentity`, `ModelLabel`, states, guardrail tests); steps 3–6 proposed.
+Spec, written 2026-09-28. Status: steps 1–2 built (`ModelIdentity`, `ModelLabel`, states, guardrail tests); step 3's lanes built, Auto waiting on the engine; steps 4–6 proposed.
 
 frog runs models on your Mac and in the cloud. This spec makes that difference visible and deliberate everywhere a model appears, and makes every appearance of a model look, read and behave the same.
 
@@ -35,6 +35,7 @@ Use these words, and only these, in every string about models.
 |---|---|---|
 | Runs locally | **On this Mac** | local, tang, ollama, MLX, sidecar |
 | Runs on your own server | **On mew** (the server's name) | server, remote, LAN, custom provider |
+| This Mac and your servers together | **Your Devices** (the picker's lane) | local, self-hosted, on-prem |
 | Runs remotely | **Cloud · Anthropic** (the provider's name) | API, remote, hosted, provider id |
 | Apple's on-device model | **Apple Intelligence** | apple, foundation model |
 | Can call tools | **Uses tools** | native tools, text tools, tool mode |
@@ -104,8 +105,8 @@ Built so far: Ready, Not downloaded, Downloading, Download failed (Retry), Needs
 Opened from the composer's pill (⌃⌘M, or click). A popover, top to bottom:
 
 1. **Auto:** "On this Mac for routine steps, cloud for hard ones", with its two models named in the detail line. Hidden until a cloud model is ready and the project allows cloud.
-2. **A segmented control: On this Mac | Cloud.** Opens on the lane of the current model.
-3. **A lane caption,** one line: "Private, free, works offline · 24 GB Mac" or "Code is sent to the provider · kiln allows cloud".
+2. **A segmented control: Your Devices | Cloud.** Opens on the lane of the current model. Your Devices holds this Mac and your own servers, each its own group ("On this Mac", "On mew (RTX 3090)"): code leaves the Mac for a server, but not your hardware. Searching looks in both lanes and hides the control.
+3. **A lane caption,** one line: "Private and free: nothing leaves your devices. This Mac has 24 GB." or "Code you send is processed by the provider." (plus the project's permission, with step 4). With no provider set up, Cloud lists the providers with Add Key… instead of an empty list.
 4. **Rows (`ModelLabel.row`).** Ready models first, then models you can get, then ones that won't fit. The current model is checked. Hovering a row shows the detail card: abilities, context length, prices per million tokens, the spec.
 5. **Footer:** "Manage models…" (Settings > Models), and disk used (On this Mac) or spend this week (Cloud).
 
@@ -168,7 +169,7 @@ Consistency has to be enforced, or it erodes one feature at a time.
 
 1. **`ModelIdentity` and `ModelLabel`, swapped into all nine surfaces.** No redesign: same places, one look, plain words. Add the guardrail tests. This removes most of the inconsistency on its own.
 2. **States.** Wire downloads, keys, fit and reachability into `ModelIdentity.state`, with actions working in place in the current picker.
-3. **The two-lane picker and Auto.** Auto starts as a simple rule (local model, escalating to the cloud model on the harness's hard-step signal) until the handoff work in bet 5 replaces it.
+3. **The two-lane picker and Auto.** Lanes are built. Auto needs the engine first: it has no model routing today, so a turn can't switch models mid-way. The engine needs a hard-step signal and a way to continue a turn on another model, which is the local↔cloud handoff in bet 5.
 4. **Per-project cloud permission** and the lane caption.
 5. **Cost and speed:** measured speed, cost estimates, turn footer, spend and cap.
 6. **First run and Settings > Models.**
