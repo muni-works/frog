@@ -58,6 +58,15 @@ final class Workspace {
         let replay = Replay.arguments
         isReplay = replay != nil
         start(arguments: replay ?? last.map { ["-r", $0] } ?? [])
+        // A remembered session that won't open (deleted, or from another engine version) starts
+        // a fresh conversation instead of leaving a dead one.
+        if replay == nil, resume == nil, last != nil, let c = conversation {
+            c.onExit = { [weak self, weak c] in
+                guard let self, let c, c.turns.isEmpty else { return }
+                UserDefaults.standard.removeObject(forKey: Self.lastSessionKey(self.folder))
+                self.newSession()
+            }
+        }
         Task { await refresh() }
     }
 
@@ -151,7 +160,9 @@ final class Workspace {
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID
-            if !self.isReplay, let id = c?.sessionID {
+            // Only once it has a turn: the engine doesn't write a session before its first
+            // message, so an empty one can't be reopened.
+            if !self.isReplay, let c, let id = c.sessionID, !c.turns.isEmpty {
                 UserDefaults.standard.set(id, forKey: Self.lastSessionKey(self.folder))
             }
             Task { await self.refresh() }

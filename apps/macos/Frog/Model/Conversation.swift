@@ -154,6 +154,8 @@ final class Conversation {
     @ObservationIgnored private var pendingFlash: (String, Bool)?
     /// Called when the session id changes or a turn ends, so the sidebar can refresh.
     @ObservationIgnored var onSessionChange: (() -> Void)?
+    /// The engine exited on its own (not stopped).
+    @ObservationIgnored var onExit: (() -> Void)?
 
     /// `arguments` are extra CLI flags, e.g. `["-r", id]` or `["--fork", "id@3"]`.
     init(folder: URL, arguments: [String], model: String?) {
@@ -293,6 +295,7 @@ final class Conversation {
                 let tail = engine?.stderr.split(separator: "\n").suffix(3).joined(separator: "\n") ?? ""
                 let how = engine?.exitDescription ?? "unknown"
                 failure = tail.isEmpty ? "The frog engine exited (\(how))." : tail
+                onExit?()
             }
             busy = false
             progress = nil
