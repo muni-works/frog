@@ -34,6 +34,41 @@ final class ProviderStore {
 
     func provider(_ id: String) -> ProviderInfo? { providers.first { $0.id == id } }
 
+    // MARK: Reachability
+
+    /// Local apps (Ollama, LM Studio) and your servers that answered when last asked, by id.
+    /// Missing means not asked yet.
+    private(set) var reachable: [String: Bool] = [:]
+
+    /// Ask every local app and server whether it's up, briefly and all at once.
+    func probe() async {
+        let targets = providers.filter(\.local)
+        let results = await withTaskGroup(of: (String, Bool).self) { group in
+            for p in targets { group.addTask { (p.id, await Self.answers(p)) } }
+            var out: [String: Bool] = [:]
+            for await (id, ok) in group { out[id] = ok }
+            return out
+        }
+        reachable = results
+    }
+
+    /// Whether a server answers its model list within a second and a half.
+    nonisolated static func answers(_ p: ProviderInfo) async -> Bool {
+        var base = p.baseUrl.hasSuffix("/") ? String(p.baseUrl.dropLast()) : p.baseUrl
+        let path: String
+        if p.kind == "ollama" {
+            if base.hasSuffix("/v1") { base = String(base.dropLast(3)) }
+            path = "/api/tags"
+        } else {
+            path = "/models"
+        }
+        guard let url = URL(string: base + path) else { return false }
+        var request = URLRequest(url: url, timeoutInterval: 1.5)
+        request.httpMethod = "GET"
+        let session = URLSession(configuration: .ephemeral)
+        return (try? await session.data(for: request)).map { _ in true } ?? false
+    }
+
     func name(of provider: String) -> String { self.provider(provider)?.name ?? provider }
 
     /// Save a key (empty removes it), then refresh what it unlocks.

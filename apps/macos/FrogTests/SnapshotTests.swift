@@ -30,7 +30,7 @@ final class SnapshotTests: XCTestCase {
             .compactMap { try JSONDecoder.frog.decode(Record.self, from: Data($0.utf8)).env }
     }
 
-    private func render<V: View>(_ view: V, size: CGSize, to name: String) throws {
+    private func render<V: View>(_ view: V, size: CGSize, to name: String, settle: TimeInterval = 0.4) throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -38,7 +38,7 @@ final class SnapshotTests: XCTestCase {
         window.contentView = host
         host.layoutSubtreeIfNeeded()
         // Let SwiftUI settle (scroll anchors, lazy stacks) before capturing.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        RunLoop.main.run(until: Date().addingTimeInterval(settle))
         host.layoutSubtreeIfNeeded()
         guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return XCTFail("no bitmap") }
         host.cacheDisplay(in: host.bounds, to: rep)
@@ -158,6 +158,14 @@ extension SnapshotTests {
             ModelMenu(workspace: w, current: w.models.first?.spec, pick: { _ in }, close: {})
                 .background(Color(nsColor: .windowBackgroundColor)),
             size: CGSize(width: 340, height: 520), to: "model-menu")
+    }
+
+    /// Settings > Models as it is on this Mac: `settings-models.png`.
+    func testRenderModelSettings() async throws {
+        await ProviderStore.shared.load()
+        try render(
+            ModelSettings().background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 640, height: 1500), to: "settings-models", settle: 5)
     }
 
     func testRenderFrogFaces() throws {

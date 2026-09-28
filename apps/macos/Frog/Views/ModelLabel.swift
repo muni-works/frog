@@ -149,7 +149,7 @@ struct ModelStateAction: View {
                 settingsTab = "models"
                 openSettings()
             }
-        case .ready, .wontFit:
+        case .ready, .wontFit, .unreachable:
             EmptyView()
         }
     }
@@ -214,6 +214,7 @@ extension ModelIdentity {
         case .wontFit(let needs, let has): "Needs \(needs) GB, this Mac has \(has)"
         case .notAllowed(let project): "\(project) keeps code on your devices"
         case .overCap: "This month's cloud cap is reached"
+        case .unreachable(let why): why
         }
     }
 
@@ -230,13 +231,14 @@ extension ModelIdentity.State {
         case .wontFit: "memorychip"
         case .notAllowed: "lock"
         case .overCap: "pause.circle"
+        case .unreachable: "bolt.slash"
         }
     }
 
     /// Shown, but not something you can pick.
     var dimmed: Bool {
         switch self {
-        case .wontFit, .notAllowed, .overCap: true
+        case .wontFit, .notAllowed, .overCap, .unreachable: true
         default: false
         }
     }

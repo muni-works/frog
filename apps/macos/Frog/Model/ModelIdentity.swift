@@ -59,6 +59,8 @@ struct ModelIdentity: Hashable, Sendable {
         case notAllowed(project: String)
         /// A cloud model, with this month's spending cap reached.
         case overCap
+        /// Its app or server isn't answering ("Ollama isn't running").
+        case unreachable(String)
 
         var isReady: Bool { self == .ready }
     }
@@ -176,6 +178,9 @@ extension ModelIdentity {
             return .needsKey(provider: name)
         }
         if place.isCloud, ModelStats.shared.overCap { return .overCap }
+        if let p = ProviderStore.shared.provider(provider), p.local, ProviderStore.shared.reachable[provider] == false {
+            return .unreachable(p.custom ? "\(p.name) isn't responding" : "\(p.name) isn't running")
+        }
         if let repo {
             switch ModelDownloads.shared.states[repo] {
             case .downloading(let f): return .downloading(fraction: f)
@@ -209,7 +214,7 @@ extension ModelIdentity {
         } ?? .cloud(provider.isEmpty ? "unknown" : store.name(of: provider))
         }
         let cleaned = cleanName(model)
-        return ModelIdentity(
+        var m = ModelIdentity(
             spec: spec,
             name: provider == "apple" ? "Apple Intelligence" : cleaned.name,
             variant: cleaned.variant,
@@ -219,6 +224,8 @@ extension ModelIdentity {
             context: nil,
             price: nil
         )
+        m.state = state(place: place, provider: provider, repo: nil, gb: nil, installed: true)
+        return m
     }
 
     // MARK: Names

@@ -86,7 +86,7 @@ struct ModelMenu: View {
         case .notDownloaded, .downloadFailed: if let r = m.repo { downloads.download(r) }
         case .needsKey: addKey(m.providerID)
         case .notAllowed: asking = m
-        case .downloading, .wontFit, .overCap: break
+        case .downloading, .wontFit, .overCap, .unreachable: break
         }
     }
 
@@ -166,6 +166,7 @@ struct ModelMenu: View {
         .task {
             await store.load()
             await workspace.reloadModels()
+            await store.probe()
         }
         // A finished download, or a key added, makes more models usable.
         .onChange(of: downloads.states) { Task { await workspace.reloadModels() } }

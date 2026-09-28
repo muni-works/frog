@@ -14,7 +14,7 @@ enum ModelSections {
         }
         // Ready first; ones that need something next; ones that can't be used last.
         let rank: (ModelIdentity.State) -> Int = { s in
-            switch s { case .ready: 0; case .wontFit, .overCap: 2; default: 1 }
+            switch s { case .ready: 0; case .wontFit, .overCap, .unreachable: 2; default: 1 }
         }
         let sorted: ([ModelIdentity]) -> [ModelIdentity] = { list in
             list.enumerated().sorted { (rank($0.element.state), $0.offset) < (rank($1.element.state), $1.offset) }.map(\.element)

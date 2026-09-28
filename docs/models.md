@@ -98,7 +98,7 @@ A model is in exactly one state. Each state has one badge, one line, one action,
 
 Actions happen in place: Get downloads right there in the row, and Add key opens a sheet over the picker, not Settings. One control, `ModelStateAction`, does them wherever a row appears (the picker, Settings, first run).
 
-Built so far: Ready, Not downloaded, Downloading, Download failed (Retry), Needs a key, Won't fit. **Unreachable** waits on the engine: `frog --models` leaves out models it can't reach, so the app can't tell "not running" from "not there". It needs the engine to list them with a reachability flag. **Not allowed here** comes with project permission (step 4). `SnapshotTests.testRenderModelLabels` renders every size × state × place to `$TMPDIR/frog-snapshots/model-labels.png` for review.
+Built: every state in the table, plus Over cap. Unreachable comes from the app's own quick check of local apps and servers (see Settings > Models). It needs the engine to list them with a reachability flag. **Not allowed here** comes with project permission (step 4). `SnapshotTests.testRenderModelLabels` renders every size × state × place to `$TMPDIR/frog-snapshots/model-labels.png` for review.
 
 ## One list
 
@@ -114,7 +114,16 @@ A menu over that list, 340pt wide: no lane switch and no side card. The search f
 
 ## Settings > Models
 
-The same list, with managing instead of choosing: models downloaded to this Mac have Show in Finder and Remove from This Mac; cloud models have Hide. Below it: Providers (keys, Add Server…, and Choose Cloud Models…, a sheet over the catalog), Spending once a cloud provider is connected, and Advanced.
+In the order people think about models:
+
+1. **Default:** which model new conversations use (moved here from General).
+2. **Your models:** the picker's list, managed instead of chosen. Downloaded models have Show in Finder and Remove from This Mac; cloud models have Hide. The default is checked.
+3. **Get more:** recommended downloads, "Runs on frog's own engine, fully offline."
+4. **Cloud:** only providers you've connected, each with how many of its models are in the picker, Choose Models… (the catalog, filtered to that provider) and a menu with Change Key / Remove Key. One "Add a Provider…" menu replaces the rows of unconnected providers. Spending (week, month, cap) sits here once a provider is connected.
+5. **Servers and Apps:** your servers, and Ollama or LM Studio while they're running, each with a live status ("Running · 3 models", "Not responding") from a quick check of its model list. Add Server….
+6. **Advanced:** engine details.
+
+The same check feeds the Unreachable state: a model whose app or server doesn't answer reads "Ollama isn't running" or "mew isn't responding" in the picker and here, dimmed.
 
 ## Where code goes
 
@@ -179,7 +188,7 @@ Steps 1 and 2 are app-only. Steps 3–5 need small engine additions: an escalati
 ## Not built yet
 
 - **Auto.** The engine can't switch models mid-turn. It needs a hard-step signal and a way to continue a turn on another model (bet 5's local↔cloud handoff).
-- **Unreachable.** `frog --models` leaves out models it can't reach. It needs to list them with a reachability flag.
+- **Unreachable, fully.** The app checks local apps and servers itself, which covers the current model and servers. Models from an app that isn't running still don't appear at all, because `frog --models` leaves them out; listing them with a reachability flag would let the picker show them dimmed.
 - **Starting on Apple Intelligence.** The first run shows the choice cards, and the conversation switches to the downloaded model when it's ready. Starting on Apple's model meanwhile needs the engine's default-model choice to prefer it when nothing else is installed.
 - **Frog Pro sign-in** on the Cloud card, once Pro exists. Until then the card offers Add a Key….
 
