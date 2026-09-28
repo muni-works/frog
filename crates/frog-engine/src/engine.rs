@@ -1548,13 +1548,20 @@ impl Agent {
         };
         let host = crate::mcp::Host::new(emit, self.rich && self.can_ask, &self.root);
         let hub = crate::mcp::Hub::connect(servers, host).await;
+        // Servers that didn't connect get one plain sentence, by reason; the raw errors go to
+        // the log, not the conversation.
+        let failed: Vec<(String, String)> = hub
+            .status()
+            .into_iter()
+            .filter_map(|st| st.error.map(|e| (st.name, e)))
+            .collect();
+        for (name, e) in &failed {
+            eprintln!("MCP `{name}` didn't connect: {e}");
+        }
+        if let Some(line) = crate::mcp::unavailable_summary(&failed) {
+            self.notice(Level::Info, line);
+        }
         for st in hub.status() {
-            if let Some(e) = &st.error {
-                self.notice(
-                    Level::Warn,
-                    format!("MCP `{}` didn't connect: {e}", st.name),
-                );
-            }
             for q in &st.quarantined {
                 self.notice(
                     Level::Warn,

@@ -150,6 +150,10 @@ pub struct Config {
     /// Let the agent see and drive macOS apps (the bundled `frog-desktop` MCP server).
     #[serde(default)]
     pub computer_use: bool,
+    /// Read Claude Code's MCP servers too. Not a config.toml key: `load` fills it from the
+    /// choice recorded by `--use-claude-mcp` (see `imports`).
+    #[serde(skip)]
+    pub claude_mcp: bool,
     /// Run shell commands in a sandbox (writes only in the project, credentials hidden), so
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]
@@ -207,11 +211,14 @@ pub fn data_dir() -> PathBuf {
 impl Config {
     pub fn load() -> Result<Self> {
         let path = config_dir().join("config.toml");
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let text = std::fs::read_to_string(&path)?;
-        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+        let mut cfg: Self = if path.exists() {
+            let text = std::fs::read_to_string(&path)?;
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
+        } else {
+            Self::default()
+        };
+        cfg.claude_mcp = crate::imports::claude_mcp_on();
+        Ok(cfg)
     }
 
     /// Resolve a profile name or a `provider/model` spec.
