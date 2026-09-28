@@ -55,6 +55,8 @@ struct ModelIdentity: Hashable, Sendable {
         case needsKey(provider: String)
         /// Too big for this Mac's memory.
         case wontFit(needsGB: Int, hasGB: Int)
+        /// A cloud model, in a project that keeps its code on your devices.
+        case notAllowed(project: String)
 
         var isReady: Bool { self == .ready }
     }

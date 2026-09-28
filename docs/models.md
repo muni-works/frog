@@ -1,6 +1,6 @@
 # Models: local and cloud
 
-Spec, written 2026-09-28. Status: steps 1–2 built (`ModelIdentity`, `ModelLabel`, states, guardrail tests); step 3's lanes built, Auto waiting on the engine; steps 4–6 proposed.
+Spec, written 2026-09-28. Status: steps 1, 2 and 4 built (`ModelIdentity`, `ModelLabel`, states, guardrail tests, project permission); step 3's lanes built, Auto waiting on the engine; steps 5–6 proposed.
 
 frog runs models on your Mac and in the cloud. This spec makes that difference visible and deliberate everywhere a model appears, and makes every appearance of a model look, read and behave the same.
 
@@ -119,6 +119,9 @@ The grouping by engine (tang / Apple / ollama / config.toml) goes away. Engines 
   > **Use cloud models in kiln?** Files you mention and tool output are sent to the provider.
   > [Keep it on this Mac] [Just this conversation] [Always allow]
 - **Keep it on this Mac** puts the Cloud lane in the Not allowed here state and makes Auto local-only. The choice is shown in the lane caption and can be changed in the project's title menu. Plain chats (no folder) ask the same question once, for all chats.
+- **Where it lives.** frog keeps the answer in `~/.config/frog/projects.json` (the nearest folder with an answer decides) and enforces it at session start, on model switches, and for the auto-mode classifier, which falls back to the session's model. `frog --cloud-policy [allow|deny|ask]` reads or sets it. "Cloud" means the endpoint leaves your devices: hosted APIs, or any server that isn't localhost, a bare or `.local` name, a private or Tailscale address.
+- **Just this conversation** allows cloud until the conversation changes. In a folder that said no, it first resets the answer to Ask, since frog enforces a no.
+- **Built:** the sheet, the Not allowed here state with Allow…, the lane caption ("kiln allows cloud models", "You'll be asked before kiln's code goes to the cloud"), and a Cloud Models picker in the title menu (Ask First / Allow / Keep Code on Your Devices).
 - **Switching lanes mid-conversation** says so once, in the transcript: "From here on, turns go to Claude Sonnet 5 (cloud)." No alert.
 
 ## Cost and speed

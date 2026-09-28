@@ -110,6 +110,7 @@ extension SnapshotTests {
             m("Qwen3 8B", .mac, .downloadFailed("offline")),
             m("GPT-5", .cloud("OpenAI"), .needsKey(provider: "OpenAI")),
             m("Qwen3 Coder 30B", .mac, .wontFit(needsGB: 32, hasGB: 24)),
+            m("Claude Opus 5.5", .cloud("Anthropic"), .notAllowed(project: "kiln"), [.reasons]),
         ]
         let sheet = VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(models.enumerated()), id: \.offset) { _, model in
@@ -129,7 +130,7 @@ extension SnapshotTests {
         }
         .padding(16)
         .background(Color(nsColor: .windowBackgroundColor))
-        try render(sheet, size: CGSize(width: 960, height: 520), to: "model-labels")
+        try render(sheet, size: CGSize(width: 960, height: 580), to: "model-labels")
     }
 
     func testRenderFrogFaces() throws {

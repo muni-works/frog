@@ -37,6 +37,42 @@ final class Workspace {
     private(set) var git: GitInfo?
     /// Agent Skills this folder sees, for `/skill` completion.
     private(set) var skills: [SkillInfo] = []
+
+    /// Whether this folder's code may go to cloud models (frog keeps and enforces the answer).
+    enum CloudPolicy: String, Codable, Sendable {
+        case ask, allow, deny
+    }
+
+    private(set) var cloud: CloudPolicy = .ask
+    /// "Just this conversation": cloud allowed until the conversation changes.
+    var cloudForThisConversation = false
+
+    /// What this folder is called when asking about it: "kiln", or "Chats".
+    var policyName: String { isChat ? "Chats" : name }
+
+    func setCloud(_ c: CloudPolicy) async {
+        struct Answer: Decodable { var cloud: CloudPolicy }
+        if let a = try? await Frog.json(Answer.self, args: ["--cloud-policy", c.rawValue, "--json"], cwd: folder) {
+            cloud = a.cloud
+        }
+    }
+
+    /// Whether choosing a cloud model needs asking first.
+    var mustAskForCloud: Bool {
+        switch cloud {
+        case .allow: false
+        case .ask: !cloudForThisConversation
+        case .deny: true
+        }
+    }
+
+    /// A model as this folder may use it: cloud models are locked where code stays on your devices.
+    func allowing(_ m: ModelIdentity) -> ModelIdentity {
+        guard m.place.isCloud, cloud == .deny, m.state.isReady else { return m }
+        var m = m
+        m.state = .notAllowed(project: policyName)
+        return m
+    }
     @ObservationIgnored private var filesLoaded = false
 
     func loadFiles() {
@@ -97,6 +133,10 @@ final class Workspace {
         if models.isEmpty, let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
             models = m
         }
+        struct Answer: Decodable { var cloud: CloudPolicy }
+        if let a = try? await Frog.json(Answer.self, args: ["--cloud-policy", "--json"], cwd: folder) {
+            cloud = a.cloud
+        }
     }
 
     /// Reload the model list (after providers or enabled models change).
@@ -144,6 +184,7 @@ final class Workspace {
 
     private func start(arguments: [String]) {
         conversation?.stop()
+        cloudForThisConversation = false
         // The permission mode new sessions start in (Settings > Permissions).
         let mode = UserDefaults.standard.string(forKey: "defaultMode").flatMap(Mode.init(rawValue:))
         let modeFlag: [String] = switch mode {

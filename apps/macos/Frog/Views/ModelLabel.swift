@@ -118,6 +118,7 @@ struct ModelStateAction: View {
     let model: ModelIdentity
     @State private var downloads = ModelDownloads.shared
     @Environment(\.addProviderKey) private var addKey
+    @Environment(\.askCloudPermission) private var askCloud
 
     var body: some View {
         switch model.state {
@@ -137,6 +138,8 @@ struct ModelStateAction: View {
             button("Retry") { if let r = model.repo { downloads.download(r) } }
         case .needsKey:
             if let addKey { button("Add Key…") { addKey(model.providerID) } }
+        case .notAllowed:
+            if let askCloud { button("Allow…") { askCloud(model) } }
         case .ready, .wontFit:
             EmptyView()
         }
@@ -185,6 +188,8 @@ extension EnvironmentValues {
     @Entry var models: [ModelEntry] = []
     /// Ask for a provider's key (by provider id), in a sheet over whatever asked.
     @Entry var addProviderKey: ((String) -> Void)?
+    /// Ask whether this project may use a cloud model.
+    @Entry var askCloudPermission: ((ModelIdentity) -> Void)?
 }
 
 extension ModelIdentity {
@@ -198,6 +203,7 @@ extension ModelIdentity {
         case .downloadFailed: "Download failed"
         case .needsKey(let p): "Add \(p.first.map { "AEIOU".contains($0) } == true ? "an" : "a") \(p) key to use it"
         case .wontFit(let needs, let has): "Needs \(needs) GB, this Mac has \(has)"
+        case .notAllowed(let project): "\(project) keeps code on your devices"
         }
     }
 
@@ -212,11 +218,17 @@ extension ModelIdentity.State {
         case .downloadFailed: "exclamationmark.triangle"
         case .needsKey: "key"
         case .wontFit: "memorychip"
+        case .notAllowed: "lock"
         }
     }
 
     /// Shown, but not something you can pick.
-    var dimmed: Bool { if case .wontFit = self { true } else { false } }
+    var dimmed: Bool {
+        switch self {
+        case .wontFit, .notAllowed: true
+        default: false
+        }
+    }
 }
 
 extension Workspace {

@@ -46,6 +46,8 @@ final class ModelIdentityTests: XCTestCase {
         XCTAssertEqual(m(.needsKey(provider: "OpenAI")).stateLine, "Add an OpenAI key to use it")
         XCTAssertEqual(m(.wontFit(needsGB: 32, hasGB: 24)).stateLine, "Needs 32 GB, this Mac has 24")
         XCTAssertTrue(m(.wontFit(needsGB: 32, hasGB: 24)).state.dimmed)
+        XCTAssertEqual(m(.notAllowed(project: "kiln")).stateLine, "kiln keeps code on your devices")
+        XCTAssertTrue(m(.notAllowed(project: "kiln")).state.dimmed)
     }
 
     /// Views don't show raw specs or engine words; `ModelLabel` does the talking. Lines that

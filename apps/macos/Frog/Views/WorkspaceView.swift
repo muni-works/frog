@@ -506,6 +506,11 @@ extension WorkspaceView {
         if !workspace.isChat {
             Button("Show Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([workspace.folder]) }
         }
+        Picker("Cloud Models", selection: Binding(get: { workspace.cloud }, set: { c in Task { await workspace.setCloud(c) } })) {
+            Text("Ask First").tag(Workspace.CloudPolicy.ask)
+            Text("Allow").tag(Workspace.CloudPolicy.allow)
+            Text("Keep Code on Your Devices").tag(Workspace.CloudPolicy.deny)
+        }
         if let id = conversation.sessionID {
             Button("Copy Session ID") {
                 NSPasteboard.general.clearContents()

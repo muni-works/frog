@@ -51,6 +51,8 @@ struct ModelMenu: View {
     @State private var keyFor: ProviderInfo?
     /// Which lane is showing; starts on the current model's.
     @State private var lane: Lane?
+    /// A cloud model waiting on the project's permission.
+    @State private var asking: ModelIdentity?
 
     /// Where code goes: your own hardware, or a provider's.
     enum Lane: String, CaseIterable, Identifiable {
@@ -74,7 +76,7 @@ struct ModelMenu: View {
     /// Every model to offer: the ones frog can use, then the ones recommended for this Mac that
     /// aren't downloaded yet (a download in progress counts as not yet).
     private var candidates: [ModelIdentity] {
-        let usable = workspace.models.map(ModelIdentity.init)
+        let usable = workspace.models.map { workspace.allowing(ModelIdentity($0)) }
         let have = Set(usable.map(\.spec))
         return usable + SuggestedModel.all.filter { !have.contains($0.spec) }.map(ModelIdentity.init)
     }
@@ -113,9 +115,11 @@ struct ModelMenu: View {
     /// Ready models are picked; the rest do what makes them ready.
     private func choose(_ m: ModelIdentity) {
         switch m.state {
+        case .ready where m.place.isCloud && workspace.mustAskForCloud: asking = m
         case .ready: pick(m.spec)
         case .notDownloaded, .downloadFailed: if let r = m.repo { downloads.download(r) }
         case .needsKey: addKey(m.providerID)
+        case .notAllowed: asking = m
         case .downloading, .wontFit: break
         }
     }
@@ -162,7 +166,14 @@ struct ModelMenu: View {
             }
         }
         .environment(\.addProviderKey) { addKey($0) }
+        .environment(\.askCloudPermission) { asking = $0 }
         .sheet(item: $keyFor) { p in KeySheet(provider: p) }
+        .sheet(item: Binding(get: { asking.map(AskingCloud.init) }, set: { if $0 == nil { asking = nil } })) { a in
+            CloudPermissionSheet(workspace: workspace, model: a.model) { allowed in
+                asking = nil
+                if allowed { pick(a.model.spec) }
+            }
+        }
         .onAppear { searching = true }
         .task {
             await store.load()
@@ -188,13 +199,25 @@ struct ModelMenu: View {
             .labelsHidden()
             Text(shownLane == .devices
                  ? "Private and free: nothing leaves your devices. This Mac has \(ModelIdentity.memoryGB) GB."
-                 : "Code you send is processed by the provider.")
+                 : "Code you send is processed by the provider. " + cloudLine)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
+    }
+
+    /// The project's answer, under the Cloud lane.
+    private var cloudLine: String {
+        let name = workspace.policyName
+        switch workspace.cloud {
+        case .allow: return "\(name) allows cloud models."
+        case .deny: return "\(name) keeps code on your devices."
+        case .ask: return workspace.cloudForThisConversation
+            ? "Allowed for this conversation."
+            : "You'll be asked before \(name)'s code goes to the cloud."
+        }
     }
 
     /// Cloud with nothing set up yet: the providers you could add a key for.
@@ -318,5 +341,62 @@ private struct ModelCard: View {
         if let c = model.context { out.append(("Context", "\(c.formatted()) tokens")) }
         if let p = model.price { out.append(("Price", p)) }
         return out
+    }
+}
+
+/// A cloud model waiting on permission, as a sheet item.
+private struct AskingCloud: Identifiable {
+    let model: ModelIdentity
+    var id: String { model.spec }
+}
+
+/// The one question frog asks before a project's code goes to the cloud: once per project, with
+/// the answer kept (and enforced) by frog, or just for this conversation.
+struct CloudPermissionSheet: View {
+    let workspace: Workspace
+    let model: ModelIdentity
+    /// Whether the model may be used now.
+    let done: (Bool) -> Void
+
+    private var provider: String {
+        if case .cloud(let p) = model.place { return p }
+        return "the provider"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Use cloud models in \(workspace.policyName)?", systemImage: "cloud")
+                .font(.headline)
+            Text("\(model.name) runs at \(provider). The files you mention, the commands frog runs and their output are sent there to answer you.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("You can change this anytime from the conversation's title menu.")
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+            HStack {
+                Button("Keep It on Your Devices") {
+                    Task { await workspace.setCloud(.deny) }
+                    done(false)
+                }
+                Spacer()
+                Button("Just This Conversation") {
+                    Task {
+                        // Enforced by frog: a folder that said no has to be asked again.
+                        if workspace.cloud == .deny { await workspace.setCloud(.ask) }
+                        workspace.cloudForThisConversation = true
+                        done(true)
+                    }
+                }
+                Button("Always Allow") {
+                    Task {
+                        await workspace.setCloud(.allow)
+                        done(true)
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
     }
 }
