@@ -62,6 +62,11 @@ struct RootView: View {
             }
         }
         .frame(minWidth: 720, minHeight: 480)
+        // Drag the window from any empty space, not just the title bar. Text selection,
+        // buttons and fields are children, so their own gestures win.
+        .contentShape(.rect)
+        .gesture(WindowDragGesture())
+        .allowsWindowActivationEvents(true)
         .onAppear {
             if folder == nil { folder = LaunchFolder.take() ?? Frog.chatFolder }
         }
