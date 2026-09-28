@@ -1179,13 +1179,10 @@ impl Agent {
         if self.subagent {
             self.system.push_str(crate::subagent::PROMPT);
         }
-        self.system.push_str(&if self.plain_chat() {
-            String::new()
-        } else if self.small_window() {
-            crate::skills::catalog_within(&self.skills, 600)
-        } else {
-            crate::skills::catalog(&self.skills)
-        });
+        // No Skill tool in a small window (see `sync_specs`), so no catalog either.
+        if !self.small_window() {
+            self.system.push_str(&crate::skills::catalog(&self.skills));
+        }
         let (index, omitted) = crate::memory::index(&self.notes, self.tier, self.window);
         self.system.push_str(&index);
         self.notes_omitted = omitted;
@@ -1222,7 +1219,11 @@ impl Agent {
         if self.chat || self.subagent || self.memory.is_none() {
             return;
         }
-        let budget = crate::repomap::budget(self.tier);
+        let budget = match crate::repomap::budget(self.tier) {
+            // A small window gets the top of the map only.
+            b if self.small_window() => b.min(Self::SMALL_REPO_MAP),
+            b => b,
+        };
         let have = !self.repo_map.text.is_empty();
         if budget == 0 {
             if have {
@@ -1473,7 +1474,12 @@ impl Agent {
             (None, None) => self.profile.context_window(),
         };
         self.provider.set_context_window(self.window);
-        // The tools and prompt were built before the window was known; a small one trims them.
+        // The tools, repo map and prompt were built before the window was known; a small one
+        // trims them.
+        if self.small_window() && self.repo_map.text.len() > Self::SMALL_REPO_MAP {
+            self.repo_map = Default::default();
+            self.refresh_repo_map(&[]);
+        }
         self.sync_specs();
         self.apply_harness();
     }
@@ -1625,6 +1631,8 @@ impl Agent {
     /// Below this window (tokens), the prompt keeps to what a small model can hold: no
     /// subagents, no MCP instructions or schemas until loaded, skills by name only.
     const COMPACT_WINDOW: u64 = 16_384;
+    /// Characters of repo map a small window gets.
+    const SMALL_REPO_MAP: usize = 1_200;
 
     fn small_window(&self) -> bool {
         self.window < Self::COMPACT_WINDOW
@@ -1664,6 +1672,14 @@ impl Agent {
         // (Apple's on-device model drew diagrams of "hello"). With none, it can only answer.
         if self.plain_chat() {
             specs.clear();
+        } else if self.small_window() && !self.subagent {
+            // In a project, a small window holds the core tools and little else: the rest
+            // (diagrams, the code map, docs, recall, skills, the plan) cost more room than
+            // they're worth at 8k.
+            specs.retain(|s| {
+                matches!(&*s.name, "Bash" | "Read" | "Write" | "Edit" | "Glob" | "Grep")
+                    || &*s.name == crate::mcp::SEARCH_TOOL
+            });
         }
         self.specs = specs;
     }
