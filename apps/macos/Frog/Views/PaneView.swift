@@ -127,6 +127,8 @@ struct PaneView: View {
                 VStack(spacing: 0) {
                     BiggerModelLine(workspace: workspace, conversation: conversation)
                         .id(ObjectIdentifier(conversation))
+                    PingLine(conversation: conversation)
+                        .id(ObjectIdentifier(conversation))
                     ComposerView(workspace: workspace, conversation: conversation, window: ui)
                         .id(ObjectIdentifier(conversation))
                         // The panes you're not typing into step back a little.

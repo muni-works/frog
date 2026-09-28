@@ -1,6 +1,6 @@
 # Onboarding
 
-Spec, written 2026-09-28. Status: steps 1–4 built (what frog found, recent projects, a bigger model when needed, the project greeting); the rest proposed.
+Spec, written 2026-09-28. Status: steps 1–5 built (what frog found, recent projects, a bigger model when needed, the project greeting, permissions in context); "after that" proposed.
 
 frog has no onboarding screens. No welcome window, no tour, no account. The product is the onboarding: the first message gets an answer in about a second, frog notices what's already on the Mac, and it asks a question only at the moment the answer matters.
 
@@ -45,8 +45,8 @@ It keeps going on Apple Intelligence until you pick, then switches without losin
 Built as one line above the composer (`BiggerModelLine`). It shows when the model has a small window (under 16k tokens) and the last turn overflowed it, looped, hit the step limit or ran out of tokens, or when it's a project conversation with a finished turn. The device option is a ready model on this Mac or a server if there is one, else the download that suits this Mac; the cloud option is a ready cloud model (through the project's cloud sheet when it asks) or "add a cloud key", which opens Settings > Models. × hides it for that conversation.
 
 **Permissions, in context:**
-- Notifications: the first time a task takes more than 30 seconds, "Ping you when it's done?".
-- Dictation: the first time you hold the mic.
+- Notifications: the first time a task takes more than 30 seconds, "Ping you when it's done?" above the composer (`PingLine`). Yes asks the system; No thanks turns off "notify when done". Either is remembered, and nothing asks for notifications before that (a notification with no answer yet is dropped, not used to prompt).
+- Dictation: the first time you hold the mic (the microphone and speech prompts come from starting dictation).
 - Cloud: the per-project sheet (docs/models.md).
 
 ## After that

@@ -355,3 +355,61 @@ private struct AskingCloudModel: Identifiable {
     let model: ModelIdentity
     var id: String { model.spec }
 }
+
+// MARK: - Ping you when it's done?
+
+/// Notifications are asked about once, the first time a task runs longer than half a minute:
+/// "This is taking a while. Ping you when it's done? Yes · No thanks". Yes asks the system;
+/// either answer is remembered, and the setting stays in Settings > General.
+struct PingLine: View {
+    let conversation: Conversation
+    @AppStorage("pingAsked") private var asked = false
+    @AppStorage("notifyWhenDone") private var notifyWhenDone = true
+    @State private var due = false
+
+    static let after: TimeInterval = 30
+
+    private var started: Date? {
+        guard conversation.busy, let turn = conversation.turns.last, !turn.finished else { return nil }
+        return turn.startedAt
+    }
+
+    var body: some View {
+        Group {
+            if due && !asked && conversation.busy {
+                HStack(spacing: 4) {
+                    Text("This is taking a while. Ping you when it's done?")
+                    Button("Yes") {
+                        asked = true
+                        notifyWhenDone = true
+                        Task { await Notifier.shared.ask() }
+                    }
+                    .buttonStyle(.link)
+                    Text("·").foregroundStyle(.tertiary)
+                    Button("No thanks") {
+                        asked = true
+                        notifyWhenDone = false
+                    }
+                    .buttonStyle(.link)
+                    .foregroundStyle(.secondary)
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 6)
+                .transition(.opacity)
+            }
+        }
+        .task(id: started) {
+            due = false
+            guard !asked, let started else { return }
+            let wait = started.addingTimeInterval(Self.after).timeIntervalSinceNow
+            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+            guard !Task.isCancelled, notifyWhenDone else { return }
+            // Already answered in System Settings (or earlier): nothing to ask.
+            guard await Notifier.shared.notAskedYet() else { asked = true; return }
+            withAnimation(.snappy) { due = true }
+        }
+    }
+}

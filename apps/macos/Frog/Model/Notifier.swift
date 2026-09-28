@@ -28,15 +28,37 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     private var inBackground: Bool { !NSApp.isActive }
 
-    /// Ask for permission the first time we actually have something to say.
+    /// Post only once you've said yes: the question is asked in context, the first time a
+    /// task runs long (`PingLine`), never out of the blue from another app.
     private func post(_ content: UNMutableNotificationContent, id: String) {
         Task {
-            if authorized == nil {
-                authorized = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
-            }
-            guard authorized == true else { return }
+            guard await allowed() else { return }
             try? await center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
         }
+    }
+
+    private func allowed() async -> Bool {
+        if let authorized { return authorized }
+        switch await center.notificationSettings().authorizationStatus {
+        case .authorized, .provisional, .ephemeral: authorized = true
+        case .denied: authorized = false
+        default: return false  // Not asked yet; ask later, in context.
+        }
+        return authorized ?? false
+    }
+
+    /// Whether notifications haven't been asked about yet.
+    func notAskedYet() async -> Bool {
+        guard !SingleInstance.isTesting else { return false }
+        return await center.notificationSettings().authorizationStatus == .notDetermined
+    }
+
+    /// The system's question. True if you said yes.
+    @discardableResult
+    func ask() async -> Bool {
+        let yes = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+        authorized = yes
+        return yes
     }
 
     func turnFinished(project: String, text: String) {
