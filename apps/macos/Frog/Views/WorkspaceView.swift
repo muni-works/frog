@@ -1,27 +1,54 @@
 import SwiftUI
 
 /// The conversation is the canvas: it fills the window, and everything else floats over it as
-/// Liquid Glass. Sessions (left) and Changes (right) are cards that fold into small glass
-/// buttons in their corners and morph back out; under Changes, a timeline rail maps the whole
-/// conversation. The conversation and composer are centered on the window when there's room
-/// (equal insets on both sides), and fit between the cards when there isn't.
+/// Liquid Glass. The window holds one to three panes side by side, each a conversation with its
+/// own composer and its own instruments (changes and the timeline rail) at its right edge. The
+/// session list (left) floats over the first pane and folds into a rail of status tiles. Each
+/// pane's column is centered in the space its cards leave, and the toolbar's activity capsule
+/// sits over the focused pane's column.
 struct WorkspaceView: View {
-    @Bindable var workspace: Workspace
-    @AppStorage("showSessions") private var showSessions = true
-    @AppStorage("showChanges") private var showChanges = false
-    @State private var canvasWidth: CGFloat = 1100
-    @State private var ui = WindowState()
+    let panes: Panes
+    /// What the user asked for, per window. Whether the list actually docks also depends on the
+    /// window's width (`docked`), so widening a window brings it back.
+    @SceneStorage("showSessions") private var showSessions = true
+    @State private var canvasSize = CGSize(width: 1100, height: 760)
+    /// The canvas in global coordinates, to place a drag's pointer.
+    @State private var canvasOrigin: CGPoint = .zero
+    @State private var dragger = PaneDragger()
+    /// A divider being dragged: layout changes follow the pointer, unanimated.
+    @State private var resizing = false
+    @State private var docked = Docked()
+    /// Too narrow for even the session rail: sessions live behind a toolbar button.
+    @State private var compact = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// A card shown floating over the conversation because the window is too narrow to dock it.
-    @State private var peek: Peek?
+    /// The session list floated over the conversation because the window is too narrow to dock it.
+    @State private var peekSessions = false
     @Namespace private var glass
     /// This view's window, so the sidebar can bring an already-open conversation forward.
     @State private var window: NSWindow?
-    @Environment(\.controlActiveState) private var activeState
     @State private var renamingTitle = false
     @State private var newTitle = ""
 
-    enum Peek { case sessions, changes }
+    struct Docked: Equatable {
+        var sessions = false
+        /// Panes whose changes card stands beside their column.
+        var changes: Set<Pane.ID> = []
+    }
+
+    /// Everything the layout depends on, so it's resolved again when any of it changes.
+    private struct LayoutInputs: Equatable {
+        var size: CGSize
+        var sessions: Bool
+        var layout: PaneLayout
+        var panes: [PaneInputs]
+    }
+
+    private struct PaneInputs: Equatable {
+        var id: Pane.ID
+        var changes: Bool
+        var hasChanges: Bool
+        var hasRail: Bool
+    }
 
     static let sessionsWidth: CGFloat = 250
     static let changesWidth: CGFloat = 380
@@ -31,128 +58,283 @@ struct WorkspaceView: View {
     static let margin: CGFloat = 12
     /// Clearance between a card and the conversation.
     static let gap: CGFloat = 16
-    /// Narrowest the centered column may get; a card that would squeeze it further stays folded.
+    /// Narrowest a column may get; a card that would squeeze it further stays folded.
     static let minColumn: CGFloat = 520
+    /// Split panes accept narrower columns: that's the point of splitting.
+    static let minSplitColumn: CGFloat = 460
+    /// Below this the session rail folds away too.
+    static let compactWidth: CGFloat = 760
+    /// Hysteresis: a card that's docked stays docked until the column would lose this much more,
+    /// so dragging a window edge near a threshold doesn't flicker the layout.
+    static let slack: CGFloat = 40
+    /// Room a split pane's instruments leave for its header.
+    static let headerClearance: CGFloat = PaneView.headerHeight + 8
 
-    /// The conversation shown on the canvas (a race has its own view).
-    private var conversation: Conversation? { workspace.race == nil ? workspace.conversation : nil }
-    private var changeCount: Int { conversation?.sessionChanges.count ?? 0 }
-    /// Open only when there's something in it: an empty "No Changes Yet" card is clutter.
-    private var changesOpen: Bool { showChanges && changeCount > 0 }
-    private var hasRail: Bool { !(conversation?.turns.isEmpty ?? true) }
+    private var focused: Pane { panes.focused }
+    private var workspace: Workspace { focused.workspace }
+    private var minColumn: CGFloat { panes.isSplit ? Self.minSplitColumn : Self.minColumn }
 
-    // Layout. The column is centered on the window with equal insets. A card docks (stands
-    // beside the column) only if the column still gets `minColumn` with it; otherwise it folds to
-    // its button, and the button floats it over the conversation instead ("peek").
+    // Layout. Panes fill the window right of the session list in rows and columns
+    // (`PaneLayout`); panes against the left edge extend under the list, so their transcripts
+    // scroll beneath its glass. Within a pane the column is centered between its cards. A card
+    // docks only if every column still gets `minColumn`; otherwise it folds to its rail or pill,
+    // and that floats it over the conversation instead ("peek"). The session list comes first:
+    // changes dock in what's left.
 
     private func extent(sessions open: Bool) -> CGFloat {
-        open ? Self.margin + Self.sessionsWidth + Self.gap : Self.gap
+        if !open && compact { return Self.gap }
+        return Self.margin + (open ? Self.sessionsWidth : SessionRail.width) + Self.gap
     }
 
-    private func extent(changes open: Bool) -> CGFloat {
-        guard changeCount > 0 || hasRail else { return Self.gap }
-        let width = open ? Self.changesWidth : (changeCount > 0 ? Self.changesPill : TimelineRail.width)
+    private func extent(changes open: Bool, _ pane: Pane) -> CGFloat {
+        guard pane.changeCount > 0 || pane.hasRail else { return Self.gap }
+        let width = open ? Self.changesWidth : (pane.changeCount > 0 ? Self.changesPill : TimelineRail.width)
         return Self.margin + width + Self.gap
     }
 
-    private func fits(_ left: CGFloat, _ right: CGFloat) -> Bool {
-        canvasWidth - 2 * max(left, right) >= Self.minColumn
+    /// The area panes share: the window right of the session list.
+    private func region(sessions open: Bool) -> CGRect {
+        let ext = extent(sessions: open)
+        return CGRect(x: ext, y: 0, width: max(0, canvasSize.width - ext), height: canvasSize.height)
     }
 
-    /// Room for the column between the cards, even if it can't be centered.
-    private func fitsBeside(_ left: CGFloat, _ right: CGFloat) -> Bool {
-        canvasWidth - left - right >= Self.minColumn
+    /// Smallest a pane may be dragged to, across a divider.
+    static let minPane: CGFloat = 280
+    /// The canvas's coordinate space, for dragging dividers.
+    static let canvasSpace = "frog-canvas"
+
+    /// A pane's frame in the window and the insets that keep its column clear of the cards.
+    private func placement(_ pane: Pane, sessions open: Bool, changes: Bool) -> (frame: CGRect, insets: EdgeInsets) {
+        let ext = extent(sessions: open)
+        var r = panes.layout.frames(in: region(sessions: open))[pane.id] ?? .zero
+        let leftmost = r.minX <= ext + 0.5
+        if leftmost {
+            r.size.width += r.minX
+            r.origin.x = 0
+        }
+        // Split panes have a header to keep clear of.
+        let top = panes.isSplit ? Self.headerClearance + Self.margin : 0
+        return (r, EdgeInsets(top: top, leading: leftmost ? ext : Self.gap, bottom: 0, trailing: extent(changes: changes, pane)))
     }
 
-    /// The conversation list is a full-height column, so floating it over the conversation
-    /// would cover the composer: it docks whenever the column still fits beside it (off
-    /// center if it must), and only peeks in windows too narrow for that.
-    private var sessionsDocked: Bool {
-        showSessions && fitsBeside(extent(sessions: true), extent(changes: false))
+    private func placement(_ pane: Pane) -> (frame: CGRect, insets: EdgeInsets) {
+        placement(pane, sessions: docked.sessions, changes: docked.changes.contains(pane.id))
     }
 
-    private var changesDocked: Bool {
-        changesOpen && fits(extent(sessions: sessionsDocked), extent(changes: true))
+    /// The column a pane is left with.
+    private func column(_ pane: Pane, sessions open: Bool, changes: Bool) -> CGFloat {
+        let p = placement(pane, sessions: open, changes: changes)
+        return p.frame.width - p.insets.leading - p.insets.trailing
     }
 
-    private var sessionsVisible: Bool { sessionsDocked || peek == .sessions }
-    private var changesVisible: Bool { changesDocked || (peek == .changes && changeCount > 0) }
+    private func fits(_ column: CGFloat, keeping: Bool) -> Bool {
+        column >= minColumn - (keeping ? Self.slack : 0)
+    }
 
-    private var insets: EdgeInsets {
-        let left = extent(sessions: sessionsDocked), right = extent(changes: changesDocked)
-        let even = max(left, right)
-        // Equal insets center the column; a window below the minimum gives up symmetry.
-        return fits(left, right)
-            ? EdgeInsets(top: 0, leading: even, bottom: 0, trailing: even)
-            : EdgeInsets(top: 0, leading: left, bottom: 0, trailing: right)
+    private var layoutInputs: LayoutInputs {
+        LayoutInputs(size: canvasSize, sessions: showSessions, layout: panes.layout, panes: panes.items.map {
+            PaneInputs(id: $0.id, changes: $0.showChanges, hasChanges: $0.changeCount > 0, hasRail: $0.hasRail)
+        })
+    }
+
+    private func relayout() {
+        compact = canvasSize.width < Self.compactWidth + (compact ? Self.slack : 0)
+        let sessions = showSessions && panes.items.allSatisfy {
+            fits(column($0, sessions: true, changes: false), keeping: docked.sessions)
+        }
+        var changes: Set<Pane.ID> = []
+        for p in panes.items where p.showChanges && p.changeCount > 0 {
+            if fits(column(p, sessions: sessions, changes: true), keeping: docked.changes.contains(p.id)) {
+                changes.insert(p.id)
+            }
+        }
+        docked = Docked(sessions: sessions, changes: changes)
+        if sessions { peekSessions = false }
+        for p in panes.items where changes.contains(p.id) { p.peekChanges = false }
+    }
+
+    private var sessionsVisible: Bool { docked.sessions || peekSessions }
+
+    private func changesVisible(_ pane: Pane) -> Bool {
+        docked.changes.contains(pane.id) || (pane.peekChanges && pane.changeCount > 0)
+    }
+
+    /// Where the (only) pane's column is centered, relative to the window's center.
+    private var focusedOffset: CGFloat {
+        let p = placement(focused)
+        return p.frame.minX + p.insets.leading + (p.frame.width - p.insets.leading - p.insets.trailing) / 2 - canvasSize.width / 2
     }
 
     private func toggleSessions() {
         Haptics.settle()
-        if fitsBeside(extent(sessions: true), extent(changes: changesDocked)) {
-            peek = nil
+        let fitsOpen = panes.items.allSatisfy {
+            fits(column($0, sessions: true, changes: docked.changes.contains($0.id)), keeping: false)
+        }
+        if docked.sessions || fitsOpen {
+            peekSessions = false
             showSessions.toggle()
         } else {
-            peek = peek == .sessions ? nil : .sessions
+            peekSessions.toggle()
         }
     }
 
-    private func toggleChanges() {
+    private func toggleChanges(_ pane: Pane) {
         Haptics.settle()
-        if fits(extent(sessions: sessionsDocked), extent(changes: true)) {
-            peek = nil
-            showChanges.toggle()
+        if docked.changes.contains(pane.id) || fits(column(pane, sessions: docked.sessions, changes: true), keeping: false) {
+            pane.peekChanges = false
+            pane.showChanges.toggle()
         } else {
-            peek = peek == .changes ? nil : .changes
+            pane.peekChanges.toggle()
         }
     }
 
-    private func noteSession() {
-        guard let id = workspace.conversation?.sessionID else { return }
-        Library.shared.register(window: window, for: id)
-        if activeState == .key {
-            Library.shared.focused = id
-            Library.shared.markRead(id)
+    // MARK: Dragging
+
+    /// Where a drag at this (global) point would land: a pane and a zone of it. Nothing over
+    /// the session list or rail, or for a pane over itself. A pane under the list only splits
+    /// in the part that's its own.
+    private func dropTarget(_ payload: PaneDragger.Payload?, at global: CGPoint) -> (pane: Pane, drop: PaneDrop, frame: CGRect)? {
+        guard let payload else { return nil }
+        let p = CGPoint(x: global.x - canvasOrigin.x, y: global.y - canvasOrigin.y)
+        let ext = extent(sessions: docked.sessions) - Self.gap
+        guard p.x >= ext else { return nil }
+        for pane in panes.items {
+            var f = placement(pane).frame
+            guard f.contains(p) else { continue }
+            if case .pane(let id) = payload, id == pane.id { return nil }
+            if f.minX == 0 {
+                f.size.width -= ext
+                f.origin.x = ext
+            }
+            return (pane, PaneDrop(at: p, in: f), f)
         }
+        return nil
+    }
+
+    private func perform(_ payload: PaneDragger.Payload, at global: CGPoint) {
+        guard let target = dropTarget(payload, at: global) else { return }
+        Haptics.settle()
+        panes.drop(payload, on: target.pane, target.drop, window: window)
+    }
+
+    /// While dragging: the zone the drop would take, and a small capsule following the pointer.
+    @ViewBuilder
+    private var dragPreview: some View {
+        if dragger.active {
+            let target = dropTarget(dragger.payload, at: dragger.location)
+            ZStack(alignment: .topLeading) {
+                if let target {
+                    let r = target.drop.rect(in: target.frame).insetBy(dx: 8, dy: 8)
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(.tint.opacity(0.14))
+                        .strokeBorder(.tint.opacity(0.75), lineWidth: 2)
+                        .overlay {
+                            Label(dropLabel(target.drop), systemImage: dropSymbol(target.drop))
+                                .font(.callout.weight(.medium))
+                                .padding(.horizontal, 12)
+                                .frame(height: 30)
+                                .glassEffect(.regular, in: .capsule)
+                        }
+                        .frame(width: r.width, height: r.height)
+                        .offset(x: r.minX, y: r.minY)
+                }
+                Text(dragger.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .padding(.horizontal, 14)
+                    .frame(height: 30)
+                    .frame(maxWidth: 260)
+                    .glassEffect(.regular, in: .capsule)
+                    .fixedSize()
+                    .offset(x: dragger.location.x - canvasOrigin.x + 10, y: dragger.location.y - canvasOrigin.y + 10)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .allowsHitTesting(false)
+            .animation(.snappy(duration: 0.18), value: target.map { "\($0.pane.id)\($0.drop)" })
+            .transition(.opacity)
+        }
+    }
+
+    private func dropLabel(_ drop: PaneDrop) -> String {
+        guard case .edge(let e) = drop else {
+            if case .pane = dragger.payload { return "Swap" }
+            return "Open here"
+        }
+        switch e {
+        case .left: return "Split left"
+        case .right: return "Split right"
+        case .top: return "Split up"
+        case .bottom: return "Split down"
+        }
+    }
+
+    private func dropSymbol(_ drop: PaneDrop) -> String {
+        switch drop {
+        case .center: "arrow.left.arrow.right"
+        case .edge(.left), .edge(.right): "rectangle.split.2x1"
+        case .edge(.top), .edge(.bottom): "rectangle.split.1x2"
+        }
+    }
+
+    private func openInFocused(_ s: SessionInfo) {
+        panes.open(s, in: focused, window: window)
+    }
+
+    private func split(_ s: SessionInfo? = nil, _ edge: PaneEdge = .right) {
+        Haptics.settle()
+        panes.split(s, on: edge, window: window)
     }
 
     var body: some View {
-        let insets = insets
+        let numbers = panes.numbers
         ZStack(alignment: .topLeading) {
-            // Full-bleed, like a viewport: the scroll view spans the window and scrolls under the
-            // glass; only its content (and the composer) keeps clear.
-            detail(insets: insets)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentMargins(.leading, insets.leading, for: .scrollContent)
-                .contentMargins(.trailing, insets.trailing, for: .scrollContent)
-                .environment(\.canvasInsets, insets)
-                .environment(\.projectFolder, workspace.folder)
+            ForEach(Array(panes.items.enumerated()), id: \.element.id) { i, pane in
+                let place = placement(pane)
+                PaneView(
+                    pane: pane,
+                    panes: panes,
+                    number: panes.isSplit ? i + 1 : nil,
+                    insets: place.insets,
+                    changesDocked: docked.changes.contains(pane.id),
+                    toggleChanges: { toggleChanges(pane) },
+                    window: window
+                )
+                .frame(width: max(0, place.frame.width), height: max(0, place.frame.height))
+                .offset(x: place.frame.minX, y: place.frame.minY)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
 
             GeometryReader { geo in
                 let room = max(120, geo.size.height - Self.margin * 2)
                 GlassEffectContainer(spacing: 20) {
-                    HStack(alignment: .top, spacing: 0) {
-                        sessions(room: room)
-                        Spacer(minLength: 0)
-                        instruments(room: room)
-                    }
+                    sessions(room: room)
                 }
                 .padding(Self.margin)
             }
+            .environment(\.openSession) { openInFocused($0) }
+            .environment(\.openSessionInSplit) { split($0) }
+            .environment(\.switchFolder) { panes.switchFolder($0, in: focused) }
+            .environment(\.paneNumbers, numbers)
 
-            if ui.findShown, let conversation {
-                FindBar(state: ui, turns: conversation.turns)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, Self.margin)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            ForEach(panes.layout.dividers(in: region(sessions: docked.sessions))) { d in
+                PaneDividerHandle(divider: d, resizing: $resizing) { t in
+                    panes.moveDivider(d, to: t, minimum: Self.minPane)
+                } equalize: {
+                    panes.equalize(d)
+                }
             }
 
-            if ui.paletteShown {
+            dragPreview
+
+            if focused.ui.paletteShown {
                 ZStack(alignment: .top) {
                     Color.black.opacity(0.001)
-                        .onTapGesture { ui.paletteShown = false }
-                    CommandPalette(commands: workspace.commands(showChanges: $showChanges)) {
-                        ui.paletteShown = false
+                        .onTapGesture { focused.ui.paletteShown = false }
+                    CommandPalette(commands: workspace.commands(showChanges: Binding(
+                        get: { focused.showChanges },
+                        set: { _ in toggleChanges(focused) }
+                    ))) {
+                        focused.ui.paletteShown = false
                     }
                     .padding(.top, 80)
                 }
@@ -160,35 +342,53 @@ struct WorkspaceView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
-        .onGeometryChange(for: CGFloat.self, of: \.size.width) { canvasWidth = $0 }
+        // Always the window's size, whatever the panes' fixed widths add up to: the panes are
+        // sized from this, so it mustn't be sized from them.
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
+        .coordinateSpace(.named(Self.canvasSpace))
+        .onGeometryChange(for: CGSize.self, of: \.size) { canvasSize = $0 }
+        .onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .global).origin }) { canvasOrigin = $0 }
+        .environment(\.paneDragger, dragger)
+        .onAppear { dragger.onDrop = { perform($0, at: $1) } }
+        .animation(.easeOut(duration: 0.15), value: dragger.active)
+        .onChange(of: layoutInputs, initial: true) { relayout() }
         // Over everything in the window: sidebar, rail, and (hidden meanwhile) the toolbar.
         .modifier(LightboxHost())
         .environment(\.projectFolder, workspace.folder)
-        // The folder as the window's document: proxy icon in the title bar (⌘-click for its
-        // path, drag it anywhere).
+        // The focused pane's folder as the window's document: proxy icon in the title bar
+        // (⌘-click for its path, drag it anywhere).
         .navigationDocument(workspace.folder)
+        .navigationTitle(windowTitle)
+        .navigationSubtitle(place)
+        .toolbarTitleMenu { if let c = workspace.conversation { titleMenu(c) } }
         // One backdrop for the whole canvas, so the conversation reads as a single surface.
         .background(FrogCanvas.color.ignoresSafeArea())
         .background(WindowReader { window = $0 })
-        // Tell the sidebar which window shows which conversation, and what's in front.
-        .onChange(of: workspace.conversation?.sessionID, initial: true) { _, _ in noteSession() }
-        .onChange(of: window) { _, _ in noteSession() }
-        .onChange(of: activeState, initial: true) { _, _ in noteSession() }
         .animation(Motion.panel(reduced: reduceMotion), value: sessionsVisible)
-        .animation(Motion.panel(reduced: reduceMotion), value: changesVisible)
-        .animation(Motion.panel(reduced: reduceMotion), value: insets)
-        .animation(Motion.quick(reduced: reduceMotion), value: hasRail)
-        .animation(Motion.quick(reduced: reduceMotion), value: ui.paletteShown)
-        .animation(Motion.quick(reduced: reduceMotion), value: ui.findShown)
-        .onChange(of: conversation.map(ObjectIdentifier.init)) { ui.visibleTurns = []; peek = nil }
-        .onChange(of: workspace.selection) { if peek == .sessions { peek = nil } }
+        .animation(Motion.panel(reduced: reduceMotion), value: docked)
+        .animation(resizing ? nil : Motion.panel(reduced: reduceMotion), value: panes.layout)
+        .animation(Motion.quick(reduced: reduceMotion), value: focused.ui.paletteShown)
+        .onChange(of: workspace.selection) { peekSessions = false }
+        .onChange(of: panes.focusedID) { peekSessions = false }
         .onExitCommand {
-            if ui.findShown { ui.findShown = false } else { peek = nil }
+            if focused.ui.findShown {
+                focused.ui.findShown = false
+            } else {
+                peekSessions = false
+                panes.items.forEach { $0.peekChanges = false }
+            }
         }
         .focusedSceneValue(\.frogWindow, FrogWindow(
-            workspace: workspace, state: ui,
-            toggleSessions: toggleSessions, toggleChanges: toggleChanges,
-            sessionsShown: sessionsVisible, changesShown: changesVisible
+            workspace: workspace, state: focused.ui,
+            toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
+            sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
+            newChat: {
+                panes.switchFolder(nil, in: focused)
+                focused.ui.focusComposer()
+            },
+            split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
+            closePane: panes.isSplit ? { panes.close(focused) } : nil,
+            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil
         ))
         .alert("Rename Conversation", isPresented: $renamingTitle) {
             TextField("Title", text: $newTitle)
@@ -199,36 +399,35 @@ struct WorkspaceView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-        .confirmationDialog(
-            undoTurn.flatMap(\.number).map { "Undo turn \($0)?" } ?? "Undo the last turn?",
-            isPresented: $ui.confirmUndo
-        ) {
-            Button("Undo Changes", role: .destructive) {
-                if let n = undoTurn?.number { Task { await workspace.rewind(toBefore: n) } }
-            }
-        } message: {
-            Text("Files frog edited in that turn go back to how they were, and the conversation continues from just before it. The current session is kept, so you can go back to it.")
-        }
-        .onChange(of: workspace.conversation?.busy ?? false, initial: true) { _, busy in
-            DockActivity.shared.set(ObjectIdentifier(workspace), busy: busy)
-        }
-        .onDisappear { DockActivity.shared.set(ObjectIdentifier(workspace), busy: false) }
         .toolbar {
-            if !sessionsVisible {
+            if compact && !sessionsVisible {
                 ToolbarItem(placement: .navigation) {
                     Button("Show Conversations", systemImage: "sidebar.left", action: toggleSessions)
                         .help("Show conversations (⌃⌘S)")
                 }
             }
             ToolbarItem(placement: .principal) {
-                if let c = workspace.conversation, workspace.race == nil {
-                    ActivityViewer(workspace: workspace, conversation: c) { ui.jumpTo = $0 }
+                // Split, each pane shows its own in its header.
+                if !panes.isSplit, let c = workspace.conversation, workspace.race == nil {
+                    // Over the column, not the window.
+                    ActivityViewer(workspace: workspace, conversation: c) { focused.ui.jumpTo = $0 }
+                        .environment(\.openSession) { openInFocused($0) }
+                        .offset(x: focusedOffset)
                 }
             }
             // The viewer draws its own glass capsule; without this the toolbar adds a second.
             .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .primaryAction) {
-                Button("Commands", systemImage: "command") { ui.paletteShown.toggle() }
+                Button("Split", systemImage: "rectangle.split.2x1") { split() }
+                    .contextMenu {
+                        Button("Split Right") { split(nil, .right) }
+                        Button("Split Down") { split(nil, .bottom) }
+                    }
+                    .help("Split pane (⌘\\)")
+                    .disabled(!panes.canSplit)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button("Commands", systemImage: "command") { focused.ui.paletteShown.toggle() }
                     .help("Command Palette (⌘K)")
             }
         }
@@ -236,7 +435,7 @@ struct WorkspaceView: View {
 
     // MARK: Glass
 
-    /// The session list, when shown.
+    /// The session list, or the rail it folds to.
     @ViewBuilder
     private func sessions(room: CGFloat) -> some View {
         if sessionsVisible {
@@ -244,74 +443,13 @@ struct WorkspaceView: View {
                 .frame(width: Self.sessionsWidth)
                 .glassEffect(.regular, in: .rect(cornerRadius: 18))
                 .glassEffectID("sessions", in: glass)
-                .shadow(color: .black.opacity(peek == .sessions ? 0.35 : 0), radius: 24, y: 10)
+                .shadow(color: .black.opacity(peekSessions ? 0.35 : 0), radius: 24, y: 10)
+        } else if !compact {
+            // Folded, it's a rail of status tiles that morphs back out.
+            SessionRail(workspace: workspace, maxHeight: room, expand: toggleSessions)
+                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                .glassEffectID("sessions", in: glass)
         }
-        // Folded, its toggle lives in the title bar, beside the traffic lights.
-    }
-
-    /// The right-hand column: changes (card or pill) above the timeline rail.
-    @ViewBuilder
-    private func instruments(room: CGFloat) -> some View {
-        if let conversation, changeCount > 0 || hasRail {
-            VStack(alignment: .trailing, spacing: 8) {
-                if changeCount > 0 {
-                    if changesVisible {
-                        ChangesInspector(conversation: conversation, maxHeight: max(120, room - (hasRail ? 160 : 0))) {
-                            toggleChanges()
-                        }
-                        .frame(width: Self.changesWidth)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 18))
-                        .glassEffectID("changes", in: glass)
-                        .shadow(color: .black.opacity(peek == .changes ? 0.35 : 0), radius: 24, y: 10)
-                    } else {
-                        Button(action: toggleChanges) {
-                            let changes = conversation.sessionChanges
-                            HStack(spacing: 6) {
-                                Text("+\(changes.reduce(0) { $0 + $1.added })").foregroundStyle(.green)
-                                Text("−\(changes.reduce(0) { $0 + $1.removed })").foregroundStyle(.red)
-                            }
-                            .monospacedDigit()
-                            .contentTransition(.numericText())
-                            .font(.callout.weight(.medium))
-                            .padding(.horizontal, 12)
-                            .frame(height: Self.button)
-                            .contentShape(.capsule)
-                        }
-                        .buttonStyle(.plain)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .glassEffectID("changes", in: glass)
-                        .help("\(changeCount) file\(changeCount == 1 ? "" : "s") changed (⌥⌘0)")
-                    }
-                }
-                if hasRail {
-                    TimelineRail(
-                        conversation: conversation,
-                        visible: ui.visibleTurns,
-                        marked: ui.findShown ? Set(ui.matches(in: conversation.turns)) : [],
-                        actions: turnActions,
-                        jump: { ui.jumpTo = $0 }
-                    )
-                    // Grows with the conversation instead of standing full height from turn one.
-                    .frame(height: min(room, CGFloat(conversation.turns.count) * 22 + 28))
-                    .glassEffect(.regular, in: .capsule)
-                    .glassEffectID("timeline", in: glass)
-                    .transition(.opacity)
-                }
-            }
-            .frame(maxHeight: room, alignment: .top)
-        }
-    }
-
-    /// The latest finished turn that changed files (what Edit > Undo Last Turn reverts).
-    private var undoTurn: TurnState? {
-        conversation?.turns.last { $0.finished && $0.number != nil && !TurnParts($0).changes.isEmpty }
-    }
-
-    private var turnActions: TurnActions {
-        TurnActions(
-            fork: { workspace.fork(afterTurn: $0) },
-            rewind: { turn in Task { await workspace.rewind(toBefore: turn) } }
-        )
     }
 }
 
@@ -346,8 +484,14 @@ struct HuggingScroll<Content: View>: View {
 }
 
 extension WorkspaceView {
-    /// Where the conversation lives: the project and its branch; nothing for a plain chat.
+    private var windowTitle: String {
+        if workspace.race != nil { return workspace.name }
+        return workspace.conversation?.title ?? (workspace.isChat ? "New Chat" : "New Conversation")
+    }
+
+    /// Where the focused conversation lives: the project and its branch; nothing for a chat.
     private var place: String {
+        if workspace.race != nil { return "Racing" }
         guard !workspace.isChat else { return "" }
         return [workspace.name, workspace.git?.branch].compactMap { $0 }.joined(separator: " · ")
     }
@@ -372,32 +516,6 @@ extension WorkspaceView {
                 Library.shared.setArchived(id, true)
                 workspace.newSession()
             }
-        }
-    }
-
-    @ViewBuilder
-    private func detail(insets: EdgeInsets) -> some View {
-        if let race = workspace.race {
-            RaceView(race: race) { workspace.endRace() }
-                .navigationTitle(workspace.name)
-                .navigationSubtitle("Racing")
-        } else if let conversation = workspace.conversation {
-            TranscriptView(
-                conversation: conversation,
-                actions: turnActions,
-                jump: $ui.jumpTo,
-                onVisibleTurns: { ui.visibleTurns = Set($0) }
-            )
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                ComposerView(workspace: workspace, conversation: conversation, window: ui)
-                    .id(ObjectIdentifier(conversation))
-                    .padding(.leading, insets.leading)
-                    .padding(.trailing, insets.trailing)
-            }
-            .modifier(ConversationDropZone(conversation: conversation))
-            .navigationTitle(conversation.title ?? (workspace.isChat ? "New Chat" : "New Conversation"))
-            .navigationSubtitle(place)
-            .toolbarTitleMenu { titleMenu(conversation) }
         }
     }
 }
@@ -473,279 +591,6 @@ private struct DropOverlay: View {
             } else {
                 withAnimation(.easeOut(duration: 0.25)) { out = true }
             }
-        }
-    }
-}
-
-/// Every conversation, newest first: pinned ones, then by day. Search, start a new one, and
-/// rename, pin, reveal or archive any of them. Rows show where each lives (a folder, or a chat)
-/// and whether it's running, waiting on you, or finished while you were away.
-struct SessionList: View {
-    @Bindable var workspace: Workspace
-    let maxHeight: CGFloat
-    var collapse: (() -> Void)?
-    @State private var library = Library.shared
-    @State private var query = ""
-    @State private var showArchived = false
-    @State private var showTree = false
-    @State private var renaming: SessionInfo?
-    @State private var newTitle = ""
-    @Environment(\.openSession) private var openSession
-    @Environment(\.switchFolder) private var switchFolder
-
-    private var current: String? { workspace.conversation?.sessionID }
-
-    private var visible: [SessionInfo] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return library.sessions.filter { s in
-            guard library.archived.contains(s.id) == showArchived else { return false }
-            guard !q.isEmpty else { return true }
-            let hay = [s.title, s.firstInput, s.folder?.lastPathComponent].compactMap { $0?.lowercased() }
-            return hay.contains { $0.contains(q) }
-        }
-    }
-
-    private var groups: [(String, [SessionInfo])] {
-        let cal = Calendar.current
-        let now = Date()
-        var out: [(String, [SessionInfo])] = []
-        func add(_ title: String, _ items: [SessionInfo]) { if !items.isEmpty { out.append((title, items)) } }
-        let all = visible
-        let pinned = showArchived ? [] : all.filter { library.pinned.contains($0.id) }
-        let rest = all.filter { showArchived || !library.pinned.contains($0.id) }
-        add("Pinned", pinned)
-        add("Today", rest.filter { cal.isDateInToday($0.modifiedDate) })
-        add("Yesterday", rest.filter { cal.isDateInYesterday($0.modifiedDate) })
-        let week = cal.date(byAdding: .day, value: -7, to: now)!
-        let month = cal.date(byAdding: .day, value: -30, to: now)!
-        let older = rest.filter { !cal.isDateInToday($0.modifiedDate) && !cal.isDateInYesterday($0.modifiedDate) }
-        add("Previous 7 Days", older.filter { $0.modifiedDate >= week })
-        add("Previous 30 Days", older.filter { $0.modifiedDate < week && $0.modifiedDate >= month })
-        add("Older", older.filter { $0.modifiedDate < month })
-        return out
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(groups, id: \.0) { title, items in
-                        Text(title)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.top, 12)
-                            .padding(.bottom, 3)
-                        ForEach(items) { s in
-                            ConversationRow(
-                                session: s,
-                                selected: s.id == current,
-                                pinned: library.pinned.contains(s.id),
-                                live: library.live[s.id]
-                            ) {
-                                openSession?(s)
-                            } menu: {
-                                rowMenu(s)
-                            }
-                        }
-                    }
-                    if groups.isEmpty {
-                        Text(query.isEmpty ? (showArchived ? "Nothing archived" : "No conversations yet") : "No matches")
-                            .font(.callout)
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 24)
-                    }
-                }
-                .padding(.horizontal, 6)
-                .padding(.bottom, 8)
-            }
-            .scrollIndicators(.never)
-            footer
-        }
-        .frame(height: maxHeight)
-        .onAppear { library.refresh() }
-        .alert("Rename Conversation", isPresented: Binding { renaming != nil } set: { if !$0 { renaming = nil } }) {
-            TextField("Title", text: $newTitle)
-            Button("Rename") {
-                if let s = renaming { Task { await library.rename(s.id, to: newTitle) } }
-                renaming = nil
-            }
-            Button("Cancel", role: .cancel) { renaming = nil }
-        }
-        .popover(isPresented: $showTree, arrowEdge: .trailing) {
-            SessionTree(workspace: workspace) { showTree = false }
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 5) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
-                TextField("Search", text: $query)
-                    .textFieldStyle(.plain)
-                if !query.isEmpty {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .font(.callout)
-            .padding(.horizontal, 8)
-            .frame(height: 26)
-            .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 8))
-            Button {
-                switchFolder?(nil)
-            } label: {
-                Image(systemName: "square.and.pencil").frame(width: 24, height: 24)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("New conversation")
-            if let collapse {
-                Button(action: collapse) {
-                    Image(systemName: "sidebar.left").frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Hide conversations (⌃⌘S)")
-            }
-        }
-        .padding(10)
-    }
-
-    private var footer: some View {
-        let count = library.archived.count
-        return HStack {
-            if showArchived {
-                Button { showArchived = false } label: { Label("Back to conversations", systemImage: "chevron.left") }
-            } else if count > 0 {
-                Button { showArchived = true } label: { Label("Archived (\(count))", systemImage: "archivebox") }
-            }
-            Spacer()
-        }
-        .buttonStyle(.plain)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, count > 0 || showArchived ? 9 : 0)
-    }
-
-    @ViewBuilder
-    private func rowMenu(_ s: SessionInfo) -> some View {
-        Button("Rename…") {
-            newTitle = s.displayTitle
-            renaming = s
-        }
-        Button(library.pinned.contains(s.id) ? "Unpin" : "Pin") { library.togglePin(s.id) }
-        if let folder = s.folder, !s.isChat {
-            Button("Reveal Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
-        }
-        if s.id == current {
-            Button("Session Tree…") { showTree = true }
-        }
-        Divider()
-        if library.archived.contains(s.id) {
-            Button("Unarchive") { library.setArchived(s.id, false) }
-        } else {
-            Button("Archive") { library.setArchived(s.id, true) }
-        }
-    }
-}
-
-/// One conversation: its title, where it lives and when, and whether it's live.
-struct ConversationRow<Menu: View>: View {
-    let session: SessionInfo
-    let selected: Bool
-    let pinned: Bool
-    let live: Library.Live?
-    let open: () -> Void
-    @ViewBuilder let menu: () -> Menu
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: open) {
-            HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        if session.forkedFrom != nil {
-                            Image(systemName: "arrow.triangle.branch").font(.caption).foregroundStyle(.secondary)
-                        }
-                        Text(session.displayTitle)
-                            .lineLimit(1)
-                            .fontWeight(live == .unread ? .semibold : .regular)
-                    }
-                    HStack(spacing: 4) {
-                        Image(systemName: session.isChat ? "bubble.left" : "folder")
-                        Text(session.isChat ? "Chat" : session.folder?.lastPathComponent ?? "")
-                            .lineLimit(1)
-                        Text("·")
-                        Text(Self.ago(session.modifiedDate))
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-                trailing
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(background, in: .rect(cornerRadius: 9))
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .contextMenu { menu() }
-        .help(helpText)
-    }
-
-    @ViewBuilder
-    private var trailing: some View {
-        if hovering {
-            SwiftUI.Menu {
-                menu()
-            } label: {
-                Image(systemName: "ellipsis").frame(width: 18, height: 18)
-            }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .foregroundStyle(.secondary)
-        } else {
-            switch live {
-            case .running: ProgressView().controlSize(.mini)
-            case .waiting: Image(systemName: "hand.raised.fill").font(.caption).foregroundStyle(.orange)
-            case .unread: Circle().fill(.tint).frame(width: 7, height: 7)
-            case nil: if pinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary) }
-            }
-        }
-    }
-
-    private var background: AnyShapeStyle {
-        if selected { return AnyShapeStyle(.tint.opacity(0.22)) }
-        if hovering { return AnyShapeStyle(.quaternary.opacity(0.6)) }
-        return AnyShapeStyle(.clear)
-    }
-
-    private var helpText: String {
-        var parts = [session.displayTitle]
-        if let f = session.folder, !session.isChat { parts.append(f.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
-        parts.append(session.model)
-        return parts.joined(separator: "\n")
-    }
-
-    /// "now", "5m", "3h", "2d", "4w", then a date.
-    static func ago(_ date: Date) -> String {
-        let s = Int(Date().timeIntervalSince(date))
-        switch s {
-        case ..<60: return "now"
-        case ..<3600: return "\(s / 60)m"
-        case ..<86400: return "\(s / 3600)h"
-        case ..<(86400 * 7): return "\(s / 86400)d"
-        case ..<(86400 * 30): return "\(s / (86400 * 7))w"
-        default: return date.formatted(.dateTime.month(.abbreviated).day())
         }
     }
 }

@@ -9,6 +9,14 @@ struct ActivityViewer: View {
     let conversation: Conversation
     /// Scroll the conversation to a turn.
     var jump: (TurnState.ID) -> Void = { _ in }
+    /// In a split window: the pane's number leads the pill and a close button ends it.
+    var pane: PaneBadge? = nil
+
+    struct PaneBadge {
+        let number: Int
+        let focused: Bool
+        let close: () -> Void
+    }
     @State private var showActivity = false
     @State private var hovering = false
     @State private var pickingModel = false
@@ -39,6 +47,14 @@ struct ActivityViewer: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            if let pane {
+                Text("\(pane.number)")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(pane.focused ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                    .frame(width: 20, height: 20)
+                    .background(pane.focused ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary), in: .circle)
+                    .padding(.leading, -6)
+            }
             if let waiting {
                 Button {
                     if let last = conversation.turns.last { jump(last.id) }
@@ -83,6 +99,20 @@ struct ActivityViewer: View {
             if !others.isEmpty {
                 Divider().frame(height: 14)
                 othersMenu
+            }
+            if let pane, hovering {
+                Button(action: pane.close) {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .background(.quaternary, in: .circle)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, -6)
+                .help("Close pane (⌃⌘W)")
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
         .font(.callout)

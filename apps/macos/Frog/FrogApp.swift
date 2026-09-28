@@ -37,51 +37,42 @@ struct FrogApp: App {
     }
 }
 
-/// A window is one conversation, in a project folder or (with no folder) a plain chat. A new
-/// window or tab starts as an empty chat; its composer's folder chip points it at a folder
-/// before the first message.
+/// A window is one to three conversations side by side (panes), each in a project folder or (with
+/// no folder) a plain chat. A new window starts as an empty chat; its composer's folder chip
+/// points it at a folder before the first message. The first pane's folder is the window's
+/// scene value, so relaunching reopens it.
 struct RootView: View {
     @Binding var folder: URL?
-    @State private var workspace: Workspace?
-    /// Start a new conversation rather than reopening the folder's last one.
-    @State private var fresh = false
-    /// A session to open when the folder changes (picked in the sidebar).
-    @State private var resume: String?
+    @State private var panes: Panes?
 
     var body: some View {
         Group {
-            if let workspace {
-                WorkspaceView(workspace: workspace)
+            if let panes {
+                WorkspaceView(panes: panes)
             } else {
                 Color.clear
             }
         }
         .frame(minWidth: 720, minHeight: 480)
-        .environment(\.switchFolder) { url in
-            fresh = true
-            folder = url ?? Frog.chatFolder
-        }
-        .environment(\.openSession) { s in
-            guard let url = s.folder, workspace?.conversation?.sessionID != s.id else { return }
-            if let w = Library.shared.window(for: s.id) {
-                w.makeKeyAndOrderFront(nil)
-            } else if let workspace, workspace.folder.standardizedFileURL.path == url.standardizedFileURL.path {
-                workspace.open(s.id)
-            } else {
-                resume = s.id
-                folder = url
-            }
-        }
         .onAppear {
             if folder == nil { folder = LaunchFolder.take() ?? Frog.chatFolder }
         }
         .onChange(of: folder, initial: true) { _, url in
-            workspace?.stop()
-            workspace = url.map { Workspace(folder: $0, fresh: fresh, resume: resume) }
-            resume = nil
-            if let url { Recents.add(url) }
+            guard let url else { return }
+            if let panes {
+                // Panes report their own folder changes; only an outside change lands here.
+                let first = panes.items[0]
+                if first.workspace.folder.standardizedFileURL != url.standardizedFileURL {
+                    panes.setWorkspace(Workspace(folder: url, fresh: true), in: first)
+                }
+            } else {
+                let p = Panes(Workspace(folder: url))
+                p.onPrimaryFolder = { folder = $0 }
+                panes = p
+                Recents.add(url)
+            }
         }
-        .onDisappear { workspace?.stop() }
+        .onDisappear { panes?.stopAll() }
     }
 }
 
@@ -143,7 +134,7 @@ struct LocalModelCard: View {
                     .buttonStyle(.link)
                     .font(.callout)
             }
-            .frame(width: 420)
+            .frame(maxWidth: 420)
             .padding(14)
             .glassEffect(.regular, in: .rect(cornerRadius: 14))
         } else if !installed.isEmpty {

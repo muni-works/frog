@@ -177,8 +177,20 @@ struct EmptyTranscript: View {
     private var isChat: Bool { Frog.isChat(conversation.folder) }
 
     var body: some View {
+        // Short panes (a split stacked in a column) drop the model card, then the details.
+        ViewThatFits(in: .vertical) {
+            content(details: true, card: true)
+            content(details: true, card: false)
+            content(details: false, card: false)
+        }
+        .padding(.top, insets.top)
+    }
+
+    private func content(details: Bool, card: Bool) -> some View {
         VStack(spacing: 10) {
-            if playful {
+            if !details {
+                EmptyView()
+            } else if playful {
                 mascot
             } else {
                 Image("FrogMark")
@@ -189,7 +201,7 @@ struct EmptyTranscript: View {
             }
             Text(isChat ? "What should we work on?" : conversation.folder.lastPathComponent)
                 .font(.title2.weight(.semibold))
-            if let s = conversation.status {
+            if details, let s = conversation.status {
                 Text("\(s.model) · \(s.toolMode) tools · \(s.tier) tier")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -198,8 +210,10 @@ struct EmptyTranscript: View {
                 .font(.callout)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 4)
-            LocalModelCard()
-                .padding(.top, 14)
+            if card {
+                LocalModelCard()
+                    .padding(.top, 14)
+            }
         }
         .multilineTextAlignment(.center)
         .padding()
