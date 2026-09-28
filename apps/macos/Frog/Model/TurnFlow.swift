@@ -43,6 +43,9 @@ struct TurnFlow {
         func flush() {
             defer { run = [] }
             guard !run.isEmpty else { return }
+            // Only a short thought, and nothing done: a model's scratch line before answering
+            // (Apple Intelligence writes one every turn). Not worth a line of its own.
+            if run.allSatisfy({ $0.kind == .reasoning && $0.done && ActivityGroup.isShort($0) }) { return }
             // A long thought before acting is its own line ("Thought for 12s"); a short one
             // folds into the line that follows ("Thought, then read 3 files").
             if run.count > 1, let first = run.first, first.kind == .reasoning, first.done,

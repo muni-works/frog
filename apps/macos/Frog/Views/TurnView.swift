@@ -54,20 +54,15 @@ struct TurnView: View {
             if !parts.changes.isEmpty {
                 ChangesStrip(changes: parts.changes)
             }
-            if let end = turn.end, pinsFooter || !isFooter(end) {
+            if let end = turn.end {
+                // An unpinned footer keeps its place and fades in on hover, so it neither
+                // covers the answer nor shifts what's below.
                 EndView(reason: end, usage: turn.usage)
+                    .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
+                    .allowsHitTesting(pinsFooter || hovering)
             }
         }
         .animation(.snappy(duration: 0.25), value: flow.segments.count)
-        // Unpinned footers show on hover, hung below the turn so nothing shifts.
-        .overlay(alignment: .bottomLeading) {
-            if hovering, !pinsFooter, let end = turn.end, isFooter(end) {
-                EndView(reason: end, usage: turn.usage)
-                    .alignmentGuide(.bottom) { $0[.top] - 4 }
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-            }
-        }
         .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hovering = h } }
         .confirmationDialog(
             "Rewind to before this turn?",

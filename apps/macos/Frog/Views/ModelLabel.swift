@@ -39,8 +39,8 @@ struct ModelLabel: View {
         case .caption:
             HStack(spacing: 5) {
                 PlaceIcon(place: model.place)
-                Text(model.name).foregroundStyle(model.place.color.opacity(0.85))
-                Text("· \(model.stateLine ?? model.place.label)").foregroundStyle(.secondary)
+                Text(model.name).foregroundStyle(model.place.color.opacity(0.75))
+                Text("· \(model.stateLine ?? model.place.label)").foregroundStyle(.tertiary)
             }
             .lineLimit(1)
         case .menu:

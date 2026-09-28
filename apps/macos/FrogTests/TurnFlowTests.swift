@@ -85,9 +85,11 @@ final class TurnFlowTests: XCTestCase {
         XCTAssertEqual(outline(flow), ["Thought, then read 3 files", "text: Done."])
     }
 
-    func testShortThoughtAloneIsItsOwnLine() {
+    /// A model's scratch line before answering (Apple Intelligence writes one every turn)
+    /// isn't worth a line: the answer stands alone.
+    func testShortThoughtAloneIsLeftOut() {
         let flow = TurnFlow([thought("r", "Easy one.", secs: 0.4), message("m", "Hi.")])
-        XCTAssertEqual(outline(flow), ["Thought for 1s", "text: Hi."])
+        XCTAssertEqual(outline(flow), ["text: Hi."])
     }
 
     func testLongThoughtWithNothingAfterIsOneLine() {

@@ -109,14 +109,18 @@ struct ActivitySteps: View {
     var body: some View {
         Group {
             if steps.count == 1, let thought = steps.first, thought.kind == .reasoning {
-                // A lone thought's line already says "Thought for 12s"; open, it's the thought.
+                // A lone thought's line already says "Thought for 12s"; open, it's the thought,
+                // set off like a quote rather than boxed.
                 Text(thought.text.trimmingCharacters(in: .whitespacesAndNewlines))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 9)
+                    .padding(.leading, 12)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(.separator).frame(width: 2)
+                    }
+                    .padding(.vertical, 2)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(steps.enumerated()), id: \.element.id) { i, step in
@@ -125,9 +129,9 @@ struct ActivitySteps: View {
                     }
                 }
                 .padding(.vertical, 2)
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
             }
         }
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
     }
 }
 
