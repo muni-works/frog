@@ -121,6 +121,9 @@ struct UserPrompt: View {
 struct EndView: View {
     let reason: EndReason
     let usage: TurnUsage?
+    /// The turn's answer: a copy button at the row's end, shown on hover.
+    var answer: String = ""
+    var hovering = false
     @Environment(\.models) private var models
 
     var body: some View {
@@ -132,13 +135,22 @@ struct EndView: View {
                     if let spec = usage.model {
                         ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
                     }
-                    if let c = ModelStats.shared.cost(of: usage) {
-                        Text(ModelStats.money(c))
-                    } else if let tps = usage.tokensPerSec, tps > 0 {
-                        Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
+                    Group {
+                        if let c = ModelStats.shared.cost(of: usage) {
+                            Text(ModelStats.money(c))
+                        } else if let tps = usage.tokensPerSec, tps > 0 {
+                            Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
+                        }
                     }
-                    Text("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s")")
-                        .help("\(usage.inputTokens.tokens) in, \(usage.outputTokens.tokens) out") // advanced
+                    .help("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s") · \(usage.inputTokens.tokens) in, \(usage.outputTokens.tokens) out") // advanced
+                    Spacer(minLength: 8)
+                    if !answer.isEmpty {
+                        MessageAction(title: "Copy answer", symbol: "doc.on.doc") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(answer, forType: .string)
+                        }
+                        .opacity(hovering ? 1 : 0)
+                    }
                 }
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.tertiary)

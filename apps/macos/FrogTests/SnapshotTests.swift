@@ -187,6 +187,25 @@ extension SnapshotTests {
             size: CGSize(width: 820, height: 460), to: "new-chat", settle: 4)
     }
 
+    /// A prompt's and an answer's actions as they show on hover: `message-actions.png`.
+    func testRenderMessageActions() throws {
+        var turn = TurnState(number: 3, input: "what directory is this", startedAt: Date().addingTimeInterval(-600))
+        turn.end = .complete
+        let usage = TurnUsage(contextTokens: nil, inputTokens: 900, outputTokens: 40, modelCalls: 2, tokensPerSec: 24, model: "apple/on-device")
+        let sheet = VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .trailing, spacing: 2) {
+                UserPrompt(text: turn.input)
+                PromptActions(turn: turn, visible: true, copy: {}, rewind: {}, fork: {})
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            Text("The current working directory is /Users/cam/Developer/kiln.")
+            EndView(reason: .complete, usage: usage, answer: "The current working directory…", hovering: true)
+        }
+        .padding(24)
+        .background(Color(nsColor: .windowBackgroundColor))
+        try render(sheet, size: CGSize(width: 760, height: 220), to: "message-actions")
+    }
+
     func testRenderFrogFaces() throws {
         let moods: [(String, FrogMood)] = [
             ("idle", .idle), ("reading", .reading), ("thinking", .thinking), ("working", .working),

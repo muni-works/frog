@@ -15,6 +15,8 @@ struct TurnView: View {
     /// Show the model/speed footer without hovering (see `TurnFooter.pinned`).
     var pinsFooter = true
     @State private var hovering = false
+    /// The pointer is over what you asked (its actions show) rather than elsewhere in the turn.
+    @State private var hoveringPrompt = false
     @State private var confirmRewind = false
     @AppStorage("showThinking") private var showThinking = true
     @AppStorage("density") private var density = Density.comfortable.rawValue
@@ -26,14 +28,20 @@ struct TurnView: View {
         let flow = TurnFlow(turn.items, showThinking: showThinking)
         VStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 8 : 14) {
             if !turn.input.isEmpty {
-                UserPrompt(text: turn.input, images: turn.images)
-                    .overlay(alignment: .bottomTrailing) {
-                        if hovering, turn.finished, turn.number != nil, !conversation.busy {
-                            hoverBar(changes: parts.changes.count)
-                                .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                        }
-                    }
-                    .contextMenu { menu(changes: parts.changes.count) }
+                VStack(alignment: .trailing, spacing: 2) {
+                    UserPrompt(text: turn.input, images: turn.images)
+                        .contextMenu { menu(changes: parts.changes.count) }
+                    PromptActions(
+                        turn: turn,
+                        visible: hoveringPrompt && !(running && turn.number == nil),
+                        copy: copy,
+                        rewind: { confirmRewind = true },
+                        fork: { if let n = turn.number { actions.fork(n) } }
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .contentShape(.rect)
+                .onHover { hoveringPrompt = $0 }
             }
             ForEach(flow.segments) { segment in
                 switch segment {
@@ -57,7 +65,7 @@ struct TurnView: View {
             if let end = turn.end {
                 // An unpinned footer keeps its place and fades in on hover, so it neither
                 // covers the answer nor shifts what's below.
-                EndView(reason: end, usage: turn.usage)
+                EndView(reason: end, usage: turn.usage, answer: answer, hovering: hovering)
                     .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
                     .allowsHitTesting(pinsFooter || hovering)
             }
@@ -105,25 +113,6 @@ struct TurnView: View {
         return (label ?? "Thinking…", turn.items.compactMap(\.endedAt).max())
     }
 
-    private func hoverBar(changes: Int) -> some View {
-        HStack(spacing: 2) {
-            Button("Rewind", systemImage: "arrow.uturn.backward") { confirmRewind = true }
-                .help("Rewind to before this turn")
-            Button("Fork", systemImage: "arrow.triangle.branch") {
-                if let n = turn.number { actions.fork(n) }
-            }
-            .help("Branch the conversation after this turn")
-            Button("Copy", systemImage: "doc.on.doc") { copy() }
-                .help("Copy prompt")
-        }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .glassEffect(.regular, in: .capsule)
-        .offset(y: 30)
-    }
-
     @ViewBuilder
     private func menu(changes: Int) -> some View {
         if turn.number != nil, turn.finished {
@@ -134,6 +123,12 @@ struct TurnView: View {
             Divider()
         }
         Button("Copy", systemImage: "doc.on.doc") { copy() }
+    }
+
+    /// What frog said in this turn, for copying.
+    private var answer: String {
+        turn.items.filter { $0.kind == .message }.map(\.text).joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func copy() {
