@@ -323,6 +323,7 @@ final class Conversation {
                 turns[i].endedAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
                 if !replaying {
                     if let id = sessionID { Library.shared.turnEnded(id) }
+                    ModelStats.shared.record(usage, model: status?.model)
                     Notifier.shared.turnFinished(project: folder.lastPathComponent, text: Self.summary(turns[i]))
                     if case .complete = reason { FrogSounds.shared.play(.ribbit) }
                     if title == nil, case .complete = reason { nameSession(from: turns[i]) }

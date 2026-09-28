@@ -312,6 +312,13 @@ struct ActivityViewer: View {
 
     // MARK: Right: the readout
 
+    /// The model, and what this conversation has cost if it ran on priced models.
+    private func readoutHelp(_ s: Status) -> String {
+        let spent = conversation.turns.compactMap { $0.usage.flatMap { ModelStats.shared.cost(of: $0) } }.reduce(0, +)
+        let spoken = workspace.identity(s.model).spoken
+        return spent > 0 ? "\(spoken). This conversation: \(ModelStats.money(spent))" : spoken
+    }
+
     private func readout(_ s: Status) -> some View {
         HStack(spacing: 8) {
             Button { pickingModel.toggle() } label: {
@@ -324,7 +331,7 @@ struct ActivityViewer: View {
             .buttonStyle(.plain)
             .fixedSize()
             .disabled(conversation.busy)
-            .help(workspace.identity(s.model).spoken)
+            .help(readoutHelp(s))
             .popover(isPresented: $pickingModel, arrowEdge: .bottom) {
                 ModelMenu(workspace: workspace, current: s.model) { spec in
                     workspace.preferredModel = spec
@@ -335,7 +342,7 @@ struct ActivityViewer: View {
                 }
             }
             if let tps = s.tokensPerSec, tps > 0 {
-                Text("\(Int(tps)) tok/s")
+                Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                     .contentTransition(.numericText())
@@ -435,7 +442,8 @@ private struct ActivityPanel: View {
 
     private func stats(_ u: TurnUsage) -> some View {
         var parts = ["\(u.modelCalls) call\(u.modelCalls == 1 ? "" : "s")", "\(u.inputTokens.tokens) in", "\(u.outputTokens.tokens) out"]
-        if let tps = u.tokensPerSec, tps > 0 { parts.append("\(Int(tps)) tok/s") }
+        if let tps = u.tokensPerSec, tps > 0 { parts.append(ModelStats.speedText(tps * ModelStats.wordsPerToken)) }
+        if let c = ModelStats.shared.cost(of: u) { parts.append(ModelStats.money(c)) }
         return Text(parts.joined(separator: " · "))
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)

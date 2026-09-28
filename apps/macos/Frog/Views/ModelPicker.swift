@@ -124,6 +124,14 @@ struct ModelMenu: View {
         }
     }
 
+    /// Measured speed on your devices, estimated cost in the cloud.
+    private func hint(_ m: ModelIdentity) -> String? {
+        if m.place.isCloud {
+            return ModelStats.shared.estimatedTurnCost(m).map { "~\(ModelStats.money($0)) a turn" }
+        }
+        return ModelStats.shared.speed(m.spec).map(ModelStats.speedText)
+    }
+
     private func addKey(_ provider: String) {
         keyFor = store.providers.first { $0.id == provider }
     }
@@ -278,6 +286,10 @@ struct ModelMenu: View {
                     if m.state.isReady {
                         ModelLabel(model: m)
                         AbilityIcons(abilities: m.abilities)
+                        Spacer(minLength: 4)
+                        if let hint = hint(m) {
+                            Text(hint).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        }
                     } else {
                         ModelLabel(model: m, size: .row)
                     }

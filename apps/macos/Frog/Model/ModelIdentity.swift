@@ -75,6 +75,9 @@ struct ModelIdentity: Hashable, Sendable {
     let context: UInt64?
     /// The provider's price line ("$3 / $15 per M"), for cloud models.
     let price: String?
+    /// Dollars per million tokens, in and out, when the provider says.
+    var costIn: Double? = nil
+    var costOut: Double? = nil
     var state: State = .ready
     /// The provider id (the spec's first part), for adding a key.
     var providerID: String { String(spec.split(separator: "/", maxSplits: 1).first ?? "") }
@@ -125,6 +128,8 @@ extension ModelIdentity {
             context: entry.info?.context,
             price: entry.info?.price
         )
+        costIn = entry.info?.costIn
+        costOut = entry.info?.costOut
         if entry.source == "tang" {
             repo = String(entry.spec.dropFirst("tang/".count))
             downloadGB = SuggestedModel.all.first { $0.repo == repo }?.approxGB ?? entry.caps?.paramsB.map { $0 * 0.56 }

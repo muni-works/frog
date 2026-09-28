@@ -132,6 +132,7 @@ final class Workspace {
         }
         if models.isEmpty, let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
             models = m
+            ModelStats.shared.learnPrices(m)
         }
         struct Answer: Decodable { var cloud: CloudPolicy }
         if let a = try? await Frog.json(Answer.self, args: ["--cloud-policy", "--json"], cwd: folder) {
@@ -143,6 +144,7 @@ final class Workspace {
     func reloadModels() async {
         if let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
             models = m
+            ModelStats.shared.learnPrices(m)
         }
     }
 

@@ -144,6 +144,8 @@ struct TurnUsage: Decodable, Sendable {
     var outputTokens: UInt64
     var modelCalls: UInt32
     var tokensPerSec: Double?
+    /// The model (spec) that ran the turn. Absent in older logs.
+    var model: String?
 }
 
 struct EngineError: Decodable, Sendable, CustomStringConvertible {

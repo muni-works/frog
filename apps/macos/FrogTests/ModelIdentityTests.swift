@@ -58,7 +58,7 @@ final class ModelIdentityTests: XCTestCase {
             .appending(path: "Frog/Views")
         let ui = try NSRegularExpression(pattern: #"(Text\(|\.help\(|title:|subtitle:|Label\(|Section\(|Button\()"#)
         let literal = try NSRegularExpression(pattern: #""((?:[^"\\]|\\.)*)""#)
-        let banned = try NSRegularExpression(pattern: #"\b(tier|tool calls|tool mode|tang|ollama)\b"#, options: .caseInsensitive)
+        let banned = try NSRegularExpression(pattern: #"\b(tier|tool calls|tool mode|tang|ollama)\b|tok/s"#, options: .caseInsensitive)
         let spec = try NSRegularExpression(pattern: #"\.spec\b"#)
         var problems: [String] = []
         let files = try FileManager.default.contentsOfDirectory(at: views, includingPropertiesForKeys: nil)

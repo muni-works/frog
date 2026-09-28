@@ -115,17 +115,24 @@ struct UserPrompt: View {
 struct EndView: View {
     let reason: EndReason
     let usage: TurnUsage?
+    @Environment(\.models) private var models
 
     var body: some View {
         switch reason {
         case .complete, .denied:
             if let usage, usage.modelCalls > 0 {
                 HStack(spacing: 10) {
-                    Text("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s")")
-                    Text("\((usage.inputTokens + usage.outputTokens).tokens) tokens")
-                    if let tps = usage.tokensPerSec {
-                        Text("\(Int(tps)) tok/s")
+                    // Where it ran, then what it cost (cloud) or how fast it wrote.
+                    if let spec = usage.model {
+                        ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
                     }
+                    if let c = ModelStats.shared.cost(of: usage) {
+                        Text(ModelStats.money(c))
+                    } else if let tps = usage.tokensPerSec, tps > 0 {
+                        Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
+                    }
+                    Text("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s")")
+                        .help("\(usage.inputTokens.tokens) in, \(usage.outputTokens.tokens) out") // advanced
                 }
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.tertiary)

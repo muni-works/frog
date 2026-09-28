@@ -1,6 +1,6 @@
 # Models: local and cloud
 
-Spec, written 2026-09-28. Status: steps 1, 2 and 4 built (`ModelIdentity`, `ModelLabel`, states, guardrail tests, project permission); step 3's lanes built, Auto waiting on the engine; steps 5–6 proposed.
+Spec, written 2026-09-28. Status: steps 1, 2, 4 and 5 built (`ModelIdentity`, `ModelLabel`, states, guardrail tests, project permission, cost and speed); step 3's lanes built, Auto waiting on the engine; the spending cap moves to step 6 with Settings > Models; step 6 proposed.
 
 frog runs models on your Mac and in the cloud. This spec makes that difference visible and deliberate everywhere a model appears, and makes every appearance of a model look, read and behave the same.
 
@@ -130,7 +130,8 @@ The grouping by engine (tang / Apple / ollama / config.toml) goes away. Engines 
 - **Activity capsule hover:** the conversation's total cost, or average speed.
 - **Measured speed:** words/s per model on this Mac, from finished turns, a rolling median of the last 20. The picker shows it once there is one.
 - **Estimated cost:** the catalog price times this person's median turn size, rounded to a friendly number ("~4¢ a turn"). Before any history, a default turn of 8k in and 1k out.
-- **Spending cap** (Settings > Models > Cloud): optional, per month. At 80% frog says so once. At 100%, Auto goes local-only and cloud models go to a Paused state with "Raise cap…".
+- **Built:** `ModelStats` keeps per-model speeds (words/s, the median of the last 20 turns), turn sizes, learned prices and weekly spend. The engine now names the model in each turn's usage (`TurnUsage.model`), so a turn is priced by the model that ran it even after a switch. The turn footer shows the model caption, then cost or speed; tokens are on hover. The picker shows measured speed for your devices and "~4¢ a turn" for cloud. The capsule's hover adds the conversation's cost. "tok/s" joined the banned words.
+- **Spending cap** (Settings > Models > Cloud, with step 6): optional, per month. At 80% frog says so once. At 100%, Auto goes local-only and cloud models go to a Paused state with "Raise cap…".
 
 ## First run
 
