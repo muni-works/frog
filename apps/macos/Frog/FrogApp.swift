@@ -120,7 +120,6 @@ struct LocalModelCard: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.models) private var models
     @AppStorage("settingsTab") private var settingsTab = "general"
-    @AppStorage("defaultModel") private var defaultModel = ""
     @State private var downloads = ModelDownloads.shared
     @State private var store = ProviderStore.shared
     @State private var keyFor: ProviderInfo?
@@ -163,7 +162,7 @@ struct LocalModelCard: View {
         .onChange(of: downloads.states[recommended.repo]) { _, s in
             guard s == .done else { return }
             let m = recommended
-            if defaultModel.isEmpty { defaultModel = m.spec }
+            UserDefaults.standard.set(m.spec, forKey: "lastModel")
             // Only a conversation that hasn't started moves over.
             if conversation.turns.isEmpty {
                 conversation.setModel(m.spec)

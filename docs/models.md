@@ -1,6 +1,6 @@
 # Models: local and cloud
 
-Spec, written 2026-09-28. Status: built, except three things that wait on the engine: Auto (step 3), the Unreachable state, and starting on Apple Intelligence while the first download runs. See "Not built yet" at the end.
+Spec, written 2026-09-28. Status: built, except what waits on the engine: Auto (step 3), and listing unreachable models. See "Not built yet" at the end.
 
 frog runs models on your Mac and in the cloud. This spec makes that difference visible and deliberate everywhere a model appears, and makes every appearance of a model look, read and behave the same.
 
@@ -149,7 +149,8 @@ The same check feeds the Unreachable state: a model whose app or server doesn't 
 
 The empty conversation's "Run a model on this Mac" card becomes a choice, and chatting works before anything is chosen.
 
-- **Immediately:** Apple Intelligence where it's available, labeled as such in the pill. Otherwise the composer says "Choose a model to start".
+- **Immediately:** new conversations start on Apple Intelligence where this Mac has it (checked with FoundationModels), labeled as such in the pill. Otherwise frog's own default.
+- **Then, whatever you picked last.** Every pick (composer, capsule, Model menu, palette, a finished download) goes through `Workspace.use`, which switches the conversation and remembers the model. New conversations start on it. A model fixed in Settings (Default) wins over the last pick; "Last Used (Qwen3 8B)" is the default setting.
 - **Two cards, side by side:**
   - **On this Mac:** the recommended model for this Mac's memory (Qwen3 8B at 16 GB and up, Qwen3 4B below). "Private and free. 4.6 GB, once." [Get]
   - **Cloud:** "The strongest models, from about 4¢ a turn." [Sign in to Frog Pro] [Add a key…]
@@ -188,7 +189,6 @@ Steps 1 and 2 are app-only. Steps 3–5 need small engine additions: an escalati
 
 - **Auto.** The engine can't switch models mid-turn. It needs a hard-step signal and a way to continue a turn on another model (bet 5's local↔cloud handoff).
 - **Unreachable, fully.** The app checks local apps and servers itself, which covers the current model and servers. Models from an app that isn't running still don't appear at all, because `frog --models` leaves them out; listing them with a reachability flag would let the picker show them dimmed.
-- **Starting on Apple Intelligence.** The first run shows the choice cards, and the conversation switches to the downloaded model when it's ready. Starting on Apple's model meanwhile needs the engine's default-model choice to prefer it when nothing else is installed.
 - **Frog Pro sign-in** on the Cloud card, once Pro exists. Until then the card offers Add a Key….
 
 ## Open questions

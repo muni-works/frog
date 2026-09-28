@@ -95,7 +95,7 @@ struct ModelSettings: View {
             ForEach(sections, id: \.title) { section in
                 Section {
                     ForEach(section.models, id: \.spec) { m in
-                        ModelListRow(model: m, current: m.spec == defaultModel) { manage(m) }
+                        ModelListRow(model: m, current: m.spec == Workspace.startingModel) { manage(m) }
                     }
                 } header: {
                     Text(section.title)
@@ -138,8 +138,7 @@ struct ModelSettings: View {
     private var defaults: some View {
         Section {
             Picker("New conversations use", selection: $defaultModel) {
-                Text("frog's choice").tag("")
-                    .help("The model in config.toml, or Apple Intelligence") // advanced
+                Text(Workspace.lastUsed.map { "Last Used (\(ModelIdentity.of($0, in: models).name))" } ?? "Last Used").tag("")
                 ForEach(usable.filter(\.state.isReady), id: \.spec) { m in
                     ModelLabel(model: m, size: .menu).tag(m.spec)
                 }
@@ -151,7 +150,7 @@ struct ModelSettings: View {
                 if loading { ProgressView().controlSize(.small) }
             }
         } footer: {
-            Text("Change it for one conversation from the composer.")
+            Text("Out of the box, Apple Intelligence. After that, whichever model you picked last, unless you choose one here.")
                 .foregroundStyle(.secondary)
         }
     }

@@ -160,8 +160,7 @@ struct FrogCommands: Commands {
                 Picker("Model", selection: Binding(
                     get: { c.status?.model ?? "" },
                     set: { spec in
-                        window?.workspace.preferredModel = spec
-                        c.setModel(spec)
+                        window?.workspace.use(spec)
                     }
                 )) {
                     ForEach(window?.workspace.models ?? []) { m in

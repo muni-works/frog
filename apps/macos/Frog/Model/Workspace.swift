@@ -57,6 +57,32 @@ final class Workspace {
         }
     }
 
+    // MARK: Which model
+
+    /// The model new conversations start with: the one fixed in Settings, else the one picked
+    /// last, else Apple Intelligence where this Mac has it (nil: frog's own default).
+    static var startingModel: String? { startingModel() }
+
+    static func startingModel(_ d: UserDefaults = .standard, apple: Bool = AppleIntelligence.available) -> String? {
+        if let s = d.string(forKey: "defaultModel"), !s.isEmpty { return s }
+        return lastUsed(d, apple: apple)
+    }
+
+    /// The model picked last, or Apple Intelligence before anything has been.
+    static var lastUsed: String? { lastUsed() }
+
+    static func lastUsed(_ d: UserDefaults = .standard, apple: Bool = AppleIntelligence.available) -> String? {
+        if let s = d.string(forKey: "lastModel"), !s.isEmpty { return s }
+        return apple ? AppleIntelligence.spec : nil
+    }
+
+    /// Switch this conversation to a model, and remember it for the next one.
+    func use(_ spec: String) {
+        preferredModel = spec
+        conversation?.setModel(spec)
+        UserDefaults.standard.set(spec, forKey: "lastModel")
+    }
+
     /// A model being downloaded to switch to once it's ready.
     @ObservationIgnored private var switching: Task<Void, Never>?
 
@@ -77,8 +103,7 @@ final class Workspace {
                 case .done:
                     guard let self else { return }
                     await self.reloadModels()
-                    self.preferredModel = m.spec
-                    self.conversation?.setModel(m.spec)
+                    self.use(m.spec)
                     self.conversation?.flash("\(m.name) is ready.")
                     return
                 case .downloading:
@@ -119,7 +144,7 @@ final class Workspace {
     /// opens that session.
     init(folder: URL, fresh: Bool = false, resume: String? = nil) {
         self.folder = folder
-        preferredModel = UserDefaults.standard.string(forKey: "defaultModel").flatMap { $0.isEmpty ? nil : $0 }
+        preferredModel = Self.startingModel
         // Pick up where you left off: the first window reopens this folder's last session.
         // Windows and tabs opened after that start a fresh conversation.
         let chat = Frog.isChat(folder)

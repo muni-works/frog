@@ -334,8 +334,7 @@ struct ActivityViewer: View {
             .help(readoutHelp(s))
             .popover(isPresented: $pickingModel, arrowEdge: .bottom) {
                 ModelMenu(workspace: workspace, current: s.model) { spec in
-                    workspace.preferredModel = spec
-                    conversation.setModel(spec)
+                    workspace.use(spec)
                     pickingModel = false
                 } close: {
                     pickingModel = false

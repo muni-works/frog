@@ -33,8 +33,7 @@ extension Workspace {
             for m in models where m.spec != c.status?.model {
                 let id = ModelIdentity(m)
                 out.append(PaletteCommand(id: "model-\(m.spec)", title: "Model: \(id.name)", subtitle: id.place.label, symbol: id.place.symbol) {
-                    self.preferredModel = m.spec
-                    c.setModel(m.spec)
+                    self.use(m.spec)
                 })
             }
         }

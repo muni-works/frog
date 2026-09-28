@@ -57,6 +57,17 @@ final class ModelStatsTests: XCTestCase {
         XCTAssertEqual(s.estimatedTurnCost(m)!, 0.09, accuracy: 1e-9)
     }
 
+    func testNewConversationsStartOnAppleThenTheLastPick() {
+        let d = UserDefaults(suiteName: "frog-start-\(UUID().uuidString)")!
+        XCTAssertEqual(Workspace.startingModel(d, apple: true), "apple/on-device")
+        XCTAssertNil(Workspace.startingModel(d, apple: false))
+        d.set("tang/mlx-community/Qwen3-8B-4bit", forKey: "lastModel")
+        XCTAssertEqual(Workspace.startingModel(d, apple: true), "tang/mlx-community/Qwen3-8B-4bit")
+        // A model fixed in Settings wins over the last pick.
+        d.set("mew/mlx-community/Qwen3-8B-4bit", forKey: "defaultModel")
+        XCTAssertEqual(Workspace.startingModel(d, apple: true), "mew/mlx-community/Qwen3-8B-4bit")
+    }
+
     private func entry(_ spec: String, costIn: Double, costOut: Double) -> ModelEntry {
         let json = """
         {"spec":"\(spec)","provider":"anthropic","model":"sonnet","source":"remote","tier":"strong","toolMode":"native",

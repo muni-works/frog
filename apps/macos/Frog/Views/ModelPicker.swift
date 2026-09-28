@@ -24,8 +24,7 @@ struct ModelPicker: View {
         .help(conversation.status.map { workspace.identity($0.model).spoken } ?? "Choose a model")
         .popover(isPresented: $open, arrowEdge: .top) {
             ModelMenu(workspace: workspace, current: conversation.status?.model) { spec in
-                workspace.preferredModel = spec
-                conversation.setModel(spec)
+                workspace.use(spec)
                 open = false
             } close: {
                 open = false
