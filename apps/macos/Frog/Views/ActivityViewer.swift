@@ -315,9 +315,8 @@ struct ActivityViewer: View {
     private func readout(_ s: Status) -> some View {
         HStack(spacing: 8) {
             Button { pickingModel.toggle() } label: {
-                Text(ModelName.short(s.model, in: workspace.models).replacingOccurrences(of: "-4bit", with: " 4-bit"))
+                ModelLabel(model: workspace.identity(s.model))
                     .fontWeight(.medium)
-                    .lineLimit(1)
                     .hoverPlate(h: 4, v: 2)
                     .padding(.horizontal, -4)
                     .padding(.vertical, -2)
@@ -325,7 +324,7 @@ struct ActivityViewer: View {
             .buttonStyle(.plain)
             .fixedSize()
             .disabled(conversation.busy)
-            .help("\(s.model) · \(s.toolMode) tool calls · \(s.tier) tier")
+            .help(workspace.identity(s.model).spoken)
             .popover(isPresented: $pickingModel, arrowEdge: .bottom) {
                 ModelMenu(workspace: workspace, current: s.model) { spec in
                     workspace.preferredModel = spec

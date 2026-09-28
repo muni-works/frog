@@ -81,6 +81,7 @@ struct RaceView: View {
 }
 
 private struct AttemptCard: View {
+    @Environment(\.models) private var models
     let attempt: Race.Attempt
     let best: Bool
     let applying: Bool
@@ -95,9 +96,8 @@ private struct AttemptCard: View {
             HStack {
                 Text("Attempt \(attempt.id + 1)").font(.headline)
                 Spacer()
-                Text(attempt.model.replacingOccurrences(of: "ollama/", with: ""))
+                ModelLabel(model: ModelIdentity.of(attempt.model, in: models), size: .caption)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
             }
             status(turn)
             if let turn, !turn.finished {
@@ -263,7 +263,7 @@ struct RaceSetup: View {
             Stepper("\(count) attempts", value: $count, in: 2...4)
             ForEach(0..<count, id: \.self) { i in
                 Picker("Attempt \(i + 1)", selection: binding(i)) {
-                    ForEach(workspace.models) { m in Text(m.spec).tag(m.spec) }
+                    ForEach(workspace.models) { m in ModelLabel(model: ModelIdentity(m), size: .menu).tag(m.spec) }
                 }
             }
             VStack(alignment: .leading, spacing: 4) {

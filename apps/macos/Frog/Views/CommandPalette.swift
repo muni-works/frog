@@ -31,14 +31,15 @@ extension Workspace {
                 out.append(PaletteCommand(id: "mode-\(mode.rawValue)", title: "Mode: \(mode.label)", symbol: mode.symbol) { c.setMode(mode) })
             }
             for m in models where m.spec != c.status?.model {
-                out.append(PaletteCommand(id: "model-\(m.spec)", title: "Model: \(m.spec)", subtitle: "\(m.toolMode) tools · \(m.tier) tier", symbol: "cpu") {
+                let id = ModelIdentity(m)
+                out.append(PaletteCommand(id: "model-\(m.spec)", title: "Model: \(id.name)", subtitle: id.place.label, symbol: id.place.symbol) {
                     self.preferredModel = m.spec
                     c.setModel(m.spec)
                 })
             }
         }
         for s in sessions where s.id != conversation?.sessionID {
-            out.append(PaletteCommand(id: "session-\(s.id)", title: s.displayTitle, subtitle: s.model, symbol: s.forkedFrom == nil ? "bubble.left" : "arrow.triangle.branch") {
+            out.append(PaletteCommand(id: "session-\(s.id)", title: s.displayTitle, subtitle: ModelIdentity.of(s.model, in: models).name, symbol: s.forkedFrom == nil ? "bubble.left" : "arrow.triangle.branch") {
                 self.selection = s.id
                 self.open(s.id)
             })

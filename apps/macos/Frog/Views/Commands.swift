@@ -165,7 +165,7 @@ struct FrogCommands: Commands {
                     }
                 )) {
                     ForEach(window?.workspace.models ?? []) { m in
-                        Text(m.spec).tag(m.spec)
+                        ModelLabel(model: ModelIdentity(m), size: .menu).tag(m.spec)
                     }
                 }
                 .pickerStyle(.inline)

@@ -31,7 +31,7 @@ private struct GeneralSettings: View {
         Form {
             Picker("Default model", selection: $defaultModel) {
                 Text("frog's default").tag("")
-                ForEach(models) { m in Text(m.spec).tag(m.spec) }
+                ForEach(models) { m in ModelLabel(model: ModelIdentity(m), size: .menu).tag(m.spec) }
             }
             .help("Used for new sessions. Change it for a session from the composer or the Model menu.")
             Picker("Open files in", selection: $editor) {
@@ -70,12 +70,11 @@ private struct ModelSettings: View {
     @State private var addingServer = false
     @State private var query = ""
 
-    private let sources: [(key: String, title: String)] = [
-        ("tang", "Local: tang (open models on this Mac)"),
-        ("apple", "Local: Apple Intelligence"),
-        ("ollama", "Local: Ollama"),
-        ("server", "Your servers"),
-        ("config", "Configured in config.toml"),
+    /// Installed models by where they run.
+    private let sources: [(keys: Set<String>, title: String)] = [
+        (["tang", "apple", "ollama"], "On this Mac"),
+        (["server"], "Your servers"),
+        (["config"], "From config.toml"),
     ]
 
     /// Catalog matches for the search: every word must appear in the name or spec.
@@ -100,7 +99,7 @@ private struct ModelSettings: View {
             } header: {
                 Text("Providers")
             } footer: {
-                Text("Keys are kept in your Keychain. A server of your own, like a GPU box running Ollama, vLLM or llama.cpp, offers everything it serves.")
+                Text("Keys are kept in your Keychain. A server of your own, like a GPU box running Ollama, vLLM or llama.cpp, offers everything it serves.") // advanced
                     .foregroundStyle(.secondary)
             }
             Section {
@@ -148,8 +147,8 @@ private struct ModelSettings: View {
                 Text("Downloads to the Hugging Face cache. Runs on frog's own inference engine; no other software needed.")
                     .foregroundStyle(.secondary)
             }
-            ForEach(sources, id: \.key) { source in
-                let rows = models.filter { $0.source == source.key }
+            ForEach(sources, id: \.title) { source in
+                let rows = models.filter { source.keys.contains($0.source) }
                 if !rows.isEmpty {
                     Section(source.title) {
                         ForEach(rows) { ModelRow(model: $0) }
@@ -226,14 +225,14 @@ private struct CatalogRow: View {
             }
         }
         .disabled(!(provider?.connected ?? false) && model.enabled != true)
-        .help(provider?.connected == false ? "Add a \(provider?.name ?? "provider") key to use this model" : model.spec)
+        .help(provider?.connected == false ? "Add a \(provider?.name ?? "provider") key to use this model" : model.spec) // advanced
     }
 
     private var details: String {
         var parts = [provider?.name ?? model.provider]
         if let c = model.contextLabel { parts.append("\(c) context") }
-        if model.vision { parts.append("images") }
-        if model.reasoning { parts.append("reasoning") }
+        if model.vision { parts.append("sees images") }
+        if model.reasoning { parts.append("reasons") }
         if !model.tools { parts.append("no tools") }
         if let p = model.price { parts.append(p) }
         return parts.joined(separator: " · ")
@@ -309,7 +308,7 @@ private struct ServerSheet: View {
         Form {
             TextField("Name", text: $name, prompt: Text("GPU Box"))
             Picker("Runs", selection: $ollama) {
-                Text("Ollama").tag(true)
+                Text("Ollama").tag(true) // advanced
                 Text("OpenAI-compatible (vLLM, llama.cpp, LM Studio)").tag(false)
             }
             TextField("URL", text: $url, prompt: Text(ollama ? "http://gpu-box.local:11434" : "http://gpu-box.local:8000/v1"))
@@ -345,26 +344,18 @@ private struct ModelRow: View {
     let model: ModelEntry
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.spec.split(separator: "/", maxSplits: 1).last.map(String.init) ?? model.spec)
-                Text(details).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text(model.tier.capitalized)
-                .font(.caption.weight(.medium))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(.quaternary, in: .capsule)
-        }
+        let id = ModelIdentity(model)
+        ModelLabel(model: id, size: .row, detail: details(id))
+            // Engine details, for people who want them.
+            .help("\(model.spec) · \(model.toolMode) tool calls · \(model.tier) tier") // advanced
     }
 
-    private var details: String {
+    private func details(_ id: ModelIdentity) -> String? {
         var parts: [String] = []
-        if let b = model.caps?.paramsB { parts.append(String(format: "%.1fB", b)) }
-        parts.append("\(model.toolMode) tool calls")
-        if model.caps == nil { parts.append("not profiled yet") }
-        return parts.joined(separator: " · ")
+        if let b = id.paramsB { parts.append(String(format: "%.1fB parameters", b)) }
+        if let v = id.variant { parts.append(v) }
+        if model.caps == nil { parts.append("not checked yet") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 

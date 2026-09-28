@@ -169,6 +169,7 @@ struct WorkingIndicator: View {
 struct EmptyTranscript: View {
     let conversation: Conversation
     @Environment(\.canvasInsets) private var insets
+    @Environment(\.models) private var models
     @AppStorage("playfulFrog") private var playful = true
     @State private var hovering = false
     @State private var line = 0
@@ -202,9 +203,8 @@ struct EmptyTranscript: View {
             Text(isChat ? "What should we work on?" : conversation.folder.lastPathComponent)
                 .font(.title2.weight(.semibold))
             if details, let s = conversation.status {
-                Text("\(s.model) · \(s.toolMode) tools · \(s.tier) tier")
+                ModelLabel(model: ModelIdentity.of(s.model, in: models), size: .caption)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
             }
             Text(isChat ? "Ask anything, or pick a folder below to work on code." : "Ask about the code, or describe a change.  Use @file to attach a file, !cmd to run a command.")
                 .font(.callout)

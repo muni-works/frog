@@ -10,14 +10,18 @@ struct ModelPicker: View {
     var body: some View {
         Button { open.toggle() } label: {
             HStack(spacing: 4) {
-                Text(conversation.status.map { ModelName.short($0.model, in: workspace.models) } ?? "Model")
+                if let s = conversation.status {
+                    ModelLabel(model: workspace.identity(s.model))
+                } else {
+                    Text("Model")
+                }
                 Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
             }
             .hoverPlate()
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help(conversation.status.map { "\($0.model) · \($0.toolMode) tool calls · \($0.tier) tier" } ?? "Model")
+        .help(conversation.status.map { workspace.identity($0.model).spoken } ?? "Choose a model")
         .popover(isPresented: $open, arrowEdge: .top) {
             ModelMenu(workspace: workspace, current: conversation.status?.model) { spec in
                 workspace.preferredModel = spec
@@ -27,14 +31,6 @@ struct ModelPicker: View {
                 open = false
             }
         }
-    }
-}
-
-enum ModelName {
-    /// A model's display name: its catalog name, else the part after the provider.
-    static func short(_ spec: String, in models: [ModelEntry]) -> String {
-        if let name = models.first(where: { $0.spec == spec })?.info?.name { return name }
-        return spec.split(separator: "/", maxSplits: 1).last.map(String.init) ?? spec
     }
 }
 
@@ -54,26 +50,23 @@ struct ModelMenu: View {
     @Environment(\.openSettings) private var openSettings
     @FocusState private var searching: Bool
 
-    /// Groups in picker order: providers you turned models on from, your servers, then what
-    /// runs on this Mac, then config.toml profiles.
+    /// Groups by where models run: this Mac, then your servers, then each cloud provider.
     private var groups: [(title: String, models: [ModelEntry])] {
         let words = query.lowercased().split(separator: " ")
         let shown = workspace.models.filter { m in
-            let hay = (ModelName.short(m.spec, in: workspace.models) + " " + m.spec).lowercased()
+            let hay = (ModelIdentity(m).name + " " + m.spec).lowercased()
             return words.allSatisfy { hay.contains($0) }
         }
         var out: [(String, [ModelEntry])] = []
-        let provider = { (m: ModelEntry) in String(m.spec.split(separator: "/").first ?? "") }
-        for source in ["remote", "server"] {
-            let rows = shown.filter { $0.source == source }
-            for id in Array(NSOrderedSet(array: rows.map(provider))) as? [String] ?? [] {
-                out.append((store.name(of: id), rows.filter { provider($0) == id }))
-            }
+        let order: (ModelIdentity.Place) -> Int = { p in
+            switch p { case .mac, .apple: 0; case .server: 1; case .cloud: 2 }
         }
-        let local: [(String, String)] = [("tang", "On this Mac"), ("apple", "Apple Intelligence"), ("ollama", "Ollama"), ("config", "config.toml")]
-        for (source, title) in local {
-            let rows = shown.filter { $0.source == source }
-            if !rows.isEmpty { out.append((title, rows)) }
+        let byPlace = Dictionary(grouping: shown) { ModelIdentity($0).place.label }
+        for (label, rows) in byPlace.sorted(by: { a, b in
+            let pa = order(ModelIdentity(a.value[0]).place), pb = order(ModelIdentity(b.value[0]).place)
+            return pa != pb ? pa < pb : a.key < b.key
+        }) {
+            out.append((label, rows))
         }
         return out
     }
@@ -116,7 +109,7 @@ struct ModelMenu: View {
             .frame(width: 290)
             if let m = focus {
                 Divider()
-                ModelCard(model: m, provider: store.name(of: String(m.spec.split(separator: "/").first ?? "")))
+                ModelCard(model: ModelIdentity(m))
                     .frame(width: 250)
             }
         }
@@ -163,7 +156,8 @@ struct ModelMenu: View {
         let lit = hovered == m.spec || (hovered == nil && flat[safe: selected]?.spec == m.spec)
         return Button { pick(m.spec) } label: {
             HStack(spacing: 8) {
-                Text(ModelName.short(m.spec, in: workspace.models)).lineLimit(1)
+                ModelLabel(model: ModelIdentity(m))
+                AbilityIcons(abilities: ModelIdentity(m).abilities)
                 Spacer(minLength: 4)
                 if m.spec == current {
                     Image(systemName: "checkmark").font(.caption.weight(.semibold)).foregroundStyle(.tint)
@@ -181,15 +175,14 @@ struct ModelMenu: View {
     }
 }
 
-/// What's worth knowing to pick a model: where it runs, what it takes, how much it holds, and
-/// what it costs.
+/// What's worth knowing to pick a model: where it runs, what it can do, how much it holds,
+/// and what it costs. The spec is here, small, for people who want it.
 private struct ModelCard: View {
-    let model: ModelEntry
-    let provider: String
+    let model: ModelIdentity
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(model.info?.name ?? model.model)
+            Text(model.name)
                 .font(.headline)
                 .lineLimit(2)
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
@@ -201,7 +194,7 @@ private struct ModelCard: View {
                 }
             }
             .font(.callout)
-            Text(model.spec)
+            Text(model.spec) // advanced: the detail card shows the spec, small
                 .font(.caption.monospaced())
                 .foregroundStyle(.tertiary)
                 .lineLimit(2)
@@ -212,17 +205,16 @@ private struct ModelCard: View {
     }
 
     private var rows: [(String, String)] {
-        var out: [(String, String)] = [("Provider", provider)]
-        if let i = model.info {
-            out.append(("Inputs", i.inputs.joined(separator: ", ")))
-            out.append(("Reasoning", i.reasoning ? "Yes" : "No"))
-            if let c = i.context { out.append(("Context", c.formatted())) }
-            if let p = i.price { out.append(("Price", p)) }
-        } else if let b = model.caps?.paramsB {
-            out.append(("Size", String(format: "%.1fB parameters", b)))
-        }
-        out.append(("Tool calls", model.toolMode))
-        out.append(("Tier", model.tier.capitalized))
+        var out: [(String, String)] = [("Runs", model.place.label)]
+        var can: [String] = []
+        if model.abilities.contains(.usesTools) { can.append("Uses tools") }
+        if model.abilities.contains(.seesImages) { can.append("Sees images") }
+        if model.abilities.contains(.reasons) { can.append("Reasons") }
+        if !can.isEmpty { out.append(("Can", can.joined(separator: ", "))) }
+        if let b = model.paramsB { out.append(("Size", String(format: "%.1fB parameters", b))) }
+        if let v = model.variant { out.append(("Variant", v)) }
+        if let c = model.context { out.append(("Context", "\(c.formatted()) tokens")) }
+        if let p = model.price { out.append(("Price", p)) }
         return out
     }
 }

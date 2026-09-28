@@ -66,6 +66,7 @@ struct PaneView: View {
         }
         .environment(\.canvasInsets, insets)
         .environment(\.projectFolder, workspace.folder)
+        .environment(\.models, workspace.models)
         .environment(\.switchFolder) { url in panes.switchFolder(url, in: pane) }
         .environment(\.openSession) { s in panes.open(s, in: pane, window: window) }
         // Clicking anywhere in a pane focuses it, without swallowing the click.
