@@ -1,6 +1,6 @@
 # Models: local and cloud
 
-Spec, written 2026-09-28. Status: steps 1, 2, 4 and 5 built (`ModelIdentity`, `ModelLabel`, states, guardrail tests, project permission, cost and speed); step 3's lanes built, Auto waiting on the engine; the spending cap moves to step 6 with Settings > Models; step 6 proposed.
+Spec, written 2026-09-28. Status: built, except three things that wait on the engine: Auto (step 3), the Unreachable state, and starting on Apple Intelligence while the first download runs. See "Not built yet" at the end.
 
 frog runs models on your Mac and in the cloud. This spec makes that difference visible and deliberate everywhere a model appears, and makes every appearance of a model look, read and behave the same.
 
@@ -179,6 +179,13 @@ Consistency has to be enforced, or it erodes one feature at a time.
 6. **First run and Settings > Models.**
 
 Steps 1 and 2 are app-only. Steps 3–5 need small engine additions: an escalation signal for Auto, per-turn cost in `turnEnded` usage, and a project policy the engine enforces as well as the UI, so the terminal app keeps the same promise.
+
+## Not built yet
+
+- **Auto.** The engine can't switch models mid-turn. It needs a hard-step signal and a way to continue a turn on another model (bet 5's local↔cloud handoff).
+- **Unreachable.** `frog --models` leaves out models it can't reach. It needs to list them with a reachability flag.
+- **Starting on Apple Intelligence.** The first run shows the choice cards, and the conversation switches to the downloaded model when it's ready. Starting on Apple's model meanwhile needs the engine's default-model choice to prefer it when nothing else is installed.
+- **Frog Pro sign-in** on the Cloud card, once Pro exists. Until then the card offers Add a Key….
 
 ## Open questions
 

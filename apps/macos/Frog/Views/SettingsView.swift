@@ -62,13 +62,20 @@ enum Models {
 
 // MARK: - Models
 
+/// Models, in the picker's two lanes: what runs on your devices (installed, what else fits,
+/// your servers) and what runs in the cloud (keys, which models to show, spending). Engine
+/// details are in Advanced, the one place their words appear.
 private struct ModelSettings: View {
     @State private var store = ProviderStore.shared
+    @State private var stats = ModelStats.shared
+    @State private var downloads = ModelDownloads.shared
     @State private var models: [ModelEntry] = []
     @State private var loading = true
     @State private var keyFor: ProviderInfo?
     @State private var addingServer = false
     @State private var query = ""
+    @AppStorage("modelSettingsLane") private var lane = "devices"
+    @AppStorage(ModelStats.capKey) private var cap: Double = 0
 
     /// Installed models by where they run.
     private let sources: [(keys: Set<String>, title: String)] = [
@@ -87,74 +94,31 @@ private struct ModelSettings: View {
         }
     }
 
+    /// Recommended models not on this Mac yet (or on their way).
+    private var toGet: [SuggestedModel] {
+        SuggestedModel.all.filter { !ModelDownloads.isInstalled($0.repo) || downloads.states[$0.repo] != nil && downloads.states[$0.repo] != .done }
+    }
+
     var body: some View {
         Form {
             Section {
-                ForEach(store.providers) { p in
-                    ProviderRow(provider: p) { keyFor = p } remove: {
-                        Task { await store.remove(p.id); models = await Models.load() }
-                    }
+                Picker("Where models run", selection: $lane) {
+                    Label("Your Devices", systemImage: "laptopcomputer").tag("devices")
+                    Label("Cloud", systemImage: "cloud").tag("cloud")
                 }
-                Button("Add Server…") { addingServer = true }
-            } header: {
-                Text("Providers")
+                .pickerStyle(.segmented)
+                .labelsHidden()
             } footer: {
-                Text("Keys are kept in your Keychain. A server of your own, like a GPU box running Ollama, vLLM or llama.cpp, offers everything it serves.") // advanced
+                Text(lane == "devices"
+                     ? "Private and free: nothing leaves your devices. This Mac has \(ModelIdentity.memoryGB) GB."
+                     : "Code you send is processed by the provider. Each project asks before its first cloud turn.")
                     .foregroundStyle(.secondary)
             }
-            Section {
-                TextField("Search \(store.catalog.count) models", text: $query)
-                    .textFieldStyle(.roundedBorder)
-                let list = Array(matches.prefix(150))
-                if list.isEmpty {
-                    Text(query.isEmpty ? "Search to find models from OpenRouter, Vercel AI Gateway and the providers you've connected, and turn on the ones you want in the picker." : "No models match.")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(list) { m in
-                    CatalogRow(model: m, provider: store.provider(m.provider)) { on in
-                        Task { await store.setEnabled(m.spec, on) }
-                    }
-                }
-                if matches.count > list.count {
-                    Text("\(matches.count - list.count) more; narrow the search.").foregroundStyle(.secondary)
-                }
-            } header: {
-                HStack {
-                    Text(query.isEmpty ? "Models you've turned on" : "Models")
-                    Spacer()
-                    if store.loadingCatalog {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("Refresh", systemImage: "arrow.clockwise") {
-                            Task { await store.loadCatalog(refresh: true) }
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .help("Fetch the latest model lists")
-                    }
-                }
-            }
+            if lane == "devices" { devices } else { cloud }
             if let error = store.error {
                 Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
             }
-            Section {
-                ForEach(SuggestedModel.all) { m in
-                    SuggestedModelRow(model: m) { Task { models = await Models.load() } }
-                }
-            } header: {
-                Text("Get a local model")
-            } footer: {
-                Text("Downloads to the Hugging Face cache. Runs on frog's own inference engine; no other software needed.")
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(sources, id: \.title) { source in
-                let rows = models.filter { source.keys.contains($0.source) }
-                if !rows.isEmpty {
-                    Section(source.title) {
-                        ForEach(rows) { ModelRow(model: $0) }
-                    }
-                }
-            }
+            advanced
             if loading {
                 ProgressView().frame(maxWidth: .infinity)
             }
@@ -173,6 +137,128 @@ private struct ModelSettings: View {
             await catalog
         }
         .onChange(of: store.generation) { Task { models = await Models.load() } }
+    }
+
+    // MARK: Your Devices
+
+    @ViewBuilder
+    private var devices: some View {
+        ForEach(sources, id: \.title) { source in
+            let rows = models.filter { source.keys.contains($0.source) }
+            if !rows.isEmpty {
+                Section(source.title) {
+                    ForEach(rows) { ModelRow(model: $0) }
+                }
+            }
+        }
+        if !toGet.isEmpty {
+            Section {
+                ForEach(toGet) { m in
+                    SuggestedModelRow(model: m) { Task { models = await Models.load() } }
+                }
+            } header: {
+                Text("Also for this Mac")
+            } footer: {
+                Text("Runs on frog's own engine, fully offline. Downloads once to the Hugging Face cache.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        Section {
+            ForEach(store.providers.filter(\.local)) { p in
+                ProviderRow(provider: p) { keyFor = p } remove: {
+                    Task { await store.remove(p.id); models = await Models.load() }
+                }
+            }
+            Button("Add Server…") { addingServer = true }
+        } header: {
+            Text("Your servers and apps")
+        } footer: {
+            Text("A server of your own, like a GPU box running Ollama, vLLM or llama.cpp, offers everything it serves.") // advanced
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Cloud
+
+    @ViewBuilder
+    private var cloud: some View {
+        Section {
+            ForEach(store.providers.filter { !$0.local }) { p in
+                ProviderRow(provider: p) { keyFor = p } remove: {
+                    Task { await store.remove(p.id); models = await Models.load() }
+                }
+            }
+        } header: {
+            Text("Providers")
+        } footer: {
+            Text("Keys are kept in your Keychain.")
+                .foregroundStyle(.secondary)
+        }
+        Section {
+            TextField("Search \(store.catalog.count) models", text: $query)
+                .textFieldStyle(.roundedBorder)
+            let list = Array(matches.prefix(150))
+            if list.isEmpty {
+                Text(query.isEmpty ? "Search to find models from OpenRouter, Vercel AI Gateway and the providers you've connected, and turn on the ones you want in the picker." : "No models match.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(list) { m in
+                CatalogRow(model: m, provider: store.provider(m.provider)) { on in
+                    Task { await store.setEnabled(m.spec, on) }
+                }
+            }
+            if matches.count > list.count {
+                Text("\(matches.count - list.count) more; narrow the search.").foregroundStyle(.secondary)
+            }
+        } header: {
+            HStack {
+                Text(query.isEmpty ? "In the picker" : "Models")
+                Spacer()
+                if store.loadingCatalog {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Refresh", systemImage: "arrow.clockwise") {
+                        Task { await store.loadCatalog(refresh: true) }
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .help("Fetch the latest model lists")
+                }
+            }
+        }
+        Section {
+            LabeledContent("This week", value: ModelStats.spent(stats.spentThisWeek))
+            LabeledContent("This month", value: ModelStats.spent(stats.spentThisMonth))
+            Picker("Monthly cap", selection: $cap) {
+                Text("None").tag(0.0)
+                ForEach([5.0, 10, 25, 50, 100, 250], id: \.self) { Text("$\(Int($0))").tag($0) }
+            }
+        } header: {
+            Text("Spending")
+        } footer: {
+            Text(cap > 0
+                 ? "At the cap, cloud models pause until next month, and conversations keep going on your devices."
+                 : "Estimated from each provider's prices and the tokens frog sent and received.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Advanced
+
+    private var advanced: some View {
+        Section {
+            DisclosureGroup("Engine details") {
+                ForEach(models) { m in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(m.spec).font(.callout.monospaced()) // advanced
+                        Text("\(m.source) · \(m.toolMode) tool calls · \(m.tier) tier") // advanced
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .textSelection(.enabled)
+                }
+            }
+        }
     }
 }
 
@@ -362,13 +448,15 @@ private struct ModelRow: View {
 /// A recommended model with its download state: Download, a progress bar, or Installed.
 struct SuggestedModelRow: View {
     let model: SuggestedModel
+    /// Add the model's one-line description ("Best balance for coding on most Macs").
+    var describe = true
     var onInstalled: () -> Void = {}
     @State private var downloads = ModelDownloads.shared
 
     var body: some View {
         let id = ModelIdentity(model)
         HStack(spacing: 12) {
-            ModelLabel(model: id, size: .row, detail: model.detail)
+            ModelLabel(model: id, size: .row, detail: describe ? model.detail : nil)
             Spacer()
             if id.state.isReady {
                 Label("Ready", systemImage: "checkmark.circle.fill")

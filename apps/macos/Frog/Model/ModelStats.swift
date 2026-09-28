@@ -24,7 +24,7 @@ final class ModelStats {
 
     private struct Store: Codable {
         var models: [String: Record] = [:]
-        /// Dollars spent per week, keyed by the week's start (yyyy-MM-dd).
+        /// Dollars spent per day (yyyy-MM-dd).
         var spend: [String: Double] = [:]
         /// Prices learned from the catalog, dollars per million tokens: spec → [in, out].
         var prices: [String: [Double]] = [:]
@@ -63,7 +63,7 @@ final class ModelStats {
         r.outputs = (r.outputs + [Double(usage.outputTokens)]).suffix(Self.window)
         store.models[spec] = r
         if let c = cost(of: usage, spec: spec), c > 0 {
-            store.spend[Self.week(of: date), default: 0] += c
+            store.spend[Self.day(date), default: 0] += c
         }
         save()
     }
@@ -88,7 +88,28 @@ final class ModelStats {
         return (input * i + output * o) / 1_000_000
     }
 
-    var spentThisWeek: Double { store.spend[Self.week(of: .now)] ?? 0 }
+    var spentThisWeek: Double { spent(in: .weekOfYear) }
+    var spentThisMonth: Double { spent(in: .month) }
+
+    private func spent(in period: Calendar.Component, at date: Date = .now) -> Double {
+        let cal = Calendar(identifier: .iso8601)
+        guard let range = cal.dateInterval(of: period, for: date) else { return 0 }
+        let (from, to) = (Self.day(range.start), Self.day(range.end))
+        return store.spend.filter { $0.key >= from && $0.key < to }.values.reduce(0, +)
+    }
+
+    // MARK: Cap
+
+    static let capKey = "monthlyCloudCap"
+
+    /// Dollars a month cloud models may spend; 0 means no cap.
+    var monthlyCap: Double {
+        get { defaults.double(forKey: Self.capKey) }
+        set { defaults.set(newValue, forKey: Self.capKey) }
+    }
+
+    /// Cloud models pause for the rest of the month once the cap is reached.
+    var overCap: Bool { monthlyCap > 0 && spentThisMonth >= monthlyCap }
 
     private static func median(_ v: [Double]) -> Double? {
         guard !v.isEmpty else { return nil }
@@ -96,19 +117,20 @@ final class ModelStats {
         return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
     }
 
-    private static func week(of date: Date) -> String {
-        let cal = Calendar(identifier: .iso8601)
-        let start = cal.dateInterval(of: .weekOfYear, for: date)?.start ?? date
+    private static func day(_ date: Date) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: start)
+        return f.string(from: date)
     }
 
     // MARK: Words
 
     /// "38 words/s".
     static func speedText(_ wordsPerSec: Double) -> String { "\(Int(wordsPerSec.rounded())) words/s" }
+
+    /// An amount spent: "$0", "4¢", "$1.84".
+    static func spent(_ dollars: Double) -> String { dollars <= 0 ? "$0" : money(dollars) }
 
     /// Friendly money: "Free", "<1¢", "4¢", "$1.84".
     static func money(_ dollars: Double) -> String {

@@ -111,42 +111,115 @@ enum Recents {
     }
 }
 
-/// First run: if no open model is on this Mac yet, offer the recommended one right in the empty
-/// conversation. Once one is installed this shrinks to a line pointing at Settings.
+/// First run, in the empty conversation: a choice between a model on this Mac (the one that
+/// suits its memory) and the cloud. When the download finishes, an empty conversation switches
+/// to it and says so. Once a model is on this Mac, this shrinks to a line, and goes away once
+/// there are two. See docs/models.md, "First run".
 struct LocalModelCard: View {
+    let conversation: Conversation
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.models) private var models
+    @AppStorage("settingsTab") private var settingsTab = "general"
+    @AppStorage("defaultModel") private var defaultModel = ""
     @State private var downloads = ModelDownloads.shared
+    @State private var store = ProviderStore.shared
+    @State private var keyFor: ProviderInfo?
+
+    /// The model for this Mac: 8B with 16 GB or more, else 4B.
+    private var recommended: SuggestedModel {
+        let repo = ModelIdentity.memoryGB >= 16 ? "mlx-community/Qwen3-8B-4bit" : "mlx-community/Qwen3-4B-4bit"
+        return SuggestedModel.all.first { $0.repo == repo } ?? SuggestedModel.all[0]
+    }
 
     private var installed: [SuggestedModel] {
         SuggestedModel.all.filter { ModelDownloads.isInstalled($0.repo) || downloads.states[$0.repo] == .done }
     }
 
+    /// Models ready on your devices, not counting Apple's.
+    private var readyOnDevices: [ModelIdentity] {
+        models.map(ModelIdentity.init).filter { !$0.place.isCloud && $0.place != .apple && $0.state.isReady }
+    }
+
     var body: some View {
-        if installed.isEmpty, let first = SuggestedModel.all.first {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Run a model on this Mac", systemImage: "cpu").font(.headline)
-                Text("frog has its own inference engine. Download a model once and work fully offline.")
+        Group {
+            if installed.isEmpty {
+                choice
+            } else if readyOnDevices.count < 2, let first = installed.first {
+                Button {
+                    settingsTab = "models"
+                    openSettings()
+                } label: {
+                    HStack(spacing: 4) {
+                        ModelLabel(model: ModelIdentity(first), size: .caption)
+                        Text("· Change").foregroundStyle(.tint)
+                    }
                     .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                SuggestedModelRow(model: first)
-                Button("More models…") { openSettings() }
-                    .buttonStyle(.link)
-                    .font(.callout)
+                }
+                .buttonStyle(.plain)
             }
-            .frame(maxWidth: 420)
+        }
+        .sheet(item: $keyFor) { p in KeySheet(provider: p) }
+        .task { await store.load() }
+        .onChange(of: downloads.states[recommended.repo]) { _, s in
+            guard s == .done else { return }
+            let m = recommended
+            if defaultModel.isEmpty { defaultModel = m.spec }
+            // Only a conversation that hasn't started moves over.
+            if conversation.turns.isEmpty {
+                conversation.setModel(m.spec)
+                conversation.flash("\(m.title) is ready on this Mac and now your default.")
+            }
+        }
+    }
+
+    /// Side by side where there's room, stacked where there isn't.
+    private var choice: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) { mac; cloud }
+            VStack(spacing: 12) { mac; cloud }
+        }
+        .frame(maxWidth: 600)
+    }
+
+    private var mac: some View {
+        card {
+            Label("On this Mac", systemImage: "laptopcomputer").font(.headline)
+            Text("Private and free, and works offline. One download.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            // The card says what it's for; the row just names the model and its size.
+            SuggestedModelRow(model: recommended, describe: false)
+            Button("More models…") {
+                settingsTab = "models"
+                openSettings()
+            }
+            .buttonStyle(.link)
+            .font(.callout)
+        }
+    }
+
+    private var cloud: some View {
+        card {
+            Label("Cloud", systemImage: "cloud").font(.headline)
+            Text("The strongest models. Code you send goes to the provider, and each project asks first.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Menu("Add a Key…") {
+                ForEach(store.providers.filter { !$0.local && !$0.custom }) { p in
+                    Button(p.name) { keyFor = p }
+                }
+            }
+            .fixedSize()
+        }
+    }
+
+    private func card<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 10) { content() }
+            .frame(minWidth: 230, maxWidth: 260, alignment: .leading)
             .padding(14)
             .glassEffect(.regular, in: .rect(cornerRadius: 14))
-        } else if !installed.isEmpty {
-            Button {
-                openSettings()
-            } label: {
-                Label("\(installed.map(\.title).joined(separator: ", ")) ready on this Mac", systemImage: "checkmark.circle.fill")
-                    .font(.callout)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-        }
     }
 }
 

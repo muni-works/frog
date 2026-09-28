@@ -218,7 +218,7 @@ struct EmptyTranscript: View {
                 .foregroundStyle(.tertiary)
                 .padding(.top, 4)
             if card {
-                LocalModelCard()
+                LocalModelCard(conversation: conversation)
                     .padding(.top, 14)
             }
         }

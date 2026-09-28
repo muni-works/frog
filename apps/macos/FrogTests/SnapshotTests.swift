@@ -133,6 +133,19 @@ extension SnapshotTests {
         try render(sheet, size: CGSize(width: 960, height: 580), to: "model-labels")
     }
 
+    /// The first-run choice, wide (side by side) and narrow (stacked): `first-run-*.png`.
+    func testRenderFirstRun() throws {
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        for (name, width) in [("wide", 640.0), ("narrow", 340.0)] {
+            try render(
+                LocalModelCard(conversation: c)
+                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(nsColor: .windowBackgroundColor)),
+                size: CGSize(width: width, height: name == "wide" ? 300 : 520), to: "first-run-\(name)")
+        }
+    }
+
     func testRenderFrogFaces() throws {
         let moods: [(String, FrogMood)] = [
             ("idle", .idle), ("reading", .reading), ("thinking", .thinking), ("working", .working),

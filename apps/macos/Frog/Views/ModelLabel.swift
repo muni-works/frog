@@ -119,6 +119,8 @@ struct ModelStateAction: View {
     @State private var downloads = ModelDownloads.shared
     @Environment(\.addProviderKey) private var addKey
     @Environment(\.askCloudPermission) private var askCloud
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("settingsTab") private var settingsTab = "general"
 
     var body: some View {
         switch model.state {
@@ -140,6 +142,11 @@ struct ModelStateAction: View {
             if let addKey { button("Add Key…") { addKey(model.providerID) } }
         case .notAllowed:
             if let askCloud { button("Allow…") { askCloud(model) } }
+        case .overCap:
+            button("Raise Cap…") {
+                settingsTab = "models"
+                openSettings()
+            }
         case .ready, .wontFit:
             EmptyView()
         }
@@ -204,6 +211,7 @@ extension ModelIdentity {
         case .needsKey(let p): "Add \(p.first.map { "AEIOU".contains($0) } == true ? "an" : "a") \(p) key to use it"
         case .wontFit(let needs, let has): "Needs \(needs) GB, this Mac has \(has)"
         case .notAllowed(let project): "\(project) keeps code on your devices"
+        case .overCap: "This month's cloud cap is reached"
         }
     }
 
@@ -219,13 +227,14 @@ extension ModelIdentity.State {
         case .needsKey: "key"
         case .wontFit: "memorychip"
         case .notAllowed: "lock"
+        case .overCap: "pause.circle"
         }
     }
 
     /// Shown, but not something you can pick.
     var dimmed: Bool {
         switch self {
-        case .wontFit, .notAllowed: true
+        case .wontFit, .notAllowed, .overCap: true
         default: false
         }
     }

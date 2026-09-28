@@ -57,6 +57,8 @@ struct ModelIdentity: Hashable, Sendable {
         case wontFit(needsGB: Int, hasGB: Int)
         /// A cloud model, in a project that keeps its code on your devices.
         case notAllowed(project: String)
+        /// A cloud model, with this month's spending cap reached.
+        case overCap
 
         var isReady: Bool { self == .ready }
     }
@@ -173,6 +175,7 @@ extension ModelIdentity {
            let p = ProviderStore.shared.providers.first(where: { $0.id == provider }), !p.connected {
             return .needsKey(provider: name)
         }
+        if place.isCloud, ModelStats.shared.overCap { return .overCap }
         if let repo {
             switch ModelDownloads.shared.states[repo] {
             case .downloading(let f): return .downloading(fraction: f)

@@ -38,6 +38,13 @@ final class ModelStatsTests: XCTestCase {
         s.record(usage(10_000, 1_000), model: nil)
         s.record(usage(10_000, 1_000), model: nil)
         XCTAssertEqual(s.spentThisWeek, 0.09, accuracy: 1e-9)
+        XCTAssertEqual(s.spentThisMonth, 0.09, accuracy: 1e-9)
+        // A cap under what's spent pauses cloud models; none (0) never does.
+        XCTAssertFalse(s.overCap)
+        s.monthlyCap = 0.05
+        XCTAssertTrue(s.overCap)
+        s.monthlyCap = 0
+        XCTAssertFalse(s.overCap)
     }
 
     func testEstimatedCostUsesYourTurnSizes() {

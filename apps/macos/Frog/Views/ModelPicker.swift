@@ -120,7 +120,7 @@ struct ModelMenu: View {
         case .notDownloaded, .downloadFailed: if let r = m.repo { downloads.download(r) }
         case .needsKey: addKey(m.providerID)
         case .notAllowed: asking = m
-        case .downloading, .wontFit: break
+        case .downloading, .wontFit, .overCap: break
         }
     }
 
