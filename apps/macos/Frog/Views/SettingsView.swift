@@ -99,10 +99,6 @@ struct ModelSettings: View {
                     }
                 } header: {
                     Text(section.title)
-                } footer: {
-                    if section.title == ModelSections.getMore {
-                        Text("Runs on frog's own engine, fully offline.").foregroundStyle(.secondary)
-                    }
                 }
             }
             cloud

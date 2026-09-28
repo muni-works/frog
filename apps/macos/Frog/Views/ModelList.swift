@@ -2,33 +2,36 @@ import SwiftUI
 
 /// The one list of models, shared by the picker and Settings (docs/models.md): the same
 /// sections in the same order, and the same row. Sections say where models run, so rows
-/// don't: On this Mac, then your servers, then each cloud provider, then Get more.
+/// don't: On this Mac, then your servers, then each cloud provider. A model you'd download
+/// is just a model on this Mac in the Not downloaded state.
 enum ModelSections {
-    static let getMore = "Get more"
-
     /// `usable`: what frog listed (plus the current model, even if it wasn't listed).
     /// `suggested`: what frog recommends downloading.
     static func make(usable: [ModelIdentity], suggested: [ModelIdentity]) -> [(title: String, models: [ModelIdentity])] {
         let order: (ModelIdentity.Place) -> Int = { p in
             switch p { case .mac, .apple: 0; case .server: 1; case .cloud: 2 }
         }
-        // Ready first; ones that need something next; ones that can't be used last.
+        // Ready first, then on their way, then ones that need something, then ones that can't
+        // run well here.
         let rank: (ModelIdentity.State) -> Int = { s in
-            switch s { case .ready: 0; case .wontFit, .overCap, .unreachable: 2; default: 1 }
+            switch s {
+            case .ready: 0
+            case .downloading: 1
+            case .wontFit, .overCap, .unreachable: 3
+            default: 2
+            }
         }
         let sorted: ([ModelIdentity]) -> [ModelIdentity] = { list in
             list.enumerated().sorted { (rank($0.element.state), $0.offset) < (rank($1.element.state), $1.offset) }.map(\.element)
         }
         let have = Set(usable.map(\.spec))
-        var out = Dictionary(grouping: usable) { $0.place.label }
+        let all = usable + suggested.filter { !have.contains($0.spec) }
+        return Dictionary(grouping: all) { $0.place.label }
             .sorted { a, b in
                 let pa = order(a.value[0].place), pb = order(b.value[0].place)
                 return pa != pb ? pa < pb : a.key < b.key
             }
             .map { (title: $0.key, models: sorted($0.value)) }
-        let more = suggested.filter { !have.contains($0.spec) }
-        if !more.isEmpty { out.append((getMore, sorted(more))) }
-        return out
     }
 }
 

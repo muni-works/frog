@@ -57,6 +57,40 @@ final class Workspace {
         }
     }
 
+    /// A model being downloaded to switch to once it's ready.
+    @ObservationIgnored private var switching: Task<Void, Never>?
+
+    /// Choose a model that isn't on this Mac yet: download it, and switch to it when it's done.
+    func useWhenReady(_ m: ModelIdentity) {
+        guard let repo = m.repo else { return }
+        let downloads = ModelDownloads.shared
+        switch downloads.states[repo] {
+        case .downloading: break
+        case .done: break
+        default: downloads.download(repo)
+        }
+        conversation?.flash("Downloading \(m.name). frog switches to it when it's ready.")
+        switching?.cancel()
+        switching = Task { [weak self] in
+            while !Task.isCancelled {
+                switch ModelDownloads.shared.states[repo] {
+                case .done:
+                    guard let self else { return }
+                    await self.reloadModels()
+                    self.preferredModel = m.spec
+                    self.conversation?.setModel(m.spec)
+                    self.conversation?.flash("\(m.name) is ready.")
+                    return
+                case .downloading:
+                    try? await Task.sleep(for: .seconds(1))
+                case .failed, nil:
+                    // Stopped or failed: the row says which.
+                    return
+                }
+            }
+        }
+    }
+
     /// Whether choosing a cloud model needs asking first.
     var mustAskForCloud: Bool {
         switch cloud {

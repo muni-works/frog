@@ -52,6 +52,8 @@ struct ModelMenu: View {
     @State private var keyFor: ProviderInfo?
     /// A cloud model waiting on the project's permission.
     @State private var asking: ModelIdentity?
+    /// A model waiting on its provider's key, picked once the key is saved.
+    @State private var awaitingKey: ModelIdentity?
     @AppStorage("settingsTab") private var settingsTab = "general"
     @Environment(\.openSettings) private var openSettings
     @FocusState private var searching: Bool
@@ -79,14 +81,23 @@ struct ModelMenu: View {
 
     private var showsSearch: Bool { !query.isEmpty || usable.count > 10 }
 
+    /// Any model can be picked: the list does whatever it needs first. Only a spending cap
+    /// stops it, since picking would override the cap.
     private func choose(_ m: ModelIdentity) {
         switch m.state {
         case .ready where m.place.isCloud && workspace.mustAskForCloud: asking = m
-        case .ready: pick(m.spec)
-        case .notDownloaded, .downloadFailed: if let r = m.repo { downloads.download(r) }
-        case .needsKey: addKey(m.providerID)
+        case .ready, .wontFit, .unreachable: pick(m.spec)
+        case .notDownloaded, .downloadFailed, .downloading:
+            workspace.useWhenReady(m)
+            close()
+        case .needsKey:
+            awaitingKey = m
+            addKey(m.providerID)
         case .notAllowed: asking = m
-        case .downloading, .wontFit, .overCap, .unreachable: break
+        case .overCap:
+            settingsTab = "models"
+            close()
+            openSettings()
         }
     }
 
@@ -172,7 +183,16 @@ struct ModelMenu: View {
         }
         // A finished download, or a key added, makes more models usable.
         .onChange(of: downloads.states) { Task { await workspace.reloadModels() } }
-        .onChange(of: store.generation) { Task { await workspace.reloadModels() } }
+        .onChange(of: store.generation) {
+            Task {
+                await workspace.reloadModels()
+                // The key it was waiting on is in: pick it (asking first, if it's cloud).
+                if let m = awaitingKey, let now = usable.first(where: { $0.spec == m.spec }), now.state.isReady {
+                    awaitingKey = nil
+                    choose(now)
+                }
+            }
+        }
         .onChange(of: query) { selected = 0 }
     }
 
@@ -187,7 +207,10 @@ struct ModelMenu: View {
 
     private func row(_ m: ModelIdentity) -> some View {
         let lit = hovered == m.spec || (hovered == nil && flat[safe: selected]?.spec == m.spec)
-        return ModelListRow(model: m, current: m.spec == current)
+        // Picking does what a model needs, so the only button is Stop while it downloads.
+        return ModelListRow(model: m, current: m.spec == current) {
+            if case .downloading = m.state { ModelStateAction(model: m) }
+        }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(Color.primary.opacity(lit ? 0.08 : 0), in: .rect(cornerRadius: 7, style: .continuous))

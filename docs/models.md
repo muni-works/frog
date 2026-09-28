@@ -104,24 +104,23 @@ Built: every state in the table, plus Over cap. Unreachable comes from the app's
 
 The picker and Settings > Models show the same list, built by `ModelSections` and drawn by `ModelListRow` (`ModelList.swift`):
 
-- **Sections say where models run,** in one order everywhere: On this Mac, then each of your servers ("On mew (RTX 3090)"), then each cloud provider ("Cloud · Anthropic"), then **Get more** (recommended downloads). Within a section: ready, then ones that need something, then ones that can't be used.
+- **Sections say where models run,** in one order everywhere: On this Mac, then each of your servers ("On mew (RTX 3090)"), then each cloud provider ("Cloud · Anthropic"). A model you could download is simply a model On this Mac in the Not downloaded state; there's no separate section. Within a section: ready, then downloading, then ones that need something, then ones that won't run well here.
 - **One row:** the name and ability icons over one line of detail (measured speed, estimated cost per turn, size, or the state line), then a checkmark for the current model, then the list's accessory. The section names the place, so the row doesn't. Hovering shows the details (abilities, context, price, spec).
 - **The current model is always listed,** even when frog didn't report it (an Ollama model with Ollama not running).
 
 ## The picker
 
-A menu over that list, 340pt wide: no lane switch and no side card. The search field appears once you type (or when there are more than ten models). Ready models are picked; the rest do what makes them ready (Get, Add Key…, Allow…). With no cloud model set up, a single Cloud row offers Add Key…. Auto will sit on top once the engine can switch models (see "Not built yet"). Manage Models… opens Settings.
+A menu over that list, 340pt wide: no lane switch and no side card. The search field appears once you type (or when there are more than ten models). **Any model can be picked,** and the picker does what it needs first: one not downloaded starts downloading and the conversation switches to it when it's ready (the row's only button is Stop, while it downloads); one needing a key opens the key sheet and is picked once the key is in; a cloud model the project hasn't allowed asks first; one whose app isn't running, or that won't fit, is picked with its warning showing. Only a reached spending cap stops a pick, and opens Settings instead. With no cloud model set up, a single Cloud row offers Add Key…. Auto will sit on top once the engine can switch models (see "Not built yet"). Manage Models… opens Settings.
 
 ## Settings > Models
 
 In the order people think about models:
 
 1. **Default:** which model new conversations use (moved here from General).
-2. **Your models:** the picker's list, managed instead of chosen. Downloaded models have Show in Finder and Remove from This Mac; cloud models have Hide. The default is checked.
-3. **Get more:** recommended downloads, "Runs on frog's own engine, fully offline."
-4. **Cloud:** only providers you've connected, each with how many of its models are in the picker, Choose Models… (the catalog, filtered to that provider) and a menu with Change Key / Remove Key. One "Add a Provider…" menu replaces the rows of unconnected providers. Spending (week, month, cap) sits here once a provider is connected.
-5. **Servers and Apps:** your servers, and Ollama or LM Studio while they're running, each with a live status ("Running · 3 models", "Not responding") from a quick check of its model list. Add Server….
-6. **Advanced:** engine details.
+2. **Your models:** the picker's list, managed instead of chosen, with each state's action (Get, Stop, Retry, Add Key…). Downloaded models have Show in Finder and Remove from This Mac; cloud models have Hide. The default is checked.
+3. **Cloud:** only providers you've connected, each with how many of its models are in the picker, Choose Models… (the catalog, filtered to that provider) and a menu with Change Key / Remove Key. One "Add a Provider…" menu replaces the rows of unconnected providers. Spending (week, month, cap) sits here once a provider is connected.
+4. **Servers and Apps:** your servers, and Ollama or LM Studio while they're running, each with a live status ("Running · 3 models", "Not responding") from a quick check of its model list. Add Server….
+5. **Advanced:** engine details.
 
 The same check feeds the Unreachable state: a model whose app or server doesn't answer reads "Ollama isn't running" or "mew isn't responding" in the picker and here, dimmed.
 
