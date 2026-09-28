@@ -22,18 +22,11 @@ struct SettingsView: View {
 // MARK: - General
 
 private struct GeneralSettings: View {
-    @AppStorage("defaultModel") private var defaultModel = ""
     @AppStorage("editor") private var editor = ""
     @AppStorage("notifyWhenDone") private var notifyWhenDone = true
-    @State private var models: [ModelEntry] = []
 
     var body: some View {
         Form {
-            Picker("Default model", selection: $defaultModel) {
-                Text("frog's default").tag("")
-                ForEach(models) { m in Text(m.spec).tag(m.spec) }
-            }
-            .help("Used for new sessions. Change it for a session from the composer or the Model menu.")
             Picker("Open files in", selection: $editor) {
                 Text(Editor.installed.first.map { "Automatic (\($0.name))" } ?? "Default app").tag("")
                 ForEach(Editor.installed) { e in
@@ -48,7 +41,6 @@ private struct GeneralSettings: View {
             Toggle("Notify me when a turn finishes while I'm in another app", isOn: $notifyWhenDone)
         }
         .formStyle(.grouped)
-        .task { models = await Models.load() }
     }
 }
 
@@ -62,53 +54,306 @@ enum Models {
 
 // MARK: - Models
 
-private struct ModelSettings: View {
+/// Models, in the order people think about them: which one new conversations use, what's
+/// ready (the picker's own list, managed instead of chosen), what else to get, the cloud
+/// accounts you've connected (with what they cost), and your servers and apps. Engine details
+/// are in Advanced, the one place their words appear.
+struct ModelSettings: View {
     @State private var store = ProviderStore.shared
+    @State private var stats = ModelStats.shared
+    @State private var downloads = ModelDownloads.shared
     @State private var models: [ModelEntry] = []
     @State private var loading = true
     @State private var keyFor: ProviderInfo?
     @State private var addingServer = false
+    /// The provider whose catalog is open (nil: closed).
+    @State private var choosingFrom: ProviderInfo?
+    @AppStorage(ModelStats.capKey) private var cap: Double = 0
+    @AppStorage("defaultModel") private var defaultModel = ""
+
+    private var usable: [ModelIdentity] { models.map(ModelIdentity.init) }
+
+    private var sections: [(title: String, models: [ModelIdentity])] {
+        ModelSections.make(usable: usable, suggested: SuggestedModel.all.map(ModelIdentity.init))
+    }
+
+    private var cloudProviders: [ProviderInfo] { store.providers.filter { !$0.local && $0.connected } }
+    private var unconnected: [ProviderInfo] { store.providers.filter { !$0.local && !$0.connected } }
+
+    /// Your servers always; Ollama and LM Studio while they're running.
+    private var servers: [ProviderInfo] {
+        store.providers.filter { $0.local && ($0.custom || store.reachable[$0.id] == true) }
+    }
+
+    private func count(_ p: ProviderInfo) -> Int {
+        models.filter { $0.spec.hasPrefix(p.id + "/") }.count
+    }
+
+    var body: some View {
+        Form {
+            defaults
+            ForEach(sections, id: \.title) { section in
+                Section {
+                    ForEach(section.models, id: \.spec) { m in
+                        ModelListRow(model: m, current: m.spec == Workspace.startingModel) { manage(m) }
+                    }
+                } header: {
+                    Text(section.title)
+                }
+            }
+            cloud
+            serversAndApps
+            if let error = store.error {
+                Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+            }
+            advanced
+        }
+        .formStyle(.grouped)
+        .frame(minHeight: 560)
+        .environment(\.addProviderKey) { id in keyFor = store.providers.first { $0.id == id } }
+        .sheet(item: $keyFor) { p in KeySheet(provider: p) }
+        .sheet(isPresented: $addingServer) {
+            ServerSheet { Task { await reload() } }
+        }
+        .sheet(item: $choosingFrom) { p in CatalogSheet(provider: p) }
+        .task {
+            await store.load()
+            async let catalog: () = store.loadCatalog()
+            async let probe: () = store.probe()
+            models = await Models.load()
+            loading = false
+            _ = await (catalog, probe)
+        }
+        .onChange(of: store.generation) { Task { await reload() } }
+        .onChange(of: downloads.states) { Task { models = await Models.load() } }
+    }
+
+    private func reload() async {
+        models = await Models.load()
+        await store.probe()
+    }
+
+    // MARK: Default
+
+    private var defaults: some View {
+        Section {
+            Picker("New conversations use", selection: $defaultModel) {
+                Text(Workspace.lastUsed.map { "Last Used (\(ModelIdentity.of($0, in: models).name))" } ?? "Last Used").tag("")
+                ForEach(usable.filter(\.state.isReady), id: \.spec) { m in
+                    ModelLabel(model: m, size: .menu).tag(m.spec)
+                }
+            }
+        } header: {
+            HStack {
+                Text("Default")
+                Spacer()
+                if loading { ProgressView().controlSize(.small) }
+            }
+        } footer: {
+            Text("Out of the box, Apple Intelligence. After that, whichever model you picked last, unless you choose one here.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// What Settings offers for a model: what makes it usable, or taking it away.
+    @ViewBuilder
+    private func manage(_ m: ModelIdentity) -> some View {
+        if m.state.isReady, let repo = m.repo, ModelDownloads.isInstalled(repo) {
+            Menu {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([ModelDownloads.repoDir(repo)]) }
+                Button("Remove from This Mac", role: .destructive) {
+                    downloads.remove(repo)
+                    Task { models = await Models.load() }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        } else if m.state.isReady, m.place.isCloud {
+            Button("Hide") { hide(m) }
+                .controlSize(.small)
+                .help("Stop showing this model in the picker")
+        } else {
+            ModelStateAction(model: m)
+        }
+    }
+
+    private func hide(_ m: ModelIdentity) {
+        Task { await store.setEnabled(m.spec, false) }
+    }
+
+    // MARK: Cloud
+
+    @ViewBuilder
+    private var cloud: some View {
+        Section {
+            if cloudProviders.isEmpty {
+                Text("The strongest models, from Anthropic, OpenAI and others. Code you send goes to the provider, and each project asks first.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(cloudProviders) { p in
+                HStack(spacing: 10) {
+                    Image(systemName: "cloud").foregroundStyle(.cyan.opacity(0.85)).frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(p.name)
+                        Text(count(p) == 0 ? "No models in the picker yet" : "\(count(p)) model\(count(p) == 1 ? "" : "s") in the picker")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Choose Models…") { choosingFrom = p }
+                        .controlSize(.small)
+                    Menu {
+                        Button("Change Key…") { keyFor = p }
+                        Button("Remove Key", role: .destructive) { Task { await store.setKey("", for: p.id) } }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                }
+            }
+            if !unconnected.isEmpty {
+                Menu(cloudProviders.isEmpty ? "Add a Provider…" : "Add Another Provider…") {
+                    ForEach(unconnected) { p in
+                        Button(p.name) { keyFor = p }
+                    }
+                }
+                .fixedSize()
+            }
+            if !cloudProviders.isEmpty || stats.spentThisMonth > 0 {
+                LabeledContent("Spent this week", value: ModelStats.spent(stats.spentThisWeek))
+                LabeledContent("Spent this month", value: ModelStats.spent(stats.spentThisMonth))
+                Picker("Monthly cap", selection: $cap) {
+                    Text("None").tag(0.0)
+                    ForEach([5.0, 10, 25, 50, 100, 250], id: \.self) { Text("$\(Int($0))").tag($0) }
+                }
+            }
+        } header: {
+            Text("Cloud")
+        } footer: {
+            if !cloudProviders.isEmpty {
+                Text(cap > 0
+                     ? "Keys are kept in your Keychain. At the cap, cloud models pause until next month."
+                     : "Keys are kept in your Keychain. Spending is estimated from each provider's prices.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: Servers and apps
+
+    private var serversAndApps: some View {
+        Section {
+            ForEach(servers) { p in
+                let up = store.reachable[p.id]
+                HStack(spacing: 10) {
+                    Image(systemName: p.custom ? "server.rack" : "app.connected.to.app.below.fill")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(p.name)
+                        HStack(spacing: 5) {
+                            Circle().fill(up == true ? Color.green : up == false ? Color.red : Color.secondary.opacity(0.4))
+                                .frame(width: 6, height: 6)
+                            Text(up == true
+                                 ? "Running · \(count(p)) model\(count(p) == 1 ? "" : "s")"
+                                 : up == false ? "Not responding" : "Checking…")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if p.custom {
+                        Menu {
+                            Button(p.key == nil ? "Set Key…" : "Change Key…") { keyFor = p }
+                            Button("Remove Server", role: .destructive) { Task { await store.remove(p.id); await reload() } }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                    }
+                }
+                .help(p.baseUrl)
+            }
+            Button("Add Server…") { addingServer = true }
+        } header: {
+            Text("Servers and Apps")
+        } footer: {
+            Text("A server of your own, like a GPU box, offers every model it serves. Apps on this Mac that serve models show up here while they're running.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Advanced
+
+    private var advanced: some View {
+        Section {
+            DisclosureGroup("Engine details") {
+                ForEach(models) { m in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(m.spec).font(.callout.monospaced()) // advanced
+                        Text("\(m.source) · \(m.toolMode) tool calls · \(m.tier) tier") // advanced
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .textSelection(.enabled)
+                }
+            }
+        }
+    }
+}
+
+/// Which cloud models show in the picker: search every connected provider's catalog and turn
+/// models on or off.
+private struct CatalogSheet: View {
+    /// Just this provider's models (nil: every connected provider's).
+    var provider: ProviderInfo? = nil
+    @State private var store = ProviderStore.shared
     @State private var query = ""
+    @Environment(\.dismiss) private var dismiss
 
-    private let sources: [(key: String, title: String)] = [
-        ("tang", "Local: tang (open models on this Mac)"),
-        ("apple", "Local: Apple Intelligence"),
-        ("ollama", "Local: Ollama"),
-        ("server", "Your servers"),
-        ("config", "Configured in config.toml"),
-    ]
+    /// Matches for the search (every word in the name or spec); without one, what's on.
+    private var catalog: [CatalogModel] {
+        guard let provider else { return store.catalog }
+        return store.catalog.filter { $0.provider == provider.id }
+    }
 
-    /// Catalog matches for the search: every word must appear in the name or spec.
     private var matches: [CatalogModel] {
         let words = query.lowercased().split(separator: " ")
-        guard !words.isEmpty else { return store.catalog.filter { $0.enabled == true } }
-        return store.catalog.filter { m in
+        guard !words.isEmpty else { return catalog.filter { $0.enabled == true } }
+        return catalog.filter { m in
             let hay = (m.name + " " + m.spec).lowercased()
             return words.allSatisfy { hay.contains($0) }
         }
     }
 
     var body: some View {
-        Form {
-            Section {
-                ForEach(store.providers) { p in
-                    ProviderRow(provider: p) { keyFor = p } remove: {
-                        Task { await store.remove(p.id); models = await Models.load() }
-                    }
-                }
-                Button("Add Server…") { addingServer = true }
-            } header: {
-                Text("Providers")
-            } footer: {
-                Text("Keys are kept in your Keychain. A server of your own, like a GPU box running Ollama, vLLM or llama.cpp, offers everything it serves.")
-                    .foregroundStyle(.secondary)
-            }
-            Section {
-                TextField("Search \(store.catalog.count) models", text: $query)
+        VStack(spacing: 0) {
+            HStack {
+                TextField("Search \(catalog.count) \(provider?.name ?? "") models", text: $query)
                     .textFieldStyle(.roundedBorder)
+                if store.loadingCatalog {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Refresh", systemImage: "arrow.clockwise") {
+                        Task { await store.loadCatalog(refresh: true) }
+                    }
+                    .labelStyle(.iconOnly)
+                    .help("Fetch the latest model lists")
+                }
+            }
+            .padding(12)
+            Form {
                 let list = Array(matches.prefix(150))
                 if list.isEmpty {
-                    Text(query.isEmpty ? "Search to find models from OpenRouter, Vercel AI Gateway and the providers you've connected, and turn on the ones you want in the picker." : "No models match.")
+                    Text(query.isEmpty ? "Search to find models from the providers you've connected, and turn on the ones you want in the picker." : "No models match.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(list) { m in
@@ -119,97 +364,16 @@ private struct ModelSettings: View {
                 if matches.count > list.count {
                     Text("\(matches.count - list.count) more; narrow the search.").foregroundStyle(.secondary)
                 }
-            } header: {
-                HStack {
-                    Text(query.isEmpty ? "Models you've turned on" : "Models")
-                    Spacer()
-                    if store.loadingCatalog {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("Refresh", systemImage: "arrow.clockwise") {
-                            Task { await store.loadCatalog(refresh: true) }
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .help("Fetch the latest model lists")
-                    }
-                }
             }
-            if let error = store.error {
-                Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+            .formStyle(.grouped)
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
-            Section {
-                ForEach(SuggestedModel.all) { m in
-                    SuggestedModelRow(model: m) { Task { models = await Models.load() } }
-                }
-            } header: {
-                Text("Get a local model")
-            } footer: {
-                Text("Downloads to the Hugging Face cache. Runs on frog's own inference engine; no other software needed.")
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(sources, id: \.key) { source in
-                let rows = models.filter { $0.source == source.key }
-                if !rows.isEmpty {
-                    Section(source.title) {
-                        ForEach(rows) { ModelRow(model: $0) }
-                    }
-                }
-            }
-            if loading {
-                ProgressView().frame(maxWidth: .infinity)
-            }
+            .padding(12)
         }
-        .formStyle(.grouped)
-        .frame(minHeight: 560)
-        .sheet(item: $keyFor) { p in KeySheet(provider: p) }
-        .sheet(isPresented: $addingServer) {
-            ServerSheet { Task { models = await Models.load() } }
-        }
-        .task {
-            await store.load()
-            async let catalog: () = store.loadCatalog()
-            models = await Models.load()
-            loading = false
-            await catalog
-        }
-        .onChange(of: store.generation) { Task { models = await Models.load() } }
-    }
-}
-
-private struct ProviderRow: View {
-    let provider: ProviderInfo
-    let setKey: () -> Void
-    let remove: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(provider.connected ? Color.green : Color.secondary.opacity(0.4))
-                .frame(width: 7, height: 7)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(provider.name)
-                Text(status).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if provider.custom {
-                Button(provider.key == nil ? "Set Key…" : "Change Key…", action: setKey)
-                    .help("For a server that asks for one, like vLLM started with --api-key")
-                Button("Remove", role: .destructive, action: remove)
-            } else if !provider.local, provider.key != "env" {
-                Button(provider.connected ? "Change Key…" : "Add Key…", action: setKey)
-            }
-        }
-    }
-
-    private var status: String {
-        if provider.custom { return provider.baseUrl }
-        if provider.local { return "On this Mac, when it's running" }
-        switch provider.key {
-        case "env": return "Connected (key from the environment)"
-        case "keychain": return "Connected"
-        default: return "Not connected"
-        }
+        .frame(width: 520, height: 560)
+        .task { await store.loadCatalog() }
     }
 }
 
@@ -226,14 +390,14 @@ private struct CatalogRow: View {
             }
         }
         .disabled(!(provider?.connected ?? false) && model.enabled != true)
-        .help(provider?.connected == false ? "Add a \(provider?.name ?? "provider") key to use this model" : model.spec)
+        .help(provider?.connected == false ? "Add a \(provider?.name ?? "provider") key to use this model" : model.spec) // advanced
     }
 
     private var details: String {
         var parts = [provider?.name ?? model.provider]
         if let c = model.contextLabel { parts.append("\(c) context") }
-        if model.vision { parts.append("images") }
-        if model.reasoning { parts.append("reasoning") }
+        if model.vision { parts.append("sees images") }
+        if model.reasoning { parts.append("reasons") }
         if !model.tools { parts.append("no tools") }
         if let p = model.price { parts.append(p) }
         return parts.joined(separator: " · ")
@@ -241,7 +405,7 @@ private struct CatalogRow: View {
 }
 
 /// Paste a provider's API key; it goes to the Keychain through frog, never to disk.
-private struct KeySheet: View {
+struct KeySheet: View {
     let provider: ProviderInfo
     @State private var key = ""
     @State private var saving = false
@@ -309,7 +473,7 @@ private struct ServerSheet: View {
         Form {
             TextField("Name", text: $name, prompt: Text("GPU Box"))
             Picker("Runs", selection: $ollama) {
-                Text("Ollama").tag(true)
+                Text("Ollama").tag(true) // advanced
                 Text("OpenAI-compatible (vLLM, llama.cpp, LM Studio)").tag(false)
             }
             TextField("URL", text: $url, prompt: Text(ollama ? "http://gpu-box.local:11434" : "http://gpu-box.local:8000/v1"))
@@ -341,32 +505,6 @@ private struct ServerSheet: View {
     }
 }
 
-private struct ModelRow: View {
-    let model: ModelEntry
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.spec.split(separator: "/", maxSplits: 1).last.map(String.init) ?? model.spec)
-                Text(details).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text(model.tier.capitalized)
-                .font(.caption.weight(.medium))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(.quaternary, in: .capsule)
-        }
-    }
-
-    private var details: String {
-        var parts: [String] = []
-        if let b = model.caps?.paramsB { parts.append(String(format: "%.1fB", b)) }
-        parts.append("\(model.toolMode) tool calls")
-        if model.caps == nil { parts.append("not profiled yet") }
-        return parts.joined(separator: " · ")
-    }
-}
 
 /// A recommended model with its download state: Download, a progress bar, or Installed.
 struct SuggestedModelRow: View {
@@ -375,36 +513,8 @@ struct SuggestedModelRow: View {
     @State private var downloads = ModelDownloads.shared
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.title).fontWeight(.medium)
-                Text("\(model.detail) · \(String(format: "%.1f", model.approxGB)) GB")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            switch downloads.states[model.repo] {
-            case .downloading(let f):
-                ProgressView(value: f).frame(width: 120)
-                Text("\(Int(f * 100))%").monospacedDigit().foregroundStyle(.secondary).frame(width: 36, alignment: .trailing)
-                Button { downloads.cancel(model.repo) } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Cancel")
-            case .failed(let e):
-                Text(e).font(.caption).foregroundStyle(.red).lineLimit(1)
-                Button("Retry") { downloads.download(model.repo) }
-            case .done:
-                Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-            case nil:
-                if ModelDownloads.isInstalled(model.repo) {
-                    Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                } else {
-                    Button("Download") { downloads.download(model.repo) }
-                }
-            }
-        }
-        .onChange(of: downloads.states[model.repo]) { _, s in if s == .done { onInstalled() } }
+        ModelListRow(model: ModelIdentity(model))
+            .onChange(of: downloads.states[model.repo]) { _, s in if s == .done { onInstalled() } }
     }
 }
 
@@ -471,6 +581,8 @@ enum Density: String, CaseIterable, Identifiable {
 private struct AppearanceSettings: View {
     @AppStorage("density") private var density = Density.comfortable.rawValue
     @AppStorage("showThinking") private var showThinking = true
+    @AppStorage("playfulFrog") private var playfulFrog = true
+    @AppStorage("playfulSounds") private var playfulSounds = false
 
     var body: some View {
         Form {
@@ -479,6 +591,12 @@ private struct AppearanceSettings: View {
             }
             .pickerStyle(.segmented)
             Toggle("Show the model's thinking", isOn: $showThinking)
+            Section {
+                Toggle("Playful frog", isOn: $playfulFrog)
+                    .help("The frog blinks, reads and hops along with the conversation.")
+                Toggle("Frog sounds", isOn: $playfulSounds)
+                    .help("A quiet plip when you send, a ribbit when a turn finishes, a drip when it needs permission.")
+            }
         }
         .formStyle(.grouped)
     }

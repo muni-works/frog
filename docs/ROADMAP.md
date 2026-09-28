@@ -1,5 +1,18 @@
 # Roadmap
 
+## The five bets (2026-09-24)
+
+Everything below follows from one fact: frog owns the whole loop, the engine, the harness and the screen. In shipping order:
+
+1. **Zero-prefill turns.** KV slots per session, disk-backed, prefill while typing. Everything in speed compounds on it.
+2. **Frog can see what it builds.** Live panes (a shared terminal, a preview) that stream errors, tests and requests into the turn; before/after of the running app per checkpoint; click an element to mention it. Cheap for small models, impossible without owning the process. The story and the demo.
+3. **Your devices, additive.** `frog node` with pairing and finish-time scheduling: a second machine only ever makes frog faster.
+4. **The gate, not the oracle.** Verification wherever small models are weak: tools first, intent checks, voting, a failing test before a finding is shown.
+5. **Frog Pro on a tang-backed gateway.** Pinned KV, the drafter, local↔cloud handoff, a frog-tuned model, included search.
+
+Researched and shelved, with reasons in `docs/research/`: a public GPU marketplace, IR-first tang-llm, a hosted docs index.
+
+
 Ordered by leverage. Each item cites the evidence behind it.
 
 ## 1. Protocol hardening: done
@@ -219,6 +232,9 @@ Also:
 - Phase 4: consolidation into a git-tracked folder, and promoting a note into AGENTS.md.
 - Phase 5: embeddings, only if the bench shows grep failing on large repos.
 - Smaller items: a memory editor in the Mac app, noticing "remember that…" in messages, a `memory.cloud` setting, budgeting instruction files by tier, checking that cited anchors still exist.
+
+### Code review with local models
+See [local code review](research/local-code-review.md): `frog review` as a gate, not an oracle. Deterministic tools first, the model explains failures and checks intent, a per-hunk voting pass on 8B+, findings reported only after verification (a failing test in a worktree, or an opt-in cloud check), at most 3 findings by default, a `bench/review` set with clean diffs to count false positives. Also: bring reviewers' PR comments into the app inline on the diff with Reply / Resolve / Send to Frog, like Claude Code Desktop, so a review round-trip never leaves the conversation.
 
 ### Harness quality (from the bench and the logs)
 - Fix contract errors in the harness (editing before reading, `old_string` mismatches) and repeat loops. These, not malformed calls, are most tool failures.

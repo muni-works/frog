@@ -9,10 +9,21 @@ struct ActivityViewer: View {
     let conversation: Conversation
     /// Scroll the conversation to a turn.
     var jump: (TurnState.ID) -> Void = { _ in }
+    /// In a split window: the pane's number leads the pill and a close button ends it.
+    var pane: PaneBadge? = nil
+
+    struct PaneBadge {
+        let number: Int
+        let focused: Bool
+        let close: () -> Void
+    }
     @State private var showActivity = false
     @State private var hovering = false
     @State private var pickingModel = false
     @State private var library = Library.shared
+    /// The turn just ended: the frog hops and the pill says "Caught it" for a moment.
+    @State private var caught = false
+    @AppStorage("playfulFrog") private var playful = true
     @Environment(\.openSession) private var openSession
 
     /// A permission prompt or a server's question: the pill turns amber and takes you there.
@@ -36,12 +47,20 @@ struct ActivityViewer: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            if let pane {
+                Text("\(pane.number)")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(pane.focused ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                    .frame(width: 20, height: 20)
+                    .background(pane.focused ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary), in: .circle)
+                    .padding(.leading, -6)
+            }
             if let waiting {
                 Button {
                     if let last = conversation.turns.last { jump(last.id) }
                 } label: {
                     HStack(spacing: 7) {
-                        Image(systemName: "hand.raised.fill").frame(width: 14)
+                        icon(.waiting) { Image(systemName: "hand.raised.fill") }
                         Text(waiting).fontWeight(.medium).lineLimit(1)
                         Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
                     }
@@ -81,6 +100,20 @@ struct ActivityViewer: View {
                 Divider().frame(height: 14)
                 othersMenu
             }
+            if let pane, hovering {
+                Button(action: pane.close) {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .background(.quaternary, in: .circle)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, -6)
+                .help("Close pane (⌃⌘W)")
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
         }
         .font(.callout)
         .padding(.horizontal, 14)
@@ -96,6 +129,39 @@ struct ActivityViewer: View {
         .animation(.snappy(duration: 0.2), value: waiting)
         .animation(.snappy(duration: 0.15), value: hovering)
         .animation(.snappy(duration: 0.2), value: others.count)
+        .onChange(of: conversation.turns.last?.endedAt) { _, end in
+            guard playful, let end, Date.now.timeIntervalSince(end) < 3 else { return }
+            caught = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                caught = false
+            }
+        }
+    }
+
+    /// The frog in the pill, or the plain symbol when the playful frog is off.
+    @ViewBuilder
+    private func icon(_ mood: FrogMood, @ViewBuilder plain: () -> some View) -> some View {
+        if playful {
+            FrogFace(mood: mood, size: 16).frame(width: 16)
+        } else {
+            plain().frame(width: 14)
+        }
+    }
+
+    /// What the frog is doing, from the conversation's state.
+    private func mood(_ turn: TurnState?) -> FrogMood {
+        if conversation.failure != nil { return .sad }
+        if waiting != nil { return .waiting }
+        if conversation.busy, let turn, !turn.finished {
+            switch turn.items.last?.kind {
+            case .tool(let name, _) where ["Read", "Grep", "Glob", "WebFetch", "Docs"].contains(name): return .reading
+            case .reasoning, nil: return .thinking
+            default: return .working
+            }
+        }
+        if conversation.busy { return .working }
+        return caught ? .done : .idle
     }
 
     private var tint: Glass {
@@ -153,13 +219,19 @@ struct ActivityViewer: View {
     private var activity: some View {
         if conversation.failure != nil {
             HStack(spacing: 7) {
-                Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red).frame(width: 14)
-                Text("Engine stopped").fontWeight(.medium)
+                icon(.sad) { Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red) }
+                Text(playful ? "Croak. Engine stopped" : "Engine stopped").fontWeight(.medium)
+            }
+        } else if conversation.replaying {
+            // Only seen when opening is slow (a quick open shows the finished state straight away).
+            HStack(spacing: 7) {
+                icon(.idle) { Image(systemName: "hourglass").foregroundStyle(.secondary) }
+                Text("Opening…").foregroundStyle(.secondary)
             }
         } else if conversation.busy, let turn = conversation.turns.last, !turn.finished {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 HStack(spacing: 7) {
-                    Image(systemName: symbol(turn)).foregroundStyle(.tint).frame(width: 14)
+                    icon(mood(turn)) { Image(systemName: symbol(turn)).foregroundStyle(.tint) }
                     Text(live(turn)).lineLimit(1).truncationMode(.middle)
                         .frame(maxWidth: 300, alignment: .leading)
                     Text(elapsed(turn)).foregroundStyle(.secondary).monospacedDigit()
@@ -167,15 +239,15 @@ struct ActivityViewer: View {
             }
         } else if conversation.busy {
             HStack(spacing: 7) {
-                Image(systemName: "hourglass").foregroundStyle(.secondary).frame(width: 14)
-                Text(conversation.progress.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Starting…")
+                icon(.working) { Image(systemName: "hourglass").foregroundStyle(.secondary) }
+                Text(conversation.progress.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? (playful ? "Hopping to it" : "Starting…"))
                     .lineLimit(1)
             }
         } else if let turn = conversation.turns.last, let end = turn.end {
             HStack(spacing: 7) {
-                Image(systemName: done(end).symbol).foregroundStyle(done(end).color).frame(width: 14)
+                icon(mood(turn)) { Image(systemName: done(end).symbol).foregroundStyle(done(end).color) }
                 if case .complete = end, let d = duration(turn) {
-                    Text("Done in \(d)").monospacedDigit()
+                    Text(caught ? "Caught it" : "Done in \(d)").monospacedDigit()
                 } else {
                     Text(done(end).text).lineLimit(1)
                     if let d = duration(turn) {
@@ -185,7 +257,7 @@ struct ActivityViewer: View {
             }
         } else {
             HStack(spacing: 7) {
-                Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(.green).frame(width: 14)
+                icon(.idle) { Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(.green) }
                 Text("Ready").foregroundStyle(.secondary)
             }
         }
@@ -246,12 +318,18 @@ struct ActivityViewer: View {
 
     // MARK: Right: the readout
 
+    /// The model, and what this conversation has cost if it ran on priced models.
+    private func readoutHelp(_ s: Status) -> String {
+        let spent = conversation.turns.compactMap { $0.usage.flatMap { ModelStats.shared.cost(of: $0) } }.reduce(0, +)
+        let spoken = workspace.identity(s.model).spoken
+        return spent > 0 ? "\(spoken). This conversation: \(ModelStats.money(spent))" : spoken
+    }
+
     private func readout(_ s: Status) -> some View {
         HStack(spacing: 8) {
             Button { pickingModel.toggle() } label: {
-                Text(ModelName.short(s.model, in: workspace.models).replacingOccurrences(of: "-4bit", with: " 4-bit"))
+                ModelLabel(model: workspace.identity(s.model))
                     .fontWeight(.medium)
-                    .lineLimit(1)
                     .hoverPlate(h: 4, v: 2)
                     .padding(.horizontal, -4)
                     .padding(.vertical, -2)
@@ -259,18 +337,17 @@ struct ActivityViewer: View {
             .buttonStyle(.plain)
             .fixedSize()
             .disabled(conversation.busy)
-            .help("\(s.model) · \(s.toolMode) tool calls · \(s.tier) tier")
+            .help(readoutHelp(s))
             .popover(isPresented: $pickingModel, arrowEdge: .bottom) {
                 ModelMenu(workspace: workspace, current: s.model) { spec in
-                    workspace.preferredModel = spec
-                    conversation.setModel(spec)
+                    workspace.use(spec)
                     pickingModel = false
                 } close: {
                     pickingModel = false
                 }
             }
             if let tps = s.tokensPerSec, tps > 0 {
-                Text("\(Int(tps)) tok/s")
+                Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                     .contentTransition(.numericText())
@@ -370,7 +447,8 @@ private struct ActivityPanel: View {
 
     private func stats(_ u: TurnUsage) -> some View {
         var parts = ["\(u.modelCalls) call\(u.modelCalls == 1 ? "" : "s")", "\(u.inputTokens.tokens) in", "\(u.outputTokens.tokens) out"]
-        if let tps = u.tokensPerSec, tps > 0 { parts.append("\(Int(tps)) tok/s") }
+        if let tps = u.tokensPerSec, tps > 0 { parts.append(ModelStats.speedText(tps * ModelStats.wordsPerToken)) }
+        if let c = ModelStats.shared.cost(of: u) { parts.append(ModelStats.money(c)) }
         return Text(parts.joined(separator: " · "))
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)

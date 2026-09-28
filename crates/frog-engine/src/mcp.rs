@@ -58,7 +58,8 @@ struct McpJson {
 }
 
 /// Every configured server: config.toml first, then the project's `.mcp.json` (which can't
-/// override a config.toml server of the same name), plus `desktop` (computer use) when it's on.
+/// override a config.toml server of the same name), then Claude Code's servers once you've
+/// said to use them (docs/onboarding.md), plus `desktop` (computer use) when it's on.
 pub fn configured(cfg: &crate::config::Config, cwd: &Path) -> BTreeMap<String, ServerConfig> {
     let mut all = cfg.mcp_servers.clone();
     if cfg.computer_use
@@ -75,6 +76,11 @@ pub fn configured(cfg: &crate::config::Config, cwd: &Path) -> BTreeMap<String, S
         && let Ok(file) = serde_json::from_str::<McpJson>(&text)
     {
         for (name, s) in file.servers {
+            all.entry(name).or_insert(s);
+        }
+    }
+    if cfg.claude_mcp {
+        for (name, s) in crate::imports::claude_servers(cwd) {
             all.entry(name).or_insert(s);
         }
     }
@@ -285,6 +291,10 @@ struct Inner {
     host: Arc<Host>,
     /// With many tools, only these (loaded through `McpTools`) are sent to the model.
     loaded: Mutex<BTreeSet<String>>,
+    /// The ones loaded up front because a server's instructions name them.
+    preloaded: BTreeSet<String>,
+    /// A model with a small window: no instructions, no tools until the model loads them.
+    compact: AtomicBool,
 }
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -307,6 +317,8 @@ impl Hub {
                 failed: Vec::new(),
                 host: Host::headless(Path::new(".")),
                 loaded: Mutex::new(BTreeSet::new()),
+                preloaded: BTreeSet::new(),
+                compact: AtomicBool::new(false),
             }),
         }
     }
@@ -382,7 +394,9 @@ impl Hub {
                 servers,
                 failed,
                 host,
+                preloaded: loaded.clone(),
                 loaded: Mutex::new(loaded),
+                compact: AtomicBool::new(false),
             }),
         }
     }
@@ -444,17 +458,32 @@ impl Hub {
     /// True when there are too many tools to send them all; the model loads them through
     /// `McpTools`.
     pub fn deferred(&self) -> bool {
-        self.catalog().len() > DEFER_OVER
+        let n = self.catalog().len();
+        n > DEFER_OVER || (n > 0 && self.compact())
+    }
+
+    /// For a model with a small window: server instructions and every tool schema stay out of
+    /// the prompt, and the model loads the tools it needs through `McpTools`.
+    pub fn set_compact(&self, on: bool) {
+        self.inner.compact.store(on, Ordering::Relaxed);
+    }
+
+    fn compact(&self) -> bool {
+        self.inner.compact.load(Ordering::Relaxed)
     }
 
     /// Tool specs to send to the model.
     pub fn specs(&self) -> Vec<ToolSpec> {
         let catalog = self.catalog();
-        let deferred = catalog.len() > DEFER_OVER;
+        let deferred = self.deferred();
+        let compact = self.compact();
         let loaded = self.inner.loaded.lock().unwrap();
         let mut specs: Vec<ToolSpec> = catalog
             .iter()
-            .filter(|e| !deferred || loaded.contains(&e.exposed))
+            .filter(|e| {
+                !deferred
+                    || (loaded.contains(&e.exposed) && !(compact && self.inner.preloaded.contains(&e.exposed)))
+            })
             .map(spec_for)
             .collect();
         if deferred {
@@ -486,6 +515,9 @@ impl Hub {
     pub fn prompt(&self) -> String {
         let mut out = String::new();
         for (name, s) in &self.inner.servers {
+            if self.compact() {
+                break;
+            }
             if let Some(i) = &s.instructions {
                 out.push_str(&format!(
                     "\n\n## MCP server `{name}`\n{}",
@@ -955,5 +987,72 @@ mod tests {
         assert_eq!(all["fs"].args, ["-y", "server-fs"]);
         assert_eq!(all["docs"].url.as_deref(), Some("https://example.com/mcp"));
         assert_eq!(all["mine"].command.as_deref(), Some("kept"));
+    }
+}
+
+/// Why a server didn't connect, in words: it wants a sign-in frog can't do yet, it isn't
+/// running, or it failed to start.
+fn unavailable_reason(error: &str) -> &'static str {
+    let e = error.to_ascii_lowercase();
+    if e.contains("auth") || e.contains("401") || e.contains("403") || e.contains("unauthorized") {
+        "need a sign-in frog doesn't support yet"
+    } else if e.contains("error sending request") || e.contains("connection refused") || e.contains("connect error") {
+        "isn't running"
+    } else {
+        "couldn't start"
+    }
+}
+
+/// One sentence for the servers that didn't connect ("choji and runpod need a sign-in frog
+/// doesn't support yet; fusion isn't running"), or None when they all did.
+pub fn unavailable_summary(failed: &[(String, String)]) -> Option<String> {
+    if failed.is_empty() {
+        return None;
+    }
+    let mut groups: Vec<(&'static str, Vec<&str>)> = Vec::new();
+    for (name, e) in failed {
+        let why = unavailable_reason(e);
+        match groups.iter_mut().find(|(w, _)| *w == why) {
+            Some((_, names)) => names.push(name),
+            None => groups.push((why, vec![name])),
+        }
+    }
+    let parts: Vec<String> = groups
+        .into_iter()
+        .map(|(why, names)| {
+            let list = match names.as_slice() {
+                [one] => one.to_string(),
+                [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+                [] => String::new(),
+            };
+            // "need" reads for several servers; one server "needs".
+            let why = if names.len() == 1 { why.replacen("need ", "needs ", 1) } else { why.to_string() };
+            format!("{list} {why}")
+        })
+        .collect();
+    Some(format!("Some MCP servers aren't available: {}.", parts.join("; ")))
+}
+
+#[cfg(test)]
+mod unavailable_tests {
+    use super::*;
+
+    #[test]
+    fn failures_read_as_one_sentence() {
+        let failed = vec![
+            ("aws-mcp".to_string(), "JSON-RPC error: -32602: Invalid request parameters".to_string()),
+            ("choji".to_string(), "Send message error Transport [...] error: Auth required, when send initialize request".to_string()),
+            ("fusion".to_string(), "Client error: error sending request for url (http://127.0.0.1:27182/mcp)".to_string()),
+            ("runpod".to_string(), "Transport error: Auth required".to_string()),
+        ];
+        assert_eq!(
+            unavailable_summary(&failed).unwrap(),
+            "Some MCP servers aren't available: aws-mcp couldn't start; choji and runpod need a sign-in frog doesn't support yet; fusion isn't running."
+        );
+        assert_eq!(
+            unavailable_summary(&failed[1..2]).unwrap(),
+            "Some MCP servers aren't available: choji needs a sign-in frog doesn't support yet."
+        );
+        assert!(unavailable_summary(&[]).is_none());
     }
 }

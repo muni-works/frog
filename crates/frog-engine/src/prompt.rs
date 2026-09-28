@@ -26,6 +26,11 @@ You help with software engineering tasks: fixing bugs, adding features, refactor
 - Reference code as path:line.
 - When the task is done, stop. Don't start unrequested work.";
 
+/// The instruction files a session in `cwd` reads (FROG.md, CLAUDE.md, AGENTS.md), in order.
+pub fn instruction_files(cwd: &Path, cfg: &Config) -> Vec<PathBuf> {
+    memory_files(cwd, cfg)
+}
+
 fn memory_files(cwd: &Path, cfg: &Config) -> Vec<PathBuf> {
     let mut files = vec![config_dir().join("FROG.md")];
     if cfg.load_claude_md {
@@ -234,22 +239,21 @@ pub fn extract_tool_calls(text: &str) -> Option<(String, Vec<(String, Value)>)> 
 
 /// Every response must be `{"thought", "action"}` where `action` is exactly one tool call with
 /// schema-checked arguments, or a final answer. The answer branch is always allowed: forcing a
-/// tool choice hurts a model's ability to decline (arXiv 2608.13959).
+/// tool choice hurts a model's ability to decline (arXiv 2608.13959). It comes first: small
+/// models under guided generation lean toward the first branch, and most turns in a chat
+/// need no tool.
 pub fn json_schema(tools: &[ToolSpec]) -> Value {
-    let mut actions: Vec<Value> = tools
-        .iter()
-        .map(|t| {
-            json!({
-                "type": "object",
-                "properties": { "tool": { "const": t.name }, "args": t.schema },
-                "required": ["tool", "args"],
-            })
-        })
-        .collect();
-    actions.push(json!({
+    let mut actions = vec![json!({
         "type": "object",
         "properties": { "answer": { "type": "string" } },
         "required": ["answer"],
+    })];
+    actions.extend(tools.iter().map(|t| {
+        json!({
+            "type": "object",
+            "properties": { "tool": { "const": t.name }, "args": t.schema },
+            "required": ["tool", "args"],
+        })
     }));
     json!({
         "type": "object",
@@ -264,9 +268,9 @@ pub fn json_schema(tools: &[ToolSpec]) -> Value {
 pub fn json_tools_prompt(tools: &[ToolSpec]) -> String {
     let mut s = String::from(
         "\n# Response format\nEvery reply is one JSON object: {\"thought\": \"...\", \"action\": ...}.\n\
+- To reply to the user (when no tool is needed, or you're done): \"action\": {\"answer\": \"your reply\"}. Most messages need no tool.\n\
 - To use a tool: \"action\": {\"tool\": \"ToolName\", \"args\": {...}}. One tool per reply; its result comes back \
 in the next message as <tool_result>.\n\
-- When you're done, or no tool is needed: \"action\": {\"answer\": \"your reply to the user\"}.\n\
 Keep \"thought\" short.\n\nTools:\n",
     );
     for t in tools {
@@ -402,5 +406,10 @@ mod tests {
             crate::tools::specs().len() + 1,
             "one per tool plus the answer branch"
         );
+        // Answering comes first: small models lean toward the first branch.
+        assert!(branches[0]["properties"].get("answer").is_some());
+        // With no tools, answering is the only thing a reply can be.
+        let alone = json_schema(&[]);
+        assert_eq!(alone["properties"]["action"]["anyOf"].as_array().unwrap().len(), 1);
     }
 }

@@ -9,6 +9,12 @@ final class Workspace {
     private(set) var sessions: [SessionInfo] = []
     private(set) var models: [ModelEntry] = []
     private(set) var conversation: Conversation?
+    /// A conversation being opened: running, but kept off screen until its transcript is in (or
+    /// it's slow to come), so opening one is a single cut rather than an empty pane filling in.
+    @ObservationIgnored private var incoming: Conversation?
+    /// The session being opened in this workspace's place (here, or another folder's), which
+    /// the sidebar selects straight away.
+    var opening: String?
     var selection: String?
     var preferredModel: String?
     /// Parallel attempts in progress, shown instead of the transcript.
@@ -37,6 +43,101 @@ final class Workspace {
     private(set) var git: GitInfo?
     /// Agent Skills this folder sees, for `/skill` completion.
     private(set) var skills: [SkillInfo] = []
+
+    /// Whether this folder's code may go to cloud models (frog keeps and enforces the answer).
+    enum CloudPolicy: String, Codable, Sendable {
+        case ask, allow, deny
+    }
+
+    private(set) var cloud: CloudPolicy = .ask
+    /// "Just this conversation": cloud allowed until the conversation changes.
+    var cloudForThisConversation = false
+
+    /// What this folder is called when asking about it: "kiln", or "Chats".
+    var policyName: String { isChat ? "Chats" : name }
+
+    func setCloud(_ c: CloudPolicy) async {
+        struct Answer: Decodable { var cloud: CloudPolicy }
+        if let a = try? await Frog.json(Answer.self, args: ["--cloud-policy", c.rawValue, "--json"], cwd: folder) {
+            cloud = a.cloud
+        }
+    }
+
+    // MARK: Which model
+
+    /// The model new conversations start with: the one fixed in Settings, else the one picked
+    /// last, else Apple Intelligence where this Mac has it (nil: frog's own default).
+    static var startingModel: String? { startingModel() }
+
+    static func startingModel(_ d: UserDefaults = .standard, apple: Bool = AppleIntelligence.available) -> String? {
+        if let s = d.string(forKey: "defaultModel"), !s.isEmpty { return s }
+        return lastUsed(d, apple: apple)
+    }
+
+    /// The model picked last, or Apple Intelligence before anything has been.
+    static var lastUsed: String? { lastUsed() }
+
+    static func lastUsed(_ d: UserDefaults = .standard, apple: Bool = AppleIntelligence.available) -> String? {
+        if let s = d.string(forKey: "lastModel"), !s.isEmpty { return s }
+        return apple ? AppleIntelligence.spec : nil
+    }
+
+    /// Switch this conversation to a model, and remember it for the next one.
+    func use(_ spec: String) {
+        preferredModel = spec
+        conversation?.setModel(spec)
+        UserDefaults.standard.set(spec, forKey: "lastModel")
+    }
+
+    /// A model being downloaded to switch to once it's ready.
+    @ObservationIgnored private var switching: Task<Void, Never>?
+
+    /// Choose a model that isn't on this Mac yet: download it, and switch to it when it's done.
+    func useWhenReady(_ m: ModelIdentity) {
+        guard let repo = m.repo else { return }
+        let downloads = ModelDownloads.shared
+        switch downloads.states[repo] {
+        case .downloading: break
+        case .done: break
+        default: downloads.download(repo)
+        }
+        conversation?.flash("Downloading \(m.name). frog switches to it when it's ready.")
+        switching?.cancel()
+        switching = Task { [weak self] in
+            while !Task.isCancelled {
+                switch ModelDownloads.shared.states[repo] {
+                case .done:
+                    guard let self else { return }
+                    await self.reloadModels()
+                    self.use(m.spec)
+                    self.conversation?.flash("\(m.name) is ready.")
+                    return
+                case .downloading:
+                    try? await Task.sleep(for: .seconds(1))
+                case .failed, nil:
+                    // Stopped or failed: the row says which.
+                    return
+                }
+            }
+        }
+    }
+
+    /// Whether choosing a cloud model needs asking first.
+    var mustAskForCloud: Bool {
+        switch cloud {
+        case .allow: false
+        case .ask: !cloudForThisConversation
+        case .deny: true
+        }
+    }
+
+    /// A model as this folder may use it: cloud models are locked where code stays on your devices.
+    func allowing(_ m: ModelIdentity) -> ModelIdentity {
+        guard m.place.isCloud, cloud == .deny, m.state.isReady else { return m }
+        var m = m
+        m.state = .notAllowed(project: policyName)
+        return m
+    }
     @ObservationIgnored private var filesLoaded = false
 
     func loadFiles() {
@@ -49,7 +150,9 @@ final class Workspace {
     /// opens that session.
     init(folder: URL, fresh: Bool = false, resume: String? = nil) {
         self.folder = folder
-        preferredModel = UserDefaults.standard.string(forKey: "defaultModel").flatMap { $0.isEmpty ? nil : $0 }
+        preferredModel = Self.startingModel
+        // Name models the way the last list did until this folder's own loads (it's slow).
+        models = Self.knownModels
         // Pick up where you left off: the first window reopens this folder's last session.
         // Windows and tabs opened after that start a fresh conversation.
         let chat = Frog.isChat(folder)
@@ -58,6 +161,15 @@ final class Workspace {
         let replay = Replay.arguments
         isReplay = replay != nil
         start(arguments: replay ?? last.map { ["-r", $0] } ?? [])
+        // A remembered session that won't open (deleted, or from another engine version) starts
+        // a fresh conversation instead of leaving a dead one.
+        if replay == nil, resume == nil, last != nil, let c = conversation {
+            c.onExit = { [weak self, weak c] in
+                guard let self, let c, c.turns.isEmpty else { return }
+                UserDefaults.standard.removeObject(forKey: Self.lastSessionKey(self.folder))
+                self.newSession()
+            }
+        }
         Task { await refresh() }
     }
 
@@ -72,6 +184,20 @@ final class Workspace {
     /// Showing a recorded session (`-FrogReplay`): don't remember it as this folder's last one.
     @ObservationIgnored private var isReplay = false
 
+    /// The model list as last loaded, by any folder.
+    private static var knownModels: [ModelEntry] = []
+    @ObservationIgnored private var modelsLoaded = false
+    @ObservationIgnored private var gitChecked = false
+
+    /// Returns once this folder shows as it will (its conversation's transcript and its git state
+    /// are in), or after `limit` if that's slow.
+    func settled(within limit: Duration) async {
+        let deadline = ContinuousClock.now + limit
+        while !gitChecked || conversation?.replaying == true, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     private static func lastSessionKey(_ folder: URL) -> String {
         "lastSession:" + folder.standardizedFileURL.path
     }
@@ -79,21 +205,32 @@ final class Workspace {
     func refresh() async {
         Library.shared.refresh()
         if !isChat { git = await Git.status(folder) }
+        gitChecked = true
         if skills.isEmpty, let k = try? await Frog.json([SkillInfo].self, args: ["--skills", "--json"], cwd: folder) {
             skills = k
         }
         if let s = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--json"], cwd: folder) {
             sessions = s
         }
-        if models.isEmpty, let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
+        if !modelsLoaded, let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
+            modelsLoaded = true
             models = m
+            Self.knownModels = m
+            ModelStats.shared.learnPrices(m)
+        }
+        struct Answer: Decodable { var cloud: CloudPolicy }
+        if let a = try? await Frog.json(Answer.self, args: ["--cloud-policy", "--json"], cwd: folder) {
+            cloud = a.cloud
         }
     }
 
     /// Reload the model list (after providers or enabled models change).
     func reloadModels() async {
         if let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
+            modelsLoaded = true
             models = m
+            Self.knownModels = m
+            ModelStats.shared.learnPrices(m)
         }
     }
 
@@ -102,7 +239,15 @@ final class Workspace {
     }
 
     func open(_ id: String) {
-        guard id != conversation?.sessionID else { return }
+        guard id != incoming?.sessionID else { return }
+        guard id != conversation?.sessionID else {
+            // Back to the one on screen before another finished opening.
+            incoming?.stop()
+            incoming = nil
+            opening = nil
+            return
+        }
+        opening = id
         start(arguments: ["-r", id])
     }
 
@@ -117,9 +262,9 @@ final class Workspace {
         guard let id = conversation?.sessionID else { return }
         do {
             let r = try await Frog.json(Rewound.self, args: ["--rewind", "\(id)@\(turn)", "--json"], cwd: folder)
-            start(arguments: ["-r", r.session])
+            let c = start(arguments: ["-r", r.session])
             let files = r.restored.count
-            conversation?.flash(files == 0
+            c.flash(files == 0
                 ? "Rewound to before turn \(turn). No files needed restoring."
                 : "Rewound to before turn \(turn) and restored \(files) file\(files == 1 ? "" : "s").")
             await refresh()
@@ -130,11 +275,12 @@ final class Workspace {
 
     func stop() {
         race?.discard()
+        incoming?.stop()
         conversation?.stop()
     }
 
-    private func start(arguments: [String]) {
-        conversation?.stop()
+    @discardableResult
+    private func start(arguments: [String]) -> Conversation {
         // The permission mode new sessions start in (Settings > Permissions).
         let mode = UserDefaults.standard.string(forKey: "defaultMode").flatMap(Mode.init(rawValue:))
         let modeFlag: [String] = switch mode {
@@ -151,12 +297,35 @@ final class Workspace {
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID
-            if !self.isReplay, let id = c?.sessionID {
+            // Only once it has a turn: the engine doesn't write a session before its first
+            // message, so an empty one can't be reopened.
+            if !self.isReplay, let c, let id = c.sessionID, !c.turns.isEmpty {
                 UserDefaults.standard.set(id, forKey: Self.lastSessionKey(self.folder))
             }
             Task { await self.refresh() }
         }
-        conversation = c
+        incoming?.stop()
+        incoming = c
+        // Nothing to cut from, or nothing to wait for: straight on screen.
+        guard conversation != nil, c.replaying else {
+            show(c)
+            return c
+        }
+        Task {
+            await c.loaded(within: .milliseconds(300))
+            show(c)
+        }
+        return c
+    }
+
+    /// Put `c` on screen in place of the conversation there, unless another was opened since.
+    private func show(_ c: Conversation) {
+        guard incoming === c else { return }
+        incoming = nil
+        opening = nil
+        conversation?.stop()
+        cloudForThisConversation = false
+        Motion.cut { conversation = c }
     }
 }
 

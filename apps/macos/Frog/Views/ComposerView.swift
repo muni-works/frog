@@ -47,6 +47,9 @@ struct ComposerView: View {
         .padding(.bottom, 10)
         .frame(maxWidth: 860)
         .frame(maxWidth: .infinity)
+        // The canvas's margins keep the transcript clear of the cards; popovers opened from
+        // here (the model picker, suggestions) mustn't inherit them.
+        .contentMargins(0, for: .scrollContent)
         // The transcript scrolls under the composer; the canvas fades in behind it.
         .background {
             LinearGradient(
@@ -179,7 +182,12 @@ struct ComposerView: View {
 
     private var placeholder: String {
         if conversation.busy { return "Working… Esc interrupts · Return queues a follow-up" }
-        return workspace.isChat ? "Ask anything" : "Ask frog to do something · @ mentions a file"
+        // A new conversation's placeholder is its only hint (the empty page is just a question).
+        let new = conversation.turns.isEmpty && !conversation.replaying
+        if workspace.isChat {
+            return new ? "Ask anything, or pick a folder to work on code" : "Ask anything"
+        }
+        return new ? "Ask about the code or describe a change · @ a file · ! a command" : "Ask frog to do something · @ mentions a file"
     }
 
     /// Send while there's something to send; stop while a turn runs and the field is empty.
@@ -289,6 +297,7 @@ struct ComposerView: View {
         // What's in the field is what goes, words still settling included.
         dictation.cancel()
         conversation.submit(text, images: attachments)
+        FrogSounds.shared.play(.plip)
         text = ""
         attachments = []
         mention = nil

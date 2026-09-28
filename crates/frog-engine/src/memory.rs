@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 /// The slash commands handled here, before any model call.
-pub const COMMANDS: [&str; 3] = ["remember", "forget", "memory"];
+pub const COMMANDS: [&str; 4] = ["remember", "forget", "memory", "recall"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
@@ -239,6 +239,16 @@ impl Store {
     pub fn folder(&self) -> &Path {
         self.project.as_deref().unwrap_or(&self.global)
     }
+
+    /// Where this project's session summaries go. `None` for a chat.
+    pub fn sessions_dir(&self) -> Option<PathBuf> {
+        self.project.as_ref().map(|p| p.join("sessions"))
+    }
+
+    /// A per-project cache file (the repo map). `None` for a chat.
+    pub fn project_file(&self, name: &str) -> Option<PathBuf> {
+        self.project.as_ref().map(|p| p.join(name))
+    }
 }
 
 pub enum Forgot {
@@ -355,7 +365,7 @@ fn parse_list(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn create_private_dir(dir: &Path) -> Result<()> {
+pub(crate) fn create_private_dir(dir: &Path) -> Result<()> {
     let mut b = std::fs::DirBuilder::new();
     b.recursive(true);
     #[cfg(unix)]
@@ -365,7 +375,7 @@ fn create_private_dir(dir: &Path) -> Result<()> {
 }
 
 /// Write via a temp file, readable only by the user.
-fn write_private(path: &Path, text: &str) -> Result<()> {
+pub(crate) fn write_private(path: &Path, text: &str) -> Result<()> {
     use std::io::Write;
     let tmp = path.with_extension("md.tmp");
     let mut o = std::fs::OpenOptions::new();
@@ -618,14 +628,63 @@ impl Reply {
     }
 }
 
-/// Run `/remember`, `/forget` or `/memory`. `None` if `text` isn't one of them. `omitted` is
-/// how many notes the current model's index leaves out.
+/// Run `/remember`, `/forget` or `/memory`. `None` if `text` isn't one of them (`/recall` is
+/// the engine's, since it also searches sessions). `omitted` is how many notes the current
+/// model's index leaves out.
 pub fn command(store: &Store, notes: &[Note], text: &str, omitted: usize) -> Option<Reply> {
     let (name, args) = parse(text)?;
     Some(match name {
         "remember" => remember(store, args),
         "forget" => forget(store, notes, args),
-        _ => list(store, notes, omitted),
+        "memory" => list(store, notes, omitted),
+        _ => return None,
+    })
+}
+
+/// The query of a `/recall` command, if `text` is one.
+pub fn recall_query(text: &str) -> Option<&str> {
+    match parse(text)? {
+        ("recall", args) => Some(args),
+        _ => None,
+    }
+}
+
+// ---- "remember that …" in a normal message ----
+
+/// A sentence opening with one of these is a note to keep.
+static REMEMBER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)(?:^|[.!\n]\s*)(?:please\s+)?(remember that|remember:|note to self[:,]?|from now on[,:]?)\s+([^\n]+)",
+    )
+    .unwrap()
+});
+
+/// The note in a message like "remember that we deploy on Fridays" or "from now on, use
+/// tabs": the sentence, without the lead-in for the "remember" forms. Questions ("remember
+/// that function?"), sentences about a thing to look at ("remember that file we edited") and
+/// fragments under three words don't count.
+pub fn detect_remember(text: &str) -> Option<String> {
+    let caps = REMEMBER.captures(text)?;
+    let lead = caps[1].to_lowercase();
+    let rest = &caps[2];
+    let end = rest.find(['.', '!', '?']).unwrap_or(rest.len());
+    let sentence = rest[..end].trim();
+    if rest[end..].starts_with('?') || sentence.split_whitespace().count() < 3 {
+        return None;
+    }
+    let first = sentence.split_whitespace().next().unwrap_or("");
+    if lead.starts_with("remember that")
+        && matches!(
+            first,
+            "file" | "function" | "one" | "thing" | "time" | "bug" | "test" | "code" | "line"
+        )
+    {
+        return None;
+    }
+    Some(if lead.starts_with("from now on") {
+        format!("From now on {sentence}")
+    } else {
+        sentence.to_string()
     })
 }
 
@@ -1053,5 +1112,40 @@ mod tests {
             assert!(kinds.is_empty(), "{text}: {kinds:?}");
             assert_eq!(out, text);
         }
+    }
+
+    #[test]
+    fn remember_that_is_detected_conservatively() {
+        assert_eq!(
+            detect_remember("Remember that we deploy on Fridays.").as_deref(),
+            Some("we deploy on Fridays")
+        );
+        assert_eq!(
+            detect_remember("fix the bug. From now on, use tabs in Swift files").as_deref(),
+            Some("From now on use tabs in Swift files")
+        );
+        assert_eq!(
+            detect_remember("note to self: the staging db is read-only. Now fix it").as_deref(),
+            Some("the staging db is read-only")
+        );
+        assert_eq!(
+            detect_remember("remember: tests need the fixture dir").as_deref(),
+            Some("tests need the fixture dir")
+        );
+        for text in [
+            "remember that function?",
+            "do you remember that function we wrote",
+            "remember that file we edited earlier and fix it",
+            "remember that",
+            "remember that one",
+            "I remember that this used to work",
+            "the README says: remember that users may be offline",
+            "fix it",
+        ] {
+            assert_eq!(detect_remember(text), None, "{text}");
+        }
+        assert_eq!(recall_query("/recall auth bug"), Some("auth bug"));
+        assert_eq!(recall_query("/memory"), None);
+        assert!(is_command("/recall x"));
     }
 }

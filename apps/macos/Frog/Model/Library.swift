@@ -41,11 +41,14 @@ final class Library {
             let home = FileManager.default.homeDirectoryForCurrentUser
             if let all = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--all", "--json"], cwd: home) {
                 // A conversation whose folder is gone can't be reopened.
-                // Race attempts live in their own worktrees and are shown in the race, not here.
+                // Race attempts live in their own worktrees and are shown in the race, not here;
+                // agents' scratch worktrees aren't projects.
                 sessions = all.filter { s in
-                    guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/") else { return false }
+                    guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/"),
+                          !cwd.contains("/.claude/worktrees/") else { return false }
                     return FileManager.default.fileExists(atPath: cwd)
                 }
+                archiveQuietChats()
             }
         }
     }
@@ -61,6 +64,26 @@ final class Library {
         if on { archived.insert(id); pinned.remove(id) } else { archived.remove(id) }
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
+    }
+
+    /// Plain chats archive themselves after this long without activity, unless pinned, live or
+    /// open in a window (the sidebar's "Chats" works like a browser's today tabs).
+    static let chatLifetime: TimeInterval = 12 * 3600
+
+    static var autoArchiveChats: Bool {
+        UserDefaults.standard.object(forKey: "autoArchiveChats") as? Bool ?? true
+    }
+
+    private func archiveQuietChats() {
+        guard Self.autoArchiveChats else { return }
+        let cutoff = Date().addingTimeInterval(-Self.chatLifetime)
+        let quiet = sessions.filter { s in
+            s.isChat && s.modifiedDate < cutoff && !pinned.contains(s.id) && !archived.contains(s.id)
+                && live[s.id] == nil && windows[s.id]?.window == nil
+        }
+        guard !quiet.isEmpty else { return }
+        archived.formUnion(quiet.map(\.id))
+        UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
     }
 
     // MARK: Renaming
@@ -102,7 +125,8 @@ final class Library {
     // MARK: Windows
 
     func register(window: NSWindow?, for id: String) {
-        windows = windows.filter { $0.value.window != nil && $0.value.window !== window }
+        // A window can show several sessions (one per pane); only forget closed windows.
+        windows = windows.filter { $0.value.window != nil }
         if let window { windows[id] = WeakWindow(window: window) }
     }
 

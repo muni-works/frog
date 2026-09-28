@@ -148,6 +148,17 @@ struct Cli {
     /// Remove a server you added.
     #[arg(long, value_name = "ID")]
     remove_provider: Option<String>,
+    /// What frog found on this Mac for this folder (instruction files, skills, rules, keys in the
+    /// environment, Claude Code's MCP servers), as JSON with --json, and exit.
+    #[arg(long)]
+    setup: bool,
+    /// Read Claude Code's MCP servers (from ~/.claude.json): on or off; then exit.
+    #[arg(long, value_name = "ON|OFF")]
+    use_claude_mcp: Option<String>,
+    /// Whether this folder's code may go to cloud models: allow, deny (keep it on your
+    /// devices), or ask (forget the answer). Without a value, print the answer; then exit.
+    #[arg(long, value_name = "ANSWER", num_args = 0..=1, default_missing_value = "")]
+    cloud_policy: Option<String>,
     /// Never ask for permission.
     #[arg(long)]
     yolo: bool,
@@ -200,6 +211,44 @@ async fn run() -> Result<bool> {
     }
     if let Some(done) = manage_providers(&cli).await? {
         return Ok(done);
+    }
+    if let Some(v) = &cli.use_claude_mcp {
+        match v.as_str() {
+            "on" => frog_engine::imports::set_claude_mcp(true)?,
+            "off" => frog_engine::imports::set_claude_mcp(false)?,
+            other => anyhow::bail!("--use-claude-mcp takes on or off, not `{other}`"),
+        }
+        return Ok(true);
+    }
+    if cli.setup {
+        let found = frog_engine::imports::report(&cfg, &std::env::current_dir()?);
+        if cli.json {
+            println!("{}", serde_json::to_string(&found)?);
+        } else {
+            println!("{found:#?}");
+        }
+        return Ok(true);
+    }
+    if let Some(answer) = &cli.cloud_policy {
+        use frog_engine::policy::{self, Cloud};
+        let here = std::env::current_dir()?;
+        let set = match answer.as_str() {
+            "" => None,
+            "allow" => Some(Cloud::Allow),
+            "deny" => Some(Cloud::Deny),
+            "ask" => Some(Cloud::Ask),
+            other => anyhow::bail!("--cloud-policy takes allow, deny or ask, not `{other}`"),
+        };
+        if let Some(c) = set {
+            policy::set_cloud(&here, c)?;
+        }
+        let c = serde_json::to_value(policy::cloud(&here))?;
+        if cli.json {
+            println!("{}", serde_json::json!({ "cloud": c }));
+        } else {
+            println!("{}", c.as_str().unwrap_or("ask"));
+        }
+        return Ok(true);
     }
     let (profile_name, mut profile) = cfg.resolve(cli.model.as_deref())?;
     if let Some(b) = cli.base_url {

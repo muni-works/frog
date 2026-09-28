@@ -212,6 +212,10 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
             .collect::<Vec<_>>()
             .join(": "),
         "Task" => s("description"),
+        "Recall" => {
+            let q = s("query");
+            if q.is_empty() { s("file") } else { q }
+        }
         "Skill" => {
             let n = s("name");
             if n.is_empty() { s("query") } else { n }

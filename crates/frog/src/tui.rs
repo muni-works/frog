@@ -62,6 +62,7 @@ const HELP: &str = "\
   /remember <note>  keep a note for this project (--global for every project)
   /forget <id|text> delete a note
   /memory           list notes
+  /recall <words>   search notes and past sessions (file:<path> by file touched)
   /exit             quit
   !<cmd>            run a shell command; output goes to the model with your next message
   @<path>           attach a file to your message";
@@ -233,7 +234,7 @@ impl Tui {
             },
             "clear" | "new" => Op::Clear,
             // The engine answers these itself, without the model.
-            "remember" | "forget" | "memory" => Op::Submit {
+            "remember" | "forget" | "memory" | "recall" => Op::Submit {
                 text: format!("/{cmd}"),
                 images: Vec::new(),
             },

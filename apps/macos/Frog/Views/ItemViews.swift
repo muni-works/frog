@@ -120,6 +120,7 @@ enum ToolIcon {
         case "Docs": "book"
         case "Task": "person.2"
         case "Skill": "sparkles.rectangle.stack"
+        case "Recall": "clock.arrow.circlepath"
         case "McpTools": "puzzlepiece.extension"
         case let n where n.hasPrefix("mcp__desktop__"): "macwindow.and.cursorarrow"
         case let n where n.hasPrefix("mcp__"): "puzzlepiece.extension"
@@ -176,35 +177,8 @@ struct ToolCallView: View {
             }
             .buttonStyle(.plain)
 
-            if expanded, let result {
-                if let diff = result.diff {
-                    DiffView(diff: diff)
-                } else if name == "Task", result.outcome == .ok {
-                    // A subagent's report reads like an answer.
-                    MarkdownView(text: result.display ?? result.output)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
-                } else {
-                    TerminalView(text: result.display ?? result.output)
-                }
-            } else if !item.done, let p = item.progress {
-                VStack(alignment: .leading, spacing: 4) {
-                    if let total = p.total, total > 0 {
-                        ProgressView(value: min(p.progress, total), total: total)
-                    } else {
-                        ProgressView().progressViewStyle(.linear)
-                    }
-                    if let m = p.message, !m.isEmpty {
-                        Text(m).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
-                .padding(.leading, 26)
-                .transition(.opacity)
-            } else if !item.done, !item.output.isEmpty {
-                // Live tail of a running command.
-                TerminalView(text: String(item.output.suffix(6000)), live: true, maxHeight: 150)
-                    .transition(.opacity)
+            if expanded || !item.done {
+                ToolDetail(name: name, item: item, expanded: expanded)
             }
 
             if let why = item.autoReason {
@@ -253,6 +227,48 @@ struct ToolCallView: View {
             ProgressView().controlSize(.small)
         } else if result?.outcome == .ok {
             Image(systemName: "checkmark").foregroundStyle(.green).font(.caption.weight(.bold))
+        }
+    }
+}
+
+/// What a tool call did: its diff, report, or output once it's opened, and its progress or
+/// live output while it runs. Shared by `ToolCallView` and the activity list's rows.
+struct ToolDetail: View {
+    let name: String
+    let item: ItemState
+    /// Opened: show the finished result.
+    var expanded = true
+
+    var body: some View {
+        if expanded, let result = item.result {
+            if let diff = result.diff {
+                DiffView(diff: diff)
+            } else if name == "Task", result.outcome == .ok {
+                // A subagent's report reads like an answer.
+                MarkdownView(text: result.display ?? result.output)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
+            } else {
+                TerminalView(text: result.display ?? result.output)
+            }
+        } else if !item.done, let p = item.progress {
+            VStack(alignment: .leading, spacing: 4) {
+                if let total = p.total, total > 0 {
+                    ProgressView(value: min(p.progress, total), total: total)
+                } else {
+                    ProgressView().progressViewStyle(.linear)
+                }
+                if let m = p.message, !m.isEmpty {
+                    Text(m).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            .padding(.leading, 26)
+            .transition(.opacity)
+        } else if !item.done, !item.output.isEmpty {
+            // Live tail of a running command.
+            TerminalView(text: String(item.output.suffix(6000)), live: true, maxHeight: 150)
+                .transition(.opacity)
         }
     }
 }

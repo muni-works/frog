@@ -92,7 +92,7 @@ struct SubagentCard: View {
             if n > 0 { parts.append("\(n) step\(n == 1 ? "" : "s")") }
             let secs = Int((run.endedAt ?? Date()).timeIntervalSince(run.startedAt))
             parts.append(secs < 60 ? "\(secs)s" : "\(secs / 60)m \(secs % 60)s")
-            if running, let tps = run.tokensPerSec, tps > 0 { parts.append("\(Int(tps)) tok/s") }
+            if running, let tps = run.tokensPerSec, tps > 0 { parts.append(ModelStats.speedText(tps * ModelStats.wordsPerToken)) }
         } else if running {
             parts.append("Starting")
         }

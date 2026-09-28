@@ -25,18 +25,21 @@ struct TranscriptView: View {
     private var transcript: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 12 : 22) {
+                let footers = TurnFooter.pinned(conversation.turns) { ModelStats.shared.cost(of: $0) }
                 ForEach(conversation.turns) { turn in
-                    TurnView(turn: turn, conversation: conversation, actions: actions)
+                    TurnView(turn: turn, conversation: conversation, actions: actions, pinsFooter: footers.contains(turn.id))
                 }
                 if let e = conversation.elicitation {
                     ElicitationCard(request: e, conversation: conversation)
                         .id(e.id)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-                // The running turn's work group shows progress once there's something to show.
-                if conversation.busy, conversation.permission == nil, conversation.elicitation == nil,
-                   conversation.replaying || (conversation.turns.last?.items.isEmpty ?? true) {
-                    WorkingIndicator(label: conversation.replaying ? "Loading session…" : conversation.progress)
+                // The running turn's live line shows progress once there's something to show.
+                if conversation.replaying {
+                    LoadingIndicator(since: conversation.opened)
+                } else if conversation.busy, conversation.permission == nil, conversation.elicitation == nil,
+                   conversation.turns.last?.items.isEmpty ?? true {
+                    WorkingIndicator(label: conversation.progress)
                 }
                 if let failure = conversation.failure {
                     Label(failure, systemImage: "exclamationmark.octagon")
@@ -51,6 +54,9 @@ struct TranscriptView: View {
             .padding(.bottom, 12)
             .frame(maxWidth: .infinity)
             .background(ScrollBackdropClear())
+            // The canvas's margins are for this scroll view, not for ones inside it (code
+            // blocks) or popovers opened from it.
+            .contentMargins(0, for: .scrollContent)
         }
         .scrollContentBackground(.hidden)
         // The system's scroll-edge blur is hidden (see ScrollBackdropClear), so fade the
@@ -70,7 +76,7 @@ struct TranscriptView: View {
         .defaultScrollAnchor(.bottom)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .overlay {
-            if conversation.turns.isEmpty, !conversation.busy, conversation.failure == nil {
+            if conversation.turns.isEmpty, !conversation.busy, !conversation.replaying, conversation.failure == nil {
                 EmptyTranscript(conversation: conversation)
             }
         }
@@ -115,16 +121,35 @@ struct UserPrompt: View {
 struct EndView: View {
     let reason: EndReason
     let usage: TurnUsage?
+    /// The turn's answer: a copy button at the row's end, shown on hover.
+    var answer: String = ""
+    var hovering = false
+    @Environment(\.models) private var models
 
     var body: some View {
         switch reason {
         case .complete, .denied:
             if let usage, usage.modelCalls > 0 {
                 HStack(spacing: 10) {
-                    Text("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s")")
-                    Text("\((usage.inputTokens + usage.outputTokens).tokens) tokens")
-                    if let tps = usage.tokensPerSec {
-                        Text("\(Int(tps)) tok/s")
+                    // Where it ran, then what it cost (cloud) or how fast it wrote.
+                    if let spec = usage.model {
+                        ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
+                    }
+                    Group {
+                        if let c = ModelStats.shared.cost(of: usage) {
+                            Text(ModelStats.money(c))
+                        } else if let tps = usage.tokensPerSec, tps > 0 {
+                            Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
+                        }
+                    }
+                    .help("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s") · \(usage.inputTokens.tokens) in, \(usage.outputTokens.tokens) out") // advanced
+                    Spacer(minLength: 8)
+                    if !answer.isEmpty {
+                        MessageAction(title: "Copy answer", symbol: "doc.on.doc") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(answer, forType: .string)
+                        }
+                        .opacity(hovering ? 1 : 0)
                     }
                 }
                 .font(.caption2.monospacedDigit())
@@ -166,37 +191,103 @@ struct WorkingIndicator: View {
     }
 }
 
+/// "Loading session…", once opening a conversation has taken long enough to notice: a quick
+/// open shows nothing between one conversation and the next.
+struct LoadingIndicator: View {
+    let since: Date
+    @State private var shown = false
+
+    var body: some View {
+        WorkingIndicator(label: "Loading session…")
+            .opacity(shown ? 1 : 0)
+            .task {
+                let wait = 0.3 - Date.now.timeIntervalSince(since)
+                if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                withAnimation(.easeIn(duration: 0.2)) { shown = true }
+            }
+    }
+}
+
 struct EmptyTranscript: View {
     let conversation: Conversation
     @Environment(\.canvasInsets) private var insets
+    @AppStorage("playfulFrog") private var playful = true
+    @State private var hovering = false
+    @State private var line = 0
+    @State private var hop = 0
 
     private var isChat: Bool { Frog.isChat(conversation.folder) }
 
     var body: some View {
+        // Short panes (a split stacked in a column) drop the suggestion, then the frog.
+        ViewThatFits(in: .vertical) {
+            content(details: true, card: true)
+            content(details: true, card: false)
+            content(details: false, card: false)
+        }
+        .padding(.top, insets.top)
+    }
+
+    private func content(details: Bool, card: Bool) -> some View {
         VStack(spacing: 10) {
-            Image("FrogMark")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 48, height: 48)
-                .foregroundStyle(Color.accentColor.gradient)
+            if !details {
+                EmptyView()
+            } else if playful {
+                mascot
+            } else {
+                Image("FrogMark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 48, height: 48)
+                    .foregroundStyle(Color.accentColor.gradient)
+            }
+            // The frog and a question; the composer (and its model pill) does the rest.
             Text(isChat ? "What should we work on?" : conversation.folder.lastPathComponent)
                 .font(.title2.weight(.semibold))
-            if let s = conversation.status {
-                Text("\(s.model) · \(s.toolMode) tools · \(s.tier) tier")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+            if card {
+                EmptyPageExtras(conversation: conversation)
+                    .padding(.top, 6)
             }
-            Text(isChat ? "Ask anything, or pick a folder below to work on code." : "Ask about the code, or describe a change.  Use @file to attach a file, !cmd to run a command.")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
-                .padding(.top, 4)
-            LocalModelCard()
-                .padding(.top, 14)
         }
         .multilineTextAlignment(.center)
         .padding()
         .padding(.leading, insets.leading)
         .padding(.trailing, insets.trailing)
+    }
+
+    /// The frog on its lily pad. Hover and it says something; drop a file and it hops.
+    private var mascot: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .bottom) {
+                LilyPad()
+                    .fill(Color.accentColor.opacity(0.22))
+                    .frame(width: 76, height: 26)
+                    .offset(y: 4)
+                FrogFace(mood: .idle, size: 48, hop: hop)
+                    .anchorPreference(key: FrogAnchorKey.self, value: .bounds) { $0 }
+            }
+            .padding(.top, 4)
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+            Text(FrogCopy.hovers[line % FrogCopy.hovers.count])
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .opacity(hovering ? 1 : 0)
+                .animation(.easeInOut(duration: 0.2), value: hovering)
+                .animation(.easeInOut(duration: 0.2), value: line)
+                .contentTransition(.opacity)
+        }
+        .task(id: hovering) {
+            guard hovering else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2.4))
+                guard !Task.isCancelled else { return }
+                line += 1
+            }
+        }
+        .onChange(of: conversation.dropped) { _, urls in
+            if !urls.isEmpty { hop += 1 }
+        }
     }
 }
 

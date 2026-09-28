@@ -30,7 +30,7 @@ final class SnapshotTests: XCTestCase {
             .compactMap { try JSONDecoder.frog.decode(Record.self, from: Data($0.utf8)).env }
     }
 
-    private func render<V: View>(_ view: V, size: CGSize, to name: String) throws {
+    private func render<V: View>(_ view: V, size: CGSize, to name: String, settle: TimeInterval = 0.4) throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -38,7 +38,7 @@ final class SnapshotTests: XCTestCase {
         window.contentView = host
         host.layoutSubtreeIfNeeded()
         // Let SwiftUI settle (scroll anchors, lazy stacks) before capturing.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        RunLoop.main.run(until: Date().addingTimeInterval(settle))
         host.layoutSubtreeIfNeeded()
         guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return XCTFail("no bitmap") }
         host.cacheDisplay(in: host.bounds, to: rep)
@@ -88,9 +88,202 @@ final class SnapshotTests: XCTestCase {
             size: CGSize(width: 660, height: 420), to: "palette")
         print("snapshots: \(outDir.path)")
     }
+
+    /// Opening a conversation that's slow to load: "Loading session…" (after a beat), never the
+    /// new-conversation page.
+    func testRenderReopening() throws {
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"), reopened: true)
+        try render(transcript(c), size: CGSize(width: 900, height: 500), to: "reopening", settle: 0.6)
+    }
 }
 
 extension SnapshotTests {
+    /// Every frog mood, and the frog on its lily pad.
+    /// Every model label size in every state and place, for docs/models.md review:
+    /// `model-labels.png`.
+    func testRenderModelLabels() throws {
+        func m(_ name: String, _ place: ModelIdentity.Place, _ state: ModelIdentity.State,
+               _ abilities: ModelIdentity.Abilities = [.usesTools]) -> ModelIdentity {
+            ModelIdentity(spec: "x/\(name)", name: name, variant: nil, place: place, abilities: abilities,
+                          paramsB: nil, context: nil, price: nil, state: state, repo: "r/\(name)", downloadGB: 4.6)
+        }
+        let models = [
+            m("Qwen3 8B", .mac, .ready),
+            m("Apple Intelligence", .apple, .ready, []),
+            m("Qwen3 8B", .server("mew (RTX 3090)"), .ready),
+            m("Claude Sonnet 5", .cloud("Anthropic"), .ready, [.usesTools, .seesImages, .reasons]),
+            m("Gemma 3 4B", .mac, .notDownloaded(gb: 3.4), [.seesImages]),
+            m("Qwen3 8B", .mac, .downloading(fraction: 0.45)),
+            m("Qwen3 8B", .mac, .downloadFailed("offline")),
+            m("GPT-5", .cloud("OpenAI"), .needsKey(provider: "OpenAI")),
+            m("Qwen3 Coder 30B", .mac, .wontFit(needsGB: 32, hasGB: 24)),
+            m("Claude Opus 5.5", .cloud("Anthropic"), .notAllowed(project: "kiln"), [.reasons]),
+        ]
+        let sheet = VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(models.enumerated()), id: \.offset) { _, model in
+                HStack(spacing: 24) {
+                    ModelLabel(model: model).frame(width: 190, alignment: .leading)
+                    HStack {
+                        ModelLabel(model: model, size: .row, detail: "38 words/s")
+                        Spacer()
+                        ModelStateAction(model: model)
+                    }
+                    .frame(width: 360, alignment: .leading)
+                    ModelLabel(model: model, size: .caption).frame(width: 300, alignment: .leading)
+                }
+                .padding(.vertical, 8)
+                Divider()
+            }
+        }
+        .padding(16)
+        .background(Color(nsColor: .windowBackgroundColor))
+        try render(sheet, size: CGSize(width: 960, height: 580), to: "model-labels")
+    }
+
+    /// The first-run choice, wide (side by side) and narrow (stacked): `first-run-*.png`.
+    func testRenderFirstRun() throws {
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        for (name, width) in [("wide", 640.0), ("narrow", 340.0)] {
+            try render(
+                EmptyTranscript(conversation: c)
+                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(nsColor: .windowBackgroundColor)),
+                size: CGSize(width: width, height: name == "wide" ? 300 : 520), to: "first-run-\(name)")
+        }
+    }
+
+    /// The model picker over a real folder's model list: `model-menu.png`.
+    func testRenderModelMenu() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "frog-menu-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let w = Workspace(folder: dir, fresh: true)
+        defer { w.stop() }
+        await w.reloadModels()
+        await ProviderStore.shared.load()
+        try render(
+            ModelMenu(workspace: w, current: w.models.first?.spec, pick: { _ in }, close: {})
+                .background(Color(nsColor: .windowBackgroundColor))
+                // The canvas's margins, as a popover from the composer inherits them.
+                .contentMargins(.leading, 200, for: .scrollContent),
+            size: CGSize(width: 340, height: 520), to: "model-menu")
+    }
+
+    /// Settings > Models as it is on this Mac: `settings-models.png`.
+    func testRenderModelSettings() async throws {
+        await ProviderStore.shared.load()
+        try render(
+            ModelSettings().background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 640, height: 1500), to: "settings-models", settle: 5)
+    }
+
+    /// A new chat's empty page on this Mac: recent projects, what frog found. `new-chat.png`.
+    func testRenderNewChat() throws {
+        let c = Conversation(preview: Frog.chatFolder)
+        try render(
+            EmptyTranscript(conversation: c)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 820, height: 460), to: "new-chat", settle: 4)
+    }
+
+    /// A new conversation in this repository: what frog read, where to start. `project-greeting.png`.
+    func testRenderProjectGreeting() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let c = Conversation(preview: root)
+        try render(
+            EmptyTranscript(conversation: c)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 820, height: 420), to: "project-greeting", settle: 4)
+    }
+
+    /// A prompt's and an answer's actions as they show on hover: `message-actions.png`.
+    func testRenderMessageActions() throws {
+        var turn = TurnState(number: 3, input: "what directory is this", startedAt: Date().addingTimeInterval(-600))
+        turn.end = .complete
+        let usage = TurnUsage(contextTokens: nil, inputTokens: 900, outputTokens: 40, modelCalls: 2, tokensPerSec: 24, model: "apple/on-device")
+        let sheet = VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .trailing, spacing: 2) {
+                UserPrompt(text: turn.input)
+                PromptActions(turn: turn, visible: true, copy: {}, rewind: {}, fork: {})
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            Text("The current working directory is /Users/cam/Developer/kiln.")
+            EndView(reason: .complete, usage: usage, answer: "The current working directory…", hovering: true)
+        }
+        .padding(24)
+        .background(Color(nsColor: .windowBackgroundColor))
+        try render(sheet, size: CGSize(width: 760, height: 220), to: "message-actions")
+        try render(
+            HStack { Spacer(); ActionTooltip(text: "Fork a new conversation from here") }
+                .padding(24).background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 420, height: 80), to: "action-tooltip")
+    }
+
+    func testRenderFrogFaces() throws {
+        let moods: [(String, FrogMood)] = [
+            ("idle", .idle), ("reading", .reading), ("thinking", .thinking), ("working", .working),
+            ("done", .done), ("waiting", .waiting), ("sad", .sad),
+        ]
+        try render(
+            VStack(spacing: 24) {
+                HStack(spacing: 24) {
+                    ForEach(moods, id: \.0) { name, mood in
+                        VStack(spacing: 6) {
+                            FrogFace(mood: mood, size: 48)
+                            Text(name).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                ZStack(alignment: .bottom) {
+                    LilyPad().fill(Color.accentColor.opacity(0.22)).frame(width: 76, height: 26).offset(y: 4)
+                    FrogFace(mood: .idle, size: 48)
+                }
+            }
+            .padding(40)
+            .background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 620, height: 240), to: "frog-faces")
+    }
+
+    /// Activity lines opened: a group's steps, one step's diff, and a long thought streaming.
+    /// `activity-open.png`, `activity-thinking.png`.
+    func testRenderActivity() throws {
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Fixtures")
+        let all = try events(dir.appending(path: "text-tools-text.jsonl"))
+        let done = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        all.forEach(done.ingest)
+        let groups = TurnFlow(try XCTUnwrap(done.turns.first).items).segments.compactMap { s -> ActivityGroup? in
+            if case .activity(let g) = s { g } else { nil }
+        }
+        let edit = try XCTUnwrap(groups.flatMap(\.steps).first { $0.arg.hasSuffix("PaneView.swift") && $0.result?.diff != nil })
+        try render(
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(Array(groups.enumerated()), id: \.offset) { _, g in
+                    ActivityLine(group: g, conversation: done, expanded: true)
+                }
+                ActivitySteps(steps: [edit], conversation: done)
+                ActivityStepRow(item: edit, conversation: done, expanded: true)
+            }
+            .padding(28)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 900, height: 900), to: "activity-open")
+
+        // A long thought streaming, after the reads.
+        let cut = try XCTUnwrap(all.firstIndex {
+            if case .itemStarted("r2", _) = $0.event { true } else { false }
+        })
+        let live = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        all[...cut].forEach(live.ingest)
+        let delta = #"{"seq":999,"session":"s","created":1790600005000,"event":"item_delta","id":"r2","delta":{"type":"reasoning","text":"Two places use the title as identity: the row's .id and the selection binding in PaneView.\n\nBoth need the stable session id. The selection binding compares titles when it restores the selection after the library reloads, so after a rename it finds nothing and clears.\n\nKeying both on the id fixes the rename"}}"#
+        live.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(delta.utf8)))
+        try render(transcript(live), size: CGSize(width: 900, height: 700), to: "activity-thinking")
+        print("snapshots: \(outDir.path)")
+    }
+
     /// A subagent mid-run (steps, thinking, the report being written) and finished.
     func testRenderSubagent() throws {
         func sub(_ inner: String) -> String {

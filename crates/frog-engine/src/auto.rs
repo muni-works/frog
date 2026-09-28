@@ -92,13 +92,20 @@ pub struct Classifier {
 impl Classifier {
     /// `auto_classifier` from config, else Apple's on-device model when it's here, else the
     /// session's own model.
-    pub fn new(cfg: &Config, session: (&str, &Profile)) -> anyhow::Result<Self> {
+    /// A classifier that would send the project's code to the cloud when the project keeps it
+    /// on your devices falls back to the session's model (which the project allows).
+    pub fn new(cfg: &Config, session: (&str, &Profile), dir: &std::path::Path) -> anyhow::Result<Self> {
         let (name, profile) = match &cfg.auto_classifier {
             Some(spec) => cfg.resolve(Some(spec))?,
             None if crate::sidecar::available(crate::sidecar::APPLE) => {
                 cfg.resolve(Some("apple/on-device"))?
             }
             None => (session.0.to_string(), session.1.clone()),
+        };
+        let (name, profile) = if crate::policy::check(dir, &name, &profile).is_err() {
+            (session.0.to_string(), session.1.clone())
+        } else {
+            (name, profile)
         };
         let mode = profile.thinking.unwrap_or(cfg.thinking);
         let think = match crate::harness::cached(&profile) {

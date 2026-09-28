@@ -483,6 +483,9 @@ pub struct TurnUsage {
     /// Where the turn's wall time went. Absent in logs from before it was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timing: Option<TurnTiming>,
+    /// The model (spec) that ran the turn, for pricing it. Absent in older logs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// A turn's wall time split by what it was waiting on, in milliseconds. `other` is whatever

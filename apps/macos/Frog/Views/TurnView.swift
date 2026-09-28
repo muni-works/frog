@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// A turn reads outcome-first: what you asked, a one-line summary of the work (expandable),
-/// the answer, and the files that changed. The step-by-step lives in the work group.
+/// A turn reads like prose, in the order things happened: what you asked, then text and
+/// muted lines for what frog did in between ("Read 3 files, searched for …"), then the files
+/// that changed. Cards are only for what needs you or went wrong.
 struct TurnActions {
     var fork: (UInt64) -> Void
     var rewind: (UInt64) -> Void
@@ -11,40 +12,65 @@ struct TurnView: View {
     let turn: TurnState
     let conversation: Conversation
     let actions: TurnActions
+    /// Show the model/speed footer without hovering (see `TurnFooter.pinned`).
+    var pinsFooter = true
     @State private var hovering = false
+    /// The pointer is over what you asked (its actions show) rather than elsewhere in the turn.
+    @State private var hoveringPrompt = false
     @State private var confirmRewind = false
     @AppStorage("showThinking") private var showThinking = true
     @AppStorage("density") private var density = Density.comfortable.rawValue
 
+    private var running: Bool { !turn.finished && conversation.busy }
+
     var body: some View {
         let parts = TurnParts(turn)
+        let flow = TurnFlow(turn.items, showThinking: showThinking)
         VStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 8 : 14) {
             if !turn.input.isEmpty {
-                UserPrompt(text: turn.input, images: turn.images)
-                    .overlay(alignment: .bottomTrailing) {
-                        if hovering, turn.finished, turn.number != nil, !conversation.busy {
-                            hoverBar(changes: parts.changes.count)
-                                .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                        }
-                    }
-                    .contextMenu { menu(changes: parts.changes.count) }
+                VStack(alignment: .trailing, spacing: 2) {
+                    UserPrompt(text: turn.input, images: turn.images)
+                        .contextMenu { menu(changes: parts.changes.count) }
+                    PromptActions(
+                        turn: turn,
+                        visible: hoveringPrompt && !(running && turn.number == nil),
+                        copy: copy,
+                        rewind: { confirmRewind = true },
+                        fork: { if let n = turn.number { actions.fork(n) } }
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .contentShape(.rect)
+                .onHover { hoveringPrompt = $0 }
             }
-            let steps = showThinking ? parts.work : parts.work.filter { $0.kind != .reasoning }
-            if !steps.isEmpty {
-                WorkGroup(turn: turn, steps: steps, plan: parts.plan, conversation: conversation)
+            ForEach(flow.segments) { segment in
+                switch segment {
+                case .activity(let group):
+                    ActivityLine(group: group, conversation: conversation, live: running)
+                case .text(let item), .visual(let item), .notice(let item):
+                    ItemView(item: item, conversation: conversation)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
             }
-            ForEach(parts.answer) { item in
-                ItemView(item: item, conversation: conversation)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            if running, !parts.plan.isEmpty {
+                PlanView(todos: parts.plan)
+            }
+            if running, let status = liveStatus {
+                LiveStatus(text: status.text, since: status.since)
+                    .transition(.opacity)
             }
             if !parts.changes.isEmpty {
                 ChangesStrip(changes: parts.changes)
             }
             if let end = turn.end {
-                EndView(reason: end, usage: turn.usage)
+                // An unpinned footer keeps its place and fades in on hover, so it neither
+                // covers the answer nor shifts what's below.
+                EndView(reason: end, usage: turn.usage, answer: answer, hovering: hovering)
+                    .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
+                    .allowsHitTesting(pinsFooter || hovering)
             }
         }
-        .animation(.snappy(duration: 0.25), value: parts.answer.count)
+        .animation(.snappy(duration: 0.25), value: flow.segments.count)
         .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hovering = h } }
         .confirmationDialog(
             "Rewind to before this turn?",
@@ -58,23 +84,33 @@ struct TurnView: View {
         }
     }
 
-    private func hoverBar(changes: Int) -> some View {
-        HStack(spacing: 2) {
-            Button("Rewind", systemImage: "arrow.uturn.backward") { confirmRewind = true }
-                .help("Rewind to before this turn")
-            Button("Fork", systemImage: "arrow.triangle.branch") {
-                if let n = turn.number { actions.fork(n) }
-            }
-            .help("Branch the conversation after this turn")
-            Button("Copy", systemImage: "doc.on.doc") { copy() }
-                .help("Copy prompt")
+    /// A finished turn's model/speed caption, as opposed to a banner for how it stopped
+    /// (interrupted, an error), which always shows.
+    private func isFooter(_ end: EndReason) -> Bool {
+        switch end {
+        case .complete, .denied: true
+        default: false
         }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .glassEffect(.regular, in: .capsule)
-        .offset(y: 30)
+    }
+
+    /// What's happening now, for the turn's last line. Nothing while the answer is being
+    /// written (the text is the status), a permission card is up, or a subagent or diagram
+    /// shows its own progress.
+    private var liveStatus: (text: String, since: Date?)? {
+        guard let last = turn.items.last else { return nil }
+        if last.kind == .message, !last.done, !last.text.isEmpty { return nil }
+        if let current = turn.items.last(where: { !$0.done && $0.kind != .message }) {
+            if current.needsPermission { return nil }
+            if case .tool(let name, _) = current.kind, name == "Task" || name == "Diagram" { return nil }
+            return (ActivityWords.now(current), current.startedAt)
+        }
+        // Between steps: the model is working out what to do next.
+        let label = conversation.progress.flatMap { p -> String? in
+            guard p != "thinking", !p.isEmpty else { return nil }
+            let s = p.prefix(1).uppercased() + p.dropFirst()
+            return s.hasSuffix("…") ? s : s + "…"
+        }
+        return (label ?? "Thinking…", turn.items.compactMap(\.endedAt).max())
     }
 
     @ViewBuilder
@@ -87,6 +123,12 @@ struct TurnView: View {
             Divider()
         }
         Button("Copy", systemImage: "doc.on.doc") { copy() }
+    }
+
+    /// What frog said in this turn, for copying.
+    private var answer: String {
+        turn.items.filter { $0.kind == .message }.map(\.text).joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func copy() {
@@ -159,131 +201,6 @@ struct FileChange: Identifiable, Hashable {
     var removed: UInt32 { diffs.reduce(0) { $0 + $1.removed } }
     var created: Bool { diffs.first?.created ?? false }
     var name: String { (path as NSString).lastPathComponent }
-}
-
-// MARK: - Work group
-
-struct WorkGroup: View {
-    let turn: TurnState
-    let steps: [ItemState]
-    let plan: [Todo]
-    let conversation: Conversation
-    @State private var expanded = false
-
-    private var running: Bool { !turn.finished }
-    private static let tail = 3
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            header
-            if running, !plan.isEmpty {
-                PlanView(todos: plan)
-            }
-            if expanded {
-                stepsList(steps)
-                if !running, !plan.isEmpty {
-                    PlanView(todos: plan)
-                }
-            } else if running {
-                let hidden = max(0, steps.count - Self.tail)
-                if hidden > 0 {
-                    Button("\(hidden) earlier step\(hidden == 1 ? "" : "s")") {
-                        withAnimation(.snappy) { expanded = true }
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                    .padding(.leading, 26)
-                }
-                stepsList(Array(steps.suffix(Self.tail)))
-            }
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
-        .background(.quaternary.opacity(running || expanded ? 0.28 : 0), in: .rect(cornerRadius: 14))
-        .animation(.snappy(duration: 0.25), value: expanded)
-        .animation(.snappy(duration: 0.25), value: steps.count)
-    }
-
-    private var header: some View {
-        Button {
-            withAnimation(.snappy) { expanded.toggle() }
-        } label: {
-            HStack(spacing: 8) {
-                if running {
-                    ProgressView().controlSize(.small).frame(width: 16)
-                    TimelineView(.periodic(from: .now, by: 1)) { _ in
-                        Text("Working \(elapsed)")
-                            .monospacedDigit()
-                    }
-                    .fontWeight(.medium)
-                    if let label = conversation.progress, label != "thinking" {
-                        Text(label).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                } else {
-                    Image(systemName: failures > 0 ? "exclamationmark.circle" : "checkmark.circle")
-                        .foregroundStyle(failures > 0 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                        .frame(width: 16)
-                    Text("Worked \(elapsed)").fontWeight(.medium)
-                    Text(summary).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees(expanded ? 90 : 0))
-            }
-            .font(.callout)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func stepsList(_ items: [ItemState]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(items) { item in
-                ItemView(item: item, conversation: conversation, showsApp: false)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-    }
-
-    private var elapsed: String {
-        guard let start = turn.startedAt else { return "" }
-        let secs = Int((turn.endedAt ?? .now).timeIntervalSince(start))
-        return secs < 60 ? "\(secs)s" : "\(secs / 60)m \(secs % 60)s"
-    }
-
-    private var failures: Int {
-        steps.filter { $0.result.map { $0.outcome == .error } ?? false }.count
-    }
-
-    /// "read 3 files · ran 2 commands · 1 search · 1 failed"
-    private var summary: String {
-        var counts: [String: Int] = [:]
-        var files = Set<String>()
-        var edited = Set<String>()
-        for s in steps {
-            guard case .tool(let name, let arg) = s.kind else { continue }
-            switch name {
-            case "Read": files.insert(arg)
-            case "Bash", "!": counts["command", default: 0] += 1
-            case "Grep", "Glob": counts["search", default: 0] += 1
-            case "Edit", "Write": if s.result?.outcome == .ok { edited.insert(arg) }
-            default: break
-            }
-        }
-        var parts: [String] = []
-        if !files.isEmpty { parts.append("read \(files.count) file\(files.count == 1 ? "" : "s")") }
-        if !edited.isEmpty { parts.append("edited \(edited.count) file\(edited.count == 1 ? "" : "s")") }
-        if let n = counts["command"] { parts.append("ran \(n) command\(n == 1 ? "" : "s")") }
-        if let n = counts["search"] { parts.append("\(n) search\(n == 1 ? "" : "es")") }
-        if failures > 0 { parts.append("\(failures) failed") }
-        if parts.isEmpty {
-            let thoughts = steps.filter { $0.kind == .reasoning }.count
-            if thoughts > 0 { parts.append("thought it through") }
-        }
-        return parts.joined(separator: " · ")
-    }
 }
 
 struct PlanView: View {

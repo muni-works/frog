@@ -9,6 +9,12 @@ struct FrogWindow {
     let toggleChanges: () -> Void
     let sessionsShown: Bool
     let changesShown: Bool
+    /// Start a plain chat in the focused pane.
+    let newChat: () -> Void
+    /// Nil when the window can't split further, or has nothing to close or cycle through.
+    let split: ((Axis) -> Void)?
+    let closePane: (() -> Void)?
+    let focusPane: ((Int) -> Void)?
 }
 
 extension FocusedValues {
@@ -31,6 +37,18 @@ struct FrogCommands: Commands {
     }
 
     var body: some Commands {
+        // ⌘N starts a chat where you are; windows and tabs are ⌘T and ⌥⌘N.
+        CommandGroup(replacing: .newItem) {
+            Button("New Chat") {
+                if let window { window.newChat() } else { newWindow() }
+            }
+            .keyboardShortcut("n")
+            Button("New Tab") { newTab() }
+                .keyboardShortcut("t")
+            Button("New Window") { newWindow() }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+        }
+
         CommandGroup(after: .newItem) {
             Button("New Session") { window?.workspace.newSession() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
@@ -69,6 +87,22 @@ struct FrogCommands: Commands {
             Button((window?.changesShown ?? false) ? "Hide Changes" : "Show Changes") { window?.toggleChanges() }
                 .keyboardShortcut("0", modifiers: [.command, .option])
                 .disabled(window == nil)
+            Divider()
+            Button("Split Right") { window?.split?(.horizontal) }
+                .keyboardShortcut("\\")
+                .disabled(window?.split == nil)
+            Button("Split Down") { window?.split?(.vertical) }
+                .keyboardShortcut("\\", modifiers: [.command, .shift])
+                .disabled(window?.split == nil)
+            Button("Close Pane") { window?.closePane?() }
+                .keyboardShortcut("w", modifiers: [.command, .control])
+                .disabled(window?.closePane == nil)
+            Button("Next Pane") { window?.focusPane?(1) }
+                .keyboardShortcut("]")
+                .disabled(window?.focusPane == nil)
+            Button("Previous Pane") { window?.focusPane?(-1) }
+                .keyboardShortcut("[")
+                .disabled(window?.focusPane == nil)
             Divider()
             Button("Command Palette") { window?.state.paletteShown.toggle() }
                 .keyboardShortcut("k")
@@ -126,12 +160,11 @@ struct FrogCommands: Commands {
                 Picker("Model", selection: Binding(
                     get: { c.status?.model ?? "" },
                     set: { spec in
-                        window?.workspace.preferredModel = spec
-                        c.setModel(spec)
+                        window?.workspace.use(spec)
                     }
                 )) {
                     ForEach(window?.workspace.models ?? []) { m in
-                        Text(m.spec).tag(m.spec)
+                        ModelLabel(model: ModelIdentity(m), size: .menu).tag(m.spec)
                     }
                 }
                 .pickerStyle(.inline)
@@ -168,6 +201,29 @@ struct FrogCommands: Commands {
         }
     }
 
+    /// A new window as a tab of the key window (what the tab bar's + does).
+    private func newTab() {
+        guard NSApp.keyWindow != nil else { return newWindow() }
+        NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+    }
+
+    /// A new window on its own. SwiftUI only makes new windows through the tab action (asking
+    /// for a window by value would bring back one already showing a chat), so make a tab and
+    /// move it out.
+    private func newWindow() {
+        let before = Set(NSApp.windows.map(ObjectIdentifier.init))
+        guard NSApp.keyWindow != nil else {
+            openWindow(value: Frog.chatFolder)
+            return
+        }
+        NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+        DispatchQueue.main.async {
+            guard let new = NSApp.windows.first(where: { !before.contains(ObjectIdentifier($0)) }) else { return }
+            new.moveTabToNewWindow(nil)
+            new.makeKeyAndOrderFront(nil)
+        }
+    }
+
     private func openFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -185,4 +241,8 @@ extension EnvironmentValues {
     /// Set by a window: show this session, in this window (switching folders if needed) unless
     /// another window already has it open.
     @Entry var openSession: ((SessionInfo) -> Void)?
+    /// Set by a window: show this session in a new pane beside the focused one.
+    @Entry var openSessionInSplit: ((SessionInfo) -> Void)?
+    /// Which pane (1-based) shows which session, when the window is split.
+    @Entry var paneNumbers: [String: Int] = [:]
 }
