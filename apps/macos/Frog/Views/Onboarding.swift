@@ -6,6 +6,7 @@ import SwiftUI
 struct EmptyPageExtras: View {
     let conversation: Conversation
     @State private var report: SetupReport?
+    @State private var glance: ProjectGlance?
     @AppStorage("setupLineClosed") private var setupClosed = false
 
     private var isChat: Bool { Frog.isChat(conversation.folder) }
@@ -17,6 +18,8 @@ struct EmptyPageExtras: View {
         VStack(spacing: 10) {
             if isChat {
                 RecentProjectChips()
+            } else if let glance {
+                ProjectGreeting(conversation: conversation, glance: glance)
             }
             if showsSetup {
                 SetupLine(conversation: conversation, report: report)
@@ -26,7 +29,46 @@ struct EmptyPageExtras: View {
         }
         // Here, not on the line: a view with nothing to show yet never appears, so its task
         // wouldn't run.
-        .task(id: conversation.folder) { report = await SetupReport.load(conversation.folder) }
+        .task(id: conversation.folder) {
+            if !isChat { glance = await ProjectGlance.load(conversation.folder) }
+            report = await SetupReport.load(conversation.folder)
+        }
+    }
+}
+
+// MARK: - The project greeting
+
+/// What frog read about a project, in one line, and up to three places to start: "Rust and
+/// Swift · 41k lines · 3 uncommitted changes", then "Review my changes", "The TODO in
+/// engine.rs", "How it fits together". A click sends it.
+struct ProjectGreeting: View {
+    let conversation: Conversation
+    let glance: ProjectGlance
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if let summary = glance.summary {
+                Text(summary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            HStack(spacing: 8) {
+                ForEach(glance.starts) { start in
+                    Button { conversation.submit(start.prompt) } label: {
+                        Text(start.title)
+                            .lineLimit(1)
+                            .font(.callout)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                    .help(start.prompt)
+                }
+            }
+        }
+        .transition(.opacity)
     }
 }
 

@@ -45,3 +45,30 @@ final class BiggerModelTests: XCTestCase {
         XCTAssertNil(BiggerModelLine.reason(model: "Qwen3 8B", window: 32_768, turns: [turn(.looping)], inProject: true))
     }
 }
+
+/// A project's greeting: what frog read, and where to start.
+final class ProjectGlanceTests: XCTestCase {
+    func testSummary() {
+        var g = ProjectGlance(languages: ["Rust", "Swift"], lines: 41_230, changed: 3)
+        XCTAssertEqual(g.summary, "Rust and Swift · 41k lines · 3 uncommitted changes")
+        g = ProjectGlance(languages: ["Python"], lines: 420)
+        XCTAssertEqual(g.summary, "Python · 420 lines")
+        XCTAssertNil(ProjectGlance().summary)
+    }
+
+    func testStartsFollowTheState() {
+        var g = ProjectGlance(changed: 2, lastCommit: "Engine: tidy", todo: (path: "src/engine.rs", text: "TODO: retry on 429"))
+        XCTAssertEqual(g.starts.map(\.title), ["Review my changes", "The TODO in engine.rs", "How it fits together"])
+        g = ProjectGlance(lastCommit: "Engine: tidy")
+        XCTAssertEqual(g.starts.map(\.title), ["Pick up from the last commit", "How it fits together"])
+    }
+
+    /// Reads this repository: it's a git checkout with Rust and Swift in it.
+    func testReadsARealRepository() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let g = try XCTUnwrap(ProjectGlance.read(root))
+        XCTAssertTrue(g.languages.contains("Rust"), "\(g.languages)")
+        XCTAssertGreaterThan(g.lines, 1000)
+    }
+}

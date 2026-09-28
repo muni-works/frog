@@ -1,6 +1,6 @@
 # Onboarding
 
-Spec, written 2026-09-28. Status: steps 1–3 built (what frog found, recent projects, a bigger model when needed); the rest proposed.
+Spec, written 2026-09-28. Status: steps 1–4 built (what frog found, recent projects, a bigger model when needed, the project greeting); the rest proposed.
 
 frog has no onboarding screens. No welcome window, no tour, no account. The product is the onboarding: the first message gets an answer in about a second, frog notices what's already on the Mac, and it asks a question only at the moment the answer matters.
 
@@ -33,6 +33,8 @@ frog has no onboarding screens. No welcome window, no tour, no account. The prod
 > kiln · a Rust engine and a SwiftUI app · 41k lines · 2 failing tests in frog-engine
 
 and three starting points you can click, made from what it found (failing tests, TODOs near recent changes, "explain how it fits together").
+
+Built without a model, from git, in about a tenth of a second (`ProjectGlance`): languages that make up at least a tenth of the code, lines of source, uncommitted changes. Starting points, up to three, in order: "Review my changes" when there are uncommitted changes, "The TODO in <file>" for the first TODO or FIXME in a file changed in the last ten commits, "Pick up from the last commit" when the tree is clean, and "How it fits together". A click sends the prompt. Not built yet: failing tests (they'd need running the tests, which isn't cheap).
 
 **60s: a bigger model, when it's needed.** When a task outgrows Apple's model (a project, a long answer, a full context), frog says so once, inline:
 

@@ -45,7 +45,7 @@ enum Git {
     }
 
     /// A git command's output, or nil if it failed.
-    private static func run(_ folder: URL, _ args: [String]) -> String? {
+    static func run(_ folder: URL, _ args: [String]) -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         p.arguments = ["-C", folder.path] + args

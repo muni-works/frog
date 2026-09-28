@@ -187,6 +187,18 @@ extension SnapshotTests {
             size: CGSize(width: 820, height: 460), to: "new-chat", settle: 4)
     }
 
+    /// A new conversation in this repository: what frog read, where to start. `project-greeting.png`.
+    func testRenderProjectGreeting() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let c = Conversation(preview: root)
+        try render(
+            EmptyTranscript(conversation: c)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 820, height: 420), to: "project-greeting", settle: 4)
+    }
+
     /// A prompt's and an answer's actions as they show on hover: `message-actions.png`.
     func testRenderMessageActions() throws {
         var turn = TurnState(number: 3, input: "what directory is this", startedAt: Date().addingTimeInterval(-600))
