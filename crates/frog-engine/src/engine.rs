@@ -681,6 +681,7 @@ impl Agent {
             tokens_per_sec: self.tokens_per_sec(),
             context_tokens: self.context_tokens(),
             timing,
+            model: Some(self.profile_name.clone()),
             ..self.turn_usage.clone()
         };
         self.emit(Event::TurnEnded {
