@@ -183,7 +183,7 @@ struct ComposerView: View {
     private var placeholder: String {
         if conversation.busy { return "Working… Esc interrupts · Return queues a follow-up" }
         // A new conversation's placeholder is its only hint (the empty page is just a question).
-        let new = conversation.turns.isEmpty
+        let new = conversation.turns.isEmpty && !conversation.replaying
         if workspace.isChat {
             return new ? "Ask anything, or pick a folder to work on code" : "Ask anything"
         }

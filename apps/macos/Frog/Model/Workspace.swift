@@ -9,6 +9,12 @@ final class Workspace {
     private(set) var sessions: [SessionInfo] = []
     private(set) var models: [ModelEntry] = []
     private(set) var conversation: Conversation?
+    /// A conversation being opened: running, but kept off screen until its transcript is in (or
+    /// it's slow to come), so opening one is a single cut rather than an empty pane filling in.
+    @ObservationIgnored private var incoming: Conversation?
+    /// The session being opened in this workspace's place (here, or another folder's), which
+    /// the sidebar selects straight away.
+    var opening: String?
     var selection: String?
     var preferredModel: String?
     /// Parallel attempts in progress, shown instead of the transcript.
@@ -145,6 +151,8 @@ final class Workspace {
     init(folder: URL, fresh: Bool = false, resume: String? = nil) {
         self.folder = folder
         preferredModel = Self.startingModel
+        // Name models the way the last list did until this folder's own loads (it's slow).
+        models = Self.knownModels
         // Pick up where you left off: the first window reopens this folder's last session.
         // Windows and tabs opened after that start a fresh conversation.
         let chat = Frog.isChat(folder)
@@ -176,6 +184,20 @@ final class Workspace {
     /// Showing a recorded session (`-FrogReplay`): don't remember it as this folder's last one.
     @ObservationIgnored private var isReplay = false
 
+    /// The model list as last loaded, by any folder.
+    private static var knownModels: [ModelEntry] = []
+    @ObservationIgnored private var modelsLoaded = false
+    @ObservationIgnored private var gitChecked = false
+
+    /// Returns once this folder shows as it will (its conversation's transcript and its git state
+    /// are in), or after `limit` if that's slow.
+    func settled(within limit: Duration) async {
+        let deadline = ContinuousClock.now + limit
+        while !gitChecked || conversation?.replaying == true, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     private static func lastSessionKey(_ folder: URL) -> String {
         "lastSession:" + folder.standardizedFileURL.path
     }
@@ -183,14 +205,17 @@ final class Workspace {
     func refresh() async {
         Library.shared.refresh()
         if !isChat { git = await Git.status(folder) }
+        gitChecked = true
         if skills.isEmpty, let k = try? await Frog.json([SkillInfo].self, args: ["--skills", "--json"], cwd: folder) {
             skills = k
         }
         if let s = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--json"], cwd: folder) {
             sessions = s
         }
-        if models.isEmpty, let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
+        if !modelsLoaded, let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
+            modelsLoaded = true
             models = m
+            Self.knownModels = m
             ModelStats.shared.learnPrices(m)
         }
         struct Answer: Decodable { var cloud: CloudPolicy }
@@ -202,7 +227,9 @@ final class Workspace {
     /// Reload the model list (after providers or enabled models change).
     func reloadModels() async {
         if let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
+            modelsLoaded = true
             models = m
+            Self.knownModels = m
             ModelStats.shared.learnPrices(m)
         }
     }
@@ -212,7 +239,15 @@ final class Workspace {
     }
 
     func open(_ id: String) {
-        guard id != conversation?.sessionID else { return }
+        guard id != incoming?.sessionID else { return }
+        guard id != conversation?.sessionID else {
+            // Back to the one on screen before another finished opening.
+            incoming?.stop()
+            incoming = nil
+            opening = nil
+            return
+        }
+        opening = id
         start(arguments: ["-r", id])
     }
 
@@ -227,9 +262,9 @@ final class Workspace {
         guard let id = conversation?.sessionID else { return }
         do {
             let r = try await Frog.json(Rewound.self, args: ["--rewind", "\(id)@\(turn)", "--json"], cwd: folder)
-            start(arguments: ["-r", r.session])
+            let c = start(arguments: ["-r", r.session])
             let files = r.restored.count
-            conversation?.flash(files == 0
+            c.flash(files == 0
                 ? "Rewound to before turn \(turn). No files needed restoring."
                 : "Rewound to before turn \(turn) and restored \(files) file\(files == 1 ? "" : "s").")
             await refresh()
@@ -240,12 +275,12 @@ final class Workspace {
 
     func stop() {
         race?.discard()
+        incoming?.stop()
         conversation?.stop()
     }
 
-    private func start(arguments: [String]) {
-        conversation?.stop()
-        cloudForThisConversation = false
+    @discardableResult
+    private func start(arguments: [String]) -> Conversation {
         // The permission mode new sessions start in (Settings > Permissions).
         let mode = UserDefaults.standard.string(forKey: "defaultMode").flatMap(Mode.init(rawValue:))
         let modeFlag: [String] = switch mode {
@@ -269,7 +304,28 @@ final class Workspace {
             }
             Task { await self.refresh() }
         }
-        conversation = c
+        incoming?.stop()
+        incoming = c
+        // Nothing to cut from, or nothing to wait for: straight on screen.
+        guard conversation != nil, c.replaying else {
+            show(c)
+            return c
+        }
+        Task {
+            await c.loaded(within: .milliseconds(300))
+            show(c)
+        }
+        return c
+    }
+
+    /// Put `c` on screen in place of the conversation there, unless another was opened since.
+    private func show(_ c: Conversation) {
+        guard incoming === c else { return }
+        incoming = nil
+        opening = nil
+        conversation?.stop()
+        cloudForThisConversation = false
+        Motion.cut { conversation = c }
     }
 }
 

@@ -222,6 +222,12 @@ struct ActivityViewer: View {
                 icon(.sad) { Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red) }
                 Text(playful ? "Croak. Engine stopped" : "Engine stopped").fontWeight(.medium)
             }
+        } else if conversation.replaying {
+            // Only seen when opening is slow (a quick open shows the finished state straight away).
+            HStack(spacing: 7) {
+                icon(.idle) { Image(systemName: "hourglass").foregroundStyle(.secondary) }
+                Text("Opening…").foregroundStyle(.secondary)
+            }
         } else if conversation.busy, let turn = conversation.turns.last, !turn.finished {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 HStack(spacing: 7) {

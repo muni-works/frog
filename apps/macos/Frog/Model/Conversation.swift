@@ -133,7 +133,12 @@ final class Conversation {
     var dropped: [URL] = []
     @ObservationIgnored private var appCalls: [String: (JSONValue?, String?) -> Void] = [:]
     private(set) var failure: String?
+    /// A reopened session's history is on its way (until the engine's `synced`).
     private(set) var replaying = false
+    /// When this conversation was opened, so a slow load can say so and a quick one doesn't.
+    @ObservationIgnored let opened = Date.now
+    /// Events that arrived while replaying, folded in together once the history is all here.
+    @ObservationIgnored private var held: [Envelope] = []
     private(set) var title: String?
     /// A short-lived status line (info notices), shown above the composer.
     private(set) var toast: String?
@@ -164,6 +169,10 @@ final class Conversation {
     init(folder: URL, arguments: [String], model: String?) {
         self.folder = folder
         replayOnStart = arguments.contains("-r") || arguments.contains("--fork")
+        // A reopened session is known before the engine says so: the sidebar selects it now.
+        if let i = arguments.firstIndex(of: "-r"), arguments.indices.contains(i + 1) {
+            sessionID = arguments[i + 1]
+        }
         guard let binary = Frog.binary else {
             failure = FrogError.missingBinary.localizedDescription
             busy = false
@@ -176,6 +185,14 @@ final class Conversation {
         do {
             try engine.start()
             self.engine = engine
+            if replayOnStart {
+                // Ask for the history straight away: the engine answers while it's still starting
+                // up (connecting MCP servers, loading the model). Nothing is running, so it isn't
+                // shown busy meanwhile; anything sent waits for the transcript (see `submit`).
+                replaying = true
+                busy = false
+                engine.send(.subscribe(after: 0))
+            }
         } catch {
             failure = "Couldn't start frog: \(error.localizedDescription)"
             busy = false
@@ -183,9 +200,11 @@ final class Conversation {
     }
 
     /// An engine-less conversation that only renders events fed to `ingest` (previews, snapshots).
-    init(preview folder: URL) {
+    /// `reopened`: as if resuming a session, whose history is fed in up to a `synced`.
+    init(preview folder: URL, reopened: Bool = false) {
         self.folder = folder
-        replayOnStart = false
+        replayOnStart = reopened
+        replaying = reopened
         busy = false
     }
 
@@ -199,7 +218,7 @@ final class Conversation {
     func submit(_ text: String, images: [ToolImage] = []) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty else { return }
-        if busy {
+        if busy || replaying {
             queue.append(Queued(text: text, images: images))
             return
         }
@@ -290,9 +309,36 @@ final class Conversation {
         engine?.stop()
     }
 
+    /// Returns once a reopened session's history is in, or after `limit` if that's slow.
+    func loaded(within limit: Duration) async {
+        let deadline = ContinuousClock.now + limit
+        while replaying, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     // MARK: - Events
 
+    /// A reopened session's history arrives as a burst of events. Held until it's all here and
+    /// then folded in at once, it shows up whole, scrolled to the end, instead of building up
+    /// turn by turn with the empty page and a spinner before it.
     private func handle(_ env: Envelope?) {
+        guard replaying else { return apply(env) }
+        if let env, !env.event.isSynced {
+            held.append(env)
+            return
+        }
+        let events = held
+        held = []
+        Motion.cut {
+            events.forEach(apply)
+            // Exited before the history came: show what did, then why.
+            if env == nil { replaying = false }
+            apply(env)
+        }
+    }
+
+    private func apply(_ env: Envelope?) {
         guard let env else {
             if !stopping {
                 let tail = engine?.stderr.split(separator: "\n").suffix(3).joined(separator: "\n") ?? ""
@@ -318,7 +364,8 @@ final class Conversation {
             } else {
                 turns.append(TurnState(number: n, input: input, images: images, startedAt: at))
             }
-            busy = true
+            // A replayed turn ran long ago.
+            if !replaying { busy = true }
         case .turnEnded(let n, let reason, let usage):
             if let i = turns.lastIndex(where: { $0.number == n }) {
                 turns[i].end = reason
@@ -333,7 +380,8 @@ final class Conversation {
                 }
             }
             progress = nil
-            onSessionChange?()
+            // Replayed turns are old news; the sidebar hears once, when the history is in.
+            if !replaying { onSessionChange?() }
         case .itemStarted(let id, let kind):
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             upsert(id) { item in
@@ -418,21 +466,26 @@ final class Conversation {
                 note(text, warning: warning)
                 pendingFlash = nil
             }
+            onSessionChange?()
+            // Sent while the history loaded: it goes now (the engine takes it once started).
+            if !busy, !queue.isEmpty {
+                let next = queue.removeFirst()
+                submit(next.text, images: next.images)
+            }
         case .idle:
             if !sawFirstIdle {
                 sawFirstIdle = true
-                if replayOnStart {
-                    replaying = true
-                    engine?.send(.subscribe(after: 0))
-                    return
-                }
+                // A reopened conversation's engine finished starting up with a message already
+                // waiting for it: that turn is next, so it stays busy.
+                if replayOnStart, busy { return }
             }
             busy = false
             awaitingCommand = false
             progress = nil
             permission = nil
             elicitation = nil
-            if !queue.isEmpty {
+            // While the history loads, what's queued waits for it (see `.synced`).
+            if !replaying, !queue.isEmpty {
                 let next = queue.removeFirst()
                 submit(next.text, images: next.images)
             }
@@ -528,5 +581,11 @@ extension UInt64 {
     /// 12345 → "12.3k"
     var tokens: String {
         self >= 1000 ? String(format: "%.1fk", Double(self) / 1000) : "\(self)"
+    }
+}
+
+private extension Event {
+    var isSynced: Bool {
+        if case .synced = self { true } else { false }
     }
 }
