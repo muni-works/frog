@@ -243,6 +243,8 @@ impl Config {
                 let mut p = Profile::new(ProviderKind::Openai, crate::sidecar::APPLE);
                 p.sidecar = Some(crate::sidecar::APPLE.into());
                 p.tool_mode = ToolMode::Json;
+                // The on-device model's whole window; the sidecar doesn't report it.
+                p.context_window = Some(8_192);
                 p
             }
             "openrouter" | "vercel" => Profile::new(ProviderKind::Openai, model),

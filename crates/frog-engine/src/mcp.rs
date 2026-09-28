@@ -285,6 +285,10 @@ struct Inner {
     host: Arc<Host>,
     /// With many tools, only these (loaded through `McpTools`) are sent to the model.
     loaded: Mutex<BTreeSet<String>>,
+    /// The ones loaded up front because a server's instructions name them.
+    preloaded: BTreeSet<String>,
+    /// A model with a small window: no instructions, no tools until the model loads them.
+    compact: AtomicBool,
 }
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -307,6 +311,8 @@ impl Hub {
                 failed: Vec::new(),
                 host: Host::headless(Path::new(".")),
                 loaded: Mutex::new(BTreeSet::new()),
+                preloaded: BTreeSet::new(),
+                compact: AtomicBool::new(false),
             }),
         }
     }
@@ -382,7 +388,9 @@ impl Hub {
                 servers,
                 failed,
                 host,
+                preloaded: loaded.clone(),
                 loaded: Mutex::new(loaded),
+                compact: AtomicBool::new(false),
             }),
         }
     }
@@ -444,17 +452,32 @@ impl Hub {
     /// True when there are too many tools to send them all; the model loads them through
     /// `McpTools`.
     pub fn deferred(&self) -> bool {
-        self.catalog().len() > DEFER_OVER
+        let n = self.catalog().len();
+        n > DEFER_OVER || (n > 0 && self.compact())
+    }
+
+    /// For a model with a small window: server instructions and every tool schema stay out of
+    /// the prompt, and the model loads the tools it needs through `McpTools`.
+    pub fn set_compact(&self, on: bool) {
+        self.inner.compact.store(on, Ordering::Relaxed);
+    }
+
+    fn compact(&self) -> bool {
+        self.inner.compact.load(Ordering::Relaxed)
     }
 
     /// Tool specs to send to the model.
     pub fn specs(&self) -> Vec<ToolSpec> {
         let catalog = self.catalog();
-        let deferred = catalog.len() > DEFER_OVER;
+        let deferred = self.deferred();
+        let compact = self.compact();
         let loaded = self.inner.loaded.lock().unwrap();
         let mut specs: Vec<ToolSpec> = catalog
             .iter()
-            .filter(|e| !deferred || loaded.contains(&e.exposed))
+            .filter(|e| {
+                !deferred
+                    || (loaded.contains(&e.exposed) && !(compact && self.inner.preloaded.contains(&e.exposed)))
+            })
             .map(spec_for)
             .collect();
         if deferred {
@@ -486,6 +509,9 @@ impl Hub {
     pub fn prompt(&self) -> String {
         let mut out = String::new();
         for (name, s) in &self.inner.servers {
+            if self.compact() {
+                break;
+            }
             if let Some(i) = &s.instructions {
                 out.push_str(&format!(
                     "\n\n## MCP server `{name}`\n{}",

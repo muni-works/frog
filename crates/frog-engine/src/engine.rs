@@ -1129,11 +1129,19 @@ impl Agent {
         let rules =
             crate::rules::prompt_section(&self.rules, crate::rules::prompt_budget(self.tier));
         self.system = format!("{base}{rules}{}", harness::guidance(self.tier));
-        self.system.push_str(&self.mcp.prompt());
+        if !self.plain_chat() {
+            self.system.push_str(&self.mcp.prompt());
+        }
         if self.subagent {
             self.system.push_str(crate::subagent::PROMPT);
         }
-        self.system.push_str(&crate::skills::catalog(&self.skills));
+        self.system.push_str(&if self.plain_chat() {
+            String::new()
+        } else if self.small_window() {
+            crate::skills::catalog_within(&self.skills, 600)
+        } else {
+            crate::skills::catalog(&self.skills)
+        });
         let (index, omitted) = crate::memory::index(&self.notes, self.tier, self.window);
         self.system.push_str(&index);
         self.notes_omitted = omitted;
@@ -1421,6 +1429,9 @@ impl Agent {
             (None, None) => self.profile.context_window(),
         };
         self.provider.set_context_window(self.window);
+        // The tools and prompt were built before the window was known; a small one trims them.
+        self.sync_specs();
+        self.apply_harness();
     }
 
     fn fixed_chars(&self) -> usize {
@@ -1560,8 +1571,22 @@ impl Agent {
         self.apply_harness();
     }
 
+    /// Below this window (tokens), the prompt keeps to what a small model can hold: no
+    /// subagents, no MCP instructions or schemas until loaded, skills by name only.
+    const COMPACT_WINDOW: u64 = 16_384;
+
+    fn small_window(&self) -> bool {
+        self.window < Self::COMPACT_WINDOW
+    }
+
+    /// A chat (no project) with a small model: no tools, so nothing to describe for them.
+    fn plain_chat(&self) -> bool {
+        self.chat && self.small_window() && !self.subagent
+    }
+
     /// Built-in tools plus whatever MCP tools are live (and, with many, loaded).
     fn sync_specs(&mut self) {
+        self.mcp.set_compact(self.small_window());
         let mut specs = tools::specs();
         if self.ctx.web.search.is_some() {
             specs.push(tools::websearch::spec());
@@ -1573,7 +1598,9 @@ impl Agent {
         if self.subagent {
             specs.retain(|s| tools::kind(&s.name) == Kind::Read);
         } else {
-            specs.push(crate::subagent::spec());
+            if !self.small_window() {
+                specs.push(crate::subagent::spec());
+            }
             if !self.skills.is_empty() {
                 specs.push(crate::skills::spec());
             }
@@ -1581,6 +1608,11 @@ impl Agent {
         }
         if self.has_recall() {
             specs.push(crate::recall::spec());
+        }
+        // A small model chatting just talks: offered any tool, it calls one on every turn
+        // (Apple's on-device model drew diagrams of "hello"). With none, it can only answer.
+        if self.plain_chat() {
+            specs.clear();
         }
         self.specs = specs;
     }

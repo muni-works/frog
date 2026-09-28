@@ -134,10 +134,16 @@ pub fn split(text: &str) -> Option<(BTreeMap<String, String>, &str)> {
 /// The catalog for the system prompt: every skill's name, with as much of its description as
 /// fits the budget.
 pub fn catalog(skills: &BTreeMap<String, Skill>) -> String {
+    catalog_within(skills, CATALOG_BUDGET)
+}
+
+/// The catalog in about `budget` characters: names only (and search) when descriptions
+/// wouldn't fit.
+pub fn catalog_within(skills: &BTreeMap<String, Skill>, budget: usize) -> String {
     if skills.is_empty() {
         return String::new();
     }
-    let per = CATALOG_BUDGET / skills.len();
+    let per = budget / skills.len();
     let (list, search) = if per < 60 {
         let names: Vec<&str> = skills.keys().map(String::as_str).collect();
         (
