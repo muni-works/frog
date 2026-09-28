@@ -111,18 +111,15 @@ enum Recents {
     }
 }
 
-/// First run, in the empty conversation: a choice between a model on this Mac (the one that
-/// suits its memory) and the cloud. When the download finishes, an empty conversation switches
-/// to it and says so. Once a model is on this Mac, this shrinks to a line, and goes away once
-/// there are two. See docs/models.md, "First run".
-struct LocalModelCard: View {
+/// One quiet line in an empty conversation, while there's no model on this Mac yet: "Using
+/// Apple Intelligence. Get Qwen3 8B for bigger tasks · 4.6 GB". Get downloads the model that
+/// suits this Mac and switches to it when it's ready, like picking it in the picker. Gone once
+/// there's a model on this Mac or a cloud key, or once it's closed.
+struct ModelSuggestion: View {
     let conversation: Conversation
-    @Environment(\.openSettings) private var openSettings
-    @Environment(\.models) private var models
-    @AppStorage("settingsTab") private var settingsTab = "general"
+    @AppStorage("modelSuggestionClosed") private var closed = false
     @State private var downloads = ModelDownloads.shared
     @State private var store = ProviderStore.shared
-    @State private var keyFor: ProviderInfo?
 
     /// The model for this Mac: 8B with 16 GB or more, else 4B.
     private var recommended: SuggestedModel {
@@ -130,94 +127,61 @@ struct LocalModelCard: View {
         return SuggestedModel.all.first { $0.repo == repo } ?? SuggestedModel.all[0]
     }
 
-    private var installed: [SuggestedModel] {
-        SuggestedModel.all.filter { ModelDownloads.isInstalled($0.repo) || downloads.states[$0.repo] == .done }
+    private var hasLocal: Bool {
+        SuggestedModel.all.contains { ModelDownloads.isInstalled($0.repo) || downloads.states[$0.repo] == .done }
     }
 
-    /// Models ready on your devices, not counting Apple's.
-    private var readyOnDevices: [ModelIdentity] {
-        models.map(ModelIdentity.init).filter { !$0.place.isCloud && $0.place != .apple && $0.state.isReady }
-    }
+    private var hasCloud: Bool { store.providers.contains { !$0.local && $0.connected } }
+
+    private var onApple: Bool { conversation.status?.model == AppleIntelligence.spec }
 
     var body: some View {
+        let m = ModelIdentity(recommended)
         Group {
-            if installed.isEmpty {
-                choice
-            } else if readyOnDevices.count < 2, let first = installed.first {
-                Button {
-                    settingsTab = "models"
-                    openSettings()
-                } label: {
-                    HStack(spacing: 4) {
-                        ModelLabel(model: ModelIdentity(first), size: .caption)
-                        Text("· Change").foregroundStyle(.tint)
+            if !closed, !hasLocal, !hasCloud {
+                HStack(spacing: 4) {
+                    switch m.state {
+                    case .downloading(let f):
+                        ProgressView(value: f)
+                            .progressViewStyle(.circular)
+                            .controlSize(.mini)
+                        Text("Downloading \(m.name) · \(m.stateLine ?? "")")
+                        Button("Stop") { downloads.cancel(recommended.repo) }
+                            .buttonStyle(.link)
+                            .foregroundStyle(.tint)
+                    default:
+                        if onApple { Text("Using Apple Intelligence.") }
+                        Button("Get \(m.name)") { downloads.download(recommended.repo) }
+                            .buttonStyle(.link)
+                            .foregroundStyle(.tint)
+                        Text("for bigger tasks · \(String(format: "%.1f GB", recommended.approxGB))")
                     }
-                    .font(.callout)
+                    Button {
+                        closed = true
+                    } label: {
+                        Image(systemName: "xmark").font(.caption2.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 4)
+                    .help("Don't suggest this again")
                 }
-                .buttonStyle(.plain)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .transition(.opacity)
             }
         }
-        .sheet(item: $keyFor) { p in KeySheet(provider: p) }
         .task { await store.load() }
         .onChange(of: downloads.states[recommended.repo]) { _, s in
             guard s == .done else { return }
-            let m = recommended
-            UserDefaults.standard.set(m.spec, forKey: "lastModel")
-            // Only a conversation that hasn't started moves over.
+            // Like picking it: remembered for new conversations, and this one moves over if it
+            // hasn't started.
+            UserDefaults.standard.set(recommended.spec, forKey: "lastModel")
             if conversation.turns.isEmpty {
-                conversation.setModel(m.spec)
-                conversation.flash("\(m.title) is ready on this Mac and now your default.")
+                conversation.setModel(recommended.spec)
+                conversation.flash("\(recommended.title) is ready on this Mac.")
             }
         }
-    }
-
-    /// Side by side where there's room, stacked where there isn't.
-    private var choice: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 12) { mac; cloud }
-            VStack(spacing: 12) { mac; cloud }
-        }
-        .frame(maxWidth: 600)
-    }
-
-    private var mac: some View {
-        card {
-            Label("On this Mac", systemImage: "laptopcomputer").font(.headline)
-            Text("Private and free, and works offline. One download.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            SuggestedModelRow(model: recommended)
-            Button("More models…") {
-                settingsTab = "models"
-                openSettings()
-            }
-            .buttonStyle(.link)
-            .font(.callout)
-        }
-    }
-
-    private var cloud: some View {
-        card {
-            Label("Cloud", systemImage: "cloud").font(.headline)
-            Text("The strongest models. Code you send goes to the provider, and each project asks first.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Menu("Add a Key…") {
-                ForEach(store.providers.filter { !$0.local && !$0.custom }) { p in
-                    Button(p.name) { keyFor = p }
-                }
-            }
-            .fixedSize()
-        }
-    }
-
-    private func card<C: View>(@ViewBuilder _ content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 10) { content() }
-            .frame(minWidth: 230, maxWidth: 260, alignment: .leading)
-            .padding(14)
-            .glassEffect(.regular, in: .rect(cornerRadius: 14))
     }
 }
 

@@ -183,14 +183,7 @@ struct FrogAnchorKey: PreferenceKey {
     }
 }
 
-/// Lines the frog says, picked the same way every time for the same seed.
+/// Lines the frog says when you hover it.
 enum FrogCopy {
     static let hovers = ["what shall we fix?", "ready when you are", "drop a file on me"]
-    static let placeholders = ["Ask anything", "What are we hopping into?", "Drop a file, or just ask"]
-
-    /// A stable index into `count` choices for a seed (unlike `hashValue`, which changes per run).
-    static func pick(_ seed: String, of count: Int) -> Int {
-        let h = seed.unicodeScalars.reduce(UInt32(2166136261)) { ($0 ^ $1.value) &* 16777619 }
-        return Int(h % UInt32(max(count, 1)))
-    }
 }

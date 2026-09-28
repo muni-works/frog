@@ -179,7 +179,6 @@ struct WorkingIndicator: View {
 struct EmptyTranscript: View {
     let conversation: Conversation
     @Environment(\.canvasInsets) private var insets
-    @Environment(\.models) private var models
     @AppStorage("playfulFrog") private var playful = true
     @State private var hovering = false
     @State private var line = 0
@@ -188,7 +187,7 @@ struct EmptyTranscript: View {
     private var isChat: Bool { Frog.isChat(conversation.folder) }
 
     var body: some View {
-        // Short panes (a split stacked in a column) drop the model card, then the details.
+        // Short panes (a split stacked in a column) drop the suggestion, then the frog.
         ViewThatFits(in: .vertical) {
             content(details: true, card: true)
             content(details: true, card: false)
@@ -210,19 +209,12 @@ struct EmptyTranscript: View {
                     .frame(width: 48, height: 48)
                     .foregroundStyle(Color.accentColor.gradient)
             }
+            // The frog and a question; the composer (and its model pill) does the rest.
             Text(isChat ? "What should we work on?" : conversation.folder.lastPathComponent)
                 .font(.title2.weight(.semibold))
-            if details, let s = conversation.status {
-                ModelLabel(model: ModelIdentity.of(s.model, in: models), size: .caption)
-                    .font(.callout)
-            }
-            Text(isChat ? "Ask anything, or pick a folder below to work on code." : "Ask about the code, or describe a change.  Use @file to attach a file, !cmd to run a command.")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
-                .padding(.top, 4)
             if card {
-                LocalModelCard(conversation: conversation)
-                    .padding(.top, 14)
+                ModelSuggestion(conversation: conversation)
+                    .padding(.top, 6)
             }
         }
         .multilineTextAlignment(.center)

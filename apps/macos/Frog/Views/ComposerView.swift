@@ -6,7 +6,6 @@ struct ComposerView: View {
     let conversation: Conversation
     var window: WindowState?
     @State private var text = ""
-    @AppStorage("playfulFrog") private var playful = true
     @State private var height: CGFloat = 22
     @State private var controller = ComposerController()
     @State private var mention: String?
@@ -183,11 +182,12 @@ struct ComposerView: View {
 
     private var placeholder: String {
         if conversation.busy { return "Working… Esc interrupts · Return queues a follow-up" }
-        guard workspace.isChat else { return "Ask frog to do something · @ mentions a file" }
-        guard playful, conversation.turns.isEmpty else { return "Ask anything" }
-        // One of a few lines per new chat, fixed by the session so it doesn't flicker.
-        let seed = conversation.sessionID ?? String(ObjectIdentifier(conversation).hashValue)
-        return FrogCopy.placeholders[FrogCopy.pick(seed, of: FrogCopy.placeholders.count)]
+        // A new conversation's placeholder is its only hint (the empty page is just a question).
+        let new = conversation.turns.isEmpty
+        if workspace.isChat {
+            return new ? "Ask anything, or pick a folder to work on code" : "Ask anything"
+        }
+        return new ? "Ask about the code or describe a change · @ a file · ! a command" : "Ask frog to do something · @ mentions a file"
     }
 
     /// Send while there's something to send; stop while a turn runs and the field is empty.

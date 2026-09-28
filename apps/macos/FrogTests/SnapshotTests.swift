@@ -138,7 +138,7 @@ extension SnapshotTests {
         let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
         for (name, width) in [("wide", 640.0), ("narrow", 340.0)] {
             try render(
-                LocalModelCard(conversation: c)
+                EmptyTranscript(conversation: c)
                     .padding(20)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(nsColor: .windowBackgroundColor)),

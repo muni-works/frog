@@ -147,15 +147,12 @@ The same check feeds the Unreachable state: a model whose app or server doesn't 
 
 ## First run
 
-The empty conversation's "Run a model on this Mac" card becomes a choice, and chatting works before anything is chosen.
+The empty conversation is a frog, a question ("What should we work on?", or the project's name), and the composer. The composer's model pill says which model and where; its placeholder carries the hint ("Ask anything, or pick a folder to work on code").
 
 - **Immediately:** new conversations start on Apple Intelligence where this Mac has it (checked with FoundationModels), labeled as such in the pill. Otherwise frog's own default.
 - **Then, whatever you picked last.** Every pick (composer, capsule, Model menu, palette, a finished download) goes through `Workspace.use`, which switches the conversation and remembers the model. New conversations start on it. A model fixed in Settings (Default) wins over the last pick; "Last Used (Qwen3 8B)" is the default setting.
-- **Two cards, side by side:**
-  - **On this Mac:** the recommended model for this Mac's memory (Qwen3 8B at 16 GB and up, Qwen3 4B below). "Private and free. 4.6 GB, once." [Get]
-  - **Cloud:** "The strongest models, from about 4¢ a turn." [Sign in to Frog Pro] [Add a key…]
-- **When the download finishes:** the conversation switches to it if it's still empty, and the transcript says once: "Qwen3 8B is ready and now your default."
-- **Afterwards:** the card shrinks to a single line in the empty state, "Qwen3 8B on this Mac · Change", then goes away once there are two ready models.
+- **One suggestion line** (`ModelSuggestion`), only while there's no model on this Mac and no cloud key: "Using Apple Intelligence. **Get Qwen3 8B** for bigger tasks · 4.6 GB" (8B with 16 GB or more, else 4B). Get downloads it (the line shows progress and Stop), then it becomes the last-used model and an empty conversation moves over, saying so once. The line can be closed for good. Cloud setup lives in the picker's Add Key… row and Settings, not here.
+- In short panes the line goes first, then the frog.
 
 ## Motion and feel
 
