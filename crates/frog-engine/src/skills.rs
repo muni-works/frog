@@ -40,14 +40,21 @@ impl Skill {
 
 /// Every skill visible from `cwd`, by name.
 pub fn discover(cwd: &Path) -> BTreeMap<String, Skill> {
+    discover_in(cwd, true)
+}
+
+/// Skills visible from `cwd`: the project's, and the user's own unless `user` is false.
+pub fn discover_in(cwd: &Path, user: bool) -> BTreeMap<String, Skill> {
     let home = dirs::home_dir().unwrap_or_default();
     let mut roots: Vec<(PathBuf, bool)> = [".frog", ".agents", ".claude"]
         .iter()
         .map(|d| (cwd.join(d).join("skills"), true))
         .collect();
-    roots.push((crate::config::config_dir().join("skills"), false));
-    roots.push((home.join(".agents/skills"), false));
-    roots.push((home.join(".claude/skills"), false));
+    if user {
+        roots.push((crate::config::config_dir().join("skills"), false));
+        roots.push((home.join(".agents/skills"), false));
+        roots.push((home.join(".claude/skills"), false));
+    }
 
     let mut out = BTreeMap::new();
     for (root, project) in roots {

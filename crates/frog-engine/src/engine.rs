@@ -476,7 +476,7 @@ impl Agent {
         let skills = if o.subagent {
             Default::default()
         } else {
-            crate::skills::discover(&o.cwd)
+            crate::skills::discover_in(&o.cwd, !o.cfg.hermetic)
         };
         let memory = match (&o.store, o.subagent) {
             (Some(store), false) => Some(crate::memory::Store::new(

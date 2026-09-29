@@ -133,6 +133,11 @@ async fn run_suite(
     thinking_budget: Option<u32>,
 ) -> Result<()> {
     let mut cfg = Config::load()?;
+    // A run measures the harness and the model: none of this machine's own instructions, skills,
+    // MCP servers or search backends.
+    cfg.hermetic = true;
+    cfg.web_search = None;
+    cfg.searxng_url = None;
     if let Some(t) = &thinking {
         cfg.thinking = serde_json::from_value(serde_json::json!(t))
             .with_context(|| format!("unknown thinking setting `{t}`"))?;

@@ -154,6 +154,11 @@ pub struct Config {
     /// choice recorded by `--use-claude-mcp` (see `imports`).
     #[serde(skip)]
     pub claude_mcp: bool,
+    /// See only the project: none of the user's own instructions (FROG.md, ~/.claude/CLAUDE.md),
+    /// skills or MCP servers. Not a config.toml key: `frog-bench` sets it so a run measures the
+    /// harness and the model, not whoever's machine it ran on.
+    #[serde(skip)]
+    pub hermetic: bool,
     /// Run shell commands in a sandbox (writes only in the project, credentials hidden), so
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]
