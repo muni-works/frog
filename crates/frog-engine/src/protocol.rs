@@ -180,6 +180,10 @@ pub enum Event {
     ModelChanged {
         model: String,
     },
+    /// The conversation moved to another folder (`UseFolder`); tools now work there.
+    FolderChanged {
+        cwd: PathBuf,
+    },
     ModeChanged {
         mode: Mode,
     },
@@ -281,6 +285,7 @@ impl Event {
                 | Self::Compacted { .. }
                 | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }
+                | Self::FolderChanged { .. }
                 | Self::ModeChanged { .. }
                 | Self::Titled { .. }
         )

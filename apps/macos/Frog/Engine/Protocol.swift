@@ -325,6 +325,8 @@ enum Event: Decodable, Sendable {
     case compacted(tokensBefore: UInt64, tokensAfter: UInt64)
     case contextPruned(results: Int, tokensBefore: UInt64, tokensAfter: UInt64)
     case modelChanged(String)
+    /// The conversation moved to another folder (the agent's `UseFolder`).
+    case folderChanged(String)
     case modeChanged(Mode)
     case titled(String)
     case itemDelta(id: String, delta: Delta)
@@ -367,7 +369,7 @@ extension Event {
     private enum Key: String, CodingKey {
         case event
         case turn, input, reason, usage, id, kind, item, delta, decision
-        case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title
+        case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner
             case images
     }
@@ -405,6 +407,8 @@ extension Event {
                 tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter))
         case "model_changed":
             self = .modelChanged(try c.decode(String.self, forKey: .model))
+        case "folder_changed":
+            self = .folderChanged(try c.decode(String.self, forKey: .cwd))
         case "titled":
             self = .titled(try c.decode(String.self, forKey: .title))
         case "mode_changed":

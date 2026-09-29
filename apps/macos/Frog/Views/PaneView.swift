@@ -69,6 +69,10 @@ struct PaneView: View {
         .environment(\.models, workspace.models)
         .environment(\.switchFolder) { url in panes.switchFolder(url, in: pane) }
         .environment(\.openSession) { s in panes.open(s, in: pane, window: window) }
+        // The agent moved the conversation to another folder: follow it there once the turn ends.
+        .onChange(of: workspace.conversation.flatMap { $0.busy ? nil : $0.movedTo }) { _, url in
+            if let url { panes.move(pane, to: url) }
+        }
         // Clicking anywhere in a pane focuses it, without swallowing the click.
         .simultaneousGesture(TapGesture().onEnded { panes.focus(pane) })
         .animation(Motion.panel(reduced: reduceMotion), value: changesVisible)

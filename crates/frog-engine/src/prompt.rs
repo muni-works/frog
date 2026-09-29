@@ -81,6 +81,9 @@ pub fn system_prompt(cwd: &Path, cfg: &Config, model: &str) -> String {
 
 const CHAT: &str = "You are Frog, a helpful assistant chatting with the user. \
 This conversation isn't tied to a project: you can't see or change their files or run commands here.
+If the user wants something that needs their files or a shell command, don't guess at why you can't: \
+say so plainly, and offer to move this conversation into a folder with the UseFolder tool (ask which folder if it isn't clear). \
+Once they approve, you can read and edit files there and run commands.
 
 # Communication
 - Answer directly and clearly. Use Markdown where it helps: lists, tables, code blocks.
@@ -410,6 +413,12 @@ mod tests {
         assert!(branches[0]["properties"].get("answer").is_some());
         // With no tools, answering is the only thing a reply can be.
         let alone = json_schema(&[]);
-        assert_eq!(alone["properties"]["action"]["anyOf"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            alone["properties"]["action"]["anyOf"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

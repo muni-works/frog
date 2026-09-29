@@ -168,6 +168,8 @@ pub fn kind(name: &str) -> Kind {
         // A subagent can only read.
         crate::subagent::TOOL => Kind::Read,
         crate::skills::TOOL => Kind::Read,
+        // Moving into a folder hands over its files and shell: always asks.
+        crate::folder::TOOL => Kind::Exec,
         _ => Kind::Read,
     }
 }
@@ -212,6 +214,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
             .collect::<Vec<_>>()
             .join(": "),
         "Task" => s("description"),
+        crate::folder::TOOL => s("path"),
         "Recall" => {
             let q = s("query");
             if q.is_empty() { s("file") } else { q }

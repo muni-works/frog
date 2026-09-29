@@ -277,6 +277,27 @@ final class Panes {
         setWorkspace(Workspace(folder: url ?? Frog.chatFolder, fresh: true), in: pane)
     }
 
+    /// The agent moved this pane's conversation to another folder (`UseFolder`): reopen it there,
+    /// so the pane, the sidebar and the git bar follow. The old engine lets go of the session
+    /// file first; resuming a session another process holds would start a new one instead.
+    func move(_ pane: Pane, to url: URL) {
+        guard let id = pane.workspace.conversation?.sessionID else { return }
+        pane.incoming?.stop()
+        pane.incoming = nil
+        let old = pane.workspace
+        old.stop()
+        Task {
+            await Frog.released(session: id, within: .seconds(3))
+            // Something else took the pane meanwhile.
+            guard pane.workspace === old, pane.incoming == nil else { return }
+            let workspace = Workspace(folder: url, resume: id)
+            pane.incoming = workspace
+            await workspace.settled(within: .seconds(2))
+            guard pane.incoming === workspace else { return }
+            Motion.cut { setWorkspace(workspace, in: pane) }
+        }
+    }
+
     /// Show a session in a pane. If a pane already shows it, focus that one; if another window
     /// does, bring that window forward.
     func open(_ s: SessionInfo, in pane: Pane, window: NSWindow?) {

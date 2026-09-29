@@ -1653,6 +1653,7 @@ impl Agent {
         if self.chat {
             // No project to work in: only the tools that don't touch files or run commands.
             specs.retain(|s| matches!(&*s.name, "Diagram" | "WebFetch" | "WebSearch"));
+            specs.push(crate::folder::spec());
         }
         if self.subagent {
             specs.retain(|s| tools::kind(&s.name) == Kind::Read);
@@ -1662,6 +1663,9 @@ impl Agent {
             }
             if !self.skills.is_empty() {
                 specs.push(crate::skills::spec());
+            }
+            if !self.chat {
+                specs.push(crate::folder::spec());
             }
             specs.extend(self.mcp.specs());
         }
@@ -1677,11 +1681,103 @@ impl Agent {
             // (diagrams, the code map, docs, recall, skills, the plan) cost more room than
             // they're worth at 8k.
             specs.retain(|s| {
-                matches!(&*s.name, "Bash" | "Read" | "Write" | "Edit" | "Glob" | "Grep")
-                    || &*s.name == crate::mcp::SEARCH_TOOL
+                matches!(
+                    &*s.name,
+                    "Bash" | "Read" | "Write" | "Edit" | "Glob" | "Grep"
+                ) || &*s.name == crate::mcp::SEARCH_TOOL
+                    || &*s.name == crate::folder::TOOL
             });
         }
         self.specs = specs;
+    }
+
+    /// `UseFolder` (already approved): move the conversation into `path` and re-derive what
+    /// depends on the folder, as `Agent::new` does. The tools and prompt switch on the next
+    /// model call, so the turn carries on there.
+    async fn use_folder(&mut self, input: &Value) -> Result<tools::Output> {
+        let base = if self.chat {
+            dirs::home_dir().unwrap_or_else(|| self.root.clone())
+        } else {
+            self.root.clone()
+        };
+        let root = crate::folder::resolve(input["path"].as_str().unwrap_or(""), &base)?;
+        if !self.chat
+            && root
+                == self
+                    .root
+                    .canonicalize()
+                    .unwrap_or_else(|_| self.root.clone())
+        {
+            return Ok(tools::Output::text(format!(
+                "Already working in {}.",
+                root.display()
+            )));
+        }
+        // A folder that keeps its code on this Mac can't take a cloud model.
+        crate::policy::check(&root, &self.profile_name, &self.profile)?;
+        // The session file moves with it: its header says which folder it belongs to.
+        if let Some(dir) = self.store.clone() {
+            let header = Header {
+                version: session::VERSION,
+                id: self.session_id.clone(),
+                cwd: root.clone(),
+                model: self.profile_name.clone(),
+                created: now_ms(),
+                forked_from: None,
+            };
+            let mut log = self.log.lock().unwrap();
+            if let Some(l) = log.as_mut() {
+                let created = session::load(&dir, &self.session_id).map(|l| l.header).ok();
+                let header = Header {
+                    created: created.as_ref().map_or(header.created, |h| h.created),
+                    forked_from: created.and_then(|h| h.forked_from),
+                    ..header
+                };
+                l.rewrite_header(&dir, &header)?;
+            }
+        }
+        self.chat = false;
+        self.root = root.clone();
+        let web = self.ctx.web.clone();
+        let todos = std::mem::take(&mut self.ctx.todos);
+        let sandbox = self.ctx.sandbox.is_some();
+        self.ctx = Ctx::new(root.clone());
+        self.ctx.web = web;
+        self.ctx.todos = todos;
+        if sandbox {
+            self.ctx.sandbox = Some(root.clone());
+        }
+        if self.cfg.sandbox_shell && tools::bash::available() {
+            self.ctx.shell_sandbox = Some(root.clone());
+        }
+        self.rules = crate::rules::discover(&root);
+        self.rules_seen.clear();
+        self.skills = crate::skills::discover(&root);
+        self.skills_loaded.clear();
+        if let Some(store) = &self.store {
+            let memory = crate::memory::Store::new(&memory_root(store), Some(root.as_path()));
+            self.notes = memory.load();
+            self.memory = Some(memory);
+        }
+        // Approvals and the auto-mode judge were for the old folder.
+        self.session_allow.clear();
+        self.classifier = None;
+        self.repo_map = Default::default();
+        self.edited.clear();
+        self.refresh_repo_map(&[]);
+        // MCP servers are configured per project.
+        self.mcp.shutdown();
+        self.mcp = crate::mcp::Hub::empty();
+        *self.shared.mcp.lock().unwrap() = None;
+        self.connect_mcp().await;
+        self.sync_specs();
+        self.apply_harness();
+        self.emit(Event::FolderChanged { cwd: root.clone() });
+        self.emit_status();
+        Ok(tools::Output::text(format!(
+            "This conversation now works in {}. You can read and edit files there and run shell commands.",
+            root.display()
+        )))
     }
 
     /// `Task`: run a read-only subagent and return its report. Its steps stream as live output.
@@ -1747,6 +1843,9 @@ impl Agent {
         }
         if name == crate::subagent::TOOL {
             return self.run_task(id, input).await;
+        }
+        if name == crate::folder::TOOL && !self.subagent {
+            return self.use_folder(input).await;
         }
         if self.mcp.handles(name) {
             return self.mcp.call(id, name, input).await;
@@ -2155,6 +2254,9 @@ Don't repeat it. Change the arguments or try a different approach.",
         if kind == Kind::Net && self.mode != Mode::Auto {
             return Decision::Allow;
         }
+        if name == crate::folder::TOOL {
+            return self.ask_folder(item, name, arg).await;
+        }
         let cmd = input["command"].as_str().unwrap_or("").trim();
         let prefix = cmd.split_whitespace().next().unwrap_or("").to_string();
         let mcp = name.starts_with("mcp__");
@@ -2255,6 +2357,37 @@ Don't repeat it. Change the arguments or try a different approach.",
         decision
     }
 
+    /// `UseFolder` hands the conversation a folder's files and shell, so the user decides,
+    /// every time: no auto mode, no "always".
+    async fn ask_folder(&mut self, item: &str, name: &str, arg: &str) -> Decision {
+        if !self.can_ask {
+            return Decision::Deny;
+        }
+        let id = new_id();
+        let (tx, rx) = oneshot::channel();
+        self.shared.pending.lock().unwrap().insert(id.clone(), tx);
+        self.emit(Event::PermissionRequest {
+            id: id.clone(),
+            item: item.into(),
+            name: name.into(),
+            arg: arg.into(),
+            always: String::new(),
+            preview: None,
+            reason: Some(
+                "Frog will be able to read and edit files in this folder and run commands there."
+                    .into(),
+            ),
+        });
+        let asked = Instant::now();
+        let decision = match rx.await.unwrap_or(Decision::Deny) {
+            Decision::AllowAlways => Decision::Allow,
+            d => d,
+        };
+        self.timing.user_ms += ms(asked.elapsed());
+        self.emit(Event::PermissionResolved { id, decision });
+        decision
+    }
+
     /// Auto mode: hard rules, then the classifier. `Ok` runs the call (and records why);
     /// `Err` says why the user should decide.
     async fn auto_judge(
@@ -2268,7 +2401,11 @@ Don't repeat it. Change the arguments or try a different approach.",
             return Err(format!("it {why}"));
         }
         if self.classifier.is_none() {
-            match crate::auto::Classifier::new(&self.cfg, (&self.profile_name, &self.profile), &self.root) {
+            match crate::auto::Classifier::new(
+                &self.cfg,
+                (&self.profile_name, &self.profile),
+                &self.root,
+            ) {
                 Ok(c) => self.classifier = Some(c),
                 Err(e) => return Err(format!("the classifier couldn't start ({e:#})")),
             }
@@ -2782,6 +2919,99 @@ mod tests {
                 return out;
             }
         }
+    }
+
+    /// A chat moves into a folder (once the user approves): the rest of the turn runs there,
+    /// and the session file now belongs to that folder.
+    #[tokio::test]
+    async fn use_folder_moves_a_chat_into_a_project() {
+        let base = std::env::temp_dir().join(format!("frog-use-folder-{}", new_id()));
+        let (chat, project, store) = (base.join("chat"), base.join("project"), base.join("store"));
+        for d in [&chat, &project, &store] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let project = project.canonicalize().unwrap();
+        let move_to = Block::ToolUse {
+            id: "f".into(),
+            name: crate::folder::TOOL.into(),
+            input: json!({ "path": project.to_str().unwrap() }),
+        };
+        let pwd = Block::ToolUse {
+            id: "p".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "pwd -P" }),
+        };
+        let script = vec![
+            reply(vec![move_to], Stop::ToolUse),
+            reply(vec![pwd], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config::default(),
+            profile_name: "test".into(),
+            profile,
+            cwd: chat,
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: Some(store.clone()),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: true,
+        };
+        let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "what's in my project?".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest {
+                id, name, always, ..
+            } = &env.event
+            {
+                if name == crate::folder::TOOL {
+                    assert!(always.is_empty(), "moving folders can't be always-allowed");
+                }
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                    })
+                    .unwrap();
+            }
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle {
+                break;
+            }
+        }
+        assert!(
+            evs.iter()
+                .any(|e| matches!(&e.event, Event::FolderChanged { cwd } if *cwd == project))
+        );
+        let pwd_out = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "Bash" => Some(output.clone()),
+                _ => None,
+            })
+            .expect("Bash ran after the move");
+        assert!(pwd_out.contains(project.to_str().unwrap()), "{pwd_out}");
+        let session = session::list(&store, Some(&project)).unwrap();
+        assert_eq!(session.len(), 1, "the session file moved to the project");
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(base);
     }
 
     async fn shutdown(mut h: Handle) {

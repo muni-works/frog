@@ -121,6 +121,7 @@ enum ToolIcon {
         case "Task": "person.2"
         case "Skill": "sparkles.rectangle.stack"
         case "Recall": "clock.arrow.circlepath"
+        case "UseFolder": "folder"
         case "McpTools": "puzzlepiece.extension"
         case let n where n.hasPrefix("mcp__desktop__"): "macwindow.and.cursorarrow"
         case let n where n.hasPrefix("mcp__"): "puzzlepiece.extension"
@@ -369,7 +370,8 @@ struct PermissionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: request.reason == nil ? "hand.raised.fill" : "lock.open.fill").foregroundStyle(.orange)
+                Image(systemName: request.name == "UseFolder" ? "folder.fill" : request.reason == nil ? "hand.raised.fill" : "lock.open.fill")
+                    .foregroundStyle(.orange)
                 Text(title).fontWeight(.semibold)
                 Spacer()
             }
@@ -398,8 +400,11 @@ struct PermissionCard: View {
                 .buttonStyle(.glassProminent)
                 .keyboardShortcut(.return, modifiers: .command)
                 .help("Allow (⌘↩)")
-                Button(alwaysLabel) { conversation.answer(.allowAlways) }
-                    .buttonStyle(.glass)
+                // Some requests (moving to a folder) are decided every time.
+                if !request.always.isEmpty {
+                    Button(alwaysLabel) { conversation.answer(.allowAlways) }
+                        .buttonStyle(.glass)
+                }
                 Spacer()
                 Button("Deny") { conversation.answer(.deny) }
                     .buttonStyle(.glass)
@@ -419,6 +424,7 @@ struct PermissionCard: View {
             : "Allow rewriting \((request.arg as NSString).lastPathComponent)?"
         case "Bash": request.reason == nil ? "Allow this command?" : "Allow this command outside the sandbox?"
         case let n where n.hasPrefix("mcp__"): "Allow \(ToolIcon.title(n))?"
+        case "UseFolder": "Move this conversation to \((request.arg as NSString).lastPathComponent)?"
         default: "Allow \(request.name)?"
         }
     }

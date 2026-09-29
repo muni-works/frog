@@ -149,6 +149,9 @@ final class Conversation {
     /// Events that arrived while replaying, folded in together once the history is all here.
     @ObservationIgnored private var held: [Envelope] = []
     private(set) var title: String?
+    /// Where the agent moved this conversation (`UseFolder`), if not the folder it runs in.
+    /// The pane reopens it there once the turn is over (see `Panes.move`).
+    private(set) var movedTo: URL?
     /// A short-lived status line (info notices), shown above the composer.
     private(set) var toast: String?
     @ObservationIgnored private var toastTask: Task<Void, Never>?
@@ -502,6 +505,10 @@ final class Conversation {
         case .titled(let t):
             title = t
             onSessionChange?()
+        case .folderChanged(let cwd):
+            let url = URL(fileURLWithPath: cwd)
+            let here = folder.resolvingSymlinksInPath().standardizedFileURL.path
+            movedTo = url.resolvingSymlinksInPath().standardizedFileURL.path == here ? nil : url
         case .modelChanged, .modeChanged, .unknown:
             break
         }
