@@ -10,25 +10,64 @@ struct TranscriptView: View {
     @AppStorage("density") private var density = Density.comfortable.rawValue
     /// The toolbar's height over the transcript, for the fade under it.
     @State private var topInset: CGFloat = 0
+    /// The view keeps to the bottom as content grows (see `onScrollGeometryChange`).
+    @State private var following = true
+    @State private var userScrolling = false
 
     var body: some View {
         ScrollViewReader { proxy in
             transcript
+                // Open at the end, whole: straight to the last row, laid out for real, rather
+                // than an estimate of where the end is that settles into place as rows measure.
+                .onAppear { proxy.scrollTo(Self.end, anchor: .bottom) }
                 .onChange(of: jump.wrappedValue) { _, id in
                     guard let id else { return }
+                    following = false
                     withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(id, anchor: .top) }
                     jump.wrappedValue = nil
                 }
                 // A new turn goes below one that may be taller than the window. The lazy stack
                 // guesses that turn's height, and the bottom anchor alone can land past the real
-                // content: a blank transcript until you scroll. Scrolling to the new turn lays
-                // it out for real.
+                // content: a blank transcript until you scroll. Scrolling to a row at the end lays
+                // the new rows out for real, and following keeps the view there as it grows.
                 .onChange(of: conversation.turns.last?.id) { _, id in
                     guard let id else { return }
-                    proxy.scrollTo(id, anchor: .bottom)
+                    following = true
+                    proxy.scrollTo(Self.end, anchor: .bottom)
+                }
+                // Follow the answer as it streams: while following, content that grows takes the
+                // view back to the bottom. The size-change anchor alone loses the bottom once the
+                // lazy stack re-estimates rows it hasn't laid out.
+                .onScrollGeometryChange(for: ScrollEnd.self, of: ScrollEnd.init) { old, new in
+                    if userScrolling {
+                        following = new.atBottom
+                    } else if following, !new.atBottom {
+                        proxy.scrollTo(Self.end, anchor: .bottom)
+                    }
+                }
+                // Only your own scrolling stops (or restarts) following: the lazy stack also
+                // moves the offset as it measures rows, and that mustn't count.
+                .onScrollPhaseChange { _, phase in
+                    userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 }
         }
     }
+
+    /// Where the view is against the end of the content.
+    private struct ScrollEnd: Equatable {
+        let contentHeight: CGFloat
+        let offset: CGFloat
+        let atBottom: Bool
+
+        init(_ g: ScrollGeometry) {
+            contentHeight = g.contentSize.height
+            offset = g.contentOffset.y
+            atBottom = g.contentOffset.y + g.containerSize.height >= g.contentSize.height + g.contentInsets.bottom - 24
+        }
+    }
+
+    /// A row at the very end of the transcript, below the last turn and its indicators.
+    private static let end = "transcript-end"
 
     private var transcript: some View {
         ScrollView {
@@ -54,6 +93,7 @@ struct TranscriptView: View {
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                 }
+                Color.clear.frame(height: 0).id(Self.end)
             }
             .scrollTargetLayout()
             .frame(maxWidth: 820)
@@ -80,9 +120,8 @@ struct TranscriptView: View {
             .ignoresSafeArea()
         }
         .onScrollTargetVisibilityChange(idType: TurnState.ID.self, threshold: 0.05) { onVisibleTurns($0) }
-        // Start at the bottom, and stay pinned there as streamed content grows.
+        // Start at the bottom; following (above) keeps it there as streamed content grows.
         .defaultScrollAnchor(.bottom)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .overlay {
             if conversation.turns.isEmpty, !conversation.busy, !conversation.replaying, conversation.failure == nil {
                 EmptyTranscript(conversation: conversation)
