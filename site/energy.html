@@ -116,7 +116,7 @@
       <thead><tr><th>Model</th><th class="num">Solved</th><th class="barcell"><span class="sr">Wh per solved task, as a bar</span></th><th class="num">Wh / task</th><th class="num">g CO₂e</th></tr></thead>
       <tbody></tbody>
     </table>
-    <div class="legend" aria-hidden="true"><span><i></i>measured on this Mac</span><span><i class="est"></i>includes a cloud estimate</span></div>
+    <div class="legend" aria-hidden="true"><span><i></i>measured on this Mac</span><span id="est-key" hidden><i class="est"></i>includes a cloud estimate</span></div>
     <p class="muted" id="results-note" style="font-size: 14px; margin-top: 12px">
       Wh per task is every run's energy, failed attempts included, divided by the tasks passed. A model that needs three tries pays for all three.
     </p>
@@ -142,7 +142,7 @@
     <li><b>Downloading the model,</b> a one-time cost that's large for local models.</li>
   </ul>
   <p>
-    And some noise stays in: anything else the Mac does during a run lands in the measurement, and the idle baseline moves with it. On the same Mac, idle measured between 12 and 19 W across sessions. Runs are repeated, and the raw numbers are all below, so you can see the spread.
+    And some noise stays in: anything else the Mac does during a run lands in the measurement, and the idle baseline moves with it<span id="idle-range"></span>. A run whose baseline came in high can even read as zero. Runs are repeated, and the raw numbers are all below, so you can see the spread.
   </p>
 
   <h2>Hosted models are estimates</h2>
@@ -201,6 +201,7 @@ cargo run --release -p frog-bench -- export ~/.local/share/frog/bench/&lt;run&gt
   // Headline rows, lowest energy first; models with nothing solved go last.
   const models = [...data.models].sort((a, b) => (a.wh_per_solve ?? Infinity) - (b.wh_per_solve ?? Infinity));
   const max = Math.max(...models.map(m => m.wh_per_solve ?? 0), 1e-9);
+  $("#est-key").hidden = !models.some(m => m.estimated);
   const tbody = $("#results tbody");
   const tip = $("#tip");
   for (const m of models) {
@@ -236,6 +237,9 @@ cargo run --release -p frog-bench -- export ~/.local/share/frog/bench/&lt;run&gt
       <div class="fact"><b>${Math.round(phoneWh / best.wh_per_solve)}</b><span>tasks per phone-battery's worth (≈ 15 Wh)</span></div>
       <div class="fact"><b>${fmt(best.g_co2e_per_solve)} g</b><span>CO₂e per task, on the world's average grid</span></div>`;
   }
+
+  const idles = data.runs.map(r => r.idle_w).filter(w => w != null);
+  if (idles.length) $("#idle-range").textContent = `: across these runs, idle measured between ${Math.min(...idles).toFixed(0)} and ${Math.max(...idles).toFixed(0)} W`;
 
   // Every run.
   const cols = [
