@@ -503,6 +503,9 @@ pub struct TurnEnergy {
     pub local_wh: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_wh: Option<f64>,
+    /// The Mac's power at rest that was subtracted, in watts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_w: Option<f64>,
 }
 
 /// A turn's wall time split by what it was waiting on, in milliseconds. `other` is whatever

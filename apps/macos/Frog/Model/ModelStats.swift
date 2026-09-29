@@ -68,6 +68,12 @@ final class ModelStats {
         save()
     }
 
+    /// A model's list price, dollars per million tokens in and out.
+    func prices(_ spec: String) -> (input: Double, output: Double)? {
+        guard let p = store.prices[spec], p.count == 2 else { return nil }
+        return (p[0], p[1])
+    }
+
     /// Dollars a turn cost, if its model has a price.
     func cost(of usage: TurnUsage, spec: String? = nil) -> Double? {
         guard let spec = spec ?? usage.model, let p = store.prices[spec], p.count == 2 else { return nil }

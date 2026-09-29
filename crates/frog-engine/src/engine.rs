@@ -767,6 +767,7 @@ impl Agent {
         let hosted = crate::harness::is_cloud(&self.profile);
         Some(crate::protocol::TurnEnergy {
             local_wh: reading.above_idle_wh((*idle)?),
+            idle_w: *idle,
             remote_wh: hosted.then(|| {
                 crate::energy::cloud::estimate_wh(
                     self.turn_usage.input_tokens,

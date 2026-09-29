@@ -30,11 +30,11 @@ final class SnapshotTests: XCTestCase {
             .compactMap { try JSONDecoder.frog.decode(Record.self, from: Data($0.utf8)).env }
     }
 
-    private func render<V: View>(_ view: V, size: CGSize, to name: String, settle: TimeInterval = 0.4) throws {
+    private func render<V: View>(_ view: V, size: CGSize, to name: String, settle: TimeInterval = 0.4, appearance: NSAppearance.Name = .darkAqua) throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: appearance)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
         // Let SwiftUI settle (scroll anchors, lazy stacks) before capturing.
@@ -49,6 +49,20 @@ final class SnapshotTests: XCTestCase {
     private func transcript(_ c: Conversation) -> some View {
         TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }))
             .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    /// The popovers behind a turn's cost and energy hints, for a hosted model's turn.
+    func testRenderTurnCostCards() throws {
+        let usage = try JSONDecoder.frog.decode(TurnUsage.self, from: Data(#"{"input_tokens":12400,"output_tokens":380,"model_calls":2,"model":"vercel/anthropic/claude-opus-5.5-fast","energy":{"local_wh":0.021,"remote_wh":2.96,"idle_w":11.6}}"#.utf8))
+        let energy = try XCTUnwrap(usage.energy)
+        for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
+            try render(EnergyCard(energy: energy, usage: usage).fixedSize().frame(maxHeight: .infinity, alignment: .top)
+                        .background(Color(nsColor: .windowBackgroundColor)),
+                       size: CGSize(width: 290, height: 520), to: "energy-card-\(name)", appearance: look)
+            try render(PriceCard(cost: 0.214, usage: usage, listed: (15, 75)).fixedSize().frame(maxHeight: .infinity, alignment: .top)
+                        .background(Color(nsColor: .windowBackgroundColor)),
+                       size: CGSize(width: 290, height: 460), to: "price-card-\(name)", appearance: look)
+        }
     }
 
     func testRenderFixtures() throws {

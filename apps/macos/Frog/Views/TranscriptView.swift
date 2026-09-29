@@ -183,19 +183,15 @@ struct EndView: View {
                     if let spec = usage.model {
                         ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
                     }
-                    Group {
-                        if let c = ModelStats.shared.cost(of: usage) {
-                            Text(ModelStats.money(c))
-                        } else if let tps = usage.tokensPerSec, tps > 0 {
-                            Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
-                        }
+                    // What it cost (cloud) or how fast it wrote; each opens its working.
+                    if let c = ModelStats.shared.cost(of: usage) {
+                        PriceHint(cost: c, usage: usage)
+                    } else if let tps = usage.tokensPerSec, tps > 0 {
+                        Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
+                            .help("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s") · \(usage.inputTokens.tokens) in, \(usage.outputTokens.tokens) out") // advanced
                     }
-                    .help("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s") · \(usage.inputTokens.tokens) in, \(usage.outputTokens.tokens) out") // advanced
                     if showEnergy, let e = usage.energy {
-                        Text(ModelStats.energy(e.totalWh, estimated: e.estimated))
-                            .help(e.estimated
-                                  ? "This Mac: \(ModelStats.energy(e.localWh)). The data center, estimated from tokens: \(ModelStats.energy(e.remoteWh ?? 0))."
-                                  : "This Mac, above what it drew at rest.")
+                        EnergyHint(energy: e, usage: usage)
                     }
                     Spacer(minLength: 8)
                     if !answer.isEmpty {
