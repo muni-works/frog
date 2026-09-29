@@ -1891,6 +1891,14 @@ impl Agent {
     }
 
     /// Run one batch of tool calls. Returns true if the user denied one.
+    /// Whether the model may call `name` now: it's in the tool list this step was offered, or
+    /// it's a connected MCP server's tool (with many, only some are listed up front and the
+    /// rest load on demand; that saves context, it isn't a permission).
+    fn offers(&self, name: &str) -> bool {
+        self.specs.iter().any(|s| s.name == name)
+            || (name.starts_with("mcp__") && self.mcp.handles(name))
+    }
+
     async fn run_tools(
         &mut self,
         uses: Vec<(String, String, Value)>,
@@ -1943,6 +1951,15 @@ Don't repeat it. Change the arguments or try a different approach.",
                     ToolOutcome::Skipped,
                     "Skipped: an earlier tool call was rejected.".to_string(),
                     None,
+                )
+            } else if !self.offers(&name) {
+                // Only what this step offered runs: a chat has no Bash however it's asked for.
+                text(
+                    ToolOutcome::Error,
+                    format!(
+                        "There's no `{name}` tool in this conversation. Use only the tools you were given."
+                    ),
+                    Some("refused: not an available tool"),
                 )
             } else if self.timed_permit(&id, &name, &arg, &input).await == Decision::Deny {
                 let msg = if self.can_ask {
@@ -2524,6 +2541,14 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
     }
 
     async fn shell(&mut self, cmd: &str) {
+        // A chat has no folder, and nothing runs there: not even a command typed with `!`.
+        if self.chat {
+            self.notice(
+                Level::Warn,
+                "Commands need a folder, and this conversation doesn't have one. Ask frog to move it into one, or start a conversation in a project.",
+            );
+            return;
+        }
         let id = new_id();
         let (name, arg) = ("!".to_string(), cmd.to_string());
         self.emit(Event::ItemStarted {
@@ -3012,6 +3037,81 @@ mod tests {
         assert_eq!(session.len(), 1, "the session file moved to the project");
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    fn chat_engine(script: Vec<Response>, cwd: PathBuf) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config::default(),
+            profile_name: "test".into(),
+            profile,
+            cwd,
+            mode: Mode::Yolo,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: true,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// A chat isn't offered Bash, so a model that calls it anyway gets an error, and nothing
+    /// runs, even in yolo mode.
+    #[tokio::test]
+    async fn a_tool_that_was_not_offered_does_not_run() {
+        let dir = std::env::temp_dir().join(format!("frog-unoffered-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("ran");
+        let bash = Block::ToolUse {
+            id: "b".into(),
+            name: "Bash".into(),
+            input: json!({ "command": format!("touch {}", marker.display()) }),
+        };
+        let script = vec![
+            reply(vec![bash], Stop::ToolUse),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = chat_engine(script, dir.clone());
+        let evs = run(&mut h, "make a file").await;
+        assert!(!marker.exists(), "Bash ran in a chat");
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::ItemCompleted { item: Item::ToolCall { name, outcome: ToolOutcome::Error, .. }, .. } if name == "Bash"
+        )));
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `!cmd` in a chat says it needs a folder instead of running.
+    #[tokio::test]
+    async fn a_chat_refuses_shell_commands() {
+        let dir = std::env::temp_dir().join(format!("frog-chat-shell-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("ran");
+        let mut h = chat_engine(Vec::new(), dir.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Shell {
+                command: format!("touch {}", marker.display()),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(!marker.exists(), "the command ran in a chat");
+        assert!(
+            notices(&evs).iter().any(|n| n.contains("need a folder")),
+            "{:?}",
+            notices(&evs)
+        );
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::ItemStarted { .. }))
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     async fn shutdown(mut h: Handle) {
