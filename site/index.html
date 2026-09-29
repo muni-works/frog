@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frog</title>
+<meta name="description" content="A coding agent for your Mac, built for local models.">
+<meta property="og:title" content="Frog">
+<meta property="og:description" content="A coding agent for your Mac, built for local models.">
+<meta property="og:image" content="https://frog.eco/icon.png">
+<meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.png">
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --fg: #1b1d1a;
+    --muted: #6b6f68;
+    --faint: #a3a69e;
+    --line: #e2e0d8;
+    --card: #ffffff;
+    --well: #f1f0eb;
+    --accent: #2e9e4f;
+    --accent-fg: #ffffff;
+    --pad: rgb(46 158 79 / .22);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --spring: cubic-bezier(.34, 1.56, .64, 1);
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141513;
+      --fg: #ecebe6;
+      --muted: #9a9d95;
+      --faint: #62655f;
+      --line: #2a2c28;
+      --card: #1c1e1b;
+      --well: #232522;
+      --accent: #58cc6f;
+      --accent-fg: #0d1a10;
+      --pad: rgb(88 204 111 / .22);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--pad); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+  p { text-wrap: pretty; }
+  code { font-family: var(--mono); font-size: .88em; }
+  main { max-width: 720px; margin: 0 auto; padding: 64px 20px 40px; }
+
+  /* The frog on its lily pad, as in a new chat. */
+  .hero { text-align: center; }
+  .pond { position: relative; width: 168px; height: 150px; margin: 0 auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .pad { position: absolute; left: 8px; bottom: 6px; width: 152px; height: 52px; }
+  .pad path { fill: var(--pad); }
+  .ripple {
+    position: absolute; left: 50%; bottom: 20px; width: 152px; height: 52px;
+    margin-left: -76px; border-radius: 50%; border: 1.5px solid var(--accent);
+    opacity: 0; pointer-events: none;
+  }
+  .ripple.go { animation: ripple .9s ease-out; }
+  @keyframes ripple { from { transform: scale(.7); opacity: .5; } to { transform: scale(1.5); opacity: 0; } }
+  .frog {
+    position: absolute; left: 36px; bottom: 16px; width: 96px; height: 96px;
+    transition: transform .22s var(--spring);
+  }
+  .frog.up { transform: translateY(-10px); transition-duration: .18s; }
+  .frog .ink { fill: var(--accent); }
+  .frog .pupil { fill: var(--bg); }
+  .says {
+    height: 20px; margin: 2px 0 0; font-size: 13px; color: var(--muted);
+    opacity: 0; transition: opacity .2s ease;
+  }
+  .pond:hover + .says, .says.on { opacity: 1; }
+
+  h1 {
+    font: 700 56px/1.05 -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+    letter-spacing: -0.03em;
+    margin: 10px 0 12px;
+  }
+  .lede { font-size: 21px; color: var(--muted); margin: 0 auto 32px; max-width: 30ch; text-wrap: balance; }
+  .download {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: var(--accent); color: var(--accent-fg);
+    font-weight: 600; font-size: 17px; text-decoration: none; white-space: nowrap;
+    padding: 14px 26px 14px 22px; border-radius: 999px;
+    box-shadow: 0 1px 0 rgb(255 255 255 / .18) inset, 0 6px 20px -8px var(--accent);
+    transition: transform .12s ease, filter .12s ease, box-shadow .2s ease;
+  }
+  .download:hover { filter: brightness(1.06); box-shadow: 0 1px 0 rgb(255 255 255 / .18) inset, 0 10px 28px -8px var(--accent); }
+  .download:active { transform: scale(.97); }
+  .download svg { width: 18px; height: 18px; transition: transform .25s var(--spring); }
+  .download:hover svg { transform: translateY(2px); }
+  .req { margin: 14px 0 0; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .req .dot { color: var(--faint); margin: 0 4px; }
+
+  /* Each card shows the thing itself, in the app's own words. */
+  .features {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 12px; margin: 80px 0 0; padding: 0; list-style: none;
+  }
+  .features > li {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 8px 8px 18px; overflow: hidden;
+  }
+  .features h3 { font-size: 17px; margin: 14px 12px 4px; }
+  .features p { color: var(--muted); font-size: 15px; margin: 0 12px; }
+  .stage {
+    height: 136px; border-radius: 10px; background: var(--well);
+    display: flex; flex-direction: column; justify-content: center; gap: 8px;
+    padding: 14px 16px; font-size: 13px; position: relative;
+  }
+  .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* 1 · a question and its answer. */
+  .ask {
+    align-self: flex-end; background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px 14px 4px 14px; padding: 6px 11px; max-width: 85%;
+  }
+  .ask .caret { display: inline-block; width: 1.5px; height: 1em; background: var(--accent); vertical-align: -2px; margin-left: 1px; }
+  .reply { display: flex; flex-direction: column; gap: 5px; opacity: 0; transform: translateY(4px); transition: opacity .3s ease, transform .3s ease; }
+  .reply i { display: block; height: 7px; border-radius: 4px; background: var(--line); }
+  .shown .reply { opacity: 1; transform: none; }
+
+  /* 2 · the model picker. */
+  .models { list-style: none; margin: 0; padding: 0; font-family: var(--mono); font-size: 11.5px; }
+  .models li {
+    display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px;
+    color: var(--muted); transition: background .25s ease, color .25s ease;
+  }
+  .models li::before { content: ""; width: 12px; text-align: center; color: var(--accent); font-family: -apple-system, sans-serif; font-weight: 700; }
+  .models li.on { background: var(--card); color: var(--fg); }
+  .models li.on::before { content: "✓"; }
+  .models .where { margin-left: auto; font-size: 10px; color: var(--faint); }
+
+  /* 3 · the timeline rail and a turn's outcome. */
+  .rail { flex: 1; display: flex; align-items: center; margin-left: 2px; }
+  .rail b {
+    width: 12px; height: 12px; border-radius: 50%; background: var(--accent); flex: none;
+    border: 2px solid var(--accent); transition: background .3s ease, border-color .3s ease;
+  }
+  .rail span { flex: 1; height: 2px; background: var(--accent); transition: background .3s ease; }
+  .rail .gone { background: transparent; border-color: var(--faint); }
+  .rail span.gone { background: var(--line); }
+  .outcome { display: flex; align-items: center; gap: 14px; }
+  .stage > .line { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pill {
+    flex: none; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--line); transition: background .2s ease, color .2s ease;
+  }
+  .rewound .pill { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+
+  /* 4 · attempts racing. */
+  .lane { display: grid; grid-template-columns: 62px 1fr 64px; align-items: center; gap: 8px; transition: opacity .3s ease; }
+  .lane .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .lane .bar i { display: block; height: 100%; width: 0; background: var(--faint); border-radius: 3px; }
+  .lane .res { font-size: 11px; color: var(--muted); text-align: right; white-space: nowrap; }
+  .lane.win .bar i { background: var(--accent); }
+  .lane.win .res { color: var(--accent); font-weight: 600; }
+  .done .lane:not(.win) { opacity: .45; }
+
+  /* The terminal. */
+  .cli { margin-top: 64px; }
+  .cli h2 { font-size: 17px; margin: 0 0 4px; }
+  .cli > p { color: var(--muted); font-size: 15px; margin: 0 0 14px; }
+  .term { background: #1b1d1a; color: #ecebe6; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+  @media (prefers-color-scheme: dark) { .term { background: #0e0f0d; } }
+  .term .bar { display: flex; align-items: center; gap: 7px; padding: 7px 8px 7px 12px; border-bottom: 1px solid rgb(255 255 255 / .06); }
+  .term .bar i { width: 11px; height: 11px; border-radius: 50%; background: rgb(255 255 255 / .14); }
+  .term .bar span { flex: 1; text-align: center; font-size: 12px; color: rgb(236 235 230 / .45); }
+  .term pre { margin: 0; padding: 14px 16px 16px; overflow-x: auto; font: 13px/1.7 var(--mono); }
+  .term .p { color: #58cc6f; user-select: none; }
+  .term .c { color: rgb(236 235 230 / .4); }
+  .copy {
+    width: 58px; font: 500 12px -apple-system, sans-serif;
+    color: rgb(236 235 230 / .7); background: rgb(255 255 255 / .08); border: 0;
+    padding: 4px 9px; border-radius: 6px; cursor: pointer;
+  }
+  .copy:hover { background: rgb(255 255 255 / .14); color: #ecebe6; }
+
+  footer {
+    margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted);
+  }
+  footer svg { width: 20px; height: 20px; }
+  footer svg path { fill: var(--accent); }
+  footer a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 3px; }
+  footer a:hover { color: var(--fg); }
+  footer .end { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+
+  @media (max-width: 560px) {
+    main { padding-top: 40px; }
+    h1 { font-size: 44px; }
+    .lede { font-size: 19px; }
+    .features { grid-template-columns: 1fr; margin-top: 56px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <div class="pond" role="img" aria-label="The frog, on its lily pad">
+      <svg class="pad" viewBox="-1 -1 2 2" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 0 L0.643 0.766 A1 1 0 1 1 0.985 0.174 Z"/>
+      </svg>
+      <div class="ripple"></div>
+      <svg class="frog" viewBox="0 0 100 100" aria-hidden="true">
+        <path class="ink" fill-rule="evenodd" d="M8 62a42 29 0 1 0 84 0a42 29 0 1 0 -84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z"/>
+        <ellipse class="ink eye" cx="30" cy="30" rx="18" ry="18"/>
+        <ellipse class="ink eye" cx="70" cy="30" rx="18" ry="18"/>
+        <circle class="pupil" cx="30" cy="27" r="6.5"/>
+        <circle class="pupil" cx="70" cy="27" r="6.5"/>
+      </svg>
+    </div>
+    <p class="says" aria-live="polite">what shall we fix?</p>
+    <h1>Frog</h1>
+    <p class="lede">A coding agent for your Mac, built for local models.</p>
+    <a class="download" href="/download">
+      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 2a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42L9 11.6V3a1 1 0 0 1 1-1Zm-6 14a1 1 0 0 1 1-1h10a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z"/></svg>
+      Download for Mac
+    </a>
+    <p class="req">macOS 26 on Apple silicon<span class="dot">·</span>updates itself</p>
+  </section>
+
+  <ul class="features">
+    <li class="card" data-play="answer">
+      <div class="stage" aria-hidden="true">
+        <div class="ask"><span class="typed"></span><span class="caret"></span></div>
+        <div class="reply">
+          <i style="width: 92%"></i><i style="width: 78%"></i><i style="width: 54%"></i>
+          <span class="meta">apple/on-device · <span class="secs">0.9</span>s</span>
+        </div>
+      </div>
+      <h3>Answers in a second</h3>
+      <p>The first message runs on Apple's on-device model. Nothing to download, no key, no account.</p>
+    </li>
+    <li class="card" data-play="models">
+      <div class="stage" aria-hidden="true">
+        <ul class="models">
+          <li class="on">apple/on-device<span class="where">this Mac</span></li>
+          <li>tang/Qwen3-4B-4bit<span class="where">Metal</span></li>
+          <li>ollama/qwen3-coder:30b<span class="where">ollama</span></li>
+          <li>anthropic/claude-sonnet-5<span class="where">key</span></li>
+        </ul>
+      </div>
+      <h3>Your models, your Mac</h3>
+      <p>Runs open models itself on Metal, or through ollama and LM Studio. Cloud keys are optional.</p>
+    </li>
+    <li class="card" data-play="rewind">
+      <div class="stage" aria-hidden="true">
+        <div class="outcome">
+          <div class="rail"><b></b><span></span><b></b><span class="t3"></span><b class="t3"></b><span class="t4"></span><b class="t4"></b></div>
+          <span class="pill">Rewind to 2</span>
+        </div>
+        <span class="line">Worked 42s · read 3 files · edited 1 file</span>
+      </div>
+      <h3>Rewind anything</h3>
+      <p>Every turn is a checkpoint. Undo what it edited and what its commands did.</p>
+    </li>
+    <li class="card" data-play="race">
+      <div class="stage" aria-hidden="true">
+        <div class="lane" data-t="2600" data-pass="0"><span class="meta">attempt 1</span><span class="bar"><i></i></span><span class="res"></span></div>
+        <div class="lane" data-t="1900" data-pass="1"><span class="meta">attempt 2</span><span class="bar"><i></i></span><span class="res"></span></div>
+        <div class="lane" data-t="3100" data-pass="0"><span class="meta">attempt 3</span><span class="bar"><i></i></span><span class="res"></span></div>
+      </div>
+      <h3>Race attempts</h3>
+      <p>Run one prompt 2–4 ways in parallel worktrees, score them with your tests, keep the best.</p>
+    </li>
+  </ul>
+
+  <section class="cli">
+    <h2>In the terminal</h2>
+    <p>The same engine ships inside the app as <code>frog</code>.</p>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><span>zsh</span><button class="copy" type="button" aria-label="Copy the alias">Copy</button></div>
+<pre><span class="p">$ </span><span class="cmd">alias frog=/Applications/Frog.app/Contents/Resources/frog</span>
+<span class="p">$ </span>frog -m ollama/qwen3-coder:30b
+<span class="p">$ </span>frog -p "why does the build fail?"   <span class="c"># one-shot, to stdout</span></pre>
+    </div>
+  </section>
+
+  <footer>
+    <svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="M12 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M23.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M52 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M63.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M8 62a42 29 0 1 0 84 0a42 29 0 1 0 -84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z"/></svg>
+    <span>Made by <a href="https://campedersen.com">Cam Pedersen</a></span>
+    <span class="end">eco.frog</span>
+  </footer>
+</main>
+
+<script>
+(() => {
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+
+  // The frog: FrogShape's geometry, FrogFace's timings. Lids 1 is open, 0 is shut.
+  const pond = document.querySelector(".pond");
+  const frog = pond.querySelector(".frog");
+  const eyes = frog.querySelectorAll(".eye");
+  const pupils = frog.querySelectorAll(".pupil");
+  let lids = 1, gaze = 0, target = 0;
+
+  function draw() {
+    const open = Math.max(lids, 0.12);
+    const r = 6.5 * Math.min(1, Math.max(0, (lids - 0.4) / 0.35));
+    eyes.forEach(e => e.setAttribute("ry", 18 * open));
+    pupils.forEach((p, i) => {
+      p.setAttribute("r", r > 2 ? r : 0);
+      p.setAttribute("cx", (i ? 70 : 30) + gaze * 5);
+      p.setAttribute("cy", 27 + (1 - lids) * 3);
+    });
+  }
+
+  function tween(to, ms, ease) {
+    const from = lids, t0 = performance.now();
+    return new Promise(done => {
+      const step = now => {
+        const k = Math.min(1, (now - t0) / ms);
+        lids = from + (to - from) * ease(k);
+        draw();
+        k < 1 ? requestAnimationFrame(step) : done();
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  async function blink() {
+    await tween(0, 70, k => k * k);
+    await wait(90);
+    await tween(1, 120, k => 1 - (1 - k) * (1 - k));
+  }
+
+  async function idle() {
+    while (true) {
+      await wait(4000 + Math.random() * 3000);
+      if (!document.hidden) await blink();
+    }
+  }
+
+  // It watches the pointer, as the app's frog glances at what it reads.
+  function look() {
+    gaze += (target - gaze) * 0.12;
+    draw();
+    requestAnimationFrame(look);
+  }
+  addEventListener("pointermove", e => {
+    const box = frog.getBoundingClientRect();
+    target = Math.max(-1, Math.min(1, (e.clientX - (box.left + box.width / 2)) / 360));
+  });
+
+  // Tap it, or download it, and it hops: up and back on a spring, and the pad ripples.
+  const ripple = pond.querySelector(".ripple");
+  function hop() {
+    if (still) return;
+    frog.classList.add("up");
+    setTimeout(() => {
+      frog.classList.remove("up");
+      ripple.classList.remove("go");
+      void ripple.offsetWidth;
+      ripple.classList.add("go");
+    }, 180);
+  }
+  pond.addEventListener("click", hop);
+  document.querySelector(".download").addEventListener("click", hop);
+
+  // Hover and it talks (FrogCopy.hovers), a new line every 2.4s.
+  const says = document.querySelector(".says");
+  const lines = ["what shall we fix?", "ready when you are", "drop a file on me"];
+  let line = 0, talking;
+  pond.addEventListener("pointerenter", () => {
+    talking = setInterval(() => {
+      says.style.opacity = 0;
+      setTimeout(() => { line = (line + 1) % lines.length; says.textContent = lines[line]; says.style.opacity = ""; }, 200);
+    }, 2400);
+  });
+  pond.addEventListener("pointerleave", () => clearInterval(talking));
+
+  if (!still) { idle(); look(); }
+
+  // Not on a Mac: say so where the requirements are.
+  const ua = navigator.userAgent;
+  const req = document.querySelector(".req");
+  if (/iPhone|iPad|Android/.test(ua)) req.textContent = "Frog is a Mac app. Open frog.eco on your Mac to get it.";
+  else if (!/Mac/.test(ua)) req.textContent = "Frog is a Mac app, for macOS 26 on Apple silicon.";
+
+  // The terminal's copy button copies the alias, and says so.
+  const copy = document.querySelector(".copy");
+  copy.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(document.querySelector(".cmd").textContent); copy.textContent = "Copied"; }
+    catch { copy.textContent = "Select it"; }
+    setTimeout(() => (copy.textContent = "Copy"), 1600);
+  });
+
+  // The cards play once each time they come into view, and hold their last frame after.
+  const plays = {
+    async answer(el) {
+      const typed = el.querySelector(".typed"), text = "why does the build fail?";
+      el.classList.remove("shown"); typed.textContent = "";
+      for (const ch of text) { typed.textContent += ch; await wait(38 + Math.random() * 40); }
+      await wait(350);
+      el.classList.add("shown");
+    },
+    async models(el) {
+      const rows = el.querySelectorAll(".models li");
+      for (const i of [1, 2, 0]) {
+        await wait(1300);
+        rows.forEach((r, j) => r.classList.toggle("on", j === i));
+      }
+    },
+    async rewind(el) {
+      const later = el.querySelectorAll(".t3, .t4");
+      el.classList.remove("rewound"); later.forEach(x => x.classList.remove("gone"));
+      await wait(1100);
+      el.classList.add("rewound");
+      for (const cls of [".t4", ".t3"]) {
+        el.querySelectorAll(cls).forEach(x => x.classList.add("gone"));
+        await wait(260);
+      }
+    },
+    async race(el) {
+      const lanes = [...el.querySelectorAll(".lane")];
+      el.classList.remove("done");
+      lanes.forEach(l => { l.classList.remove("win"); l.querySelector(".res").textContent = ""; const i = l.querySelector("i"); i.style.transition = "none"; i.style.width = "0"; });
+      await wait(60);
+      await Promise.all(lanes.map(async l => {
+        const i = l.querySelector("i"), t = +l.dataset.t;
+        i.style.transition = `width ${t}ms cubic-bezier(.3,.6,.4,1)`;
+        i.style.width = "100%";
+        await wait(t);
+        const pass = l.dataset.pass === "1";
+        l.querySelector(".res").textContent = pass ? "✓ tests pass" : "2 failing";
+        if (pass) l.classList.add("win");
+      }));
+      el.classList.add("done");
+    },
+  };
+  const cards = document.querySelectorAll(".card");
+  const settle = {
+    answer: el => { el.querySelector(".typed").textContent = "why does the build fail?"; el.classList.add("shown"); },
+    rewind: el => { el.classList.add("rewound"); el.querySelectorAll(".t3, .t4").forEach(x => x.classList.add("gone")); },
+    race: el => { el.querySelectorAll(".lane").forEach(l => { l.querySelector("i").style.width = "100%"; const pass = l.dataset.pass === "1"; l.querySelector(".res").textContent = pass ? "✓ tests pass" : "2 failing"; l.classList.toggle("win", pass); }); el.classList.add("done"); },
+  };
+  if (still || !("IntersectionObserver" in window)) {
+    cards.forEach(c => settle[c.dataset.play]?.(c.querySelector(".stage")));
+    return;
+  }
+  const busy = new WeakSet();
+  const seen = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      const stage = e.target.querySelector(".stage");
+      if (!e.isIntersecting || busy.has(stage)) continue;
+      busy.add(stage);
+      plays[e.target.dataset.play](stage).finally(() => busy.delete(stage));
+    }
+  }, { threshold: 0.6 });
+  cards.forEach(c => seen.observe(c));
+})();
+</script>
+</body>
+</html>
