@@ -206,9 +206,28 @@ async fn run_suite(
         results_path.display()
     );
 
+    // Energy: the whole Mac's power, integrated over each turn, less what it draws at rest.
+    let meter = frog_engine::energy::Meter::new();
+    if meter.is_none() {
+        eprintln!("no power sensor on this machine: energy won't be measured\n");
+    }
+
     let mut results = Vec::new();
     let mut i = 0;
     for model in &models {
+        // Idle with this model loaded and warm, so the baseline holds whatever it keeps resident.
+        let idle = match &meter {
+            Some(m) => {
+                let (_, profile) = cfg.resolve(Some(model))?;
+                frog_engine::sidecar::ensure(&profile).await?;
+                eprint!("measuring idle power for {model} … ");
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let w = m.idle_watts(10.0).await;
+                eprintln!("{w:.1} W");
+                Some((m, w))
+            }
+            None => None,
+        };
         for &mode in &modes {
             for t in &tasks {
                 for rep in 1..=repeat {
@@ -226,14 +245,23 @@ async fn run_suite(
                         rep,
                         workspace,
                         sessions: &sessions,
+                        energy: idle,
                     })
                     .await?;
                     r.thinking = thinking.clone();
                     r.thinking_budget = thinking_budget;
                     eprintln!(
-                        "{} {:.1}s ({}{})",
+                        "{} {:.1}s{} ({}{})",
                         if r.pass { "pass" } else { "FAIL" },
                         r.secs,
+                        r.energy
+                            .as_ref()
+                            .map(|e| format!(
+                                " {}{:.2} Wh",
+                                if e.remote_wh.is_some() { "~" } else { "" },
+                                e.total_wh()
+                            ))
+                            .unwrap_or_default(),
                         r.end,
                         r.error
                             .as_deref()

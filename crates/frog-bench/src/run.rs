@@ -3,6 +3,8 @@
 use crate::task::{self, Task};
 use anyhow::Result;
 use frog_engine::config::{Config, ToolMode};
+use frog_engine::energy::{Meter, cloud};
+use frog_engine::harness;
 use frog_engine::{EndReason, Event, Item, Mode, Op, Options, ToolOutcome};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -42,9 +44,36 @@ pub struct RunResult {
     pub think_ms: u64,
     #[serde(default)]
     pub no_think_calls: u32,
+    /// What the run cost in energy. Absent where the Mac has no power sensor to read.
+    #[serde(default)]
+    pub energy: Option<RunEnergy>,
     pub session: String,
     pub workspace: PathBuf,
     pub check_output: String,
+}
+
+/// Energy for one run, in watt-hours. `local` is measured on this Mac (the engine, a local model
+/// server, the tools it ran); `remote` is a hosted model's data center, estimated from tokens.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RunEnergy {
+    /// The whole Mac over the turn, above `idle_w`.
+    pub local_wh: f64,
+    /// The whole Mac over the turn, idle included.
+    pub system_wh: f64,
+    /// The idle baseline subtracted, in watts.
+    pub idle_w: f64,
+    /// The chip's own GPU and Neural Engine counters over the turn, for the breakdown.
+    pub gpu_wh: f64,
+    pub ane_wh: f64,
+    /// Estimated, for hosted models only.
+    pub remote_wh: Option<f64>,
+    pub remote_basis: Option<String>,
+}
+
+impl RunEnergy {
+    pub fn total_wh(&self) -> f64 {
+        self.local_wh + self.remote_wh.unwrap_or(0.0)
+    }
 }
 
 fn end_name(r: &EndReason) -> String {
@@ -66,12 +95,15 @@ pub struct Run<'a> {
     pub rep: u32,
     pub workspace: PathBuf,
     pub sessions: &'a Path,
+    /// The meter and this model's idle power, when energy is being measured.
+    pub energy: Option<(&'a Meter, f64)>,
 }
 
 pub async fn run(r: Run<'_>) -> Result<RunResult> {
     task::seed(r.task, &r.workspace)?;
     let (profile_name, mut profile) = r.cfg.resolve(Some(r.model))?;
     profile.tool_mode = r.mode;
+    let hosted = harness::is_hosted(&profile);
     let mut h = frog_engine::spawn(Options {
         cfg: r.cfg.clone(),
         profile_name,
@@ -115,12 +147,14 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         thinking_budget: None,
         think_ms: 0,
         no_think_calls: 0,
+        energy: None,
         session: String::new(),
         workspace: r.workspace.clone(),
         check_output: String::new(),
     };
 
     let started = Instant::now();
+    let mark = r.energy.map(|(m, _)| m.mark());
     let deadline = tokio::time::Instant::now() + Duration::from_secs(r.task.timeout_secs);
     let mut timed_out = false;
     loop {
@@ -181,6 +215,19 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         }
     }
     out.secs = started.elapsed().as_secs_f64();
+    // The turn only: the check runs after, and isn't frog's work.
+    if let (Some((meter, idle_w)), Some(mark)) = (r.energy, &mark) {
+        let e = meter.since(mark);
+        out.energy = Some(RunEnergy {
+            local_wh: e.above_idle_wh(idle_w),
+            system_wh: e.system_wh(),
+            idle_w,
+            gpu_wh: e.soc.gpu / 3600.0,
+            ane_wh: e.soc.ane / 3600.0,
+            remote_wh: hosted.then(|| cloud::estimate_wh(out.input_tokens, out.output_tokens)),
+            remote_basis: hosted.then(|| cloud::BASIS.to_string()),
+        });
+    }
     if timed_out {
         out.end = "timeout".into();
     }
