@@ -46,6 +46,13 @@ struct FrogCommands: Commands {
     }
 
     var body: some Commands {
+        if Updates.shared.enabled {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Updates.shared.check() }
+                    .disabled(!Updates.shared.canCheck)
+            }
+        }
+
         // ⌘N starts a chat where you are; windows and tabs are ⌘T and ⌥⌘N.
         CommandGroup(replacing: .newItem) {
             Button("New Chat") {

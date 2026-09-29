@@ -4,6 +4,10 @@ options:
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.7.0
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -21,10 +25,19 @@ targets:
     platform: macOS
     sources:
       - path: Frog
+        excludes: ["Frog.entitlements"]
+    dependencies:
+      - package: Sparkle
     info:
       path: Frog/Info.plist
       properties:
         CFBundleDisplayName: Frog
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Sparkle: frog.eco redirects to the latest release's appcast, so hosting can move
+        # without shipping an update. Only the release build (eco.frog) ever checks it.
+        SUFeedURL: https://frog.eco/appcast.xml
+        SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: "© 2026 Cam Pedersen"
         NSMicrophoneUsageDescription: "Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it."
@@ -32,6 +45,10 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog
+        CODE_SIGN_ENTITLEMENTS: Frog/Frog.entitlements
+        # The EdDSA public key for update signatures. Its private half lives in the release
+        # machine's Keychain (Sparkle's generate_keys); see scripts/release.sh.
+        SPARKLE_PUBLIC_KEY: BLziGLx/omop7rhIoQuyOTqj1ssTJi+KJcGfpIAL1WY=
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
       # Debug builds (this checkout, worktrees, agents) are their own app, so macOS never
