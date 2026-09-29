@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frog energy</title>
+<meta name="description" content="What a coding task costs in watt-hours, measured on a Mac: the method, what's left out, and every run.">
+<meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #f6f5f1; --fg: #1b1d1a; --muted: #6b6f68; --faint: #a3a69e; --line: #e2e0d8;
+    --card: #ffffff; --well: #f1f0eb; --accent: #2e9e4f; --pad: rgb(46 158 79 / .22);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141513; --fg: #ecebe6; --muted: #9a9d95; --faint: #62655f; --line: #2a2c28;
+      --card: #1c1e1b; --well: #232522; --accent: #58cc6f; --pad: rgb(88 204 111 / .22);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--pad); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 20px 48px; }
+  p, li { text-wrap: pretty; }
+  a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: var(--accent); }
+  code { font-family: var(--mono); font-size: .86em; background: var(--well); padding: 1px 5px; border-radius: 5px; }
+
+  .home { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; color: var(--muted); font-size: 15px; }
+  .home svg { width: 22px; height: 22px; }
+  .home path { fill: var(--accent); }
+  h1 { font: 700 44px/1.1 -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; letter-spacing: -0.03em; margin: 40px 0 10px; }
+  .lede { font-size: 20px; color: var(--muted); margin: 0 0 8px; max-width: 34ch; }
+  .stamp { font: 12px var(--mono); color: var(--faint); margin: 0 0 40px; }
+  h2 { font-size: 22px; letter-spacing: -0.01em; margin: 56px 0 10px; }
+  h2 + p { margin-top: 0; }
+  p { margin: 0 0 14px; }
+  ul { padding-left: 20px; margin: 0 0 14px; }
+  li { margin: 4px 0; }
+  .muted { color: var(--muted); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* The headline: Wh per solved task, one row per model, a bar in each. */
+  .results { width: 100%; border-collapse: collapse; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .results th { text-align: left; font: 600 11px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 0 8px 8px 0; border-bottom: 1px solid var(--line); }
+  .results td { padding: 12px 8px 12px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .results .num { text-align: right; white-space: nowrap; }
+  .results .model { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+  .results .kind { font-size: 12px; color: var(--muted); }
+  .barcell { width: 38%; }
+  .bar { position: relative; height: 8px; border-radius: 0 4px 4px 0; background: var(--accent); min-width: 2px; }
+  .bar.est {
+    background: repeating-linear-gradient(135deg, var(--accent) 0 3px, transparent 3px 6px);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .bar-hit { padding: 8px 0; cursor: default; }
+  .tip {
+    position: fixed; z-index: 10; pointer-events: none; background: var(--card); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; line-height: 1.45;
+    box-shadow: 0 8px 24px -12px rgb(0 0 0 / .35); opacity: 0; transition: opacity .12s ease; font-variant-numeric: tabular-nums;
+  }
+  .tip.on { opacity: 1; }
+  .tip b { display: block; font-family: var(--mono); font-size: 12px; margin-bottom: 2px; }
+  .legend { display: flex; gap: 18px; margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 18px; height: 8px; border-radius: 0 4px 4px 0; background: var(--accent); }
+  .legend i.est { background: repeating-linear-gradient(135deg, var(--accent) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1px var(--accent); }
+
+  .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 18px 0 6px; }
+  .fact { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .fact b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .fact span { font-size: 12.5px; color: var(--muted); }
+
+  details { margin-top: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  summary { cursor: pointer; padding: 12px 14px; font-weight: 600; font-size: 15px; list-style: none; display: flex; justify-content: space-between; }
+  summary::after { content: "Show"; font-weight: 500; color: var(--muted); font-size: 13px; }
+  details[open] summary::after { content: "Hide"; }
+  .runs-wrap { overflow-x: auto; border-top: 1px solid var(--line); }
+  .runs { width: 100%; border-collapse: collapse; font: 12px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+  .runs th, .runs td { padding: 6px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  .runs th:first-child, .runs td:first-child, .runs th:nth-child(2), .runs td:nth-child(2) { text-align: left; }
+  .runs th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
+  .runs .fail { color: var(--faint); }
+  .dl { display: inline-block; margin: 12px 14px 14px; font-size: 13px; }
+  pre { margin: 0 0 14px; padding: 12px 14px; overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; font: 13px/1.6 var(--mono); }
+  .empty { padding: 18px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); font-size: 15px; }
+
+  footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); display: flex; justify-content: space-between; }
+  @media (max-width: 560px) {
+    h1 { font-size: 36px; }
+    .facts { grid-template-columns: 1fr; }
+    .barcell { width: 28%; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <a class="home" href="/"><svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="M12 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M23.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z M52 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M63.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z M8 62a42 29 0 1 0 84 0a42 29 0 1 0 -84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z"/></svg>Frog</a>
+
+  <h1>Energy</h1>
+  <p class="lede">What a coding task costs in watt-hours, measured on a Mac.</p>
+  <p class="stamp" id="stamp">loading the results…</p>
+
+  <section>
+    <table class="results" id="results" aria-describedby="results-note">
+      <thead><tr><th>Model</th><th class="num">Solved</th><th class="barcell"><span class="sr">Wh per solved task, as a bar</span></th><th class="num">Wh / task</th><th class="num">g CO₂e</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="legend" aria-hidden="true"><span><i></i>measured on this Mac</span><span><i class="est"></i>includes a cloud estimate</span></div>
+    <p class="muted" id="results-note" style="font-size: 14px; margin-top: 12px">
+      Wh per task is every run's energy, failed attempts included, divided by the tasks passed. A model that needs three tries pays for all three.
+    </p>
+    <div class="facts" id="facts"></div>
+  </section>
+
+  <h2>How it's measured</h2>
+  <p>
+    The Mac's System Management Controller reports how much power the whole machine draws from its supply (<code>PSTR</code>, in watts). Frog reads it ten times a second, without root, and adds it up over each task.
+  </p>
+  <ul>
+    <li><b>Idle comes off first.</b> Right before each run, with the model loaded, frog waits two seconds for the Mac to settle and measures its power for five seconds doing nothing. That baseline times the run's duration is subtracted, so what's left is the extra energy the task caused. Measuring before every run, not once per suite, keeps up with the Mac's own drift.</li>
+    <li><b>Only the turn counts.</b> Measurement runs from the prompt to the answer: the model thinking, frog's tools, the commands it runs (tests included). The bench's own pass/fail check afterwards is left out.</li>
+    <li><b>Runs are hermetic.</b> Each task starts from a clean copy of its repository, and frog sees only that repository: none of the machine owner's instructions, skills, MCP servers or search.</li>
+    <li><b>The chip's counters are kept as a breakdown.</b> Apple silicon also counts GPU and Neural Engine energy per component, and the raw runs below include those. They aren't the headline: on macOS 27 the CPU and memory counters stopped advancing on every Apple silicon chip (<a href="https://github.com/vladkens/macmon/issues/76">macmon#76</a>), and they never saw the rest of the machine anyway.</li>
+  </ul>
+
+  <h2>What's left out</h2>
+  <ul>
+    <li><b>Manufacturing.</b> Making the Mac, the servers and the network costs energy too. None of it is here.</li>
+    <li><b>The network,</b> between the Mac and a hosted model.</li>
+    <li><b>Power supply losses</b> upstream of the sensor, which are small on a laptop and larger on a desktop's supply.</li>
+    <li><b>Downloading the model,</b> a one-time cost that's large for local models.</li>
+  </ul>
+  <p>
+    And some noise stays in: anything else the Mac does during a run lands in the measurement, and the idle baseline moves with it. On the same Mac, idle measured between 12 and 19 W across sessions. Runs are repeated, and the raw numbers are all below, so you can see the spread.
+  </p>
+
+  <h2>Hosted models are estimates</h2>
+  <p>
+    Nobody publishes measured energy per request for frontier models. For a hosted model, frog measures what the Mac spent (it still runs the tools and tests locally) and adds an estimate for the data center from the tokens used:
+  </p>
+  <p id="coeffs" class="muted">—</p>
+  <p>
+    Those figures are <a href="https://epoch.ai/gradient-updates/how-much-energy-does-chatgpt-use">Epoch AI's estimate</a> for GPT-4o on H100s, server and data center overhead included. They don't account for prompt caching, which agent loops lean on heavily, and later work finds widely cited per-query estimates are 4–20× higher than production-optimized serving (<a href="https://www.cell.com/joule/fulltext/S2542-4351(26)00114-5">Joule, 2026</a>). Read hosted numbers as the high end. They're marked <b>~</b> and hatched everywhere they appear.
+  </p>
+
+  <h2>Grid</h2>
+  <p id="grid">
+    Grams of CO₂e use the world's average electricity.
+  </p>
+
+  <h2>Every run</h2>
+  <p>The bench's own export, with no paths or output. Idle and system energy are per run, so any figure above can be recomputed.</p>
+  <details id="runs-box">
+    <summary id="runs-count">Runs</summary>
+    <div class="runs-wrap"><table class="runs" id="runs"><thead></thead><tbody></tbody></table></div>
+    <a class="dl" href="data/bench-v1.json" download>Download the JSON</a>
+  </details>
+
+  <h2>Run it yourself</h2>
+  <p>The suite and the bench are in the repository. On an Apple silicon Mac:</p>
+<pre>cargo run --release -p frog-bench -- run -m apple/on-device -r 3
+cargo run --release -p frog-bench -- export ~/.local/share/frog/bench/&lt;run&gt;/results.jsonl</pre>
+  <p class="muted">Close what you can first; the idle baseline is only as quiet as the Mac.</p>
+
+  <footer><a href="/">frog.eco</a><span id="suite"></span></footer>
+</main>
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script>
+(async () => {
+  const $ = s => document.querySelector(s);
+  const fmt = (x, d = 2) => x == null ? "—" : x.toFixed(d);
+  let data;
+  try {
+    data = await (await fetch("data/bench-v1.json")).json();
+  } catch {
+    $("#stamp").textContent = "The results couldn't be loaded.";
+    $("#results").outerHTML = '<div class="empty">No results published yet.</div>';
+    return;
+  }
+
+  const { machine, method } = data;
+  $("#stamp").textContent = `bench suite ${data.suite} · ${machine.chip}, ${machine.memory_gb} GB · macOS ${machine.macos} · ${data.date}`;
+  $("#suite").textContent = `suite ${data.suite}`;
+  $("#coeffs").innerHTML =
+    `<b>${(method.remote_wh_per_input_token * 1000).toFixed(2)} mWh</b> per input token and <b>${(method.remote_wh_per_output_token * 1000).toFixed(2)} mWh</b> per output token.`;
+  $("#grid").innerHTML =
+    `Grams of CO₂e use the world's average electricity in 2025: <b>${method.grid_g_per_kwh} g per kWh</b> (<a href="https://ember-energy.org/latest-insights/global-electricity-review-2026/electricity-demand-and-supply-trends/">Ember, Global Electricity Review 2026</a>), for the Mac and the data center alike. Your grid may be far cleaner or dirtier; the watt-hours are the part that's measured.`;
+
+  // Headline rows, lowest energy first; models with nothing solved go last.
+  const models = [...data.models].sort((a, b) => (a.wh_per_solve ?? Infinity) - (b.wh_per_solve ?? Infinity));
+  const max = Math.max(...models.map(m => m.wh_per_solve ?? 0), 1e-9);
+  const tbody = $("#results tbody");
+  const tip = $("#tip");
+  for (const m of models) {
+    const tr = document.createElement("tr");
+    const wh = m.wh_per_solve;
+    const est = m.estimated ? "~" : "";
+    tr.innerHTML = `
+      <td><div class="model">${m.model}</div><div class="kind">${m.estimated ? "hosted · includes estimate" : "local · measured"}</div></td>
+      <td class="num">${m.passed}/${m.runs}</td>
+      <td class="barcell"><div class="bar-hit"><div class="bar${m.estimated ? " est" : ""}" style="width:${wh == null ? 0 : Math.max(1, wh / max * 100)}%"></div></div></td>
+      <td class="num">${wh == null ? "—" : est + fmt(wh)}</td>
+      <td class="num">${m.g_co2e_per_solve == null ? "—" : est + fmt(m.g_co2e_per_solve, 2)}</td>`;
+    const hit = tr.querySelector(".bar-hit");
+    hit.addEventListener("pointermove", e => {
+      tip.innerHTML = `<b>${m.model}</b>${wh == null ? "No task solved" :
+        `${est}${fmt(wh, 3)} Wh per solved task<br>this Mac: ${fmt(m.local_wh_per_solve, 3)} Wh` +
+        (m.estimated ? `<br>data center (est.): ${fmt(m.remote_wh_per_solve, 3)} Wh` : "") +
+        `<br>idle baseline ${fmt(m.idle_w, 1)} W · ${fmt(m.secs_per_run, 0)} s per run`}`;
+      tip.style.left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8) + "px";
+      tip.style.top = e.clientY + 14 + "px";
+      tip.classList.add("on");
+    });
+    hit.addEventListener("pointerleave", () => tip.classList.remove("on"));
+    tbody.append(tr);
+  }
+
+  // Three facts from the best measured local model.
+  const best = models.find(m => !m.estimated && m.wh_per_solve != null);
+  if (best) {
+    const phoneWh = 15; // a typical phone battery, about 4,000 mAh at 3.85 V
+    $("#facts").innerHTML = `
+      <div class="fact"><b>${fmt(best.wh_per_solve)} Wh</b><span>per solved task on ${best.model}</span></div>
+      <div class="fact"><b>${Math.round(phoneWh / best.wh_per_solve)}</b><span>tasks per phone-battery's worth (≈ 15 Wh)</span></div>
+      <div class="fact"><b>${fmt(best.g_co2e_per_solve)} g</b><span>CO₂e per task, on the world's average grid</span></div>`;
+  }
+
+  // Every run.
+  const cols = [
+    ["task", "task"], ["model", "model"], ["rep", "#"], ["pass", "pass"], ["secs", "s"],
+    ["input_tokens", "in tok"], ["output_tokens", "out tok"], ["local_wh", "Mac Wh"],
+    ["system_wh", "system Wh"], ["idle_w", "idle W"], ["gpu_wh", "GPU Wh"], ["ane_wh", "ANE Wh"], ["remote_wh", "~remote Wh"],
+  ];
+  $("#runs thead").innerHTML = "<tr>" + cols.map(([, h]) => `<th>${h}</th>`).join("") + "</tr>";
+  $("#runs tbody").innerHTML = data.runs.map(r => `<tr class="${r.pass ? "" : "fail"}">` + cols.map(([k]) => {
+    const v = r[k];
+    return `<td>${v == null ? "—" : typeof v === "boolean" ? (v ? "✓" : "✗") : v}</td>`;
+  }).join("") + "</tr>").join("");
+  $("#runs-count").textContent = `${data.runs.length} runs`;
+})();
+</script>
+</body>
+</html>

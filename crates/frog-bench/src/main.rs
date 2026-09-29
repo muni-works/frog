@@ -3,6 +3,7 @@
 //! Every harness change should be measured, not guessed. Harness choices move results
 //! 40–139x in tokens and up to 30 points in score (arXiv 2607.22585, 2608.08654, 2609.17394).
 
+mod export;
 mod report;
 mod run;
 mod task;
@@ -57,6 +58,8 @@ enum Cmd {
     },
     /// Summarize a results file from an earlier run.
     Report { results: PathBuf },
+    /// Write a results file as the public JSON frog.eco/energy reads (no paths or output).
+    Export { results: PathBuf },
     /// List the tasks.
     List {
         #[arg(long, default_value = "bench/tasks")]
@@ -91,13 +94,11 @@ async fn main() -> Result<()> {
             .await
         }
         Cmd::Report { results } => {
-            let text = std::fs::read_to_string(&results)?;
-            let rows: Vec<RunResult> = text
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .map(serde_json::from_str)
-                .collect::<Result<_, _>>()?;
-            report::print(&rows);
+            report::print(&read_results(&results)?);
+            Ok(())
+        }
+        Cmd::Export { results } => {
+            println!("{}", export::json(&read_results(&results)?)?);
             Ok(())
         }
         Cmd::List { tasks } => {
@@ -107,6 +108,15 @@ async fn main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn read_results(path: &std::path::Path) -> Result<Vec<RunResult>> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?)
 }
 
 fn slug(s: &str) -> String {
@@ -220,25 +230,26 @@ async fn run_suite(
     let mut results = Vec::new();
     let mut i = 0;
     for model in &models {
-        // Idle with this model loaded and warm, so the baseline holds whatever it keeps resident.
-        let idle = match &meter {
-            Some(m) => {
-                let (_, profile) = cfg.resolve(Some(model))?;
-                frog_engine::sidecar::ensure(&profile).await?;
-                eprint!("measuring idle power for {model} … ");
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                let w = m.idle_watts(10.0).await;
-                eprintln!("{w:.1} W");
-                Some((m, w))
-            }
-            None => None,
-        };
+        // Load and warm the model first, so idle baselines hold whatever it keeps resident.
+        if meter.is_some() {
+            let (_, profile) = cfg.resolve(Some(model))?;
+            frog_engine::sidecar::ensure(&profile).await?;
+        }
         for &mode in &modes {
             for t in &tasks {
                 for rep in 1..=repeat {
                     i += 1;
                     let mode_name = format!("{mode:?}").to_lowercase();
                     eprint!("[{i}/{total}] {} · {model} · {mode_name} … ", t.name);
+                    // Idle just before this run: what the Mac draws drifts over a suite (other
+                    // apps, background work), and one baseline for an hour of runs drifts with it.
+                    let idle = match &meter {
+                        Some(m) => {
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            Some((m, m.idle_watts(5.0).await))
+                        }
+                        None => None,
+                    };
                     let workspace = out
                         .join("work")
                         .join(slug(&format!("{}-{model}-{mode_name}-{rep}", t.name)));

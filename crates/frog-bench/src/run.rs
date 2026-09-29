@@ -95,7 +95,7 @@ pub struct Run<'a> {
     pub rep: u32,
     pub workspace: PathBuf,
     pub sessions: &'a Path,
-    /// The meter and this model's idle power, when energy is being measured.
+    /// The meter and the Mac's idle power just before this run, when energy is being measured.
     pub energy: Option<(&'a Meter, f64)>,
 }
 
