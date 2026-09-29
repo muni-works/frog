@@ -81,7 +81,9 @@ struct EnergyCard: View {
                         detail: energy.idleW.map { "Measured, above the \(String(format: "%.1f", $0)) W it drew at rest" } ?? "Measured")
                 if let remote = energy.remoteWh {
                     PartRow(swatch: .hatched, title: "Data center", value: ModelStats.energy(remote, estimated: true),
-                            detail: "Estimated from \(usage.inputTokens.tokens) tokens in, \(usage.outputTokens.tokens) out")
+                            detail: "Estimated from \(usage.inputTokens.tokens) tokens in, \(usage.outputTokens.tokens) out. "
+                                + (energy.remoteBasis ?? "Assumes a frontier model like GPT-4o (Epoch AI)") + ".",
+                            source: energy.remoteSource.flatMap(URL.init(string:)))
                 }
             }
 
@@ -99,11 +101,21 @@ struct EnergyCard: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Link(destination: URL(string: "https://frog.eco/energy")!) {
-                Label("How it's measured", systemImage: "arrow.up.right")
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
+            HStack {
+                Link(destination: URL(string: "https://frog.eco/energy")!) {
+                    Label("How it's measured", systemImage: "arrow.up.right")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                Spacer()
+                SettingsLink {
+                    Label("History", systemImage: "chart.bar.xaxis")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .simultaneousGesture(TapGesture().onEnded { UserDefaults.standard.set("energy", forKey: "settingsTab") })
             }
         }
         .padding(16)
@@ -165,6 +177,11 @@ struct PriceCard: View {
                     PartRow(swatch: .soft, title: "Writing", value: Self.cents(outCost),
                             detail: "\(usage.outputTokens.tokens) tokens out at \(Self.perMillion(p.output)) per million")
                 }
+            }
+
+            if let p = prices, let spec = usage.model {
+                Divider()
+                PriceList(spec: spec, prices: p)
             }
 
             Divider()
@@ -260,11 +277,67 @@ private struct SwatchFill: View {
     }
 }
 
+/// A model's price list: its rates, what a million tokens is, and who lists them.
+private struct PriceList: View {
+    let spec: String
+    let prices: (input: Double, output: Double)
+    @Environment(\.models) private var models
+
+    /// Gateways price their own models; direct APIs are priced from models.dev's catalog.
+    private var source: (name: String, url: URL) {
+        switch spec.split(separator: "/").first {
+        case "openrouter": ("OpenRouter's model list", URL(string: "https://openrouter.ai/models")!)
+        case "vercel": ("Vercel AI Gateway's model list", URL(string: "https://vercel.com/ai-gateway/models")!)
+        default: ("models.dev", URL(string: "https://models.dev")!)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(ModelIdentity.of(spec, in: models).name).font(.callout.weight(.medium))
+                Spacer()
+                Text("per million tokens").font(.caption).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                Rate(label: "In", value: prices.input)
+                Rate(label: "Out", value: prices.output)
+            }
+            HStack(spacing: 4) {
+                Text("List prices from").foregroundStyle(.secondary)
+                Link(source.name, destination: source.url).foregroundStyle(Color.accentColor)
+            }
+            .font(.caption)
+            Text("A million tokens is about \(Int(1_000_000 * ModelStats.wordsPerToken / 1000))k words, roughly \(Int(1_000_000 * ModelStats.wordsPerToken / 90_000)) novels.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private struct Rate: View {
+        let label: String
+        let value: Double
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Text(value >= 10 ? "$\(Int(value.rounded()))" : String(format: "$%.2f", value))
+                    .font(.title3.weight(.semibold).monospacedDigit())
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 8))
+        }
+    }
+}
+
 private struct PartRow: View {
     let swatch: Swatch
     let title: String
     let value: String
     let detail: String
+    var source: URL? = nil
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -283,6 +356,13 @@ private struct PartRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let source {
+                    Link(destination: source) {
+                        Text("Source: \(source.host()?.replacingOccurrences(of: "www.", with: "") ?? source.absoluteString)")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Color.accentColor)
+                }
             }
         }
     }

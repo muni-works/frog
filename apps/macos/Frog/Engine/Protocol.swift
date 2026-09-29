@@ -156,6 +156,9 @@ struct TurnEnergy: Decodable, Sendable {
     var remoteWh: Double?
     /// The Mac's power at rest that was subtracted, in watts.
     var idleW: Double?
+    /// How `remoteWh` was estimated for this model, and where its numbers come from.
+    var remoteBasis: String?
+    var remoteSource: String?
 
     var totalWh: Double { localWh + (remoteWh ?? 0) }
     var estimated: Bool { remoteWh != nil }

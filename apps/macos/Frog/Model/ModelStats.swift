@@ -28,6 +28,11 @@ final class ModelStats {
         var spend: [String: Double] = [:]
         /// Prices learned from the catalog, dollars per million tokens: spec → [in, out].
         var prices: [String: [Double]] = [:]
+        /// Watt-hours per model per hour (yyyy-MM-dd HH): spec → hour → [this Mac, data center].
+        /// Optional so defaults saved before it existed still decode.
+        var energy: [String: [String: [Double]]]?
+        /// How a cloud model's data center energy is estimated: spec → [basis, source].
+        var estimates: [String: [String]]?
     }
 
     private var store: Store
@@ -65,7 +70,93 @@ final class ModelStats {
         if let c = cost(of: usage, spec: spec), c > 0 {
             store.spend[Self.day(date), default: 0] += c
         }
+        recordEnergy(usage, at: date)
         save()
+    }
+
+    private func recordEnergy(_ usage: TurnUsage, at date: Date) {
+        if let spec = usage.model, let e = usage.energy {
+            var byHour = store.energy?[spec] ?? [:]
+            let old = byHour[Self.hour(date)] ?? [0, 0]
+            byHour[Self.hour(date)] = [old[0] + max(e.localWh, 0), old[1] + (e.remoteWh ?? 0)]
+            // Ten days is all the charts show.
+            let cutoff = Self.hour(date.addingTimeInterval(-10 * 86_400))
+            store.energy = (store.energy ?? [:]).merging([spec: byHour.filter { $0.key >= cutoff }]) { $1 }
+            if let basis = e.remoteBasis, let source = e.remoteSource {
+                store.estimates = (store.estimates ?? [:]).merging([spec: [basis, source]]) { $1 }
+            }
+        }
+    }
+
+    // MARK: Energy history
+
+    /// One bar of the energy chart: a model's watt-hours in an hour or a day.
+    struct EnergyBucket: Identifiable, Hashable {
+        let spec: String
+        let start: Date
+        let mac: Double
+        let dataCenter: Double
+        var id: String { "\(spec) \(start.timeIntervalSince1970)" }
+    }
+
+    /// Models with any energy on record, most used first.
+    var energyModels: [String] {
+        (store.energy ?? [:]).map { ($0.key, $0.value.values.reduce(0) { $0 + $1[0] + $1[1] }) }
+            .sorted { $0.1 > $1.1 }.map(\.0)
+    }
+
+    /// Bars for the last 24 hours (by hour) or 10 days (by day), per model, optionally one model.
+    func energyBuckets(days: Bool, spec only: String? = nil, now: Date = .now) -> [EnergyBucket] {
+        let cal = Calendar.current
+        let from = days ? cal.startOfDay(for: now.addingTimeInterval(-9 * 86_400)) : now.addingTimeInterval(-24 * 3600)
+        var out: [String: EnergyBucket] = [:]
+        for (spec, byHour) in store.energy ?? [:] where only == nil || only == spec {
+            for (key, wh) in byHour {
+                guard let at = Self.hourFormatter.date(from: key), at >= cal.dateInterval(of: .hour, for: from)!.start else { continue }
+                let start = days ? cal.startOfDay(for: at) : at
+                let id = "\(spec) \(start.timeIntervalSince1970)"
+                let prev = out[id]
+                out[id] = EnergyBucket(spec: spec, start: start, mac: (prev?.mac ?? 0) + wh[0], dataCenter: (prev?.dataCenter ?? 0) + wh[1])
+            }
+        }
+        return out.values.sorted { $0.start < $1.start }
+    }
+
+    /// Fill the energy history from session logs (the last ten days), once: turns measured before
+    /// the history existed, or while this copy of the app wasn't running.
+    func backfillEnergy(from dir: URL = Frog.sessions) async {
+        let flag = "energyBackfilled"
+        guard !defaults.bool(forKey: flag) else { return }
+        defaults.set(true, forKey: flag)
+        let cutoff = Date.now.addingTimeInterval(-10 * 86_400)
+        let found: [(TurnUsage, Date)] = await Task.detached {
+            struct Record: Decodable { let env: Envelope? }
+            let fm = FileManager.default
+            let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            var out: [(TurnUsage, Date)] = []
+            for f in files where f.pathExtension == "jsonl" {
+                let modified = (try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                guard modified >= cutoff, let text = try? String(contentsOf: f, encoding: .utf8) else { continue }
+                for line in text.split(separator: "\n") where line.contains("\"turn_ended\"") && line.contains("\"energy\"") {
+                    guard let env = (try? JSONDecoder.frog.decode(Record.self, from: Data(line.utf8)))?.env,
+                          case .turnEnded(_, _, let usage) = env.event else { continue }
+                    let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
+                    if at >= cutoff { out.append((usage, at)) }
+                }
+            }
+            return out
+        }.value
+        // The logs hold every turn of the last ten days, including any recorded live: rebuild
+        // from them rather than add to what's there.
+        store.energy = [:]
+        for (usage, at) in found { recordEnergy(usage, at: at) }
+        save()
+    }
+
+    /// How a cloud model's data center energy is estimated, and the source, once a turn said so.
+    func estimate(_ spec: String) -> (basis: String, source: URL?)? {
+        guard let e = store.estimates?[spec], e.count == 2 else { return nil }
+        return (e[0], URL(string: e[1]))
     }
 
     /// A model's list price, dollars per million tokens in and out.
@@ -122,6 +213,15 @@ final class ModelStats {
         let s = v.sorted()
         return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
     }
+
+    private static let hourFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH"
+        return f
+    }()
+
+    private static func hour(_ date: Date) -> String { hourFormatter.string(from: date) }
 
     private static func day(_ date: Date) -> String {
         let f = DateFormatter()

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// ⌘, : General, Models, Permissions, Appearance, Shortcuts.
+/// ⌘, : General, Models, Energy, Permissions, MCP, Appearance, Shortcuts.
 struct SettingsView: View {
     /// The open tab; "Manage models…" in the model picker sets it to "models".
     @AppStorage("settingsTab") private var tab = "general"
@@ -9,6 +9,7 @@ struct SettingsView: View {
         TabView(selection: $tab) {
             Tab("General", systemImage: "gearshape", value: "general") { GeneralSettings() }
             Tab("Models", systemImage: "cpu", value: "models") { ModelSettings() }
+            Tab("Energy", systemImage: "leaf", value: "energy") { EnergySettings() }
             Tab("Permissions", systemImage: "hand.raised", value: "permissions") { PermissionSettings() }
             Tab("MCP", systemImage: "puzzlepiece.extension", value: "mcp") { MCPSettings() }
             Tab("Appearance", systemImage: "paintbrush", value: "appearance") { AppearanceSettings() }
