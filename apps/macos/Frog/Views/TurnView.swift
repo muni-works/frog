@@ -18,14 +18,25 @@ struct TurnView: View {
     /// The pointer is over what you asked (its actions show) rather than elsewhere in the turn.
     @State private var hoveringPrompt = false
     @State private var confirmRewind = false
-    @AppStorage("showThinking") private var showThinking = true
+    @AppStorage(Verbosity.key) private var defaultVerbosity = Verbosity.standard.rawValue
     @AppStorage("density") private var density = Density.comfortable.rawValue
 
     private var running: Bool { !turn.finished && conversation.busy }
 
+    private var verbosity: Verbosity {
+        VerbosityOverrides.shared.level(
+            for: conversation.sessionID, default: Verbosity(rawValue: defaultVerbosity) ?? .normal)
+    }
+
+    /// The thought streaming now, previewed beside "Thinking…" (verbose shows it in full, below).
+    private var thinking: String? {
+        guard verbosity == .normal, let last = turn.items.last, last.kind == .reasoning, !last.done else { return nil }
+        return last.text
+    }
+
     var body: some View {
         let parts = TurnParts(turn)
-        let flow = TurnFlow(turn.items, showThinking: showThinking)
+        let flow = TurnFlow(turn.items, showThinking: verbosity.showsThinking)
         VStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 8 : 14) {
             if !turn.input.isEmpty {
                 VStack(alignment: .trailing, spacing: 2) {
@@ -46,7 +57,7 @@ struct TurnView: View {
             ForEach(flow.segments) { segment in
                 switch segment {
                 case .activity(let group):
-                    ActivityLine(group: group, conversation: conversation, live: running)
+                    ActivityLine(group: group, conversation: conversation, live: running, verbosity: verbosity)
                 case .text(let item), .visual(let item), .notice(let item):
                     ItemView(item: item, conversation: conversation)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -56,7 +67,7 @@ struct TurnView: View {
                 PlanView(todos: parts.plan)
             }
             if running, let status = liveStatus {
-                LiveStatus(text: status.text, since: status.since)
+                LiveStatus(text: status.text, since: status.since, preview: thinking)
                     .transition(.opacity)
             }
             if !parts.changes.isEmpty {

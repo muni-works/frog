@@ -580,7 +580,7 @@ enum Density: String, CaseIterable, Identifiable {
 
 private struct AppearanceSettings: View {
     @AppStorage("density") private var density = Density.comfortable.rawValue
-    @AppStorage("showThinking") private var showThinking = true
+    @AppStorage(Verbosity.key) private var verbosity = Verbosity.standard.rawValue
     @AppStorage("playfulFrog") private var playfulFrog = true
     @AppStorage("playfulSounds") private var playfulSounds = false
 
@@ -590,7 +590,14 @@ private struct AppearanceSettings: View {
                 ForEach(Density.allCases) { Text($0.label).tag($0.rawValue) }
             }
             .pickerStyle(.segmented)
-            Toggle("Show the model's thinking", isOn: $showThinking)
+            Picker("Detail", selection: $verbosity) {
+                ForEach(Verbosity.allCases) { Text($0.label).tag($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            .help("How much of the model's work a conversation shows. Session › Detail changes it for one conversation.")
+            Text((Verbosity(rawValue: verbosity) ?? .normal).detail)
+                .font(.callout)
+                .foregroundStyle(.secondary)
             Section {
                 Toggle("Playful frog", isOn: $playfulFrog)
                     .help("The frog blinks, reads and hops along with the conversation.")

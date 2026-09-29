@@ -30,6 +30,15 @@ struct FrogCommands: Commands {
 
     private var conversation: Conversation? { window?.workspace.conversation }
 
+    /// This conversation's detail level: its own, or nil for the app's default.
+    private var detail: Binding<Verbosity?> {
+        Binding(
+            get: { conversation?.sessionID.flatMap { VerbosityOverrides.shared.bySession[$0] } },
+            set: { level in
+                if let id = conversation?.sessionID { VerbosityOverrides.shared.set(level, for: id) }
+            })
+    }
+
     /// The latest finished turn that changed files: what "Undo Last Turn" reverts.
     private var undoableTurn: TurnState? {
         guard let c = conversation, !c.busy else { return nil }
@@ -129,6 +138,11 @@ struct FrogCommands: Commands {
             Button("Compact Conversation") { conversation?.compact() }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
                 .disabled(conversation.map { $0.busy || $0.turns.isEmpty } ?? true)
+            Picker("Detail", selection: detail) {
+                Text("Default (\(Verbosity.standard.label))").tag(Verbosity?.none)
+                ForEach(Verbosity.allCases) { Text($0.label).tag(Optional($0)) }
+            }
+            .disabled(conversation?.sessionID == nil)
             Divider()
             Button("Previous Turn") { step(-1) }
                 .keyboardShortcut(.upArrow, modifiers: [.command, .option])

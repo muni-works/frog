@@ -7,8 +7,29 @@ struct ActivityLine: View {
     let conversation: Conversation
     /// The turn is running: a long thought streams below the line, and a subagent shows live.
     var live = false
+    var verbosity: Verbosity = .normal
     /// Opened. Not private so snapshots can render it open.
-    @State var expanded = false
+    @State var expanded: Bool
+
+    init(group: ActivityGroup, conversation: Conversation, live: Bool = false, verbosity: Verbosity = .normal, expanded: Bool? = nil) {
+        self.group = group
+        self.conversation = conversation
+        self.live = live
+        self.verbosity = verbosity
+        // Verbose shows every step; otherwise a line opens on click.
+        _expanded = State(initialValue: expanded ?? (verbosity == .verbose))
+    }
+
+    /// A long thought on a line of its own ("Thought for 12s"): it gets a gist.
+    private var thought: ItemState? {
+        guard group.steps.count == 1, let t = group.steps.first, t.kind == .reasoning, t.done,
+              !ActivityGroup.isShort(t) else { return nil }
+        return t
+    }
+
+    private var gist: String? {
+        thought.flatMap { Gists.shared.gist(session: conversation.sessionID, item: $0.id) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -27,13 +48,19 @@ struct ActivityLine: View {
             }
         }
         .animation(.snappy(duration: 0.25), value: expanded)
+        // Asked for once the line shows (the lazy transcript only builds what's near the view).
+        .task(id: thought?.id) {
+            guard let t = thought else { return }
+            Gists.shared.request(session: conversation.sessionID, item: t.id, thought: t.text)
+        }
+        .onChange(of: verbosity) { _, v in expanded = v == .verbose }
     }
 
     private var line: some View {
         Button {
             withAnimation(.snappy(duration: 0.25)) { expanded.toggle() }
         } label: {
-            Text("\(ActivityText(pieces: group.summary).text)  \(chevron)")
+            Text("\(ActivityText(pieces: group.summary).text)\(gistText)  \(chevron)")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -42,6 +69,12 @@ struct ActivityLine: View {
         .buttonStyle(.plain)
         .pointerStyle(.link)
         .help(expanded ? "Hide steps" : "Show steps")
+    }
+
+    /// " · Decided to…", quieter than the line it follows.
+    private var gistText: Text {
+        guard let gist else { return Text(verbatim: "") }
+        return Text(verbatim: " · \(gist)").foregroundStyle(.tertiary)
     }
 
     private var chevron: Text {
@@ -54,7 +87,10 @@ struct ActivityLine: View {
     private func liveStep(_ item: ItemState) -> some View {
         switch item.kind {
         case .reasoning where !ActivityGroup.isShort(item):
-            LiveThought(text: item.text)
+            // Normal previews it beside "Thinking…" (see `LiveStatus`); verbose shows it here.
+            if verbosity == .verbose {
+                LiveThought(text: item.text)
+            }
         case .tool("Task", let arg):
             // A subagent works for a while; show it working, with its Stop button.
             SubagentCard(arg: arg, item: item, conversation: conversation)
@@ -98,6 +134,51 @@ struct LiveThought: View {
 
     private var tail: String {
         text.split(separator: "\n", omittingEmptySubsequences: true).suffix(6).joined(separator: "\n")
+    }
+}
+
+/// A thought as it streams, in one line beside "Thinking…": the sentence being written, replaced
+/// by the next. Enough to see what it's working on, without a block of text growing and
+/// shrinking.
+struct ThoughtSubtitle: View {
+    let text: String
+
+    var body: some View {
+        let (index, sentence) = Self.current(text)
+        Text(sentence)
+            .font(.callout)
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            // The newest words stay in view as the sentence outgrows the line.
+            .truncationMode(.head)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .id(index)
+            .transition(.opacity)
+            .animation(.easeOut(duration: 0.2), value: index)
+    }
+
+    /// The sentence being written and its position, so a new sentence fades in. One that's
+    /// barely begun shows the one before it until it has a few words.
+    static func current(_ text: String) -> (Int, String) {
+        var sentences: [String] = []
+        var sentence = ""
+        for ch in text {
+            if ch == "\n" {
+                if !sentence.trimmingCharacters(in: .whitespaces).isEmpty { sentences.append(sentence) }
+                sentence = ""
+                continue
+            }
+            sentence.append(ch)
+            if ".?!".contains(ch) {
+                sentences.append(sentence)
+                sentence = ""
+            }
+        }
+        let tail = sentence.trimmingCharacters(in: .whitespaces)
+        if tail.count >= 24 || sentences.isEmpty {
+            return (sentences.count, tail)
+        }
+        return (sentences.count - 1, sentences[sentences.count - 1].trimmingCharacters(in: .whitespaces))
     }
 }
 
@@ -247,6 +328,8 @@ struct LiveStatus: View {
     let text: String
     /// When the current step started, for "Running the tests… 12s".
     let since: Date?
+    /// A thought as it streams: its current sentence, after "Thinking… 4s".
+    var preview: String?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -255,6 +338,10 @@ struct LiveStatus: View {
                 Text(text + elapsed(at: ctx.date))
                     .monospacedDigit()
                     .contentTransition(.opacity)
+            }
+            .fixedSize()
+            if let preview, !ThoughtSubtitle.current(preview).1.isEmpty {
+                ThoughtSubtitle(text: preview)
             }
         }
         .foregroundStyle(.secondary)
