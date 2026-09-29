@@ -203,98 +203,35 @@ struct MarkdownView: View {
     @State private var cache = MarkdownCache()
 
     var body: some View {
+        // One selectable text view per stretch of the message; a diagram is a card of its own.
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(cache.blocks(for: text).enumerated()), id: \.offset) { _, block in
-                blockView(block)
+            ForEach(Array(Self.segments(cache.blocks(for: text)).enumerated()), id: \.offset) { _, segment in
+                switch segment {
+                case .text(let blocks): MessageText(blocks: blocks)
+                case .mermaid(let code): MermaidBlock(code: code)
+                }
             }
         }
-        .textSelection(.enabled)
     }
 
-    @ViewBuilder
-    private func blockView(_ block: MarkdownBlock) -> some View {
-        switch block {
-        case .paragraph(let s):
-            Text(Markdown.inline(s))
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-        case .heading(let level, let s):
-            Text(Markdown.inline(s))
-                .font(level == 1 ? .title2 : level == 2 ? .title3 : .headline)
-                .fontWeight(.semibold)
-                .padding(.top, 4)
-        case .code(let lang, let s):
-            if lang.lowercased() == "mermaid" {
-                MermaidBlock(code: s)
+    enum Segment {
+        case text([MarkdownBlock])
+        case mermaid(String)
+    }
+
+    static func segments(_ blocks: [MarkdownBlock]) -> [Segment] {
+        var out: [Segment] = []
+        var run: [MarkdownBlock] = []
+        for block in blocks {
+            if case .code(let lang, let code) = block, lang.lowercased() == "mermaid" {
+                if !run.isEmpty { out.append(.text(run)); run = [] }
+                out.append(.mermaid(code))
             } else {
-                CodeBlock(language: lang, code: s)
+                run.append(block)
             }
-        case .bullet(let indent, let marker, let s):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(marker).foregroundStyle(.secondary).monospacedDigit()
-                Text(Markdown.inline(s)).fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.leading, CGFloat(indent) * 16)
-        case .quote(let s):
-            Text(Markdown.inline(s))
-                .foregroundStyle(.secondary)
-                .padding(.leading, 12)
-                .overlay(alignment: .leading) {
-                    Capsule().fill(.quaternary).frame(width: 3)
-                }
-        case .rule:
-            Divider()
-        case .table(let header, let align, let rows):
-            MarkdownTable(header: header, align: align, rows: rows)
         }
-    }
-}
-
-/// A pipe table as a grid: a bold header, hairlines between rows, columns sized to content.
-struct MarkdownTable: View {
-    let header: [String]
-    let align: [TableAlign]
-    let rows: [[String]]
-
-    private var columns: Int { max(header.count, rows.map(\.count).max() ?? 0) }
-
-    var body: some View {
-        ScrollView(.horizontal) {
-            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
-                GridRow {
-                    ForEach(0..<columns, id: \.self) { c in
-                        cell(header[safe: c] ?? "", column: c)
-                            .fontWeight(.semibold)
-                    }
-                }
-                .background(Color.primary.opacity(0.05))
-                ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
-                    Divider().gridCellColumns(columns)
-                    GridRow {
-                        ForEach(0..<columns, id: \.self) { c in
-                            cell(row[safe: c] ?? "", column: c)
-                        }
-                    }
-                }
-            }
-            .padding(1)
-        }
-        .scrollIndicators(.automatic)
-        .background(Color.primary.opacity(0.02), in: .rect(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
-        .padding(.vertical, 2)
-    }
-
-    private func cell(_ text: String, column: Int) -> some View {
-        let a = align[safe: column] ?? .leading
-        return Text(Markdown.inline(text))
-            .font(.callout)
-            .multilineTextAlignment(a == .center ? .center : a == .trailing ? .trailing : .leading)
-            .frame(maxWidth: 360, alignment: a == .center ? .center : a == .trailing ? .trailing : .leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .gridColumnAlignment(a == .center ? .center : a == .trailing ? .trailing : .leading)
+        if !run.isEmpty { out.append(.text(run)) }
+        return out
     }
 }
 

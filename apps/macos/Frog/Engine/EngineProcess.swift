@@ -9,6 +9,24 @@ enum Frog {
         return dir
     }()
 
+    /// Where the engine keeps session logs.
+    static let sessions = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/share/frog/sessions")
+
+    /// Returns once no engine holds session `id`'s log (a stopped engine takes a moment to exit),
+    /// or after `limit`. The engine holds an exclusive `flock` on the log while it's open.
+    static func released(session id: String, within limit: Duration) async {
+        let path = sessions.appending(path: "\(id).jsonl").path
+        let deadline = ContinuousClock.now + limit
+        while ContinuousClock.now < deadline {
+            let fd = open(path, O_WRONLY | O_APPEND)
+            guard fd >= 0 else { return }
+            let held = flock(fd, LOCK_EX | LOCK_NB) != 0
+            close(fd)
+            if !held { return }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
     /// Whether `url` is the chat folder (compared by path: a restored URL may carry a trailing
     /// slash or a symlinked prefix).
     static func isChat(_ url: URL) -> Bool {
@@ -27,7 +45,7 @@ enum Frog {
         }
         let home = fm.homeDirectoryForCurrentUser
         candidates += [
-            home.appending(path: "Developer/kiln/target/release/frog"),
+            home.appending(path: "Developer/frog/target/release/frog"),
             home.appending(path: ".cargo/bin/frog"),
             URL(fileURLWithPath: "/opt/homebrew/bin/frog"),
             URL(fileURLWithPath: "/usr/local/bin/frog"),

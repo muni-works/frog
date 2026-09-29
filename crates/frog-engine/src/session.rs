@@ -160,6 +160,23 @@ impl Log {
         Ok(())
     }
 
+    /// Replace the header (the file's first line), e.g. when the session moves to another
+    /// folder. The file is rewritten beside the old one and renamed over it, then reopened and
+    /// locked again; the old handle's lock goes with it.
+    pub fn rewrite_header(&mut self, dir: &Path, header: &Header) -> Result<()> {
+        let target = path(dir, &header.id);
+        let text = std::fs::read_to_string(&target)?;
+        let rest = text.split_once('\n').map(|(_, rest)| rest).unwrap_or("");
+        let mut line = serde_json::to_string(&Record::Header(header.clone()))?;
+        line.push('\n');
+        let tmp = target.with_extension("jsonl.tmp");
+        std::fs::write(&tmp, line + rest)?;
+        std::fs::rename(&tmp, &target)?;
+        let file = OpenOptions::new().append(true).open(&target)?;
+        *self = Self::locked(file, &header.id)?;
+        Ok(())
+    }
+
     pub fn sync(&self) -> Result<()> {
         self.file.sync_data()?;
         Ok(())

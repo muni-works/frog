@@ -214,6 +214,9 @@ enum ActivityWords {
         case "Docs": return [.text("read the docs")]
         case "Skill": return [.text(args.count == 1 && !args[0].isEmpty ? "used the \(args[0]) skill" : "used \(count(calls.count, "skill"))")]
         case "Recall": return [.text("looked through past sessions")]
+        case "UseFolder":
+            guard let to = calls.last(where: { $0.result?.outcome == .ok })?.arg else { return [.text("asked to use a folder")] }
+            return [.text("moved to \((to as NSString).lastPathComponent)")]
         case "McpTools": return [.text("looked up tools")]
         case let k where k.hasPrefix("mcp:"):
             let server = String(k.dropFirst(4))
@@ -248,6 +251,7 @@ enum ActivityWords {
             case "Docs": return arg.isEmpty ? "Read the docs" : "Read the docs for \(arg)"
             case "Skill": return "Used the \(arg) skill"
             case "Recall": return arg.isEmpty ? "Looked through past sessions" : "Looked through past sessions for “\(arg)”"
+            case "UseFolder": return "Moved to \(arg.isEmpty ? "a folder" : arg)"
             default: return arg.isEmpty ? "Used \(ToolIcon.title(name))" : "Used \(ToolIcon.title(name)) \(arg)"
             }
         }
@@ -273,6 +277,7 @@ enum ActivityWords {
             case "CodeMap": return "Mapping the code…"
             case "Docs": return "Reading the docs…"
             case "Recall": return "Looking through past sessions…"
+            case "UseFolder": return "Moving to a folder…"
             default: return "Using \(ToolIcon.title(name))…"
             }
         }
