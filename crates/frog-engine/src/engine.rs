@@ -764,7 +764,7 @@ impl Agent {
         let m = self.meter.as_ref()?;
         let (mark, idle) = self.energy_mark.as_ref()?;
         let reading = m.since(mark);
-        let hosted = crate::harness::is_hosted(&self.profile);
+        let hosted = crate::harness::is_cloud(&self.profile);
         Some(crate::protocol::TurnEnergy {
             local_wh: reading.above_idle_wh((*idle)?),
             remote_wh: hosted.then(|| {
@@ -2174,7 +2174,7 @@ Don't repeat it. Change the arguments or try a different approach.",
         };
         // A local server fills whatever's left of the window unless told otherwise, and
         // overflows it; hosted APIs have their own output limits.
-        let max_tokens = if crate::harness::is_hosted(&self.profile) {
+        let max_tokens = if crate::harness::is_cloud(&self.profile) {
             self.profile.max_tokens
         } else {
             let prompt = self

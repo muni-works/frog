@@ -87,6 +87,17 @@ pub fn save(p: &Profile, caps: &Caps) {
     }
 }
 
+/// A model that runs in someone's data center: a hosted API, or one reached through a cloud
+/// gateway (OpenRouter, Vercel AI Gateway). Its window and output limits are the API's, and its
+/// energy can only be estimated. A server of your own isn't one: its window is real.
+pub fn is_cloud(p: &Profile) -> bool {
+    let url = p.base_url.as_deref().map(|u| u.trim_end_matches('/'));
+    is_hosted(p)
+        || crate::providers::PRESETS
+            .iter()
+            .any(|pre| !pre.local && url == Some(pre.base_url.trim_end_matches('/')))
+}
+
 /// Hosted frontier APIs don't need probing.
 pub fn is_hosted(p: &Profile) -> bool {
     p.provider == ProviderKind::Anthropic
@@ -276,6 +287,21 @@ fn answered_directly(r: &Response) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gateways_are_cloud_and_your_own_servers_are_not() {
+        let cfg = crate::config::Config::default();
+        let cloud = |spec: &str| is_cloud(&cfg.resolve(Some(spec)).unwrap().1);
+        assert!(cloud("anthropic/claude-sonnet-5"));
+        assert!(cloud("vercel/anthropic/claude-opus-5.5-fast"));
+        assert!(cloud("openrouter/qwen/qwen3-coder"));
+        assert!(!cloud("ollama/qwen3:4b"));
+        assert!(!cloud("lmstudio/qwen3-coder-30b"));
+        assert!(!cloud("tang/mlx-community/Qwen3-4B-4bit"));
+        let mut mine = Profile::new(ProviderKind::Openai, "qwen3");
+        mine.base_url = Some("http://mew.local:8000/v1".into());
+        assert!(!is_cloud(&mine));
+    }
 
     fn local(model: &str) -> Profile {
         Profile::new(ProviderKind::Ollama, model)

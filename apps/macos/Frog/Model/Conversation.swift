@@ -193,7 +193,9 @@ final class Conversation {
         }
         var args = arguments
         if let model { args += ["-m", model] }
-        if UserDefaults.standard.bool(forKey: ModelStats.energyKey) { args.append("--energy") }
+        // Always measured (a sensor read ten times a second), so "Show energy use" shows every
+        // turn's figure the moment it's on, earlier turns included.
+        args.append("--energy")
         let engine = EngineProcess(binary: binary, cwd: folder, arguments: args)
         engine.onEvent = { [weak self] env in self?.handle(env) }
         do {

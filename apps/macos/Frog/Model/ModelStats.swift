@@ -134,8 +134,8 @@ final class ModelStats {
 
     // MARK: Energy
 
-    /// Show each turn's watt-hours (Settings › Appearance). Engines started after it's turned on
-    /// measure; it's off by default.
+    /// Show each turn's watt-hours (Settings › Appearance). Engines always measure; this only
+    /// shows it, and it's off by default.
     nonisolated static let energyKey = "showEnergy"
 
     /// "0.4 Wh", "0.04 Wh", "<0.01 Wh", "12 Wh"; "~" when part of it is a cloud estimate.

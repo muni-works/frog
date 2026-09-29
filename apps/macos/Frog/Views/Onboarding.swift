@@ -289,7 +289,10 @@ struct BiggerModelLine: View {
     private var onDevices: ModelIdentity {
         let ready = workspace.models.map(ModelIdentity.init)
             .filter { $0.state.isReady && !$0.place.isCloud && $0.place != .apple && $0.spec != current?.spec }
-        if let m = ready.first { return m }
+        // frog's own engine before a server you'd have to run.
+        if let m = ready.enumerated().min(by: { ($0.element.runtimeRank, $0.offset) < ($1.element.runtimeRank, $1.offset) })?.element {
+            return m
+        }
         return ModelIdentity(SuggestedModel.forThisMac)
     }
 

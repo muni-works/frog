@@ -103,7 +103,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
     task::seed(r.task, &r.workspace)?;
     let (profile_name, mut profile) = r.cfg.resolve(Some(r.model))?;
     profile.tool_mode = r.mode;
-    let hosted = harness::is_hosted(&profile);
+    let hosted = harness::is_cloud(&profile);
     let mut h = frog_engine::spawn(Options {
         cfg: r.cfg.clone(),
         profile_name,

@@ -236,7 +236,8 @@ impl Config {
             .map(String::from)
             .or_else(|| std::env::var("FROG_MODEL").ok())
             .or_else(|| self.default_model.clone())
-            .unwrap_or_else(|| "ollama/qwen3:4b".into());
+            // frog's own engine first: it needs nothing else installed.
+            .unwrap_or_else(|| "tang/mlx-community/Qwen3-4B-4bit".into());
         if let Some(p) = self.models.get(&spec) {
             return Ok((spec, p.clone()));
         }

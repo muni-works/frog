@@ -607,7 +607,7 @@ private struct AppearanceSettings: View {
             }
             Section {
                 Toggle("Show energy use", isOn: $showEnergy)
-                    .help("Each turn's watt-hours, from this Mac's power sensor, above what it drew at rest. Cloud models add an estimate for their data center. Applies to conversations opened after you turn it on. frog.eco/energy has the method.")
+                    .help("Each turn's watt-hours, from this Mac's power sensor, above what it drew at rest. Cloud models add an estimate for their data center. frog.eco/energy has the method.")
             }
         }
         .formStyle(.grouped)
