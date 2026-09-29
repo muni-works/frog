@@ -1087,7 +1087,7 @@ impl Agent {
             let budget = self.think_budget(think);
             let started = Instant::now();
             let (resp, streamed) = self
-                .call("thinking", &self.messages, false, think, budget)
+                .call("thinking", &self.messages, false, true, think, budget)
                 .await?;
             self.last_call = started.elapsed();
             self.usage = resp.usage;
@@ -2094,41 +2094,60 @@ Don't repeat it. Change the arguments or try a different approach.",
     }
 
     /// One model request. Streams item events (unless `quiet`) and retries transient errors
-    /// that happen before anything streamed.
+    /// that happen before anything streamed. Without `offer_tools` the model can only answer:
+    /// in `json` mode a summary request that offers tools gets a tool call back, not a summary.
     async fn call(
         &self,
         label: &str,
         messages: &[Message],
         quiet: bool,
+        offer_tools: bool,
         think: Option<bool>,
         think_budget: Option<u32>,
     ) -> Result<(Response, Streamed)> {
         let json_mode = self.tool_mode == ToolMode::Json;
         let with_images = self.prepare_images(messages);
         let messages = with_images.as_deref().unwrap_or(messages);
+        let specs = if offer_tools {
+            &self.specs[..]
+        } else {
+            &[][..]
+        };
         let converted;
         let schema;
         let (system, messages, tools, format) = match self.tool_mode {
             ToolMode::Text => {
                 converted = prompt::to_text_mode(messages);
-                let system = format!("{}{}", self.system, prompt::text_tools_prompt(&self.specs));
+                let system = format!("{}{}", self.system, prompt::text_tools_prompt(specs));
                 (system, &converted[..], &[][..], None)
             }
             ToolMode::Json => {
                 converted = prompt::to_json_mode(messages);
-                schema = prompt::json_schema(&self.specs);
-                let system = format!("{}{}", self.system, prompt::json_tools_prompt(&self.specs));
+                schema = prompt::json_schema(specs);
+                let system = format!("{}{}", self.system, prompt::json_tools_prompt(specs));
                 (system, &converted[..], &[][..], Some(&schema))
             }
-            ToolMode::Native | ToolMode::Auto => {
-                (self.system.clone(), messages, &self.specs[..], None)
-            }
+            ToolMode::Native | ToolMode::Auto => (self.system.clone(), messages, specs, None),
+        };
+        // A local server fills whatever's left of the window unless told otherwise, and
+        // overflows it; hosted APIs have their own output limits.
+        let max_tokens = if crate::harness::is_hosted(&self.profile) {
+            self.profile.max_tokens
+        } else {
+            let prompt = self
+                .est
+                .tokens(fixed_chars(&system, tools) + context::history_chars(messages));
+            Some(context::reply_budget(
+                self.window,
+                prompt,
+                self.profile.max_tokens,
+            ))
         };
         let req = Request {
             system: &system,
             messages,
             tools,
-            max_tokens: self.profile.max_tokens,
+            max_tokens,
             format,
             think,
             think_budget,
@@ -2467,7 +2486,9 @@ Don't repeat it. Change the arguments or try a different approach.",
         }
         // A summary needs no reasoning.
         let think = self.think_switch(false);
-        let (resp, streamed) = self.call("compacting", &msgs, true, think, None).await?;
+        let (resp, streamed) = self
+            .call("compacting", &msgs, true, false, think, None)
+            .await?;
         self.count_call(resp.usage, &streamed, true);
         let summary = resp.message.text();
         if summary.trim().is_empty() {

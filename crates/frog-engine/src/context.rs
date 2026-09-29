@@ -21,6 +21,22 @@ pub const COMPACT_AT: f64 = 0.80;
 pub const KEEP_RECENT: usize = 4;
 /// Results smaller than this aren't worth pruning.
 const MIN_PRUNE_CHARS: usize = 600;
+/// The share of the window a local model's reply leaves unused, for the prompt estimate being
+/// off (it's calibrated from counts a server may itself estimate).
+pub const REPLY_MARGIN: f64 = 0.10;
+/// The shortest reply worth asking for, even when the prompt has nearly filled the window.
+pub const MIN_REPLY: u64 = 256;
+
+/// How long a reply may be. The window holds the reply as well as the prompt, and a server told
+/// no limit lets a rambling reply run until the window overflows (Apple's on-device model fails
+/// at 8193 of 8192 tokens). What's left of `window` after `prompt`, less [`REPLY_MARGIN`] of the
+/// window, at least [`MIN_REPLY`], and never more than a configured `cap`.
+pub fn reply_budget(window: u64, prompt: u64, cap: Option<u32>) -> u32 {
+    let margin = (window as f64 * REPLY_MARGIN) as u64;
+    let room = window.saturating_sub(prompt + margin).max(MIN_REPLY);
+    let room = u32::try_from(room).unwrap_or(u32::MAX);
+    cap.map_or(room, |c| c.min(room))
+}
 
 /// Chars→tokens, calibrated against what the provider reports.
 #[derive(Clone, Copy, Debug)]
@@ -217,6 +233,24 @@ pub fn pinned_inputs(inputs: &[String], cap: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_reply_fits_what_the_prompt_leaves_of_an_8k_window() {
+        // Apple's on-device model: 8192 tokens for prompt and reply together.
+        let window = 8192;
+        // A prompt right at the compaction line leaves ~800 for the reply, and prompt + reply
+        // stays a tenth under the window.
+        let prompt = (window as f64 * COMPACT_AT) as u64;
+        let reply = reply_budget(window, prompt, None) as u64;
+        assert!(reply >= MIN_REPLY);
+        assert!(prompt + reply <= window - (window as f64 * REPLY_MARGIN) as u64);
+        // A configured limit still wins when it's tighter.
+        assert_eq!(reply_budget(window, 1000, Some(512)), 512);
+        // An over-full prompt still gets a short reply rather than zero or an underflow.
+        assert_eq!(reply_budget(window, 9000, None) as u64, MIN_REPLY);
+        // A big window leaves a big reply.
+        assert_eq!(reply_budget(131_072, 1000, None), 131_072 - 1000 - 13_107);
+    }
+
     use super::*;
     use crate::message::Role;
     use serde_json::json;
