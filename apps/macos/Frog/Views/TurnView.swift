@@ -21,7 +21,15 @@ struct TurnView: View {
     @AppStorage(Verbosity.key) private var defaultVerbosity = Verbosity.standard.rawValue
     @AppStorage("density") private var density = Density.comfortable.rawValue
 
+    @Environment(\.models) private var models
+
     private var running: Bool { !turn.finished && conversation.busy }
+
+    /// The model that answered (or is answering): the prompt takes its place's color.
+    private var promptTint: Color {
+        guard let spec = turn.usage?.model ?? conversation.status?.model else { return .accentColor }
+        return ModelIdentity.of(spec, in: models).place.color
+    }
 
     private var verbosity: Verbosity {
         VerbosityOverrides.shared.level(
@@ -40,7 +48,7 @@ struct TurnView: View {
         VStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 8 : 14) {
             if !turn.input.isEmpty {
                 VStack(alignment: .trailing, spacing: 2) {
-                    UserPrompt(text: turn.input, images: turn.images)
+                    UserPrompt(text: turn.input, images: turn.images, tint: promptTint)
                         .contextMenu { menu(changes: parts.changes.count) }
                     PromptActions(
                         turn: turn,
