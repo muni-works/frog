@@ -147,11 +147,18 @@
 
   <h2>Hosted models are estimates</h2>
   <p>
-    Nobody publishes measured energy per request for frontier models. For a hosted model, frog measures what the Mac spent (it still runs the tools and tests locally) and adds an estimate for the data center from the tokens used:
+    Nobody publishes measured energy per request for most models. For a hosted model, frog measures what the Mac spent (it still runs the tools and tests locally) and adds an estimate for the data center from the tokens used, per model:
   </p>
-  <p id="coeffs" class="muted">—</p>
+  <ul>
+    <li><b>The reference</b> is <a href="https://epoch.ai/gradient-updates/how-much-energy-does-chatgpt-use">Epoch AI's estimate</a> for GPT-4o on H100s, server and data center overhead included, assuming about 100B active parameters: <span id="coeffs">—</span></li>
+    <li><b>Open-weight models</b> publish their size, and inference work scales with active parameters (two operations per active parameter per token), so each scales the reference by its own count, from its model card.</li>
+    <li><b>Closed models</b> (Claude, GPT, Gemini, Grok) don't publish their size, so they keep the reference as is, and say so.</li>
+  </ul>
+  <div class="runs-wrap" style="border: 1px solid var(--line); border-radius: 12px; background: var(--card); margin: 0 0 14px">
+    <table class="runs" id="estimates"><thead><tr><th>model</th><th>active</th><th>mWh / 1k in</th><th>mWh / 1k out</th><th>source</th></tr></thead><tbody></tbody></table>
+  </div>
   <p>
-    Those figures are <a href="https://epoch.ai/gradient-updates/how-much-energy-does-chatgpt-use">Epoch AI's estimate</a> for GPT-4o on H100s, server and data center overhead included. They don't account for prompt caching, which agent loops lean on heavily, and later work finds widely cited per-query estimates are 4–20× higher than production-optimized serving (<a href="https://www.cell.com/joule/fulltext/S2542-4351(26)00114-5">Joule, 2026</a>). Read hosted numbers as the high end. They're marked <b>~</b> and hatched everywhere they appear.
+    None of this accounts for prompt caching, which agent loops lean on heavily, or for how efficiently a provider serves a model, and later work finds widely cited per-query estimates are 4–20× higher than production-optimized serving (<a href="https://www.cell.com/joule/fulltext/S2542-4351(26)00114-5">Joule, 2026</a>). Read hosted numbers as the high end. They're marked <b>~</b> and hatched everywhere they appear.
   </p>
 
   <h2>Grid</h2>
@@ -195,6 +202,10 @@ cargo run --release -p frog-bench -- export ~/.local/share/frog/bench/&lt;run&gt
   $("#suite").textContent = `suite ${data.suite}`;
   $("#coeffs").innerHTML =
     `<b>${(method.remote_wh_per_input_token * 1000).toFixed(2)} mWh</b> per input token and <b>${(method.remote_wh_per_output_token * 1000).toFixed(2)} mWh</b> per output token.`;
+  $("#estimates tbody").innerHTML = (data.remote_estimates || []).map(e => `<tr>` +
+    `<td>${e.model}</td><td>${e.active_b == null ? "not published" : e.active_b + "B"}</td>` +
+    `<td>${(e.wh_per_input_token * 1e6).toFixed(0)}</td><td>${(e.wh_per_output_token * 1e6).toFixed(0)}</td>` +
+    `<td><a href="${e.source}">${new URL(e.source).hostname.replace("www.", "")}</a></td></tr>`).join("");
   $("#grid").innerHTML =
     `Grams of CO₂e use the world's average electricity in 2025: <b>${method.grid_g_per_kwh} g per kWh</b> (<a href="https://ember-energy.org/latest-insights/global-electricity-review-2026/electricity-demand-and-supply-trends/">Ember, Global Electricity Review 2026</a>), for the Mac and the data center alike. Your grid may be far cleaner or dirtier; the watt-hours are the part that's measured.`;
 

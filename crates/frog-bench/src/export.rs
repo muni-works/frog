@@ -24,6 +24,18 @@ struct Export {
     method: Method,
     models: Vec<Summary>,
     runs: Vec<Run>,
+    /// The per-model data center estimates hosted models get, with their sources.
+    remote_estimates: Vec<RemoteEstimate>,
+}
+
+#[derive(Serialize)]
+struct RemoteEstimate {
+    model: String,
+    active_b: Option<f64>,
+    wh_per_input_token: f64,
+    wh_per_output_token: f64,
+    basis: String,
+    source: &'static str,
 }
 
 #[derive(Serialize)]
@@ -112,13 +124,24 @@ pub fn json(results: &[RunResult]) -> Result<String> {
                 passed,
                 wh_per_solve: wh,
                 local_wh_per_solve: per(&|e| e.local_wh),
-                remote_wh_per_solve: if estimated { per(&|e| e.remote_wh.unwrap_or(0.0)) } else { None },
+                remote_wh_per_solve: if estimated {
+                    per(&|e| e.remote_wh.unwrap_or(0.0))
+                } else {
+                    None
+                },
                 estimated,
                 g_co2e_per_solve: wh.map(|w| round(w / 1000.0 * GRID_G_PER_KWH, 3)),
-                secs_per_run: round(runs.iter().map(|r| r.secs).sum::<f64>() / runs.len() as f64, 1),
+                secs_per_run: round(
+                    runs.iter().map(|r| r.secs).sum::<f64>() / runs.len() as f64,
+                    1,
+                ),
                 // Measured before every run; the mean of those.
-                idle_w: (!energy.is_empty())
-                    .then(|| round(energy.iter().map(|e| e.idle_w).sum::<f64>() / energy.len() as f64, 1)),
+                idle_w: (!energy.is_empty()).then(|| {
+                    round(
+                        energy.iter().map(|e| e.idle_w).sum::<f64>() / energy.len() as f64,
+                        1,
+                    )
+                }),
             }
         })
         .collect();
@@ -150,12 +173,15 @@ pub fn json(results: &[RunResult]) -> Result<String> {
         date: chrono::Local::now().format("%Y-%m-%d").to_string(),
         machine: Machine {
             chip: sh("sysctl", &["-n", "machdep.cpu.brand_string"]),
-            memory_gb: sh("sysctl", &["-n", "hw.memsize"]).parse::<u64>().unwrap_or(0) >> 30,
+            memory_gb: sh("sysctl", &["-n", "hw.memsize"])
+                .parse::<u64>()
+                .unwrap_or(0)
+                >> 30,
             macos: sh("sw_vers", &["-productVersion"]),
         },
         method: Method {
             local: "SMC system power (PSTR), 10 Hz, integrated over the engine's turn, less the idle power measured for 5 s just before the run, with the model loaded",
-            remote: cloud::BASIS,
+            remote: "per model: open-weight models scale Epoch AI's GPT-4o estimate by their active parameters; closed models use it as is",
             remote_wh_per_input_token: cloud::WH_PER_INPUT_TOKEN,
             remote_wh_per_output_token: cloud::WH_PER_OUTPUT_TOKEN,
             grid_g_per_kwh: GRID_G_PER_KWH,
@@ -163,6 +189,17 @@ pub fn json(results: &[RunResult]) -> Result<String> {
         },
         models,
         runs,
+        remote_estimates: cloud::table()
+            .into_iter()
+            .map(|(model, active_b, e)| RemoteEstimate {
+                model,
+                active_b,
+                wh_per_input_token: e.wh_per_input_token,
+                wh_per_output_token: e.wh_per_output_token,
+                basis: e.basis,
+                source: e.source,
+            })
+            .collect(),
     };
     Ok(serde_json::to_string_pretty(&export)?)
 }

@@ -103,7 +103,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
     task::seed(r.task, &r.workspace)?;
     let (profile_name, mut profile) = r.cfg.resolve(Some(r.model))?;
     profile.tool_mode = r.mode;
-    let hosted = harness::is_cloud(&profile);
+    let estimate = harness::is_cloud(&profile).then(|| cloud::for_model(r.model));
     let mut h = frog_engine::spawn(Options {
         cfg: r.cfg.clone(),
         profile_name,
@@ -224,8 +224,10 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
             idle_w,
             gpu_wh: e.soc.gpu / 3600.0,
             ane_wh: e.soc.ane / 3600.0,
-            remote_wh: hosted.then(|| cloud::estimate_wh(out.input_tokens, out.output_tokens)),
-            remote_basis: hosted.then(|| cloud::BASIS.to_string()),
+            remote_wh: estimate
+                .as_ref()
+                .map(|c| c.wh(out.input_tokens, out.output_tokens)),
+            remote_basis: estimate.as_ref().map(|c| c.basis.clone()),
         });
     }
     if timed_out {

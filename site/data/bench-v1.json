@@ -8,7 +8,7 @@
   },
   "method": {
     "local": "SMC system power (PSTR), 10 Hz, integrated over the engine's turn, less the idle power measured for 5 s just before the run, with the model loaded",
-    "remote": "Epoch AI 2025, GPT-4o on H100",
+    "remote": "per model: open-weight models scale Epoch AI's GPT-4o estimate by their active parameters; closed models use it as is",
     "remote_wh_per_input_token": 0.00022,
     "remote_wh_per_output_token": 0.0006,
     "grid_g_per_kwh": 458.0,
@@ -652,6 +652,96 @@
       "gpu_wh": 3.3848,
       "ane_wh": 0.0001,
       "remote_wh": null
+    }
+  ],
+  "remote_estimates": [
+    {
+      "model": "Qwen3-Coder 480B-A35B",
+      "active_b": 35.0,
+      "wh_per_input_token": 0.000077,
+      "wh_per_output_token": 0.00020999999999999998,
+      "basis": "Qwen3-Coder 480B-A35B: 35B active parameters, scaled from Epoch AI's GPT-4o estimate",
+      "source": "https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct"
+    },
+    {
+      "model": "Qwen3 235B-A22B",
+      "active_b": 22.0,
+      "wh_per_input_token": 0.000048400000000000004,
+      "wh_per_output_token": 0.00013199999999999998,
+      "basis": "Qwen3 235B-A22B: 22B active parameters, scaled from Epoch AI's GPT-4o estimate",
+      "source": "https://huggingface.co/Qwen/Qwen3-235B-A22B"
+    },
+    {
+      "model": "DeepSeek-V3",
+      "active_b": 37.0,
+      "wh_per_input_token": 0.0000814,
+      "wh_per_output_token": 0.00022199999999999998,
+      "basis": "DeepSeek-V3: 37B active parameters, scaled from Epoch AI's GPT-4o estimate",
+      "source": "https://huggingface.co/deepseek-ai/DeepSeek-V3"
+    },
+    {
+      "model": "Kimi K2",
+      "active_b": 32.0,
+      "wh_per_input_token": 0.0000704,
+      "wh_per_output_token": 0.00019199999999999998,
+      "basis": "Kimi K2: 32B active parameters, scaled from Epoch AI's GPT-4o estimate",
+      "source": "https://huggingface.co/moonshotai/Kimi-K2-Instruct"
+    },
+    {
+      "model": "GLM-4.5-Air",
+      "active_b": 12.0,
+      "wh_per_input_token": 0.0000264,
+      "wh_per_output_token": 0.00007199999999999999,
+      "basis": "GLM-4.5-Air: 12B active parameters, scaled from Epoch AI's GPT-4o estimate",
+      "source": "https://huggingface.co/zai-org/GLM-4.5-Air"
+    },
+    {
+      "model": "GLM-4.5",
+      "active_b": 32.0,
+      "wh_per_input_token": 0.0000704,
+      "wh_per_output_token": 0.00019199999999999998,
+      "basis": "GLM-4.5: 32B active parameters, scaled from Epoch AI's GPT-4o estimate",
+      "source": "https://huggingface.co/zai-org/GLM-4.5"
+    },
+    {
+      "model": "gpt-oss-120b",
+      "active_b": 5.1,
+      "wh_per_input_token": 0.00001122,
+      "wh_per_output_token": 0.0000306,
+      "basis": "gpt-oss-120b: 5.1B active parameters, scaled from Epoch AI's GPT-4o estimate",
+      "source": "https://huggingface.co/openai/gpt-oss-120b"
+    },
+    {
+      "model": "gpt-oss-20b",
+      "active_b": 3.6,
+      "wh_per_input_token": 7.92e-6,
+      "wh_per_output_token": 0.0000216,
+      "basis": "gpt-oss-20b: 3.6B active parameters, scaled from Epoch AI's GPT-4o estimate",
+      "source": "https://huggingface.co/openai/gpt-oss-20b"
+    },
+    {
+      "model": "Llama 4 Maverick",
+      "active_b": 17.0,
+      "wh_per_input_token": 0.0000374,
+      "wh_per_output_token": 0.000102,
+      "basis": "Llama 4 Maverick: 17B active parameters, scaled from Epoch AI's GPT-4o estimate",
+      "source": "https://huggingface.co/meta-llama/Llama-4-Maverick-17B-128E-Instruct"
+    },
+    {
+      "model": "Mistral Large 2",
+      "active_b": 123.0,
+      "wh_per_input_token": 0.0002706,
+      "wh_per_output_token": 0.0007379999999999999,
+      "basis": "Mistral Large 2: 123B active parameters, scaled from Epoch AI's GPT-4o estimate",
+      "source": "https://huggingface.co/mistralai/Mistral-Large-Instruct-2407"
+    },
+    {
+      "model": "Closed models (Claude, GPT, Gemini, Grok)",
+      "active_b": null,
+      "wh_per_input_token": 0.00022,
+      "wh_per_output_token": 0.0006,
+      "basis": "Size not published; assumes a frontier model like GPT-4o (Epoch AI)",
+      "source": "https://epoch.ai/gradient-updates/how-much-energy-does-chatgpt-use"
     }
   ]
 }

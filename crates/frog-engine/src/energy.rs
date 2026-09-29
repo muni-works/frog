@@ -614,17 +614,150 @@ impl Meter {
     }
 }
 
-/// Energy a hosted model's data center spent on a request, estimated from token counts. Nobody
-/// publishes measured per-request figures for frontier models, so this uses Epoch AI's estimate
-/// for GPT-4o on H100s, including server and data center overhead ("How much energy does ChatGPT
-/// use?", Feb 2025): about 0.3 Wh for 500 output tokens, and about 2.2 Wh more for 10k input
-/// tokens. It ignores prompt caching, which agent loops lean on, so treat it as the high end;
+/// Energy a hosted model's data center spends on a request, estimated from its token counts.
+/// Nobody publishes measured per-request energy for most models, so each gets the best
+/// estimate we can source, per model:
+///
+/// - The reference is Epoch AI's estimate for GPT-4o on H100s, server and data center overhead
+///   included ("How much energy does ChatGPT use?", Feb 2025): about 0.3 Wh for 500 output
+///   tokens and about 2.2 Wh more for 10k input tokens, assuming ~100B active parameters.
+/// - Inference work scales with *active* parameters (2 FLOPs per active parameter per token),
+///   so an open-weight model with a published size scales that reference by its active count,
+///   citing its model card.
+/// - A closed model whose size isn't published (Claude, GPT, Gemini, Grok) keeps the frontier
+///   reference as is, and says so.
+///
+/// It ignores prompt caching, which agent loops lean on, so treat it as the high end;
 /// frog.eco/energy has the caveats.
 pub mod cloud {
+    /// The reference model's active parameters, in billions (Epoch AI's GPT-4o assumption).
+    const REFERENCE_ACTIVE_B: f64 = 100.0;
     pub const WH_PER_INPUT_TOKEN: f64 = 2.2 / 10_000.0;
     pub const WH_PER_OUTPUT_TOKEN: f64 = 0.3 / 500.0;
     pub const BASIS: &str = "Epoch AI 2025, GPT-4o on H100";
+    pub const REFERENCE_SOURCE: &str =
+        "https://epoch.ai/gradient-updates/how-much-energy-does-chatgpt-use";
 
+    /// How a model's estimate was made.
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Estimate {
+        pub wh_per_input_token: f64,
+        pub wh_per_output_token: f64,
+        /// In words: "37B active parameters (DeepSeek-V3), scaled from Epoch AI's GPT-4o estimate".
+        pub basis: String,
+        /// Where the numbers come from.
+        pub source: &'static str,
+    }
+
+    /// Open-weight models with published sizes: a fragment of their id, active parameters in
+    /// billions, their name, and their model card.
+    pub const OPEN: &[(&str, f64, &str, &str)] = &[
+        (
+            "qwen3-coder",
+            35.0,
+            "Qwen3-Coder 480B-A35B",
+            "https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct",
+        ),
+        (
+            "qwen3-235b",
+            22.0,
+            "Qwen3 235B-A22B",
+            "https://huggingface.co/Qwen/Qwen3-235B-A22B",
+        ),
+        (
+            "deepseek",
+            37.0,
+            "DeepSeek-V3",
+            "https://huggingface.co/deepseek-ai/DeepSeek-V3",
+        ),
+        (
+            "kimi-k2",
+            32.0,
+            "Kimi K2",
+            "https://huggingface.co/moonshotai/Kimi-K2-Instruct",
+        ),
+        (
+            "glm-4.5-air",
+            12.0,
+            "GLM-4.5-Air",
+            "https://huggingface.co/zai-org/GLM-4.5-Air",
+        ),
+        (
+            "glm-4.5",
+            32.0,
+            "GLM-4.5",
+            "https://huggingface.co/zai-org/GLM-4.5",
+        ),
+        (
+            "gpt-oss-120b",
+            5.1,
+            "gpt-oss-120b",
+            "https://huggingface.co/openai/gpt-oss-120b",
+        ),
+        (
+            "gpt-oss-20b",
+            3.6,
+            "gpt-oss-20b",
+            "https://huggingface.co/openai/gpt-oss-20b",
+        ),
+        (
+            "llama-4-maverick",
+            17.0,
+            "Llama 4 Maverick",
+            "https://huggingface.co/meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+        ),
+        (
+            "mistral-large",
+            123.0,
+            "Mistral Large 2",
+            "https://huggingface.co/mistralai/Mistral-Large-Instruct-2407",
+        ),
+    ];
+
+    /// The estimate for a model spec (`vercel/anthropic/claude-opus-5.5`, `openrouter/qwen/qwen3-coder`).
+    pub fn for_model(spec: &str) -> Estimate {
+        let id = spec.to_ascii_lowercase();
+        if let Some(&(_, active, name, source)) = OPEN.iter().find(|(frag, ..)| id.contains(frag)) {
+            let k = active / REFERENCE_ACTIVE_B;
+            return Estimate {
+                wh_per_input_token: WH_PER_INPUT_TOKEN * k,
+                wh_per_output_token: WH_PER_OUTPUT_TOKEN * k,
+                basis: format!(
+                    "{name}: {active}B active parameters, scaled from Epoch AI's GPT-4o estimate"
+                ),
+                source,
+            };
+        }
+        Estimate {
+            wh_per_input_token: WH_PER_INPUT_TOKEN,
+            wh_per_output_token: WH_PER_OUTPUT_TOKEN,
+            basis: "Size not published; assumes a frontier model like GPT-4o (Epoch AI)".into(),
+            source: REFERENCE_SOURCE,
+        }
+    }
+
+    impl Estimate {
+        pub fn wh(&self, input_tokens: u64, output_tokens: u64) -> f64 {
+            input_tokens as f64 * self.wh_per_input_token
+                + output_tokens as f64 * self.wh_per_output_token
+        }
+    }
+
+    /// Every model with its own estimate, then the frontier reference closed models use.
+    pub fn table() -> Vec<(String, Option<f64>, Estimate)> {
+        let mut rows: Vec<_> = OPEN
+            .iter()
+            .map(|&(frag, active, name, _)| (name.to_string(), Some(active), for_model(frag)))
+            .collect();
+        rows.push((
+            "Closed models (Claude, GPT, Gemini, Grok)".into(),
+            None,
+            for_model(""),
+        ));
+        rows
+    }
+
+    /// The frontier reference, for callers without a model.
     pub fn estimate_wh(input_tokens: u64, output_tokens: u64) -> f64 {
         input_tokens as f64 * WH_PER_INPUT_TOKEN + output_tokens as f64 * WH_PER_OUTPUT_TOKEN
     }
@@ -682,6 +815,22 @@ mod tests {
         assert_eq!(to_joules(1500, "mJ"), 1.5);
         assert_eq!(to_joules(2_000_000, "uJ"), 2.0);
         assert_eq!(to_joules(3_000_000_000, "nJ"), 3.0);
+    }
+
+    #[test]
+    fn open_models_scale_by_active_parameters_and_closed_ones_say_so() {
+        let ds = cloud::for_model("openrouter/deepseek/deepseek-chat-v3");
+        assert!((ds.wh(0, 500) - 0.3 * 0.37).abs() < 1e-9);
+        assert!(ds.source.contains("DeepSeek-V3"));
+        // The Air before the full model: fragments are matched in order.
+        assert!(
+            cloud::for_model("openrouter/z-ai/glm-4.5-air")
+                .basis
+                .starts_with("GLM-4.5-Air")
+        );
+        let opus = cloud::for_model("vercel/anthropic/claude-opus-5.5-fast");
+        assert!((opus.wh(10_000, 500) - 2.5).abs() < 1e-9);
+        assert!(opus.basis.contains("not published"));
     }
 
     #[test]

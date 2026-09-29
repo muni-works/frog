@@ -764,16 +764,16 @@ impl Agent {
         let m = self.meter.as_ref()?;
         let (mark, idle) = self.energy_mark.as_ref()?;
         let reading = m.since(mark);
-        let hosted = crate::harness::is_cloud(&self.profile);
+        let estimate = crate::harness::is_cloud(&self.profile)
+            .then(|| crate::energy::cloud::for_model(&self.profile_name));
         Some(crate::protocol::TurnEnergy {
             local_wh: reading.above_idle_wh((*idle)?),
             idle_w: *idle,
-            remote_wh: hosted.then(|| {
-                crate::energy::cloud::estimate_wh(
-                    self.turn_usage.input_tokens,
-                    self.turn_usage.output_tokens,
-                )
-            }),
+            remote_wh: estimate
+                .as_ref()
+                .map(|e| e.wh(self.turn_usage.input_tokens, self.turn_usage.output_tokens)),
+            remote_basis: estimate.as_ref().map(|e| e.basis.clone()),
+            remote_source: estimate.as_ref().map(|e| e.source.to_string()),
         })
     }
 

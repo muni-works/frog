@@ -506,6 +506,11 @@ pub struct TurnEnergy {
     /// The Mac's power at rest that was subtracted, in watts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_w: Option<f64>,
+    /// How `remote_wh` was estimated for this model, and where its numbers come from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_basis: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_source: Option<String>,
 }
 
 /// A turn's wall time split by what it was waiting on, in milliseconds. `other` is whatever
