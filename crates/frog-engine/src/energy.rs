@@ -578,12 +578,24 @@ impl Meter {
     }
 
     /// Idle power from the last minute of seconds that weren't busy: their median, so a burst
-    /// of other work doesn't move it much. `None` until there are a few.
+    /// of other work doesn't move it much. An engine is often started just as a message is
+    /// sent (opening a conversation), with no quiet seconds of its own yet; then it uses what
+    /// the last engine on this Mac measured, saved in `idle_w`. `None` only before the first.
     pub fn idle_estimate(&self) -> Option<f64> {
         #[cfg(target_os = "macos")]
         {
-            let q = self.power.idle.lock().ok()?;
-            median(q.iter().copied().collect())
+            let seen: Vec<f64> = self.power.idle.lock().ok()?.iter().copied().collect();
+            let saved = crate::config::data_dir().join("idle_w");
+            if let Some(w) = median(seen.clone()) {
+                let _ = std::fs::write(&saved, format!("{w:.3}"));
+                return Some(w);
+            }
+            std::fs::read_to_string(&saved)
+                .ok()
+                .and_then(|t| t.trim().parse().ok())
+                .or_else(|| {
+                    (!seen.is_empty()).then(|| seen.iter().sum::<f64>() / seen.len() as f64)
+                })
         }
         #[cfg(not(target_os = "macos"))]
         None
