@@ -24,6 +24,7 @@
     --accent: #2e9e4f;
     --accent-fg: #ffffff;
     --pad: rgb(46 158 79 / .22);
+    --warn: #c4513d;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
     --spring: cubic-bezier(.34, 1.56, .64, 1);
     color-scheme: light dark;
@@ -40,6 +41,7 @@
       --accent: #58cc6f;
       --accent-fg: #0d1a10;
       --pad: rgb(88 204 111 / .22);
+      --warn: #e5775f;
     }
   }
   * { box-sizing: border-box; }
@@ -106,7 +108,10 @@
   /* Each card shows the thing itself, in the app's own words. */
   .features {
     display: grid; grid-template-columns: repeat(2, 1fr);
-    gap: 12px; margin: 80px 0 0; padding: 0; list-style: none;
+    gap: 12px; margin: 88px 0 0; padding: 0; list-style: none;
+  }
+  @media (min-width: 1180px) {
+    .features { grid-template-columns: repeat(4, 1fr); width: min(1160px, 100vw - 40px); margin-left: 50%; transform: translateX(-50%); }
   }
   .features > li {
     background: var(--card); border: 1px solid var(--line); border-radius: 16px;
@@ -140,7 +145,9 @@
   .models li::before { content: ""; width: 12px; text-align: center; color: var(--accent); font-family: -apple-system, sans-serif; font-weight: 700; }
   .models li.on { background: var(--card); color: var(--fg); }
   .models li.on::before { content: "✓"; }
+  .models li { white-space: nowrap; }
   .models .where { margin-left: auto; font-size: 10px; color: var(--faint); }
+  @media (min-width: 1180px) { .models .where { display: none; } .stage > .line .skim { display: none; } }
 
   /* 3 · the timeline rail and a turn's outcome. */
   .rail { flex: 1; display: flex; align-items: center; margin-left: 2px; }
@@ -167,6 +174,177 @@
   .lane.win .bar i { background: var(--accent); }
   .lane.win .res { color: var(--accent); font-weight: 600; }
   .done .lane:not(.win) { opacity: .45; }
+
+  /* Shared bits: a tool row as the app draws it, and a warning red. */
+  .tool {
+    display: flex; align-items: center; gap: 8px; padding: 5px 9px; border-radius: 8px;
+    background: var(--card); border: 1px solid var(--line); font-size: 12px; white-space: nowrap; overflow: hidden;
+    transition: opacity .25s ease, transform .25s ease, border-color .25s ease, background .25s ease;
+  }
+  .tool b { font-weight: 600; }
+  .tool code { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+  .tool .tag { margin-left: auto; font-size: 10.5px; font-weight: 600; color: var(--warn); }
+  .hidden { opacity: 0; transform: translateY(4px); }
+  .stage.top { justify-content: flex-start; }
+
+  /* Context budget: the history as a bar, pruned in one step. */
+  .budget { position: relative; height: 22px; display: flex; gap: 2px; padding: 3px; border-radius: 7px; background: var(--card); border: 1px solid var(--line); }
+  .budget i { display: block; height: 100%; border-radius: 3px; background: var(--line); transition: flex-basis .5s cubic-bezier(.3,.7,.3,1), margin .5s ease, opacity .3s ease; flex: 0 0 var(--w); overflow: hidden; }
+  .budget i.you { background: var(--accent); }
+  .budget i.read { background: var(--faint); opacity: .55; }
+  .budget i.out { background: var(--faint); opacity: .3; }
+  .budget i.pruned { flex-basis: 0; margin-right: -2px; opacity: 0; }
+  .budget .mark { position: absolute; top: -5px; bottom: -5px; width: 1.5px; background: var(--fg); opacity: .25; }
+  .budget .mark::after { content: attr(data-l); position: absolute; top: -14px; left: -8px; font: 9.5px var(--mono); color: var(--muted); }
+  .legend { display: flex; gap: 10px; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+  .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); opacity: var(--o, 1); }
+
+  /* Loop guard: the third identical call bounces. */
+  .refused { border-color: var(--warn); animation: shake .35s ease; }
+  .refused code { text-decoration: line-through; text-decoration-color: var(--warn); }
+  .fresh { border-color: var(--accent); }
+  @keyframes shake { 25% { transform: translateX(-4px); } 50% { transform: translateX(4px); } 75% { transform: translateX(-2px); } }
+
+  /* Docs: the answer, from what's installed. */
+  .doc { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .doc .sig { font: 11.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .doc .sig em { font-style: normal; color: var(--accent); }
+  .doc .row { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .chip {
+    font: 600 10px var(--mono); padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+    background: var(--pad); color: var(--accent); transition: transform .3s var(--spring), opacity .2s ease;
+  }
+  .chip.off { opacity: 0; transform: scale(.6); }
+  .offline { margin-left: auto; display: flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--muted); }
+  .offline svg { width: 12px; height: 12px; }
+
+  /* Subagents: a child's steps stream inside the parent's card, then fold to a report. */
+  .sub { border: 1px solid var(--line); background: var(--card); border-radius: 8px; overflow: hidden; }
+  .sub .head { display: flex; gap: 8px; padding: 6px 9px; font-size: 12px; border-bottom: 1px solid var(--line); }
+  .sub .head code { color: var(--muted); }
+  .sub .steps { height: 50px; overflow: hidden; padding: 4px 9px 0 21px; position: relative; transition: height .35s ease, padding .35s ease; }
+  .sub .steps::before { content: ""; position: absolute; left: 12px; top: 6px; bottom: 6px; width: 1.5px; background: var(--line); }
+  .sub .steps div { font: 11px/16px var(--mono); color: var(--muted); white-space: nowrap; transition: transform .25s ease; }
+  .sub .report { display: flex; justify-content: space-between; padding: 0 9px; height: 0; overflow: hidden; font-size: 11.5px; white-space: nowrap; transition: height .35s ease; }
+  .sub .report b { color: var(--accent); font-weight: 600; }
+  .folded .steps { height: 0; padding-top: 0; }
+  .folded .report { height: 26px; align-items: center; }
+
+  /* Permission card: see the edit, then allow it. */
+  .perm { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; transition: border-color .25s ease; }
+  .perm .head { display: flex; align-items: center; gap: 8px; padding: 6px 9px; font-size: 12px; }
+  .perm .head code { color: var(--muted); }
+  .perm .diff { font: 11px/17px var(--mono); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); transition: height .3s ease; height: 36px; overflow: hidden; }
+  .perm .diff div { padding: 0 9px; white-space: nowrap; }
+  .perm .del { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+  .perm .add { background: var(--pad); color: var(--accent); }
+  .perm .btns { display: flex; justify-content: flex-end; gap: 6px; padding: 6px 8px; transition: height .3s ease, padding .3s ease; height: 34px; overflow: hidden; }
+  .perm button {
+    font: 600 11px -apple-system, sans-serif; border-radius: 6px; padding: 3px 9px; border: 1px solid var(--line);
+    background: var(--well); color: var(--fg); transition: transform .12s ease, filter .12s ease;
+  }
+  .perm button kbd { font: 10px var(--mono); opacity: .6; margin-left: 4px; }
+  .perm button.yes { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .perm button.press { transform: scale(.92); filter: brightness(.9); }
+  .perm .ok { display: none; color: var(--accent); font-weight: 600; margin-left: auto; font-size: 11px; }
+  .allowed { border-color: var(--accent); }
+  .allowed .diff, .allowed .btns { height: 0; padding-top: 0; padding-bottom: 0; border: 0; }
+  .allowed .ok { display: inline; }
+
+  /* Sandbox: inside the folder is fine, outside is not. */
+  .shell { font: 11.5px/19px var(--mono); }
+  .shell div { display: flex; gap: 8px; white-space: nowrap; transition: opacity .25s ease; }
+  .shell .ps { color: var(--accent); }
+  .shell .r { margin-left: auto; font-weight: 600; }
+  .shell .r.okk { color: var(--accent); }
+  .shell .r.no { color: var(--warn); }
+  .shell .cmd { overflow: hidden; text-overflow: ellipsis; }
+  .fence { font-size: 10.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .fence i { flex: 1; height: 0; border-top: 1.5px dashed var(--faint); }
+
+  /* Quarantine: a scan passes over the tools, one gets pulled. */
+  .mcp { display: flex; flex-direction: column; gap: 4px; position: relative; }
+  .mcp .tool { font-size: 11.5px; }
+  .mcp .tool .tag { color: var(--accent); }
+  .mcp .bad .tag { color: var(--warn); }
+  .mcp .bad.caught { opacity: .5; border-style: dashed; }
+  .mcp .bad mark { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); border-radius: 3px; padding: 0 2px; opacity: 0; transition: opacity .2s ease; }
+  .mcp .bad.caught mark { opacity: 1; }
+  .scan { position: absolute; left: -4px; right: -4px; height: 24px; top: 0; border-radius: 8px; background: linear-gradient(90deg, transparent, var(--pad), transparent); opacity: 0; pointer-events: none; }
+  .scan.go { animation: scan 1.3s ease-in-out forwards; }
+  @keyframes scan { 0% { top: -4px; opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { top: 64px; opacity: 0; } }
+
+  /* Notification: slides in, gets answered, leaves. */
+  .notif {
+    position: absolute; top: 14px; right: 12px; left: 12px; display: flex; gap: 10px; align-items: flex-start;
+    padding: 9px 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--line);
+    box-shadow: 0 8px 24px -10px rgb(0 0 0 / .35); transform: translateX(110%); opacity: 0;
+    transition: transform .45s cubic-bezier(.2,.9,.3,1.1), opacity .3s ease;
+  }
+  .notif.in { transform: none; opacity: 1; }
+  .notif.out { transform: translateX(110%); opacity: 0; transition-duration: .35s; }
+  .notif .ico { width: 28px; height: 28px; border-radius: 7px; background: var(--well); display: grid; place-items: center; flex: none; }
+  .notif .ico svg { width: 20px; height: 20px; }
+  .notif .ico path { fill: var(--accent); }
+  .notif .txt { flex: 1; min-width: 0; font-size: 11.5px; line-height: 1.35; }
+  .notif .txt b, .notif .txt span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .notif .txt b { font-size: 12px; }
+  .notif .txt span { color: var(--muted); }
+  .notif .acts { display: flex; flex-direction: column; gap: 4px; }
+  .notif .acts i { font: normal 600 10.5px -apple-system, sans-serif; padding: 3px 10px; border-radius: 6px; background: var(--well); text-align: center; transition: background .15s ease, color .15s ease; }
+  .notif .acts i.hit { background: var(--accent); color: var(--accent-fg); }
+  .after { position: absolute; bottom: 14px; left: 16px; font-size: 11.5px; color: var(--accent); font-weight: 600; opacity: 0; transition: opacity .3s ease; }
+  .after.on { opacity: 1; }
+  .behind { position: absolute; inset: 12px 16px 12px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); opacity: .6; overflow: hidden; }
+  .behind .win { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  .behind .win i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+  .behind .doc-lines { display: flex; flex-direction: column; gap: 6px; padding: 12px 12px; }
+  .behind .doc-lines b { height: 6px; border-radius: 3px; background: var(--line); }
+  .after { z-index: 1; background: var(--card); padding: 3px 9px; border-radius: 999px; bottom: 20px; left: 24px; border: 1px solid var(--accent); }
+
+  /* Dictation: the waveform and the words it becomes. */
+  .dict { display: flex; align-items: center; gap: 10px; }
+  .mic { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; flex: none; position: relative; }
+  .mic svg { width: 14px; height: 14px; fill: var(--accent-fg); }
+  .mic::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--accent); opacity: 0; }
+  .listening .mic::after { animation: pulse 1.2s ease-out infinite; }
+  @keyframes pulse { from { transform: scale(.9); opacity: .6; } to { transform: scale(1.35); opacity: 0; } }
+  .wave { flex: 1; height: 30px; display: flex; align-items: center; gap: 2px; }
+  .wave i { flex: 1; height: 3px; border-radius: 2px; background: var(--accent); opacity: .7; transition: height .09s linear; }
+  .said { font-size: 13px; min-height: 20px; }
+  .said .w { display: inline-block; margin-right: .27em; animation: word .25s ease both; }
+  @keyframes word { from { opacity: 0; transform: translateY(3px); filter: blur(2px); } }
+  .local { font-size: 10.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+  .local svg { width: 11px; height: 11px; }
+
+  /* Diagram: boxes and arrows drawing themselves. */
+  .dia { width: 100%; height: 100%; }
+  .dia .d { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset .6s ease; }
+  .dia .d.on { stroke-dashoffset: 0; }
+  .dia .box { fill: var(--card); }
+  .dia text { font: 10.5px var(--mono); fill: var(--fg); opacity: 0; transition: opacity .3s ease; text-anchor: middle; dominant-baseline: central; }
+  .dia text.on { opacity: 1; }
+  .dia .hub text { fill: var(--accent); font-weight: 600; }
+
+  /* Claude Code setup: the onboarding line, as it appears. */
+  .found { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; line-height: 1.45; }
+  .found .n { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .found a { color: var(--accent); font-weight: 600; text-decoration: none; margin-left: 4px; display: inline-block; transition: transform .12s ease; }
+  .found a.press { transform: scale(.92); }
+  .files { display: flex; gap: 6px; flex-wrap: wrap; }
+  .files span { font: 10.5px var(--mono); padding: 2px 7px; border-radius: 5px; background: var(--card); border: 1px solid var(--line); color: var(--muted); transition: opacity .25s ease, transform .25s var(--spring); }
+
+  /* ⌘K: the palette filters as you type. */
+  .pal { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 8px 24px -14px rgb(0 0 0 / .35); }
+  .pal .q { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .pal .q kbd { font: 600 10px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--well); color: var(--muted); }
+  .pal .q .caret { display: inline-block; width: 1.5px; height: 13px; background: var(--accent); margin-left: -6px; }
+  .pal ul { list-style: none; margin: 0; padding: 4px; font-size: 12px; }
+  .pal li { padding: 3px 8px; border-radius: 6px; display: flex; gap: 8px; white-space: nowrap; }
+  .pal li span { margin-left: auto; font: 10px var(--mono); color: var(--faint); }
+  .pal li.sel { background: var(--accent); color: var(--accent-fg); }
+  .pal li.sel span { color: inherit; opacity: .7; }
+  .pal li.gone { display: none; }
 
   /* The terminal. */
   .cli { margin-top: 64px; }
@@ -201,7 +379,7 @@
     main { padding-top: 40px; }
     h1 { font-size: 44px; }
     .lede { font-size: 19px; }
-    .features { grid-template-columns: 1fr; margin-top: 56px; }
+    .features { grid-template-columns: 1fr; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -258,13 +436,70 @@
       <h3>Your models, your Mac</h3>
       <p>Runs open models itself on Metal, or through ollama and LM Studio. Cloud keys are optional.</p>
     </li>
+    <li class="card" data-play="budget">
+      <div class="stage" aria-hidden="true">
+        <div class="budget">
+          <i class="you" style="--w: 6%"></i><i class="read" style="--w: 11%"></i><i class="out" style="--w: 10%"></i><i class="you" style="--w: 5%"></i><i class="read" style="--w: 8%"></i><i class="out" style="--w: 13%"></i><i class="you" style="--w: 5%"></i><i class="out" style="--w: 6%"></i>
+          <span class="mark" data-l="45%" style="left: 45%"></span><span class="mark" data-l="60%" style="left: 60%"></span>
+        </div>
+        <div class="legend"><span style="--c: var(--accent)">yours</span><span style="--c: var(--faint); --o: .55">stale reads</span><span style="--c: var(--faint); --o: .3">old output</span></div>
+        <span class="meta">context <span class="pct">64</span>% · no model call</span>
+      </div>
+      <h3>Context as a budget</h3>
+      <p>Before every call it drops stale reads and old output. Your own messages are never paraphrased away.</p>
+    </li>
+    <li class="card" data-play="loop">
+      <div class="stage top" aria-hidden="true">
+        <div class="tool"><b>Bash</b><code>cargo test</code></div>
+        <div class="tool"><b>Bash</b><code>cargo test</code></div>
+        <div class="tool"><b>Bash</b><code>cargo test</code><span class="tag">refused</span></div>
+        <div class="tool"><b>Read</b><code>tests/parse.rs</code></div>
+      </div>
+      <h3>Knows when it’s stuck</h3>
+      <p>The third identical call is refused with a nudge to change approach. Small models stop spinning.</p>
+    </li>
+    <li class="card" data-play="docs">
+      <div class="stage" aria-hidden="true">
+        <div class="tool"><b>Docs</b><code class="q"></code></div>
+        <div class="doc">
+          <div class="row"><span class="chip">tokio 1.47.1</span><span class="meta">Cargo.lock</span>
+            <span class="offline"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l12 12M8 12.5h.01M5.6 10a3.4 3.4 0 0 1 4.8 0M3 7.4a7 7 0 0 1 3-1.7M10.5 5.9A7 7 0 0 1 13 7.4"/></svg>offline</span></div>
+          <div class="sig">pub async fn <em>sleep</em>(duration: Duration)</div>
+          <span class="meta">src/time/sleep.rs:124</span>
+        </div>
+      </div>
+      <h3>Docs at your versions</h3>
+      <p>Reads the dependencies you actually have installed, offline, before it ever reaches for the web.</p>
+    </li>
+    <li class="card" data-play="sub">
+      <div class="stage" aria-hidden="true">
+        <div class="sub">
+          <div class="head"><b>Task</b><code>where are sessions saved?</code></div>
+          <div class="steps"></div>
+          <div class="report"><span>read <span class="nf">14</span> files</span><b>214 tokens back</b></div>
+        </div>
+      </div>
+      <h3>Subagents do the digging</h3>
+      <p>A search through dozens of files runs in a child’s context. Only its report comes back.</p>
+    </li>
+    <li class="card" data-play="perm">
+      <div class="stage" aria-hidden="true">
+        <div class="perm">
+          <div class="head"><b>Edit</b><code>src/parse.rs</code><span class="ok">✓ Edited</span></div>
+          <div class="diff"><div class="del">-  let n = s.parse().unwrap();</div><div class="add">+  let n = s.trim().parse()?;</div></div>
+          <div class="btns"><button tabindex="-1">Deny<kbd>⌘.</kbd></button><button class="yes" tabindex="-1">Allow<kbd>⌘↩</kbd></button></div>
+        </div>
+      </div>
+      <h3>See the change first</h3>
+      <p>Permission cards show exactly what an edit will do before you allow it. ⌘↩ to allow, ⌘. to deny.</p>
+    </li>
     <li class="card" data-play="rewind">
       <div class="stage" aria-hidden="true">
         <div class="outcome">
           <div class="rail"><b></b><span></span><b></b><span class="t3"></span><b class="t3"></b><span class="t4"></span><b class="t4"></b></div>
           <span class="pill">Rewind to 2</span>
         </div>
-        <span class="line">Worked 42s · read 3 files · edited 1 file</span>
+        <span class="line">Worked 42s<span class="skim"> · read 3 files</span> · edited 1 file</span>
       </div>
       <h3>Rewind anything</h3>
       <p>Every turn is a checkpoint. Undo what it edited and what its commands did.</p>
@@ -277,6 +512,92 @@
       </div>
       <h3>Race attempts</h3>
       <p>Run one prompt 2–4 ways in parallel worktrees, score them with your tests, keep the best.</p>
+    </li>
+    <li class="card" data-play="sandbox">
+      <div class="stage" aria-hidden="true">
+        <div class="fence"><i></i>~/code/app<i></i></div>
+        <div class="shell">
+          <div><span class="ps">$</span><span class="cmd">cargo build</span><span class="r okk">✓</span></div>
+          <div><span class="ps">$</span><span class="cmd">rm -rf target/debug</span><span class="r okk">✓</span></div>
+          <div><span class="ps">$</span><span class="cmd">echo … &gt;&gt; ~/.zshrc</span><span class="r no">blocked</span></div>
+        </div>
+      </div>
+      <h3>A sandbox that means it</h3>
+      <p>With <code>--sandbox</code>, writes stay in the project folder, and on macOS shell commands are confined too.</p>
+    </li>
+    <li class="card" data-play="quarantine">
+      <div class="stage" aria-hidden="true">
+        <div class="mcp">
+          <div class="scan"></div>
+          <div class="tool"><b>github</b><code>create_issue</code><span class="tag"></span></div>
+          <div class="tool"><b>github</b><code>search_code</code><span class="tag"></span></div>
+          <div class="tool bad"><b>notes</b><code>summarize <mark>‹ignore previous…›</mark></code><span class="tag"></span></div>
+        </div>
+      </div>
+      <h3>Tools it won’t trust</h3>
+      <p>MCP tools whose descriptions look like prompt injection or hide Unicode are quarantined. The model never sees them.</p>
+    </li>
+    <li class="card" data-play="notify">
+      <div class="stage" aria-hidden="true">
+        <div class="behind"><div class="win"><i></i><i></i><i></i></div><div class="doc-lines"><b style="width: 70%"></b><b style="width: 88%"></b><b style="width: 52%"></b></div></div>
+        <div class="notif">
+          <div class="ico"><svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="M12 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M23.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z M52 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M63.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z M8 62a42 29 0 1 0 84 0a42 29 0 1 0 -84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z"/></svg></div>
+          <div class="txt"><b>Frog needs you</b><span>Bash: cargo test</span></div>
+          <div class="acts"><i class="a">Allow</i><i>Deny</i></div>
+        </div>
+        <span class="after">✓ Allowed. Frog kept going.</span>
+      </div>
+      <h3>Answer from anywhere</h3>
+      <p>When a turn needs you and you’re in another app, allow or deny right from the notification.</p>
+    </li>
+    <li class="card" data-play="dictate">
+      <div class="stage" aria-hidden="true">
+        <div class="dict"><div class="mic"><svg viewBox="0 0 16 16"><path d="M8 1a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 0 0 5 0v-4A2.5 2.5 0 0 0 8 1Zm-4.5 6a.75.75 0 0 1 .75.75 3.75 3.75 0 0 0 7.5 0 .75.75 0 0 1 1.5 0 5.25 5.25 0 0 1-4.5 5.2V14.5a.75.75 0 0 1-1.5 0v-1.55a5.25 5.25 0 0 1-4.5-5.2A.75.75 0 0 1 3.5 7Z"/></svg></div><div class="wave"></div></div>
+        <div class="said"></div>
+        <span class="local"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 7V5a3 3 0 1 1 6 0v2h.5A1.5 1.5 0 0 1 13 8.5v5a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13.5v-5A1.5 1.5 0 0 1 4.5 7H5Zm1.5 0h3V5a1.5 1.5 0 1 0-3 0v2Z"/></svg>transcribed on this Mac</span>
+      </div>
+      <h3>Talk to it</h3>
+      <p>Dictate into the composer. Speech is turned into text on this Mac, and audio never leaves it.</p>
+    </li>
+    <li class="card" data-play="diagram">
+      <div class="stage" aria-hidden="true">
+        <svg class="dia" viewBox="0 0 280 108">
+          <rect class="d box" pathLength="1" x="4" y="6" width="74" height="24" rx="6"/><text x="41" y="18">TUI</text>
+          <rect class="d box" pathLength="1" x="4" y="42" width="74" height="24" rx="6"/><text x="41" y="54">Mac app</text>
+          <rect class="d box" pathLength="1" x="4" y="78" width="74" height="24" rx="6"/><text x="41" y="90">bench</text>
+          <path class="d" pathLength="1" d="M78 18 C 100 18, 100 54, 116 54"/>
+          <path class="d" pathLength="1" d="M78 54 L 116 54"/>
+          <path class="d" pathLength="1" d="M78 90 C 100 90, 100 54, 116 54"/>
+          <g class="hub"><rect class="d box" pathLength="1" x="116" y="40" width="84" height="28" rx="7"/><text x="158" y="54">engine</text></g>
+          <path class="d" pathLength="1" d="M200 54 L 222 54"/>
+          <rect class="d box" pathLength="1" x="222" y="40" width="54" height="28" rx="7"/><text x="249" y="54">models</text>
+        </svg>
+      </div>
+      <h3>Draws what it means</h3>
+      <p>Diagrams from typed JSON a small model can’t get wrong, and code maps drawn from the code itself.</p>
+    </li>
+    <li class="card" data-play="setup">
+      <div class="stage" aria-hidden="true">
+        <div class="files"><span>CLAUDE.md</span><span>.claude/skills</span><span>~/.claude.json</span></div>
+        <div class="found">Using your Claude Code setup: CLAUDE.md, <span class="n sk">14</span> skills. Also found <span class="n mc">2</span> MCP servers.<a class="use">Use them</a></div>
+      </div>
+      <h3>Brings your setup</h3>
+      <p>It finds your CLAUDE.md, skills and MCP servers and uses them, so there’s nothing to set up twice.</p>
+    </li>
+    <li class="card" data-play="palette">
+      <div class="stage top" aria-hidden="true">
+        <div class="pal">
+          <div class="q"><kbd>⌘K</kbd><span class="typed"></span><span class="caret"></span></div>
+          <ul>
+            <li data-k="fork from turn 3">Fork from turn 3<span>⌥⌘F</span></li>
+            <li data-k="compact">Compact<span></span></li>
+            <li data-k="model qwen3-coder">Model: qwen3-coder:30b<span></span></li>
+            <li data-k="mode accept-edits">Mode: accept-edits<span>⇧⇥</span></li>
+          </ul>
+        </div>
+      </div>
+      <h3>Keyboard all the way</h3>
+      <p>⌘K reaches sessions, models, modes, fork and compact. Everything in the menus has a shortcut.</p>
     </li>
   </ul>
 
@@ -401,63 +722,230 @@
     setTimeout(() => (copy.textContent = "Copy"), 1600);
   });
 
-  // The cards play once each time they come into view, and hold their last frame after.
+  // The cards play each time they come into view, and hold their last frame after. Under
+  // Reduce Motion every pause is zero, so each one lands on its last frame at once.
+  const pause = ms => (still ? Promise.resolve() : wait(ms));
+  const $ = (el, q) => el.querySelector(q), $$ = (el, q) => [...el.querySelectorAll(q)];
+  async function type(node, text, ms = 55) {
+    node.textContent = "";
+    if (still) { node.textContent = text; return; }
+    for (const ch of text) { node.textContent += ch; await wait(ms * (0.7 + Math.random() * 0.6)); }
+  }
+  async function count(node, from, to, ms) {
+    if (still) { node.textContent = to; return; }
+    const t0 = performance.now();
+    await new Promise(done => {
+      const step = now => {
+        const k = Math.min(1, (now - t0) / ms);
+        node.textContent = Math.round(from + (to - from) * (1 - (1 - k) ** 3));
+        k < 1 ? requestAnimationFrame(step) : done();
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
   const plays = {
     async answer(el) {
-      const typed = el.querySelector(".typed"), text = "why does the build fail?";
-      el.classList.remove("shown"); typed.textContent = "";
-      for (const ch of text) { typed.textContent += ch; await wait(38 + Math.random() * 40); }
-      await wait(350);
+      el.classList.remove("shown");
+      await type($(el, ".typed"), "why does the build fail?", 55);
+      await pause(350);
       el.classList.add("shown");
     },
     async models(el) {
-      const rows = el.querySelectorAll(".models li");
+      const rows = $$(el, ".models li");
       for (const i of [1, 2, 0]) {
-        await wait(1300);
+        await pause(1300);
         rows.forEach((r, j) => r.classList.toggle("on", j === i));
       }
     },
+    async budget(el) {
+      const stale = $$(el, ".budget .read");
+      const pct = $(el, ".pct");
+      stale.forEach(x => x.classList.remove("pruned")); pct.textContent = 64;
+      await pause(1200);
+      for (const x of stale) { x.classList.add("pruned"); await pause(140); }
+      await count(pct, 64, 45, 600);
+    },
+    async loop(el) {
+      const rows = $$(el, ".tool");
+      rows.forEach(r => r.classList.add("hidden")); rows[2].classList.remove("refused"); rows[3].classList.remove("fresh");
+      $(rows[2], ".tag").style.opacity = 0;
+      for (const [i, r] of rows.entries()) {
+        await pause(i ? 550 : 250);
+        r.classList.remove("hidden");
+        if (i === 2) { r.classList.add("refused"); $(r, ".tag").style.opacity = 1; await pause(500); }
+        if (i === 3) r.classList.add("fresh");
+      }
+    },
+    async docs(el) {
+      const doc = $(el, ".doc"), chip = $(el, ".chip");
+      doc.classList.add("hidden"); chip.classList.add("off");
+      await type($(el, ".q"), "tokio · sleep", 60);
+      await pause(300);
+      doc.classList.remove("hidden");
+      await pause(200);
+      chip.classList.remove("off");
+    },
+    async sub(el) {
+      const box = $(el, ".sub"), steps = $(el, ".steps"), nf = $(el, ".nf");
+      const lines = ["Grep flock", "Read engine/src/session.rs", "Read engine/src/store.rs", "Grep sessions_dir", "Read engine/src/paths.rs", "Glob **/*.jsonl", "Read engine/src/log.rs"];
+      box.classList.remove("folded"); steps.innerHTML = "";
+      for (const text of still ? [] : lines) {
+        const d = document.createElement("div");
+        d.textContent = text; steps.append(d);
+        if (steps.children.length > 3) steps.firstChild.remove();
+        await wait(260);
+      }
+      await pause(250);
+      box.classList.add("folded");
+      await count(nf, 0, 14, 500);
+    },
     async rewind(el) {
-      const later = el.querySelectorAll(".t3, .t4");
+      const later = $$(el, ".t3, .t4");
       el.classList.remove("rewound"); later.forEach(x => x.classList.remove("gone"));
-      await wait(1100);
+      await pause(1100);
       el.classList.add("rewound");
       for (const cls of [".t4", ".t3"]) {
-        el.querySelectorAll(cls).forEach(x => x.classList.add("gone"));
-        await wait(260);
+        $$(el, cls).forEach(x => x.classList.add("gone"));
+        await pause(260);
       }
     },
     async race(el) {
-      const lanes = [...el.querySelectorAll(".lane")];
+      const lanes = $$(el, ".lane");
       el.classList.remove("done");
-      lanes.forEach(l => { l.classList.remove("win"); l.querySelector(".res").textContent = ""; const i = l.querySelector("i"); i.style.transition = "none"; i.style.width = "0"; });
-      await wait(60);
+      lanes.forEach(l => { l.classList.remove("win"); $(l, ".res").textContent = ""; const i = $(l, "i"); i.style.transition = "none"; i.style.width = "0"; });
+      await pause(60);
       await Promise.all(lanes.map(async l => {
-        const i = l.querySelector("i"), t = +l.dataset.t;
+        const i = $(l, "i"), t = still ? 0 : +l.dataset.t;
         i.style.transition = `width ${t}ms cubic-bezier(.3,.6,.4,1)`;
         i.style.width = "100%";
-        await wait(t);
+        await pause(t);
         const pass = l.dataset.pass === "1";
-        l.querySelector(".res").textContent = pass ? "✓ tests pass" : "2 failing";
+        $(l, ".res").textContent = pass ? "✓ tests pass" : "2 failing";
         if (pass) l.classList.add("win");
       }));
       el.classList.add("done");
     },
+    async perm(el) {
+      const card = $(el, ".perm"), yes = $(el, ".yes");
+      card.classList.remove("allowed");
+      await pause(1600);
+      yes.classList.add("press");
+      await pause(140);
+      yes.classList.remove("press");
+      card.classList.add("allowed");
+    },
+    async sandbox(el) {
+      const rows = $$(el, ".shell div");
+      rows.forEach(r => (r.style.opacity = 0));
+      $$(el, ".r").forEach(r => (r.style.visibility = "hidden"));
+      for (const r of rows) {
+        await pause(350);
+        r.style.opacity = 1;
+        await pause(450);
+        $(r, ".r").style.visibility = "";
+      }
+    },
+    async quarantine(el) {
+      const tools = $$(el, ".tool"), scan = $(el, ".scan");
+      tools.forEach(t => { t.classList.remove("caught"); $(t, ".tag").textContent = ""; });
+      scan.classList.remove("go"); void scan.offsetWidth;
+      await pause(300);
+      if (!still) scan.classList.add("go");
+      for (const t of tools) {
+        await pause(400);
+        const bad = t.classList.contains("bad");
+        $(t, ".tag").textContent = bad ? "quarantined" : "✓";
+        if (bad) t.classList.add("caught");
+      }
+    },
+    async notify(el) {
+      const n = $(el, ".notif"), a = $(el, ".a"), after = $(el, ".after");
+      n.classList.remove("in", "out"); a.classList.remove("hit"); after.classList.remove("on");
+      await pause(500);
+      n.classList.add("in");
+      await pause(1400);
+      a.classList.add("hit");
+      await pause(350);
+      n.classList.add("out");
+      await pause(300);
+      after.classList.add("on");
+    },
+    async dictate(el) {
+      const wave = $(el, ".wave"), said = $(el, ".said");
+      if (!wave.children.length) wave.innerHTML = "<i></i>".repeat(28);
+      const bars = [...wave.children];
+      said.innerHTML = "";
+      const words = "make the empty state say hello".split(" ");
+      if (still) { said.textContent = words.join(" "); return; }
+      el.classList.add("listening");
+      const t0 = performance.now();
+      const tick = setInterval(() => {
+        const t = (performance.now() - t0) / 1000;
+        bars.forEach((b, i) => (b.style.height = `${3 + Math.abs(Math.sin(t * 7 + i * 0.6)) * 22 * Math.random()}px`));
+      }, 90);
+      for (const w of words) {
+        await wait(330);
+        const s = document.createElement("span");
+        s.className = "w"; s.textContent = w;
+        said.append(s);
+      }
+      await wait(400);
+      clearInterval(tick);
+      el.classList.remove("listening");
+      bars.forEach(b => (b.style.height = "3px"));
+    },
+    async diagram(el) {
+      const parts = $$(el, ".d"), labels = $$(el, "text");
+      parts.forEach(p => p.classList.remove("on")); labels.forEach(t => t.classList.remove("on"));
+      await pause(200);
+      const order = [[0, 1, 2], [3, 4, 5], [6], [7], [8]];
+      for (const group of order) {
+        group.forEach(i => parts[i].classList.add("on"));
+        await pause(300);
+        labels.forEach((t, i) => { if (parts[[0, 1, 2, 6, 8][i]].classList.contains("on")) t.classList.add("on"); });
+      }
+    },
+    async setup(el) {
+      const files = $$(el, ".files span"), use = $(el, ".use"), found = $(el, ".found");
+      files.forEach(f => { f.style.opacity = 0; f.style.transform = "scale(.8)"; });
+      found.classList.add("hidden"); use.textContent = "Use them"; $(el, ".sk").textContent = 0;
+      for (const f of files) { await pause(220); f.style.opacity = 1; f.style.transform = ""; }
+      await pause(250);
+      found.classList.remove("hidden");
+      await count($(el, ".sk"), 0, 14, 700);
+      await pause(900);
+      use.classList.add("press");
+      await pause(140);
+      use.classList.remove("press");
+      use.textContent = "✓ Using them";
+    },
+    async palette(el) {
+      const rows = $$(el, "li"), typed = $(el, ".typed");
+      const pick = () => {
+        const q = typed.textContent;
+        const live = rows.filter(r => r.dataset.k.includes(q));
+        rows.forEach(r => { r.classList.toggle("gone", !live.includes(r)); r.classList.remove("sel"); });
+        live[0]?.classList.add("sel");
+        return live;
+      };
+      typed.textContent = ""; pick();
+      await pause(700);
+      for (const ch of "mo") { typed.textContent += ch; pick(); await pause(260); }
+      await pause(500);
+      const live = pick();
+      live[0].classList.remove("sel"); live[1]?.classList.add("sel");
+    },
   };
   const cards = document.querySelectorAll(".card");
-  const settle = {
-    answer: el => { el.querySelector(".typed").textContent = "why does the build fail?"; el.classList.add("shown"); },
-    rewind: el => { el.classList.add("rewound"); el.querySelectorAll(".t3, .t4").forEach(x => x.classList.add("gone")); },
-    race: el => { el.querySelectorAll(".lane").forEach(l => { l.querySelector("i").style.width = "100%"; const pass = l.dataset.pass === "1"; l.querySelector(".res").textContent = pass ? "✓ tests pass" : "2 failing"; l.classList.toggle("win", pass); }); el.classList.add("done"); },
-  };
   if (still || !("IntersectionObserver" in window)) {
-    cards.forEach(c => settle[c.dataset.play]?.(c.querySelector(".stage")));
+    cards.forEach(c => plays[c.dataset.play]($(c, ".stage")));
     return;
   }
   const busy = new WeakSet();
   const seen = new IntersectionObserver(entries => {
     for (const e of entries) {
-      const stage = e.target.querySelector(".stage");
+      const stage = $(e.target, ".stage");
       if (!e.isIntersecting || busy.has(stage)) continue;
       busy.add(stage);
       plays[e.target.dataset.play](stage).finally(() => busy.delete(stage));
