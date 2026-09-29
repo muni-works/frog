@@ -67,6 +67,18 @@ struct ModelIdentity: Hashable, Sendable {
 
     /// For the engine, ⌥-hover and the detail card only. Never shown as a name.
     let spec: String
+
+    /// Order among models on this Mac: Apple's, then frog's own engine (tang, built in), then
+    /// the servers you'd install (Ollama, LM Studio), then anything else.
+    var runtimeRank: Int {
+        switch spec.split(separator: "/").first {
+        case "apple": 0
+        case "tang": 1
+        case "ollama": 2
+        case "lmstudio": 3
+        default: 4
+        }
+    }
     /// "Qwen3 8B", "Claude Sonnet 5", "Apple Intelligence".
     let name: String
     /// "4-bit", when the model id says so. Shown only in details.

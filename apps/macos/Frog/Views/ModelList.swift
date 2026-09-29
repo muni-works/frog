@@ -11,8 +11,8 @@ enum ModelSections {
         let order: (ModelIdentity.Place) -> Int = { p in
             switch p { case .mac, .apple: 0; case .server: 1; case .cloud: 2 }
         }
-        // Ready first, then on their way, then ones that need something, then ones that can't
-        // run well here.
+        // By runtime (Apple, tang, Ollama, LM Studio), then ready first, then on their way, then
+        // ones that need something, then ones that can't run well here.
         let rank: (ModelIdentity.State) -> Int = { s in
             switch s {
             case .ready: 0
@@ -22,7 +22,9 @@ enum ModelSections {
             }
         }
         let sorted: ([ModelIdentity]) -> [ModelIdentity] = { list in
-            list.enumerated().sorted { (rank($0.element.state), $0.offset) < (rank($1.element.state), $1.offset) }.map(\.element)
+            list.enumerated().sorted {
+                ($0.element.runtimeRank, rank($0.element.state), $0.offset) < ($1.element.runtimeRank, rank($1.element.state), $1.offset)
+            }.map(\.element)
         }
         let have = Set(usable.map(\.spec))
         let all = usable + suggested.filter { !have.contains($0.spec) }

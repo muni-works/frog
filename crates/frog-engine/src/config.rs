@@ -154,6 +154,15 @@ pub struct Config {
     /// choice recorded by `--use-claude-mcp` (see `imports`).
     #[serde(skip)]
     pub claude_mcp: bool,
+    /// See only the project: none of the user's own instructions (FROG.md, ~/.claude/CLAUDE.md),
+    /// skills or MCP servers. Not a config.toml key: `frog-bench` sets it so a run measures the
+    /// harness and the model, not whoever's machine it ran on.
+    #[serde(skip)]
+    pub hermetic: bool,
+    /// Measure each turn's energy (`--energy`, which the Mac app passes when "Show energy use"
+    /// is on). Off by default: it keeps a thread reading the power sensor.
+    #[serde(skip)]
+    pub energy: bool,
     /// Run shell commands in a sandbox (writes only in the project, credentials hidden), so
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]
@@ -227,7 +236,8 @@ impl Config {
             .map(String::from)
             .or_else(|| std::env::var("FROG_MODEL").ok())
             .or_else(|| self.default_model.clone())
-            .unwrap_or_else(|| "ollama/qwen3:4b".into());
+            // frog's own engine first: it needs nothing else installed.
+            .unwrap_or_else(|| "tang/mlx-community/Qwen3-4B-4bit".into());
         if let Some(p) = self.models.get(&spec) {
             return Ok((spec, p.clone()));
         }

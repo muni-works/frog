@@ -7,6 +7,7 @@ pub mod codemap;
 pub mod config;
 pub mod context;
 pub mod diagram;
+pub mod energy;
 pub mod engine;
 pub mod folder;
 pub mod harness;

@@ -23,6 +23,9 @@ TANG_DIR="${TANG_DIR:-$REPO/../tang}"
 if [ -f "$TANG_DIR/crates/tang-llm/Cargo.toml" ]; then
     cargo build --manifest-path "$TANG_DIR/Cargo.toml" --release -p tang-llm --features metal
     rm -f "$DEST/tang-llm"; cp "$TANG_DIR/target/release/tang-llm" "$DEST/tang-llm"
+elif [ -n "$FROG_REQUIRE_TANG" ]; then
+    echo "error: no tang checkout at $TANG_DIR; a release must ship tang-llm (set TANG_DIR)" >&2
+    exit 1
 else
     echo "warning: no tang checkout at $TANG_DIR; tang/ models won't be available" >&2
 fi

@@ -491,6 +491,26 @@ pub struct TurnUsage {
     /// The model (spec) that ran the turn, for pricing it. Absent in older logs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// What the turn cost in energy, when it was measured (`--energy`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy: Option<TurnEnergy>,
+}
+
+/// A turn's energy in watt-hours: the whole Mac above its idle power just before, and for a
+/// hosted model an estimate of its data center's share (see `energy::cloud`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct TurnEnergy {
+    pub local_wh: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_wh: Option<f64>,
+    /// The Mac's power at rest that was subtracted, in watts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_w: Option<f64>,
+    /// How `remote_wh` was estimated for this model, and where its numbers come from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_basis: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_source: Option<String>,
 }
 
 /// A turn's wall time split by what it was waiting on, in milliseconds. `other` is whatever

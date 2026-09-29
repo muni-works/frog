@@ -104,7 +104,7 @@ Built: every state in the table, plus Over cap. Unreachable comes from the app's
 
 The picker and Settings > Models show the same list, built by `ModelSections` and drawn by `ModelListRow` (`ModelList.swift`):
 
-- **Sections say where models run,** in one order everywhere: On this Mac, then each of your servers ("On mew (RTX 3090)"), then each cloud provider ("Cloud · Anthropic"). A model you could download is simply a model On this Mac in the Not downloaded state; there's no separate section. Within a section: ready, then downloading, then ones that need something, then ones that won't run well here.
+- **Sections say where models run,** in one order everywhere: On this Mac, then each of your servers ("On mew (RTX 3090)"), then each cloud provider ("Cloud · Anthropic"). A model you could download is simply a model On this Mac in the Not downloaded state; there's no separate section. Within a section: by runtime on this Mac (Apple's model, then frog's own tang engine, then Ollama, then LM Studio), then ready, then downloading, then ones that need something, then ones that won't run well here. With nothing configured, frog's own default is tang's Qwen3 4B.
 - **One row:** the name and ability icons over one line of detail (measured speed, estimated cost per turn, size, or the state line), then a checkmark for the current model, then the list's accessory. The section names the place, so the row doesn't. Hovering shows the details (abilities, context, price, spec).
 - **The current model is always listed,** even when frog didn't report it (an Ollama model with Ollama not running).
 

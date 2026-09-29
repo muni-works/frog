@@ -30,11 +30,11 @@ final class SnapshotTests: XCTestCase {
             .compactMap { try JSONDecoder.frog.decode(Record.self, from: Data($0.utf8)).env }
     }
 
-    private func render<V: View>(_ view: V, size: CGSize, to name: String, settle: TimeInterval = 0.4) throws {
+    private func render<V: View>(_ view: V, size: CGSize, to name: String, settle: TimeInterval = 0.4, appearance: NSAppearance.Name = .darkAqua) throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: appearance)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
         // Let SwiftUI settle (scroll anchors, lazy stacks) before capturing.
@@ -49,6 +49,45 @@ final class SnapshotTests: XCTestCase {
     private func transcript(_ c: Conversation) -> some View {
         TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }))
             .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    /// The popovers behind a turn's cost and energy hints, for a hosted model's turn.
+    func testRenderTurnCostCards() throws {
+        let usage = try JSONDecoder.frog.decode(TurnUsage.self, from: Data(#"{"input_tokens":12400,"output_tokens":380,"model_calls":2,"model":"vercel/anthropic/claude-opus-5.5-fast","energy":{"local_wh":0.021,"remote_wh":2.96,"idle_w":11.6}}"#.utf8))
+        let energy = try XCTUnwrap(usage.energy)
+        for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
+            try render(EnergyCard(energy: energy, usage: usage).fixedSize().frame(maxHeight: .infinity, alignment: .top)
+                        .background(Color(nsColor: .windowBackgroundColor)),
+                       size: CGSize(width: 290, height: 520), to: "energy-card-\(name)", appearance: look)
+            try render(PriceCard(cost: 0.214, usage: usage, listed: (15, 75)).fixedSize().frame(maxHeight: .infinity, alignment: .top)
+                        .background(Color(nsColor: .windowBackgroundColor)),
+                       size: CGSize(width: 290, height: 460), to: "price-card-\(name)", appearance: look)
+        }
+    }
+
+    /// Settings › Energy with a day of turns on three models, from a throwaway defaults suite.
+    func testRenderEnergySettings() throws {
+        let suite = "frog-snapshot-energy"
+        UserDefaults().removePersistentDomain(forName: suite)
+        let stats = ModelStats(defaults: UserDefaults(suiteName: suite)!)
+        let turn = { (model: String, local: Double, remote: Double?, basis: String?) throws -> TurnUsage in
+            var json = #"{"input_tokens":9000,"output_tokens":600,"model_calls":3,"model":"\#(model)","energy":{"local_wh":\#(local)"#
+            if let remote { json += #","remote_wh":\#(remote)"# }
+            if let basis { json += #","remote_basis":"\#(basis)","remote_source":"https://huggingface.co/deepseek-ai/DeepSeek-V3""# }
+            json += "}}"
+            return try JSONDecoder.frog.decode(TurnUsage.self, from: Data(json.utf8))
+        }
+        for h in stride(from: 0.0, to: 20, by: 1) {
+            let at = Date.now.addingTimeInterval(-h * 3600)
+            if Int(h) % 3 != 2 { stats.record(try turn("tang/mlx-community/Qwen3-8B-4bit", 0.4 + 0.05 * h.truncatingRemainder(dividingBy: 5), nil, nil), model: nil, at: at) }
+            if Int(h) % 4 == 0 { stats.record(try turn("openrouter/deepseek/deepseek-chat-v3", 0.03, 0.9, "DeepSeek-V3: 37.0B active parameters, scaled from Epoch AI's GPT-4o estimate"), model: nil, at: at) }
+            if Int(h) % 6 == 1 { stats.record(try turn("apple/on-device", 0.05, nil, nil), model: nil, at: at) }
+        }
+        for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
+            try render(EnergySettings(stats: stats).frame(width: 620).background(Color(nsColor: .windowBackgroundColor)),
+                       size: CGSize(width: 620, height: 900), to: "energy-settings-\(name)", settle: 0.8, appearance: look)
+        }
+        UserDefaults().removePersistentDomain(forName: suite)
     }
 
     func testRenderFixtures() throws {

@@ -32,8 +32,11 @@ pub fn instruction_files(cwd: &Path, cfg: &Config) -> Vec<PathBuf> {
 }
 
 fn memory_files(cwd: &Path, cfg: &Config) -> Vec<PathBuf> {
-    let mut files = vec![config_dir().join("FROG.md")];
-    if cfg.load_claude_md {
+    let mut files = Vec::new();
+    if !cfg.hermetic {
+        files.push(config_dir().join("FROG.md"));
+    }
+    if cfg.load_claude_md && !cfg.hermetic {
         files.push(
             dirs::home_dir()
                 .unwrap_or_default()
@@ -99,8 +102,11 @@ pub fn chat_prompt(cfg: &Config, model: &str) -> String {
         "{CHAT}\n\n# Environment\n- Date: {}\n- Model: {model}\n",
         chrono::Local::now().format("%Y-%m-%d"),
     );
-    let mut files = vec![config_dir().join("FROG.md")];
-    if cfg.load_claude_md {
+    let mut files = Vec::new();
+    if !cfg.hermetic {
+        files.push(config_dir().join("FROG.md"));
+    }
+    if cfg.load_claude_md && !cfg.hermetic {
         files.push(
             dirs::home_dir()
                 .unwrap_or_default()

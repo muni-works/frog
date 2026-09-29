@@ -259,10 +259,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             *ready = true;
             agent.emit(Event::Idle);
         }
+        // Only seconds spent waiting for the user count toward the idle baseline: not startup
+        // (MCP servers, a model loading), and not any op's work.
+        agent.meter_busy(false);
         while let Some(op) = work_rx.recv().await {
             if let Op::Shutdown = op {
                 break;
             }
+            agent.meter_busy(true);
             let token = CancellationToken::new();
             *shared.cancel.lock().unwrap() = token.clone();
             let r = tokio::select! {
@@ -287,6 +291,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             }
             agent.emit_status();
             agent.emit(Event::Idle);
+            agent.meter_busy(false);
         }
         agent.mcp.shutdown();
         shared.mcp.lock().unwrap().take();
@@ -400,6 +405,10 @@ struct Agent {
     /// Where the current turn's time went, and when it started.
     timing: TurnTiming,
     turn_clock: Option<Instant>,
+    /// The power meter, with `--energy`, and where this turn started on it (with the idle
+    /// power to subtract).
+    meter: Option<crate::energy::Meter>,
+    energy_mark: Option<(crate::energy::Mark, Option<f64>)>,
     root: PathBuf,
     system: String,
     specs: Vec<ToolSpec>,
@@ -476,7 +485,7 @@ impl Agent {
         let skills = if o.subagent {
             Default::default()
         } else {
-            crate::skills::discover(&o.cwd)
+            crate::skills::discover_in(&o.cwd, !o.cfg.hermetic)
         };
         let memory = match (&o.store, o.subagent) {
             (Some(store), false) => Some(crate::memory::Store::new(
@@ -543,6 +552,8 @@ impl Agent {
             turn_usage: TurnUsage::default(),
             timing: TurnTiming::default(),
             turn_clock: None,
+            meter: None,
+            energy_mark: None,
             root: o.cwd,
             system,
             specs: tools::specs(),
@@ -571,6 +582,10 @@ impl Agent {
         agent.sync_specs();
         agent.refresh_repo_map(&[]);
         agent.apply_harness();
+        if agent.cfg.energy && !agent.subagent {
+            agent.meter = crate::energy::Meter::new();
+            agent.meter_busy(true);
+        }
         Ok(agent)
     }
 
@@ -726,6 +741,7 @@ impl Agent {
             context_tokens: self.context_tokens(),
             timing,
             model: Some(self.profile_name.clone()),
+            energy: self.turn_energy(),
             ..self.turn_usage.clone()
         };
         self.emit(Event::TurnEnded {
@@ -735,6 +751,30 @@ impl Agent {
         });
         self.sync_log();
         self.write_summary();
+    }
+
+    fn meter_busy(&self, busy: bool) {
+        if let Some(m) = &self.meter {
+            m.set_busy(busy);
+        }
+    }
+
+    /// This turn's energy, when it's being measured and there was idle to measure against.
+    fn turn_energy(&self) -> Option<crate::protocol::TurnEnergy> {
+        let m = self.meter.as_ref()?;
+        let (mark, idle) = self.energy_mark.as_ref()?;
+        let reading = m.since(mark);
+        let estimate = crate::harness::is_cloud(&self.profile)
+            .then(|| crate::energy::cloud::for_model(&self.profile_name));
+        Some(crate::protocol::TurnEnergy {
+            local_wh: reading.above_idle_wh((*idle)?),
+            idle_w: *idle,
+            remote_wh: estimate
+                .as_ref()
+                .map(|e| e.wh(self.turn_usage.input_tokens, self.turn_usage.output_tokens)),
+            remote_basis: estimate.as_ref().map(|e| e.basis.clone()),
+            remote_source: estimate.as_ref().map(|e| e.source.to_string()),
+        })
     }
 
     /// "Remember that …" in an ordinary message saves a note (and the turn still runs).
@@ -1003,6 +1043,10 @@ impl Agent {
         self.active_turn = Some(turn);
         self.inputs.push(input.to_string());
         self.turn_clock = Some(Instant::now());
+        if let Some(m) = &self.meter {
+            // Idle from the seconds spent waiting before this turn (the op loop marked it busy).
+            self.energy_mark = Some((m.mark(), m.idle_estimate()));
+        }
         self.timing = TurnTiming::default();
         self.quiet = 0;
         self.checkpoint(turn);
@@ -1087,7 +1131,7 @@ impl Agent {
             let budget = self.think_budget(think);
             let started = Instant::now();
             let (resp, streamed) = self
-                .call("thinking", &self.messages, false, think, budget)
+                .call("thinking", &self.messages, false, true, think, budget)
                 .await?;
             self.last_call = started.elapsed();
             self.usage = resp.usage;
@@ -2094,41 +2138,60 @@ Don't repeat it. Change the arguments or try a different approach.",
     }
 
     /// One model request. Streams item events (unless `quiet`) and retries transient errors
-    /// that happen before anything streamed.
+    /// that happen before anything streamed. Without `offer_tools` the model can only answer:
+    /// in `json` mode a summary request that offers tools gets a tool call back, not a summary.
     async fn call(
         &self,
         label: &str,
         messages: &[Message],
         quiet: bool,
+        offer_tools: bool,
         think: Option<bool>,
         think_budget: Option<u32>,
     ) -> Result<(Response, Streamed)> {
         let json_mode = self.tool_mode == ToolMode::Json;
         let with_images = self.prepare_images(messages);
         let messages = with_images.as_deref().unwrap_or(messages);
+        let specs = if offer_tools {
+            &self.specs[..]
+        } else {
+            &[][..]
+        };
         let converted;
         let schema;
         let (system, messages, tools, format) = match self.tool_mode {
             ToolMode::Text => {
                 converted = prompt::to_text_mode(messages);
-                let system = format!("{}{}", self.system, prompt::text_tools_prompt(&self.specs));
+                let system = format!("{}{}", self.system, prompt::text_tools_prompt(specs));
                 (system, &converted[..], &[][..], None)
             }
             ToolMode::Json => {
                 converted = prompt::to_json_mode(messages);
-                schema = prompt::json_schema(&self.specs);
-                let system = format!("{}{}", self.system, prompt::json_tools_prompt(&self.specs));
+                schema = prompt::json_schema(specs);
+                let system = format!("{}{}", self.system, prompt::json_tools_prompt(specs));
                 (system, &converted[..], &[][..], Some(&schema))
             }
-            ToolMode::Native | ToolMode::Auto => {
-                (self.system.clone(), messages, &self.specs[..], None)
-            }
+            ToolMode::Native | ToolMode::Auto => (self.system.clone(), messages, specs, None),
+        };
+        // A local server fills whatever's left of the window unless told otherwise, and
+        // overflows it; hosted APIs have their own output limits.
+        let max_tokens = if crate::harness::is_cloud(&self.profile) {
+            self.profile.max_tokens
+        } else {
+            let prompt = self
+                .est
+                .tokens(fixed_chars(&system, tools) + context::history_chars(messages));
+            Some(context::reply_budget(
+                self.window,
+                prompt,
+                self.profile.max_tokens,
+            ))
         };
         let req = Request {
             system: &system,
             messages,
             tools,
-            max_tokens: self.profile.max_tokens,
+            max_tokens,
             format,
             think,
             think_budget,
@@ -2467,7 +2530,9 @@ Don't repeat it. Change the arguments or try a different approach.",
         }
         // A summary needs no reasoning.
         let think = self.think_switch(false);
-        let (resp, streamed) = self.call("compacting", &msgs, true, think, None).await?;
+        let (resp, streamed) = self
+            .call("compacting", &msgs, true, false, think, None)
+            .await?;
         self.count_call(resp.usage, &streamed, true);
         let summary = resp.message.text();
         if summary.trim().is_empty() {

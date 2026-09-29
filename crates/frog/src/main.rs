@@ -56,6 +56,9 @@ struct Cli {
     /// Don't sandbox shell commands; every command asks instead (unless allowed or --yolo).
     #[arg(long)]
     no_shell_sandbox: bool,
+    /// Measure each turn's energy from the Mac's power sensor, and report it with the turn.
+    #[arg(long)]
+    energy: bool,
     /// A plain chat, not tied to a project: no file or shell tools.
     #[arg(long)]
     chat: bool,
@@ -203,6 +206,7 @@ async fn run() -> Result<bool> {
     }
     let mut cfg = Config::load()?;
     cfg.computer_use |= cli.computer_use;
+    cfg.energy |= cli.energy;
     if cli.no_shell_sandbox {
         cfg.sandbox_shell = false;
     }

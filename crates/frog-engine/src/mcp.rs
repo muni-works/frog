@@ -61,8 +61,9 @@ struct McpJson {
 /// override a config.toml server of the same name), then Claude Code's servers once you've
 /// said to use them (docs/onboarding.md), plus `desktop` (computer use) when it's on.
 pub fn configured(cfg: &crate::config::Config, cwd: &Path) -> BTreeMap<String, ServerConfig> {
-    let mut all = cfg.mcp_servers.clone();
-    if cfg.computer_use
+    // Hermetic: only what the project itself declares.
+    let mut all = if cfg.hermetic { BTreeMap::new() } else { cfg.mcp_servers.clone() };
+    if cfg.computer_use && !cfg.hermetic
         && let Some(bin) = crate::sidecar::desktop()
     {
         all.entry("desktop".into()).or_insert(ServerConfig {
@@ -79,7 +80,7 @@ pub fn configured(cfg: &crate::config::Config, cwd: &Path) -> BTreeMap<String, S
             all.entry(name).or_insert(s);
         }
     }
-    if cfg.claude_mcp {
+    if cfg.claude_mcp && !cfg.hermetic {
         for (name, s) in crate::imports::claude_servers(cwd) {
             all.entry(name).or_insert(s);
         }
@@ -987,6 +988,13 @@ mod tests {
         assert_eq!(all["fs"].args, ["-y", "server-fs"]);
         assert_eq!(all["docs"].url.as_deref(), Some("https://example.com/mcp"));
         assert_eq!(all["mine"].command.as_deref(), Some("kept"));
+
+        // Hermetic (the bench): the project's own servers only, never the user's.
+        cfg.hermetic = true;
+        cfg.claude_mcp = true;
+        let all = configured(&cfg, &dir);
+        assert_eq!(all.len(), 3);
+        assert_eq!(all["mine"].command.as_deref(), Some("other"));
     }
 }
 

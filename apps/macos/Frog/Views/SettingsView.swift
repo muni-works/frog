@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// ⌘, : General, Models, Permissions, Appearance, Shortcuts.
+/// ⌘, : General, Models, Energy, Permissions, MCP, Appearance, Shortcuts.
 struct SettingsView: View {
     /// The open tab; "Manage models…" in the model picker sets it to "models".
     @AppStorage("settingsTab") private var tab = "general"
@@ -9,6 +9,7 @@ struct SettingsView: View {
         TabView(selection: $tab) {
             Tab("General", systemImage: "gearshape", value: "general") { GeneralSettings() }
             Tab("Models", systemImage: "cpu", value: "models") { ModelSettings() }
+            Tab("Energy", systemImage: "leaf", value: "energy") { EnergySettings() }
             Tab("Permissions", systemImage: "hand.raised", value: "permissions") { PermissionSettings() }
             Tab("MCP", systemImage: "puzzlepiece.extension", value: "mcp") { MCPSettings() }
             Tab("Appearance", systemImage: "paintbrush", value: "appearance") { AppearanceSettings() }
@@ -583,6 +584,7 @@ private struct AppearanceSettings: View {
     @AppStorage(Verbosity.key) private var verbosity = Verbosity.standard.rawValue
     @AppStorage("playfulFrog") private var playfulFrog = true
     @AppStorage("playfulSounds") private var playfulSounds = false
+    @AppStorage(ModelStats.energyKey) private var showEnergy = false
 
     var body: some View {
         Form {
@@ -603,6 +605,10 @@ private struct AppearanceSettings: View {
                     .help("The frog blinks, reads and hops along with the conversation.")
                 Toggle("Frog sounds", isOn: $playfulSounds)
                     .help("A quiet plip when you send, a ribbit when a turn finishes, a drip when it needs permission.")
+            }
+            Section {
+                Toggle("Show energy use", isOn: $showEnergy)
+                    .help("Each turn's watt-hours, from this Mac's power sensor, above what it drew at rest. Cloud models add an estimate for their data center. frog.eco/energy has the method.")
             }
         }
         .formStyle(.grouped)

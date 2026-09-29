@@ -269,6 +269,8 @@ cd apps/macos && xcodegen generate && open Frog.xcodeproj
 
 **Designing without a model.** `open Frog.app --args -FrogFolder <dir> -FrogReplay <session.jsonl> -FrogReplaySpeed 4 [-FrogReplayAsk YES]` plays back a recorded session. Some fixtures live in [apps/macos/Fixtures](apps/macos/Fixtures). The snapshot tests render them through the real views into `$TMPDIR/frog-snapshots/*.png`.
 
+**Releasing.** `apps/macos/scripts/release.sh 0.2.0` builds an arm64 Release build with tang-llm bundled. It signs every binary with a Developer ID and the hardened runtime, notarizes and staples the app and a DMG, writes a Sparkle appcast, and publishes `Frog.dmg` and `appcast.xml` as a GitHub release. Pass `--local` to stop before GitHub. The script's header lists the one-time setup (certificate, notary profile, Sparkle key). [site/](site) is frog.eco, where `/download` and `/appcast.xml` redirect to the latest release. Only the release build (`eco.frog`) checks for updates.
+
 **Opening a folder from the command line:** `open Frog.app --args -FrogFolder <path>`. Engine stderr is logged to `~/Library/Logs/Frog/engine.log`.
 
 ## Bench

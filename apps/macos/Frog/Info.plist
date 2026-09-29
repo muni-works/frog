@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>NSHumanReadableCopyright</key>
@@ -28,5 +28,9 @@
 	<string>Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Frog turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else.</string>
+	<key>SUFeedURL</key>
+	<string>https://frog.eco/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>$(SPARKLE_PUBLIC_KEY)</string>
 </dict>
 </plist>

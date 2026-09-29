@@ -54,10 +54,36 @@ func chunk(_ id: String, _ delta: [String: Any], finish: String? = nil) -> [Stri
      "choices": [["index": 0, "delta": delta, "finish_reason": finish as Any]]]
 }
 
-func usage(_ prompt: String, _ out: String) -> [String: Any] {
-    // The framework doesn't report token counts; ~4 characters per token.
-    let (p, c) = ((prompt.count + 3) / 4, (out.count + 3) / 4)
+func usage(_ prompt: String, _ out: String, counted: Int?) -> [String: Any] {
+    // Counted by the model's own tokenizer where the OS can (macOS 26.4); else ~4 characters
+    // per token. frog calibrates its context budget from these, so a real count matters.
+    let p = counted ?? (prompt.count + 3) / 4
+    let c = (out.count + 3) / 4
     return ["prompt_tokens": p, "completion_tokens": c, "total_tokens": p + c]
+}
+
+/// Tokens a request takes before the reply: instructions, the prompt, and the schema guided
+/// generation adds. `nil` where the OS can't count them.
+func promptTokens(_ model: SystemLanguageModel, _ instructions: String, _ prompt: String, _ schema: GenerationSchema?) async -> Int? {
+    guard #available(macOS 26.4, *) else { return nil }
+    do {
+        var n = try await model.tokenCount(for: prompt)
+        if !instructions.isEmpty { n += try await model.tokenCount(for: Instructions(instructions)) }
+        if let schema { n += try await model.tokenCount(for: schema) }
+        return n
+    } catch {
+        return nil
+    }
+}
+
+/// Room left for the reply: the context holds the prompt *and* what's generated, and a reply
+/// allowed to run on fails at contextSize + 1 instead of stopping. A few tokens are kept back
+/// for the framework's own framing.
+let replyMargin = 64
+
+struct ContextFull: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
 }
 
 func chat(_ body: [String: Any], _ res: HTTPServer.Response) async {
@@ -80,9 +106,18 @@ func chat(_ body: [String: Any], _ res: HTTPServer.Response) async {
     let format = body["response_format"] as? [String: Any]
     let schemaJSON = (format?["json_schema"] as? [String: Any])?["schema"] as? [String: Any]
     var output = ""
+    var counted: Int?
     do {
-        if let schemaJSON {
-            let schema = try SchemaConverter.generationSchema(schemaJSON)
+        let schema = try schemaJSON.map(SchemaConverter.generationSchema)
+        counted = await promptTokens(model, instructions, prompt, schema)
+        if let counted {
+            let room = model.contextSize - counted - replyMargin
+            guard room > 0 else {
+                throw ContextFull(message: "Content contains \(counted) tokens, leaving no room for a reply in the context of \(model.contextSize).")
+            }
+            options.maximumResponseTokens = min(options.maximumResponseTokens ?? room, room)
+        }
+        if let schema {
             let r = try await session.respond(to: prompt, schema: schema, options: options)
             output = r.content.jsonString
             if stream { await res.event(chunk(id, ["role": "assistant", "content": output])) }
@@ -99,6 +134,9 @@ func chat(_ body: [String: Any], _ res: HTTPServer.Response) async {
         }
     } catch {
         let message = "\(error)"
+        if ProcessInfo.processInfo.environment["FROG_APPLE_DEBUG"] != nil {
+            FileHandle.standardError.write(Data("--- error (prompt \(counted.map(String.init) ?? "?") tokens, reply cap \(options.maximumResponseTokens.map(String.init) ?? "none")): \(message)\n".utf8))
+        }
         if stream {
             await res.event(["error": ["message": message]])
             await res.finish()
@@ -107,15 +145,18 @@ func chat(_ body: [String: Any], _ res: HTTPServer.Response) async {
         }
         return
     }
+    if ProcessInfo.processInfo.environment["FROG_APPLE_DEBUG"] != nil {
+        FileHandle.standardError.write(Data("--- reply (prompt \(counted.map(String.init) ?? "?") tokens, reply cap \(options.maximumResponseTokens.map(String.init) ?? "none"))\n\(output.prefix(600))\n".utf8))
+    }
     if stream {
         await res.event(chunk(id, [:], finish: "stop"))
-        await res.event(["id": id, "object": "chat.completion.chunk", "choices": [], "usage": usage(prompt, output)])
+        await res.event(["id": id, "object": "chat.completion.chunk", "choices": [], "usage": usage(prompt, output, counted: counted)])
         await res.finish()
     } else {
         res.json(200, [
             "id": id, "object": "chat.completion", "created": Int(Date().timeIntervalSince1970), "model": modelID,
             "choices": [["index": 0, "message": ["role": "assistant", "content": output], "finish_reason": "stop"]],
-            "usage": usage(prompt, output),
+            "usage": usage(prompt, output, counted: counted),
         ])
     }
 }

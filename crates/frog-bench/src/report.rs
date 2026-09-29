@@ -42,6 +42,23 @@ fn label(r: &RunResult) -> String {
     l
 }
 
+/// Energy over every run, failures included, per task solved; `~` when part of it is a hosted
+/// model's estimate rather than a measurement.
+fn wh_per_solve(runs: &[&RunResult]) -> String {
+    let passed = runs.iter().filter(|r| r.pass).count();
+    let measured: Vec<_> = runs.iter().filter_map(|r| r.energy.as_ref()).collect();
+    if passed == 0 || measured.len() < runs.len() {
+        return "—".into();
+    }
+    let wh: f64 = measured.iter().map(|e| e.total_wh()).sum::<f64>() / passed as f64;
+    let est = if measured.iter().any(|e| e.remote_wh.is_some()) {
+        "~"
+    } else {
+        ""
+    };
+    format!("{est}{wh:.2}")
+}
+
 /// One row per model × mode, then a task × config pass grid.
 pub fn print(results: &[RunResult]) {
     let mut groups: BTreeMap<Config, Vec<&RunResult>> = BTreeMap::new();
@@ -53,7 +70,7 @@ pub fn print(results: &[RunResult]) {
     }
 
     println!(
-        "\n{:<28} {:<12} {:<9} {:>6} {:>7} {:>6} {:>10} {:>7} {:>7} {:>6} {:>6}  ends",
+        "\n{:<28} {:<12} {:<9} {:>6} {:>7} {:>6} {:>10} {:>9} {:>7} {:>7} {:>6} {:>6}  ends",
         "model",
         "mode",
         "resolved",
@@ -61,6 +78,7 @@ pub fn print(results: &[RunResult]) {
         "avg s",
         "calls",
         "tok/solve",
+        "Wh/solve",
         "out tok",
         "think s",
         "tools",
@@ -76,9 +94,10 @@ pub fn print(results: &[RunResult]) {
         } else {
             "—".into()
         };
+        let wh_per_solve = wh_per_solve(runs);
         let resolved = most_common(runs.iter().filter_map(|r| r.resolved_mode.as_deref()));
         println!(
-            "{:<28} {:<12} {:<9} {:>6} {:>7.1} {:>6.1} {:>10} {:>7.0} {:>7.1} {:>6.1} {:>6.1}  {}",
+            "{:<28} {:<12} {:<9} {:>6} {:>7.1} {:>6.1} {:>10} {:>9} {:>7.0} {:>7.1} {:>6.1} {:>6.1}  {}",
             model,
             mode,
             resolved,
@@ -86,6 +105,7 @@ pub fn print(results: &[RunResult]) {
             avg(|r| r.secs),
             avg(|r| r.model_calls as f64),
             per_solve,
+            wh_per_solve,
             avg(|r| r.output_tokens as f64),
             avg(|r| r.think_ms as f64 / 1000.0),
             avg(|r| r.tool_calls as f64),
