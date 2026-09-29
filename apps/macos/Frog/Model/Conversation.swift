@@ -193,6 +193,7 @@ final class Conversation {
         }
         var args = arguments
         if let model { args += ["-m", model] }
+        if UserDefaults.standard.bool(forKey: ModelStats.energyKey) { args.append("--energy") }
         let engine = EngineProcess(binary: binary, cwd: folder, arguments: args)
         engine.onEvent = { [weak self] env in self?.handle(env) }
         do {

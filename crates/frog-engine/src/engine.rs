@@ -259,10 +259,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             *ready = true;
             agent.emit(Event::Idle);
         }
+        // Only seconds spent waiting for the user count toward the idle baseline: not startup
+        // (MCP servers, a model loading), and not any op's work.
+        agent.meter_busy(false);
         while let Some(op) = work_rx.recv().await {
             if let Op::Shutdown = op {
                 break;
             }
+            agent.meter_busy(true);
             let token = CancellationToken::new();
             *shared.cancel.lock().unwrap() = token.clone();
             let r = tokio::select! {
@@ -287,6 +291,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             }
             agent.emit_status();
             agent.emit(Event::Idle);
+            agent.meter_busy(false);
         }
         agent.mcp.shutdown();
         shared.mcp.lock().unwrap().take();
@@ -400,6 +405,10 @@ struct Agent {
     /// Where the current turn's time went, and when it started.
     timing: TurnTiming,
     turn_clock: Option<Instant>,
+    /// The power meter, with `--energy`, and where this turn started on it (with the idle
+    /// power to subtract).
+    meter: Option<crate::energy::Meter>,
+    energy_mark: Option<(crate::energy::Mark, Option<f64>)>,
     root: PathBuf,
     system: String,
     specs: Vec<ToolSpec>,
@@ -543,6 +552,8 @@ impl Agent {
             turn_usage: TurnUsage::default(),
             timing: TurnTiming::default(),
             turn_clock: None,
+            meter: None,
+            energy_mark: None,
             root: o.cwd,
             system,
             specs: tools::specs(),
@@ -571,6 +582,10 @@ impl Agent {
         agent.sync_specs();
         agent.refresh_repo_map(&[]);
         agent.apply_harness();
+        if agent.cfg.energy && !agent.subagent {
+            agent.meter = crate::energy::Meter::new();
+            agent.meter_busy(true);
+        }
         Ok(agent)
     }
 
@@ -726,6 +741,7 @@ impl Agent {
             context_tokens: self.context_tokens(),
             timing,
             model: Some(self.profile_name.clone()),
+            energy: self.turn_energy(),
             ..self.turn_usage.clone()
         };
         self.emit(Event::TurnEnded {
@@ -735,6 +751,29 @@ impl Agent {
         });
         self.sync_log();
         self.write_summary();
+    }
+
+    fn meter_busy(&self, busy: bool) {
+        if let Some(m) = &self.meter {
+            m.set_busy(busy);
+        }
+    }
+
+    /// This turn's energy, when it's being measured and there was idle to measure against.
+    fn turn_energy(&self) -> Option<crate::protocol::TurnEnergy> {
+        let m = self.meter.as_ref()?;
+        let (mark, idle) = self.energy_mark.as_ref()?;
+        let reading = m.since(mark);
+        let hosted = crate::harness::is_hosted(&self.profile);
+        Some(crate::protocol::TurnEnergy {
+            local_wh: reading.above_idle_wh((*idle)?),
+            remote_wh: hosted.then(|| {
+                crate::energy::cloud::estimate_wh(
+                    self.turn_usage.input_tokens,
+                    self.turn_usage.output_tokens,
+                )
+            }),
+        })
     }
 
     /// "Remember that …" in an ordinary message saves a note (and the turn still runs).
@@ -1003,6 +1042,10 @@ impl Agent {
         self.active_turn = Some(turn);
         self.inputs.push(input.to_string());
         self.turn_clock = Some(Instant::now());
+        if let Some(m) = &self.meter {
+            // Idle from the seconds spent waiting before this turn (the op loop marked it busy).
+            self.energy_mark = Some((m.mark(), m.idle_estimate()));
+        }
         self.timing = TurnTiming::default();
         self.quiet = 0;
         self.checkpoint(turn);

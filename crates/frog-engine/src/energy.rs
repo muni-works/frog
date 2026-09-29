@@ -406,13 +406,20 @@ impl Reading {
 }
 
 /// Integrates the system power sensor on its own thread, so a reading covers every moment of an
-/// interval rather than its two ends.
+/// interval rather than its two ends. It also keeps the last minute of idle seconds (average
+/// watts over each second nothing was `busy`), for a baseline without stopping to measure one.
 #[cfg(target_os = "macos")]
 struct Integrator {
     /// Joules since the meter started, as f64 bits.
     total: std::sync::Arc<std::sync::atomic::AtomicU64>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    idle: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<f64>>>,
 }
+
+/// How many idle seconds the baseline remembers.
+#[cfg(target_os = "macos")]
+const IDLE_WINDOW: usize = 60;
 
 #[cfg(target_os = "macos")]
 impl Integrator {
@@ -421,12 +428,16 @@ impl Integrator {
         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
         let total = Arc::new(AtomicU64::new(0f64.to_bits()));
         let stop = Arc::new(AtomicBool::new(false));
-        let (t, s) = (total.clone(), stop.clone());
+        let busy = Arc::new(AtomicBool::new(false));
+        let idle = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let (t, s, b, q) = (total.clone(), stop.clone(), busy.clone(), idle.clone());
         std::thread::Builder::new()
             .name("frog-energy".into())
             .spawn(move || {
                 let mut last = std::time::Instant::now();
                 let mut last_w = smc.float(b"PSTR").map(f64::from).unwrap_or(0.0);
+                // The current second: its joules, its start, and whether any of it was busy.
+                let (mut sec_j, mut sec_at, mut sec_busy) = (0.0, last, false);
                 while !s.load(Ordering::Relaxed) {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     let now = std::time::Instant::now();
@@ -436,10 +447,27 @@ impl Integrator {
                     let prev = f64::from_bits(t.load(Ordering::Relaxed));
                     t.store((prev + j).to_bits(), Ordering::Relaxed);
                     (last, last_w) = (now, w);
+                    sec_j += j;
+                    sec_busy |= b.load(Ordering::Relaxed);
+                    let span = (now - sec_at).as_secs_f64();
+                    if span >= 1.0 {
+                        if !sec_busy && let Ok(mut q) = q.lock() {
+                            q.push_back(sec_j / span);
+                            if q.len() > IDLE_WINDOW {
+                                q.pop_front();
+                            }
+                        }
+                        (sec_j, sec_at, sec_busy) = (0.0, now, b.load(Ordering::Relaxed));
+                    }
                 }
             })
             .ok();
-        Integrator { total, stop }
+        Integrator {
+            total,
+            stop,
+            busy,
+            idle,
+        }
     }
 
     fn joules(&self) -> f64 {
@@ -539,6 +567,28 @@ impl Meter {
         Vec::new()
     }
 
+    /// Mark the Mac busy (a turn is running) or not; only seconds that weren't count as idle.
+    pub fn set_busy(&self, busy: bool) {
+        #[cfg(target_os = "macos")]
+        self.power
+            .busy
+            .store(busy, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(target_os = "macos"))]
+        let _ = busy;
+    }
+
+    /// Idle power from the last minute of seconds that weren't busy: their median, so a burst
+    /// of other work doesn't move it much. `None` until there are a few.
+    pub fn idle_estimate(&self) -> Option<f64> {
+        #[cfg(target_os = "macos")]
+        {
+            let q = self.power.idle.lock().ok()?;
+            median(q.iter().copied().collect())
+        }
+        #[cfg(not(target_os = "macos"))]
+        None
+    }
+
     /// The Mac's average power over `secs` while frog asks nothing of it.
     pub async fn idle_watts(&self, secs: f64) -> f64 {
         let m = self.mark();
@@ -568,9 +618,30 @@ pub mod cloud {
     }
 }
 
+/// The middle value, once there are at least three.
+fn median(mut v: Vec<f64>) -> Option<f64> {
+    if v.len() < 3 {
+        return None;
+    }
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    Some(if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_is_the_median_of_enough_seconds() {
+        assert_eq!(median(vec![12.0, 40.0]), None);
+        assert_eq!(median(vec![12.0, 40.0, 13.0]), Some(13.0));
+        assert_eq!(median(vec![12.0, 14.0, 13.0, 90.0]), Some(13.5));
+    }
 
     #[test]
     fn above_idle_subtracts_the_baseline_and_never_goes_negative() {

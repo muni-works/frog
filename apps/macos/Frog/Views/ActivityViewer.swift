@@ -322,7 +322,14 @@ struct ActivityViewer: View {
     private func readoutHelp(_ s: Status) -> String {
         let spent = conversation.turns.compactMap { $0.usage.flatMap { ModelStats.shared.cost(of: $0) } }.reduce(0, +)
         let spoken = workspace.identity(s.model).spoken
-        return spent > 0 ? "\(spoken). This conversation: \(ModelStats.money(spent))" : spoken
+        var totals: [String] = []
+        if spent > 0 { totals.append(ModelStats.money(spent)) }
+        // The conversation's energy, tucked in here rather than on screen.
+        let energy = conversation.turns.compactMap { $0.usage?.energy }
+        if UserDefaults.standard.bool(forKey: ModelStats.energyKey), !energy.isEmpty {
+            totals.append(ModelStats.energy(energy.map(\.totalWh).reduce(0, +), estimated: energy.contains(where: \.estimated)))
+        }
+        return totals.isEmpty ? spoken : "\(spoken). This conversation: \(totals.joined(separator: ", "))"
     }
 
     private func readout(_ s: Status) -> some View {
@@ -449,6 +456,9 @@ private struct ActivityPanel: View {
         var parts = ["\(u.modelCalls) call\(u.modelCalls == 1 ? "" : "s")", "\(u.inputTokens.tokens) in", "\(u.outputTokens.tokens) out"]
         if let tps = u.tokensPerSec, tps > 0 { parts.append(ModelStats.speedText(tps * ModelStats.wordsPerToken)) }
         if let c = ModelStats.shared.cost(of: u) { parts.append(ModelStats.money(c)) }
+        if UserDefaults.standard.bool(forKey: ModelStats.energyKey), let e = u.energy {
+            parts.append(ModelStats.energy(e.totalWh, estimated: e.estimated))
+        }
         return Text(parts.joined(separator: " · "))
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)

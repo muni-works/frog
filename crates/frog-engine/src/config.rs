@@ -159,6 +159,10 @@ pub struct Config {
     /// harness and the model, not whoever's machine it ran on.
     #[serde(skip)]
     pub hermetic: bool,
+    /// Measure each turn's energy (`--energy`, which the Mac app passes when "Show energy use"
+    /// is on). Off by default: it keeps a thread reading the power sensor.
+    #[serde(skip)]
+    pub energy: bool,
     /// Run shell commands in a sandbox (writes only in the project, credentials hidden), so
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]

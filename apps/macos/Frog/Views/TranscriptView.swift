@@ -168,6 +168,7 @@ struct UserPrompt: View {
 struct EndView: View {
     let reason: EndReason
     let usage: TurnUsage?
+    @AppStorage(ModelStats.energyKey) private var showEnergy = false
     /// The turn's answer: a copy button at the row's end, shown on hover.
     var answer: String = ""
     var hovering = false
@@ -190,6 +191,12 @@ struct EndView: View {
                         }
                     }
                     .help("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s") · \(usage.inputTokens.tokens) in, \(usage.outputTokens.tokens) out") // advanced
+                    if showEnergy, let e = usage.energy {
+                        Text(ModelStats.energy(e.totalWh, estimated: e.estimated))
+                            .help(e.estimated
+                                  ? "This Mac: \(ModelStats.energy(e.localWh)). The data center, estimated from tokens: \(ModelStats.energy(e.remoteWh ?? 0))."
+                                  : "This Mac, above what it drew at rest.")
+                    }
                     Spacer(minLength: 8)
                     if !answer.isEmpty {
                         MessageAction(title: "Copy answer", symbol: "doc.on.doc") {

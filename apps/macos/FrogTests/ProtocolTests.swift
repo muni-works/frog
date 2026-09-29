@@ -44,6 +44,19 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(upto, 6)
     }
 
+    func testTurnEnergy() throws {
+        let local = try decode(#"{"seq":5,"session":"s","created":0,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":10,"output_tokens":5,"model_calls":1,"energy":{"local_wh":0.42}}}"#)
+        guard case .turnEnded(_, _, let u) = local.event, let e = u.energy else { return XCTFail() }
+        XCTAssertFalse(e.estimated)
+        XCTAssertEqual(ModelStats.energy(e.totalWh), "0.4 Wh")
+
+        let hosted = try decode(#"{"seq":5,"session":"s","created":0,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":10,"output_tokens":5,"model_calls":1,"energy":{"local_wh":0.02,"remote_wh":0.05}}}"#)
+        guard case .turnEnded(_, _, let h) = hosted.event, let he = h.energy else { return XCTFail() }
+        XCTAssertEqual(ModelStats.energy(he.totalWh, estimated: he.estimated), "~0.07 Wh")
+        XCTAssertEqual(ModelStats.energy(0.004), "<0.01 Wh")
+        XCTAssertEqual(ModelStats.energy(12.4), "12 Wh")
+    }
+
     func testOpsEncodeLikeTheEngineExpects() throws {
         let enc = JSONEncoder()
         enc.outputFormatting = .sortedKeys

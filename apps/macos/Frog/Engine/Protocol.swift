@@ -146,6 +146,17 @@ struct TurnUsage: Decodable, Sendable {
     var tokensPerSec: Double?
     /// The model (spec) that ran the turn. Absent in older logs.
     var model: String?
+    /// What the turn cost in energy, when the engine measured it (`--energy`).
+    var energy: TurnEnergy?
+}
+
+/// Watt-hours: the whole Mac above its idle power, and a hosted model's data center, estimated.
+struct TurnEnergy: Decodable, Sendable {
+    var localWh: Double
+    var remoteWh: Double?
+
+    var totalWh: Double { localWh + (remoteWh ?? 0) }
+    var estimated: Bool { remoteWh != nil }
 }
 
 struct EngineError: Decodable, Sendable, CustomStringConvertible {

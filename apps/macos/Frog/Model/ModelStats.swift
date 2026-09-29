@@ -132,6 +132,18 @@ final class ModelStats {
     /// An amount spent: "$0", "4¢", "$1.84".
     static func spent(_ dollars: Double) -> String { dollars <= 0 ? "$0" : money(dollars) }
 
+    // MARK: Energy
+
+    /// Show each turn's watt-hours (Settings › Appearance). Engines started after it's turned on
+    /// measure; it's off by default.
+    nonisolated static let energyKey = "showEnergy"
+
+    /// "0.4 Wh", "0.04 Wh", "<0.01 Wh", "12 Wh"; "~" when part of it is a cloud estimate.
+    nonisolated static func energy(_ wh: Double, estimated: Bool = false) -> String {
+        let n = wh < 0.01 ? "<0.01" : wh < 0.1 ? String(format: "%.2f", wh) : wh < 10 ? String(format: "%.1f", wh) : "\(Int(wh.rounded()))"
+        return (estimated ? "~" : "") + n + " Wh"
+    }
+
     /// Friendly money: "Free", "<1¢", "4¢", "$1.84".
     static func money(_ dollars: Double) -> String {
         if dollars <= 0 { return "Free" }

@@ -583,6 +583,7 @@ private struct AppearanceSettings: View {
     @AppStorage(Verbosity.key) private var verbosity = Verbosity.standard.rawValue
     @AppStorage("playfulFrog") private var playfulFrog = true
     @AppStorage("playfulSounds") private var playfulSounds = false
+    @AppStorage(ModelStats.energyKey) private var showEnergy = false
 
     var body: some View {
         Form {
@@ -603,6 +604,10 @@ private struct AppearanceSettings: View {
                     .help("The frog blinks, reads and hops along with the conversation.")
                 Toggle("Frog sounds", isOn: $playfulSounds)
                     .help("A quiet plip when you send, a ribbit when a turn finishes, a drip when it needs permission.")
+            }
+            Section {
+                Toggle("Show energy use", isOn: $showEnergy)
+                    .help("Each turn's watt-hours, from this Mac's power sensor, above what it drew at rest. Cloud models add an estimate for their data center. Applies to conversations opened after you turn it on. frog.eco/energy has the method.")
             }
         }
         .formStyle(.grouped)
