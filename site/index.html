@@ -105,10 +105,16 @@
   .req { margin: 14px 0 0; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .req .dot { color: var(--faint); margin: 0 4px; }
 
+  /* The app itself, captured by apps/macos/scripts/hero-shot.sh. The PNG carries the window's own
+     shadow, so it sits on the page as the window would on a desktop. */
+  .shot { display: block; width: min(1146px, 100vw - 24px); margin: 44px 0 0 50%; transform: translateX(-50%); }
+  .shot img { display: block; width: 100%; height: auto; animation: rise .8s cubic-bezier(.2,.8,.2,1) .15s both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.985); } }
+
   /* Each card shows the thing itself, in the app's own words. */
   .features {
     display: grid; grid-template-columns: repeat(2, 1fr);
-    gap: 12px; margin: 88px 0 0; padding: 0; list-style: none;
+    gap: 12px; margin: 56px 0 0; padding: 0; list-style: none;
   }
   @media (min-width: 1180px) {
     .features { grid-template-columns: repeat(4, 1fr); width: min(1160px, 100vw - 40px); margin-left: 50%; transform: translateX(-50%); }
@@ -411,6 +417,12 @@
     </a>
     <p class="req">macOS 26 on Apple silicon<span class="dot">·</span>updates itself</p>
   </section>
+
+  <picture class="shot">
+    <source srcset="shot-dark.png" media="(prefers-color-scheme: dark)">
+    <img src="shot-light.png" width="2292" height="1612" fetchpriority="high"
+         alt="Frog's window: a flaky test found and fixed on Qwen3 Coder 30B, running on this Mac, with the two changed files underneath.">
+  </picture>
 
   <ul class="features">
     <li class="card" data-play="answer">
