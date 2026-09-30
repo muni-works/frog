@@ -1039,27 +1039,31 @@ impl Panes {
 
     /// Wait for a fresh shell to show its first prompt (its rc files can take a moment), so a
     /// command isn't typed into the startup noise. Shells without markers get a settle wait.
+    /// The marker comes before the prompt is drawn, so then wait for the drawing to stop too:
+    /// typed before the line editor starts, a command is echoed twice.
     async fn wait_ready(&self, id: &str) {
         let grid = {
             let s = self.state.lock().unwrap();
             let Some(t) = s.panes.get(id).and_then(|p| p.term.as_ref()) else {
                 return;
             };
-            if t.grid.lock().unwrap().prompts > 0 {
-                return;
-            }
             t.grid.clone()
         };
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(5) {
+            {
+                let g = grid.lock().unwrap();
+                if g.exit.is_some() {
+                    return;
+                }
+                if g.prompts > 0 && g.quiet_for() > Duration::from_millis(120) {
+                    return;
+                }
+                if g.received > 0 && g.quiet_for() > Duration::from_millis(700) {
+                    return;
+                }
+            }
             tokio::time::sleep(Duration::from_millis(40)).await;
-            let g = grid.lock().unwrap();
-            if g.prompts > 0 || g.exit.is_some() {
-                return;
-            }
-            if g.received > 0 && g.quiet_for() > Duration::from_millis(700) {
-                return;
-            }
         }
     }
 
