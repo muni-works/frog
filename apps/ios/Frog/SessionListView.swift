@@ -148,9 +148,3 @@ struct FixtureListView: View {
         }
     }
 }
-
-extension Color {
-    /// The Mac's bubble colors: blue when the model runs on your hardware, green in the cloud.
-    static let imessageBlue = Color(red: 0.04, green: 0.52, blue: 1.0)
-    static let imessageGreen = Color(red: 0.19, green: 0.78, blue: 0.35)
-}

@@ -130,8 +130,3 @@ struct RenderedMessage {
         count = pieces.reduce(0) { $0 + $1.count }
     }
 }
-
-extension Color {
-    /// The app mark's green.
-    static let frog = Color("AccentColor")
-}

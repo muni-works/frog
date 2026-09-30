@@ -15,8 +15,11 @@ targets:
   Frog:
     type: application
     platform: iOS
+    dependencies:
+      - target: FrogNotify
     sources:
       - path: Frog
+      - path: Shared
       # The engine protocol, shared with the Mac app.
       - path: ../macos/Frog/Engine/Protocol.swift
         group: Shared
@@ -47,3 +50,35 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSUserActivityTypes: [eco.frog.conversation]
+  # Long-press a question from frog: the command or the diff, before you allow it.
+  FrogNotify:
+    type: app-extension
+    platform: iOS
+    dependencies:
+      - sdk: UserNotifications.framework
+      - sdk: UserNotificationsUI.framework
+    sources:
+      - path: NotificationContent
+      - path: Shared
+      - path: ../macos/Frog/Engine/Protocol.swift
+        group: Shared
+      - path: ../macos/Frog/Engine/Diagram.swift
+        group: Shared
+      - path: ../macos/Frog/Views/FrogFace.swift
+        group: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.notify
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Frog
+    info:
+      path: NotificationContent/Info.plist
+      properties:
+        CFBundleDisplayName: Frog
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.content-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationViewController
+          NSExtensionAttributes:
+            UNNotificationExtensionCategory: PERMISSION
+            UNNotificationExtensionDefaultContentHidden: true
+            UNNotificationExtensionInitialContentSizeRatio: 0.5

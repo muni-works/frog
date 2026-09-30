@@ -86,6 +86,7 @@ final class RemoteBridge {
     func forward(_ line: String) {
         guard listener != nil, let head = Head(line) else { return }
         track(head, line)
+        RemotePush.shared.observe(line)
         for c in clients.values where c.attached.keys.contains(head.session) {
             c.deliver(line, head: head)
         }
@@ -151,6 +152,15 @@ final class RemoteBridge {
         case "attach":
             guard let id = msg["session"] as? String else { return }
             attach(client, to: id, after: (msg["after"] as? NSNumber)?.uint64Value ?? 0)
+        case "register":
+            // Where to reach this phone when it's asleep.
+            guard let transport = msg["transport"] as? String, let address = msg["address"] as? String,
+                  let bundle = msg["bundle"] as? String else { return }
+            RemotePush.shared.register(.init(transport: transport, address: address, bundle: bundle, env: msg["env"] as? String))
+            client.address = address
+        case "activity":
+            guard let id = msg["session"] as? String, let address = client.address else { return }
+            RemotePush.shared.activity(session: id, token: msg["token"] as? String, device: address)
         case "detach":
             if let id = msg["session"] as? String { client.attached[id] = nil }
         case "op":
@@ -276,6 +286,8 @@ private final class Client {
 
     let conn: NWConnection
     var authed = false
+    /// The phone's push address, once it has registered.
+    var address: String?
     var attached: [String: Attachment] = [:]
 
     init(conn: NWConnection) { self.conn = conn }

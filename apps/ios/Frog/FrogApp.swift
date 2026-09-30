@@ -2,7 +2,8 @@ import SwiftUI
 
 @main
 struct FrogApp: App {
-    @State private var remote = Remote()
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @State private var remote = Remote.shared
 
     var body: some Scene {
         WindowGroup {
@@ -45,8 +46,17 @@ struct RootView: View {
             openPending()
         }
         .onChange(of: remote.sessions) { openPending() }
+        .onChange(of: remote.requested) { _, id in
+            guard let id else { return }
+            remote.requested = nil
+            pending = id
+            openPending()
+        }
         .onChange(of: remote.state) { _, s in
-            if case .connected = s { everConnected = true }
+            if case .connected = s {
+                everConnected = true
+                Task { await Notifications.shared.requestPermission() }
+            }
         }
         .onChange(of: phase) { _, p in
             // iOS drops the socket in the background; come back where we were.

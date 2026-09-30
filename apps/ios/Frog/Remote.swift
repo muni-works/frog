@@ -7,6 +7,9 @@ import Observation
 @MainActor
 @Observable
 final class Remote: SessionLink {
+    /// The one connection, shared with notification actions and intents.
+    static let shared = Remote()
+
     enum State: Equatable {
         case idle
         case connecting
@@ -17,6 +20,8 @@ final class Remote: SessionLink {
     private(set) var state: State = .idle
     private(set) var sessions: [RemoteSession] = []
     private(set) var open: SessionModel?
+    /// A conversation someone asked to see (a tapped notification, Handoff, a widget).
+    var requested: String?
 
     var host: String {
         didSet { UserDefaults.standard.set(host, forKey: "remoteHost") }
@@ -28,6 +33,9 @@ final class Remote: SessionLink {
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
     @ObservationIgnored private var retry: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
+    /// Said before the Mac let us in; sent as soon as it does.
+    @ObservationIgnored private var outbox: [[String: Any]] = []
+    @ObservationIgnored private var waiters: [CheckedContinuation<Bool, Never>] = []
 
     init() {
         let env = ProcessInfo.processInfo.environment
@@ -104,6 +112,11 @@ final class Remote: SessionLink {
         switch msg["type"] as? String {
         case "welcome":
             state = .connected(host: msg["host"] as? String ?? "Mac")
+            registerForPushes()
+            for m in outbox { send(m) }
+            outbox = []
+            waiters.forEach { $0.resume(returning: true) }
+            waiters = []
             refresh()
             // Back after a drop: carry on where the transcript left off.
             if let open { send(["type": "attach", "session": open.id, "after": open.lastSeq]) }
@@ -158,6 +171,48 @@ final class Remote: SessionLink {
         send(["type": "op", "session": session, "op": op])
     }
 
+    /// Do something on the Mac from wherever we are (a notification's button, an intent):
+    /// connect if we must, wait to be let in, then send. False if the Mac didn't answer in time.
+    @discardableResult
+    func perform(op: [String: Any], in session: String) async -> Bool {
+        let message: [String: Any] = ["type": "op", "session": session, "op": op]
+        if isConnected {
+            send(message)
+            return true
+        }
+        outbox.append(message)
+        if state != .connecting { connect() }
+        return await withCheckedContinuation { cont in
+            waiters.append(cont)
+            Task {
+                try? await Task.sleep(for: .seconds(8))
+                // Still not let in: give up on everyone waiting.
+                let late = self.waiters
+                self.waiters = []
+                late.forEach { $0.resume(returning: false) }
+            }
+        }
+    }
+
+    /// Tell the Mac how to reach this phone when the app is asleep.
+    private func registerForPushes() {
+        #if targetEnvironment(simulator)
+        if let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] {
+            send(["type": "register", "transport": "simctl", "address": udid, "bundle": Bundle.main.bundleIdentifier ?? ""])
+        }
+        #else
+        if let token = Notifications.shared.deviceToken {
+            send(["type": "register", "transport": "apns", "address": token, "bundle": Bundle.main.bundleIdentifier ?? "",
+                  "env": Notifications.apnsEnvironment])
+        }
+        #endif
+    }
+
+    /// Where a Live Activity for `session` takes its updates.
+    func registerActivity(session: String, token: String?) {
+        send(["type": "activity", "session": session, "token": token ?? NSNull()])
+    }
+
     private func send(_ obj: [String: Any]) {
         guard let socket, let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
         socket.send(.string(String(decoding: data, as: UTF8.self))) { _ in }
@@ -205,9 +260,4 @@ enum Models {
         let name = spec.split(separator: "/", maxSplits: 1).last.map(String.init) ?? spec
         return name.split(separator: "/").last.map(String.init) ?? name
     }
-}
-
-/// Stand-ins for the Mac-only helpers that the shared protocol file refers to.
-enum Frog {
-    static func isChat(_ url: URL) -> Bool { url.path.hasSuffix("/.local/share/frog/chat") }
 }
