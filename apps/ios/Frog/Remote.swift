@@ -350,7 +350,7 @@ final class Remote {
 
 /// A row in the session list.
 struct RemoteSession: Identifiable, Hashable {
-    enum Live: String { case running, waiting, unread }
+    typealias Live = SessionLive
 
     let id: String
     let title: String
@@ -364,6 +364,8 @@ struct RemoteSession: Identifiable, Hashable {
     let open: Bool
     let pinned: Bool
     let live: Live?
+    /// The session as the Mac's sidebar knows it.
+    let info: SessionInfo
     /// The step in hand, while it runs.
     let activity: String?
     /// What frog is asking, while it waits.
@@ -391,6 +393,11 @@ struct RemoteSession: Identifiable, Hashable {
         pinned = row["pinned"] as? Bool ?? false
         live = (row["live"] as? String).flatMap(Live.init)
         activity = row["activity"] as? String
+        let decoded = (row["info"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+            .flatMap { try? JSONDecoder().decode(SessionInfo.self, from: $0) }
+        let modifiedMs = Int64((row["modified"] as? NSNumber)?.doubleValue ?? 0)
+        info = decoded ?? SessionInfo(id: id, modified: modifiedMs, created: modifiedMs, model: model,
+                                      firstInput: nil, title: title, forkedFrom: nil, cwd: cwd)
         question = (row["question"] as? [String: Any]).flatMap { q in
             (q["id"] as? String).map { Question(id: $0, name: q["name"] as? String ?? "", arg: q["arg"] as? String ?? "") }
         }

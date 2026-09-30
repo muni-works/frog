@@ -551,8 +551,8 @@ struct SkillInfo: Decodable, Sendable, Hashable {
     var project: Bool
 }
 
-struct SessionInfo: Decodable, Sendable, Identifiable, Hashable {
-    struct ForkPoint: Decodable, Sendable, Hashable {
+struct SessionInfo: Codable, Sendable, Identifiable, Hashable {
+    struct ForkPoint: Codable, Sendable, Hashable {
         var session: String
         var seq: UInt64
     }

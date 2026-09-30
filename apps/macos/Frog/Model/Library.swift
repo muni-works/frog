@@ -10,11 +10,7 @@ import Observation
 final class Library {
     static let shared = Library()
 
-    enum Live: Equatable {
-        case running
-        case waiting
-        case unread
-    }
+    typealias Live = SessionLive
 
     private(set) var sessions: [SessionInfo] = []
     private(set) var pinned: Set<String>

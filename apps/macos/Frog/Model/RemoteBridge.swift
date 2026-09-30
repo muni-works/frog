@@ -318,6 +318,10 @@ final class RemoteBridge {
                 row["folder"] = (cwd as NSString).lastPathComponent
                 row["cwd"] = cwd
             }
+            // The session as the Mac knows it, so the phone's rows are the sidebar's.
+            if let data = try? JSONEncoder().encode(s), let info = try? JSONSerialization.jsonObject(with: data) {
+                row["info"] = info
+            }
             switch lib.live[s.id] {
             case .running: row["live"] = "running"
             case .waiting: row["live"] = "waiting"

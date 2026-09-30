@@ -89,57 +89,28 @@ struct SessionListView: View {
     }
 }
 
+/// A conversation, as in the Mac's sidebar (the same monogram, label and live glyph); while it
+/// runs or waits, what it's doing or asking takes the place line.
 struct SessionRow: View {
     let session: RemoteSession
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                switch session.live {
-                case .waiting: FrogFace(mood: .waiting, size: 22).tint(.frog)
-                case .running: FrogFace(mood: .working, size: 22).tint(.frog)
-                default:
-                    Circle()
-                        .fill(Color.place(cloud: !session.isLocal))
-                        .frame(width: 8, height: 8)
-                }
-            }
-            .frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.title)
-                    .font(.body.weight(session.live == .unread ? .semibold : .regular))
-                    .lineLimit(1)
-                if let q = session.question {
-                    Text(q.text).font(.caption.weight(.medium)).foregroundStyle(.orange).lineLimit(1)
-                } else if session.live == .running, let a = session.activity {
-                    Text(a).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                } else {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            Monogram(session: session.info, size: 34, selected: false, live: session.live)
+            ConversationRowLabel(session: session.info, live: session.live, detail: detail, detailTint: tint)
             Spacer(minLength: 0)
-            switch session.live {
-            case .waiting:
-                Text("Needs you").font(.caption.weight(.semibold)).foregroundStyle(.orange)
-            case .unread:
-                Circle().fill(Color.place(cloud: false)).frame(width: 10, height: 10)
-            default:
-                EmptyView()
-            }
+            if session.live == .unread { LiveGlyph(live: .unread) }
         }
         .accessibilityElement(children: .combine)
     }
 
-    private var subtitle: String {
-        var parts: [String] = []
-        if !session.chat, let f = session.folder { parts.append(f) }
-        parts.append(session.identity.name)
-        parts.append(session.modified.formatted(.relative(presentation: .named)))
-        return parts.joined(separator: " · ")
+    private var detail: String? {
+        if let q = session.question { return q.text }
+        if session.live == .running { return session.activity }
+        return nil
     }
+
+    private var tint: Color { session.question != nil ? .orange : .secondary }
 }
 
 /// Recorded sessions, for designing without a Mac (`-fixtures`).
