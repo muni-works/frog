@@ -34,10 +34,11 @@ struct PermissionCard: View {
                 }
                 .buttonStyle(.glass)
                 Button { answer(.allow) } label: {
-                    Text("Allow").fontWeight(.semibold).frame(maxWidth: .infinity)
+                    Text("Allow").fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glassProminent)
-                .tint(.frog)
+                // The mark's deeper green in both appearances, so white reads on it.
+                .tint(Color(red: 0.18, green: 0.62, blue: 0.31))
             }
             .controlSize(.large)
             if !request.always.isEmpty {
