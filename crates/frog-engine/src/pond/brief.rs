@@ -116,7 +116,7 @@ pub async fn write(
                 receipt.model = Some(ModelUse {
                     name,
                     place,
-                    input_tokens: usage.input,
+                    input_tokens: usage.input + usage.cache_read,
                     output_tokens: usage.output,
                 });
                 if let (Some(m), Some(mark)) = (&meter, &mark)
