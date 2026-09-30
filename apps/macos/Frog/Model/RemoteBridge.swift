@@ -259,7 +259,11 @@ final class RemoteBridge {
         }
         switch op["op"] as? String {
         case "submit":
-            if let text = op["text"] as? String { c.submit(text) }
+            // Images too: a screenshot shared from the phone goes in with the message.
+            let images = (op["images"] as? [[String: String]] ?? []).compactMap { i in
+                i["mime"].flatMap { m in i["data"].map { ToolImage(mime: m, data: $0) } }
+            }
+            c.submit(op["text"] as? String ?? "", images: images)
         case "permission":
             guard let pid = op["id"] as? String, c.permission?.id == pid,
                   let d = (op["decision"] as? String).flatMap(Decision.init(rawValue:)) else { return }

@@ -19,6 +19,7 @@ targets:
       - target: FrogNotify
       - target: FrogWidgets
       - target: FrogWatch
+      - target: FrogShare
     sources:
       - path: Frog
         excludes: ["*.entitlements"]
@@ -146,3 +147,37 @@ targets:
       properties:
         CFBundleDisplayName: Frog
         WKCompanionAppBundleIdentifier: eco.frog.remote
+  # "Send to frog" in the share sheet: a screenshot, a log or a link, into an open conversation.
+  FrogShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+        excludes: ["*.entitlements"]
+      - path: Shared
+      - path: ../macos/Frog/Engine/Protocol.swift
+        group: Shared
+      - path: ../macos/Frog/Engine/Diagram.swift
+        group: Shared
+      - path: ../macos/Frog/Views/FrogFace.swift
+        group: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.share
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Send to frog
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Send to frog
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsImageWithMaxCount: 1
