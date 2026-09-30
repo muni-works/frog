@@ -21,6 +21,7 @@ targets:
       - target: FrogWatch
     sources:
       - path: Frog
+        excludes: ["*.entitlements"]
       - path: Shared
       # The engine protocol, shared with the Mac app.
       - path: ../macos/Frog/Engine/Protocol.swift
@@ -38,6 +39,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote
         PRODUCT_NAME: Frog
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) FROG_APP
+        CODE_SIGN_ENTITLEMENTS: Frog/Frog.entitlements
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Frog
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -99,6 +101,7 @@ targets:
       - sdk: ActivityKit.framework
     sources:
       - path: Widgets
+        excludes: ["*.entitlements"]
       - path: Shared
       - path: ../macos/Frog/Engine/Protocol.swift
         group: Shared
@@ -109,6 +112,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.widgets
+        CODE_SIGN_ENTITLEMENTS: Widgets/Widgets.entitlements
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Frog
     info:

@@ -6,6 +6,8 @@ import WidgetKit
 struct FrogWidgets: WidgetBundle {
     var body: some Widget {
         TurnLiveActivity()
+        StatusWidget()
+        NeedsYouControl()
     }
 }
 

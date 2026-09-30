@@ -93,6 +93,8 @@ final class FixturePlayer: SessionLink {
                 try? await Task.sleep(for: .milliseconds(300))
                 emit(env)
                 emit(["event": "idle"])
+                WatchLink.shared.share([])
+                Glance.share([], host: "Recording")
             default:
                 emit(env)
             }
@@ -131,7 +133,9 @@ final class FixturePlayer: SessionLink {
         var row: [String: Any] = ["id": model.id, "title": model.session.title, "model": model.session.model,
                                   "open": true, "live": question == nil ? "running" : "waiting", "activity": model.activityLine]
         if let question { row["question"] = question }
-        WatchLink.shared.share(RemoteSession(row).map { [$0] } ?? [])
+        let rows = RemoteSession(row).map { [$0] } ?? []
+        WatchLink.shared.share(rows)
+        Glance.share(rows, host: "Recording")
     }
 
     func send(op: [String: Any], in session: String) {

@@ -27,7 +27,10 @@ final class Remote: SessionLink {
         didSet { UserDefaults.standard.set(host, forKey: "remoteHost") }
     }
     var code: String {
-        didSet { UserDefaults.standard.set(code, forKey: "remoteCode") }
+        didSet {
+            UserDefaults.standard.set(code, forKey: "remoteCode")
+            Snapshot.remember(host: host, code: code)
+        }
     }
 
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
@@ -112,6 +115,7 @@ final class Remote: SessionLink {
         switch msg["type"] as? String {
         case "welcome":
             state = .connected(host: msg["host"] as? String ?? "Mac")
+            Snapshot.remember(host: host, code: code)
             registerForPushes()
             for m in outbox { send(m) }
             outbox = []
@@ -124,6 +128,7 @@ final class Remote: SessionLink {
             let rows = msg["sessions"] as? [[String: Any]] ?? []
             sessions = rows.compactMap(RemoteSession.init)
             WatchLink.shared.share(sessions)
+            Glance.share(sessions, host: { if case .connected(let h) = state { h } else { nil } }())
             open?.isOpenOnMac = sessions.first { $0.id == open?.id }?.open ?? false
         case "event":
             guard let env = msg["env"],
