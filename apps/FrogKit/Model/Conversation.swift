@@ -1,125 +1,34 @@
 import Foundation
 import Observation
 
-/// One entry in a turn: a message, reasoning, a tool call, or an engine notice.
-struct ItemState: Identifiable {
-    enum Kind: Equatable {
-        case message
-        case reasoning
-        case tool(name: String, arg: String)
-        case notice(warning: Bool)
-    }
-
-    let id: String
-    var kind: Kind
-    var text = ""
-    /// Live output from a running tool.
-    var output = ""
-    var result: Item.ToolResult?
-    var done = false
-    var needsPermission = false
-    /// Reported by a running MCP tool.
-    var progress: ToolProgress?
-    /// For a `Task` call: the subagent's own run, live.
-    var subagent: SubagentRun?
-    /// Why auto mode let this call run without asking.
-    var autoReason: String?
-    /// When the engine started and finished it, for "Thought for 2s" and the live line.
-    var startedAt: Date?
-    var endedAt: Date?
+/// Where a conversation's engine is: a `frog --serve` process on this Mac, or frog on your Mac
+/// seen from a phone. The conversation doesn't care which.
+@MainActor
+protocol ConversationLink: AnyObject {
+    /// Every event, then `nil` once when the link ends.
+    var onEvent: (Envelope?) -> Void { get set }
+    func send(_ op: Op)
+    /// Ask it to end (it ends with `nil`).
+    func stop()
+    /// Why it ended on its own, for the transcript.
+    var endDescription: String { get }
 }
 
-/// A subagent's run as it streams in: its items (thinking, tool calls, the report being
-/// written) and its speed.
-struct SubagentRun {
-    var items: [ItemState] = []
-    var startedAt = Date()
-    var endedAt: Date?
-    var tokensPerSec: Double?
-    var contextTokens: UInt64?
-    var stopping = false
-
-    var steps: Int { items.filter { if case .tool = $0.kind { true } else { false } }.count }
-
-    /// What it's doing right now, for headers and the activity viewer.
-    var activity: String {
-        guard let last = items.last else { return "Starting" }
-        switch last.kind {
-        case .tool(let name, let arg):
-            let verb = ["Read": "Reading", "Grep": "Searching", "Glob": "Finding", "CodeMap": "Mapping"][name] ?? ToolIcon.title(name)
-            return last.done ? "Thinking" : (arg.isEmpty ? verb : "\(verb) \((arg as NSString).lastPathComponent)")
-        case .reasoning: return "Thinking"
-        case .message: return last.done ? "Reporting" : "Writing the report"
-        case .notice: return last.text
-        }
-    }
-
-    /// Fold one of the subagent's events in.
-    mutating func apply(_ event: Event) {
-        switch event {
-        case .itemStarted(let id, let kind):
-            upsert(id) { item in
-                switch kind {
-                case .message: item.kind = .message
-                case .reasoning: item.kind = .reasoning
-                case .toolCall(let name, let arg): item.kind = .tool(name: name, arg: arg)
-                }
-            }
-        case .itemDelta(let id, let delta):
-            upsert(id) { item in
-                switch delta {
-                case .text(let t), .reasoning(let t): item.text += t
-                case .output(let t): item.output += t
-                }
-            }
-        case .itemCompleted(let id, let item):
-            upsert(id) { state in
-                state.done = true
-                switch item {
-                case .message(let t): state.kind = .message; state.text = t
-                case .reasoning(let t): state.kind = .reasoning; state.text = t
-                case .toolCall(let r): state.kind = .tool(name: r.name, arg: r.arg); state.result = r
-                }
-            }
-        case .status(let s):
-            tokensPerSec = s.tokensPerSec
-            contextTokens = s.contextTokens
-        default:
-            break
-        }
-    }
-
-    private mutating func upsert(_ id: String, _ update: (inout ItemState) -> Void) {
-        if let i = items.firstIndex(where: { $0.id == id }) {
-            update(&items[i])
-        } else {
-            var item = ItemState(id: id, kind: .message)
-            update(&item)
-            items.append(item)
-        }
-    }
+/// What a platform does when things happen in a conversation: sounds, the Mac's sidebar and
+/// notifications, the phone's Live Activity. Set once at launch (`Conversation.effects`).
+@MainActor
+protocol ConversationEffects: AnyObject {
+    /// A turn finished, live (not history).
+    func turnEnded(_ c: Conversation, turn: TurnState)
+    /// Frog asks, live.
+    func asked(_ c: Conversation, _ request: PermissionRequest)
+    /// You answered (or it stopped waiting).
+    func answered(_ c: Conversation, permission id: String)
+    /// Running or waiting on you changed.
+    func live(_ c: Conversation, running: Bool, waiting: Bool)
 }
 
-struct TurnState: Identifiable {
-    let id = UUID()
-    /// Assigned by the engine; nil until `turn_started` arrives for a locally echoed prompt.
-    var number: UInt64?
-    var input: String
-    /// Images attached to the message.
-    var images: [ToolImage] = []
-    var items: [ItemState] = []
-    var end: EndReason?
-    var usage: TurnUsage?
-    var startedAt: Date?
-    var endedAt: Date?
-    /// When you sent it from this window: its bubble animates in, like a sent iMessage.
-    /// Nil for turns that arrive from a log (history, replay, another window).
-    var sentAt: Date?
-
-    var finished: Bool { end != nil }
-}
-
-/// A running session: owns one `frog --serve` process and folds its events into turns.
+/// A session: folds its engine's events into turns, and sends it what you do.
 @MainActor
 @Observable
 final class Conversation {
@@ -167,8 +76,16 @@ final class Conversation {
         var images: [ToolImage] = []
     }
 
-    @ObservationIgnored private var engine: EngineProcess?
+    @ObservationIgnored private(set) var link: ConversationLink?
     @ObservationIgnored private let replayOnStart: Bool
+    /// What this platform does when things happen (see `ConversationEffects`).
+    @ObservationIgnored static var effects: ConversationEffects?
+    /// Counts of live happenings, for haptics and the frog's face.
+    private(set) var stepsDone = 0
+    private(set) var turnsDone = 0
+    /// A turn just finished: the frog is pleased (or sad) for a moment.
+    private(set) var justFinished = false
+    @ObservationIgnored private var finishedTask: Task<Void, Never>?
     @ObservationIgnored private var sawFirstIdle = false
     @ObservationIgnored private var stopping = false
     /// A memory command (`/remember` …) is waiting for its answer, which arrives as a notice.
@@ -180,42 +97,28 @@ final class Conversation {
     /// The engine exited on its own (not stopped).
     @ObservationIgnored var onExit: (() -> Void)?
 
-    /// `arguments` are extra CLI flags, e.g. `["-r", id]` or `["--fork", "id@3"]`.
-    init(folder: URL, arguments: [String], model: String?) {
+    /// A conversation over `link`. `replay`: a session with history, which the link replays on
+    /// `subscribe` up to a `synced`; until then nothing shows busy and anything sent waits.
+    /// `failure`: the link couldn't start.
+    init(folder: URL, link: ConversationLink?, replay: Bool, session: String? = nil, failure: String? = nil) {
         self.folder = folder
         openedLive = Date()
-        replayOnStart = arguments.contains("-r") || arguments.contains("--fork")
-        // A reopened session is known before the engine says so: the sidebar selects it now.
-        if let i = arguments.firstIndex(of: "-r"), arguments.indices.contains(i + 1) {
-            sessionID = arguments[i + 1]
-        }
-        guard let binary = Frog.binary else {
-            failure = FrogError.missingBinary.localizedDescription
+        replayOnStart = replay
+        sessionID = session
+        guard let link else {
+            self.failure = failure
             busy = false
             return
         }
-        var args = arguments
-        if let model { args += ["-m", model] }
-        // Always measured (a sensor read ten times a second), so "Show energy use" shows every
-        // turn's figure the moment it's on, earlier turns included.
-        args.append("--energy")
-        let engine = EngineProcess(binary: binary, cwd: folder, arguments: args)
-        engine.onEvent = { [weak self] env in self?.handle(env) }
-        engine.onLine = { RemoteBridge.shared.forward($0) }
-        do {
-            try engine.start()
-            self.engine = engine
-            if replayOnStart {
-                // Ask for the history straight away: the engine answers while it's still starting
-                // up (connecting MCP servers, loading the model). Nothing is running, so it isn't
-                // shown busy meanwhile; anything sent waits for the transcript (see `submit`).
-                replaying = true
-                busy = false
-                engine.send(.subscribe(after: 0))
-            }
-        } catch {
-            failure = "Couldn't start frog: \(error.localizedDescription)"
+        self.link = link
+        link.onEvent = { [weak self] env in self?.handle(env) }
+        if replay {
+            // Ask for the history straight away: the engine answers while it's still starting
+            // up (connecting MCP servers, loading the model). Nothing is running, so it isn't
+            // shown busy meanwhile; anything sent waits for the transcript (see `submit`).
+            replaying = true
             busy = false
+            link.send(.subscribe(after: 0))
         }
     }
 
@@ -246,7 +149,7 @@ final class Conversation {
             let command = String(text.dropFirst()).trimmingCharacters(in: .whitespaces)
             turns.append(TurnState(number: nil, input: text, end: .complete, sentAt: .now))
             busy = true
-            engine?.send(.shell(command))
+            link?.send(.shell(command))
             return
         }
         if Self.isMemoryCommand(text) {
@@ -254,12 +157,12 @@ final class Conversation {
             turns.append(TurnState(number: nil, input: text, end: .complete, sentAt: .now))
             busy = true
             awaitingCommand = true
-            engine?.send(.submit(text, images: []))
+            link?.send(.submit(text, images: []))
             return
         }
         turns.append(TurnState(number: nil, input: text, images: images, sentAt: .now))
         busy = true
-        engine?.send(.submit(text, images: images))
+        link?.send(.submit(text, images: images))
     }
 
     private static func isMemoryCommand(_ text: String) -> Bool {
@@ -273,60 +176,65 @@ final class Conversation {
     }
 
     func interrupt() {
-        engine?.send(.interrupt)
+        link?.send(.interrupt)
     }
 
     func answer(_ decision: Decision) {
         guard let p = permission else { return }
-        engine?.send(.permission(id: p.id, decision: decision))
+        link?.send(.permission(id: p.id, decision: decision))
         permission = nil
-        Notifier.shared.resolved(p.id)
+        Conversation.effects?.answered(self, permission: p.id)
     }
 
     /// Answer the pending MCP elicitation.
     func elicit(_ action: String, content: JSONValue? = nil) {
         guard let e = elicitation else { return }
-        engine?.send(.elicit(id: e.id, action: action, content: content))
+        link?.send(.elicit(id: e.id, action: action, content: content))
         elicitation = nil
     }
 
     /// An MCP App calling a tool on its server; `reply` gets the `CallToolResult` or an error.
     func callAppTool(server: String, tool: String, arguments: JSONValue, reply: @escaping (JSONValue?, String?) -> Void) {
-        guard let engine else { return reply(nil, "the engine isn't running") }
+        guard let link else { return reply(nil, "the engine isn't running") }
         let id = UUID().uuidString
         appCalls[id] = reply
-        engine.send(.appCall(id: id, server: server, tool: tool, arguments: arguments))
+        link.send(.appCall(id: id, server: server, tool: tool, arguments: arguments))
     }
 
     /// Name the session (the engine records it).
     func rename(_ title: String) {
-        engine?.send(.setTitle(title))
+        link?.send(.setTitle(title))
         self.title = title
     }
 
     /// Stop one subagent; the turn goes on with what it found so far.
     func stopSubagent(_ item: String) {
-        engine?.send(.stopSubagent(id: item))
+        link?.send(.stopSubagent(id: item))
         upsert(item) { $0.subagent?.stopping = true }
     }
 
     func setMode(_ mode: Mode) {
-        engine?.send(.setMode(mode))
+        link?.send(.setMode(mode))
         status?.mode = mode
     }
 
     func setModel(_ spec: String) {
-        engine?.send(.setModel(spec))
+        link?.send(.setModel(spec))
     }
 
     func compact() {
         busy = true
-        engine?.send(.compact(focus: nil))
+        link?.send(.compact(focus: nil))
     }
 
     func stop() {
         stopping = true
-        engine?.stop()
+        link?.stop()
+    }
+
+    /// Send the engine an op directly (a title from the Mac's on-device model, say).
+    func send(_ op: Op) {
+        link?.send(op)
     }
 
     /// Returns once a reopened session's history is in, or after `limit` if that's slow.
@@ -361,9 +269,7 @@ final class Conversation {
     private func apply(_ env: Envelope?) {
         guard let env else {
             if !stopping {
-                let tail = engine?.stderr.split(separator: "\n").suffix(3).joined(separator: "\n") ?? ""
-                let how = engine?.exitDescription ?? "unknown"
-                failure = tail.isEmpty ? "The frog engine exited (\(how))." : tail
+                failure = link?.endDescription ?? "The frog engine exited."
                 onExit?()
             }
             busy = false
@@ -392,11 +298,10 @@ final class Conversation {
                 turns[i].usage = usage
                 turns[i].endedAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
                 if isNews(env) {
-                    if let id = sessionID { Library.shared.turnEnded(id) }
-                    ModelStats.shared.record(usage, model: status?.model)
-                    Notifier.shared.turnFinished(project: folder.lastPathComponent, text: Self.summary(turns[i]))
+                    turnsDone += 1
+                    celebrate()
                     if case .complete = reason { FrogSounds.shared.play(.ribbit) }
-                    if title == nil, case .complete = reason { nameSession(from: turns[i]) }
+                    Conversation.effects?.turnEnded(self, turn: turns[i])
                 }
             }
             progress = nil
@@ -435,13 +340,12 @@ final class Conversation {
                     if state.subagent?.endedAt == nil { state.subagent?.endedAt = Date() }
                 }
             }
+            if case .toolCall = item, isNews(env) { stepsDone += 1 }
         case .permissionRequest(let req):
             permission = req
             if isNews(env) {
                 FrogSounds.shared.play(.drip)
-                Notifier.shared.needsPermission(project: folder.lastPathComponent, request: req) { [weak self] d in
-                    self?.answer(d)
-                }
+                Conversation.effects?.asked(self, req)
             }
             upsert(req.item) { $0.needsPermission = true }
             progress = nil
@@ -524,12 +428,13 @@ final class Conversation {
     /// Tell the sidebar whether this conversation is running or waiting on the user.
     private func reportLive() {
         guard let id = sessionID, !replaying else { return }
+        _ = id
         let running = turns.last.map { !$0.finished } ?? false
-        Library.shared.report(id, conversation: self, running: running && busy, waiting: permission != nil || elicitation != nil)
+        Conversation.effects?.live(self, running: running && busy, waiting: permission != nil || elicitation != nil)
     }
 
     /// One line for a notification: the start of the answer, or how the turn ended.
-    private static func summary(_ turn: TurnState) -> String {
+    static func summary(_ turn: TurnState) -> String {
         switch turn.end {
         case .cancelled: return "Interrupted"
         case .error(let e): return e.description
@@ -576,28 +481,49 @@ final class Conversation {
         }
     }
 
-    /// Name the session with the on-device model after its first completed turn.
-    private func nameSession(from turn: TurnState) {
-        let answer = turn.items.last { $0.kind == .message }?.text ?? ""
-        let request = turn.input
-        Task { [weak self] in
-            guard let t = await Titler.title(for: request, answer: answer) else { return }
-            self?.engine?.send(.setTitle(t))
-        }
-    }
-
     /// Show a one-off notice in the transcript (e.g. after a rewind).
     func flash(_ text: String, warning: Bool = false) {
         pendingFlash = (text, warning)
         if !turns.isEmpty { note(text, warning: warning); pendingFlash = nil }
     }
 
-    private func note(_ text: String, warning: Bool) {
+    func note(_ text: String, warning: Bool) {
         // Before anything's been said there's no turn to attach it to: a status line, not an
         // empty "Worked" group.
         guard !turns.isEmpty else { return show(text) }
         let item = ItemState(id: UUID().uuidString, kind: .notice(warning: warning), text: text, done: true)
         turns[turns.count - 1].items.append(item)
+    }
+}
+
+extension Conversation {
+    /// What the frog's face shows for this conversation.
+    var mood: FrogMood {
+        if permission != nil || elicitation != nil { return .waiting }
+        if justFinished {
+            if case .error? = turns.last?.end { return .sad }
+            return .done
+        }
+        guard busy else { return .idle }
+        guard let last = turns.last?.items.last(where: { if case .notice = $0.kind { false } else { true } }) else {
+            return .thinking
+        }
+        switch last.kind {
+        case .tool(let name, _) where !last.done:
+            return ["Read", "Grep", "Glob", "CodeMap", "Docs", "WebFetch", "WebSearch", "Recall"].contains(name) ? .reading : .working
+        case .message where !last.done: return .working
+        default: return .thinking
+        }
+    }
+
+    fileprivate func celebrate() {
+        justFinished = true
+        finishedTask?.cancel()
+        finishedTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            self?.justFinished = false
+        }
     }
 }
 

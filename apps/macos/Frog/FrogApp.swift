@@ -14,6 +14,7 @@ struct FrogApp: App {
         // cards and materials (the per-app form of System Settings' "Allow wallpaper tinting").
         UserDefaults.standard.set(true, forKey: "AppleReduceDesktopTinting")
         Notifier.shared.setup()
+        Conversation.effects = MacEffects.shared
         _ = Updates.shared
         RemoteBridge.shared.startIfEnabled()
     }

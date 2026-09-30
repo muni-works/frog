@@ -253,12 +253,6 @@ struct TurnView: View {
     }
 }
 
-extension UInt64 {
-    /// 12345 → "12.3k"
-    var tokens: String {
-        self >= 1000 ? String(format: "%.1fk", Double(self) / 1000) : "\(self)"
-    }
-}
 
 enum Handoff {
     /// The conversation you're reading, for the Mac to pick up (and back).

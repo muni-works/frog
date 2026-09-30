@@ -1,15 +1,27 @@
-import AppKit
 @preconcurrency import AVFoundation
+import Foundation
+#if os(macOS)
+import AppKit
+#endif
 
 /// Three tiny sounds the frog makes, synthesized when first needed (nothing is bundled): a plip
-/// when you send, a ribbit when a turn finishes, a drip when it needs permission. Off unless
-/// "Frog sounds" is on; quiet; and only while the app is in front, or in the background when
-/// finished-turn notifications are on.
+/// when you send, a ribbit when a turn finishes, a drip when it needs you. Quiet, and the same on
+/// every device. On the Mac they're off unless "Frog sounds" is on, and play only while frog is
+/// in front (or in the background when finished-turn notifications are on). On iPhone they're on
+/// unless turned off, and ambient: the silent switch mutes them and they mix with your music.
 @MainActor
 final class FrogSounds {
     static let shared = FrogSounds()
 
     enum Cue { case plip, ribbit, drip }
+
+    static var enabled: Bool {
+        #if os(macOS)
+        UserDefaults.standard.bool(forKey: "playfulSounds")
+        #else
+        UserDefaults.standard.object(forKey: "playfulSounds") as? Bool ?? true
+        #endif
+    }
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -19,10 +31,10 @@ final class FrogSounds {
 
     func play(_ cue: Cue) {
         // Test hosts replay recorded sessions; they're never heard.
-        guard !SingleInstance.isTesting else { return }
-        let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: "playfulSounds") else { return }
-        guard NSApp.isActive || defaults.object(forKey: "notifyWhenDone") as? Bool ?? true else { return }
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil, Self.enabled else { return }
+        #if os(macOS)
+        guard NSApp.isActive || UserDefaults.standard.object(forKey: "notifyWhenDone") as? Bool ?? true else { return }
+        #endif
         guard prepare(), let buffer = buffer(for: cue) else { return }
         if !player.isPlaying { player.play() }
         player.scheduleBuffer(buffer, at: nil)
@@ -32,6 +44,9 @@ final class FrogSounds {
 
     private func prepare() -> Bool {
         if !prepared {
+            #if os(iOS)
+            try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
+            #endif
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: format)
             engine.mainMixerNode.outputVolume = 0.3
@@ -45,7 +60,7 @@ final class FrogSounds {
         if let b = buffers[cue] { return b }
         let samples: [Float]
         switch cue {
-        case .plip: samples = tone(ms: 60) { t in (sin(2 * .pi * (1200 - 500 * t) * t)) * exp(-t * 60) }
+        case .plip: samples = tone(ms: 60) { t in sin(2 * .pi * (1200 - 500 * t) * t) * exp(-t * 60) }
         case .ribbit:
             // Two short low notes with a touch of second harmonic, so it croaks rather than beeps.
             samples = tone(ms: 150) { t in
@@ -68,8 +83,7 @@ final class FrogSounds {
         let n = Int(rate * ms / 1000)
         return (0..<n).map { i in
             let t = Double(i) / rate
-            let fade = min(1, t / 0.002)
-            return Float(f(t) * fade * 0.35)
+            return Float(f(t) * min(1, t / 0.002) * 0.35)
         }
     }
 }
