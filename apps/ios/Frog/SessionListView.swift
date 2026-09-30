@@ -100,7 +100,7 @@ struct SessionRow: View {
                 case .running: FrogFace(mood: .working, size: 22).tint(.frog)
                 default:
                     Circle()
-                        .fill(session.isLocal ? Color.imessageBlue : Color.imessageGreen)
+                        .fill(Color.place(cloud: !session.isLocal))
                         .frame(width: 8, height: 8)
                 }
             }
@@ -125,7 +125,7 @@ struct SessionRow: View {
             case .waiting:
                 Text("Needs you").font(.caption.weight(.semibold)).foregroundStyle(.orange)
             case .unread:
-                Circle().fill(Color.imessageBlue).frame(width: 10, height: 10)
+                Circle().fill(Color.place(cloud: false)).frame(width: 10, height: 10)
             default:
                 EmptyView()
             }

@@ -24,15 +24,8 @@ targets:
       - path: Frog
         excludes: ["*.entitlements"]
       - path: Shared
-      # The engine protocol, shared with the Mac app.
-      - path: ../macos/Frog/Engine/Protocol.swift
-        group: Shared
-      - path: ../macos/Frog/Engine/Pairing.swift
-        group: Shared
-      - path: ../macos/Frog/Engine/Diagram.swift
-        group: Shared
-      - path: ../macos/Frog/Views/FrogFace.swift
-        group: Shared
+      - path: ../FrogKit
+        excludes: ["README.md"]
       # The Mac's recorded sessions, for designing without a Mac (-fixtures YES).
       - path: ../macos/Fixtures
         type: folder
@@ -75,14 +68,8 @@ targets:
     sources:
       - path: NotificationContent
       - path: Shared
-      - path: ../macos/Frog/Engine/Pairing.swift
-        group: Shared
-      - path: ../macos/Frog/Engine/Protocol.swift
-        group: Shared
-      - path: ../macos/Frog/Engine/Diagram.swift
-        group: Shared
-      - path: ../macos/Frog/Views/FrogFace.swift
-        group: Shared
+      - path: ../FrogKit
+        excludes: ["README.md"]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.notify
@@ -111,14 +98,8 @@ targets:
       - path: Widgets
         excludes: ["*.entitlements"]
       - path: Shared
-      - path: ../macos/Frog/Engine/Pairing.swift
-        group: Shared
-      - path: ../macos/Frog/Engine/Protocol.swift
-        group: Shared
-      - path: ../macos/Frog/Engine/Diagram.swift
-        group: Shared
-      - path: ../macos/Frog/Views/FrogFace.swift
-        group: Shared
+      - path: ../FrogKit
+        excludes: ["README.md"]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.widgets
@@ -138,10 +119,8 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: Watch
-      - path: ../macos/Frog/Views/FrogFace.swift
-        group: Shared
-      - path: Shared/Palette.swift
-        group: Shared
+      - path: ../FrogKit/Core
+      - path: ../FrogKit/UI/Basics
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.watchkitapp
@@ -164,14 +143,8 @@ targets:
       - path: ShareExtension
         excludes: ["*.entitlements"]
       - path: Shared
-      - path: ../macos/Frog/Engine/Pairing.swift
-        group: Shared
-      - path: ../macos/Frog/Engine/Protocol.swift
-        group: Shared
-      - path: ../macos/Frog/Engine/Diagram.swift
-        group: Shared
-      - path: ../macos/Frog/Views/FrogFace.swift
-        group: Shared
+      - path: ../FrogKit
+        excludes: ["README.md"]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.share

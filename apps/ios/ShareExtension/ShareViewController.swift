@@ -61,7 +61,7 @@ struct ShareSheet: View {
                     ForEach(conversations) { c in
                         Button { target = c.id } label: {
                             HStack {
-                                Circle().fill(c.local ? Color.imessageBlue : Color.imessageGreen).frame(width: 8, height: 8)
+                                Circle().fill(Color.place(cloud: !c.local)).frame(width: 8, height: 8)
                                 Text(c.title).foregroundStyle(.primary).lineLimit(1)
                                 Spacer()
                                 if target == c.id { Image(systemName: "checkmark").foregroundStyle(Color.frog) }

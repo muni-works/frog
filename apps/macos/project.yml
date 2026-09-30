@@ -26,6 +26,9 @@ targets:
     sources:
       - path: Frog
         excludes: ["Frog.entitlements"]
+      # Shared with the iOS app and its extensions (see FrogKit/README.md).
+      - path: ../FrogKit
+        excludes: ["README.md"]
     dependencies:
       - package: Sparkle
     info:

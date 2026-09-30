@@ -572,7 +572,7 @@ struct SessionInfo: Decodable, Sendable, Identifiable, Hashable {
         return t.split(separator: "\n").first.map(String.init) ?? "Untitled"
     }
     var folder: URL? { cwd.map { URL(fileURLWithPath: $0) } }
-    var isChat: Bool { folder.map(Frog.isChat) ?? false }
+    var isChat: Bool { folder.map(FrogPaths.isChat) ?? false }
 
     var modifiedDate: Date { Date(timeIntervalSince1970: Double(modified) / 1000) }
 }

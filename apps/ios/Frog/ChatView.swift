@@ -56,7 +56,7 @@ struct ChatView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(model.session.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                         HStack(spacing: 4) {
-                            Circle().fill(model.isLocal ? Color.imessageBlue : Color.imessageGreen).frame(width: 6, height: 6)
+                            Circle().fill(Color.place(cloud: !model.isLocal)).frame(width: 6, height: 6)
                             Text(Models.short(model.model)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
@@ -126,7 +126,7 @@ struct ChatView: View {
                         }
                         .buttonStyle(.glassProminent)
                         .buttonBorderShape(.circle)
-                        .tint(model.isLocal ? .imessageBlue : .imessageGreen)
+                        .tint(Color.place(cloud: !model.isLocal))
                         .accessibilityLabel("Send")
                         .transition(.scale.combined(with: .opacity))
                     }
@@ -209,7 +209,7 @@ struct TurnView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
-            .background(local ? Color.imessageBlue : Color.imessageGreen, in: .rect(cornerRadius: 20))
+            .background(Color.place(cloud: !local), in: .rect(cornerRadius: 20))
         }
         .scaleEffect(turn.sentHere && !appeared ? 0.5 : 1, anchor: .bottomTrailing)
         .offset(y: turn.sentHere && !appeared ? 30 : 0)

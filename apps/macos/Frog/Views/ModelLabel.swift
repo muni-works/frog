@@ -176,7 +176,7 @@ struct PlaceIcon: View {
 extension ModelIdentity.Place {
     /// Blue for your own devices (this Mac, your servers), green for the cloud: the model's
     /// name and icon say where your code goes at a glance.
-    var color: Color { isCloud ? .green : .blue }
+    var color: Color { .place(cloud: isCloud) }
 }
 
 /// What a model can do beyond text: uses tools, sees images, reasons.
