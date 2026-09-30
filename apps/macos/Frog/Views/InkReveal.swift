@@ -76,6 +76,30 @@ final class InkReveal: NSObject {
         }
     }
 
+    /// The height of the revealed text (to the bottom of the pen's line), or nil once it's all
+    /// shown and the view is simply as tall as its text.
+    func writtenHeight() -> CGFloat? {
+        guard revealed < length, let layout = view.layoutManager else { return nil }
+        guard revealed > 0 else { return 0 }
+        let glyph = layout.glyphIndexForCharacter(at: revealed - 1)
+        let line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        // On the last line there's nothing hidden below: the full height, so the view doesn't
+        // flicker between the two as the pen catches up with the text and falls behind again.
+        let last = layout.lineFragmentRect(forGlyphAt: max(0, layout.numberOfGlyphs - 1), effectiveRange: nil)
+        return line.minY >= last.minY ? nil : line.maxY
+    }
+
+    /// The bottom of the pen's line last frame: when it moves, the view grows (a line at a time).
+    private var lastWritten: CGFloat = -1
+
+    private func grewIfNeeded() {
+        let h = writtenHeight() ?? .greatestFiniteMagnitude
+        guard h != lastWritten else { return }
+        lastWritten = h
+        view.invalidateIntrinsicContentSize()
+        view.superview?.needsLayout = true
+    }
+
     /// Code blocks are views of their own: they appear when the pen reaches them.
     func codeVisible(at location: Int) -> Bool { location < revealed }
 
@@ -105,6 +129,7 @@ final class InkReveal: NSObject {
         revealed = length
         inked.removeAll()
         style(now: CACurrentMediaTime())
+        grewIfNeeded()
         hidePen()
     }
 
@@ -117,6 +142,7 @@ final class InkReveal: NSObject {
             advance(by: dt, total: total, now: now)
         }
         style(now: now)
+        grewIfNeeded()
         if revealed >= total, inked.isEmpty, !streaming {
             finish()
         } else {
