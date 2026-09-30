@@ -104,6 +104,11 @@ final class Library {
 
     // MARK: Live status
 
+    /// The conversation open on this Mac for session `id`, if any.
+    func conversation(_ id: String) -> Conversation? {
+        conversations[id]?.value
+    }
+
     /// An open conversation's state; called as its events arrive.
     func report(_ id: String, conversation: Conversation, running: Bool, waiting: Bool) {
         conversations[id] = WeakConversation(value: conversation)

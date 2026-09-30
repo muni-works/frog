@@ -25,6 +25,7 @@ struct SettingsView: View {
 private struct GeneralSettings: View {
     @AppStorage("editor") private var editor = ""
     @AppStorage("notifyWhenDone") private var notifyWhenDone = true
+    @AppStorage("remoteEnabled") private var remote = false
 
     var body: some View {
         Form {
@@ -40,6 +41,19 @@ private struct GeneralSettings: View {
                 }
             }
             Toggle("Notify me when a turn finishes while I'm in another app", isOn: $notifyWhenDone)
+            Section {
+                Toggle("Let frog on iPhone connect", isOn: $remote)
+                    .onChange(of: remote) { _, on in
+                        on ? RemoteBridge.shared.start() : RemoteBridge.shared.stop()
+                    }
+                if remote {
+                    LabeledContent("Code") {
+                        Text(RemoteBridge.token).font(.body.monospaced()).textSelection(.enabled)
+                    }
+                }
+            } footer: {
+                Text("For now only the iOS Simulator on this Mac can reach it. Pairing over Wi-Fi comes next.")
+            }
         }
         .formStyle(.grouped)
     }

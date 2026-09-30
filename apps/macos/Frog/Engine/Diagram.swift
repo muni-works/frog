@@ -71,6 +71,7 @@ struct Diagram: Codable, Hashable, Sendable {
 
     func node(_ id: String) -> Node? { nodes.first { $0.id == id } }
 
+    #if os(macOS)
     /// Lay out Mermaid source with the engine (`frog --mermaid --json`).
     static func fromMermaid(_ source: String, cwd: URL) async -> Diagram? {
         guard let binary = Frog.binary else { return nil }
@@ -125,4 +126,5 @@ struct Diagram: Codable, Hashable, Sendable {
             return try? d.decode(Diagram.self, from: data)
         }.value
     }
+    #endif
 }

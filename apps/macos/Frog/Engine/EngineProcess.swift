@@ -150,6 +150,8 @@ final class EngineProcess {
 
     /// Called on the main actor for every event, then once with `nil` when the process exits.
     var onEvent: (Envelope?) -> Void = { _ in }
+    /// Every stdout line, verbatim, before it's decoded (for the iPhone bridge).
+    var onLine: (String) -> Void = { _ in }
     private(set) var stderr = ""
 
     /// How the process ended, for error messages.
@@ -185,6 +187,7 @@ final class EngineProcess {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     for await line in lines {
+                        await MainActor.run { self?.onLine(line) }
                         guard let env = try? JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8)) else { continue }
                         await MainActor.run { self?.onEvent(env) }
                     }

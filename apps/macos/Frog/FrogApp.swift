@@ -15,6 +15,7 @@ struct FrogApp: App {
         UserDefaults.standard.set(true, forKey: "AppleReduceDesktopTinting")
         Notifier.shared.setup()
         _ = Updates.shared
+        RemoteBridge.shared.startIfEnabled()
     }
 
     var body: some Scene {

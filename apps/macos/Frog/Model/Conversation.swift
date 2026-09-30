@@ -201,6 +201,7 @@ final class Conversation {
         args.append("--energy")
         let engine = EngineProcess(binary: binary, cwd: folder, arguments: args)
         engine.onEvent = { [weak self] env in self?.handle(env) }
+        engine.onLine = { RemoteBridge.shared.forward($0) }
         do {
             try engine.start()
             self.engine = engine
