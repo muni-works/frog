@@ -176,7 +176,7 @@ struct TurnView: View {
 
     private func copy() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(turn.input, forType: .string)
+        NSPasteboard.general.setString(turn.request, forType: .string)
     }
 }
 

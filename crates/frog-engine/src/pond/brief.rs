@@ -312,7 +312,7 @@ fn template_headline(items: &[Line], today: &[Event], now: DateTime<Utc>) -> Str
 
 /// A title's gist: its conventional prefix ("feat(qcd):", "WIP:") gone, cut at a colon or
 /// after four words, never ending on a little word ("and", "of").
-fn short_title(title: &str) -> String {
+pub(crate) fn short_title(title: &str) -> String {
     static PREFIX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"(?i)^\s*(\[?wip\]?:?|draft:|(feat|fix|chore|docs|refactor|perf|test|build|ci)(\([^)]*\))?!?:)\s*").unwrap()
     });

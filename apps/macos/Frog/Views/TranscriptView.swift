@@ -202,6 +202,7 @@ struct UserPrompt: View {
     var tint: Color = .accentColor
 
     var body: some View {
+        let (message, contexts) = PromptContext.split(text)
         VStack(alignment: .trailing, spacing: 6) {
             if !images.isEmpty {
                 HStack(spacing: 6) {
@@ -218,8 +219,8 @@ struct UserPrompt: View {
                     }
                 }
             }
-            if !text.isEmpty {
-                Text(text)
+            if !message.isEmpty {
+                Text(message)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
@@ -228,9 +229,51 @@ struct UserPrompt: View {
                     .foregroundStyle(.white)
                     .background(tint, in: .rect(cornerRadius: 18))
             }
+            ForEach(contexts) { ContextDisclosure(context: $0) }
         }
         .frame(maxWidth: 560, alignment: .trailing)
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+/// Context sent with a message, folded under its bubble: "› GitHub · ecto/ipse#458". Open it
+/// to read what the model was given.
+private struct ContextDisclosure: View {
+    let context: PromptContext
+    @State private var open = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            Button {
+                withAnimation(Motion.quick(reduced: reduceMotion)) { open.toggle() }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                    Text(context.title)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .help(open ? "Hide what was sent with this message" : "Show what was sent with this message")
+            if open {
+                Text(context.body)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topTrailing)))
+            }
+        }
     }
 }
 
