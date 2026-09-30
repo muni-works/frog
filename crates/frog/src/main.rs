@@ -690,6 +690,15 @@ async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
 fn print_brief(b: &frog_engine::pond::brief::Brief) {
     use frog_engine::pond::Place;
     println!("\n  {}\n", b.headline);
+    if !b.today.is_empty() {
+        use frog_engine::pond::calendar::clock;
+        let day: Vec<String> = b
+            .today
+            .iter()
+            .map(|e| if e.all_day { e.title.clone() } else { format!("{} {}", clock(e.start), e.title) })
+            .collect();
+        println!("  \x1b[2mtoday\x1b[0m  {}\n", day.join(" · "));
+    }
     for l in &b.items {
         let dot = if l.new { "●" } else { "○" };
         println!("  {dot} {}  \x1b[2m{}\x1b[0m", l.title, l.place);
@@ -722,7 +731,7 @@ fn print_brief(b: &frog_engine::pond::brief::Brief) {
     } else {
         format!("{} of your data left this Mac", bytes(private))
     };
-    let wh = r.wh.map(|w| format!(" · {w:.2} Wh")).unwrap_or_default();
+    let wh = r.wh.filter(|w| *w >= 0.005).map(|w| format!(" · {w:.2} Wh")).unwrap_or_default();
     println!("\n  \x1b[2mread {} · wrote with {model} · {left}{wh}\x1b[0m\n", read.join(", "));
 }
 

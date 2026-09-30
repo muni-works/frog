@@ -14,6 +14,7 @@
 
 pub mod background;
 pub mod brief;
+pub mod calendar;
 pub mod github;
 
 use anyhow::Result;
@@ -316,7 +317,19 @@ pub async fn pass(cfg: &crate::config::Config) -> Result<brief::Brief> {
         Err(e) => trouble.push(format!("github: {e:#}")),
     }
 
-    let b = brief::write(cfg, &mut pond, receipt, trouble, now).await;
+    // Read on this Mac from the app's snapshot; nothing to send.
+    let today = match calendar::read(&dir, now) {
+        Some((events, what)) => {
+            receipt.read.push(Read {
+                source: "calendar".into(),
+                what,
+            });
+            events
+        }
+        None => Vec::new(),
+    };
+
+    let b = brief::write(cfg, &mut pond, today, receipt, trouble, now).await;
     pond.prune(now);
     pond.save(&dir)?;
     write_atomic(&dir.join("brief.json"), &serde_json::to_vec_pretty(&b)?)?;

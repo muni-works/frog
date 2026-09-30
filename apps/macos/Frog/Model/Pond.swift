@@ -32,6 +32,7 @@ final class Pond {
         refreshing = true
         defer { refreshing = false }
         let home = FileManager.default.homeDirectoryForCurrentUser
+        CalendarSense.snapshot()
         if let fresh = try? await Frog.json(Brief.self, args: ["--brief", "--json"], cwd: home) {
             brief = fresh
         }
@@ -68,6 +69,7 @@ struct Brief: Codable, Sendable {
     var also: [Line]
     var receipt: Receipt
     var trouble: [String]?
+    var today: [Event]?
 
     /// The engine writes UTC with nanoseconds ("2026-09-30T17:35:12.123456789Z"); seconds do.
     var date: Date? { try? Date(String(at.prefix(19)) + "Z", strategy: .iso8601) }
@@ -83,6 +85,18 @@ struct Brief: Codable, Sendable {
         var new: Bool
 
         var link: URL? { URL(string: url) }
+    }
+
+    struct Event: Codable, Sendable, Equatable {
+        var title: String
+        var start: String
+        var allDay: Bool?
+
+        /// "10:30", local time; all-day events have none.
+        var clock: String? {
+            guard allDay != true, let d = try? Date(String(start.prefix(19)) + "Z", strategy: .iso8601) else { return nil }
+            return d.formatted(date: .omitted, time: .shortened)
+        }
     }
 
     struct Receipt: Codable, Sendable {

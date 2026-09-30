@@ -24,6 +24,9 @@ struct PondBrief: View {
             Text(brief.headline)
                 .font(.callout.weight(.medium))
                 .fixedSize(horizontal: false, vertical: true)
+            if let today = brief.today, !today.isEmpty {
+                todayRow(today)
+            }
             if !brief.items.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(brief.items) { PondRow(line: $0) }
@@ -40,6 +43,26 @@ struct PondBrief: View {
         .padding(14)
         .frame(maxWidth: 460, alignment: .leading)
         .glassEffect(.regular, in: .rect(cornerRadius: 16))
+    }
+
+    /// What's left of today, as a quiet row: "10:30 Standup · 1:00 PM Design review".
+    private func todayRow(_ events: [Brief.Event]) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "calendar")
+                .foregroundStyle(.tertiary)
+            ForEach(Array(events.prefix(4).enumerated()), id: \.offset) { _, e in
+                HStack(spacing: 4) {
+                    if let clock = e.clock {
+                        Text(clock).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    Text(e.title).lineLimit(1)
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(.quaternary.opacity(0.5), in: .capsule)
+            }
+        }
+        .font(.caption)
     }
 
     private func receipt(_ brief: Brief) -> some View {
