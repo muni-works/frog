@@ -2,8 +2,9 @@ import SwiftUI
 
 /// What frog noticed while you were away, under the frog on its lily pad: one line on what to
 /// do first, what's next on your calendar, the few things worth your time, and beneath the
-/// card a receipt for how the brief was made. Click a row to open it; hover for ✕ when it
-/// isn't worth your time.
+/// card a receipt for how the brief was made. Click a row to talk it through with frog (in your
+/// clone of its repo when you have one); hover for ↗ to open it on GitHub, ✕ when it isn't
+/// worth your time.
 struct PondBrief: View {
     @State private var pond = Pond.shared
 
@@ -104,6 +105,23 @@ private struct NextUp: View {
 private struct PondRow: View {
     let line: Brief.Line
     @State private var hovering = false
+    @State private var starting = false
+    @Environment(\.startConversation) private var startConversation
+
+    /// Click: a conversation about it, in your clone of its repo when you have one.
+    private func open() {
+        guard !starting else { return }
+        starting = true
+        Task {
+            defer { starting = false }
+            guard let c = await Pond.shared.conversation(about: line) else {
+                // Couldn't make the prompt (gh, or the pond moved on): the page is still there.
+                if let url = line.link { NSWorkspace.shared.open(url) }
+                return
+            }
+            startConversation?(c.folder, c.prompt)
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -131,17 +149,20 @@ private struct PondRow: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.tertiary)
                 }
-                .opacity(hovering ? 0 : 1)
-                Button { Pond.shared.dismiss(line) } label: {
-                    Image(systemName: "xmark")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 18, height: 18)
-                        .contentShape(.rect)
+                .opacity(hovering || starting ? 0 : 1)
+                if starting {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    HStack(spacing: 2) {
+                        RowButton(symbol: "arrow.up.right", help: "Open on GitHub") {
+                            if let url = line.link { NSWorkspace.shared.open(url) }
+                        }
+                        RowButton(symbol: "xmark", help: "Not worth my time") {
+                            Pond.shared.dismiss(line)
+                        }
+                    }
+                    .opacity(hovering ? 1 : 0)
                 }
-                .buttonStyle(.plain)
-                .opacity(hovering ? 1 : 0)
-                .help("Not worth my time")
             }
             .frame(minWidth: 24, alignment: .trailing)
             .padding(.top, 1)
@@ -151,8 +172,8 @@ private struct PondRow: View {
         .background(.primary.opacity(hovering ? 0.05 : 0), in: .rect(cornerRadius: 12))
         .contentShape(.rect)
         .onHover { hovering = $0 }
-        .onTapGesture { if let url = line.link { NSWorkspace.shared.open(url) } }
-        .help(line.url)
+        .onTapGesture(perform: open)
+        .help("Talk it through with frog")
     }
 
     /// "ecto/frog · alex asked for a review".
@@ -201,6 +222,28 @@ private struct PondRow: View {
         case "mention": .purple
         default: .accentColor
         }
+    }
+}
+
+/// A small icon button that shows on a row's hover.
+private struct RowButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(hovering ? .primary : .secondary)
+                .frame(width: 22, height: 22)
+                .background(.primary.opacity(hovering ? 0.08 : 0), in: .circle)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
     }
 }
 

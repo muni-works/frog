@@ -316,6 +316,7 @@ struct WorkspaceView: View {
             .environment(\.openSession) { openInFocused($0) }
             .environment(\.openSessionInSplit) { split($0) }
             .environment(\.switchFolder) { panes.switchFolder($0, in: focused) }
+            .environment(\.startConversation) { panes.start($1, in: $0, pane: focused) }
             .environment(\.paneNumbers, numbers)
 
             ForEach(panes.layout.dividers(in: region(sessions: docked.sessions))) { d in

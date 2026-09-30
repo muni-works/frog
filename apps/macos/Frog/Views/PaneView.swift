@@ -68,6 +68,7 @@ struct PaneView: View {
         .environment(\.projectFolder, workspace.folder)
         .environment(\.models, workspace.models)
         .environment(\.switchFolder) { url in panes.switchFolder(url, in: pane) }
+        .environment(\.startConversation) { url, prompt in panes.start(prompt, in: url, pane: pane) }
         .environment(\.openSession) { s in panes.open(s, in: pane, window: window) }
         // The agent moved the conversation to another folder: follow it there once the turn ends.
         .onChange(of: workspace.conversation.flatMap { $0.busy ? nil : $0.movedTo }) { _, url in

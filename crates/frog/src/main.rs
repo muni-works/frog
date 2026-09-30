@@ -176,6 +176,10 @@ struct Cli {
     /// on or off. Without a value, say whether it's on.
     #[arg(long, value_name = "ON|OFF", num_args = 0..=1, default_missing_value = "")]
     background: Option<String>,
+    /// Print a prompt for a conversation about an item in the brief, with what GitHub says
+    /// about it (JSON with --json: {"prompt", "repo"}).
+    #[arg(long, value_name = "ID")]
+    ask: Option<String>,
     /// Take an item out of the brief: it isn't worth your time. It comes back if it changes.
     #[arg(long, value_name = "ID")]
     dismiss: Option<String>,
@@ -652,6 +656,15 @@ async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
                 Some(b) => println!("on: {} looks every 15 minutes", b.display()),
                 None => println!("off"),
             }
+        }
+        return Ok(Some(true));
+    }
+    if let Some(id) = &cli.ask {
+        let (prompt, repo) = pond::ask::prompt(id).await?;
+        if cli.json {
+            println!("{}", serde_json::json!({ "prompt": prompt, "repo": repo }));
+        } else {
+            println!("{prompt}");
         }
         return Ok(Some(true));
     }

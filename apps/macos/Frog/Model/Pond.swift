@@ -55,6 +55,39 @@ final class Pond {
         await loadBackground()
     }
 
+    /// A conversation about `line`: its prompt, with what GitHub says about it, and your clone
+    /// of its repo to have it in (nil: a plain chat).
+    func conversation(about line: Brief.Line) async -> (folder: URL?, prompt: String)? {
+        struct Ask: Decodable { var prompt: String; var repo: String }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        guard let ask = try? await Frog.json(Ask.self, args: ["--ask", line.id, "--json"], cwd: home) else { return nil }
+        let folders = Library.shared.sessions.compactMap { $0.isChat ? nil : $0.folder } + Recents.all
+        let clone = await Task.detached(priority: .userInitiated) {
+            Self.clone(of: ask.repo, among: folders + RecentProjectChips.repositories())
+        }.value
+        return (clone, ask.prompt)
+    }
+
+    /// The first folder whose git remote is github.com's `owner/repo`.
+    nonisolated static func clone(of repo: String, among folders: [URL]) -> URL? {
+        let want = repo.lowercased()
+        var seen = Set<String>()
+        for folder in folders where seen.insert(folder.standardizedFileURL.path).inserted {
+            // A worktree's .git is a file; its main checkout is found by its own path.
+            guard let config = try? String(contentsOf: folder.appending(path: ".git/config"), encoding: .utf8) else { continue }
+            for line in config.split(separator: "\n") where line.contains("url =") && line.lowercased().contains("github.com") {
+                let url = line.split(separator: "=", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces).lowercased() } ?? ""
+                var path = url.replacingOccurrences(of: "git@github.com:", with: "")
+                    .replacingOccurrences(of: "ssh://git@github.com/", with: "")
+                    .replacingOccurrences(of: "https://github.com/", with: "")
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                if path.hasSuffix(".git") { path.removeLast(4) }
+                if path == want { return folder }
+            }
+        }
+        return nil
+    }
+
     /// Not worth your time: out of the brief, and a little less of its kind in the next one.
     func dismiss(_ line: Brief.Line) {
         brief?.items.removeAll { $0.id == line.id }
