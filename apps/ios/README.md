@@ -32,6 +32,7 @@ lives in the Keychain.
 | `FrogWidgets` | Live Activity + Dynamic Island, home/lock widgets, Control Center control |
 | `FrogShare` | "Send to frog" in the share sheet |
 | `FrogWatch` | what needs you (answer with ✕ / ✓) and what's running |
+| `FrogWatchWidgets` | the complication: the iPhone's status widget, built for watchOS |
 
 Shared with the Mac app: `Protocol.swift`, `Diagram.swift`, `FrogFace.swift`.
 
@@ -60,8 +61,8 @@ a paid team's APNs key and isn't deployed yet.
 
 ## Not done yet
 
-- A paid team: a real device, APNs (and deploying the relay, with its requests tied to a
-  pairing), TestFlight.
-- Bonjour discovery is built but unconfirmed here: the Mac may be waiting on macOS's local network
-  permission for the app. Pairing by QR code or address works.
-- A watch complication.
+- A paid team: a real device, APNs (and deploying the relay, with rate limits), TestFlight.
+- The complication is built and fed, but hasn't been placed on a watch face in the Simulator.
+
+Everything a phone shows of a conversation is FrogKit's (see ../FrogKit/README.md): change a
+component there and the Mac, iPhone, iPad and extensions all change with it.
