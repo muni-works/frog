@@ -39,6 +39,7 @@ final class Remote: SessionLink {
     /// Said before the Mac let us in; sent as soon as it does.
     @ObservationIgnored private var outbox: [[String: Any]] = []
     @ObservationIgnored private var waiters: [CheckedContinuation<Bool, Never>] = []
+    @ObservationIgnored private var listWaiters: [CheckedContinuation<[RemoteSession], Never>] = []
 
     init() {
         let env = ProcessInfo.processInfo.environment
@@ -127,6 +128,8 @@ final class Remote: SessionLink {
         case "sessions":
             let rows = msg["sessions"] as? [[String: Any]] ?? []
             sessions = rows.compactMap(RemoteSession.init)
+            listWaiters.forEach { $0.resume(returning: sessions) }
+            listWaiters = []
             WatchLink.shared.share(sessions)
             Glance.share(sessions, host: { if case .connected(let h) = state { h } else { nil } }())
             open?.isOpenOnMac = sessions.first { $0.id == open?.id }?.open ?? false
@@ -206,6 +209,22 @@ final class Remote: SessionLink {
             await perform(op: ["op": "permission", "id": q.id, "decision": allow ? "allow" : "deny"], in: session)
             try? await Task.sleep(for: .milliseconds(300))
             refresh()
+        }
+    }
+
+    /// The Mac's conversations as of now, connecting if we must (for Siri and Shortcuts). What we
+    /// already have if the Mac doesn't answer in a few seconds.
+    func listNow() async -> [RemoteSession] {
+        if !isConnected, state != .connecting { connect() }
+        return await withCheckedContinuation { cont in
+            listWaiters.append(cont)
+            if isConnected { refresh() } else { outbox.append(["type": "list"]) }
+            Task {
+                try? await Task.sleep(for: .seconds(5))
+                let late = self.listWaiters
+                self.listWaiters = []
+                late.forEach { $0.resume(returning: self.sessions) }
+            }
         }
     }
 
