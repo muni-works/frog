@@ -4507,13 +4507,21 @@ mod tests {
         }
         // `open` is a read; `click` asks, then goes to the client's pane.
         assert_eq!(asked, [("Preview".to_string(), "click: #go".to_string())]);
+        // `open` waits for the page to load; then the click.
         assert_eq!(
             requested,
-            [(
-                "p1".to_string(),
-                crate::protocol::PaneAction::Click,
-                json!({ "selector": "#go" })
-            )]
+            [
+                (
+                    "p1".to_string(),
+                    crate::protocol::PaneAction::Navigate,
+                    json!({ "url": "http://localhost:3000", "wait": true })
+                ),
+                (
+                    "p1".to_string(),
+                    crate::protocol::PaneAction::Click,
+                    json!({ "selector": "#go" })
+                )
+            ]
         );
         assert!(evs.iter().any(|e| matches!(
             &e.event,
@@ -4560,14 +4568,78 @@ mod tests {
                 images: Vec::new(),
             })
             .unwrap();
-        let evs = until_idle(&mut h).await;
-        assert!(evs.iter().any(|e| matches!(
-            &e.event,
-            Event::PaneOpened {
-                kind: crate::protocol::PaneKind::Preview,
-                ..
+        let mut opened = false;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::PaneOpened {
+                    kind: crate::protocol::PaneKind::Preview,
+                    ..
+                } => opened = true,
+                Event::PaneRequest { call, .. } => h
+                    .ops
+                    .send(Op::PaneReply {
+                        call,
+                        result: Some(json!({ "loaded": true })),
+                        error: None,
+                    })
+                    .unwrap(),
+                Event::Idle => break,
+                _ => {}
             }
-        )));
+        }
+        assert!(opened);
+    }
+
+    #[tokio::test]
+    async fn a_preview_that_cannot_load_says_so() {
+        let open = Block::ToolUse {
+            id: "o".into(),
+            name: "Preview".into(),
+            input: json!({ "action": "open", "url": "3000" }),
+        };
+        let script = vec![
+            reply(vec![open], Stop::ToolUse),
+            reply(vec![text("down")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops.send(Op::SetClientCaps { panes: true }).unwrap();
+        until_idle(&mut h).await;
+        h.ops
+            .send(Op::Submit {
+                text: "open it".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut result = None;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::PaneRequest { call, .. } => h
+                    .ops
+                    .send(Op::PaneReply {
+                        call,
+                        result: None,
+                        error: Some("Could not connect to the server.".into()),
+                    })
+                    .unwrap(),
+                Event::ItemCompleted {
+                    item:
+                        Item::ToolCall {
+                            output, outcome, ..
+                        },
+                    ..
+                } => result = Some((output, outcome)),
+                Event::Idle => break,
+                _ => {}
+            }
+        }
+        let (out, outcome) = result.unwrap();
+        assert_eq!(outcome, ToolOutcome::Error);
+        assert!(
+            out.contains("couldn't load http://localhost:3000")
+                && out.contains("Could not connect"),
+            "{out}"
+        );
     }
 
     #[tokio::test]

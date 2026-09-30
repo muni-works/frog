@@ -225,6 +225,8 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
     private(set) var currentURL: String?
     private(set) var title = ""
     private(set) var loading = false
+    /// Why the last load failed, until the next one starts.
+    private var loadError: String?
     private(set) var canGoBack = false
     @ObservationIgnored private(set) var web: WKWebView?
     @ObservationIgnored private var inspecting = false
@@ -330,9 +332,17 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
             }
         case "navigate":
             guard let url = req.args["url"]?.string else { return reply(nil, "navigate needs a url") }
+            // `wait`: the pane was just opened at this URL; answer when that load settles
+            // rather than loading it again.
+            if req.args["wait"]?.bool == true {
+                if let loadError { return reply(nil, loadError) }
+                if !loading, currentURL != nil {
+                    return reply(.object(["url": .string(currentURL ?? url), "title": .string(title), "loaded": .bool(true)]), nil)
+                }
+            }
             navigationWaiter?(nil, "superseded by another navigation")
             navigationWaiter = reply
-            load(url)
+            if req.args["wait"]?.bool != true { load(url) }
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(15))
                 guard let self, let w = self.navigationWaiter else { return }
@@ -383,6 +393,7 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
 
     func webView(_ web: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         loading = true
+        loadError = nil
     }
 
     func webView(_ web: WKWebView, didCommit navigation: WKNavigation!) {
@@ -413,6 +424,7 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
         loading = false
         // A navigation the user cancelled by starting another isn't news.
         guard (error as NSError).code != NSURLErrorCancelled else { return }
+        loadError = error.localizedDescription
         hub?.report(PaneReport(id: paneID, kind: .error, level: "error", message: "Couldn't load: \(error.localizedDescription)", url: currentURL))
         if let w = navigationWaiter {
             navigationWaiter = nil

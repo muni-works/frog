@@ -1165,7 +1165,26 @@ impl Panes {
         if action == "open" {
             let url = resolve_url(str_arg(input, "url")?, &root)?;
             let id = self.open(PaneKind::Preview, None, Some(url.clone()), 0, 0)?;
-            return Ok(Output::text(format!("Opened preview pane {id} at {url}.")));
+            // Wait for the page, so a dead dev server or a 404 is the answer rather than "open".
+            let args = json!({ "url": url, "wait": true });
+            return match self
+                .request(&id, PaneAction::Navigate, args, REQUEST_TIMEOUT)
+                .await
+            {
+                Ok(v) if v["loaded"] == false => Ok(Output::text(format!(
+                    "Opened preview pane {id} at {url}; it's still loading."
+                ))),
+                Ok(v) => {
+                    let title = v["title"].as_str().filter(|t| !t.is_empty());
+                    Ok(Output::text(format!(
+                        "Opened preview pane {id} at {url}{}.",
+                        title.map(|t| format!(" (\"{t}\")")).unwrap_or_default()
+                    )))
+                }
+                Err(e) => bail!(
+                    "preview pane {id} couldn't load {url}: {e}. If it's a dev server, is it running (check Terminal)?"
+                ),
+            };
         }
         let id = match input["id"].as_str() {
             Some(id) => id.to_string(),
