@@ -18,7 +18,14 @@ struct PondBrief: View {
         }
         .animation(.snappy(duration: 0.35), value: pond.brief?.at)
         .animation(.snappy(duration: 0.25), value: pond.brief?.items)
-        .task { await pond.show() }
+        .task {
+            await pond.show()
+            // You've seen it: next time, only what's come in since is new.
+            if NSApp.isActive, pond.brief?.items.contains(where: \.new) == true {
+                try? await Task.sleep(for: .seconds(2))
+                if !Task.isCancelled { pond.markSeen() }
+            }
+        }
     }
 
     private func content(_ brief: Brief) -> some View {

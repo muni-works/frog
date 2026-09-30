@@ -88,6 +88,11 @@ final class Pond {
         return nil
     }
 
+    /// You've looked: what's in the brief is no longer new (the dots stay until it's rewritten).
+    func markSeen() {
+        Task { try? await Frog.command(["--seen"]) }
+    }
+
     /// Not worth your time: out of the brief, and a little less of its kind in the next one.
     func dismiss(_ line: Brief.Line) {
         brief?.items.removeAll { $0.id == line.id }

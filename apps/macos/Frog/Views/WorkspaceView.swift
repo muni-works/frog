@@ -410,6 +410,13 @@ struct WorkspaceView: View {
                 panes.items.forEach { $0.peekChanges = false }
             }
         }
+        // The morning notice was clicked: the brief, in a new chat, unless one's already showing.
+        .onReceive(NotificationCenter.default.publisher(for: .showBrief)) { _ in
+            guard window?.isKeyWindow ?? true else { return }
+            let showing = Frog.isChat(workspace.folder) && (workspace.conversation?.turns.isEmpty ?? false)
+            if !showing { panes.switchFolder(nil, in: focused) }
+            Task { await Pond.shared.refresh() }
+        }
         .focusedSceneValue(\.frogWindow, FrogWindow(
             workspace: workspace, state: focused.ui,
             toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },

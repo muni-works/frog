@@ -58,7 +58,8 @@ pub struct Line {
 }
 
 impl Line {
-    fn of(e: &Entry, now: DateTime<Utc>) -> Line {
+    /// `seen`: when you last looked at a brief; anything first found after that is new.
+    fn of(e: &Entry, now: DateTime<Utc>, seen: Option<DateTime<Utc>>) -> Line {
         Line {
             id: e.item.id.clone(),
             kind: e.item.kind,
@@ -68,7 +69,7 @@ impl Line {
             who: e.item.who.clone(),
             updated: e.item.updated,
             note: template_note(e, now),
-            new: e.shown.is_none(),
+            new: seen.is_none_or(|s| e.first_seen > s),
         }
     }
 }
@@ -86,9 +87,9 @@ pub async fn write(
     let mut also = Vec::new();
     for (e, p) in ranked {
         if items.len() < HEADLINE_ITEMS && p >= WORTH_IT {
-            items.push(Line::of(e, now));
+            items.push(Line::of(e, now, pond.last_seen));
         } else {
-            also.push(Line::of(e, now));
+            also.push(Line::of(e, now, pond.last_seen));
         }
     }
     for l in &items {
@@ -397,7 +398,7 @@ mod tests {
     #[test]
     fn headlines_must_be_about_the_brief() {
         let now: DateTime<Utc> = "2026-09-30T08:00:00Z".parse().unwrap();
-        let items = [Line::of(&entry("Add vcad", Kind::Mention, None), now)];
+        let items = [Line::of(&entry("Add vcad", Kind::Mention, None), now, None)];
         assert!(grounded("Answer the vcad mention first", &items, &[]));
         // A meeting that isn't on any calendar.
         assert!(!grounded("Answer the vcad mention before standup", &items, &[]));
@@ -410,9 +411,9 @@ mod tests {
     #[test]
     fn templates_read_well() {
         let now: DateTime<Utc> = "2026-09-30T08:00:00Z".parse().unwrap();
-        let a = Line::of(&entry("a", Kind::Review, Some("alex")), now);
-        let b = Line::of(&entry("b", Kind::Review, None), now);
-        let c = Line::of(&entry("c", Kind::Failing, None), now);
+        let a = Line::of(&entry("a", Kind::Review, Some("alex")), now, None);
+        let b = Line::of(&entry("b", Kind::Review, None), now, None);
+        let c = Line::of(&entry("c", Kind::Failing, None), now, None);
         assert_eq!(a.note, "alex asked for your review yesterday");
         assert_eq!(template_headline(&[a.clone(), b, c], &[], now), "Review alex’s “a”, then 2 more");
         let standup = Event { title: "Standup".into(), start: now + chrono::Duration::minutes(40), end: now + chrono::Duration::minutes(55), all_day: false, calendar: None, location: None };
