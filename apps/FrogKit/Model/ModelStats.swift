@@ -124,7 +124,7 @@ final class ModelStats {
 
     /// Fill the energy history from session logs (the last ten days), once: turns measured before
     /// the history existed, or while this copy of the app wasn't running.
-    func backfillEnergy(from dir: URL = Frog.sessions) async {
+    func backfillEnergy(from dir: URL = FrogPaths.sessions) async {
         let flag = "energyBackfilled"
         guard !defaults.bool(forKey: flag) else { return }
         defaults.set(true, forKey: flag)

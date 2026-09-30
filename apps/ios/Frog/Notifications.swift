@@ -70,7 +70,7 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
         let session = notification.request.content.userInfo["session"] as? String
         Task { @MainActor in
             // The thread on screen already shows it.
-            done(session != nil && session == Remote.shared.open?.id ? [] : [.banner, .sound, .list])
+            done(session != nil && session == Remote.shared.open?.sessionID ? [] : [.banner, .sound, .list])
         }
     }
 
@@ -107,6 +107,9 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         MainActor.assumeIsolated {
+            Conversation.effects = PhoneEffects.shared
+            // Models are named and placed the way the Mac does, from what the Mac says.
+            ModelContext.providers = { Remote.shared.providers }
             Notifications.shared.setup()
             WatchLink.shared.start()
         }

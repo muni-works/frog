@@ -6,7 +6,7 @@ import Observation
 /// from the last event it saw, so nothing arrives twice and nothing is missed.
 @MainActor
 @Observable
-final class Remote: SessionLink {
+final class Remote {
     /// The one connection, shared with notification actions and intents.
     static let shared = Remote()
 
@@ -23,7 +23,13 @@ final class Remote: SessionLink {
         didSet { UserDefaults.standard.set(paired, forKey: "remotePaired") }
     }
     private(set) var sessions: [RemoteSession] = []
-    private(set) var open: SessionModel?
+    /// The conversation on screen, and how it reaches the Mac.
+    private(set) var open: Conversation?
+    @ObservationIgnored private(set) var openLink: RemoteLink?
+    /// The Mac's models and the providers behind them, so a model is named and placed here the
+    /// way it is there (see `ModelContext`).
+    private(set) var models: [ModelEntry] = []
+    private(set) var providers: [ProviderInfo] = []
     /// A conversation someone asked to see (a tapped notification, Handoff, a widget).
     var requested: String?
 
@@ -157,7 +163,15 @@ final class Remote: SessionLink {
             waiters = []
             refresh()
             // Back after a drop: carry on where the transcript left off.
-            if let open { send(["type": "attach", "session": open.id, "after": open.lastSeq]) }
+            if let openLink { attach(openLink.session, after: openLink.lastSeq) }
+        case "context":
+            let dec = JSONDecoder()
+            if let m = msg["models"].flatMap({ try? JSONSerialization.data(withJSONObject: $0) }) {
+                models = (try? dec.decode([ModelEntry].self, from: m)) ?? models
+            }
+            if let p = msg["providers"].flatMap({ try? JSONSerialization.data(withJSONObject: $0) }) {
+                providers = (try? dec.decode([ProviderInfo].self, from: p)) ?? providers
+            }
         case "sessions":
             let rows = msg["sessions"] as? [[String: Any]] ?? []
             sessions = rows.compactMap(RemoteSession.init)
@@ -165,25 +179,27 @@ final class Remote: SessionLink {
             listWaiters = []
             WatchLink.shared.share(sessions)
             Glance.share(sessions, host: { if case .connected(let h) = state { h } else { nil } }())
-            open?.isOpenOnMac = sessions.first { $0.id == open?.id }?.open ?? false
+            if let openLink { openLink.isOpenOnMac = sessions.first { $0.id == openLink.session }?.open ?? false }
         case "event":
             guard let env = msg["env"],
                   let raw = try? JSONSerialization.data(withJSONObject: env),
                   let envelope = try? JSONDecoder.frog.decode(Envelope.self, from: raw),
-                  envelope.session == open?.id else { return }
-            open?.apply(envelope, raw: raw)
+                  envelope.session == openLink?.session else { return }
+            openLink?.receive(envelope, raw: raw)
         case "synced":
-            if (msg["session"] as? String) == open?.id { open?.synced() }
+            if (msg["session"] as? String) == openLink?.session {
+                openLink?.synced(upto: (msg["upto"] as? NSNumber)?.uint64Value ?? 0)
+            }
         case "opened":
             let id = msg["session"] as? String ?? ""
             if let ref = msg["ref"] as? String, let ask = asks.removeValue(forKey: ref) { ask.resume(returning: .success(id)) }
-            if open?.id == id { open?.isOpenOnMac = true }
+            if openLink?.session == id { openLink?.isOpenOnMac = true }
         case "error" where (msg["ref"] as? String).map { asks[$0] != nil } ?? false:
             let ref = msg["ref"] as! String
             asks.removeValue(forKey: ref)?.resume(returning: .failure(AskError(message: msg["message"] as? String ?? "Something went wrong")))
         case "error":
             let text = msg["message"] as? String ?? "Something went wrong"
-            if msg["session"] != nil { open?.note(text) }
+            if (msg["session"] as? String) == openLink?.session { openLink?.refused(text) }
             else if !isConnected {
                 retry?.cancel()
                 generation += 1
@@ -200,20 +216,33 @@ final class Remote: SessionLink {
         send(["type": "list"])
     }
 
-    func attach(_ session: RemoteSession) -> SessionModel {
-        if let open, open.id == session.id { return open }
-        if let open { send(["type": "detach", "session": open.id]) }
-        let model = SessionModel(session: session, link: self)
-        open = model
-        send(["type": "attach", "session": session.id, "after": model.lastSeq])
-        return model
+    /// The conversation for `session`, reaching the Mac through the bridge.
+    func conversation(_ session: RemoteSession) -> Conversation {
+        if let open, open.sessionID == session.id { return open }
+        open?.stop()
+        let link = RemoteLink(session: session.id, remote: self, open: session.open)
+        let folder = URL(fileURLWithPath: session.cwd ?? FrogPaths.chatSuffix)
+        let c = Conversation(folder: folder, link: link, replay: true, session: session.id)
+        openLink = link
+        open = c
+        return c
     }
 
-    func detach(_ model: SessionModel) {
-        guard open === model else { return }
-        send(["type": "detach", "session": model.id])
-        model.close()
+    /// Done looking at `c`.
+    func close(_ c: Conversation) {
+        guard open === c else { return }
+        c.stop()
         open = nil
+        openLink = nil
+    }
+
+    /// Ask the Mac for a conversation's history after `seq`, then what happens next.
+    func attach(_ session: String, after seq: UInt64) {
+        send(["type": "attach", "session": session, "after": seq])
+    }
+
+    func detach(_ session: String) {
+        send(["type": "detach", "session": session])
     }
 
     func send(op: [String: Any], in session: String) {
@@ -326,6 +355,8 @@ struct RemoteSession: Identifiable, Hashable {
     let id: String
     let title: String
     let folder: String?
+    /// The folder's full path on the Mac.
+    let cwd: String?
     let model: String
     let modified: Date
     let chat: Bool
@@ -343,14 +374,8 @@ struct RemoteSession: Identifiable, Hashable {
         let name: String
         let arg: String
 
-        /// "Run cargo test?", "Edit main.rs?"
-        var text: String {
-            switch name {
-            case "Bash": "Run \(arg.split(separator: "\n").first.map(String.init) ?? arg)?"
-            case "Edit", "Write": "\(name) \((arg as NSString).lastPathComponent)?"
-            default: "Use \(name)?"
-            }
-        }
+        /// What frog is asking, as the Mac's card says it.
+        var text: String { PermissionRequest.question(name: name, arg: arg) }
     }
 
     init?(_ row: [String: Any]) {
@@ -358,6 +383,7 @@ struct RemoteSession: Identifiable, Hashable {
         self.id = id
         title = row["title"] as? String ?? "Untitled"
         folder = row["folder"] as? String
+        cwd = row["cwd"] as? String
         model = row["model"] as? String ?? ""
         modified = Date(timeIntervalSince1970: ((row["modified"] as? NSNumber)?.doubleValue ?? 0) / 1000)
         chat = row["chat"] as? Bool ?? false
@@ -370,17 +396,11 @@ struct RemoteSession: Identifiable, Hashable {
         }
     }
 
-    /// Runs on your own hardware (blue), or on someone's data center (green), like the Mac.
-    var isLocal: Bool { Models.isLocal(model) }
-}
+    /// The model as the Mac names and places it.
+    @MainActor
+    var identity: ModelIdentity { ModelIdentity.of(model, in: Remote.shared.models) }
 
-enum Models {
-    static let localPrefixes = ["tang/", "apple/", "ollama/", "lmstudio/", "llamacpp/", "mlx/", "vllm/", "node/"]
-    static func isLocal(_ spec: String) -> Bool { localPrefixes.contains { spec.hasPrefix($0) } }
-
-    /// "ollama/qwen3-coder:30b" → "qwen3-coder:30b"
-    static func short(_ spec: String) -> String {
-        let name = spec.split(separator: "/", maxSplits: 1).last.map(String.init) ?? spec
-        return name.split(separator: "/").last.map(String.init) ?? name
-    }
+    /// Runs on your own hardware (blue), or in the cloud (green), as on the Mac.
+    @MainActor
+    var isLocal: Bool { !identity.place.isCloud }
 }

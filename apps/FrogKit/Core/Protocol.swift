@@ -582,8 +582,8 @@ struct Rewound: Decodable, Sendable {
     var restored: [String]
 }
 
-struct ModelEntry: Decodable, Sendable, Identifiable, Hashable {
-    struct Caps: Decodable, Sendable, Hashable {
+struct ModelEntry: Codable, Sendable, Identifiable, Hashable {
+    struct Caps: Codable, Sendable, Hashable {
         var nativeTools: Bool
         var textTools: Bool
         var jsonMode: Bool
@@ -605,7 +605,7 @@ struct ModelEntry: Decodable, Sendable, Identifiable, Hashable {
 }
 
 /// A model a provider offers, with what's worth knowing to pick it.
-struct CatalogModel: Decodable, Sendable, Hashable, Identifiable {
+struct CatalogModel: Codable, Sendable, Hashable, Identifiable {
     var spec: String
     var provider: String
     var id: String
@@ -625,7 +625,7 @@ struct CatalogModel: Decodable, Sendable, Hashable, Identifiable {
 }
 
 /// A provider: a preset gateway or API, a local server, or one you added.
-struct ProviderInfo: Decodable, Sendable, Hashable, Identifiable {
+struct ProviderInfo: Codable, Sendable, Hashable, Identifiable {
     var id: String
     var name: String
     var kind: String
@@ -644,4 +644,21 @@ extension JSONDecoder {
         d.keyDecodingStrategy = .convertFromSnakeCase
         return d
     }()
+}
+
+extension CatalogModel {
+    /// "$3 / $15 per M tokens", or nil when unknown.
+    var price: String? {
+        guard let i = costIn, let o = costOut else { return nil }
+        if i == 0, o == 0 { return "Free" }
+        return "\(Self.dollars(i)) in · \(Self.dollars(o)) out per M"
+    }
+
+    var contextLabel: String? {
+        context.map { $0 >= 1_000_000 ? String(format: "%gM", Double($0) / 1_000_000) : "\($0 / 1000)k" }
+    }
+
+    private static func dollars(_ v: Double) -> String {
+        v < 1 ? String(format: "$%.2f", v) : String(format: "$%g", (v * 100).rounded() / 100)
+    }
 }

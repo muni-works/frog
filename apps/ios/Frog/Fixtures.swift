@@ -1,15 +1,18 @@
 import Foundation
 
 /// Recorded sessions (the Mac's test fixtures) played back as if frog on the Mac were running
-/// them: answers stream in, tools take their time, and one command stops to ask. For designing
-/// and screenshotting without a Mac. Launch with `-fixtures` for the list, or
-/// `-fixture <name>` to open one.
+/// them, through the same `Conversation` and transcript: answers stream in, tools take their
+/// time, and the first command or edit stops to ask. For designing and screenshotting without a
+/// Mac. Launch with `-fixtures YES` for the list, or `-fixture <name>` to open one.
 @MainActor
-final class FixturePlayer: SessionLink {
+final class FixturePlayer: ConversationLink {
     static var names: [String] {
         let urls = Bundle.main.urls(forResourcesWithExtension: "jsonl", subdirectory: "Fixtures") ?? []
         return urls.map { $0.deletingPathExtension().lastPathComponent }.sorted()
     }
+
+    /// Recordings playing now, so answers from the Live Activity and the watch reach them.
+    static var playing: [String: FixturePlayer] = [:]
 
     static func session(_ name: String) -> RemoteSession? {
         guard let (header, _) = load(name) else { return nil }
@@ -18,15 +21,16 @@ final class FixturePlayer: SessionLink {
             "title": name.replacingOccurrences(of: "-", with: " ").capitalized,
             "model": header["model"] as? String ?? "ollama/qwen3:4b",
             "folder": ((header["cwd"] as? String ?? "demo") as NSString).lastPathComponent,
+            "cwd": header["cwd"] as? String ?? "/demo",
             "modified": Date().timeIntervalSince1970 * 1000,
             "open": true,
         ])
     }
 
-    /// Recordings playing now, so answers from the Live Activity reach them.
-    static var playing: [String: FixturePlayer] = [:]
-
-    let model: SessionModel
+    let session: RemoteSession
+    private(set) var conversation: Conversation!
+    var onEvent: (Envelope?) -> Void = { _ in }
+    var endDescription: String { "The recording ended." }
     private let events: [[String: Any]]
     private var seq: UInt64 = 1000
     private var answered: CheckedContinuation<Void, Never>?
@@ -38,9 +42,8 @@ final class FixturePlayer: SessionLink {
         guard let (_, events) = Self.load(name), let session = Self.session(name) else { return nil }
         self.events = events
         self.ask = ask
-        model = SessionModel(session: session, link: DeadLink.shared, cached: false)
-        model.relink(self)
-        model.synced()
+        self.session = session
+        conversation = Conversation(folder: URL(fileURLWithPath: session.cwd ?? "/demo"), link: self, replay: false, session: session.id)
     }
 
     private static func load(_ name: String) -> ([String: Any], [[String: Any]])? {
@@ -58,10 +61,11 @@ final class FixturePlayer: SessionLink {
 
     /// Play the recording: the first turn's prompt arrives as if you'd just sent it.
     func play() async {
-        Self.playing[model.id] = self
+        Self.playing[session.id] = self
         var asked = false
-        emit(["event": "status", "model": model.session.model, "mode": "default", "cwd": "/demo", "messages": 0,
+        emit(["event": "status", "model": session.model, "mode": "default", "cwd": session.cwd ?? "/demo", "messages": 0,
               "context_window": 32768, "tool_mode": "native", "tier": "medium", "todos": []])
+        emit(["event": "idle"])
         for env in events {
             guard !stopped else { return }
             let name = env["event"] as? String ?? ""
@@ -93,19 +97,18 @@ final class FixturePlayer: SessionLink {
                 try? await Task.sleep(for: .milliseconds(300))
                 emit(env)
                 emit(["event": "idle"])
-                WatchLink.shared.share([])
-                Glance.share([], host: "Recording")
+                share(nil, running: false)
             default:
                 emit(env)
             }
         }
     }
 
-    /// The text in word-sized pieces at a model's pace, as the engine streams it.
+    /// The text in word-sized pieces at a model's pace, as the engine streams it. Thinking is
+    /// long and folded away, so it goes by quickly.
     private func stream(_ text: String, id: String, type: String) async {
         var rest = Substring(text)
         while !rest.isEmpty, !stopped {
-            // Thinking is long and folded away; it goes by quickly.
             let n = min(rest.count, type == "text" ? Int.random(in: 3...9) : Int.random(in: 60...120))
             let piece = rest.prefix(n)
             rest = rest.dropFirst(n)
@@ -115,49 +118,54 @@ final class FixturePlayer: SessionLink {
     }
 
     private func askPermission(for item: [String: Any], id: String) async {
+        let name = item["name"] as? String ?? ""
         var req: [String: Any] = [
-            "event": "permission_request", "id": "p-\(id)", "item": id,
-            "name": item["name"] ?? "", "arg": item["arg"] ?? "",
-            "always": (item["name"] as? String) == "Bash" ? "always allow `\((item["arg"] as? String ?? "").split(separator: " ").first ?? "")`" : "allow all edits this session",
+            "event": "permission_request", "id": "p-\(id)", "item": id, "name": name, "arg": item["arg"] ?? "",
+            "always": name == "Bash" ? "always allow `\((item["arg"] as? String ?? "").split(separator: " ").first ?? "")`" : "allow all edits this session",
         ]
         if let diff = item["diff"] { req["preview"] = diff }
         emit(req)
-        shareWithWatch(question: ["id": "p-\(id)", "name": item["name"] ?? "", "arg": item["arg"] ?? ""])
+        share(["id": "p-\(id)", "name": name, "arg": item["arg"] ?? ""], running: true)
         await withCheckedContinuation { answered = $0 }
         emit(["event": "permission_resolved", "id": "p-\(id)", "decision": "allow"])
-        shareWithWatch(question: nil)
+        share(nil, running: true)
     }
 
-    /// The recording as the watch would see it from a Mac.
-    private func shareWithWatch(question: [String: Any]?) {
-        var row: [String: Any] = ["id": model.id, "title": model.session.title, "model": model.session.model,
-                                  "open": true, "live": question == nil ? "running" : "waiting", "activity": model.activityLine]
+    /// The recording as a list row, for the watch and widgets, as they'd see it from a Mac.
+    private func share(_ question: [String: Any]?, running: Bool) {
+        var row: [String: Any] = ["id": session.id, "title": session.title, "model": session.model, "open": true]
+        if running {
+            row["live"] = question == nil ? "running" : "waiting"
+            row["activity"] = conversation.activityState.activity
+        }
         if let question { row["question"] = question }
         let rows = RemoteSession(row).map { [$0] } ?? []
-        WatchLink.shared.share(rows)
-        Glance.share(rows, host: "Recording")
+        WatchLink.shared.share(running ? rows : [])
+        Glance.share(running ? rows : [], host: "Recording")
     }
 
-    func send(op: [String: Any], in session: String) {
-        switch op["op"] as? String {
-        case "permission":
-            if op["decision"] as? String == "deny" { stopped = true; finish(.denied) }
+    // MARK: ConversationLink
+
+    func send(_ op: Op) {
+        switch op {
+        case .permission(_, let decision):
+            if decision == .deny { stopped = true; finish(.denied) }
             answered?.resume()
             answered = nil
-        case "interrupt":
+        case .interrupt:
             stopped = true
             answered?.resume()
             answered = nil
             finish(.cancelled)
-        case "submit":
+        case .submit(let text, _):
             // A recording can't answer something new; frog says so, kindly.
-            let n = (model.turns.compactMap(\.number).max() ?? 1) + 1
-            let text = op["text"] as? String ?? ""
+            let n = (conversation.turns.compactMap(\.number).max() ?? 1) + 1
+            let reply = "This is a recorded session, so I can't act on that here. Connect to frog on your Mac and I'll get right on it."
             Task {
                 emit(["event": "turn_started", "turn": n, "input": text])
                 emit(["event": "item_started", "id": "m\(n)", "kind": ["type": "message"]])
-                await stream("This is a recorded session, so I can't act on that here. Connect to frog on your Mac and I'll get right on it.", id: "m\(n)", type: "text")
-                emit(["event": "item_completed", "id": "m\(n)", "item": ["type": "message", "text": "This is a recorded session, so I can't act on that here. Connect to frog on your Mac and I'll get right on it."]])
+                await stream(reply, id: "m\(n)", type: "text")
+                emit(["event": "item_completed", "id": "m\(n)", "item": ["type": "message", "text": reply]])
                 emit(["event": "turn_ended", "turn": n, "reason": ["type": "complete"],
                       "usage": ["input_tokens": 120, "output_tokens": 30, "model_calls": 1]])
                 emit(["event": "idle"])
@@ -167,39 +175,32 @@ final class FixturePlayer: SessionLink {
         }
     }
 
-    private func finish(_ reason: EndReason) {
-        guard let n = model.turns.last?.number else { return }
-        let type = reason == .denied ? "denied" : "cancelled"
-        emit(["event": "turn_ended", "turn": n, "reason": ["type": type],
+    func stop() {
+        stopped = true
+        answered?.resume()
+        answered = nil
+        Self.playing[session.id] = nil
+    }
+
+    private enum Stop: String { case denied, cancelled }
+
+    /// End the turn the way the engine would when you say no or stop it.
+    private func finish(_ stop: Stop) {
+        guard let n = conversation.turns.last?.number else { return }
+        emit(["event": "turn_ended", "turn": n, "reason": ["type": stop.rawValue],
               "usage": ["input_tokens": 0, "output_tokens": 0, "model_calls": 0]])
         emit(["event": "idle"])
+        share(nil, running: false)
     }
 
     private func emit(_ event: [String: Any]) {
         seq += 1
         var env = event
         env["seq"] = seq
-        env["session"] = model.id
+        env["session"] = session.id
         env["created"] = Int64(Date().timeIntervalSince1970 * 1000)
         guard let data = try? JSONSerialization.data(withJSONObject: env),
               let e = try? JSONDecoder.frog.decode(Envelope.self, from: data) else { return }
-        model.apply(e)
-    }
-}
-
-/// A link that goes nowhere, until the real one is attached.
-@MainActor
-final class DeadLink: SessionLink {
-    static let shared = DeadLink()
-    func send(op: [String: Any], in session: String) {}
-}
-
-extension EndReason: Equatable {
-    public static func == (a: EndReason, b: EndReason) -> Bool {
-        switch (a, b) {
-        case (.complete, .complete), (.maxTokens, .maxTokens), (.denied, .denied), (.looping, .looping),
-             (.stepLimit, .stepLimit), (.cancelled, .cancelled), (.error, .error): true
-        default: false
-        }
+        onEvent(e)
     }
 }

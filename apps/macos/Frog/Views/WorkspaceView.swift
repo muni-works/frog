@@ -492,7 +492,6 @@ struct WorkspaceView: View {
 extension EnvironmentValues {
     /// Horizontal space the floating cards take from the canvas, for content positioned outside
     /// scroll views (which get it as content margins).
-    @Entry var canvasInsets = EdgeInsets()
 }
 
 extension View {

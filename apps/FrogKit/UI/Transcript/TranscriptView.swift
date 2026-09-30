@@ -98,7 +98,13 @@ struct TranscriptView: View {
         init(_ g: ScrollGeometry) {
             contentHeight = g.contentSize.height
             offset = g.contentOffset.y
+            #if os(macOS)
             below = max(0, g.contentSize.height + g.contentInsets.bottom - (g.contentOffset.y + g.containerSize.height))
+            #else
+            // On iOS the container leaves out the bars and the composer inset; the visible rect
+            // runs under them, as the offset does.
+            below = max(0, g.contentSize.height + g.contentInsets.bottom - g.visibleRect.maxY)
+            #endif
             atBottom = below <= 24
         }
     }
@@ -189,8 +195,8 @@ struct UserPrompt: View {
             if !images.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(Array(images.enumerated()), id: \.offset) { i, img in
-                        if let ns = img.nsImage {
-                            Image(nsImage: ns)
+                        if let ns = img.image {
+                            Image(platformImage: ns)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
                                 .frame(width: images.count == 1 ? 220 : 110, height: images.count == 1 ? 150 : 80)
@@ -248,8 +254,7 @@ struct EndView: View {
                     Spacer(minLength: 8)
                     if !answer.isEmpty {
                         MessageAction(title: "Copy answer", symbol: "doc.on.doc") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(answer, forType: .string)
+                            Clipboard.copy(answer)
                         }
                         .opacity(hovering ? 1 : 0)
                     }
@@ -318,7 +323,7 @@ struct EmptyTranscript: View {
     @State private var line = 0
     @State private var hop = 0
 
-    private var isChat: Bool { Frog.isChat(conversation.folder) }
+    private var isChat: Bool { FrogPaths.isChat(conversation.folder) }
 
     var body: some View {
         // Short panes (a split stacked in a column) drop the suggestion, then the frog.
@@ -346,10 +351,12 @@ struct EmptyTranscript: View {
             // The frog and a question; the composer (and its model pill) does the rest.
             Text(isChat ? "What should we work on?" : conversation.folder.lastPathComponent)
                 .font(.title2.weight(.semibold))
+            #if os(macOS)
             if card {
                 EmptyPageExtras(conversation: conversation)
                     .padding(.top, 6)
             }
+            #endif
         }
         .multilineTextAlignment(.center)
         .padding()
@@ -393,6 +400,7 @@ struct EmptyTranscript: View {
     }
 }
 
+#if os(macOS)
 /// Keeps the `NSScrollView` behind a SwiftUI `ScrollView` from painting anything of its own,
 /// so the transcript stays one canvas with the window instead of a panel that lightens on hover.
 struct ScrollBackdropClear: NSViewRepresentable {
@@ -432,6 +440,13 @@ struct ScrollBackdropClear: NSViewRepresentable {
 }
 
 /// The way down from a long answer: how much is left, and whether it's still being written.
+#else
+/// A SwiftUI `ScrollView` on iOS paints nothing of its own.
+struct ScrollBackdropClear: View {
+    var body: some View { EmptyView() }
+}
+#endif
+
 private struct MoreBelow: View {
     let lines: Int
     let writing: Bool

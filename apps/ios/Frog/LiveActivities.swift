@@ -14,24 +14,26 @@ final class LiveActivities {
     private var lastSent = Date.distantPast
     private var queued: Task<Void, Never>?
 
-    func follow(_ m: SessionModel) {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        let state = m.activityState
-        if m.busy {
-            if let current, current.attributes.session == m.id {
+    func follow(_ c: Conversation) {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled, let id = c.sessionID else { return }
+        let state = c.activityState
+        if c.busy {
+            if let current, current.attributes.session == id {
                 update(state)
             } else {
-                start(m, state)
+                start(c, id, state)
             }
-        } else if let current, current.attributes.session == m.id {
+        } else if let current, current.attributes.session == id {
             end(current, state)
         }
     }
 
-    private func start(_ m: SessionModel, _ state: TurnActivity.ContentState) {
+    private func start(_ c: Conversation, _ id: String, _ state: TurnActivity.ContentState) {
         if let old = current { end(old, last ?? state) }
-        let attributes = TurnActivity(session: m.id, title: m.session.title, local: m.isLocal,
-                                      startedAt: m.turns.last?.startedAt ?? .now)
+        let title = c.title ?? Remote.shared.sessions.first { $0.id == id }?.title ?? "frog"
+        let cloud = c.status.map { ModelIdentity.of($0.model, in: Remote.shared.models).place.isCloud } ?? false
+        let attributes = TurnActivity(session: id, title: title, local: !cloud,
+                                      startedAt: c.turns.last?.startedAt ?? .now)
         let content = ActivityContent(state: state, staleDate: nil)
         // Pushes need the push entitlement; without it (the simulator, a free team) the activity
         // still runs, moved along by the app while it's awake.
@@ -44,7 +46,7 @@ final class LiveActivities {
         Task {
             for await token in activity.pushTokenUpdates {
                 let hex = token.map { String(format: "%02x", $0) }.joined()
-                Remote.shared.registerActivity(session: m.id, token: hex)
+                Remote.shared.registerActivity(session: id, token: hex)
             }
         }
     }
@@ -75,22 +77,16 @@ final class LiveActivities {
     }
 }
 
-extension SessionModel {
-    /// What the lock screen shows for this conversation right now.
+extension Conversation {
+    /// What the lock screen shows for this conversation right now, in the Mac's words.
     var activityState: TurnActivity.ContentState {
         let turn = turns.last
-        let steps = turn?.entries.filter { if case .tool = $0.kind { true } else { false } }.count ?? 0
+        let steps = turn?.items.filter { if case .tool = $0.kind { true } else { false } }.count ?? 0
         if let p = permission {
-            let q: String
-            switch p.name {
-            case "Bash": q = "Run \(p.arg.split(separator: "\n").first.map(String.init) ?? p.arg)?"
-            case "Edit", "Write": q = "\(p.name) \((p.arg as NSString).lastPathComponent)?"
-            default: q = "Use \(p.name)?"
-            }
-            return .init(mood: "waiting", activity: q, steps: steps, waiting: true, permission: p.id)
+            return .init(mood: mood.name, activity: p.question, steps: steps, waiting: true, permission: p.id)
         }
         if !busy, let turn {
-            let answer = turn.entries.last { $0.kind == .message }?.text ?? ""
+            let answer = turn.items.last { $0.kind == .message }?.text ?? ""
             let line = answer.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             switch turn.end {
             case .error(let e)?: return .init(mood: "sad", activity: e.description, steps: steps)
@@ -98,29 +94,8 @@ extension SessionModel {
             default: return .init(mood: "done", activity: line.map(String.init) ?? "Done", steps: steps)
             }
         }
-        return .init(mood: mood.name, activity: activityLine, steps: steps)
-    }
-
-    /// The step in hand, in words.
-    var activityLine: String {
-        guard let e = turns.last?.entries.last(where: { $0.kind != .notice }) else { return "Thinking" }
-        switch e.kind {
-        case .tool(let name, let arg) where !e.done:
-            let t = StepRow.short(arg)
-            switch name {
-            case "Read": return "Reading \(t)"
-            case "Grep": return "Searching for \(t)"
-            case "Glob": return "Finding \(t)"
-            case "Bash": return "Running \(t)"
-            case "Edit": return "Editing \(t)"
-            case "Write": return "Writing \(t)"
-            case "WebFetch": return "Reading a web page"
-            case "WebSearch": return "Searching the web"
-            default: return "Using \(name)"
-            }
-        case .message where !e.done: return "Writing the answer"
-        default: return "Thinking"
-        }
+        let now = turn?.items.last { !$0.done && $0.kind != .message }
+        return .init(mood: mood.name, activity: now.map(ActivityWords.now) ?? "Thinking…", steps: steps)
     }
 }
 

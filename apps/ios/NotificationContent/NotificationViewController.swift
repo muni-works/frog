@@ -58,7 +58,7 @@ struct QuestionCard: View {
                 }
             }
             if let diff {
-                DiffCard(diff: diff, limit: 24)
+                DiffView(diff: diff, maxLines: 24)
             } else if !arg.isEmpty {
                 Text(name == "Bash" ? "$ " + arg : arg)
                     .font(.callout.monospaced())

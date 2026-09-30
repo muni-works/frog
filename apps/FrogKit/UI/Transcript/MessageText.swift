@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import SwiftUI
 
@@ -436,3 +437,4 @@ final class RuleTextBlock: NSTextBlock {
         NSRect(x: frameRect.minX, y: frameRect.midY, width: frameRect.width, height: 0.5).fill()
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import QuartzCore
 
@@ -230,3 +231,4 @@ final class InkReveal: NSObject {
         pen.opacity = 0
     }
 }
+#endif

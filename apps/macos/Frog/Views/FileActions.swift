@@ -2,11 +2,6 @@ import AppKit
 import QuickLook
 import SwiftUI
 
-extension EnvironmentValues {
-    /// The project folder, for resolving the relative paths the engine reports.
-    @Entry var projectFolder: URL?
-}
-
 extension View {
     /// Pro-app file affordances for a path shown in the UI: a context menu (open in editor,
     /// reveal, Quick Look, copy path), drag out as a real file, and Quick Look.

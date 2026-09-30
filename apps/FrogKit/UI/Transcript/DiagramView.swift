@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -118,7 +122,7 @@ struct DiagramCanvas: View {
                 .lineLimit(1)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color(nsColor: .windowBackgroundColor).opacity(0.92), in: .capsule)
+                .background(Color.windowBackground.opacity(0.92), in: .capsule)
                 .fixedSize()
                 .position(x: at[0], y: at[1])
                 .opacity(on ? 1 : 0)
@@ -154,7 +158,9 @@ struct DiagramCanvas: View {
             }
             .onTapGesture { tap(node) }
             .help(node.detail ?? node.file.map { "Open \($0)" } ?? node.label)
+            #if os(macOS)
             .pointerStyle(node.file != nil || onNode != nil ? .link : nil)
+            #endif
     }
 
     /// The hovered node and its direct neighbors.
@@ -179,7 +185,11 @@ struct DiagramCanvas: View {
         guard let file = node.file else { return }
         let url = file.hasPrefix("/") ? URL(fileURLWithPath: file)
             : (folder ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).appending(path: file)
+        #if os(macOS)
         Editor.open([url])
+        #else
+        Platform.open(url)
+        #endif
     }
 }
 
@@ -412,20 +422,22 @@ struct DiagramExportMenu: View {
     var body: some View {
         Button("Copy Image", systemImage: "photo") {
             guard let image = DiagramExport.image(diagram) else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.writeObjects([image])
+            Clipboard.copy(image)
         }
         if let mermaid = diagram.mermaid {
             Button("Copy Mermaid", systemImage: "doc.on.doc") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(mermaid, forType: .string)
+                Clipboard.copy(mermaid)
             }
         }
         Divider()
+        #if os(macOS)
         Button("Save as PNG…") { DiagramExport.save(diagram, as: .png) }
         Button("Save as SVG…") { DiagramExport.save(diagram, as: .svg) }
+        #endif
         if diagram.mermaid != nil {
+            #if os(macOS)
             Button("Save as Mermaid…") { DiagramExport.save(diagram, as: .mermaid) }
+            #endif
         }
     }
 }
@@ -434,15 +446,20 @@ struct DiagramExportMenu: View {
 enum DiagramExport {
     enum Format { case png, svg, mermaid }
 
-    static func image(_ d: Diagram, scale: CGFloat = 2) -> NSImage? {
+    static func image(_ d: Diagram, scale: CGFloat = 2) -> PlatformImage? {
         let view = DiagramCanvas(diagram: d, animated: false)
             .padding(8)
             .background(FrogCanvas.color)
         let r = ImageRenderer(content: view)
         r.scale = scale
+        #if os(macOS)
         return r.nsImage
+        #else
+        return r.uiImage
+        #endif
     }
 
+    #if os(macOS)
     static func save(_ d: Diagram, as format: Format) {
         let panel = NSSavePanel()
         let base = d.displayTitle.replacingOccurrences(of: "/", with: "-")
@@ -468,6 +485,7 @@ enum DiagramExport {
             try? (d.mermaid ?? "").write(to: url, atomically: true, encoding: .utf8)
         }
     }
+    #endif
 
     /// A standalone SVG of the laid-out diagram (light theme, system font).
     static func svg(_ d: Diagram) -> String {
@@ -598,7 +616,12 @@ struct MermaidBlock: View {
             }
         }
         .task(id: code) {
+            // The engine lays it out; away from the Mac there's none, so the code shows.
+            #if os(macOS)
             let d = await Diagram.fromMermaid(code, cwd: folder ?? FileManager.default.homeDirectoryForCurrentUser)
+            #else
+            let d: Diagram? = nil
+            #endif
             diagram = d
             failed = d == nil
         }

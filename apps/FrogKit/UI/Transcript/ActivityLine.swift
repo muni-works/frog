@@ -3,6 +3,7 @@ import SwiftUI
 /// What frog did between two pieces of text, as a line of prose in the text column: muted,
 /// no card. Clicking it opens a light list of the steps; each step opens to its output.
 struct ActivityLine: View {
+    @Environment(\.pinsQuestions) private var pinsQuestions
     let group: ActivityGroup
     let conversation: Conversation
     /// The turn is running: a long thought streams below the line, and a subagent shows live.
@@ -43,7 +44,7 @@ struct ActivityLine: View {
             } else if live, let now = group.current {
                 liveStep(now)
             }
-            if let p = conversation.permission, group.steps.contains(where: { $0.needsPermission && $0.id == p.item }) {
+            if !pinsQuestions, let p = conversation.permission, group.steps.contains(where: { $0.needsPermission && $0.id == p.item }) {
                 PermissionCard(request: p, conversation: conversation)
             }
         }
@@ -67,7 +68,9 @@ struct ActivityLine: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        #if os(macOS)
         .pointerStyle(.link)
+        #endif
         .help(expanded ? "Hide steps" : "Show steps")
     }
 

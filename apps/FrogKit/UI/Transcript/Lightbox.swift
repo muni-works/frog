@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -27,7 +31,7 @@ final class Lightbox {
 
 extension ToolImage {
     var bytes: Data? { Data(base64Encoded: data) }
-    var nsImage: NSImage? { bytes.flatMap(NSImage.init(data:)) }
+    var image: PlatformImage? { bytes.flatMap(PlatformImage.init(data:)) }
     var fileExtension: String { UTType(mimeType: mime)?.preferredFilenameExtension ?? "png" }
 }
 
@@ -62,7 +66,9 @@ private struct LightboxThumbnail: ViewModifier {
             .animation(.snappy(duration: 0.18), value: hovering)
             .contentShape(.rect)
             .onHover { hovering = $0 }
+            #if os(macOS)
             .pointerStyle(.link)
+            #endif
             .onTapGesture {
                 withAnimation(.spring(duration: 0.32, bounce: 0.18)) {
                     lightbox?.show(images, at: index)
@@ -89,7 +95,9 @@ struct LightboxHost: ViewModifier {
                 }
             }
             // The title bar's controls would float over the image.
+            #if os(macOS)
             .toolbar(lightbox.isOpen ? .hidden : .automatic, for: .windowToolbar)
+            #endif
     }
 }
 
@@ -112,8 +120,8 @@ private struct LightboxView: View {
                 .ignoresSafeArea()
                 .onTapGesture { dismiss() }
 
-            if let img = current, let ns = img.nsImage {
-                Image(nsImage: ns)
+            if let img = current, let ns = img.image {
+                Image(platformImage: ns)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
@@ -146,7 +154,7 @@ private struct LightboxView: View {
                     .help("Close (Esc)")
                 }
                 Spacer()
-                if let img = current, let ns = img.nsImage {
+                if let img = current, let ns = img.image {
                     toolbar(img, ns)
                 }
             }
@@ -164,7 +172,7 @@ private struct LightboxView: View {
         .onChange(of: lightbox.index) { resetZoom() }
     }
 
-    private func toolbar(_ img: ToolImage, _ ns: NSImage) -> some View {
+    private func toolbar(_ img: ToolImage, _ ns: PlatformImage) -> some View {
         HStack(spacing: 4) {
             if lightbox.images.count > 1 {
                 bar("chevron.left", "Previous (←)") { flip(-1) }
@@ -181,8 +189,17 @@ private struct LightboxView: View {
                 .padding(.horizontal, 6)
             bar(scale > 1 ? "minus.magnifyingglass" : "plus.magnifyingglass", scale > 1 ? "Fit" : "Zoom") { toggleZoom() }
             bar(copied ? "checkmark" : "doc.on.doc", "Copy") { copy(ns) }
+            #if os(macOS)
             bar("square.and.arrow.down", "Save…") { save(img) }
             bar("arrow.up.forward.app", "Open in Preview") { openInPreview(img) }
+            #else
+            ShareLink(item: Image(platformImage: ns), preview: SharePreview("Image", image: Image(platformImage: ns))) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 30, height: 28)
+            }
+            .buttonStyle(.plain)
+            #endif
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -202,10 +219,12 @@ private struct LightboxView: View {
     }
 
     @ViewBuilder
-    private func actions(_ img: ToolImage, _ ns: NSImage) -> some View {
+    private func actions(_ img: ToolImage, _ ns: PlatformImage) -> some View {
         Button("Copy Image") { copy(ns) }
+        #if os(macOS)
         Button("Save…") { save(img) }
         Button("Open in Preview") { openInPreview(img) }
+        #endif
     }
 
     // MARK: Zoom and pan
@@ -248,9 +267,8 @@ private struct LightboxView: View {
 
     // MARK: Actions
 
-    private func copy(_ ns: NSImage) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([ns])
+    private func copy(_ ns: PlatformImage) {
+        Clipboard.copy(ns)
         withAnimation { copied = true }
         Task {
             try? await Task.sleep(for: .seconds(1.2))
@@ -258,6 +276,7 @@ private struct LightboxView: View {
         }
     }
 
+    #if os(macOS)
     private func save(_ img: ToolImage) {
         guard let data = img.bytes else { return }
         let panel = NSSavePanel()
@@ -273,4 +292,5 @@ private struct LightboxView: View {
         try? data.write(to: url)
         NSWorkspace.shared.open(url)
     }
+    #endif
 }

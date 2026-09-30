@@ -150,13 +150,13 @@ struct SubagentCard: View {
             HStack(spacing: 12) {
                 if text.count >= 900 {
                     Button(expanded ? "Show less" : "Show more") { withAnimation(.snappy) { expanded.toggle() } }
-                        .buttonStyle(.link)
+                        .linkButton()
                 }
                 if let run, run.steps > 0 {
                     Button(showSteps ? "Hide steps" : "Show \(run.steps) step\(run.steps == 1 ? "" : "s")") {
                         withAnimation(.snappy) { showSteps.toggle() }
                     }
-                    .buttonStyle(.link)
+                    .linkButton()
                 }
             }
             .font(.caption)

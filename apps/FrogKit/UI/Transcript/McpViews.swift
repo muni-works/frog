@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 import WebKit
 
@@ -7,6 +11,7 @@ import WebKit
 /// An MCP server asking the user for something mid-call: a small form built from the server's
 /// flat JSON Schema, or a link to finish in the browser (sign-in, payment).
 struct ElicitationCard: View {
+    @Environment(\.openURL) private var openURL
     let request: Elicitation
     let conversation: Conversation
     @State private var values: [String: String] = [:]
@@ -71,7 +76,7 @@ struct ElicitationCard: View {
                 if let url = request.url {
                     Button {
                         if let u = URL(string: url), ["https", "http"].contains(u.scheme?.lowercased() ?? "") {
-                            NSWorkspace.shared.open(u)
+                            openURL(u)
                         }
                         conversation.elicit("accept")
                     } label: {
@@ -181,8 +186,8 @@ struct ToolImages: View {
         ScrollView(.horizontal) {
             HStack(spacing: 10) {
                 ForEach(Array(images.enumerated()), id: \.offset) { i, img in
-                    if let data = img.bytes, let ns = NSImage(data: data) {
-                        Image(nsImage: ns)
+                    if let data = img.bytes, let ns = PlatformImage(data: data) {
+                        Image(platformImage: ns)
                             .resizable()
                             .interpolation(.high)
                             .aspectRatio(contentMode: .fit)
@@ -190,12 +195,11 @@ struct ToolImages: View {
                             .clipShape(.rect(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
                             .opensInLightbox(images, at: i)
-                            .draggable(Image(nsImage: ns))
+                            .draggable(Image(platformImage: ns))
                             .contextMenu {
                                 Button("Open in Preview") { open(data, mime: img.mime) }
                                 Button("Copy Image") {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.writeObjects([ns])
+                                    Clipboard.copy(ns)
                                 }
                             }
                     }
@@ -209,7 +213,7 @@ struct ToolImages: View {
         let ext = mime.split(separator: "/").last.map(String.init) ?? "png"
         let url = FileManager.default.temporaryDirectory.appending(path: "frog-\(UUID().uuidString.prefix(8)).\(ext)")
         try? data.write(to: url)
-        NSWorkspace.shared.open(url)
+        Platform.open(url)
     }
 }
 
@@ -257,7 +261,7 @@ struct McpAppCard: View {
 /// Hosts an MCP App in a web view and speaks the MCP Apps protocol with it (JSON-RPC over
 /// `postMessage`). The app runs top-level, so its `window.parent` is itself: a script at
 /// document start routes its outgoing messages here and delivers replies as `message` events.
-struct AppWebView: NSViewRepresentable {
+struct AppWebView: PlatformViewRepresentable {
     let app: AppView
     let input: JSONValue
     let conversation: Conversation
@@ -265,13 +269,19 @@ struct AppWebView: NSViewRepresentable {
 
     func makeCoordinator() -> Host { Host(self) }
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeWeb(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         let bridge = WKUserScript(source: Self.bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         config.userContentController.addUserScript(bridge)
         config.userContentController.add(context.coordinator, name: "frog")
         let web = WKWebView(frame: .zero, configuration: config)
+        #if os(macOS)
         web.setValue(false, forKey: "drawsBackground")
+        #else
+        web.isOpaque = false
+        web.backgroundColor = .clear
+        web.scrollView.isScrollEnabled = false
+        #endif
         web.navigationDelegate = context.coordinator
         web.uiDelegate = context.coordinator
         context.coordinator.web = web
@@ -281,11 +291,17 @@ struct AppWebView: NSViewRepresentable {
         return web
     }
 
-    func updateNSView(_ web: WKWebView, context: Context) {
-        context.coordinator.view = self
-    }
+    #if os(macOS)
+    func makeNSView(context: Context) -> WKWebView { makeWeb(context: context) }
+    func updateNSView(_ web: WKWebView, context: Context) { context.coordinator.view = self }
+    static func dismantleNSView(_ web: WKWebView, coordinator: Host) { dismantle(web) }
+    #else
+    func makeUIView(context: Context) -> WKWebView { makeWeb(context: context) }
+    func updateUIView(_ web: WKWebView, context: Context) { context.coordinator.view = self }
+    static func dismantleUIView(_ web: WKWebView, coordinator: Host) { dismantle(web) }
+    #endif
 
-    static func dismantleNSView(_ web: WKWebView, coordinator: Host) {
+    private static func dismantle(_ web: WKWebView) {
         web.configuration.userContentController.removeScriptMessageHandler(forName: "frog")
     }
 
@@ -341,7 +357,7 @@ struct AppWebView: NSViewRepresentable {
                 }
             case "ui/open-link":
                 if let s = params["url"]?.string, let url = URL(string: s), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
-                    NSWorkspace.shared.open(url)
+                    Platform.open(url)
                     reply(id, result: [:])
                 } else {
                     reply(id, result: ["isError": true])
@@ -361,7 +377,7 @@ struct AppWebView: NSViewRepresentable {
         }
 
         private func initializeResult(_ params: JSONValue) -> [String: Any] {
-            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let dark = Platform.isDark
             let width = web?.bounds.width ?? 760
             return [
                 "protocolVersion": params["protocolVersion"]?.string ?? "2026-01-26",
@@ -418,7 +434,7 @@ struct AppWebView: NSViewRepresentable {
                 && url.host()?.hasSuffix(".mcp-app.localhost") != true
             let userLink = action.navigationType == .linkActivated || action.navigationType == .formSubmitted
             if userLink || (external && action.targetFrame?.isMainFrame != false) {
-                if external { NSWorkspace.shared.open(url) }
+                if external { Platform.open(url) }
                 return .cancel
             }
             return .allow
@@ -426,7 +442,7 @@ struct AppWebView: NSViewRepresentable {
 
         func webView(_ web: WKWebView, createWebViewWith config: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = action.request.url, ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
-                NSWorkspace.shared.open(url)
+                Platform.open(url)
             }
             return nil
         }

@@ -118,8 +118,8 @@ final class RemotePush {
         // APNs takes 4 KB; the diff is the first thing to go.
         if (try? JSONSerialization.data(withJSONObject: payload))?.count ?? 0 > 3800 { payload["preview"] = nil }
         send(payload, collapse: "perm-\(session)")
-        let question = name == "Bash" ? "Run \(arg.split(separator: "\n").first.map(String.init) ?? arg)?"
-            : ["Edit", "Write"].contains(name) ? "\(name) \((arg as NSString).lastPathComponent)?" : "Use \(name)?"
+        let creating = (obj["preview"] as? [String: Any])?["created"] as? Bool ?? false
+        let question = PermissionRequest.question(name: name, arg: arg, outsideSandbox: obj["reason"] is String, creating: creating)
         sendActivity(session: session, event: "update", state: [
             "mood": "waiting", "activity": question, "steps": steps[session, default: 0],
             "waiting": true, "permission": obj["id"] as? String ?? "",
@@ -175,7 +175,7 @@ final class RemotePush {
         guard devices.contains(where: { $0.activities?[session] != nil }) else { return }
         let event = obj["event"] as? String
         if event == "turn_started" { steps[session] = 0 }
-        var activity = "Thinking"
+        var activity = "Thinking…"
         if event == "item_started", let kind = obj["kind"] as? [String: Any], kind["type"] as? String == "tool_call" {
             activity = Self.verb(kind["name"] as? String ?? "", kind["arg"] as? String ?? "")
         } else if event == "item_completed", (obj["item"] as? [String: Any])?["type"] as? String == "tool_call" {
@@ -194,17 +194,9 @@ final class RemotePush {
         ])
     }
 
+    /// The step in hand, in the words the transcript uses ("Running the tests…").
     static func verb(_ name: String, _ arg: String) -> String {
-        let target = (arg.split(separator: "\n").first.map(String.init) ?? arg)
-        let short = target.hasPrefix("/") ? (target as NSString).lastPathComponent : String(target.prefix(40))
-        switch name {
-        case "Read": return "Reading \(short)"
-        case "Grep": return "Searching for \(short)"
-        case "Bash": return "Running \(short)"
-        case "Edit": return "Editing \(short)"
-        case "Write": return "Writing \(short)"
-        default: return "Using \(name)"
-        }
+        ActivityWords.now(ItemState(id: "", kind: .tool(name: name, arg: arg)))
     }
 
     private func sendActivity(session: String, event: String, state: [String: Any]) {

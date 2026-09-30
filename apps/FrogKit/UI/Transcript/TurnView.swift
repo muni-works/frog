@@ -4,8 +4,10 @@ import SwiftUI
 /// muted lines for what frog did in between ("Read 3 files, searched for …"), then the files
 /// that changed. Cards are only for what needs you or went wrong.
 struct TurnActions {
-    var fork: (UInt64) -> Void
-    var rewind: (UInt64) -> Void
+    /// Nil where a turn can't be forked or rewound from (the phone, for now): the actions hide.
+    var fork: ((UInt64) -> Void)?
+    var rewind: ((UInt64) -> Void)?
+    var canRewind: Bool { fork != nil && rewind != nil }
 }
 
 struct TurnView: View {
@@ -77,9 +79,10 @@ struct TurnView: View {
                     PromptActions(
                         turn: turn,
                         visible: hoveringPrompt && !(running && turn.number == nil),
+                        canRewind: actions.canRewind,
                         copy: copy,
                         rewind: { confirmRewind = true },
-                        fork: { if let n = turn.number { actions.fork(n) } }
+                        fork: { if let n = turn.number { actions.fork?(n) } }
                     )
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -120,7 +123,7 @@ struct TurnView: View {
             isPresented: $confirmRewind
         ) {
             Button("Rewind", role: .destructive) {
-                if let n = turn.number { actions.rewind(n) }
+                if let n = turn.number { actions.rewind?(n) }
             }
         } message: {
             Text("Files frog edited in this turn and later go back to how they were, and the conversation continues on a new branch from here. The current session is kept. Changes made by shell commands aren't undone.")
@@ -158,10 +161,10 @@ struct TurnView: View {
 
     @ViewBuilder
     private func menu(changes: Int) -> some View {
-        if turn.number != nil, turn.finished {
+        if turn.number != nil, turn.finished, actions.canRewind {
             Button("Rewind to Before This Turn…", systemImage: "arrow.uturn.backward") { confirmRewind = true }
             Button("Fork from Here", systemImage: "arrow.triangle.branch") {
-                if let n = turn.number { actions.fork(n) }
+                if let n = turn.number { actions.fork?(n) }
             }
             Divider()
         }
@@ -175,8 +178,7 @@ struct TurnView: View {
     }
 
     private func copy() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(turn.input, forType: .string)
+        Clipboard.copy(turn.input)
     }
 }
 

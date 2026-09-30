@@ -61,7 +61,7 @@ struct TimelineRail: View {
             isPresented: Binding(get: { confirmRewind != nil }, set: { if !$0 { confirmRewind = nil } })
         ) {
             Button("Rewind", role: .destructive) {
-                if let n = confirmRewind { actions.rewind(n) }
+                if let n = confirmRewind { actions.rewind?(n) }
             }
         } message: {
             Text("Files frog edited in this turn and later go back to how they were, and the conversation continues on a new branch from here. The current session is kept.")
@@ -151,7 +151,7 @@ struct TimelineRail: View {
             Button("Show Turn") { jump(t.id) }
             if let n = t.number, t.finished, !conversation.busy {
                 Divider()
-                Button("Fork After This Turn", systemImage: "arrow.triangle.branch") { actions.fork(n) }
+                Button("Fork After This Turn", systemImage: "arrow.triangle.branch") { actions.fork?(n) }
                 Button("Rewind to Before This Turn…", systemImage: "arrow.uturn.backward") { confirmRewind = n }
             }
         }

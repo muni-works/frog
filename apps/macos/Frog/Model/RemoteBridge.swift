@@ -147,14 +147,14 @@ final class RemoteBridge {
         case "status": s.status = line
         case "permission_request": s.permission = line
         case "permission_resolved", "turn_ended": s.permission = nil
-        case "turn_started": s.busy = true; s.activity = "Thinking"
+        case "turn_started": s.busy = true; s.activity = "Thinking…"
         case "idle": s.busy = false; s.permission = nil; s.activity = nil
         case "item_started":
             if let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                let kind = obj["kind"] as? [String: Any] {
                 s.activity = kind["type"] as? String == "tool_call"
                     ? RemotePush.verb(kind["name"] as? String ?? "", kind["arg"] as? String ?? "")
-                    : kind["type"] as? String == "message" ? "Writing the answer" : "Thinking"
+                    : kind["type"] as? String == "message" ? "Writing…" : "Thinking…"
             }
         default: break
         }
@@ -218,6 +218,7 @@ final class RemoteBridge {
             }
             client.authed = true
             client.send(["type": "welcome", "host": Host.current().localizedName ?? "Mac"])
+            sendContext(to: client)
         case "list":
             client.send(["type": "sessions", "sessions": sessionList()])
         case "attach":
@@ -285,6 +286,19 @@ final class RemoteBridge {
         }
     }
 
+    /// What the phone needs to name and place models the way this Mac does: the models frog
+    /// lists and the providers behind them (see `ModelContext`).
+    private func sendContext(to client: Client) {
+        Task {
+            let models = await Models.load()
+            let providers = ProviderStore.shared.providers
+            let enc = JSONEncoder()
+            guard let m = try? enc.encode(models), let p = try? enc.encode(providers),
+                  let mj = try? JSONSerialization.jsonObject(with: m), let pj = try? JSONSerialization.jsonObject(with: p) else { return }
+            client.send(["type": "context", "models": mj, "providers": pj])
+        }
+    }
+
     /// Constant-time comparison, so the code can't be guessed a character at a time.
     private static func matches(_ a: String, _ b: String) -> Bool {
         let x = Array(a.utf8), y = Array(b.utf8)
@@ -300,7 +314,10 @@ final class RemoteBridge {
                 "id": s.id, "title": s.displayTitle, "modified": s.modified, "model": s.model,
                 "chat": s.isChat, "open": c != nil, "pinned": lib.pinned.contains(s.id),
             ]
-            if let cwd = s.cwd { row["folder"] = (cwd as NSString).lastPathComponent }
+            if let cwd = s.cwd {
+                row["folder"] = (cwd as NSString).lastPathComponent
+                row["cwd"] = cwd
+            }
             switch lib.live[s.id] {
             case .running: row["live"] = "running"
             case .waiting: row["live"] = "waiting"
@@ -375,6 +392,17 @@ final class RemoteBridge {
             c.answer(d)
         case "interrupt":
             c.interrupt()
+        case "shell":
+            if let command = op["command"] as? String { c.submit("!" + command) }
+        case "set_title":
+            if let t = op["title"] as? String { c.rename(t) }
+        case "stop_subagent":
+            if let item = op["id"] as? String { c.stopSubagent(item) }
+        case "compact":
+            c.compact()
+        case "elicit":
+            guard let action = op["action"] as? String else { return }
+            c.elicit(action, content: op["content"].map { JSONValue(any: $0) })
         case "set_mode":
             if let m = (op["mode"] as? String).flatMap(Mode.init(rawValue:)) { c.setMode(m) }
         default:
@@ -405,11 +433,6 @@ final class OpenRequest {
         defer { claimed = true }
         return !claimed
     }
-}
-
-enum Handoff {
-    /// A conversation being read on one device, for another to pick up.
-    static let conversation = "eco.frog.conversation"
 }
 
 /// The routing fields of an envelope line, without decoding the rest.

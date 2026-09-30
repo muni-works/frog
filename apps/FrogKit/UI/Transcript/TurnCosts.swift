@@ -109,6 +109,7 @@ struct EnergyCard: View {
                         .foregroundStyle(Color.accentColor)
                 }
                 Spacer()
+                #if os(macOS)
                 SettingsLink {
                     Label("History", systemImage: "chart.bar.xaxis")
                         .font(.caption.weight(.semibold))
@@ -116,6 +117,7 @@ struct EnergyCard: View {
                 }
                 .buttonStyle(.plain)
                 .simultaneousGesture(TapGesture().onEnded { UserDefaults.standard.set("energy", forKey: "settingsTab") })
+                #endif
             }
         }
         .padding(16)

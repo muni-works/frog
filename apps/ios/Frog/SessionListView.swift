@@ -24,8 +24,8 @@ struct SessionListView: View {
         .listStyle(.insetGrouped)
         .navigationTitle(title)
         .navigationDestination(for: RemoteSession.self) { s in
-            let model = remote.attach(s)
-            ChatView(model: model) { remote.detach(model) }
+            let c = remote.conversation(s)
+            ChatView(conversation: c, link: remote.openLink, title: s.title) { remote.close(c) }
                 .navigationTransition(.zoom(sourceID: s.id, in: zoom))
         }
         .toolbar {
@@ -112,7 +112,7 @@ struct SessionRow: View {
                 if let q = session.question {
                     Text(q.text).font(.caption.weight(.medium)).foregroundStyle(.orange).lineLimit(1)
                 } else if session.live == .running, let a = session.activity {
-                    Text(a).font(.caption).foregroundStyle(.secondary).lineLimit(1).shimmer()
+                    Text(a).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 } else {
                     Text(subtitle)
                         .font(.caption)
@@ -136,7 +136,7 @@ struct SessionRow: View {
     private var subtitle: String {
         var parts: [String] = []
         if !session.chat, let f = session.folder { parts.append(f) }
-        parts.append(Models.short(session.model))
+        parts.append(session.identity.name)
         parts.append(session.modified.formatted(.relative(presentation: .named)))
         return parts.joined(separator: " · ")
     }
@@ -161,7 +161,7 @@ struct FixtureListView: View {
             .navigationTitle("Recordings")
             .navigationDestination(for: String.self) { name in
                 if let player = players[name] {
-                    ChatView(model: player.model)
+                    ChatView(conversation: player.conversation, link: nil, title: player.session.title)
                         .navigationTransition(.zoom(sourceID: name, in: zoom))
                         .task { await player.play() }
                 }

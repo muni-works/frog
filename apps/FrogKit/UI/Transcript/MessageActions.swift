@@ -1,4 +1,6 @@
+#if os(macOS)
 import AppKit
+#endif
 import SwiftUI
 
 /// A small action under a message: a plain icon that brightens, with a soft plate, under the
@@ -61,6 +63,7 @@ struct ActionTooltip: View {
 struct PromptActions: View {
     let turn: TurnState
     let visible: Bool
+    var canRewind = true
     let copy: () -> Void
     let rewind: () -> Void
     let fork: () -> Void
@@ -79,8 +82,10 @@ struct PromptActions: View {
             }
             MessageAction(title: "Copy message", symbol: "doc.on.doc", action: copy)
             if turn.number != nil, turn.finished {
-                MessageAction(title: "Rewind: undo from here", symbol: "arrow.uturn.backward", action: rewind)
-                MessageAction(title: "Fork a new conversation from here", symbol: "arrow.triangle.branch", action: fork)
+                if canRewind {
+                    MessageAction(title: "Rewind: undo from here", symbol: "arrow.uturn.backward", action: rewind)
+                    MessageAction(title: "Fork a new conversation from here", symbol: "arrow.triangle.branch", action: fork)
+                }
             }
         }
         .frame(height: 22)

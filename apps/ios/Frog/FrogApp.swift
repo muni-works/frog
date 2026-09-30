@@ -11,6 +11,7 @@ struct FrogApp: App {
                 FixtureListView()
             } else {
                 RootView(remote: remote)
+                    .environment(\.models, remote.models)
                     .task { if !remote.code.isEmpty { remote.connect() } }
             }
         }
@@ -44,8 +45,8 @@ struct RootView: View {
                     SessionListView(remote: remote, selection: $selection)
                 } detail: {
                     if let id = selection, let s = remote.sessions.first(where: { $0.id == id }) {
-                        let model = remote.attach(s)
-                        ChatView(model: model) { remote.detach(model) }.id(id)
+                        let c = remote.conversation(s)
+                        ChatView(conversation: c, link: remote.openLink, title: s.title) { remote.close(c) }.id(id)
                     } else {
                         ContentUnavailableView {
                             Label { Text("Pick a conversation") } icon: { FrogFace(mood: .idle, size: 56).tint(.frog) }

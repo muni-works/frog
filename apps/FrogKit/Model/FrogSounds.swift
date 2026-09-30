@@ -1,7 +1,11 @@
 @preconcurrency import AVFoundation
 import Foundation
 #if os(macOS)
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 #endif
 
 /// Three tiny sounds the frog makes, synthesized when first needed (nothing is bundled): a plip

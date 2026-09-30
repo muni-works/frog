@@ -250,8 +250,7 @@ struct CodeBlock: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(code, forType: .string)
+                    Clipboard.copy(code)
                     copied = true
                     Task {
                         try? await Task.sleep(for: .seconds(1.5))
@@ -279,16 +278,20 @@ struct CodeBlock: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary, lineWidth: 0.5))
         .contextMenu {
             Button("Copy", systemImage: "doc.on.doc") { copy() }
+            #if os(macOS)
             Button("Save As…", systemImage: "square.and.arrow.down") { save() }
+            #else
+            ShareLink(item: code) { Label("Share", systemImage: "square.and.arrow.up") }
+            #endif
         }
         .draggable(code)
     }
 
     private func copy() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code, forType: .string)
+        Clipboard.copy(code)
     }
 
+    #if os(macOS)
     private func save() {
         let panel = NSSavePanel()
         let ext = ["python": "py", "rust": "rs", "swift": "swift", "typescript": "ts", "javascript": "js",
@@ -297,4 +300,5 @@ struct CodeBlock: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         try? code.write(to: url, atomically: true, encoding: .utf8)
     }
+    #endif
 }

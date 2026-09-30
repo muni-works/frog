@@ -15,6 +15,7 @@ struct FrogApp: App {
         UserDefaults.standard.set(true, forKey: "AppleReduceDesktopTinting")
         Notifier.shared.setup()
         Conversation.effects = MacEffects.shared
+        ModelContext.useMac()
         _ = Updates.shared
         RemoteBridge.shared.startIfEnabled()
     }

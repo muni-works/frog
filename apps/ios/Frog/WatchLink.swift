@@ -43,7 +43,7 @@ final class WatchLink: NSObject, WCSessionDelegate {
         Task { @MainActor in
             guard let id, let permission else { return replyHandler(["ok": false]) }
             if let player = FixturePlayer.playing[id] {
-                player.send(op: ["op": "permission", "id": permission, "decision": allow ? "allow" : "deny"], in: id)
+                player.send(.permission(id: permission, decision: allow ? .allow : .deny))
                 return replyHandler(["ok": true])
             }
             let sent = await Remote.shared.perform(op: ["op": "permission", "id": permission, "decision": allow ? "allow" : "deny"], in: id)

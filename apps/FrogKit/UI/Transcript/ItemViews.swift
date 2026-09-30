@@ -104,6 +104,7 @@ struct NoticeView: View {
 }
 
 struct ToolCallView: View {
+    @Environment(\.pinsQuestions) private var pinsQuestions
     let name: String
     let arg: String
     let item: ItemState
@@ -154,7 +155,7 @@ struct ToolCallView: View {
                     .padding(.leading, 26)
                     .help("Auto mode's classifier let this run without asking")
             }
-            if item.needsPermission, let p = conversation.permission, p.item == item.id {
+            if !pinsQuestions, item.needsPermission, let p = conversation.permission, p.item == item.id {
                 PermissionCard(request: p, conversation: conversation)
             }
         }
@@ -238,95 +239,6 @@ struct ToolDetail: View {
     }
 }
 
-struct DiffView: View {
-    let diff: FileDiff
-    var maxLines: Int = .max
-
-    private var lines: [(hunk: Int, line: DiffLine)] {
-        diff.hunks.enumerated().flatMap { h, hunk in hunk.lines.map { (h, $0) } }
-    }
-
-    var body: some View {
-        let all = lines
-        let shown = all.prefix(maxLines)
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: diff.created ? "doc.badge.plus" : "doc")
-                Text(diff.path).font(.caption.weight(.medium))
-                Spacer()
-                Text("+\(diff.added)").foregroundStyle(.green)
-                Text("−\(diff.removed)").foregroundStyle(.red)
-            }
-            .font(.caption.monospacedDigit())
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            Divider().opacity(0.5)
-            ScrollView(.horizontal, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(shown.enumerated()), id: \.offset) { i, entry in
-                        if i > 0, shown[shown.startIndex + i - 1].hunk != entry.hunk {
-                            Text("⋯").font(.caption).foregroundStyle(.tertiary).padding(.leading, 60).padding(.vertical, 2)
-                        }
-                        DiffLineView(line: entry.line, lang: Highlight.lang(path: diff.path))
-                    }
-                    if all.count > shown.count {
-                        Text("\(all.count - shown.count) more lines")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                    }
-                }
-            }
-        }
-        .background(.background.opacity(0.6))
-        .clipShape(.rect(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary, lineWidth: 0.5))
-    }
-}
-
-struct DiffLineView: View {
-    let line: DiffLine
-    var lang: Highlight.Lang = .plain
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Text(line.old.map(String.init) ?? "")
-                .frame(width: 32, alignment: .trailing)
-            Text(line.new.map(String.init) ?? "")
-                .frame(width: 32, alignment: .trailing)
-            Text(sign)
-                .frame(width: 20)
-                .foregroundStyle(tint)
-            Text(Highlight.line(line.text, lang))
-                .foregroundStyle(.primary)
-                .fixedSize()
-                .padding(.trailing, 12)
-        }
-        .font(.system(.caption, design: .monospaced))
-        .foregroundStyle(.tertiary)
-        .padding(.vertical, 1)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(line.kind == .context ? 0 : 0.12))
-    }
-
-    private var sign: String {
-        switch line.kind {
-        case .add: "+"
-        case .remove: "−"
-        case .context: ""
-        }
-    }
-
-    private var tint: Color {
-        switch line.kind {
-        case .add: .green
-        case .remove: .red
-        case .context: .clear
-        }
-    }
-}
-
 struct PermissionCard: View {
     let request: PermissionRequest
     let conversation: Conversation
@@ -355,6 +267,24 @@ struct PermissionCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.black.opacity(0.3), in: .rect(cornerRadius: 8))
             }
+            #if os(iOS)
+            // For a thumb: two big answers side by side, the standing one as a line below.
+            HStack(spacing: 10) {
+                Button { conversation.answer(.deny) } label: { Text("Deny").frame(maxWidth: .infinity) }
+                    .buttonStyle(.glass)
+                Button { conversation.answer(.allow) } label: {
+                    Text("Allow").fontWeight(.semibold).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+            }
+            .controlSize(.large)
+            if !request.always.isEmpty {
+                Button(alwaysLabel) { conversation.answer(.allowAlways) }
+                    .font(.footnote)
+                    .buttonStyle(.borderless)
+                    .frame(maxWidth: .infinity)
+            }
+            #else
             HStack(spacing: 8) {
                 Button {
                     conversation.answer(.allow)
@@ -375,23 +305,13 @@ struct PermissionCard: View {
                     .keyboardShortcut(".", modifiers: .command)
                     .help("Deny (⌘.)")
             }
+            #endif
         }
         .padding(14)
         .glassEffect(.regular.tint(.orange.opacity(0.10)), in: .rect(cornerRadius: 14))
     }
 
-    private var title: String {
-        switch request.name {
-        case "Edit": "Allow this edit to \((request.arg as NSString).lastPathComponent)?"
-        case "Write": request.preview?.created == true
-            ? "Allow creating \((request.arg as NSString).lastPathComponent)?"
-            : "Allow rewriting \((request.arg as NSString).lastPathComponent)?"
-        case "Bash": request.reason == nil ? "Allow this command?" : "Allow this command outside the sandbox?"
-        case let n where n.hasPrefix("mcp__"): "Allow \(ToolIcon.title(n))?"
-        case "UseFolder": "Move this conversation to \((request.arg as NSString).lastPathComponent)?"
-        default: "Allow \(request.name)?"
-        }
-    }
+    private var title: String { request.question }
 
     private var alwaysLabel: String {
         request.always.prefix(1).uppercased() + request.always.dropFirst()

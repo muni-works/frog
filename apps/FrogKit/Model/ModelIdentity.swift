@@ -116,15 +116,14 @@ extension ModelIdentity {
     @MainActor
     init(_ entry: ModelEntry) {
         let provider = String(entry.spec.split(separator: "/", maxSplits: 1).first ?? "")
-        let store = ProviderStore.shared
         let place: Place = switch entry.source {
         case "apple": .apple
         case "tang", "ollama": .mac
-        case "server": .server(store.name(of: provider))
-        case "remote": .cloud(store.name(of: provider))
+        case "server": .server(ModelContext.name(of: provider))
+        case "remote": .cloud(ModelContext.name(of: provider))
         // config.toml profiles can point anywhere: trust the provider's own flag, and call
         // anything unknown cloud (the conservative answer for where code goes).
-        default: store.providers.first { $0.id == provider }.map { $0.local ? .mac : .cloud($0.name) } ?? .cloud(store.name(of: provider))
+        default: ModelContext.provider(provider).map { $0.local ? .mac : .cloud($0.name) } ?? .cloud(ModelContext.name(of: provider))
         }
         var abilities: Abilities = []
         if let c = entry.caps, c.nativeTools || c.textTools { abilities.insert(.usesTools) }
@@ -148,31 +147,9 @@ extension ModelIdentity {
         costOut = entry.info?.costOut
         if entry.source == "tang" {
             repo = String(entry.spec.dropFirst("tang/".count))
-            downloadGB = SuggestedModel.all.first { $0.repo == repo }?.approxGB ?? entry.caps?.paramsB.map { $0 * 0.56 }
+            downloadGB = repo.flatMap(ModelContext.suggestedGB) ?? entry.caps?.paramsB.map { $0 * 0.56 }
         }
         state = Self.state(place: place, provider: providerID, repo: repo, gb: downloadGB, installed: true)
-    }
-
-    /// A model frog recommends downloading.
-    @MainActor
-    init(_ suggested: SuggestedModel) {
-        let cleaned = Self.cleanName(suggested.repo)
-        var abilities: Abilities = [.usesTools]
-        if suggested.repo.lowercased().contains("gemma") { abilities = [.seesImages] }
-        self.init(
-            spec: suggested.spec,
-            name: suggested.title,
-            variant: cleaned.variant,
-            place: .mac,
-            abilities: abilities,
-            paramsB: nil,
-            context: nil,
-            price: nil
-        )
-        repo = suggested.repo
-        downloadGB = suggested.approxGB
-        state = Self.state(place: .mac, provider: "tang", repo: suggested.repo, gb: suggested.approxGB,
-                           installed: ModelDownloads.isInstalled(suggested.repo))
     }
 
     // MARK: State
@@ -184,20 +161,19 @@ extension ModelIdentity {
     static func neededGB(weights gb: Double) -> Int { Int((gb * 1.2 + 2).rounded(.up)) }
 
     @MainActor
-    private static func state(place: Place, provider: String, repo: String?, gb: Double?, installed: Bool) -> State {
-        if case .cloud(let name) = place,
-           let p = ProviderStore.shared.providers.first(where: { $0.id == provider }), !p.connected {
+    static func state(place: Place, provider: String, repo: String?, gb: Double?, installed: Bool) -> State {
+        if case .cloud(let name) = place, let p = ModelContext.provider(provider), !p.connected {
             return .needsKey(provider: name)
         }
         if place.isCloud, ModelStats.shared.overCap { return .overCap }
-        if let p = ProviderStore.shared.provider(provider), p.local, ProviderStore.shared.reachable[provider] == false {
+        if let p = ModelContext.provider(provider), p.local, ModelContext.reachable(provider) == false {
             return .unreachable(p.custom ? "\(p.name) isn't responding" : "\(p.name) isn't running")
         }
         if let repo {
-            switch ModelDownloads.shared.states[repo] {
-            case .downloading(let f): return .downloading(fraction: f)
-            case .failed(let e): return .downloadFailed(e)
-            case .done: return .ready
+            switch ModelContext.download(repo) {
+            case .downloading(let f)?: return .downloading(fraction: f)
+            case .failed(let e)?: return .downloadFailed(e)
+            case .done?: return .ready
             case nil: break
             }
         }
@@ -217,13 +193,12 @@ extension ModelIdentity {
         let parts = spec.split(separator: "/", maxSplits: 1).map(String.init)
         let provider = parts.count == 2 ? parts[0] : ""
         let model = parts.last ?? spec
-        let store = ProviderStore.shared
         let place: Place = switch provider {
         case "apple": .apple
         case "tang", "ollama", "lmstudio": .mac
-        default: store.providers.first { $0.id == provider }.map { p in
+        default: ModelContext.provider(provider).map { p in
             p.custom ? .server(p.name) : p.local ? .mac : .cloud(p.name)
-        } ?? .cloud(provider.isEmpty ? "unknown" : store.name(of: provider))
+        } ?? .cloud(provider.isEmpty ? "unknown" : ModelContext.name(of: provider))
         }
         let cleaned = cleanName(model)
         var m = ModelIdentity(

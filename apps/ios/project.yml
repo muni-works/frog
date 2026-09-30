@@ -68,8 +68,9 @@ targets:
     sources:
       - path: NotificationContent
       - path: Shared
-      - path: ../FrogKit
-        excludes: ["README.md"]
+      - path: ../FrogKit/Core
+      - path: ../FrogKit/UI/Basics
+      - path: ../FrogKit/UI/Diff
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.notify
@@ -98,8 +99,9 @@ targets:
       - path: Widgets
         excludes: ["*.entitlements"]
       - path: Shared
-      - path: ../FrogKit
-        excludes: ["README.md"]
+      - path: ../FrogKit/Core
+      - path: ../FrogKit/UI/Basics
+      - path: ../FrogKit/UI/Diff
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.widgets
@@ -143,8 +145,9 @@ targets:
       - path: ShareExtension
         excludes: ["*.entitlements"]
       - path: Shared
-      - path: ../FrogKit
-        excludes: ["README.md"]
+      - path: ../FrogKit/Core
+      - path: ../FrogKit/UI/Basics
+      - path: ../FrogKit/UI/Diff
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.share

@@ -706,29 +706,3 @@ struct QueuedMessages: View {
         .padding(.horizontal, 4)
     }
 }
-
-extension View {
-    /// A soft rounded plate behind a plain control while the pointer is over it, so chromeless
-    /// buttons and menus still answer the pointer. The padding is the plate's margin.
-    func hoverPlate(h: CGFloat = 7, v: CGFloat = 3, radius: CGFloat = 7) -> some View {
-        modifier(HoverPlate(h: h, v: v, radius: radius))
-    }
-}
-
-private struct HoverPlate: ViewModifier {
-    let h: CGFloat
-    let v: CGFloat
-    let radius: CGFloat
-    @State private var hovering = false
-    @Environment(\.isEnabled) private var enabled
-
-    func body(content: Content) -> some View {
-        content
-            .padding(.horizontal, h)
-            .padding(.vertical, v)
-            .background(Color.primary.opacity(hovering && enabled ? 0.08 : 0), in: .rect(cornerRadius: radius, style: .continuous))
-            .contentShape(.rect)
-            .onHover { hovering = $0 }
-            .animation(.easeOut(duration: 0.12), value: hovering)
-    }
-}

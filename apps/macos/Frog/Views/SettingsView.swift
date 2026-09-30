@@ -592,12 +592,6 @@ private struct PermissionSettings: View {
 
 // MARK: - Appearance
 
-enum Density: String, CaseIterable, Identifiable {
-    case comfortable, compact
-    var id: String { rawValue }
-    var label: String { rawValue.capitalized }
-}
-
 private struct AppearanceSettings: View {
     @AppStorage("density") private var density = Density.comfortable.rawValue
     @AppStorage(Verbosity.key) private var verbosity = Verbosity.standard.rawValue

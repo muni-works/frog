@@ -49,7 +49,7 @@ enum Answer {
     static func send(session: String, permission: String, decision: String) async {
         #if FROG_APP
         if let player = await FixturePlayer.playing[session] {
-            await player.send(op: ["op": "permission", "id": permission, "decision": decision], in: session)
+            await player.send(.permission(id: permission, decision: decision == "allow" ? .allow : .deny))
             return
         }
         await Remote.shared.perform(op: ["op": "permission", "id": permission, "decision": decision], in: session)

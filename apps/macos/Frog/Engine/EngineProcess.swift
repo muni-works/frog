@@ -10,7 +10,7 @@ enum Frog {
     }()
 
     /// Where the engine keeps session logs.
-    static let sessions = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/share/frog/sessions")
+    static let sessions = FrogPaths.sessions
 
     /// Returns once no engine holds session `id`'s log (a stopped engine takes a moment to exit),
     /// or after `limit`. The engine holds an exclusive `flock` on the log while it's open.

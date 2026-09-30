@@ -1,6 +1,10 @@
 import SwiftUI
 #if os(macOS)
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 #elseif os(iOS)
 import UIKit
 #elseif os(watchOS)
