@@ -40,6 +40,8 @@ targets:
         SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
         LSApplicationCategoryType: public.app-category.developer-tools
         NSUserActivityTypes: [eco.frog.conversation]
+        NSLocalNetworkUsageDescription: "frog on your iPhone connects to this Mac over your network."
+        NSBonjourServices: [_frog._tcp]
         NSHumanReadableCopyright: "© 2026 Cam Pedersen"
         NSMicrophoneUsageDescription: "Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it."
         NSSpeechRecognitionUsageDescription: "Frog turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else."

@@ -27,6 +27,8 @@ targets:
       # The engine protocol, shared with the Mac app.
       - path: ../macos/Frog/Engine/Protocol.swift
         group: Shared
+      - path: ../macos/Frog/Engine/Pairing.swift
+        group: Shared
       - path: ../macos/Frog/Engine/Diagram.swift
         group: Shared
       - path: ../macos/Frog/Views/FrogFace.swift
@@ -47,6 +49,7 @@ targets:
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Frog connects to frog on your Mac."
+        INFOPLIST_KEY_NSCameraUsageDescription: "To scan the pairing code on your Mac."
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -57,6 +60,7 @@ targets:
           NSAllowsLocalNetworking: true
         NSUserActivityTypes: [eco.frog.conversation]
         NSSupportsLiveActivities: true
+        NSBonjourServices: [_frog._tcp]
         CFBundleURLTypes:
           - CFBundleURLName: eco.frog.remote
             CFBundleURLSchemes: [frog]
@@ -70,6 +74,8 @@ targets:
     sources:
       - path: NotificationContent
       - path: Shared
+      - path: ../macos/Frog/Engine/Pairing.swift
+        group: Shared
       - path: ../macos/Frog/Engine/Protocol.swift
         group: Shared
       - path: ../macos/Frog/Engine/Diagram.swift
@@ -104,6 +110,8 @@ targets:
       - path: Widgets
         excludes: ["*.entitlements"]
       - path: Shared
+      - path: ../macos/Frog/Engine/Pairing.swift
+        group: Shared
       - path: ../macos/Frog/Engine/Protocol.swift
         group: Shared
       - path: ../macos/Frog/Engine/Diagram.swift
@@ -155,6 +163,8 @@ targets:
       - path: ShareExtension
         excludes: ["*.entitlements"]
       - path: Shared
+      - path: ../macos/Frog/Engine/Pairing.swift
+        group: Shared
       - path: ../macos/Frog/Engine/Protocol.swift
         group: Shared
       - path: ../macos/Frog/Engine/Diagram.swift
@@ -171,6 +181,8 @@ targets:
       path: ShareExtension/Info.plist
       properties:
         CFBundleDisplayName: Send to frog
+        NSBonjourServices: [_frog._tcp]
+        NSLocalNetworkUsageDescription: "frog sends what you share to frog on your Mac."
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSExtension:

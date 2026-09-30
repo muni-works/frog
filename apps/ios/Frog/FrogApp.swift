@@ -61,6 +61,8 @@ struct RootView: View {
             }
         }
         .onOpenURL { url in
+            // frog://pair?..., the QR code in the Mac's settings, from the Camera app.
+            if remote.pair(url) { return }
             // frog://session/<id>, from the Live Activity and widgets.
             if url.host() == "session", let id = url.pathComponents.last { remote.requested = id }
         }
@@ -98,6 +100,9 @@ struct RootView: View {
 
 struct ConnectView: View {
     @Bindable var remote: Remote
+    @State private var finder = MacFinder()
+    @State private var scanning = false
+    @State private var advanced = false
 
     var body: some View {
         Form {
@@ -114,17 +119,44 @@ struct ConnectView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
             }
+            if Scanner.available {
+                Section {
+                    Button("Scan the Code on Your Mac", systemImage: "qrcode.viewfinder") { scanning = true }
+                }
+            }
+            Section {
+                if finder.names.isEmpty {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Looking for your Mac…").foregroundStyle(.secondary)
+                    }
+                }
+                ForEach(finder.names, id: \.self) { name in
+                    Button { remote.host = name } label: {
+                        HStack {
+                            Image(systemName: "laptopcomputer").foregroundStyle(.secondary)
+                            Text(name).foregroundStyle(.primary)
+                            Spacer()
+                            if remote.host == name { Image(systemName: "checkmark").foregroundStyle(Color.frog) }
+                        }
+                    }
+                }
+            } header: {
+                Text("Macs nearby")
+            } footer: {
+                Text("On your Mac: Frog → Settings → General → Let frog on iPhone connect.")
+            }
             Section {
                 TextField("Code", text: $remote.code)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .font(.body.monospaced())
-                TextField("Address", text: $remote.host)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.URL)
-            } footer: {
-                Text("On your Mac: Frog → Settings → General → Let frog on iPhone connect.")
+                DisclosureGroup("Address", isExpanded: $advanced) {
+                    TextField("Mac name or host:port", text: $remote.host)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                }
             }
             Section {
                 Button {
@@ -136,7 +168,7 @@ struct ConnectView: View {
                         if remote.state == .connecting { ProgressView() }
                     }
                 }
-                .disabled(remote.code.isEmpty || remote.state == .connecting)
+                .disabled(remote.code.isEmpty || remote.host.isEmpty || remote.state == .connecting)
                 if case .failed(let why) = remote.state {
                     Label(why, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
@@ -145,5 +177,18 @@ struct ConnectView: View {
             }
         }
         .navigationTitle("Connect")
+        .onAppear { finder.start() }
+        .onDisappear { finder.stop() }
+        .onChange(of: finder.names) { _, names in
+            // One Mac nearby and nothing chosen yet: that's the one.
+            if names.count == 1, remote.host.isEmpty { remote.host = names[0] }
+        }
+        .sheet(isPresented: $scanning) {
+            Scanner { url in
+                scanning = false
+                _ = remote.pair(url)
+            }
+            .ignoresSafeArea()
+        }
     }
 }

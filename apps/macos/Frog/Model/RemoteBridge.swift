@@ -23,6 +23,12 @@ final class RemoteBridge {
     }
 
     /// What a client must present. Made once, kept in defaults.
+    /// A new code: every paired phone has to pair again.
+    static func newToken() {
+        UserDefaults.standard.removeObject(forKey: "remoteToken")
+        _ = token
+    }
+
     static var token: String {
         if let t = UserDefaults.standard.string(forKey: "remoteToken"), !t.isEmpty { return t }
         let alphabet = Array("abcdefghjkmnpqrstuvwxyz23456789")
@@ -32,6 +38,7 @@ final class RemoteBridge {
     }
 
     private var listener: NWListener?
+    private var lanListener: NWListener?
     private var clients: [ObjectIdentifier: Client] = [:]
     /// What a newcomer needs that the log doesn't have: the last status and any open question.
     private var live: [String: LiveState] = [:]
@@ -54,32 +61,57 @@ final class RemoteBridge {
 
     func start() {
         guard listener == nil else { return }
-        let ws = NWProtocolWebSocket.Options()
-        ws.autoReplyPing = true
-        ws.maximumMessageSize = 64 << 20
-        let params = NWParameters.tcp
-        params.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
-        params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: Self.port)
-        params.allowLocalEndpointReuse = true
+        // This Mac only (the Simulator), plain.
+        let local = Pairing.plain()
+        local.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: Self.port)
+        local.allowLocalEndpointReuse = true
+        listener = listen(local, "127.0.0.1:\(Self.port)", lines: false)
+        // The local network, encrypted and keyed by the code, found by Bonjour.
+        let lan = Pairing.parameters(code: Self.token)
+        lan.requiredLocalEndpoint = .hostPort(host: .ipv6(.any), port: Pairing.lanPort)
+        lan.allowLocalEndpointReuse = true
+        lanListener = listen(lan, "the network on \(Pairing.lanPort)", lines: true, service: .init(name: Self.name, type: Pairing.service))
+    }
+
+    /// This Mac's name, as phones see it.
+    static var name: String { Host.current().localizedName ?? "Mac" }
+
+    /// Where a phone on the network reaches this Mac, for the QR code: its Bonjour host name.
+    static var lanHost: String {
+        let local = ProcessInfo.processInfo.hostName
+        let host = local.hasSuffix(".local") ? local : local.split(separator: ".").first.map { "\($0).local" } ?? local
+        return "\(host):\(Pairing.lanPort)"
+    }
+
+    static var pairingURL: URL { Pairing.url(name: name, host: lanHost, code: token) }
+
+    private func listen(_ params: NWParameters, _ label: String, lines: Bool, service: NWListener.Service? = nil) -> NWListener? {
         do {
             let l = try NWListener(using: params)
+            l.service = service
             l.newConnectionHandler = { [weak self] conn in
-                Task { @MainActor in self?.accept(conn) }
+                Task { @MainActor in self?.accept(conn, lines: lines) }
             }
             l.stateUpdateHandler = { state in
-                if case .failed(let e) = state { EngineProcess.log("remote: listener failed: \(e)") }
+                if case .failed(let e) = state { EngineProcess.log("remote: listener on \(label) failed: \(e)") }
+            }
+            l.serviceRegistrationUpdateHandler = { change in
+                if case .add(let endpoint) = change { EngineProcess.log("remote: advertised as \(endpoint)") }
             }
             l.start(queue: .main)
-            listener = l
-            EngineProcess.log("remote: listening on 127.0.0.1:\(Self.port)")
+            EngineProcess.log("remote: listening on \(label)")
+            return l
         } catch {
-            EngineProcess.log("remote: couldn't listen: \(error)")
+            EngineProcess.log("remote: couldn't listen on \(label): \(error)")
+            return nil
         }
     }
 
     func stop() {
         listener?.cancel()
         listener = nil
+        lanListener?.cancel()
+        lanListener = nil
         clients.values.forEach { $0.conn.cancel() }
         clients = [:]
     }
@@ -131,10 +163,12 @@ final class RemoteBridge {
 
     // MARK: Clients
 
-    private func accept(_ conn: NWConnection) {
-        let client = Client(conn: conn)
+    private func accept(_ conn: NWConnection, lines: Bool) {
+        let client = Client(conn: conn, lines: lines)
         clients[ObjectIdentifier(client)] = client
         conn.stateUpdateHandler = { [weak self, weak client] state in
+            if case .failed(let e) = state { EngineProcess.log("remote: a phone's connection failed: \(e)") }
+            if case .waiting(let e) = state { EngineProcess.log("remote: a phone's connection is waiting: \(e)") }
             switch state {
             case .failed, .cancelled:
                 Task { @MainActor in if let client { self?.clients[ObjectIdentifier(client)] = nil } }
@@ -146,6 +180,19 @@ final class RemoteBridge {
     }
 
     private func receive(_ client: Client) {
+        if let splitter = client.splitter {
+            // The network: JSON lines over TLS.
+            client.conn.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self, weak client] data, _, done, error in
+                Task { @MainActor in
+                    guard let self, let client else { return }
+                    for line in data.map(splitter.push) ?? [] {
+                        if let msg = try? JSONSerialization.jsonObject(with: line) as? [String: Any] { self.handle(msg, from: client) }
+                    }
+                    if error == nil, !done { self.receive(client) } else { client.conn.cancel() }
+                }
+            }
+            return
+        }
         client.conn.receiveMessage { [weak self, weak client] data, _, _, error in
             Task { @MainActor in
                 guard let self, let client else { return }
@@ -326,7 +373,13 @@ private final class Client {
     var address: String?
     var attached: [String: Attachment] = [:]
 
-    init(conn: NWConnection) { self.conn = conn }
+    /// Set for network clients, whose messages are JSON lines rather than WebSocket frames.
+    let splitter: Pairing.Lines?
+
+    init(conn: NWConnection, lines: Bool) {
+        self.conn = conn
+        splitter = lines ? Pairing.Lines() : nil
+    }
 
     func deliver(_ line: String, head: Head) {
         switch attached[head.session] {
@@ -348,6 +401,10 @@ private final class Client {
     }
 
     func sendRaw(_ text: String) {
+        if splitter != nil {
+            conn.send(content: Data((text + "\n").utf8), completion: .idempotent)
+            return
+        }
         let meta = NWProtocolWebSocket.Metadata(opcode: .text)
         let ctx = NWConnection.ContentContext(identifier: "text", metadata: [meta])
         conn.send(content: Data(text.utf8), contentContext: ctx, isComplete: true, completion: .idempotent)

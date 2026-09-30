@@ -23,6 +23,8 @@ final class Remote: SessionLink {
     /// A conversation someone asked to see (a tapped notification, Handoff, a widget).
     var requested: String?
 
+    /// A Bonjour name ("Cam's MacBook Pro") or host:port; 127.0.0.1:8913 is the Mac this
+    /// Simulator runs on.
     var host: String {
         didSet { UserDefaults.standard.set(host, forKey: "remoteHost") }
     }
@@ -33,7 +35,7 @@ final class Remote: SessionLink {
         }
     }
 
-    @ObservationIgnored private var socket: URLSessionWebSocketTask?
+    @ObservationIgnored private var socket: BridgeSocket?
     @ObservationIgnored private var retry: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
     /// Said before the Mac let us in; sent as soon as it does.
@@ -43,7 +45,7 @@ final class Remote: SessionLink {
 
     init() {
         let env = ProcessInfo.processInfo.environment
-        host = env["FROG_REMOTE_HOST"] ?? UserDefaults.standard.string(forKey: "remoteHost") ?? "127.0.0.1:8913"
+        host = env["FROG_REMOTE_HOST"] ?? UserDefaults.standard.string(forKey: "remoteHost") ?? ""
         code = env["FROG_REMOTE_CODE"] ?? UserDefaults.standard.string(forKey: "remoteCode") ?? ""
     }
 
@@ -55,19 +57,41 @@ final class Remote: SessionLink {
 
     func connect() {
         retry?.cancel()
-        socket?.cancel(with: .goingAway, reason: nil)
-        guard !code.isEmpty, let url = URL(string: "ws://\(host)") else {
+        socket?.cancel()
+        guard !code.isEmpty, !host.isEmpty else {
             state = .failed("Enter the code from Frog's settings on your Mac.")
             return
         }
         generation += 1
         let gen = generation
         state = .connecting
-        let task = URLSession.shared.webSocketTask(with: url)
-        socket = task
-        task.resume()
-        send(["type": "hello", "token": code])
-        receive(task, gen)
+        let s = BridgeSocket(host: host, code: code)
+        s.onReady = { [weak self] in
+            Task { @MainActor in
+                guard let self, gen == self.generation else { return }
+                self.send(["type": "hello", "token": self.code])
+            }
+        }
+        s.onMessage = { [weak self] data in
+            Task { @MainActor in
+                guard let self, gen == self.generation else { return }
+                self.handle(data)
+            }
+        }
+        s.onClose = { [weak self] error, early in
+            Task { @MainActor in
+                guard let self, gen == self.generation else { return }
+                // A TLS failure before we're in means the key (the code) didn't match.
+                if early, case .tls? = error {
+                    self.retry?.cancel()
+                    self.state = .failed("That code didn't match. Check Frog's settings on your Mac.")
+                    return
+                }
+                self.lost(error?.localizedDescription ?? "closed", gen)
+            }
+        }
+        socket = s
+        s.start()
     }
 
     /// Stop talking to the Mac; `forget` also drops the code, back to the connect screen.
@@ -75,28 +99,18 @@ final class Remote: SessionLink {
         if forget { code = "" }
         retry?.cancel()
         generation += 1
-        socket?.cancel(with: .goingAway, reason: nil)
+        socket?.cancel()
         socket = nil
         state = .idle
     }
 
-    private func receive(_ task: URLSessionWebSocketTask, _ gen: Int) {
-        task.receive { [weak self] result in
-            Task { @MainActor in
-                guard let self, gen == self.generation else { return }
-                switch result {
-                case .success(let message):
-                    switch message {
-                    case .string(let s): self.handle(Data(s.utf8))
-                    case .data(let d): self.handle(d)
-                    @unknown default: break
-                    }
-                    self.receive(task, gen)
-                case .failure(let error):
-                    self.lost(error.localizedDescription, gen)
-                }
-            }
-        }
+    /// Pair from a `frog://pair` link (the QR code in the Mac's settings) and connect.
+    func pair(_ url: URL) -> Bool {
+        guard let p = Pairing.parse(url) else { return false }
+        host = p.host ?? p.name
+        code = p.code
+        connect()
+        return true
     }
 
     /// Dropped: try again shortly, unless the Mac turned us away.
@@ -249,7 +263,7 @@ final class Remote: SessionLink {
 
     private func send(_ obj: [String: Any]) {
         guard let socket, let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        socket.send(.string(String(decoding: data, as: UTF8.self))) { _ in }
+        socket.send(String(decoding: data, as: UTF8.self))
     }
 }
 

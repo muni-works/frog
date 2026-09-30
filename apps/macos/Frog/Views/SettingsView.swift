@@ -1,3 +1,4 @@
+import CoreImage
 import SwiftUI
 
 /// ⌘, : General, Models, Energy, Permissions, MCP, Appearance, Shortcuts.
@@ -26,6 +27,7 @@ private struct GeneralSettings: View {
     @AppStorage("editor") private var editor = ""
     @AppStorage("notifyWhenDone") private var notifyWhenDone = true
     @AppStorage("remoteEnabled") private var remote = false
+    @State private var code = RemoteBridge.token
 
     var body: some View {
         Form {
@@ -47,12 +49,15 @@ private struct GeneralSettings: View {
                         on ? RemoteBridge.shared.start() : RemoteBridge.shared.stop()
                     }
                 if remote {
-                    LabeledContent("Code") {
-                        Text(RemoteBridge.token).font(.body.monospaced()).textSelection(.enabled)
+                    PairingCard(code: code) {
+                        RemoteBridge.newToken()
+                        RemoteBridge.shared.stop()
+                        RemoteBridge.shared.start()
+                        code = RemoteBridge.token
                     }
                 }
             } footer: {
-                Text("For now only the iOS Simulator on this Mac can reach it. Pairing over Wi-Fi comes next.")
+                Text("Scan the code with your iPhone's camera, or pick this Mac in frog and type the code. The connection is encrypted with it. A new code signs out every phone.")
             }
         }
         .formStyle(.grouped)
@@ -767,5 +772,43 @@ private struct MCPSettings: View {
         servers = (try? await Frog.json([MCPStatus].self, args: ["--mcp", "--json"],
                                          cwd: FileManager.default.homeDirectoryForCurrentUser)) ?? []
         loading = false
+    }
+}
+
+/// The QR code a phone scans to pair (a `frog://pair` link the Camera app opens in frog), and the
+/// code itself for typing.
+private struct PairingCard: View {
+    let code: String
+    let renew: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            if let qr = Self.qr(RemoteBridge.pairingURL) {
+                Image(nsImage: qr)
+                    .interpolation(.none)
+                    .resizable()
+                    .frame(width: 132, height: 132)
+                    .padding(8)
+                    .background(.white, in: .rect(cornerRadius: 10))
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text(RemoteBridge.name).font(.headline)
+                Text(code).font(.body.monospaced()).textSelection(.enabled)
+                Button("New Code", action: renew)
+            }
+        }
+        .padding(.vertical, 4)
+        .id(code)
+    }
+
+    static func qr(_ url: URL) -> NSImage? {
+        guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(Data(url.absoluteString.utf8), forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let out = filter.outputImage?.transformed(by: .init(scaleX: 8, y: 8)) else { return nil }
+        let rep = NSCIImageRep(ciImage: out)
+        let image = NSImage(size: rep.size)
+        image.addRepresentation(rep)
+        return image
     }
 }

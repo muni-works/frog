@@ -22,8 +22,14 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_frog._tcp</string>
+	</array>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Cam Pedersen</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>frog on your iPhone connects to this Mac over your network.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
