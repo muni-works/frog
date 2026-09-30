@@ -19,6 +19,8 @@ pub mod message;
 pub mod models;
 pub mod named_files;
 pub mod policy;
+pub mod panes;
+pub mod pond;
 pub mod prompt;
 pub mod protocol;
 pub mod provider;

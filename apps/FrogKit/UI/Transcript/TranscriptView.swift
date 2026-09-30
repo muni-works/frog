@@ -13,14 +13,18 @@ struct TranscriptView: View {
     /// The view keeps to the bottom as content grows (see `onScrollGeometryChange`).
     @State private var following = true
     @State private var userScrolling = false
-    /// Where the last turn starts, from the top of the view: a long answer stops following
-    /// once its prompt reaches the top, so you read it from the beginning.
+    /// Where the last turn starts, in the content: a long answer stops following once its
+    /// prompt would pass the top of the view, so you read it from the beginning.
     @State private var lastTurnTop: CGFloat = .infinity
     /// Stopped short of the end, with more below (stopped at a long answer's start, or you
     /// scrolled up while it wrote): the pill offers the way down.
     @State private var parked = false
     /// Content below the view, in points.
     @State private var below: CGFloat = 0
+    /// How tall the content was when the view stopped following: the pill only shows once
+    /// something new has come in past it, not for what was already there.
+    @State private var parkedHeight: CGFloat?
+    @State private var height: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -42,6 +46,7 @@ struct TranscriptView: View {
                 .onChange(of: conversation.turns.last?.id) { _, id in
                     guard let id else { return }
                     following = true
+                    parked = false
                     proxy.scrollTo(Self.end, anchor: .bottom)
                 }
                 // Follow the answer as it streams: while following, content that grows takes the
@@ -49,22 +54,26 @@ struct TranscriptView: View {
                 // lazy stack re-estimates rows it hasn't laid out.
                 .onScrollGeometryChange(for: ScrollEnd.self, of: ScrollEnd.init) { old, new in
                     below = new.below
-                    if new.atBottom { parked = false }
+                    height = new.contentHeight
+                    let growth = new.contentHeight - old.contentHeight
                     if userScrolling {
+                        // Only your own scrolling ends a stop: back at the end, it follows again.
                         following = new.atBottom
-                        if !new.atBottom, conversation.busy { parked = true }
-                    } else if following, !new.atBottom {
+                        if !new.atBottom, parked || conversation.busy {
+                            park(at: new.contentHeight)
+                        } else {
+                            parked = false
+                        }
+                    } else if following, conversation.busy, growth > 0,
+                              lastTurnTop < new.visibleTop + growth + topInset + 4,
+                              let id = conversation.turns.last?.id {
                         // Keeping to the bottom would push the answer's start above the top:
                         // stop with the prompt at the top instead, and read from there.
-                        let growth = new.contentHeight - old.contentHeight
-                        if conversation.busy, growth > 0, lastTurnTop - growth < topInset + 4,
-                           let id = conversation.turns.last?.id {
-                            following = false
-                            parked = true
-                            withAnimation(Motion.quick(reduced: reduceMotion)) { proxy.scrollTo(id, anchor: .top) }
-                        } else {
-                            proxy.scrollTo(Self.end, anchor: .bottom)
-                        }
+                        following = false
+                        park(at: old.contentHeight)
+                        withAnimation(Motion.quick(reduced: reduceMotion)) { proxy.scrollTo(id, anchor: .top) }
+                    } else if following, !new.atBottom {
+                        proxy.scrollTo(Self.end, anchor: .bottom)
                     }
                 }
                 // Only your own scrolling stops (or restarts) following: the lazy stack also
@@ -73,8 +82,8 @@ struct TranscriptView: View {
                     userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 }
                 .overlay(alignment: .bottom) {
-                    if parked, below > 30 {
-                        MoreBelow(lines: Int(below / 22), writing: conversation.busy) {
+                    if unseen {
+                        NewBelow(writing: conversation.busy) {
                             parked = false
                             following = true
                             withAnimation(Motion.panel(reduced: reduceMotion)) { proxy.scrollTo(Self.end, anchor: .bottom) }
@@ -83,8 +92,20 @@ struct TranscriptView: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottom)))
                     }
                 }
-                .animation(Motion.quick(reduced: reduceMotion), value: parked && below > 30)
+                .animation(Motion.quick(reduced: reduceMotion), value: unseen)
         }
+    }
+
+    private func park(at contentHeight: CGFloat) {
+        if !parked { parkedHeight = contentHeight }
+        parked = true
+    }
+
+    /// Something new came in below where you stopped (more than a line: the thinking row
+    /// changing size doesn't count), and it's still out of view.
+    private var unseen: Bool {
+        guard parked, below > 30, let parkedHeight else { return false }
+        return height - parkedHeight > 40
     }
 
     /// Where the view is against the end of the content.
@@ -94,20 +115,24 @@ struct TranscriptView: View {
         let atBottom: Bool
         /// Content below the view.
         let below: CGFloat
+        /// The top of the visible area, in content coordinates.
+        let visibleTop: CGFloat
 
         init(_ g: ScrollGeometry) {
             contentHeight = g.contentSize.height
             offset = g.contentOffset.y
-            #if os(macOS)
-            below = max(0, g.contentSize.height + g.contentInsets.bottom - (g.contentOffset.y + g.containerSize.height))
-            #else
-            // On iOS the container leaves out the bars and the composer inset; the visible rect
-            // runs under them, as the offset does.
-            below = max(0, g.contentSize.height + g.contentInsets.bottom - g.visibleRect.maxY)
-            #endif
+            // Against what's actually visible above the composer. The offset alone misses the top
+            // inset, which is large while the content is shorter than the view (it's anchored to
+            // the bottom): the transcript never thought it was at the end, and following
+            // scrolled to it over and over.
+            below = max(0, g.contentSize.height - (g.visibleRect.maxY - g.contentInsets.bottom))
+            visibleTop = g.visibleRect.minY
             atBottom = below <= 24
         }
     }
+
+    /// The transcript's content, for measuring where a turn starts in it.
+    private static let content = "transcript-content"
 
     /// A row at the very end of the transcript, below the last turn and its indicators.
     private static let end = "transcript-end"
@@ -120,7 +145,7 @@ struct TranscriptView: View {
                     TurnView(turn: turn, conversation: conversation, actions: actions, pinsFooter: footers.contains(turn.id))
                         .background {
                             if turn.id == conversation.turns.last?.id {
-                                Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .scrollView).minY }) {
+                                Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.content)).minY }) {
                                     lastTurnTop = $0
                                 }
                             }
@@ -146,6 +171,7 @@ struct TranscriptView: View {
                 Color.clear.frame(height: 0).id(Self.end)
             }
             .scrollTargetLayout()
+            .coordinateSpace(.named(Self.content))
             .frame(maxWidth: 820)
             .padding(.horizontal, 28)
             .padding(.top, 20)
@@ -173,8 +199,12 @@ struct TranscriptView: View {
             .ignoresSafeArea()
         }
         .onScrollTargetVisibilityChange(idType: TurnState.ID.self, threshold: 0.05) { onVisibleTurns($0) }
-        // Start at the bottom; following (above) keeps it there as streamed content grows.
-        .defaultScrollAnchor(.bottom)
+        // Start at the bottom, and keep short content there. While following (above), growth
+        // keeps the view at the bottom too; once a long answer has stopped at its start, it
+        // grows downward under a still view instead.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .alignment)
+        .defaultScrollAnchor(following ? .bottom : .top, for: .sizeChanges)
         .overlay {
             if conversation.turns.isEmpty, !conversation.busy, !conversation.replaying, conversation.failure == nil {
                 EmptyTranscript(conversation: conversation)
@@ -191,6 +221,7 @@ struct UserPrompt: View {
     var tint: Color = .accentColor
 
     var body: some View {
+        let (message, contexts) = PromptContext.split(text)
         VStack(alignment: .trailing, spacing: 6) {
             if !images.isEmpty {
                 HStack(spacing: 6) {
@@ -207,8 +238,8 @@ struct UserPrompt: View {
                     }
                 }
             }
-            if !text.isEmpty {
-                Text(text)
+            if !message.isEmpty {
+                Text(message)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
@@ -217,9 +248,51 @@ struct UserPrompt: View {
                     .foregroundStyle(.white)
                     .background(tint, in: .rect(cornerRadius: 18))
             }
+            ForEach(contexts) { ContextDisclosure(context: $0) }
         }
         .frame(maxWidth: 560, alignment: .trailing)
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+/// Context sent with a message, folded under its bubble: "› GitHub · ecto/ipse#458". Open it
+/// to read what the model was given.
+private struct ContextDisclosure: View {
+    let context: PromptContext
+    @State private var open = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            Button {
+                withAnimation(Motion.quick(reduced: reduceMotion)) { open.toggle() }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                    Text(context.title)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .help(open ? "Hide what was sent with this message" : "Show what was sent with this message")
+            if open {
+                Text(context.body)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topTrailing)))
+            }
+        }
     }
 }
 
@@ -439,7 +512,6 @@ struct ScrollBackdropClear: NSViewRepresentable {
     }
 }
 
-/// The way down from a long answer: how much is left, and whether it's still being written.
 #else
 /// A SwiftUI `ScrollView` on iOS paints nothing of its own.
 struct ScrollBackdropClear: View {
@@ -447,19 +519,17 @@ struct ScrollBackdropClear: View {
 }
 #endif
 
-private struct MoreBelow: View {
-    let lines: Int
+/// The way down to a message that came in below where you're reading.
+private struct NewBelow: View {
     let writing: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 7) {
-                Image(systemName: writing ? "pencil.line" : "arrow.down")
+                Image(systemName: "arrow.down")
                     .symbolEffect(.pulse, options: .repeating, isActive: writing)
-                Text(writing ? "Writing · \(lines) more line\(lines == 1 ? "" : "s")" : "\(lines) more line\(lines == 1 ? "" : "s")")
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+                Text("New message")
             }
             .font(.callout.weight(.medium))
             .padding(.horizontal, 14)
@@ -468,6 +538,6 @@ private struct MoreBelow: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .capsule)
-        .help("Follow the answer to the end")
+        .help("Go to the end and follow the answer")
     }
 }

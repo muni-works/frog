@@ -43,6 +43,8 @@ final class Conversation {
     private(set) var elicitation: Elicitation?
     /// Files dropped anywhere on the conversation, for the composer to attach or mention.
     var dropped: [URL] = []
+    /// The terminal and preview panes the engine shares with this session.
+    let panes = PaneHub()
     @ObservationIgnored private var appCalls: [String: (JSONValue?, String?) -> Void] = [:]
     private(set) var failure: String?
     /// A reopened session's history is on its way (until the engine's `synced`).
@@ -112,6 +114,7 @@ final class Conversation {
         }
         self.link = link
         link.onEvent = { [weak self] env in self?.handle(env) }
+        panes.send = { [weak link] op in link?.send(op) }
         if replay {
             // Ask for the history straight away: the engine answers while it's still starting
             // up (connecting MCP servers, loading the model). Nothing is running, so it isn't
@@ -278,6 +281,8 @@ final class Conversation {
         }
         if sessionID != env.session {
             sessionID = env.session
+            panes.sessionDir = URL.homeDirectory
+                .appending(path: ".local/share/frog/sessions/\(env.session)")
             onSessionChange?()
         }
         defer { reportLive() }
@@ -290,6 +295,7 @@ final class Conversation {
             } else {
                 turns.append(TurnState(number: n, input: input, images: images, startedAt: at))
             }
+            panes.currentTurn = n
             // A replayed turn ran long ago.
             if !replaying { busy = true }
         case .turnEnded(let n, let reason, let usage):
@@ -420,6 +426,10 @@ final class Conversation {
             let url = URL(fileURLWithPath: cwd)
             let here = folder.resolvingSymlinksInPath().standardizedFileURL.path
             movedTo = url.resolvingSymlinksInPath().standardizedFileURL.path == here ? nil : url
+        case .paneNotice(_, let level, let message):
+            note(message, warning: level != "info")
+        case .paneOpened, .paneScreen, .paneClosed, .paneRequest, .paneCheckpoint:
+            panes.apply(env.event)
         case .modelChanged, .modeChanged, .unknown:
             break
         }

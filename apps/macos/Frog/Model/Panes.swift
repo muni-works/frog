@@ -24,6 +24,12 @@ final class Pane: Identifiable {
     /// The conversation on the canvas (a race has its own view).
     var conversation: Conversation? { workspace.race == nil ? workspace.conversation : nil }
     var changeCount: Int { conversation?.sessionChanges.count ?? 0 }
+    /// Terminals and previews open beside the conversation (see `PaneHub`).
+    var toolCount: Int { conversation?.panes.panes.count ?? 0 }
+    /// Something for the card at this pane's edge: changed files, or a terminal or preview.
+    var hasTabs: Bool { changeCount > 0 || toolCount > 0 }
+    /// A preview needs room to be useful; changes alone read fine narrower.
+    var cardWidth: CGFloat { toolCount > 0 ? PaneArea.minWidth + 60 : WorkspaceView.changesWidth }
     var hasRail: Bool { !(conversation?.turns.isEmpty ?? true) }
 }
 
@@ -275,6 +281,13 @@ final class Panes {
     /// Point a pane at another folder (nil: a plain chat), starting a fresh conversation there.
     func switchFolder(_ url: URL?, in pane: Pane) {
         setWorkspace(Workspace(folder: url ?? Frog.chatFolder, fresh: true), in: pane)
+    }
+
+    /// A fresh conversation in `url` (nil: a plain chat) that opens with `prompt`.
+    func start(_ prompt: String, in url: URL?, pane: Pane) {
+        let workspace = Workspace(folder: url ?? Frog.chatFolder, fresh: true)
+        setWorkspace(workspace, in: pane)
+        workspace.conversation?.submit(prompt)
     }
 
     /// The agent moved this pane's conversation to another folder (`UseFolder`): reopen it there,

@@ -23,7 +23,7 @@ struct PaneView: View {
     private var ui: WindowState { pane.ui }
     private var conversation: Conversation? { pane.conversation }
     private var focused: Bool { panes.focusedID == pane.id }
-    private var changesVisible: Bool { changesDocked || (pane.peekChanges && pane.changeCount > 0) }
+    private var changesVisible: Bool { changesDocked || (pane.peekChanges && pane.hasTabs) }
     private var margin: CGFloat { WorkspaceView.margin }
 
     var body: some View {
@@ -76,6 +76,7 @@ struct PaneView: View {
         .environment(\.projectFolder, workspace.folder)
         .environment(\.models, workspace.models)
         .environment(\.switchFolder) { url in panes.switchFolder(url, in: pane) }
+        .environment(\.startConversation) { url, prompt in panes.start(prompt, in: url, pane: pane) }
         .environment(\.openSession) { s in panes.open(s, in: pane, window: window) }
         // The agent moved the conversation to another folder: follow it there once the turn ends.
         .onChange(of: workspace.conversation.flatMap { $0.busy ? nil : $0.movedTo }) { _, url in
@@ -84,6 +85,10 @@ struct PaneView: View {
         // Clicking anywhere in a pane focuses it, without swallowing the click.
         .simultaneousGesture(TapGesture().onEnded { panes.focus(pane) })
         .animation(Motion.panel(reduced: reduceMotion), value: changesVisible)
+        // Frog opened a terminal or preview: show it, rather than a button to find it by.
+        .onChange(of: pane.toolCount) { old, new in
+            if new > old, !changesVisible { toggleChanges() }
+        }
         .animation(Motion.quick(reduced: reduceMotion), value: pane.hasRail)
         .animation(Motion.quick(reduced: reduceMotion), value: ui.findShown)
         .onChange(of: conversation.map(ObjectIdentifier.init)) { ui.visibleTurns = []; pane.peekChanges = false }
@@ -179,23 +184,30 @@ struct PaneView: View {
     @ViewBuilder
     private func instruments(room: CGFloat) -> some View {
         let top = number == nil ? 0 : WorkspaceView.headerClearance
-        if let conversation, pane.changeCount > 0 || pane.hasRail {
+        if let conversation, pane.hasTabs || pane.hasRail {
             VStack(alignment: .trailing, spacing: 8) {
-                if pane.changeCount > 0 {
+                if pane.hasTabs {
                     if changesVisible {
-                        ChangesInspector(conversation: conversation, maxHeight: max(120, room - top - (pane.hasRail ? 160 : 0))) {
-                            toggleChanges()
-                        }
-                        .frame(width: WorkspaceView.changesWidth)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 18))
-                        .glassEffectID("changes", in: glass)
-                        .shadow(color: .black.opacity(pane.peekChanges && !changesDocked ? 0.35 : 0), radius: 24, y: 10)
+                        // Changes, and any terminal or preview frog opened, as tabs of one card.
+                        PaneArea(conversation: conversation,
+                                 height: max(160, room - top - (pane.hasRail ? 160 : 0)),
+                                 width: .constant(pane.cardWidth),
+                                 collapse: { toggleChanges() })
+                            .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                            .glassEffectID("changes", in: glass)
+                            .shadow(color: .black.opacity(pane.peekChanges && !changesDocked ? 0.35 : 0), radius: 24, y: 10)
                     } else {
                         Button(action: toggleChanges) {
                             let changes = conversation.sessionChanges
                             HStack(spacing: 6) {
-                                Text("+\(changes.reduce(0) { $0 + $1.added })").foregroundStyle(.green)
-                                Text("−\(changes.reduce(0) { $0 + $1.removed })").foregroundStyle(.red)
+                                if !changes.isEmpty {
+                                    Text("+\(changes.reduce(0) { $0 + $1.added })").foregroundStyle(.green)
+                                    Text("−\(changes.reduce(0) { $0 + $1.removed })").foregroundStyle(.red)
+                                }
+                                if pane.toolCount > 0 {
+                                    Image(systemName: conversation.panes.panes.contains { $0.kind == .preview } ? "globe" : "terminal")
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             .monospacedDigit()
                             .contentTransition(.numericText())
@@ -207,7 +219,9 @@ struct PaneView: View {
                         .buttonStyle(.plain)
                         .glassEffect(.regular.interactive(), in: .capsule)
                         .glassEffectID("changes", in: glass)
-                        .help("\(pane.changeCount) file\(pane.changeCount == 1 ? "" : "s") changed (⌥⌘0)")
+                        .help(pane.changeCount > 0
+                              ? "\(pane.changeCount) file\(pane.changeCount == 1 ? "" : "s") changed (⌥⌘0)"
+                              : "Terminal and preview (⌥⌘0)")
                     }
                 }
                 if pane.hasRail {

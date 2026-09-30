@@ -66,4 +66,53 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(try json(.setMode(.acceptEdits)), #"{"mode":"accept-edits","op":"set_mode"}"#)
         XCTAssertEqual(try json(.subscribe(after: 0)), #"{"after":0,"op":"subscribe"}"#)
     }
+
+    func testPaneOpsEncode() throws {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let json = { (op: Op) in String(decoding: try enc.encode(op), as: UTF8.self) }
+        XCTAssertEqual(try json(.setClientCaps(panes: true)), #"{"op":"set_client_caps","panes":true}"#)
+        XCTAssertEqual(try json(.paneOpen(kind: .terminal, cwd: "/p", cols: 80, rows: 24)), #"{"cols":80,"cwd":"/p","kind":"terminal","op":"pane_open","rows":24}"#)
+        XCTAssertEqual(try json(.paneOpen(kind: .preview, url: "http://localhost:3000")), #"{"kind":"preview","op":"pane_open","url":"http://localhost:3000"}"#)
+        XCTAssertEqual(try json(.paneInput(id: "t1", data: "ls\r")), #"{"data":"ls\r","id":"t1","op":"pane_input"}"#)
+        XCTAssertEqual(try json(.paneResize(id: "t1", cols: 100, rows: 30)), #"{"cols":100,"id":"t1","op":"pane_resize","rows":30}"#)
+        XCTAssertEqual(try json(.paneClose(id: "t1")), #"{"id":"t1","op":"pane_close"}"#)
+        XCTAssertEqual(
+            try json(.paneReport(PaneReport(id: "p1", kind: .network, level: "error", message: "GET /api → 500", url: "http://localhost:3000/api", status: 500))),
+            #"{"id":"p1","kind":"network","level":"error","message":"GET /api → 500","op":"pane_report","status":500,"url":"http://localhost:3000/api"}"#)
+        XCTAssertEqual(try json(.paneReply(call: "c1", result: .object(["ok": .bool(true)]))), #"{"call":"c1","op":"pane_reply","result":{"ok":true}}"#)
+        XCTAssertEqual(try json(.paneReply(call: "c2", result: nil, error: "no")), #"{"call":"c2","error":"no","op":"pane_reply","result":null}"#)
+        XCTAssertEqual(try json(.paneMention(id: "p1", mention: "@button.submit", context: "tag: button")), #"{"context":"tag: button","id":"p1","mention":"@button.submit","op":"pane_mention"}"#)
+    }
+
+    func testPaneEventsDecode() throws {
+        let opened = try decode(#"{"seq":1,"session":"s","created":0,"event":"pane_opened","id":"t1","kind":"terminal","title":"zsh","cwd":"/p"}"#)
+        guard case .paneOpened(let id, let kind, let title, let cwd, _) = opened.event else { return XCTFail() }
+        XCTAssertEqual([id, kind.rawValue, title, cwd ?? ""], ["t1", "terminal", "zsh", "/p"])
+
+        let screen = try decode(#"{"seq":2,"session":"s","created":0,"event":"pane_screen","id":"t1","cols":80,"rows":2,"lines":["$ ls","a b"],"cursor":[1,3],"seq":7}"#)
+        guard case .paneScreen(let g) = screen.event else { return XCTFail() }
+        XCTAssertEqual(g.lines, ["$ ls", "a b"])
+        XCTAssertEqual(g.cursorRow, 1)
+        XCTAssertEqual(g.cursorCol, 3)
+
+        let req = try decode(##"{"seq":3,"session":"s","created":0,"event":"pane_request","call":"c1","id":"p1","action":"click","args":{"selector":"#go"}}"##)
+        guard case .paneRequest(let r) = req.event else { return XCTFail() }
+        XCTAssertEqual(r.action, "click")
+        XCTAssertEqual(r.args["selector"]?.string, "#go")
+
+        let closed = try decode(#"{"seq":4,"session":"s","created":0,"event":"pane_closed","id":"t1","exit":0}"#)
+        guard case .paneClosed("t1", 0) = closed.event else { return XCTFail() }
+
+        let notice = try decode(#"{"seq":5,"session":"s","created":0,"event":"pane_notice","id":"p1","level":"warn","message":"3 console errors"}"#)
+        guard case .paneNotice(_, "warn", "3 console errors") = notice.event else { return XCTFail() }
+
+        // A checkpoint record, by shape.
+        let check = try decode(#"{"seq":6,"session":"s","created":0,"event":"pane_checkpoint","turn":4,"path":"panes/turn-4.png"}"#)
+        guard case .paneCheckpoint(4, "panes/turn-4.png") = check.event else { return XCTFail() }
+
+        // Unknown events still decode.
+        let other = try decode(#"{"seq":7,"session":"s","created":0,"event":"something_new","x":1}"#)
+        guard case .unknown("something_new") = other.event else { return XCTFail() }
+    }
 }

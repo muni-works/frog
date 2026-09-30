@@ -178,6 +178,13 @@ struct ComposerView: View {
             conversation.dropped = []
             accept(urls)
         }
+        // An element picked in the preview's inspect mode lands here as an @mention.
+        .onChange(of: conversation.panes.insert) { _, mention in
+            guard let mention else { return }
+            conversation.panes.insert = nil
+            controller.insert(mention)
+        }
+        .onChange(of: text, initial: true) { conversation.panes.draft = text }
     }
 
     private var placeholder: String {

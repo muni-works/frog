@@ -178,7 +178,7 @@ struct TurnView: View {
     }
 
     private func copy() {
-        Clipboard.copy(turn.input)
+        Clipboard.copy(turn.request)
     }
 }
 

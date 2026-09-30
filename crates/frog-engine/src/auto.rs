@@ -43,7 +43,8 @@ pub fn hard_rule(name: &str, input: &Value, root: &Path) -> Option<&'static str>
         .collect()
     });
     match name {
-        "Bash" => {
+        // A command typed into a terminal pane is a shell command like any other.
+        "Bash" | crate::panes::TERMINAL => {
             let cmd = input["command"].as_str().unwrap_or("");
             RULES
                 .iter()
@@ -234,6 +235,36 @@ pub fn describe(
             "search query: {}\nsent to the configured web search service\n",
             input["query"].as_str().unwrap_or("")
         )),
+        crate::panes::TERMINAL => {
+            let action = input["action"].as_str().unwrap_or("");
+            match action {
+                "run" => {
+                    s.push_str(&format!(
+                        "command: {}\nruns in a persistent shell in a terminal pane the user can see; not sandboxed (it could write anywhere and read credentials)\n",
+                        input["command"].as_str().unwrap_or("")
+                    ));
+                }
+                _ => s.push_str(&format!(
+                    "action: {action}\ntext typed into the terminal: {:?}\n",
+                    input["text"].as_str().unwrap_or("")
+                )),
+            }
+        }
+        crate::panes::PREVIEW => {
+            let get = |k: &str| input[k].as_str().unwrap_or("");
+            s.push_str(&format!("action: {}\n", get("action")));
+            for (k, what) in [
+                ("url", "page"),
+                ("selector", "element"),
+                ("text", "text typed"),
+                ("js", "javascript run in the page"),
+            ] {
+                if !get(k).is_empty() {
+                    s.push_str(&format!("{what}: {}\n", get(k)));
+                }
+            }
+            s.push_str("in the app's preview pane (a browser view of the project)\n");
+        }
         _ => {
             let args = serde_json::to_string_pretty(input).unwrap_or_default();
             s.push_str(&format!(
