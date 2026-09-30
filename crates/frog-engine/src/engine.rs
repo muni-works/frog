@@ -1879,12 +1879,13 @@ impl Agent {
         } else if self.small_window() && !self.subagent {
             // In a project, a small window holds the core tools and little else: the rest
             // (diagrams, the code map, docs, recall, skills, the plan) cost more room than
-            // they're worth at 8k.
+            // they're worth at 8k. The panes stay: the user can see them, and asks for them.
             specs.retain(|s| {
                 matches!(
                     &*s.name,
                     "Bash" | "Read" | "Write" | "Edit" | "Glob" | "Grep"
-                ) || &*s.name == crate::mcp::SEARCH_TOOL
+                ) || matches!(&*s.name, crate::panes::TERMINAL | crate::panes::PREVIEW)
+                    || &*s.name == crate::mcp::SEARCH_TOOL
                     || &*s.name == crate::folder::TOOL
             });
         }
@@ -4536,6 +4537,37 @@ mod tests {
                 "clicked #go"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_small_window_still_gets_the_panes() {
+        let open = Block::ToolUse {
+            id: "o".into(),
+            name: "Preview".into(),
+            input: json!({ "action": "open", "url": "http://localhost:3000" }),
+        };
+        let script = vec![
+            reply(vec![open], Stop::ToolUse),
+            reply(vec![text("open")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, Some(8_192), std::env::temp_dir());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops.send(Op::SetClientCaps { panes: true }).unwrap();
+        until_idle(&mut h).await;
+        h.ops
+            .send(Op::Submit {
+                text: "open the preview".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::PaneOpened {
+                kind: crate::protocol::PaneKind::Preview,
+                ..
+            }
+        )));
     }
 
     #[tokio::test]
