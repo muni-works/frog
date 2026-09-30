@@ -172,6 +172,10 @@ struct Cli {
     /// Keep the brief fresh: look again every N minutes (default 15), until stopped.
     #[arg(long, value_name = "MINUTES", num_args = 0..=1, default_missing_value = "15")]
     watch: Option<u64>,
+    /// Keep the brief fresh while frog is closed, from login on (a LaunchAgent running --watch):
+    /// on or off. Without a value, say whether it's on.
+    #[arg(long, value_name = "ON|OFF", num_args = 0..=1, default_missing_value = "")]
+    background: Option<String>,
     /// Take an item out of the brief: it isn't worth your time. It comes back if it changes.
     #[arg(long, value_name = "ID")]
     dismiss: Option<String>,
@@ -632,6 +636,25 @@ fn session_tree(
 /// `--brief`, `--watch` and `--dismiss`: the pond.
 async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
     use frog_engine::pond;
+    if let Some(v) = &cli.background {
+        use frog_engine::pond::background;
+        match v.as_str() {
+            "on" => background::on(&std::env::current_exe()?.canonicalize()?)?,
+            "off" => background::off()?,
+            "" => {}
+            other => anyhow::bail!("--background takes on or off, not `{other}`"),
+        }
+        let bin = background::status();
+        if cli.json {
+            println!("{}", serde_json::json!({ "on": bin.is_some(), "binary": bin }));
+        } else {
+            match bin {
+                Some(b) => println!("on: {} looks every 15 minutes", b.display()),
+                None => println!("off"),
+            }
+        }
+        return Ok(Some(true));
+    }
     if let Some(id) = &cli.dismiss {
         if !pond::dismiss(id)? {
             anyhow::bail!("nothing open in the pond is called `{id}`");
@@ -642,7 +665,7 @@ async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
         let every = std::time::Duration::from_secs(minutes.max(1) * 60);
         loop {
             match pond::pass(cfg).await {
-                Ok(b) => eprintln!("{} brief: {}", b.at.format("%H:%M"), b.headline),
+                Ok(b) => eprintln!("{} brief: {}", b.at.with_timezone(&chrono::Local).format("%H:%M"), b.headline),
                 Err(e) => eprintln!("pond pass failed: {e:#}"),
             }
             tokio::time::sleep(every).await;

@@ -12,6 +12,7 @@
 //! Everything lives in `~/.local/share/frog/pond/`: `items.json` (the pond) and `brief.json`
 //! (the latest brief, which clients read without running a pass).
 
+pub mod background;
 pub mod brief;
 pub mod github;
 

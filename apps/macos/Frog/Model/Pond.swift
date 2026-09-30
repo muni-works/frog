@@ -8,6 +8,8 @@ final class Pond {
 
     private(set) var brief: Brief?
     private(set) var refreshing = false
+    /// Whether a LaunchAgent keeps the brief fresh while Frog is closed; `nil` until asked.
+    private(set) var background: Bool?
 
     /// A brief older than this is refreshed when the empty page shows it.
     static let stale: TimeInterval = 10 * 60
@@ -33,6 +35,23 @@ final class Pond {
         if let fresh = try? await Frog.json(Brief.self, args: ["--brief", "--json"], cwd: home) {
             brief = fresh
         }
+    }
+
+    func loadBackground() async {
+        struct Status: Decodable { var on: Bool }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        background = (try? await Frog.json(Status.self, args: ["--background", "--json"], cwd: home))?.on
+    }
+
+    /// Runs this app's own engine, so it keeps working after updates.
+    func setBackground(_ on: Bool) async {
+        background = on
+        do {
+            try await Frog.command(["--background", on ? "on" : "off"])
+        } catch {
+            NSLog("frog --background: \(error.localizedDescription)")
+        }
+        await loadBackground()
     }
 
     /// Not worth your time: out of the brief, and a little less of its kind in the next one.

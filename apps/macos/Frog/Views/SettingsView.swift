@@ -25,6 +25,7 @@ struct SettingsView: View {
 private struct GeneralSettings: View {
     @AppStorage("editor") private var editor = ""
     @AppStorage("notifyWhenDone") private var notifyWhenDone = true
+    @State private var pond = Pond.shared
 
     var body: some View {
         Form {
@@ -40,8 +41,19 @@ private struct GeneralSettings: View {
                 }
             }
             Toggle("Notify me when a turn finishes while I'm in another app", isOn: $notifyWhenDone)
+            Section {
+                Toggle("Keep the brief fresh while Frog is closed", isOn: Binding(
+                    get: { pond.background ?? false },
+                    set: { on in Task { await pond.setBackground(on) } }
+                ))
+                .disabled(pond.background == nil)
+            } footer: {
+                Text("Looks at GitHub every 15 minutes from login, so the brief is ready when you open Frog. It only reads; nothing is sent or changed for you.")
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+        .task { await pond.loadBackground() }
     }
 }
 
