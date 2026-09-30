@@ -394,6 +394,17 @@ struct WorkspaceView: View {
             closePane: panes.isSplit ? { panes.close(focused) } : nil,
             focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil
         ))
+        // Handoff: the phone offers the conversation you're reading here, and back.
+        .userActivity(Handoff.conversation, isActive: workspace.conversation?.sessionID != nil) { a in
+            a.title = workspace.conversation?.title ?? "Conversation"
+            a.userInfo = ["session": workspace.conversation?.sessionID ?? ""]
+            a.isEligibleForHandoff = true
+        }
+        .onContinueUserActivity(Handoff.conversation) { a in
+            guard let id = a.userInfo?["session"] as? String,
+                  let s = Library.shared.sessions.first(where: { $0.id == id }) else { return }
+            openInFocused(s)
+        }
         .alert("Rename Conversation", isPresented: $renamingTitle) {
             TextField("Title", text: $newTitle)
             Button("Rename") {

@@ -46,3 +46,4 @@ targets:
       properties:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        NSUserActivityTypes: [eco.frog.conversation]

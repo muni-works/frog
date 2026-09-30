@@ -247,6 +247,11 @@ final class RemoteBridge {
     }
 }
 
+enum Handoff {
+    /// A conversation being read on one device, for another to pick up.
+    static let conversation = "eco.frog.conversation"
+}
+
 /// The routing fields of an envelope line, without decoding the rest.
 private struct Head {
     let session: String

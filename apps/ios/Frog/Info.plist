@@ -23,5 +23,9 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>eco.frog.conversation</string>
+	</array>
 </dict>
 </plist>

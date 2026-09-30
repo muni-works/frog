@@ -26,9 +26,12 @@ extension FrogApp {
 struct RootView: View {
     let remote: Remote
     @Environment(\.scenePhase) private var phase
+    @State private var path: [RemoteSession] = []
+    /// A conversation to open once the list knows it (from Handoff or a notification).
+    @State private var pending: String?
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if remote.code.isEmpty || !(everConnected || remote.isConnected) {
                     ConnectView(remote: remote)
@@ -37,6 +40,11 @@ struct RootView: View {
                 }
             }
         }
+        .onContinueUserActivity(Handoff.conversation) { a in
+            pending = a.userInfo?["session"] as? String
+            openPending()
+        }
+        .onChange(of: remote.sessions) { openPending() }
         .onChange(of: remote.state) { _, s in
             if case .connected = s { everConnected = true }
         }
@@ -47,6 +55,12 @@ struct RootView: View {
     }
 
     @State private var everConnected = false
+
+    private func openPending() {
+        guard let id = pending, let s = remote.sessions.first(where: { $0.id == id }) else { return }
+        pending = nil
+        path = [s]
+    }
 }
 
 struct ConnectView: View {
