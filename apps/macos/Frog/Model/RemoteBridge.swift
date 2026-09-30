@@ -232,6 +232,19 @@ final class RemoteBridge {
         case "activity":
             guard let id = msg["session"] as? String, let address = client.address else { return }
             RemotePush.shared.activity(session: id, token: msg["token"] as? String, device: address)
+        case "open":
+            // Resume a conversation in a window, so the phone can talk to it.
+            guard let id = msg["session"] as? String else { return }
+            if Library.shared.conversation(id) != nil { return client.send(["type": "opened", "session": id, "ref": msg["ref"] ?? ""]) }
+            guard let s = Library.shared.sessions.first(where: { $0.id == id }) else {
+                return client.send(["type": "error", "session": id, "message": "That conversation isn't on this Mac anymore."])
+            }
+            request(OpenRequest(session: s, folder: nil, text: nil), for: client, ref: msg["ref"])
+        case "new":
+            // A new conversation: a chat, or in the folder of the one named by `like`.
+            let like = (msg["like"] as? String).flatMap { id in Library.shared.sessions.first { $0.id == id } }
+            let folder = like.flatMap { $0.isChat ? nil : $0.folder }
+            request(OpenRequest(session: nil, folder: folder, text: msg["text"] as? String), for: client, ref: msg["ref"])
         case "detach":
             if let id = msg["session"] as? String { client.attached[id] = nil }
         case "op":
@@ -239,6 +252,36 @@ final class RemoteBridge {
             perform(op, in: id, for: client)
         default:
             client.send(["type": "error", "message": "unknown message \(type)"])
+        }
+    }
+
+    /// Ask a window to open a conversation (whichever window claims it), then tell the phone
+    /// its session once the engine has one.
+    private func request(_ r: OpenRequest, for client: Client, ref: Any?) {
+        let ref = ref ?? ""
+        r.done = { [weak client] c in
+            Task { @MainActor in
+                // A fresh conversation learns its session from the engine's first event.
+                for _ in 0..<100 {
+                    if let id = c?.sessionID {
+                        client?.send(["type": "opened", "session": id, "ref": ref])
+                        // The engine writes a new session's file with its first message; list it
+                        // once that's on disk, so the phone can find it before the turn ends.
+                        try? await Task.sleep(for: .seconds(1))
+                        Library.shared.refresh()
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                client?.send(["type": "error", "ref": ref, "message": "frog on your Mac didn't open it in time."])
+            }
+        }
+        NotificationCenter.default.post(name: OpenRequest.name, object: r)
+        Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            if !r.claimed {
+                client.send(["type": "error", "ref": ref, "message": "Open a frog window on your Mac first."])
+            }
         }
     }
 
@@ -337,6 +380,30 @@ final class RemoteBridge {
         default:
             client.send(["type": "error", "session": id, "message": "Not supported from the phone yet."])
         }
+    }
+}
+
+/// A phone asking for a conversation on this Mac: an existing one to resume, or a new one (in
+/// `folder`, or a chat) that starts with `text`. The first window to claim it opens it.
+@MainActor
+final class OpenRequest {
+    static let name = Notification.Name("eco.frog.remote.open")
+
+    let session: SessionInfo?
+    let folder: URL?
+    let text: String?
+    private(set) var claimed = false
+    var done: (Conversation?) -> Void = { _ in }
+
+    init(session: SessionInfo?, folder: URL?, text: String?) {
+        self.session = session
+        self.folder = folder
+        self.text = text
+    }
+
+    func claim() -> Bool {
+        defer { claimed = true }
+        return !claimed
     }
 }
 

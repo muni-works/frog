@@ -168,6 +168,8 @@ final class SessionModel: Identifiable {
 
     func synced() {
         loading = false
+        // Joined partway through a turn: it's still running (or waiting on us).
+        if let last = turns.last, last.number != nil, !last.finished { busy = true }
         cache?.flush()
     }
 

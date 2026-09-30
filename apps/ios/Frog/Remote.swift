@@ -42,6 +42,10 @@ final class Remote: SessionLink {
     @ObservationIgnored private var outbox: [[String: Any]] = []
     @ObservationIgnored private var waiters: [CheckedContinuation<Bool, Never>] = []
     @ObservationIgnored private var listWaiters: [CheckedContinuation<[RemoteSession], Never>] = []
+    /// Requests waiting on the Mac's answer, by ref: a session id, or why not.
+    @ObservationIgnored private var asks: [String: CheckedContinuation<Result<String, AskError>, Never>] = [:]
+
+    struct AskError: Error { let message: String }
 
     init() {
         let env = ProcessInfo.processInfo.environment
@@ -161,6 +165,13 @@ final class Remote: SessionLink {
             open?.apply(envelope, raw: raw)
         case "synced":
             if (msg["session"] as? String) == open?.id { open?.synced() }
+        case "opened":
+            let id = msg["session"] as? String ?? ""
+            if let ref = msg["ref"] as? String, let ask = asks.removeValue(forKey: ref) { ask.resume(returning: .success(id)) }
+            if open?.id == id { open?.isOpenOnMac = true }
+        case "error" where (msg["ref"] as? String).map { asks[$0] != nil } ?? false:
+            let ref = msg["ref"] as! String
+            asks.removeValue(forKey: ref)?.resume(returning: .failure(AskError(message: msg["message"] as? String ?? "Something went wrong")))
         case "error":
             let text = msg["message"] as? String ?? "Something went wrong"
             if msg["session"] != nil { open?.note(text) }
@@ -229,6 +240,32 @@ final class Remote: SessionLink {
             await perform(op: ["op": "permission", "id": q.id, "decision": allow ? "allow" : "deny"], in: session)
             try? await Task.sleep(for: .milliseconds(300))
             refresh()
+        }
+    }
+
+    /// Open a conversation in a window on the Mac, so it can take messages.
+    func openOnMac(_ id: String) async -> Result<String, AskError> {
+        await ask(["type": "open", "session": id])
+    }
+
+    /// Start a new conversation on the Mac (a chat, or in the folder of `like`) with `text`.
+    func startNew(_ text: String, like: String?) async -> Result<String, AskError> {
+        var m: [String: Any] = ["type": "new", "text": text]
+        if let like { m["like"] = like }
+        return await ask(m)
+    }
+
+    private func ask(_ message: [String: Any]) async -> Result<String, AskError> {
+        let ref = UUID().uuidString
+        var m = message
+        m["ref"] = ref
+        if isConnected { send(m) } else { outbox.append(m); if state != .connecting { connect() } }
+        return await withCheckedContinuation { cont in
+            asks[ref] = cont
+            Task {
+                try? await Task.sleep(for: .seconds(15))
+                self.asks.removeValue(forKey: ref)?.resume(returning: .failure(AskError(message: "Your Mac didn't answer.")))
+            }
         }
     }
 

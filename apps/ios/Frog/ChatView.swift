@@ -8,6 +8,8 @@ struct ChatView: View {
     var onClose: () -> Void = {}
     @State private var draft = ""
     @FocusState private var typing: Bool
+    @State private var opening = false
+    @State private var openError: String?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -82,9 +84,23 @@ struct ChatView: View {
     private var composer: some View {
         VStack(spacing: 6) {
             if !model.isOpenOnMac {
-                Label("Open this conversation on your Mac to reply from here", systemImage: "desktopcomputer")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                // Not in a window on the Mac, so nothing's there to take a message: open it there.
+                Button {
+                    Task {
+                        opening = true
+                        openError = nil
+                        if case .failure(let e) = await Remote.shared.openOnMac(model.id) { openError = e.message }
+                        opening = false
+                    }
+                } label: {
+                    Label(opening ? "Opening on your Mac…" : "Open on Your Mac to Reply", systemImage: "desktopcomputer")
+                        .font(.subheadline.weight(.medium))
+                }
+                .buttonStyle(.glass)
+                .disabled(opening)
+                if let openError {
+                    Text(openError).font(.caption).foregroundStyle(.orange)
+                }
             }
             GlassEffectContainer(spacing: 8) {
                 HStack(alignment: .bottom, spacing: 8) {

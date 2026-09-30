@@ -394,6 +394,27 @@ struct WorkspaceView: View {
             closePane: panes.isSplit ? { panes.close(focused) } : nil,
             focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil
         ))
+        // The phone asked for a conversation: here if this pane is a blank chat, else beside it,
+        // so nothing on screen is replaced.
+        .onReceive(NotificationCenter.default.publisher(for: OpenRequest.name)) { note in
+            guard let r = note.object as? OpenRequest, r.claim() else { return }
+            let blank = focused.conversation.map { $0.sessionID == nil && $0.turns.isEmpty } ?? true
+            if let s = r.session {
+                if !blank, panes.canSplit { panes.split(s, window: window) } else { panes.open(s, in: focused, window: window) }
+            } else {
+                if !blank, panes.canSplit { panes.split(window: window) }
+                panes.switchFolder(r.folder, in: panes.focused)
+            }
+            let pane = panes.focused
+            Task {
+                // Resuming swaps the pane's workspace in once its history is loaded.
+                for _ in 0..<30 where pane.conversation == nil || (r.session != nil && pane.conversation?.sessionID != r.session?.id) {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                if let text = r.text, !text.isEmpty { pane.conversation?.submit(text) }
+                r.done(pane.conversation)
+            }
+        }
         // Handoff: the phone offers the conversation you're reading here, and back.
         .userActivity(Handoff.conversation, isActive: workspace.conversation?.sessionID != nil) { a in
             a.title = workspace.conversation?.title ?? "Conversation"

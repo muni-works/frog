@@ -7,6 +7,7 @@ struct SessionListView: View {
     var selection: Binding<String?>? = nil
     @Namespace private var zoom
     @AppStorage("playfulSounds") private var sounds = true
+    @State private var composing = false
 
     var body: some View {
         List(selection: selection) {
@@ -28,12 +29,20 @@ struct SessionListView: View {
                 .navigationTransition(.zoom(sourceID: s.id, in: zoom))
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("New", systemImage: "square.and.pencil") { composing = true }
+            }
+            ToolbarItem(placement: .secondaryAction) {
             Menu {
                 Toggle("Frog sounds", systemImage: "speaker.wave.2", isOn: $sounds)
                 Button("Disconnect", systemImage: "xmark.circle", role: .destructive) { remote.disconnect(forget: true) }
             } label: {
                 Image(systemName: "ellipsis")
             }
+            }
+        }
+        .sheet(isPresented: $composing) {
+            NewConversationSheet(remote: remote) { id in remote.requested = id }
         }
         .refreshable { remote.refresh() }
         // The Mac sends changes as they happen; this is for coming back to the list.

@@ -118,7 +118,7 @@ final class FixturePlayer: SessionLink {
         var req: [String: Any] = [
             "event": "permission_request", "id": "p-\(id)", "item": id,
             "name": item["name"] ?? "", "arg": item["arg"] ?? "",
-            "always": (item["name"] as? String) == "Bash" ? "\((item["arg"] as? String ?? "").split(separator: " ").first ?? "") commands" : "edits in this folder",
+            "always": (item["name"] as? String) == "Bash" ? "always allow `\((item["arg"] as? String ?? "").split(separator: " ").first ?? "")`" : "allow all edits this session",
         ]
         if let diff = item["diff"] { req["preview"] = diff }
         emit(req)

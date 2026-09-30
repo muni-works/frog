@@ -43,7 +43,8 @@ struct PermissionCard: View {
             .controlSize(.large)
             if !request.always.isEmpty {
                 Button { answer(.allowAlways) } label: {
-                    Text("Always allow \(request.always)")
+                    // The engine phrases it ("allow all edits this session"), as on the Mac.
+                    Text(request.always.prefix(1).uppercased() + request.always.dropFirst())
                         .font(.footnote)
                         .lineLimit(1)
                         .truncationMode(.middle)
