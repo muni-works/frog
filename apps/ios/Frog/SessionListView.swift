@@ -36,13 +36,8 @@ struct SessionListView: View {
             }
         }
         .refreshable { remote.refresh() }
-        .task {
-            // The Mac doesn't push list changes yet; a light poll keeps "running" honest.
-            while !Task.isCancelled {
-                remote.refresh()
-                try? await Task.sleep(for: .seconds(4))
-            }
-        }
+        // The Mac sends changes as they happen; this is for coming back to the list.
+        .task { remote.refresh() }
         .overlay {
             if remote.sessions.isEmpty, remote.isConnected {
                 ContentUnavailableView {

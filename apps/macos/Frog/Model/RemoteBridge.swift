@@ -35,6 +35,8 @@ final class RemoteBridge {
     private var clients: [ObjectIdentifier: Client] = [:]
     /// What a newcomer needs that the log doesn't have: the last status and any open question.
     private var live: [String: LiveState] = [:]
+    /// A list update is on its way to every phone (changes within 300 ms go as one).
+    private var listDue: Task<Void, Never>?
 
     private struct LiveState {
         var status: String?
@@ -89,8 +91,21 @@ final class RemoteBridge {
         guard listener != nil, let head = Head(line) else { return }
         track(head, line)
         RemotePush.shared.observe(line)
+        if ["turn_started", "turn_ended", "idle", "permission_request", "permission_resolved", "item_started", "titled"]
+            .contains(head.event) { listChanged() }
         for c in clients.values where c.attached.keys.contains(head.session) {
             c.deliver(line, head: head)
+        }
+    }
+
+    /// Tell every phone what changed in the list, soon: they no longer ask every few seconds.
+    func listChanged() {
+        guard listener != nil, listDue == nil else { return }
+        listDue = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            listDue = nil
+            let rows = sessionList()
+            for c in clients.values where c.authed { c.send(["type": "sessions", "sessions": rows]) }
         }
     }
 

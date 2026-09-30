@@ -49,6 +49,7 @@ final class Library {
                     return FileManager.default.fileExists(atPath: cwd)
                 }
                 archiveQuietChats()
+                RemoteBridge.shared.listChanged()
             }
         }
     }
@@ -113,7 +114,10 @@ final class Library {
     func report(_ id: String, conversation: Conversation, running: Bool, waiting: Bool) {
         conversations[id] = WeakConversation(value: conversation)
         let now: Live? = waiting ? .waiting : running ? .running : (live[id] == .unread ? .unread : nil)
-        if live[id] != now { live[id] = now }
+        if live[id] != now {
+            live[id] = now
+            RemoteBridge.shared.listChanged()
+        }
     }
 
     /// A turn finished: unread unless it's what the user is looking at.
