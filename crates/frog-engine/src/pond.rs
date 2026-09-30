@@ -16,6 +16,7 @@ pub mod ask;
 pub mod background;
 pub mod brief;
 pub mod calendar;
+pub mod morning;
 pub mod github;
 
 use anyhow::Result;
@@ -123,6 +124,13 @@ pub struct Pond {
     pub items: BTreeMap<String, Entry>,
     #[serde(default)]
     pub scores: BTreeMap<Kind, Score>,
+    /// When you last looked at a brief (the app says, when it shows one). What was found
+    /// after that is new.
+    #[serde(default)]
+    pub last_seen: Option<DateTime<Utc>>,
+    /// The local day of the last morning notice: one a day at most.
+    #[serde(default)]
+    pub notified_on: Option<chrono::NaiveDate>,
 }
 
 pub fn dir() -> PathBuf {
@@ -342,6 +350,22 @@ pub fn latest() -> Option<brief::Brief> {
     std::fs::read(dir().join("brief.json"))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
+}
+
+/// You looked at the brief: nothing in it is new any more.
+pub fn seen() -> Result<()> {
+    let dir = dir();
+    let _lock = Lock::take(&dir)?;
+    let mut pond = Pond::load(&dir);
+    pond.last_seen = Some(Utc::now());
+    pond.save(&dir)?;
+    if let Some(mut b) = latest() {
+        for l in b.items.iter_mut().chain(b.also.iter_mut()) {
+            l.new = false;
+        }
+        write_atomic(&dir.join("brief.json"), &serde_json::to_vec_pretty(&b)?)?;
+    }
+    Ok(())
 }
 
 /// Dismiss an item and rewrite the saved brief without it.

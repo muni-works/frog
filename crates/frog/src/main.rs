@@ -180,6 +180,13 @@ struct Cli {
     /// about it (JSON with --json: {"prompt", "repo"}).
     #[arg(long, value_name = "ID")]
     ask: Option<String>,
+    /// You looked at the brief: what's in it is no longer new.
+    #[arg(long)]
+    seen: bool,
+    /// The morning notice, when one is due (after 7, once a day, only for something new):
+    /// print it (JSON with --json, `null` when none) and count today as notified.
+    #[arg(long)]
+    morning: bool,
     /// Take an item out of the brief: it isn't worth your time. It comes back if it changes.
     #[arg(long, value_name = "ID")]
     dismiss: Option<String>,
@@ -658,6 +665,19 @@ async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
                 Some(b) => println!("on: {} looks every 15 minutes", b.display()),
                 None => println!("off"),
             }
+        }
+        return Ok(Some(true));
+    }
+    if cli.seen {
+        pond::seen()?;
+        return Ok(Some(true));
+    }
+    if cli.morning {
+        let notice = pond::morning::check(cfg).await?;
+        if cli.json {
+            println!("{}", serde_json::to_string(&notice)?);
+        } else if let Some(n) = notice {
+            println!("{}\n{}", n.title, n.body);
         }
         return Ok(Some(true));
     }

@@ -47,6 +47,18 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         return authorized ?? false
     }
 
+    /// Whether a notification would be shown (you've said yes).
+    func canPost() async -> Bool { await allowed() }
+
+    /// The brief's morning notice. Clicking it opens the brief.
+    func morning(title: String, body: String) {
+        let c = UNMutableNotificationContent()
+        c.title = title
+        c.body = body
+        c.userInfo = ["brief": true]
+        post(c, id: "morning-brief")
+    }
+
     /// Whether notifications haven't been asked about yet.
     func notAskedYet() async -> Bool {
         guard !SingleInstance.isTesting else { return false }
@@ -99,9 +111,13 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         let id = response.notification.request.content.userInfo["permission"] as? String
+        let brief = response.notification.request.content.userInfo["brief"] as? Bool == true
         let action = response.actionIdentifier
         await MainActor.run {
-            if let id, let answer = answers[id] {
+            if brief {
+                NSApp.activate()
+                NotificationCenter.default.post(name: .showBrief, object: nil)
+            } else if let id, let answer = answers[id] {
                 switch action {
                 case Action.allow: answer(.allow)
                 case Action.deny: answer(.deny)

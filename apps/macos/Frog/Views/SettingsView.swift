@@ -27,6 +27,7 @@ private struct GeneralSettings: View {
     @AppStorage("notifyWhenDone") private var notifyWhenDone = true
     @State private var pond = Pond.shared
     @AppStorage(CalendarSense.key) private var calendarSense = false
+    @AppStorage(MorningNotice.key) private var morningNotice = true
 
     private func setCalendar(_ on: Bool) async {
         guard on else {
@@ -58,12 +59,19 @@ private struct GeneralSettings: View {
                     set: { on in Task { await pond.setBackground(on) } }
                 ))
                 .disabled(pond.background == nil)
+                Toggle("Tell me about the brief in the morning", isOn: Binding(
+                    get: { morningNotice },
+                    set: { on in
+                        morningNotice = on
+                        if on { Task { if await Notifier.shared.notAskedYet() { await Notifier.shared.ask() } } }
+                    }
+                ))
                 Toggle("Include my calendar", isOn: Binding(
                     get: { calendarSense },
                     set: { on in Task { await setCalendar(on) } }
                 ))
             } footer: {
-                Text("Looks at GitHub every 15 minutes from login, so the brief is ready when you open Frog. Your calendar is read on this Mac and never leaves it. The brief only reads; nothing is sent or changed for you.")
+                Text("Looks at GitHub every 15 minutes from login, so the brief is ready when you open Frog. In the morning, one notification when there's something new, never more than once a day. Your calendar is read on this Mac and never leaves it. The brief only reads; nothing is sent or changed for you.")
                     .foregroundStyle(.secondary)
             }
         }
