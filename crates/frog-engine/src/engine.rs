@@ -204,6 +204,15 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     });
                 }
                 Op::Interrupt => router.cancel.lock().unwrap().cancel(),
+                // Stopping mid-turn ends the turn first (cancelled, and logged as such), rather
+                // than waiting behind it: a client that stops an engine gives it about a second
+                // before killing it, and a turn cut off there would stay open in the log.
+                Op::Shutdown => {
+                    router.cancel.lock().unwrap().cancel();
+                    if work_tx.send(Op::Shutdown).is_err() {
+                        break;
+                    }
+                }
                 Op::Permission { id, decision } => {
                     if let Some(tx) = router.pending.lock().unwrap().remove(&id) {
                         let _ = tx.send(decision);
@@ -462,7 +471,8 @@ impl Agent {
             prompt::system_prompt(&o.cwd, &o.cfg, &o.profile.model),
             harness::guidance(tier)
         );
-        let (session_id, messages, seq, turn, log, inputs) = match (&o.resume, &o.store) {
+        let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
+        {
             (Some(id), Some(dir)) => {
                 let l = session::load(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
@@ -475,12 +485,26 @@ impl Agent {
                         _ => None,
                     })
                     .collect();
-                (id.clone(), l.messages, seq, turn, Some(log), inputs)
+                // A turn that started and never ended: the engine died or was killed mid-turn.
+                let unfinished = l.events.iter().rev().find_map(|e| match &e.event {
+                    Event::TurnEnded { .. } => Some(None),
+                    Event::TurnStarted { turn, .. } => Some(Some(*turn)),
+                    _ => None,
+                });
+                (
+                    id.clone(),
+                    l.messages,
+                    seq,
+                    turn,
+                    Some(log),
+                    inputs,
+                    unfinished.flatten(),
+                )
             }
             (Some(_), None) => {
                 anyhow::bail!(ConfigError("can't resume without a session store".into()))
             }
-            (None, _) => (session::new_id(), Vec::new(), 0, 0, None, Vec::new()),
+            (None, _) => (session::new_id(), Vec::new(), 0, 0, None, Vec::new(), None),
         };
         let skills = if o.subagent {
             Default::default()
@@ -576,8 +600,12 @@ impl Agent {
             shared,
         };
         if resumed {
-            // A session that died mid-turn may have dangling tool calls.
+            // A session that died mid-turn may have dangling tool calls, and a turn that never
+            // ended: end it, cancelled, so clients don't show it running forever.
             agent.repair();
+            if let Some(turn) = unfinished {
+                agent.end_turn(turn, EndReason::Cancelled);
+            }
         }
         agent.sync_specs();
         agent.refresh_repo_map(&[]);
@@ -3293,6 +3321,24 @@ mod tests {
         shutdown(h).await;
     }
 
+    /// Append a `turn_started` for turn 1 to a session log, as an engine does when a turn begins.
+    fn log_turn_started(dir: &std::path::Path, id: &str) -> Result<()> {
+        let mut log = Log::open(dir, id)?;
+        log.append(&Record::Event {
+            env: Envelope {
+                seq: 1,
+                session: id.to_string(),
+                created: 0,
+                event: Event::TurnStarted {
+                    turn: 1,
+                    input: "go".into(),
+                    images: Vec::new(),
+                },
+            },
+        })?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn crashed_mid_turn_session_is_repaired_on_resume() {
         let dir = tmp_store();
@@ -3327,9 +3373,19 @@ mod tests {
         .unwrap();
         drop(log);
 
+        drop(log_turn_started(&dir, &id));
         let h = engine_at(vec![], true, Some(dir.clone()), Some(id.clone()));
         shutdown(h).await;
         let loaded = session::load(&dir, &id).unwrap();
+        // The turn it died in is ended, cancelled, not left running.
+        assert!(loaded.events.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnEnded {
+                turn: 1,
+                reason: EndReason::Cancelled,
+                ..
+            }
+        )));
         let last = loaded.messages.last().unwrap();
         assert_eq!(last.role, Role::User);
         assert!(
