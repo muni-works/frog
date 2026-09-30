@@ -200,6 +200,8 @@ final class MarkdownCache {
 
 struct MarkdownView: View {
     let text: String
+    /// Still arriving from the model: written in at a reading pace.
+    var streaming = false
     @State private var cache = MarkdownCache()
 
     var body: some View {
@@ -207,7 +209,7 @@ struct MarkdownView: View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(Array(Self.segments(cache.blocks(for: text)).enumerated()), id: \.offset) { _, segment in
                 switch segment {
-                case .text(let blocks): MessageText(blocks: blocks)
+                case .text(let blocks): MessageText(blocks: blocks, streaming: streaming)
                 case .mermaid(let code): MermaidBlock(code: code)
                 }
             }

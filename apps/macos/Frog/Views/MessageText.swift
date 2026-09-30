@@ -7,6 +7,8 @@ import SwiftUI
 /// changed, so a selection in what's already there survives new text arriving.
 struct MessageText: NSViewRepresentable {
     let blocks: [MarkdownBlock]
+    /// Still arriving: reveal it at a reading pace, inking in (see `InkReveal`).
+    var streaming = false
 
     func makeNSView(context: Context) -> MessageTextView {
         let view = MessageTextView(usingTextLayoutManager: false)
@@ -28,6 +30,7 @@ struct MessageText: NSViewRepresentable {
     }
 
     func updateNSView(_ view: MessageTextView, context: Context) {
+        view.reveal.streaming = streaming
         view.show(blocks)
     }
 
@@ -44,6 +47,7 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
     /// The code blocks laid over their attachments, in order.
     private var codeViews: [NSHostingView<CodeOverlay>] = []
     private var placePending = false
+    lazy var reveal = InkReveal(view: self)
 
     // MARK: Content
 
@@ -74,6 +78,25 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         ranges = newRanges
         needsLayout = true
         invalidateIntrinsicContentSize()
+        reveal.textChanged()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        reveal.windowChanged()
+    }
+
+    /// A code block shows once the pen reaches it.
+    func syncCodeVisibility() {
+        for (i, item) in codeAttachments().enumerated() where i < codeViews.count {
+            let visible = reveal.codeVisible(at: item.range.location)
+            let alpha: CGFloat = visible ? 1 : 0
+            guard codeViews[i].alphaValue != alpha else { continue }
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = visible ? 0.3 : 0
+                codeViews[i].animator().alphaValue = alpha
+            }
+        }
     }
 
     // MARK: Size

@@ -9,7 +9,7 @@ struct ItemView: View {
     var body: some View {
         switch item.kind {
         case .message:
-            MarkdownView(text: item.text)
+            MarkdownView(text: item.text, streaming: !item.done)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .reasoning:
             ReasoningView(text: item.text, done: item.done)
