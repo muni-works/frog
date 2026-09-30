@@ -423,7 +423,7 @@ private struct ActivityPanel: View {
                 }
             }
             if !turn.input.isEmpty {
-                Text(turn.input)
+                Text(turn.request)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)

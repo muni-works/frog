@@ -142,7 +142,7 @@ struct TimelineRail: View {
     private func label(_ t: TurnState) -> some View {
         HStack(spacing: 6) {
             if let n = t.number { Text("\(n)").foregroundStyle(.secondary).monospacedDigit() }
-            Text(t.input.isEmpty ? "(no prompt)" : t.input)
+            Text(t.input.isEmpty ? "(no prompt)" : t.request)
                 .lineLimit(1)
                 .frame(maxWidth: 260, alignment: .leading)
         }

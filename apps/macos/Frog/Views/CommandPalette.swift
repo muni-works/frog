@@ -25,7 +25,7 @@ extension Workspace {
                 out.append(PaletteCommand(id: "interrupt", title: "Interrupt", subtitle: "Esc", symbol: "stop.fill") { c.interrupt() })
             }
             if let last = c.turns.last(where: { $0.finished && $0.number != nil }), let n = last.number {
-                out.append(PaletteCommand(id: "fork", title: "Fork After Last Turn", subtitle: last.input, symbol: "arrow.triangle.branch") { self.fork(afterTurn: n) })
+                out.append(PaletteCommand(id: "fork", title: "Fork After Last Turn", subtitle: last.request, symbol: "arrow.triangle.branch") { self.fork(afterTurn: n) })
             }
             for mode in Mode.allCases where mode != c.status?.mode {
                 out.append(PaletteCommand(id: "mode-\(mode.rawValue)", title: "Mode: \(mode.label)", symbol: mode.symbol) { c.setMode(mode) })
