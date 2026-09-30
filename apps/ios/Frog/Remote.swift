@@ -123,6 +123,7 @@ final class Remote: SessionLink {
         case "sessions":
             let rows = msg["sessions"] as? [[String: Any]] ?? []
             sessions = rows.compactMap(RemoteSession.init)
+            WatchLink.shared.share(sessions)
             open?.isOpenOnMac = sessions.first { $0.id == open?.id }?.open ?? false
         case "event":
             guard let env = msg["env"],
@@ -194,6 +195,15 @@ final class Remote: SessionLink {
         }
     }
 
+    /// Answer a question from a list, the watch or a widget, without opening its thread.
+    func answer(_ q: RemoteSession.Question, in session: String, allow: Bool) {
+        Task {
+            await perform(op: ["op": "permission", "id": q.id, "decision": allow ? "allow" : "deny"], in: session)
+            try? await Task.sleep(for: .milliseconds(300))
+            refresh()
+        }
+    }
+
     /// Tell the Mac how to reach this phone when the app is asleep.
     private func registerForPushes() {
         #if targetEnvironment(simulator)
@@ -233,6 +243,25 @@ struct RemoteSession: Identifiable, Hashable {
     let open: Bool
     let pinned: Bool
     let live: Live?
+    /// The step in hand, while it runs.
+    let activity: String?
+    /// What frog is asking, while it waits.
+    let question: Question?
+
+    struct Question: Hashable {
+        let id: String
+        let name: String
+        let arg: String
+
+        /// "Run cargo test?", "Edit main.rs?"
+        var text: String {
+            switch name {
+            case "Bash": "Run \(arg.split(separator: "\n").first.map(String.init) ?? arg)?"
+            case "Edit", "Write": "\(name) \((arg as NSString).lastPathComponent)?"
+            default: "Use \(name)?"
+            }
+        }
+    }
 
     init?(_ row: [String: Any]) {
         guard let id = row["id"] as? String else { return nil }
@@ -245,6 +274,10 @@ struct RemoteSession: Identifiable, Hashable {
         open = row["open"] as? Bool ?? false
         pinned = row["pinned"] as? Bool ?? false
         live = (row["live"] as? String).flatMap(Live.init)
+        activity = row["activity"] as? String
+        question = (row["question"] as? [String: Any]).flatMap { q in
+            (q["id"] as? String).map { Question(id: $0, name: q["name"] as? String ?? "", arg: q["arg"] as? String ?? "") }
+        }
     }
 
     /// Runs on your own hardware (blue), or on someone's data center (green), like the Mac.

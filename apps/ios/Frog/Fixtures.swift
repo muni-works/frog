@@ -120,8 +120,18 @@ final class FixturePlayer: SessionLink {
         ]
         if let diff = item["diff"] { req["preview"] = diff }
         emit(req)
+        shareWithWatch(question: ["id": "p-\(id)", "name": item["name"] ?? "", "arg": item["arg"] ?? ""])
         await withCheckedContinuation { answered = $0 }
         emit(["event": "permission_resolved", "id": "p-\(id)", "decision": "allow"])
+        shareWithWatch(question: nil)
+    }
+
+    /// The recording as the watch would see it from a Mac.
+    private func shareWithWatch(question: [String: Any]?) {
+        var row: [String: Any] = ["id": model.id, "title": model.session.title, "model": model.session.model,
+                                  "open": true, "live": question == nil ? "running" : "waiting", "activity": model.activityLine]
+        if let question { row["question"] = question }
+        WatchLink.shared.share(RemoteSession(row).map { [$0] } ?? [])
     }
 
     func send(op: [String: Any], in session: String) {

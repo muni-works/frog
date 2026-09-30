@@ -65,6 +65,14 @@ struct SessionListView: View {
                     NavigationLink(value: s) {
                         SessionRow(session: s).matchedTransitionSource(id: s.id, in: zoom)
                     }
+                    .swipeActions(edge: .trailing) {
+                        if let q = s.question {
+                            Button("Allow", systemImage: "checkmark") { remote.answer(q, in: s.id, allow: true) }
+                                .tint(Color(red: 0.18, green: 0.62, blue: 0.31))
+                            Button("Deny", systemImage: "xmark") { remote.answer(q, in: s.id, allow: false) }
+                                .tint(.gray)
+                        }
+                    }
                 }
             }
         }
@@ -91,10 +99,16 @@ struct SessionRow: View {
                 Text(session.title)
                     .font(.body.weight(session.live == .unread ? .semibold : .regular))
                     .lineLimit(1)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if let q = session.question {
+                    Text(q.text).font(.caption.weight(.medium)).foregroundStyle(.orange).lineLimit(1)
+                } else if session.live == .running, let a = session.activity {
+                    Text(a).font(.caption).foregroundStyle(.secondary).lineLimit(1).shimmer()
+                } else {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 0)
             switch session.live {

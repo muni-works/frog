@@ -40,6 +40,8 @@ final class RemoteBridge {
         var status: String?
         var permission: String?
         var busy = false
+        /// The step in hand, in words, for lists and the watch.
+        var activity: String?
     }
 
     // MARK: Lifecycle
@@ -98,8 +100,15 @@ final class RemoteBridge {
         case "status": s.status = line
         case "permission_request": s.permission = line
         case "permission_resolved", "turn_ended": s.permission = nil
-        case "turn_started": s.busy = true
-        case "idle": s.busy = false; s.permission = nil
+        case "turn_started": s.busy = true; s.activity = "Thinking"
+        case "idle": s.busy = false; s.permission = nil; s.activity = nil
+        case "item_started":
+            if let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+               let kind = obj["kind"] as? [String: Any] {
+                s.activity = kind["type"] as? String == "tool_call"
+                    ? RemotePush.verb(kind["name"] as? String ?? "", kind["arg"] as? String ?? "")
+                    : kind["type"] as? String == "message" ? "Writing the answer" : "Thinking"
+            }
         default: break
         }
         live[head.session] = s
@@ -192,6 +201,14 @@ final class RemoteBridge {
             case .waiting: row["live"] = "waiting"
             case .unread: row["live"] = "unread"
             case nil: break
+            }
+            if let state = live[s.id] {
+                if let a = state.activity { row["activity"] = a }
+                // The open question, so a list or a watch can answer it without the thread.
+                if let line = state.permission,
+                   let q = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
+                    row["question"] = ["id": q["id"] ?? "", "name": q["name"] ?? "", "arg": String((q["arg"] as? String ?? "").prefix(200))]
+                }
             }
             return row
         }
