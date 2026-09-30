@@ -616,12 +616,7 @@ struct MermaidBlock: View {
             }
         }
         .task(id: code) {
-            // The engine lays it out; away from the Mac there's none, so the code shows.
-            #if os(macOS)
-            let d = await Diagram.fromMermaid(code, cwd: folder ?? FileManager.default.homeDirectoryForCurrentUser)
-            #else
-            let d: Diagram? = nil
-            #endif
+            let d = await DiagramLayout.mermaid(code, folder)
             diagram = d
             failed = d == nil
         }

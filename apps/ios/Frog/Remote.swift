@@ -53,9 +53,11 @@ final class Remote {
     @ObservationIgnored private var waiters: [CheckedContinuation<Bool, Never>] = []
     @ObservationIgnored private var listWaiters: [CheckedContinuation<[RemoteSession], Never>] = []
     /// Requests waiting on the Mac's answer, by ref: a session id, or why not.
-    @ObservationIgnored private var asks: [String: CheckedContinuation<Result<String, AskError>, Never>] = [:]
+    @ObservationIgnored private var asks: [String: CheckedContinuation<Result<Reply, AskError>, Never>] = [:]
 
     struct AskError: Error { let message: String }
+    /// The Mac's answer, as it came (JSON, only ever read on the main actor).
+    struct Reply: @unchecked Sendable { let msg: [String: Any] }
 
     init() {
         let env = ProcessInfo.processInfo.environment
@@ -151,6 +153,11 @@ final class Remote {
 
     private func handle(_ data: Data) {
         guard let msg = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        // The answer to something we asked (open, new, fork, a diagram…).
+        if let ref = msg["ref"] as? String, !ref.isEmpty, let ask = asks.removeValue(forKey: ref) {
+            ask.resume(returning: msg["type"] as? String == "error"
+                ? .failure(AskError(message: msg["message"] as? String ?? "Something went wrong")) : .success(Reply(msg: msg)))
+        }
         switch msg["type"] as? String {
         case "welcome":
             state = .connected(host: msg["host"] as? String ?? "Mac")
@@ -192,11 +199,9 @@ final class Remote {
             }
         case "opened":
             let id = msg["session"] as? String ?? ""
-            if let ref = msg["ref"] as? String, let ask = asks.removeValue(forKey: ref) { ask.resume(returning: .success(id)) }
             if openLink?.session == id { openLink?.isOpenOnMac = true }
-        case "error" where (msg["ref"] as? String).map { asks[$0] != nil } ?? false:
-            let ref = msg["ref"] as! String
-            asks.removeValue(forKey: ref)?.resume(returning: .failure(AskError(message: msg["message"] as? String ?? "Something went wrong")))
+        case "error" where msg["ref"] != nil:
+            break
         case "error":
             let text = msg["message"] as? String ?? "Something went wrong"
             if (msg["session"] as? String) == openLink?.session { openLink?.refused(text) }
@@ -283,17 +288,36 @@ final class Remote {
 
     /// Open a conversation in a window on the Mac, so it can take messages.
     func openOnMac(_ id: String) async -> Result<String, AskError> {
-        await ask(["type": "open", "session": id])
+        await ask(["type": "open", "session": id]).map { $0["session"] as? String ?? id }
+    }
+
+    /// Fork or rewind a turn on the Mac, then carry on in the session it continues in.
+    func turn(_ action: String, _ turn: UInt64, in session: String) async -> Result<String, AskError> {
+        let r = await ask(["type": "turn", "session": session, "turn": turn, "action": action])
+            .map { $0["session"] as? String ?? session }
+        if case .success(let next) = r { requested = next }
+        return r
+    }
+
+    /// A Mermaid diagram laid out by the Mac's engine.
+    func layoutMermaid(_ code: String) async -> Diagram? {
+        guard case .success(let msg) = await ask(["type": "mermaid", "code": code, "session": openLink?.session ?? ""]),
+              let json = msg["diagram"], let data = try? JSONSerialization.data(withJSONObject: json) else { return nil }
+        return try? JSONDecoder.frog.decode(Diagram.self, from: data)
     }
 
     /// Start a new conversation on the Mac (a chat, or in the folder of `like`) with `text`.
     func startNew(_ text: String, like: String?) async -> Result<String, AskError> {
         var m: [String: Any] = ["type": "new", "text": text]
         if let like { m["like"] = like }
-        return await ask(m)
+        return await ask(m).map { $0["session"] as? String ?? "" }
     }
 
-    private func ask(_ message: [String: Any]) async -> Result<String, AskError> {
+    private func ask(_ message: [String: Any]) async -> Result<[String: Any], AskError> {
+        await askReply(message).map(\.msg)
+    }
+
+    private func askReply(_ message: [String: Any]) async -> Result<Reply, AskError> {
         let ref = UUID().uuidString
         var m = message
         m["ref"] = ref

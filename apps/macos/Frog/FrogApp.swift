@@ -16,6 +16,9 @@ struct FrogApp: App {
         Notifier.shared.setup()
         Conversation.effects = MacEffects.shared
         ModelContext.useMac()
+        DiagramLayout.mermaid = { source, cwd in
+            await Diagram.fromMermaid(source, cwd: cwd ?? FileManager.default.homeDirectoryForCurrentUser)
+        }
         _ = Updates.shared
         RemoteBridge.shared.startIfEnabled()
     }

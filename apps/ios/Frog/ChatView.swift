@@ -18,8 +18,19 @@ struct ChatView: View {
     }
     private var canSend: Bool { link?.isOpenOnMac ?? true }
 
+    /// Fork and rewind happen on the Mac, in the pane showing this conversation; the phone
+    /// follows to the session it continues in. Only while it's open there.
+    private var turnActions: TurnActions {
+        guard let link, link.isOpenOnMac else { return TurnActions() }
+        let session = link.session
+        return TurnActions(
+            fork: { n in Task { await Remote.shared.turn("fork", n, in: session) } },
+            rewind: { n in Task { await Remote.shared.turn("rewind", n, in: session) } }
+        )
+    }
+
     var body: some View {
-        TranscriptView(conversation: conversation, actions: TurnActions())
+        TranscriptView(conversation: conversation, actions: turnActions)
             .environment(\.pinsQuestions, true)
             .safeAreaInset(edge: .bottom) {
                 ZStack {

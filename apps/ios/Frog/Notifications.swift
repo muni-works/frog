@@ -110,6 +110,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             Conversation.effects = PhoneEffects.shared
             // Models are named and placed the way the Mac does, from what the Mac says.
             ModelContext.providers = { Remote.shared.providers }
+            DiagramLayout.mermaid = { code, _ in await Remote.shared.layoutMermaid(code) }
             Notifications.shared.setup()
             WatchLink.shared.start()
         }

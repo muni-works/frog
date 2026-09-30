@@ -246,6 +246,41 @@ final class RemoteBridge {
             let like = (msg["like"] as? String).flatMap { id in Library.shared.sessions.first { $0.id == id } }
             let folder = like.flatMap { $0.isChat ? nil : $0.folder }
             request(OpenRequest(session: nil, folder: folder, text: msg["text"] as? String), for: client, ref: msg["ref"])
+        case "turn":
+            // Fork or rewind, from a phone, in the pane showing it.
+            guard let id = msg["session"] as? String, let n = (msg["turn"] as? NSNumber)?.uint64Value,
+                  let action = (msg["action"] as? String).flatMap(TurnRequest.Action.init) else { return }
+            let ref = msg["ref"] ?? ""
+            let r = TurnRequest(session: id, turn: n, action: action)
+            r.done = { [weak client] next in
+                Task { @MainActor in
+                    if let next {
+                        client?.send(["type": "opened", "session": next, "ref": ref])
+                        try? await Task.sleep(for: .seconds(1))
+                        Library.shared.refresh()
+                    } else {
+                        client?.send(["type": "error", "ref": ref, "message": "Couldn't \(action.rawValue) that turn."])
+                    }
+                }
+            }
+            NotificationCenter.default.post(name: TurnRequest.name, object: r)
+            Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                if !r.claimed { client.send(["type": "error", "ref": ref, "message": "Open this conversation on your Mac first."]) }
+            }
+        case "mermaid":
+            // Lay out a diagram for a phone, which has no engine of its own.
+            guard let code = msg["code"] as? String else { return }
+            let ref = msg["ref"] ?? ""
+            let cwd = (msg["session"] as? String).flatMap { id in Library.shared.sessions.first { $0.id == id }?.folder }
+            Task {
+                let d = await Diagram.fromMermaid(code, cwd: cwd ?? FileManager.default.homeDirectoryForCurrentUser)
+                if let d, let data = try? JSONEncoder().encode(d), let json = try? JSONSerialization.jsonObject(with: data) {
+                    client.send(["type": "diagram", "ref": ref, "diagram": json])
+                } else {
+                    client.send(["type": "error", "ref": ref, "message": "Couldn't draw that diagram."])
+                }
+            }
         case "detach":
             if let id = msg["session"] as? String { client.attached[id] = nil }
         case "op":
@@ -412,6 +447,30 @@ final class RemoteBridge {
         default:
             client.send(["type": "error", "session": id, "message": "Not supported from the phone yet."])
         }
+    }
+}
+
+/// A phone asking to fork or rewind a turn. The pane showing the session claims it.
+@MainActor
+final class TurnRequest {
+    static let name = Notification.Name("eco.frog.remote.turn")
+    enum Action: String { case fork, rewind }
+
+    let session: String
+    let turn: UInt64
+    let action: Action
+    private(set) var claimed = false
+    var done: (String?) -> Void = { _ in }
+
+    init(session: String, turn: UInt64, action: Action) {
+        self.session = session
+        self.turn = turn
+        self.action = action
+    }
+
+    func claim() -> Bool {
+        defer { claimed = true }
+        return !claimed
     }
 }
 

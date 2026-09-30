@@ -72,7 +72,8 @@ struct Diagram: Codable, Hashable, Sendable {
     func node(_ id: String) -> Node? { nodes.first { $0.id == id } }
 
     #if os(macOS)
-    /// Lay out Mermaid source with the engine (`frog --mermaid --json`).
+    /// Lay out Mermaid source with the engine (`frog --mermaid --json`). Views go through
+    /// `DiagramLayout.mermaid`, which is this on the Mac and a request to the Mac on a phone.
     static func fromMermaid(_ source: String, cwd: URL) async -> Diagram? {
         guard let binary = Frog.binary else { return nil }
         return await Task.detached {
@@ -127,4 +128,11 @@ struct Diagram: Codable, Hashable, Sendable {
         }.value
     }
     #endif
+}
+
+/// Where Mermaid gets laid out: the engine on the Mac; on a phone, the Mac's engine over the
+/// bridge. Nil means it couldn't be, and the code shows instead.
+@MainActor
+enum DiagramLayout {
+    static var mermaid: (_ source: String, _ cwd: URL?) async -> Diagram? = { _, _ in nil }
 }

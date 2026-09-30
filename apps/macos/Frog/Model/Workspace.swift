@@ -252,14 +252,17 @@ final class Workspace {
     }
 
     /// Branch the current session right after `turn`, and switch to the branch.
-    func fork(afterTurn turn: UInt64) {
-        guard let id = conversation?.sessionID else { return }
-        start(arguments: ["--fork", "\(id)@\(turn)"])
+    @discardableResult
+    func fork(afterTurn turn: UInt64) -> Conversation? {
+        guard let id = conversation?.sessionID else { return nil }
+        return start(arguments: ["--fork", "\(id)@\(turn)"])
     }
 
     /// Restore files edited in `turn` and later, and continue on a branch from just before it.
-    func rewind(toBefore turn: UInt64) async {
-        guard let id = conversation?.sessionID else { return }
+    /// Returns the new branch's session, or nil if it failed (the transcript says why).
+    @discardableResult
+    func rewind(toBefore turn: UInt64) async -> String? {
+        guard let id = conversation?.sessionID else { return nil }
         do {
             let r = try await Frog.json(Rewound.self, args: ["--rewind", "\(id)@\(turn)", "--json"], cwd: folder)
             let c = start(arguments: ["-r", r.session])
@@ -268,8 +271,10 @@ final class Workspace {
                 ? "Rewound to before turn \(turn). No files needed restoring."
                 : "Rewound to before turn \(turn) and restored \(files) file\(files == 1 ? "" : "s").")
             await refresh()
+            return r.session
         } catch {
             conversation?.flash("Rewind failed: \(error.localizedDescription)", warning: true)
+            return nil
         }
     }
 
