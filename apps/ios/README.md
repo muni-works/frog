@@ -9,11 +9,19 @@ xcodegen && open FrogRemote.xcodeproj
 
 ## How it connects
 
-The Mac app runs `RemoteBridge` (Settings → General → "Let frog on iPhone connect"): a WebSocket
-on `127.0.0.1:8913` that speaks the engine protocol. A phone says the code first, then lists
-conversations, attaches to one (history replayed from the session log, then the engine's lines
-live) and sends ops (`submit`, `permission`, `interrupt`, `set_mode`). Loopback only until LAN
-pairing, so today that means the iOS Simulator on the same Mac.
+The Mac app runs `RemoteBridge` (Settings → General → "Let frog on iPhone connect"):
+
+- **On the network (8914):** advertised on Bonjour as `_frog._tcp`, encrypted with TLS-PSK keyed
+  by the pairing code (an HMAC of it), carrying JSON lines. Pair by scanning the QR code in the
+  Mac's settings (a `frog://pair` link the Camera app opens in frog) or by picking the Mac and
+  typing the code. A wrong code fails the handshake. New Code on the Mac signs every phone out.
+- **Loopback (8913):** a plain WebSocket, for the Simulator and tools.
+
+A phone says the code, lists conversations (the Mac pushes changes), attaches to one (history
+replayed from the session log, then the engine's lines live) and sends ops (`submit`,
+`permission`, `interrupt`, `set_mode`). It can also ask the Mac to `open` a conversation or start
+a `new` one; a Mac window opens it without replacing what's on screen. On the phone the code
+lives in the Keychain.
 
 ## Targets
 
@@ -52,8 +60,8 @@ a paid team's APNs key and isn't deployed yet.
 
 ## Not done yet
 
-- LAN pairing (Bonjour, a QR code, SPAKE2 → pinned keys), so a real phone can connect.
-- Deploying the relay, and tying its requests to a pairing.
-- Starting or resuming a conversation from the phone when it isn't open on the Mac.
-- The list refreshes by polling every 4 seconds; the Mac should push changes.
+- A paid team: a real device, APNs (and deploying the relay, with its requests tied to a
+  pairing), TestFlight.
+- Bonjour discovery is built but unconfirmed here: the Mac may be waiting on macOS's local network
+  permission for the app. Pairing by QR code or address works.
 - A watch complication.
