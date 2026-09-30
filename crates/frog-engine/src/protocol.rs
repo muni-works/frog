@@ -119,7 +119,125 @@ pub enum Op {
         #[serde(default)]
         arguments: serde_json::Value,
     },
+    /// What this client can do beyond the basics. Sent once after connecting; defaults to nothing.
+    SetClientCaps {
+        /// The client shows terminal panes and hosts preview panes (webviews it observes and
+        /// drives for the engine).
+        #[serde(default)]
+        panes: bool,
+    },
+    /// Open a pane. The engine mints the id and answers with [`Event::PaneOpened`]. Terminal
+    /// panes are engine-owned shells; preview panes are the client's webviews.
+    PaneOpen {
+        kind: PaneKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cols: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rows: Option<u16>,
+    },
+    /// Keystrokes for a terminal pane (UTF-8; control characters as-is).
+    PaneInput {
+        id: String,
+        data: String,
+    },
+    PaneResize {
+        id: String,
+        cols: u16,
+        rows: u16,
+    },
+    PaneClose {
+        id: String,
+    },
+    /// Something a preview pane observed: a console message, a failed request, a navigation.
+    /// Errors during a turn reach the model; everything is kept for `Preview.console`.
+    PaneReport {
+        id: String,
+        kind: ReportKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        level: Option<ReportLevel>,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<u16>,
+    },
+    /// The answer to an [`Event::PaneRequest`] with the same `call`.
+    PaneReply {
+        call: String,
+        #[serde(default)]
+        result: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// The user picked an element in a preview pane. `context` (tag, text, selector, source
+    /// location) is inlined the next time `mention` (e.g. `@button.submit`) appears in a message.
+    PaneMention {
+        id: String,
+        mention: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<String>,
+    },
     Shutdown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneKind {
+    Terminal,
+    Preview,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportKind {
+    Console,
+    Network,
+    Error,
+    Navigated,
+    Title,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+/// What the engine can ask a preview pane to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneAction {
+    Read,
+    Click,
+    Type,
+    Screenshot,
+    Navigate,
+    Eval,
+    Console,
+}
+
+impl PaneAction {
+    pub fn parse(s: &str) -> Option<Self> {
+        serde_json::from_value(serde_json::Value::String(s.to_string())).ok()
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Click => "click",
+            Self::Type => "type",
+            Self::Screenshot => "screenshot",
+            Self::Navigate => "navigate",
+            Self::Eval => "eval",
+            Self::Console => "console",
+        }
+    }
 }
 
 /// Wrapper for every event.
@@ -190,6 +308,27 @@ pub enum Event {
     Titled {
         title: String,
     },
+    PaneOpened {
+        id: String,
+        kind: PaneKind,
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+    },
+    PaneClosed {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit: Option<i32>,
+    },
+    /// A preview pane's screenshot taken with turn `turn`'s checkpoint, so a client can show
+    /// before/after. `path` is relative to the session's data dir (`panes/turn-3.png`).
+    PaneCheckpoint {
+        id: String,
+        turn: u64,
+        path: String,
+    },
 
     // ---- ephemeral ----
     ItemDelta {
@@ -257,6 +396,34 @@ pub enum Event {
         level: Level,
         message: String,
     },
+    /// A terminal pane's grid after processing output. Coalesced to at most ~30/s per pane.
+    /// Plain text for now (no attributes).
+    PaneScreen {
+        id: String,
+        cols: u16,
+        rows: u16,
+        lines: Vec<String>,
+        /// `[row, col]`.
+        cursor: [u16; 2],
+        /// Per-pane update counter (the envelope's `seq` is the session's).
+        screen_seq: u64,
+    },
+    /// The engine asks the client's preview pane to do something. Answer with [`Op::PaneReply`]
+    /// using the same `call`; the engine gives up after 20s.
+    PaneRequest {
+        call: String,
+        id: String,
+        action: PaneAction,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
+    /// Something a pane reported that the client should show inline (a console error
+    /// surfaced during a turn).
+    PaneNotice {
+        id: String,
+        level: ReportLevel,
+        message: String,
+    },
     /// A queued op other than `Submit` failed. Turn failures arrive as `TurnEnded` instead.
     Error {
         error: EngineError,
@@ -288,6 +455,9 @@ impl Event {
                 | Self::FolderChanged { .. }
                 | Self::ModeChanged { .. }
                 | Self::Titled { .. }
+                | Self::PaneOpened { .. }
+                | Self::PaneClosed { .. }
+                | Self::PaneCheckpoint { .. }
         )
     }
 }

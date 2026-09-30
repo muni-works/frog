@@ -13,8 +13,8 @@ struct TranscriptView: View {
     /// The view keeps to the bottom as content grows (see `onScrollGeometryChange`).
     @State private var following = true
     @State private var userScrolling = false
-    /// Where the last turn starts, from the top of the view: a long answer stops following
-    /// once its prompt reaches the top, so you read it from the beginning.
+    /// Where the last turn starts, in the content: a long answer stops following once its
+    /// prompt would pass the top of the view, so you read it from the beginning.
     @State private var lastTurnTop: CGFloat = .infinity
     /// Stopped short of the end, with more below (stopped at a long answer's start, or you
     /// scrolled up while it wrote): the pill offers the way down.
@@ -46,6 +46,7 @@ struct TranscriptView: View {
                 .onChange(of: conversation.turns.last?.id) { _, id in
                     guard let id else { return }
                     following = true
+                    parked = false
                     proxy.scrollTo(Self.end, anchor: .bottom)
                 }
                 // Follow the answer as it streams: while following, content that grows takes the
@@ -54,22 +55,25 @@ struct TranscriptView: View {
                 .onScrollGeometryChange(for: ScrollEnd.self, of: ScrollEnd.init) { old, new in
                     below = new.below
                     height = new.contentHeight
-                    if new.atBottom { parked = false }
+                    let growth = new.contentHeight - old.contentHeight
                     if userScrolling {
+                        // Only your own scrolling ends a stop: back at the end, it follows again.
                         following = new.atBottom
-                        if !new.atBottom, conversation.busy { park(at: new.contentHeight) }
-                    } else if following, !new.atBottom {
+                        if !new.atBottom, parked || conversation.busy {
+                            park(at: new.contentHeight)
+                        } else {
+                            parked = false
+                        }
+                    } else if following, conversation.busy, growth > 0,
+                              lastTurnTop < new.visibleTop + growth + topInset + 4,
+                              let id = conversation.turns.last?.id {
                         // Keeping to the bottom would push the answer's start above the top:
                         // stop with the prompt at the top instead, and read from there.
-                        let growth = new.contentHeight - old.contentHeight
-                        if conversation.busy, growth > 0, lastTurnTop - growth < topInset + 4,
-                           let id = conversation.turns.last?.id {
-                            following = false
-                            park(at: old.contentHeight)
-                            withAnimation(Motion.quick(reduced: reduceMotion)) { proxy.scrollTo(id, anchor: .top) }
-                        } else {
-                            proxy.scrollTo(Self.end, anchor: .bottom)
-                        }
+                        following = false
+                        park(at: old.contentHeight)
+                        withAnimation(Motion.quick(reduced: reduceMotion)) { proxy.scrollTo(id, anchor: .top) }
+                    } else if following, !new.atBottom {
+                        proxy.scrollTo(Self.end, anchor: .bottom)
                     }
                 }
                 // Only your own scrolling stops (or restarts) following: the lazy stack also
@@ -111,14 +115,24 @@ struct TranscriptView: View {
         let atBottom: Bool
         /// Content below the view.
         let below: CGFloat
+        /// The top of the visible area, in content coordinates.
+        let visibleTop: CGFloat
 
         init(_ g: ScrollGeometry) {
             contentHeight = g.contentSize.height
             offset = g.contentOffset.y
-            below = max(0, g.contentSize.height + g.contentInsets.bottom - (g.contentOffset.y + g.containerSize.height))
+            // Against what's actually visible above the composer. The offset alone misses the top
+            // inset, which is large while the content is shorter than the view (it's anchored to
+            // the bottom): the transcript never thought it was at the end, and following
+            // scrolled to it over and over.
+            below = max(0, g.contentSize.height - (g.visibleRect.maxY - g.contentInsets.bottom))
+            visibleTop = g.visibleRect.minY
             atBottom = below <= 24
         }
     }
+
+    /// The transcript's content, for measuring where a turn starts in it.
+    private static let content = "transcript-content"
 
     /// A row at the very end of the transcript, below the last turn and its indicators.
     private static let end = "transcript-end"
@@ -131,7 +145,7 @@ struct TranscriptView: View {
                     TurnView(turn: turn, conversation: conversation, actions: actions, pinsFooter: footers.contains(turn.id))
                         .background {
                             if turn.id == conversation.turns.last?.id {
-                                Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .scrollView).minY }) {
+                                Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.content)).minY }) {
                                     lastTurnTop = $0
                                 }
                             }
@@ -157,6 +171,7 @@ struct TranscriptView: View {
                 Color.clear.frame(height: 0).id(Self.end)
             }
             .scrollTargetLayout()
+            .coordinateSpace(.named(Self.content))
             .frame(maxWidth: 820)
             .padding(.horizontal, 28)
             .padding(.top, 20)
@@ -184,8 +199,12 @@ struct TranscriptView: View {
             .ignoresSafeArea()
         }
         .onScrollTargetVisibilityChange(idType: TurnState.ID.self, threshold: 0.05) { onVisibleTurns($0) }
-        // Start at the bottom; following (above) keeps it there as streamed content grows.
-        .defaultScrollAnchor(.bottom)
+        // Start at the bottom, and keep short content there. While following (above), growth
+        // keeps the view at the bottom too; once a long answer has stopped at its start, it
+        // grows downward under a still view instead.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .alignment)
+        .defaultScrollAnchor(following ? .bottom : .top, for: .sizeChanges)
         .overlay {
             if conversation.turns.isEmpty, !conversation.busy, !conversation.replaying, conversation.failure == nil {
                 EmptyTranscript(conversation: conversation)
