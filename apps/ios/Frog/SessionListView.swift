@@ -3,11 +3,13 @@ import SwiftUI
 /// Every conversation on the Mac: what needs you first, then what's running, then the rest.
 struct SessionListView: View {
     let remote: Remote
+    /// iPad: rows select the conversation shown beside the list instead of pushing it.
+    var selection: Binding<String?>? = nil
     @Namespace private var zoom
     @AppStorage("playfulSounds") private var sounds = true
 
     var body: some View {
-        List {
+        List(selection: selection) {
             if case .failed(let why) = remote.state {
                 Label(why, systemImage: "wifi.exclamationmark")
                     .font(.footnote)
@@ -62,8 +64,14 @@ struct SessionListView: View {
         if !rows.isEmpty {
             Section(name) {
                 ForEach(rows) { s in
-                    NavigationLink(value: s) {
-                        SessionRow(session: s).matchedTransitionSource(id: s.id, in: zoom)
+                    Group {
+                        if selection != nil {
+                            SessionRow(session: s).tag(s.id)
+                        } else {
+                            NavigationLink(value: s) {
+                                SessionRow(session: s).matchedTransitionSource(id: s.id, in: zoom)
+                            }
+                        }
                     }
                     .swipeActions(edge: .trailing) {
                         if let q = s.question {

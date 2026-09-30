@@ -27,17 +27,36 @@ extension FrogApp {
 struct RootView: View {
     let remote: Remote
     @Environment(\.scenePhase) private var phase
+    @Environment(\.horizontalSizeClass) private var size
     @State private var path: [RemoteSession] = []
+    /// iPad: the conversation beside the list.
+    @State private var selection: String?
     /// A conversation to open once the list knows it (from Handoff or a notification).
     @State private var pending: String?
 
+    private var connected: Bool { !remote.code.isEmpty && (everConnected || remote.isConnected) }
+
     var body: some View {
-        NavigationStack(path: $path) {
-            Group {
-                if remote.code.isEmpty || !(everConnected || remote.isConnected) {
-                    ConnectView(remote: remote)
-                } else {
-                    SessionListView(remote: remote)
+        Group {
+            if size == .regular, connected {
+                // iPad: the list beside the conversation, like Messages.
+                NavigationSplitView {
+                    SessionListView(remote: remote, selection: $selection)
+                } detail: {
+                    if let id = selection, let s = remote.sessions.first(where: { $0.id == id }) {
+                        let model = remote.attach(s)
+                        ChatView(model: model) { remote.detach(model) }.id(id)
+                    } else {
+                        ContentUnavailableView {
+                            Label { Text("Pick a conversation") } icon: { FrogFace(mood: .idle, size: 56).tint(.frog) }
+                        } description: {
+                            Text("What frog is doing on your Mac shows up here.")
+                        }
+                    }
+                }
+            } else {
+                NavigationStack(path: $path) {
+                    if connected { SessionListView(remote: remote) } else { ConnectView(remote: remote) }
                 }
             }
         }
@@ -73,7 +92,7 @@ struct RootView: View {
     private func openPending() {
         guard let id = pending, let s = remote.sessions.first(where: { $0.id == id }) else { return }
         pending = nil
-        path = [s]
+        if size == .regular { selection = s.id } else { path = [s] }
     }
 }
 
