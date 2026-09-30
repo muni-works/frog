@@ -18,10 +18,23 @@ struct TurnView: View {
     /// The pointer is over what you asked (its actions show) rather than elsewhere in the turn.
     @State private var hoveringPrompt = false
     @State private var confirmRewind = false
+    /// False until a just-sent prompt has sprung into place.
+    @State private var landed: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(Verbosity.key) private var defaultVerbosity = Verbosity.standard.rawValue
     @AppStorage("density") private var density = Density.comfortable.rawValue
 
     @Environment(\.models) private var models
+
+    init(turn: TurnState, conversation: Conversation, actions: TurnActions, pinsFooter: Bool = true) {
+        self.turn = turn
+        self.conversation = conversation
+        self.actions = actions
+        self.pinsFooter = pinsFooter
+        // Only a prompt sent a moment ago flies in; history, replays and a scrolled-back
+        // turn are simply there.
+        _landed = State(initialValue: !(turn.sentAt.map { Date.now.timeIntervalSince($0) < 1 } ?? false))
+    }
 
     private var running: Bool { !turn.finished && conversation.busy }
 
@@ -49,6 +62,17 @@ struct TurnView: View {
             if !turn.input.isEmpty {
                 VStack(alignment: .trailing, spacing: 2) {
                     UserPrompt(text: turn.input, images: turn.images, tint: promptTint)
+                        // Sent like an iMessage: up from the composer, a little small, then a
+                        // springy settle into place. Just a fade under Reduce Motion.
+                        .scaleEffect(landed || reduceMotion ? 1 : 0.86, anchor: .bottomTrailing)
+                        .offset(y: landed || reduceMotion ? 0 : 44)
+                        .opacity(landed ? 1 : 0)
+                        .onAppear {
+                            guard !landed else { return }
+                            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.66)) {
+                                landed = true
+                            }
+                        }
                         .contextMenu { menu(changes: parts.changes.count) }
                     PromptActions(
                         turn: turn,
