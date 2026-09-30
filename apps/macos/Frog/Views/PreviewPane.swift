@@ -250,7 +250,13 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
     }
 
     func load(_ string: String) {
-        guard let url = URL(string: string), url.scheme != nil else { return }
+        guard let url = URL(string: string) ?? URL(string: string.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""),
+              url.scheme != nil else { return }
+        // A page on disk can read its folder (stylesheets, images, sibling pages).
+        if url.isFileURL {
+            makeWebView().loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            return
+        }
         makeWebView().load(URLRequest(url: url))
     }
 

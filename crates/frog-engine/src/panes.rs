@@ -83,7 +83,8 @@ pub fn preview_spec(read_only: bool) -> ToolSpec {
     } else {
         (
             "A preview pane: a browser view in the app that shows what you're building and reports what it sees. \
-`open` shows `url` in a new pane; `read` returns the page as structured text (an accessibility tree); \
+`open` shows `url` in a new pane (a dev server's URL or port, or a path to an .html file or folder in \
+the project); `read` returns the page as structured text (an accessibility tree); \
 `screenshot` returns a picture of it; `console` returns recent console messages, failed requests and \
 navigations; `click` clicks `selector`; `type` types `text` into `selector`; `navigate` goes to `url`; `eval` \
 runs `js` in the page and returns the result. Console errors that happen while you work are reported to you \
@@ -1160,8 +1161,9 @@ impl Panes {
         if read_only && !matches!(action, "read" | "console") {
             bail!("subagents can only `read` and `console` preview panes");
         }
+        let root = self.state.lock().unwrap().root.clone();
         if action == "open" {
-            let url = str_arg(input, "url")?.to_string();
+            let url = resolve_url(str_arg(input, "url")?, &root)?;
             let id = self.open(PaneKind::Preview, None, Some(url.clone()), 0, 0)?;
             return Ok(Output::text(format!("Opened preview pane {id} at {url}.")));
         }
@@ -1188,7 +1190,12 @@ impl Panes {
         let mut args = serde_json::Map::new();
         for k in ["url", "selector", "text", "js"] {
             if let Some(v) = input[k].as_str() {
-                args.insert(k.into(), Value::String(v.to_string()));
+                let v = if k == "url" {
+                    resolve_url(v, &root)?
+                } else {
+                    v.to_string()
+                };
+                args.insert(k.into(), Value::String(v));
             }
         }
         let v = self
@@ -1210,6 +1217,77 @@ impl Panes {
         }
         Ok(Output::text(truncate_middle(&result_text(&v), 30_000)))
     }
+}
+
+/// What the model passed as a preview URL, made loadable: a port or `localhost:3000` gets
+/// `http://`; a path (relative to the project, or `file://`) must exist, and a folder opens
+/// its `index.html`. A missing file is an error that lists the pages there are, rather than
+/// a blank pane the model would call open.
+fn resolve_url(raw: &str, root: &Path) -> Result<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        bail!("`url` is empty");
+    }
+    if raw.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(format!("http://localhost:{raw}"));
+    }
+    let local = ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"];
+    if local.iter().any(|h| raw.starts_with(h)) {
+        return Ok(format!("http://{raw}"));
+    }
+    let path = if let Some(p) = raw.strip_prefix("file://") {
+        PathBuf::from(p)
+    } else if raw.contains("://") || raw.starts_with("about:") || raw.starts_with("data:") {
+        return Ok(raw.to_string());
+    } else {
+        let p = PathBuf::from(raw.strip_prefix("~/").map_or(raw.to_string(), |rest| {
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(rest)
+                .display()
+                .to_string()
+        }));
+        if p.is_absolute() { p } else { root.join(p) }
+    };
+    let path = if path.is_dir() {
+        path.join("index.html")
+    } else {
+        path
+    };
+    if !path.is_file() {
+        let pages = html_files(root, 12);
+        let hint = if pages.is_empty() {
+            "There are no .html files in the project; if it has a dev server, start it in Terminal and open its URL.".to_string()
+        } else {
+            format!("Pages in the project:\n{}", pages.join("\n"))
+        };
+        bail!("no file at {}. {hint}", path.display());
+    }
+    Ok(format!("file://{}", path.display()))
+}
+
+/// Up to `max` .html files under `root`, relative, skipping ignored and build folders.
+fn html_files(root: &Path, max: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let walk = ignore::WalkBuilder::new(root).max_depth(Some(5)).build();
+    for e in walk.flatten() {
+        let p = e.path();
+        if p.extension().is_some_and(|x| x == "html")
+            && !p.components().any(|c| {
+                matches!(
+                    c.as_os_str().to_str(),
+                    Some("node_modules" | "target" | "build" | "dist")
+                )
+            })
+        {
+            out.push(p.strip_prefix(root).unwrap_or(p).display().to_string());
+            if out.len() >= max {
+                break;
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 fn level_name(l: ReportLevel) -> &'static str {
@@ -1246,6 +1324,36 @@ fn image_bytes(v: &Value) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_urls_resolve_or_say_what_there_is() {
+        let root = std::env::temp_dir().join(format!("frog-preview-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("site")).unwrap();
+        std::fs::write(root.join("site/index.html"), "<h1>hi</h1>").unwrap();
+        assert_eq!(resolve_url("3000", &root).unwrap(), "http://localhost:3000");
+        assert_eq!(
+            resolve_url("localhost:5173/x", &root).unwrap(),
+            "http://localhost:5173/x"
+        );
+        assert_eq!(
+            resolve_url("https://frog.eco", &root).unwrap(),
+            "https://frog.eco"
+        );
+        let index = format!("file://{}", root.join("site/index.html").display());
+        assert_eq!(resolve_url("site", &root).unwrap(), index);
+        assert_eq!(
+            resolve_url(&format!("file://{}", root.join("site").display()), &root).unwrap(),
+            index
+        );
+        let err = resolve_url("docs/README.md", &root)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no file at") && err.contains("site/index.html"),
+            "{err}"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn grid_tracks_screen_log_and_prompt_marks() {
