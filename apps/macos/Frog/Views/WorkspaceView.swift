@@ -413,9 +413,11 @@ struct WorkspaceView: View {
         // The morning notice was clicked: the brief, in a new chat, unless one's already showing.
         .onReceive(NotificationCenter.default.publisher(for: .showBrief)) { _ in
             guard window?.isKeyWindow ?? true else { return }
-            let showing = Frog.isChat(workspace.folder) && (workspace.conversation?.turns.isEmpty ?? false)
-            if !showing { panes.switchFolder(nil, in: focused) }
-            Task { await Pond.shared.refresh() }
+            showBrief()
+        }
+        // Clicking the notice launched frog: this is the first window, so it shows the brief.
+        .task {
+            if MorningNotice.pendingShow { showBrief() }
         }
         .focusedSceneValue(\.frogWindow, FrogWindow(
             workspace: workspace, state: focused.ui,
@@ -537,6 +539,14 @@ struct HuggingScroll<Content: View>: View {
 }
 
 extension WorkspaceView {
+    /// The brief, in a new chat, unless an empty chat (where it sits) is already showing.
+    private func showBrief() {
+        MorningNotice.pendingShow = false
+        let showing = Frog.isChat(workspace.folder) && (workspace.conversation?.turns.isEmpty ?? false)
+        if !showing { panes.switchFolder(nil, in: focused) }
+        Task { await Pond.shared.refresh() }
+    }
+
     private var windowTitle: String {
         if workspace.race != nil { return workspace.name }
         return workspace.conversation?.title ?? (workspace.isChat ? "New Chat" : "New Conversation")

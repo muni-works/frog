@@ -116,7 +116,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         await MainActor.run {
             if brief {
                 NSApp.activate()
-                NotificationCenter.default.post(name: .showBrief, object: nil)
+                MorningNotice.show()
             } else if let id, let answer = answers[id] {
                 switch action {
                 case Action.allow: answer(.allow)

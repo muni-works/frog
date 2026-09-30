@@ -700,7 +700,12 @@ async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
         let every = std::time::Duration::from_secs(minutes.max(1) * 60);
         loop {
             match pond::pass(cfg).await {
-                Ok(b) => eprintln!("{} brief: {}", b.at.with_timezone(&chrono::Local).format("%H:%M"), b.headline),
+                Ok(b) => {
+                    eprintln!("{} brief: {}", b.at.with_timezone(&chrono::Local).format("%H:%M"), b.headline);
+                    if let Err(e) = pond::morning::wake_app(&b) {
+                        eprintln!("couldn't wake Frog for the morning notice: {e:#}");
+                    }
+                }
                 Err(e) => eprintln!("pond pass failed: {e:#}"),
             }
             tokio::time::sleep(every).await;

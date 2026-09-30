@@ -3,8 +3,15 @@ import SwiftUI
 @main
 struct FrogApp: App {
     init() {
-        // One frog: a second copy hands its folder to the running one and quits.
-        SingleInstance.handOff()
+        if MorningNotice.headless {
+            // Woken by the brief's watcher to post the morning notice: no window, no Dock icon,
+            // and never in the way of a frog that's already open (it asks on its own).
+            if SingleInstance.otherIsRunning { exit(0) }
+            NSApplication.shared.setActivationPolicy(.accessory)
+        } else {
+            // One frog: a second copy hands its folder to the running one and quits.
+            SingleInstance.handOff()
+        }
         if SingleInstance.isTesting {
             // A test host: no Dock icon, no windows of its own (tests render offscreen).
             NSApplication.shared.setActivationPolicy(.accessory)
@@ -25,8 +32,8 @@ struct FrogApp: App {
         }
         .defaultSize(width: 1100, height: 760)
         .windowToolbarStyle(.unified)
-        .defaultLaunchBehavior(SingleInstance.isTesting ? .suppressed : .presented)
-        .restorationBehavior(SingleInstance.isTesting ? .disabled : .automatic)
+        .defaultLaunchBehavior(SingleInstance.isTesting || MorningNotice.headless ? .suppressed : .presented)
+        .restorationBehavior(SingleInstance.isTesting || MorningNotice.headless ? .disabled : .automatic)
         .commands { FrogCommands() }
 
         WindowGroup("Diagram", for: DiagramDocument.self) { $doc in
@@ -107,6 +114,14 @@ enum SingleInstance {
 
     /// Per bundle id, so a debug frog and the installed one don't open each other's folders.
     static let openFolder = Notification.Name("\(Bundle.main.bundleIdentifier ?? "eco.frog").openFolder")
+
+    /// Another copy of this frog is running.
+    static var otherIsRunning: Bool {
+        guard let id = Bundle.main.bundleIdentifier else { return false }
+        let me = ProcessInfo.processInfo.processIdentifier
+        return NSRunningApplication.runningApplications(withBundleIdentifier: id)
+            .contains { $0.processIdentifier != me && !$0.isTerminated }
+    }
 
     static func handOff() {
         guard !isTesting, let id = Bundle.main.bundleIdentifier else { return }
