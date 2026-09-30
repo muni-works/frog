@@ -175,6 +175,10 @@ pub struct Config {
     /// on-device model when available, else the session's model.
     #[serde(default)]
     pub auto_classifier: Option<String>,
+    /// The model that writes the pond's brief (a profile or provider/model). Default: Apple's
+    /// on-device model when available, else the default model if it runs on your devices.
+    #[serde(default)]
+    pub brief_model: Option<String>,
     /// The WebSearch backend: "searxng", "brave", "exa" or "tavily". Unset: a configured
     /// `searxng_url`, else a search key in the environment, else no WebSearch.
     #[serde(default)]

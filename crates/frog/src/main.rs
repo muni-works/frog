@@ -162,6 +162,27 @@ struct Cli {
     /// devices), or ask (forget the answer). Without a value, print the answer; then exit.
     #[arg(long, value_name = "ANSWER", num_args = 0..=1, default_missing_value = "")]
     cloud_policy: Option<String>,
+    /// Look around (GitHub for now), write the brief of what needs you, print it and exit.
+    /// Reads only: nothing is sent or changed on your behalf.
+    #[arg(long)]
+    brief: bool,
+    /// With --brief: print the last brief without looking again.
+    #[arg(long, requires = "brief")]
+    cached: bool,
+    /// Keep the brief fresh: look again every N minutes (default 15), until stopped.
+    #[arg(long, value_name = "MINUTES", num_args = 0..=1, default_missing_value = "15")]
+    watch: Option<u64>,
+    /// Keep the brief fresh while frog is closed, from login on (a LaunchAgent running --watch):
+    /// on or off. Without a value, say whether it's on.
+    #[arg(long, value_name = "ON|OFF", num_args = 0..=1, default_missing_value = "")]
+    background: Option<String>,
+    /// Print a prompt for a conversation about an item in the brief, with what GitHub says
+    /// about it (JSON with --json: {"prompt", "repo"}).
+    #[arg(long, value_name = "ID")]
+    ask: Option<String>,
+    /// Take an item out of the brief: it isn't worth your time. It comes back if it changes.
+    #[arg(long, value_name = "ID")]
+    dismiss: Option<String>,
     /// Never ask for permission.
     #[arg(long)]
     yolo: bool,
@@ -255,6 +276,9 @@ async fn run() -> Result<bool> {
             println!("{}", c.as_str().unwrap_or("ask"));
         }
         return Ok(true);
+    }
+    if let Some(done) = pond(&cli, &cfg).await? {
+        return Ok(done);
     }
     let (profile_name, mut profile) = cfg.resolve(cli.model.as_deref())?;
     if let Some(b) = cli.base_url {
@@ -613,6 +637,125 @@ fn session_tree(
         }
     }
     Ok(d)
+}
+
+/// `--brief`, `--watch` and `--dismiss`: the pond.
+async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
+    use frog_engine::pond;
+    if let Some(v) = &cli.background {
+        use frog_engine::pond::background;
+        match v.as_str() {
+            "on" => background::on(&std::env::current_exe()?.canonicalize()?)?,
+            "off" => background::off()?,
+            "" => {}
+            other => anyhow::bail!("--background takes on or off, not `{other}`"),
+        }
+        let bin = background::status();
+        if cli.json {
+            println!("{}", serde_json::json!({ "on": bin.is_some(), "binary": bin }));
+        } else {
+            match bin {
+                Some(b) => println!("on: {} looks every 15 minutes", b.display()),
+                None => println!("off"),
+            }
+        }
+        return Ok(Some(true));
+    }
+    if let Some(id) = &cli.ask {
+        let (prompt, repo) = pond::ask::prompt(id).await?;
+        if cli.json {
+            println!("{}", serde_json::json!({ "prompt": prompt, "repo": repo }));
+        } else {
+            println!("{prompt}");
+        }
+        return Ok(Some(true));
+    }
+    if let Some(id) = &cli.dismiss {
+        if !pond::dismiss(id)? {
+            anyhow::bail!("nothing open in the pond is called `{id}`");
+        }
+        return Ok(Some(true));
+    }
+    if let Some(minutes) = cli.watch {
+        let every = std::time::Duration::from_secs(minutes.max(1) * 60);
+        loop {
+            match pond::pass(cfg).await {
+                Ok(b) => eprintln!("{} brief: {}", b.at.with_timezone(&chrono::Local).format("%H:%M"), b.headline),
+                Err(e) => eprintln!("pond pass failed: {e:#}"),
+            }
+            tokio::time::sleep(every).await;
+        }
+    }
+    if !cli.brief {
+        return Ok(None);
+    }
+    let b = if cli.cached {
+        pond::latest().context("no brief yet: run frog --brief")?
+    } else {
+        pond::pass(cfg).await?
+    };
+    if cli.json {
+        println!("{}", serde_json::to_string(&b)?);
+    } else {
+        print_brief(&b);
+    }
+    Ok(Some(true))
+}
+
+fn print_brief(b: &frog_engine::pond::brief::Brief) {
+    use frog_engine::pond::Place;
+    println!("\n  {}\n", b.headline);
+    if !b.today.is_empty() {
+        use frog_engine::pond::calendar::clock;
+        let day: Vec<String> = b
+            .today
+            .iter()
+            .map(|e| if e.all_day { e.title.clone() } else { format!("{} {}", clock(e.start), e.title) })
+            .collect();
+        println!("  \x1b[2mtoday\x1b[0m  {}\n", day.join(" · "));
+    }
+    for l in &b.items {
+        let dot = if l.new { "●" } else { "○" };
+        println!("  {dot} {}  \x1b[2m{}\x1b[0m", l.title, l.place);
+        println!("    {}", l.note);
+        println!("    \x1b[2m{}\x1b[0m", l.url);
+    }
+    if !b.also.is_empty() {
+        println!("\n  \x1b[2malso: {} quieter thing{}\x1b[0m", b.also.len(), if b.also.len() == 1 { "" } else { "s" });
+    }
+    for t in &b.trouble {
+        println!("\n  \x1b[33m! {t}\x1b[0m");
+    }
+    let r = &b.receipt;
+    let read: Vec<String> = r.read.iter().map(|x| format!("{} ({})", x.source, x.what)).collect();
+    let model = match &r.model {
+        Some(m) => format!(
+            "{} {}",
+            m.name,
+            match m.place {
+                Place::Mac => "on this Mac",
+                Place::Server => "on your server",
+                Place::Cloud => "in the cloud",
+            }
+        ),
+        None => "templates, no model".into(),
+    };
+    let private = r.private_bytes();
+    let left = if private == 0 {
+        "none of your data left this Mac".to_string()
+    } else {
+        format!("{} of your data left this Mac", bytes(private))
+    };
+    let wh = r.wh.filter(|w| *w >= 0.005).map(|w| format!(" · {w:.2} Wh")).unwrap_or_default();
+    println!("\n  \x1b[2mread {} · wrote with {model} · {left}{wh}\x1b[0m\n", read.join(", "));
+}
+
+fn bytes(n: u64) -> String {
+    match n {
+        0..1_000 => format!("{n} B"),
+        1_000..1_000_000 => format!("{:.1} KB", n as f64 / 1e3),
+        _ => format!("{:.1} MB", n as f64 / 1e6),
+    }
 }
 
 fn list_sessions(

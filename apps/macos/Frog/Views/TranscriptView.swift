@@ -21,6 +21,10 @@ struct TranscriptView: View {
     @State private var parked = false
     /// Content below the view, in points.
     @State private var below: CGFloat = 0
+    /// How tall the content was when the view stopped following: the pill only shows once
+    /// something new has come in past it, not for what was already there.
+    @State private var parkedHeight: CGFloat?
+    @State private var height: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -50,18 +54,23 @@ struct TranscriptView: View {
                 // lazy stack re-estimates rows it hasn't laid out.
                 .onScrollGeometryChange(for: ScrollEnd.self, of: ScrollEnd.init) { old, new in
                     below = new.below
+                    height = new.contentHeight
                     let growth = new.contentHeight - old.contentHeight
                     if userScrolling {
                         // Only your own scrolling ends a stop: back at the end, it follows again.
                         following = new.atBottom
-                        parked = !new.atBottom && (parked || conversation.busy)
+                        if !new.atBottom, parked || conversation.busy {
+                            park(at: new.contentHeight)
+                        } else {
+                            parked = false
+                        }
                     } else if following, conversation.busy, growth > 0,
                               lastTurnTop < new.visibleTop + growth + topInset + 4,
                               let id = conversation.turns.last?.id {
                         // Keeping to the bottom would push the answer's start above the top:
                         // stop with the prompt at the top instead, and read from there.
                         following = false
-                        parked = true
+                        park(at: old.contentHeight)
                         withAnimation(Motion.quick(reduced: reduceMotion)) { proxy.scrollTo(id, anchor: .top) }
                     } else if following, !new.atBottom {
                         proxy.scrollTo(Self.end, anchor: .bottom)
@@ -73,8 +82,8 @@ struct TranscriptView: View {
                     userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 }
                 .overlay(alignment: .bottom) {
-                    if parked, below > 30 {
-                        MoreBelow(lines: Int(below / 22), writing: conversation.busy) {
+                    if unseen {
+                        NewBelow(writing: conversation.busy) {
                             parked = false
                             following = true
                             withAnimation(Motion.panel(reduced: reduceMotion)) { proxy.scrollTo(Self.end, anchor: .bottom) }
@@ -83,8 +92,20 @@ struct TranscriptView: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottom)))
                     }
                 }
-                .animation(Motion.quick(reduced: reduceMotion), value: parked && below > 30)
+                .animation(Motion.quick(reduced: reduceMotion), value: unseen)
         }
+    }
+
+    private func park(at contentHeight: CGFloat) {
+        if !parked { parkedHeight = contentHeight }
+        parked = true
+    }
+
+    /// Something new came in below where you stopped (more than a line: the thinking row
+    /// changing size doesn't count), and it's still out of view.
+    private var unseen: Bool {
+        guard parked, below > 30, let parkedHeight else { return false }
+        return height - parkedHeight > 40
     }
 
     /// Where the view is against the end of the content.
@@ -446,20 +467,17 @@ struct ScrollBackdropClear: NSViewRepresentable {
     }
 }
 
-/// The way down from a long answer: how much is left, and whether it's still being written.
-private struct MoreBelow: View {
-    let lines: Int
+/// The way down to a message that came in below where you're reading.
+private struct NewBelow: View {
     let writing: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 7) {
-                Image(systemName: writing ? "pencil.line" : "arrow.down")
+                Image(systemName: "arrow.down")
                     .symbolEffect(.pulse, options: .repeating, isActive: writing)
-                Text(writing ? "Writing · \(lines) more line\(lines == 1 ? "" : "s")" : "\(lines) more line\(lines == 1 ? "" : "s")")
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+                Text("New message")
             }
             .font(.callout.weight(.medium))
             .padding(.horizontal, 14)
@@ -468,6 +486,6 @@ private struct MoreBelow: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .capsule)
-        .help("Follow the answer to the end")
+        .help("Go to the end and follow the answer")
     }
 }

@@ -25,6 +25,18 @@ struct SettingsView: View {
 private struct GeneralSettings: View {
     @AppStorage("editor") private var editor = ""
     @AppStorage("notifyWhenDone") private var notifyWhenDone = true
+    @State private var pond = Pond.shared
+    @AppStorage(CalendarSense.key) private var calendarSense = false
+
+    private func setCalendar(_ on: Bool) async {
+        guard on else {
+            calendarSense = false
+            CalendarSense.forget()
+            return
+        }
+        calendarSense = await CalendarSense.requestAccess()
+        if calendarSense { await pond.refresh() }
+    }
 
     var body: some View {
         Form {
@@ -40,8 +52,23 @@ private struct GeneralSettings: View {
                 }
             }
             Toggle("Notify me when a turn finishes while I'm in another app", isOn: $notifyWhenDone)
+            Section {
+                Toggle("Keep the brief fresh while Frog is closed", isOn: Binding(
+                    get: { pond.background ?? false },
+                    set: { on in Task { await pond.setBackground(on) } }
+                ))
+                .disabled(pond.background == nil)
+                Toggle("Include my calendar", isOn: Binding(
+                    get: { calendarSense },
+                    set: { on in Task { await setCalendar(on) } }
+                ))
+            } footer: {
+                Text("Looks at GitHub every 15 minutes from login, so the brief is ready when you open Frog. Your calendar is read on this Mac and never leaves it. The brief only reads; nothing is sent or changed for you.")
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+        .task { await pond.loadBackground() }
     }
 }
 

@@ -283,6 +283,13 @@ final class Panes {
         setWorkspace(Workspace(folder: url ?? Frog.chatFolder, fresh: true), in: pane)
     }
 
+    /// A fresh conversation in `url` (nil: a plain chat) that opens with `prompt`.
+    func start(_ prompt: String, in url: URL?, pane: Pane) {
+        let workspace = Workspace(folder: url ?? Frog.chatFolder, fresh: true)
+        setWorkspace(workspace, in: pane)
+        workspace.conversation?.submit(prompt)
+    }
+
     /// The agent moved this pane's conversation to another folder (`UseFolder`): reopen it there,
     /// so the pane, the sidebar and the git bar follow. The old engine lets go of the session
     /// file first; resuming a session another process holds would start a new one instead.
