@@ -356,6 +356,39 @@ extension SnapshotTests {
         print("snapshots: \(outDir.path)")
     }
 
+    /// The terminal pane from a sample grid, and the preview pane on a local page: what the
+    /// engine's side will drive.
+    func testRenderPanes() throws {
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        let lines = [
+            #"{"seq":1,"session":"s","created":0,"event":"pane_opened","id":"t1","kind":"terminal","title":"zsh","cwd":"/Users/cam/Developer/demo"}"#,
+            #"{"seq":2,"session":"s","created":0,"event":"pane_screen","id":"t1","cols":60,"rows":12,"lines":["demo % npm run dev","","> demo@0.1.0 dev","> vite","","  VITE v5.4.2  ready in 312 ms","","  ➜  Local:   http://localhost:5173/","  ➜  Network: use --host to expose","","demo % "],"cursor":[10,7],"seq":3}"#,
+            #"{"seq":3,"session":"s","created":0,"event":"pane_opened","id":"p1","kind":"preview","title":"Preview","url":null}"#,
+        ]
+        try lines.map { try JSONDecoder.frog.decode(Envelope.self, from: Data($0.utf8)) }.forEach(c.ingest)
+        XCTAssertEqual(c.panes.panes.map(\.id), ["t1", "p1"])
+        let hub = c.panes
+        let terminal = try XCTUnwrap(hub.pane("t1"))
+        try render(
+            TerminalPane(pane: terminal, hub: hub).background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 480, height: 320), to: "pane-terminal")
+        let preview = try XCTUnwrap(hub.pane("p1"))
+        let html = """
+        <html><head><title>Demo</title></head><body style="font-family:-apple-system;padding:24px">
+        <h1>Hello from the preview</h1><p>A form the model can read and drive.</p>
+        <form id="login"><label>Email <input name="email" value="cam@example.com"></label>
+        <button type="submit">Sign in</button></form></body></html>
+        """
+        try render(
+            PreviewPane(pane: preview, hub: hub, html: html).background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 480, height: 420), to: "pane-preview")
+        hub.selected = .pane("t1")
+        try render(
+            PaneArea(conversation: c, height: 400, width: .constant(480)).background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 480, height: 400), to: "pane-area")
+        print("snapshots: \(outDir.path)")
+    }
+
     /// Diagram cards, in dark and light: the model's diagrams from recent sessions (when
     /// present) and one laid out from Mermaid by the engine.
     func testRenderDiagrams() async throws {

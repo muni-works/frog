@@ -245,6 +245,11 @@ impl Renderer {
                     Level::Warn => warn(&format!("  {message}")),
                 }
             }
+            // Pane screens are for clients that draw panes; only what a pane reported shows here.
+            Event::PaneNotice { id, message, .. } => {
+                self.idle();
+                warn(&format!("  [{id}] {message}"));
+            }
             Event::Error { error: e } => {
                 self.idle();
                 error(&e.to_string());

@@ -144,12 +144,16 @@ impl Log {
     }
 
     fn locked(file: File, id: &str) -> Result<Self> {
-        // SAFETY: flock on a valid fd we own; released when the file closes.
-        let r = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if r != 0 {
-            bail!("session {id} is open in another frog process");
+        // A lock just released can linger for a moment: a process forked while it was held
+        // shares it until it execs. Wait that out before calling the session taken.
+        for _ in 0..20 {
+            // SAFETY: flock on a valid fd we own; released when the file closes.
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                return Ok(Self { file });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        Ok(Self { file })
+        bail!("session {id} is open in another frog process")
     }
 
     pub fn append(&mut self, rec: &Record) -> Result<()> {

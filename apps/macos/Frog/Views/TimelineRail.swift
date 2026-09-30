@@ -8,6 +8,8 @@ struct TimelineRail: View {
     let visible: Set<TurnState.ID>
     /// Turns to call out (find matches): drawn with a marker beside the tick.
     var marked: Set<TurnState.ID> = []
+    /// Turns with a preview screenshot: badged with a camera, and comparable in the preview.
+    var checkpoints: Set<UInt64> = []
     let actions: TurnActions
     let jump: (TurnState.ID) -> Void
 
@@ -125,6 +127,12 @@ struct TimelineRail: View {
             if marked.contains(t.id) {
                 let dot = CGRect(x: 3, y: y(of: i, in: h) - 2.5, width: 5, height: 5)
                 ctx.fill(Path(ellipseIn: dot), with: .color(.yellow))
+            }
+            if let n = t.number, checkpoints.contains(n) {
+                let badge = CGRect(x: size.width - 10, y: y(of: i, in: h) - 4, width: 8, height: 8)
+                var image = ctx.resolve(Image(systemName: "camera.fill"))
+                image.shading = .color(.secondary)
+                ctx.draw(image, in: badge)
             }
         }
     }

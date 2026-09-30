@@ -132,19 +132,129 @@ pub struct Handle {
 }
 
 /// State the op router touches while a turn is running.
-#[derive(Default)]
 struct Shared {
     cancel: Mutex<CancellationToken>,
     pending: Mutex<HashMap<String, oneshot::Sender<Decision>>>,
     /// Connected MCP servers, for elicitation answers and app tool calls mid-turn.
     mcp: Mutex<Option<crate::mcp::Hub>>,
-    /// The current session id, for events emitted outside the agent (MCP callbacks).
-    session: Mutex<String>,
     /// Running subagents by `Task` tool call id, so a client can stop one.
     subagents: Mutex<HashMap<String, CancellationToken>>,
     /// Set (under the lock) just before the first `Idle`; until then the router answers
     /// `Subscribe` itself.
     ready: Mutex<bool>,
+    journal: Arc<Journal>,
+    /// Terminal and preview panes, driven by the router so they work mid-turn.
+    panes: Arc<crate::panes::Panes>,
+}
+
+/// Event numbering and the session log. Shared, so events raised outside the agent loop (MCP
+/// callbacks, panes) get the same seq and, when durable, land in the log too.
+struct Journal {
+    /// Taken when the agent stops, so the event stream closes even though the router (and
+    /// the panes) still hold the journal.
+    events: Mutex<Option<mpsc::UnboundedSender<Envelope>>>,
+    seq: AtomicU64,
+    session: Mutex<String>,
+    store: Option<PathBuf>,
+    /// Opened lazily on the first durable write, so idle launches leave no files behind.
+    log: Mutex<Option<Log>>,
+    /// For the header: cwd and model name.
+    header: Mutex<(PathBuf, String)>,
+}
+
+impl Journal {
+    fn new(events: mpsc::UnboundedSender<Envelope>, store: Option<PathBuf>) -> Self {
+        Self {
+            events: Mutex::new(Some(events)),
+            seq: AtomicU64::new(0),
+            session: Mutex::new(String::new()),
+            store,
+            log: Mutex::new(None),
+            header: Mutex::new((PathBuf::new(), String::new())),
+        }
+    }
+
+    fn session(&self) -> String {
+        self.session.lock().unwrap().clone()
+    }
+
+    /// Switch to a session (new or resumed), with its log if already open.
+    fn start_session(&self, id: String, seq: u64, log: Option<Log>) {
+        *self.session.lock().unwrap() = id;
+        self.seq.store(seq, Ordering::Relaxed);
+        *self.log.lock().unwrap() = log;
+    }
+
+    fn has_log(&self) -> bool {
+        self.log.lock().unwrap().is_some()
+    }
+
+    /// Append a record to the session log, creating the log on first use. An error means the
+    /// session is no longer being saved.
+    fn record(&self, rec: Record) -> std::result::Result<(), String> {
+        let Some(dir) = &self.store else {
+            return Ok(());
+        };
+        let mut log = self.log.lock().unwrap();
+        if log.is_none() {
+            let (cwd, model) = self.header.lock().unwrap().clone();
+            let header = Header {
+                version: session::VERSION,
+                id: self.session(),
+                cwd,
+                model,
+                created: now_ms(),
+                forked_from: None,
+            };
+            match Log::create(dir, header) {
+                Ok(l) => *log = Some(l),
+                Err(e) => return Err(format!("session won't be saved: {e:#}")),
+            }
+        }
+        if let Some(Err(e)) = log.as_mut().map(|l| l.append(&rec)) {
+            *log = None;
+            return Err(format!("session log write failed, no longer saving: {e:#}"));
+        }
+        Ok(())
+    }
+
+    fn sync(&self) {
+        if let Some(l) = self.log.lock().unwrap().as_ref() {
+            let _ = l.sync();
+        }
+    }
+
+    fn emit(&self, event: Event) {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let env = Envelope {
+            seq,
+            session: self.session(),
+            created: now_ms(),
+            event,
+        };
+        if env.event.is_durable()
+            && let Err(message) = self.record(Record::Event { env: env.clone() })
+        {
+            self.emit(Event::Notice {
+                level: Level::Warn,
+                message,
+            });
+        }
+        self.send(env);
+    }
+
+    fn send(&self, env: Envelope) {
+        if let Some(tx) = self.events.lock().unwrap().as_ref() {
+            let _ = tx.send(env);
+        }
+    }
+
+    /// Close the event stream and release the session log (its lock), for good.
+    fn close(&self) {
+        self.sync();
+        self.log.lock().unwrap().take();
+        self.events.lock().unwrap().take();
+    }
 }
 
 /// Start the engine. It emits `Status` then `Idle` once ready, and exits after `Op::Shutdown`
@@ -159,22 +269,36 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     let (op_tx, mut op_rx) = mpsc::unbounded_channel::<Op>();
     let (ev_tx, ev_rx) = mpsc::unbounded_channel();
     let (work_tx, mut work_rx) = mpsc::unbounded_channel::<Op>();
-    let shared = Arc::new(Shared::default());
-    // Weak: the event stream still ends when the agent does.
-    let early = ev_tx.downgrade();
-    let mut agent = Agent::new(opts, provider, ev_tx, shared.clone())?;
+    let journal = Arc::new(Journal::new(ev_tx, opts.store.clone()));
+    let panes = {
+        let j = journal.clone();
+        crate::panes::Panes::new(move |e| j.emit(e))
+    };
+    let shared = Arc::new(Shared {
+        cancel: Default::default(),
+        pending: Default::default(),
+        mcp: Default::default(),
+        subagents: Default::default(),
+        ready: Default::default(),
+        journal,
+        panes,
+    });
+    let mut agent = Agent::new(opts, provider, shared.clone())?;
     // What's running, before anything slow (MCP servers, a local model loading, probing the
     // provider), so a client can name the model as soon as a conversation opens.
     agent.emit_status();
     // A resumed session's log, for answering `Subscribe` while the engine starts up.
-    let resumed = match (&agent.store, agent.log.lock().unwrap().is_some()) {
-        (Some(dir), true) => Some((dir.clone(), agent.session_id.clone(), agent.seq.clone())),
+    let resumed = match (&agent.store, shared.journal.has_log()) {
+        (Some(dir), true) => Some((dir.clone(), agent.session_id.clone())),
         _ => None,
     };
 
     let router = shared.clone();
     tokio::spawn(async move {
         while let Some(op) = op_rx.recv().await {
+            if router.panes.handle(&op) {
+                continue;
+            }
             match op {
                 // Replaying the log needs nothing that starting up does, so a reopened
                 // conversation's transcript doesn't wait on it. Holding `ready` keeps the whole
@@ -182,26 +306,19 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 // agent answers, in order with its turns.
                 Op::Subscribe { after } if resumed.is_some() => {
                     let ready = router.ready.lock().unwrap();
-                    let Some((dir, id, seq)) = resumed.as_ref().filter(|_| !*ready) else {
+                    let Some((dir, id)) = resumed.as_ref().filter(|_| !*ready) else {
                         drop(ready);
                         if work_tx.send(op).is_err() {
                             break;
                         }
                         continue;
                     };
-                    let Some(events) = early.upgrade() else {
-                        continue;
-                    };
+                    let journal = &router.journal;
                     for env in session::events_after(dir, id, after).unwrap_or_default() {
-                        let _ = events.send(env);
+                        journal.send(env);
                     }
-                    let upto = seq.load(Ordering::Relaxed);
-                    let _ = events.send(Envelope {
-                        seq: seq.fetch_add(1, Ordering::Relaxed) + 1,
-                        session: id.clone(),
-                        created: now_ms(),
-                        event: Event::Synced { upto },
-                    });
+                    let upto = journal.seq.load(Ordering::Relaxed);
+                    journal.emit(Event::Synced { upto });
                 }
                 Op::Interrupt => router.cancel.lock().unwrap().cancel(),
                 // Stopping mid-turn ends the turn first (cancelled, and logged as such), rather
@@ -283,6 +400,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 _ = token.cancelled() => Err(Interrupted.into()),
             };
             shared.pending.lock().unwrap().clear();
+            shared.panes.set_in_turn(false);
             if let Err(e) = r {
                 agent.repair();
                 let reason = if e.is::<Interrupted>() {
@@ -304,8 +422,10 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         }
         agent.mcp.shutdown();
         shared.mcp.lock().unwrap().take();
+        shared.panes.shutdown();
         agent.sync_log();
         agent.write_summary();
+        shared.journal.close();
     });
 
     Ok(Handle {
@@ -388,12 +508,9 @@ struct Agent {
     subagent: bool,
     chat: bool,
     store: Option<PathBuf>,
-    /// Opened lazily on the first durable write, so idle launches leave no files behind.
-    log: Mutex<Option<Log>>,
     usage: Usage,
     last_call: Duration,
     session_id: String,
-    seq: Arc<AtomicU64>,
     turn: u64,
     active_turn: Option<u64>,
     /// The context window actually in effect (config, bounded by what the server reports).
@@ -449,17 +566,11 @@ struct Agent {
     session_allow: HashSet<String>,
     /// Context from `Op::Shell`, attached to the next message.
     pending: Vec<String>,
-    events: mpsc::UnboundedSender<Envelope>,
     shared: Arc<Shared>,
 }
 
 impl Agent {
-    fn new(
-        o: Options,
-        provider: Provider,
-        events: mpsc::UnboundedSender<Envelope>,
-        shared: Arc<Shared>,
-    ) -> Result<Self> {
+    fn new(o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
         // The capability cache lives next to the session store; in-memory engines skip it.
         let caps = (o.store.is_some() && !harness::is_hosted(&o.profile))
             .then(|| harness::cached(&o.profile))
@@ -471,6 +582,9 @@ impl Agent {
             prompt::system_prompt(&o.cwd, &o.cfg, &o.profile.model),
             harness::guidance(tier)
         );
+        // Panes open when the session was last saved, to close in the log (their shells died
+        // with that process) so a resumed client doesn't expect them.
+        let mut stale_panes: Vec<String> = Vec::new();
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
@@ -485,6 +599,18 @@ impl Agent {
                         _ => None,
                     })
                     .collect();
+                let mut used = Vec::new();
+                for e in &l.events {
+                    match &e.event {
+                        Event::PaneOpened { id, .. } => {
+                            used.push(id.clone());
+                            stale_panes.push(id.clone());
+                        }
+                        Event::PaneClosed { id, .. } => stale_panes.retain(|p| p != id),
+                        _ => {}
+                    }
+                }
+                shared.panes.seed_ids(used);
                 // A turn that started and never ended: the engine died or was killed mid-turn.
                 let unfinished = l.events.iter().rev().find_map(|e| match &e.event {
                     Event::TurnEnded { .. } => Some(None),
@@ -506,6 +632,11 @@ impl Agent {
             }
             (None, _) => (session::new_id(), Vec::new(), 0, 0, None, Vec::new(), None),
         };
+        *shared.journal.header.lock().unwrap() = (o.cwd.clone(), o.profile_name.clone());
+        shared.journal.start_session(session_id.clone(), seq, log);
+        for id in stale_panes {
+            shared.journal.emit(Event::PaneClosed { id, exit: None });
+        }
         let skills = if o.subagent {
             Default::default()
         } else {
@@ -534,6 +665,8 @@ impl Agent {
         let window = o.profile.context_window();
         let web = Arc::new(tools::web::Web::from_config(&o.cfg));
         let resumed = o.resume.is_some();
+        let shell_root = o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone());
+        shared.panes.configure(o.cwd.clone());
         let mut agent = Self {
             cfg: o.cfg,
             profile_name: o.profile_name,
@@ -547,8 +680,7 @@ impl Agent {
                     ctx.sandbox = Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
                 }
                 if shell_sandbox {
-                    ctx.shell_sandbox =
-                        Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
+                    ctx.shell_sandbox = Some(shell_root);
                 }
                 ctx
             },
@@ -558,11 +690,9 @@ impl Agent {
             subagent: o.subagent,
             chat: o.chat,
             store: o.store,
-            log: Mutex::new(log),
             usage: Usage::default(),
             last_call: Duration::ZERO,
             session_id,
-            seq: Arc::new(AtomicU64::new(seq)),
             turn,
             active_turn: None,
             window,
@@ -596,7 +726,6 @@ impl Agent {
             budget_ok: false,
             session_allow: HashSet::new(),
             pending: Vec::new(),
-            events,
             shared,
         };
         if resumed {
@@ -621,40 +750,13 @@ impl Agent {
 
     /// Append a record to the session log, creating the log on first use.
     fn record(&self, rec: Record) {
-        let Some(dir) = &self.store else { return };
-        let mut log = self.log.lock().unwrap();
-        if log.is_none() {
-            let header = Header {
-                version: session::VERSION,
-                id: self.session_id.clone(),
-                cwd: self.root.clone(),
-                model: self.profile_name.clone(),
-                created: now_ms(),
-                forked_from: None,
-            };
-            match Log::create(dir, header) {
-                Ok(l) => *log = Some(l),
-                Err(e) => {
-                    drop(log);
-                    self.notice(Level::Warn, format!("session won't be saved: {e:#}"));
-                    return;
-                }
-            }
-        }
-        if let Some(Err(e)) = log.as_mut().map(|l| l.append(&rec)) {
-            *log = None;
-            drop(log);
-            self.notice(
-                Level::Warn,
-                format!("session log write failed, no longer saving: {e:#}"),
-            );
+        if let Err(message) = self.shared.journal.record(rec) {
+            self.notice(Level::Warn, message);
         }
     }
 
     fn sync_log(&self) {
-        if let Some(l) = self.log.lock().unwrap().as_ref() {
-            let _ = l.sync();
-        }
+        self.shared.journal.sync();
     }
 
     fn push_msg(&mut self, message: Message) {
@@ -683,17 +785,7 @@ impl Agent {
     // ---- events ----
 
     fn emit(&self, event: Event) {
-        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let env = Envelope {
-            seq,
-            session: self.session_id.clone(),
-            created: now_ms(),
-            event,
-        };
-        if env.event.is_durable() {
-            self.record(Record::Event { env: env.clone() });
-        }
-        let _ = self.events.send(env);
+        self.shared.journal.emit(event);
     }
 
     fn notice(&self, level: Level, message: impl Into<String>) {
@@ -872,6 +964,7 @@ impl Agent {
                     Provider::new(&profile).map_err(|e| ConfigError(format!("{e:#}")))?;
                 self.profile_name = name;
                 self.profile = profile;
+                self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
                 self.caps = (self.store.is_some() && !harness::is_hosted(&self.profile))
                     .then(|| harness::cached(&self.profile))
                     .flatten();
@@ -885,22 +978,21 @@ impl Agent {
             Op::Compact { focus } => self.compact(focus.as_deref()).await?,
             Op::Subscribe { after } => {
                 let replay = match &self.store {
-                    Some(dir) if self.log.lock().unwrap().is_some() => {
+                    Some(dir) if self.shared.journal.has_log() => {
                         session::events_after(dir, &self.session_id, after)?
                     }
                     _ => Vec::new(),
                 };
                 for env in replay {
-                    let _ = self.events.send(env);
+                    self.shared.journal.send(env);
                 }
                 self.emit(Event::Synced {
-                    upto: self.seq.load(Ordering::Relaxed),
+                    upto: self.shared.journal.seq.load(Ordering::Relaxed),
                 });
             }
             Op::Clear => {
                 self.sync_log();
                 self.write_summary();
-                *self.log.lock().unwrap() = None;
                 self.messages.clear();
                 self.inputs.clear();
                 self.skills_loaded.clear();
@@ -915,8 +1007,9 @@ impl Agent {
                 self.ctx.web = web;
                 self.usage = Usage::default();
                 self.session_id = session::new_id();
-                *self.shared.session.lock().unwrap() = self.session_id.clone();
-                self.seq.store(0, Ordering::Relaxed);
+                self.shared
+                    .journal
+                    .start_session(self.session_id.clone(), 0, None);
                 self.turn = 0;
                 self.notes = self.memory.as_ref().map(|m| m.load()).unwrap_or_default();
                 self.refresh_repo_map(&[]);
@@ -929,12 +1022,24 @@ impl Agent {
                     self.emit(Event::Titled { title });
                 }
             }
+            Op::SetClientCaps { panes } => {
+                self.shared.panes.set_client(panes);
+                self.sync_specs();
+                self.apply_harness();
+            }
             // Handled by the router, never queued.
             Op::Interrupt
             | Op::Permission { .. }
             | Op::Elicit { .. }
             | Op::AppCall { .. }
             | Op::StopSubagent { .. }
+            | Op::PaneOpen { .. }
+            | Op::PaneInput { .. }
+            | Op::PaneResize { .. }
+            | Op::PaneClose { .. }
+            | Op::PaneReport { .. }
+            | Op::PaneReply { .. }
+            | Op::PaneMention { .. }
             | Op::Shutdown => {}
         }
         Ok(())
@@ -948,11 +1053,18 @@ impl Agent {
         }
     }
 
-    /// `@path` mentions inline the file so the model doesn't need a Read round-trip.
+    /// `@path` mentions inline the file so the model doesn't need a Read round-trip; `@element`
+    /// mentions the user picked in a preview pane inline what the pane said about them.
     fn expand_mentions(&mut self, input: &str) -> String {
         let mut extra = String::new();
         for tok in input.split_whitespace().filter_map(|t| t.strip_prefix('@')) {
             let tok = tok.trim_end_matches([',', ')', ':', ';', '?', '!']);
+            if let Some(context) = self.shared.panes.mention(&format!("@{tok}")) {
+                extra.push_str(&format!(
+                    "\n<element mention=\"@{tok}\">\n{context}\n</element>"
+                ));
+                continue;
+            }
             let path = self.ctx.resolve(tok.trim_end_matches('.'));
             let Ok(meta) = std::fs::metadata(&path) else {
                 continue;
@@ -1069,6 +1181,7 @@ impl Agent {
             images: images.clone(),
         });
         self.active_turn = Some(turn);
+        self.shared.panes.set_in_turn(true);
         self.inputs.push(input.to_string());
         self.turn_clock = Some(Instant::now());
         if let Some(m) = &self.meter {
@@ -1148,6 +1261,11 @@ impl Agent {
                 self.apply_harness();
             }
             self.sync_specs();
+            // What the preview pane saw go wrong since the last call.
+            let reports = self.shared.panes.take_queued();
+            if !reports.is_empty() {
+                self.push_user(reports.join("\n"));
+            }
             self.fit_context(&mut compacted).await?;
             let sent = self.fixed_chars() + context::history_chars(&self.messages);
             let think = self.think_switch(thinking::wanted(&self.messages, self.quiet));
@@ -1229,6 +1347,7 @@ impl Agent {
             }
         };
         self.active_turn = None;
+        self.shared.panes.set_in_turn(false);
         self.end_turn(turn, reason);
         Ok(())
     }
@@ -1245,6 +1364,10 @@ impl Agent {
         let rules =
             crate::rules::prompt_section(&self.rules, crate::rules::prompt_budget(self.tier));
         self.system = format!("{base}{rules}{}", harness::guidance(self.tier));
+        if !self.chat && !self.subagent {
+            self.system
+                .push_str(prompt::panes_prompt(self.shared.panes.client()));
+        }
         if !self.plain_chat() {
             self.system.push_str(&self.mcp.prompt());
         }
@@ -1346,7 +1469,7 @@ impl Agent {
         ) else {
             return;
         };
-        if self.log.lock().unwrap().is_none() {
+        if !self.shared.journal.has_log() {
             return;
         }
         let Ok(loaded) = session::load(dir, &self.session_id) else {
@@ -1614,6 +1737,10 @@ impl Agent {
                 format!("couldn't checkpoint the working tree: {e:#}"),
             ),
         }
+        // A picture of the preview to go with it, if there is one (doesn't hold the turn up).
+        if let Some(dir) = &self.store {
+            self.shared.panes.checkpoint(&self.session_id, turn, dir);
+        }
     }
 
     /// Before an Edit/Write, log the file's current content so the turn can be rewound.
@@ -1654,19 +1781,9 @@ impl Agent {
         self.emit(Event::Progress {
             label: format!("connecting {n} MCP server{}", if n == 1 { "" } else { "s" }),
         });
-        *self.shared.session.lock().unwrap() = self.session_id.clone();
         let emit = {
-            let (events, seq, shared) =
-                (self.events.clone(), self.seq.clone(), self.shared.clone());
-            move |event: Event| {
-                let seq = seq.fetch_add(1, Ordering::Relaxed) + 1;
-                let _ = events.send(Envelope {
-                    seq,
-                    session: shared.session.lock().unwrap().clone(),
-                    created: now_ms(),
-                    event,
-                });
-            }
+            let journal = self.shared.journal.clone();
+            move |event: Event| journal.emit(event)
         };
         let host = crate::mcp::Host::new(emit, self.rich && self.can_ask, &self.root);
         let hub = crate::mcp::Hub::connect(servers, host).await;
@@ -1727,8 +1844,19 @@ impl Agent {
             specs.retain(|s| matches!(&*s.name, "Diagram" | "WebFetch" | "WebSearch"));
             specs.push(crate::folder::spec());
         }
+        // Terminal panes are engine-owned, so every client gets them; previews need a client
+        // that hosts them. Subagents only get to look.
+        if !self.chat {
+            specs.push(crate::panes::terminal_spec(self.subagent));
+            if self.shared.panes.client() {
+                specs.push(crate::panes::preview_spec(self.subagent));
+            }
+        }
         if self.subagent {
-            specs.retain(|s| tools::kind(&s.name) == Kind::Read);
+            specs.retain(|s| {
+                tools::kind(&s.name) == Kind::Read
+                    || matches!(&*s.name, crate::panes::TERMINAL | crate::panes::PREVIEW)
+            });
         } else {
             if !self.small_window() {
                 specs.push(crate::subagent::spec());
@@ -1751,12 +1879,13 @@ impl Agent {
         } else if self.small_window() && !self.subagent {
             // In a project, a small window holds the core tools and little else: the rest
             // (diagrams, the code map, docs, recall, skills, the plan) cost more room than
-            // they're worth at 8k.
+            // they're worth at 8k. The panes stay: the user can see them, and asks for them.
             specs.retain(|s| {
                 matches!(
                     &*s.name,
                     "Bash" | "Read" | "Write" | "Edit" | "Glob" | "Grep"
-                ) || &*s.name == crate::mcp::SEARCH_TOOL
+                ) || matches!(&*s.name, crate::panes::TERMINAL | crate::panes::PREVIEW)
+                    || &*s.name == crate::mcp::SEARCH_TOOL
                     || &*s.name == crate::folder::TOOL
             });
         }
@@ -1797,7 +1926,8 @@ impl Agent {
                 created: now_ms(),
                 forked_from: None,
             };
-            let mut log = self.log.lock().unwrap();
+            self.shared.journal.header.lock().unwrap().0 = root.clone();
+            let mut log = self.shared.journal.log.lock().unwrap();
             if let Some(l) = log.as_mut() {
                 let created = session::load(&dir, &self.session_id).map(|l| l.header).ok();
                 let header = Header {
@@ -1877,22 +2007,11 @@ impl Agent {
             .lock()
             .unwrap()
             .insert(id.to_string(), stop.clone());
-        let (events, seq, session, item) = (
-            self.events.clone(),
-            self.seq.clone(),
-            self.session_id.clone(),
-            id.to_string(),
-        );
+        let (journal, item) = (self.shared.journal.clone(), id.to_string());
         let out = crate::subagent::run(opts, input, stop, move |inner| {
-            let seq = seq.fetch_add(1, Ordering::Relaxed) + 1;
-            let _ = events.send(Envelope {
-                seq,
-                session: session.clone(),
-                created: now_ms(),
-                event: Event::Subagent {
-                    item: item.clone(),
-                    inner: Box::new(inner),
-                },
+            journal.emit(Event::Subagent {
+                item: item.clone(),
+                inner: Box::new(inner),
             });
         })
         .await;
@@ -1919,6 +2038,12 @@ impl Agent {
         if name == crate::folder::TOOL && !self.subagent {
             return self.use_folder(input).await;
         }
+        if name == crate::panes::TERMINAL {
+            return self.shared.panes.terminal(input, self.subagent).await;
+        }
+        if name == crate::panes::PREVIEW {
+            return self.shared.panes.preview(input, self.subagent).await;
+        }
         if self.mcp.handles(name) {
             return self.mcp.call(id, name, input).await;
         }
@@ -1926,22 +2051,11 @@ impl Agent {
         self.ctx.progress = Some(tx);
         // The tool holds `ctx` mutably, so deltas go out through a detached emitter.
         let emit = {
-            let (events, seq, session, id) = (
-                self.events.clone(),
-                self.seq.clone(),
-                self.session_id.clone(),
-                id.to_string(),
-            );
+            let (journal, id) = (self.shared.journal.clone(), id.to_string());
             move |text: String| {
-                let seq = seq.fetch_add(1, Ordering::Relaxed) + 1;
-                let _ = events.send(Envelope {
-                    seq,
-                    session: session.clone(),
-                    created: now_ms(),
-                    event: Event::ItemDelta {
-                        id: id.clone(),
-                        delta: Delta::Output { text },
-                    },
+                journal.emit(Event::ItemDelta {
+                    id: id.clone(),
+                    delta: Delta::Output { text },
                 });
             }
         };
@@ -1985,7 +2099,10 @@ impl Agent {
         let mut looping = false;
         for (id, name, input) in uses {
             let seen = repeats.entry(format!("{name}\u{0}{input}")).or_insert(0);
-            *seen += 1;
+            // Reading a pane again is polling, not looping: what's there changes.
+            if !crate::panes::is_read(&name, &input) {
+                *seen += 1;
+            }
             let seen = *seen;
             looping |= seen >= LOOP_STOP;
             let (_, arg) = tools::label(&name, &input, &self.ctx);
@@ -2404,10 +2521,21 @@ Don't repeat it. Change the arguments or try a different approach.",
     }
 
     async fn permit(&mut self, item: &str, name: &str, arg: &str, input: &Value) -> Decision {
-        let kind = tools::kind(name);
+        let kind = if crate::panes::is_read(name, input) {
+            Kind::Read
+        } else {
+            tools::kind(name)
+        };
         if kind == Kind::Read || self.mode == Mode::Yolo {
             return Decision::Allow;
         }
+        let pane_action = input["action"].as_str().unwrap_or("");
+        // `Terminal.run` is a shell command like any other, except that pane shells can't be
+        // sandboxed (see `panes::shell_command`), so it asks the way an unsandboxed command
+        // does. The other pane actions (typing into a shell, driving a page) ask on their own
+        // terms.
+        let terminal_run = name == crate::panes::TERMINAL && pane_action == "run";
+        let pane = !terminal_run && matches!(name, crate::panes::TERMINAL | crate::panes::PREVIEW);
         // Web reads change nothing and show on their tool card, like reads. Auto mode runs
         // unwatched, so there the classifier sees the URL first (a query string can carry data).
         if kind == Kind::Net && self.mode != Mode::Auto {
@@ -2429,6 +2557,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             Kind::Edit => "edits".to_string(),
             Kind::Net => format!("web:{}", web_host(name, input)),
             _ if mcp => format!("mcp:{name}"),
+            _ if pane => format!("{}:{pane_action}", name.to_lowercase()),
             _ if leaves_sandbox => format!("bash-unsandboxed:{prefix}"),
             _ => format!("bash:{prefix}"),
         };
@@ -2440,7 +2569,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                         && crate::auto::hard_rule(name, input, &self.root).is_none())
             }
             Kind::Net => false,
-            _ if mcp || leaves_sandbox => false,
+            _ if mcp || leaves_sandbox || pane => false,
             _ => bash_allowed(cmd, &self.cfg.allow_bash),
         };
         if auto || self.session_allow.contains(&key) {
@@ -2450,6 +2579,12 @@ Don't repeat it. Change the arguments or try a different approach.",
             "Runs outside the sandbox: it can change files anywhere and read your credentials."
                 .to_string()
         });
+        if terminal_run && self.ctx.shell_sandbox.is_some() {
+            reason = Some(
+                "Runs in a terminal pane, which isn't sandboxed: it can change files anywhere and read your credentials."
+                    .to_string(),
+            );
+        }
         if self.mode == Mode::Auto {
             let sandbox = match (self.ctx.shell_sandbox.is_some(), leaves_sandbox) {
                 (_, true) => crate::auto::Sandbox::Leaving,
@@ -2488,6 +2623,10 @@ Don't repeat it. Change the arguments or try a different approach.",
                     .replacen("__", " › ", 1);
                 format!("always allow {pretty} this session")
             }
+            _ if name == crate::panes::TERMINAL && pane => {
+                "always allow typing into terminal panes this session".to_string()
+            }
+            _ if pane => format!("always allow preview {pane_action} this session"),
             _ if leaves_sandbox => {
                 format!("always allow `{prefix}` outside the sandbox this session")
             }
@@ -4368,6 +4507,288 @@ mod tests {
             std::fs::read_to_string(ws.join("keep.txt")).unwrap(),
             "original\n"
         );
+    }
+
+    #[tokio::test]
+    async fn preview_actions_ask_and_round_trip_through_the_client() {
+        let open = Block::ToolUse {
+            id: "o".into(),
+            name: "Preview".into(),
+            input: json!({ "action": "open", "url": "http://localhost:3000" }),
+        };
+        let click = Block::ToolUse {
+            id: "c".into(),
+            name: "Preview".into(),
+            input: json!({ "action": "click", "selector": "#go" }),
+        };
+        let script = vec![
+            reply(vec![open], Stop::ToolUse),
+            reply(vec![click], Stop::ToolUse),
+            reply(vec![text("clicked")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops.send(Op::SetClientCaps { panes: true }).unwrap();
+        until_idle(&mut h).await;
+        h.ops
+            .send(Op::Submit {
+                text: "try it".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let (mut asked, mut requested, mut evs) = (Vec::new(), Vec::new(), Vec::new());
+        loop {
+            let env = h.events.recv().await.unwrap();
+            match &env.event {
+                Event::PermissionRequest { id, name, arg, .. } => {
+                    asked.push((name.clone(), arg.clone()));
+                    h.ops
+                        .send(Op::Permission {
+                            id: id.clone(),
+                            decision: Decision::Allow,
+                        })
+                        .unwrap();
+                }
+                Event::PaneRequest {
+                    call,
+                    id,
+                    action,
+                    args,
+                } => {
+                    requested.push((id.clone(), *action, args.clone()));
+                    h.ops
+                        .send(Op::PaneReply {
+                            call: call.clone(),
+                            result: Some(json!({ "text": "clicked #go" })),
+                            error: None,
+                        })
+                        .unwrap();
+                }
+                Event::Idle => break,
+                _ => {}
+            }
+            evs.push(env);
+        }
+        // `open` is a read; `click` asks, then goes to the client's pane.
+        assert_eq!(asked, [("Preview".to_string(), "click: #go".to_string())]);
+        // `open` waits for the page to load; then the click.
+        assert_eq!(
+            requested,
+            [
+                (
+                    "p1".to_string(),
+                    crate::protocol::PaneAction::Navigate,
+                    json!({ "url": "http://localhost:3000", "wait": true })
+                ),
+                (
+                    "p1".to_string(),
+                    crate::protocol::PaneAction::Click,
+                    json!({ "selector": "#go" })
+                )
+            ]
+        );
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::PaneOpened { id, kind: crate::protocol::PaneKind::Preview, url: Some(u), .. }
+                if id == "p1" && u == "http://localhost:3000" && e.event.is_durable()
+        )));
+        let outputs: Vec<String> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { output, .. },
+                    ..
+                } => Some(output.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            outputs,
+            [
+                "Opened preview pane p1 at http://localhost:3000.",
+                "clicked #go"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_small_window_still_gets_the_panes() {
+        let open = Block::ToolUse {
+            id: "o".into(),
+            name: "Preview".into(),
+            input: json!({ "action": "open", "url": "http://localhost:3000" }),
+        };
+        let script = vec![
+            reply(vec![open], Stop::ToolUse),
+            reply(vec![text("open")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, Some(8_192), std::env::temp_dir());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops.send(Op::SetClientCaps { panes: true }).unwrap();
+        until_idle(&mut h).await;
+        h.ops
+            .send(Op::Submit {
+                text: "open the preview".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut opened = false;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::PaneOpened {
+                    kind: crate::protocol::PaneKind::Preview,
+                    ..
+                } => opened = true,
+                Event::PaneRequest { call, .. } => h
+                    .ops
+                    .send(Op::PaneReply {
+                        call,
+                        result: Some(json!({ "loaded": true })),
+                        error: None,
+                    })
+                    .unwrap(),
+                Event::Idle => break,
+                _ => {}
+            }
+        }
+        assert!(opened);
+    }
+
+    #[tokio::test]
+    async fn a_preview_that_cannot_load_says_so() {
+        let open = Block::ToolUse {
+            id: "o".into(),
+            name: "Preview".into(),
+            input: json!({ "action": "open", "url": "3000" }),
+        };
+        let script = vec![
+            reply(vec![open], Stop::ToolUse),
+            reply(vec![text("down")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops.send(Op::SetClientCaps { panes: true }).unwrap();
+        until_idle(&mut h).await;
+        h.ops
+            .send(Op::Submit {
+                text: "open it".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut result = None;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::PaneRequest { call, .. } => h
+                    .ops
+                    .send(Op::PaneReply {
+                        call,
+                        result: None,
+                        error: Some("Could not connect to the server.".into()),
+                    })
+                    .unwrap(),
+                Event::ItemCompleted {
+                    item:
+                        Item::ToolCall {
+                            output, outcome, ..
+                        },
+                    ..
+                } => result = Some((output, outcome)),
+                Event::Idle => break,
+                _ => {}
+            }
+        }
+        let (out, outcome) = result.unwrap();
+        assert_eq!(outcome, ToolOutcome::Error);
+        assert!(
+            out.contains("couldn't load http://localhost:3000")
+                && out.contains("Could not connect"),
+            "{out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_needs_a_pane_client() {
+        let open = Block::ToolUse {
+            id: "o".into(),
+            name: "Preview".into(),
+            input: json!({ "action": "open", "url": "http://localhost:3000" }),
+        };
+        let mut h = engine(
+            vec![
+                reply(vec![open], Stop::ToolUse),
+                reply(vec![text("no")], Stop::End),
+            ],
+            true,
+        );
+        let evs = run(&mut h, "try it").await;
+        let out = evs.iter().find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::ToolCall {
+                    output, outcome, ..
+                },
+                ..
+            } => Some((output.clone(), *outcome)),
+            _ => None,
+        });
+        let (out, outcome) = out.unwrap();
+        // Without a client to host panes, Preview isn't offered, so a call to it is refused.
+        assert_eq!(outcome, ToolOutcome::Error);
+        assert!(out.contains("no `Preview` tool"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn pane_lifecycle_is_logged_but_screens_are_not() {
+        let dir = tmp_store();
+        let mut h = engine_at(
+            vec![reply(vec![text("hello")], Stop::End)],
+            true,
+            Some(dir.clone()),
+            None,
+        );
+        // A turn first, so the session log exists.
+        let first = run(&mut h, "hi").await;
+        let sid = first[0].session.clone();
+        h.ops
+            .send(Op::PaneOpen {
+                kind: crate::protocol::PaneKind::Terminal,
+                cwd: None,
+                url: None,
+                cols: Some(80),
+                rows: Some(24),
+            })
+            .unwrap();
+        let mut seen_screen = false;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            match env.event {
+                Event::PaneOpened { ref id, .. } => {
+                    assert_eq!(id, "t1");
+                    h.ops
+                        .send(Op::PaneInput {
+                            id: id.clone(),
+                            data: "echo pane-ok\n".into(),
+                        })
+                        .unwrap();
+                }
+                Event::PaneScreen { lines, cols, .. } => {
+                    assert_eq!(cols, 80);
+                    if lines.iter().any(|l| l.contains("pane-ok")) && !seen_screen {
+                        seen_screen = true;
+                        h.ops.send(Op::PaneClose { id: "t1".into() }).unwrap();
+                    }
+                }
+                Event::PaneClosed { id, .. } => {
+                    assert_eq!(id, "t1");
+                    break;
+                }
+                _ => {}
+            }
+        }
+        shutdown(h).await;
+        let logged = names(&session::load(&dir, &sid).unwrap().events);
+        assert!(logged.contains(&"pane_opened".to_string()));
+        assert!(logged.contains(&"pane_closed".to_string()));
+        assert!(!logged.contains(&"pane_screen".to_string()));
     }
 
     #[test]

@@ -89,8 +89,8 @@ struct WorkspaceView: View {
     }
 
     private func extent(changes open: Bool, _ pane: Pane) -> CGFloat {
-        guard pane.changeCount > 0 || pane.hasRail else { return Self.gap }
-        let width = open ? Self.changesWidth : (pane.changeCount > 0 ? Self.changesPill : TimelineRail.width)
+        guard pane.hasTabs || pane.hasRail else { return Self.gap }
+        let width = open ? pane.cardWidth : (pane.hasTabs ? Self.changesPill : TimelineRail.width)
         return Self.margin + width + Self.gap
     }
 
@@ -135,7 +135,7 @@ struct WorkspaceView: View {
 
     private var layoutInputs: LayoutInputs {
         LayoutInputs(size: canvasSize, sessions: showSessions, layout: panes.layout, panes: panes.items.map {
-            PaneInputs(id: $0.id, shows: $0.conversation.map(ObjectIdentifier.init), changes: $0.showChanges, hasChanges: $0.changeCount > 0, hasRail: $0.hasRail)
+            PaneInputs(id: $0.id, shows: $0.conversation.map(ObjectIdentifier.init), changes: $0.showChanges, hasChanges: $0.hasTabs, hasRail: $0.hasRail)
         })
     }
 
@@ -145,7 +145,7 @@ struct WorkspaceView: View {
             fits(column($0, sessions: true, changes: false), keeping: docked.sessions)
         }
         var changes: Set<Pane.ID> = []
-        for p in panes.items where p.showChanges && p.changeCount > 0 {
+        for p in panes.items where p.showChanges && p.hasTabs {
             if fits(column(p, sessions: sessions, changes: true), keeping: docked.changes.contains(p.id)) {
                 changes.insert(p.id)
             }
@@ -158,7 +158,7 @@ struct WorkspaceView: View {
     private var sessionsVisible: Bool { docked.sessions || peekSessions }
 
     private func changesVisible(_ pane: Pane) -> Bool {
-        docked.changes.contains(pane.id) || (pane.peekChanges && pane.changeCount > 0)
+        docked.changes.contains(pane.id) || (pane.peekChanges && pane.hasTabs)
     }
 
     /// Where the (only) pane's column is centered, relative to the window's center.
@@ -188,6 +188,33 @@ struct WorkspaceView: View {
         } else {
             pane.peekChanges.toggle()
         }
+    }
+
+    /// Show the focused pane's side card, if it's hidden.
+    private func revealPanes(_ pane: Pane) {
+        if !changesVisible(pane) { toggleChanges(pane) }
+    }
+
+    /// A terminal in the focused conversation's folder (⇧⌘T).
+    private func showTerminal() {
+        guard let conversation = focused.conversation else { return }
+        conversation.panes.openTerminal(cwd: workspace.folder)
+        revealPanes(focused)
+    }
+
+    /// The live preview (⇧⌘P).
+    private func showPreview() {
+        guard let conversation = focused.conversation else { return }
+        conversation.panes.openPreview()
+        revealPanes(focused)
+    }
+
+    /// Inspect mode in the preview (⇧⌘I): shows the preview if it isn't in front.
+    private func toggleInspect() {
+        guard let hub = focused.conversation?.panes else { return }
+        if let p = hub.previews.first { hub.selected = .pane(p.id) } else { hub.openPreview() }
+        revealPanes(focused)
+        hub.inspecting.toggle()
     }
 
     // MARK: Dragging
@@ -385,6 +412,7 @@ struct WorkspaceView: View {
         .focusedSceneValue(\.frogWindow, FrogWindow(
             workspace: workspace, state: focused.ui,
             toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
+            showTerminal: showTerminal, showPreview: showPreview, toggleInspect: toggleInspect,
             sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
             newChat: {
                 panes.switchFolder(nil, in: focused)
@@ -421,6 +449,19 @@ struct WorkspaceView: View {
             }
             // The viewer draws its own glass capsule; without this the toolbar adds a second.
             .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button("Terminal", systemImage: "terminal", action: showTerminal)
+                    Button("Preview", systemImage: "globe", action: showPreview)
+                    if focused.changeCount > 0 {
+                        Button("Changes", systemImage: "plusminus") { revealPanes(focused) }
+                    }
+                } label: {
+                    Label("Panes", systemImage: "sidebar.right")
+                }
+                .help("Panes: terminal (⇧⌘T), preview (⇧⌘P), changes (⌥⌘0)")
+                .disabled(focused.conversation == nil)
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Split", systemImage: "rectangle.split.2x1") { split() }
                     .contextMenu {
