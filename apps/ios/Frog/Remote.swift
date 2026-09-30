@@ -18,6 +18,10 @@ final class Remote: SessionLink {
     }
 
     private(set) var state: State = .idle
+    /// Has reached this Mac with this code: the app opens on the list, even offline.
+    private(set) var paired = UserDefaults.standard.bool(forKey: "remotePaired") {
+        didSet { UserDefaults.standard.set(paired, forKey: "remotePaired") }
+    }
     private(set) var sessions: [RemoteSession] = []
     private(set) var open: SessionModel?
     /// A conversation someone asked to see (a tapped notification, Handoff, a widget).
@@ -106,7 +110,11 @@ final class Remote: SessionLink {
 
     /// Stop talking to the Mac; `forget` also drops the code, back to the connect screen.
     func disconnect(forget: Bool = false) {
-        if forget { code = "" }
+        if forget {
+            code = ""
+            paired = false
+            sessions = []
+        }
         retry?.cancel()
         generation += 1
         socket?.cancel()
@@ -140,6 +148,7 @@ final class Remote: SessionLink {
         switch msg["type"] as? String {
         case "welcome":
             state = .connected(host: msg["host"] as? String ?? "Mac")
+            paired = true
             Snapshot.remember(host: host)
             registerForPushes()
             for m in outbox { send(m) }

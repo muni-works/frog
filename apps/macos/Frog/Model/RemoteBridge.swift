@@ -93,7 +93,7 @@ final class RemoteBridge {
                 Task { @MainActor in self?.accept(conn, lines: lines) }
             }
             l.stateUpdateHandler = { state in
-                if case .failed(let e) = state { EngineProcess.log("remote: listener on \(label) failed: \(e)") }
+                EngineProcess.log("remote: listener on \(label): \(state)")
             }
             l.serviceRegistrationUpdateHandler = { change in
                 if case .add(let endpoint) = change { EngineProcess.log("remote: advertised as \(endpoint)") }

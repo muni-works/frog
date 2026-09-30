@@ -29,10 +29,8 @@ struct SessionListView: View {
                 .navigationTransition(.zoom(sourceID: s.id, in: zoom))
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("New", systemImage: "square.and.pencil") { composing = true }
-            }
-            ToolbarItem(placement: .secondaryAction) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+            Button("New", systemImage: "square.and.pencil") { composing = true }
             Menu {
                 Toggle("Frog sounds", systemImage: "speaker.wave.2", isOn: $sounds)
                 Button("Disconnect", systemImage: "xmark.circle", role: .destructive) { remote.disconnect(forget: true) }

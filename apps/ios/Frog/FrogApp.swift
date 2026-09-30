@@ -34,7 +34,7 @@ struct RootView: View {
     /// A conversation to open once the list knows it (from Handoff or a notification).
     @State private var pending: String?
 
-    private var connected: Bool { !remote.code.isEmpty && (everConnected || remote.isConnected) }
+    private var connected: Bool { remote.paired && !remote.code.isEmpty }
 
     var body: some View {
         Group {
@@ -79,7 +79,6 @@ struct RootView: View {
         }
         .onChange(of: remote.state) { _, s in
             if case .connected = s {
-                everConnected = true
                 Task { await Notifications.shared.requestPermission() }
             }
         }
@@ -89,7 +88,6 @@ struct RootView: View {
         }
     }
 
-    @State private var everConnected = false
 
     private func openPending() {
         guard let id = pending, let s = remote.sessions.first(where: { $0.id == id }) else { return }
