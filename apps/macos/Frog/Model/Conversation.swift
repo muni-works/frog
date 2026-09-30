@@ -112,6 +112,9 @@ struct TurnState: Identifiable {
     var usage: TurnUsage?
     var startedAt: Date?
     var endedAt: Date?
+    /// When you sent it from this window: its bubble animates in, like a sent iMessage.
+    /// Nil for turns that arrive from a log (history, replay, another window).
+    var sentAt: Date?
 
     var finished: Bool { end != nil }
 }
@@ -240,20 +243,20 @@ final class Conversation {
         }
         if text.hasPrefix("!") {
             let command = String(text.dropFirst()).trimmingCharacters(in: .whitespaces)
-            turns.append(TurnState(number: nil, input: text, end: .complete))
+            turns.append(TurnState(number: nil, input: text, end: .complete, sentAt: .now))
             busy = true
             engine?.send(.shell(command))
             return
         }
         if Self.isMemoryCommand(text) {
             // The engine answers these itself: no turn, just a notice.
-            turns.append(TurnState(number: nil, input: text, end: .complete))
+            turns.append(TurnState(number: nil, input: text, end: .complete, sentAt: .now))
             busy = true
             awaitingCommand = true
             engine?.send(.submit(text, images: []))
             return
         }
-        turns.append(TurnState(number: nil, input: text, images: images))
+        turns.append(TurnState(number: nil, input: text, images: images, sentAt: .now))
         busy = true
         engine?.send(.submit(text, images: images))
     }
