@@ -6,7 +6,7 @@ import Observation
 /// from the last event it saw, so nothing arrives twice and nothing is missed.
 @MainActor
 @Observable
-final class Remote {
+final class Remote: SessionLink {
     enum State: Equatable {
         case idle
         case connecting
@@ -58,7 +58,9 @@ final class Remote {
         receive(task, gen)
     }
 
-    func disconnect() {
+    /// Stop talking to the Mac; `forget` also drops the code, back to the connect screen.
+    func disconnect(forget: Bool = false) {
+        if forget { code = "" }
         retry?.cancel()
         generation += 1
         socket?.cancel(with: .goingAway, reason: nil)
@@ -114,7 +116,7 @@ final class Remote {
                   let raw = try? JSONSerialization.data(withJSONObject: env),
                   let envelope = try? JSONDecoder.frog.decode(Envelope.self, from: raw),
                   envelope.session == open?.id else { return }
-            open?.apply(envelope)
+            open?.apply(envelope, raw: raw)
         case "synced":
             if (msg["session"] as? String) == open?.id { open?.synced() }
         case "error":
@@ -139,15 +141,16 @@ final class Remote {
     func attach(_ session: RemoteSession) -> SessionModel {
         if let open, open.id == session.id { return open }
         if let open { send(["type": "detach", "session": open.id]) }
-        let model = SessionModel(session: session, remote: self)
+        let model = SessionModel(session: session, link: self)
         open = model
-        send(["type": "attach", "session": session.id, "after": 0])
+        send(["type": "attach", "session": session.id, "after": model.lastSeq])
         return model
     }
 
     func detach(_ model: SessionModel) {
         guard open === model else { return }
         send(["type": "detach", "session": model.id])
+        model.close()
         open = nil
     }
 

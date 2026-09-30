@@ -6,9 +6,20 @@ struct FrogApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(remote: remote)
-                .task { if !remote.code.isEmpty { remote.connect() } }
+            if Self.recordings {
+                FixtureListView()
+            } else {
+                RootView(remote: remote)
+                    .task { if !remote.code.isEmpty { remote.connect() } }
+            }
         }
+    }
+}
+
+extension FrogApp {
+    /// Launched with `-fixtures YES` or `-fixture <name>`: recorded sessions instead of a Mac.
+    static var recordings: Bool {
+        UserDefaults.standard.bool(forKey: "fixtures") || UserDefaults.standard.string(forKey: "fixture") != nil
     }
 }
 
@@ -19,7 +30,7 @@ struct RootView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if remote.code.isEmpty || !everConnected {
+                if remote.code.isEmpty || !(everConnected || remote.isConnected) {
                     ConnectView(remote: remote)
                 } else {
                     SessionListView(remote: remote)
@@ -45,7 +56,7 @@ struct ConnectView: View {
         Form {
             Section {
                 VStack(spacing: 10) {
-                    Text("🐸").font(.system(size: 56))
+                    FrogFace(mood: remote.state == .connecting ? .reading : .idle, size: 64).tint(.frog)
                     Text("Frog on your Mac, in your pocket")
                         .font(.headline)
                     Text("Watch your conversations, answer frog's questions and send it the next thing, while the work runs on your Mac.")

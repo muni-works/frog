@@ -2,7 +2,7 @@ name: FrogRemote
 options:
   bundleIdPrefix: eco.frog
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "26.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -22,6 +22,12 @@ targets:
         group: Shared
       - path: ../macos/Frog/Engine/Diagram.swift
         group: Shared
+      - path: ../macos/Frog/Views/FrogFace.swift
+        group: Shared
+      # The Mac's recorded sessions, for designing without a Mac (-fixtures YES).
+      - path: ../macos/Fixtures
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote
@@ -33,6 +39,7 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Frog connects to frog on your Mac."
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1,2"
     info:
       path: Frog/Info.plist

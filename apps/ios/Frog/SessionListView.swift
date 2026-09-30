@@ -3,6 +3,8 @@ import SwiftUI
 /// Every conversation on the Mac: what needs you first, then what's running, then the rest.
 struct SessionListView: View {
     let remote: Remote
+    @Namespace private var zoom
+    @AppStorage("playfulSounds") private var sounds = true
 
     var body: some View {
         List {
@@ -19,7 +21,17 @@ struct SessionListView: View {
         .listStyle(.insetGrouped)
         .navigationTitle(title)
         .navigationDestination(for: RemoteSession.self) { s in
-            ChatView(model: remote.attach(s), remote: remote)
+            let model = remote.attach(s)
+            ChatView(model: model) { remote.detach(model) }
+                .navigationTransition(.zoom(sourceID: s.id, in: zoom))
+        }
+        .toolbar {
+            Menu {
+                Toggle("Frog sounds", systemImage: "speaker.wave.2", isOn: $sounds)
+                Button("Disconnect", systemImage: "xmark.circle", role: .destructive) { remote.disconnect(forget: true) }
+            } label: {
+                Image(systemName: "ellipsis")
+            }
         }
         .refreshable { remote.refresh() }
         .task {
@@ -31,8 +43,11 @@ struct SessionListView: View {
         }
         .overlay {
             if remote.sessions.isEmpty, remote.isConnected {
-                ContentUnavailableView("No conversations yet", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("Start one on your Mac and it shows up here."))
+                ContentUnavailableView {
+                    Label { Text("No conversations yet") } icon: { FrogFace(mood: .idle, size: 48).tint(.frog) }
+                } description: {
+                    Text("Start one on your Mac and it shows up here.")
+                }
             }
         }
     }
@@ -47,7 +62,9 @@ struct SessionListView: View {
         if !rows.isEmpty {
             Section(name) {
                 ForEach(rows) { s in
-                    NavigationLink(value: s) { SessionRow(session: s) }
+                    NavigationLink(value: s) {
+                        SessionRow(session: s).matchedTransitionSource(id: s.id, in: zoom)
+                    }
                 }
             }
         }
@@ -59,9 +76,17 @@ struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Circle()
-                .fill(session.isLocal ? Color.imessageBlue : Color.imessageGreen)
-                .frame(width: 8, height: 8)
+            ZStack {
+                switch session.live {
+                case .waiting: FrogFace(mood: .waiting, size: 22).tint(.frog)
+                case .running: FrogFace(mood: .working, size: 22).tint(.frog)
+                default:
+                    Circle()
+                        .fill(session.isLocal ? Color.imessageBlue : Color.imessageGreen)
+                        .frame(width: 8, height: 8)
+                }
+            }
+            .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.title)
                     .font(.body.weight(session.live == .unread ? .semibold : .regular))
@@ -72,8 +97,16 @@ struct SessionRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            badge
+            switch session.live {
+            case .waiting:
+                Text("Needs you").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+            case .unread:
+                Circle().fill(Color.imessageBlue).frame(width: 10, height: 10)
+            default:
+                EmptyView()
+            }
         }
+        .accessibilityElement(children: .combine)
     }
 
     private var subtitle: String {
@@ -83,18 +116,35 @@ struct SessionRow: View {
         parts.append(session.modified.formatted(.relative(presentation: .named)))
         return parts.joined(separator: " · ")
     }
+}
 
-    @ViewBuilder
-    private var badge: some View {
-        switch session.live {
-        case .waiting:
-            Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
-        case .running:
-            ProgressView().controlSize(.small)
-        case .unread:
-            Circle().fill(Color.accentColor).frame(width: 10, height: 10)
-        case nil:
-            EmptyView()
+/// Recorded sessions, for designing without a Mac (`-fixtures`).
+struct FixtureListView: View {
+    @State private var players: [String: FixturePlayer] = Dictionary(
+        uniqueKeysWithValues: FixturePlayer.names.compactMap { n in FixturePlayer(name: n).map { (n, $0) } })
+    @State private var path: [String] = []
+    @Namespace private var zoom
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            List(FixturePlayer.names, id: \.self) { name in
+                NavigationLink(value: name) {
+                    if let s = FixturePlayer.session(name) {
+                        SessionRow(session: s).matchedTransitionSource(id: name, in: zoom)
+                    }
+                }
+            }
+            .navigationTitle("Recordings")
+            .navigationDestination(for: String.self) { name in
+                if let player = players[name] {
+                    ChatView(model: player.model)
+                        .navigationTransition(.zoom(sourceID: name, in: zoom))
+                        .task { await player.play() }
+                }
+            }
+        }
+        .onAppear {
+            if let name = UserDefaults.standard.string(forKey: "fixture"), path.isEmpty { path = [name] }
         }
     }
 }
