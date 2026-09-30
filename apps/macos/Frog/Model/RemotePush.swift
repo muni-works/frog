@@ -114,9 +114,14 @@ final class RemotePush {
             "arg": String(arg.prefix(300)),
             "always": obj["always"] as? String ?? "",
         ]
-        if let preview = obj["preview"] as? [String: Any] { payload["preview"] = Self.trim(preview) }
+        // The request itself, so the phone shows the question as the Mac does (QuestionBody).
+        var request: [String: Any] = ["id": obj["id"] ?? "", "item": obj["item"] ?? "", "name": name,
+                                      "arg": String(arg.prefix(300)), "always": obj["always"] ?? ""]
+        if let reason = obj["reason"] { request["reason"] = reason }
+        if let preview = obj["preview"] as? [String: Any] { request["preview"] = Self.trim(preview) }
+        payload["request"] = request
         // APNs takes 4 KB; the diff is the first thing to go.
-        if (try? JSONSerialization.data(withJSONObject: payload))?.count ?? 0 > 3800 { payload["preview"] = nil }
+        if (try? JSONSerialization.data(withJSONObject: payload))?.count ?? 0 > 3800 { request["preview"] = nil; payload["request"] = request }
         send(payload, collapse: "perm-\(session)")
         let creating = (obj["preview"] as? [String: Any])?["created"] as? Bool ?? false
         let question = PermissionRequest.question(name: name, arg: arg, outsideSandbox: obj["reason"] is String, creating: creating)

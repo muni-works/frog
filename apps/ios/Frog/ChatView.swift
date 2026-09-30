@@ -77,36 +77,34 @@ struct ChatView: View {
                 .disabled(opening)
                 if let openError { Text(openError).font(.caption).foregroundStyle(.orange) }
             }
+            if !conversation.queue.isEmpty {
+                QueuedMessages(conversation: conversation)
+            }
             GlassEffectContainer(spacing: 8) {
                 HStack(alignment: .bottom, spacing: 8) {
-                    TextField("Message frog", text: $draft, axis: .vertical)
+                    TextField(conversation.busy ? "Queue a follow-up" : "Message frog", text: $draft, axis: .vertical)
                         .lineLimit(1...6)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 11)
                         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
                         .disabled(!canSend)
                         .onSubmit(send)
-                    if conversation.busy {
-                        Button { conversation.interrupt() } label: {
-                            Image(systemName: "stop.fill").font(.body.weight(.semibold)).frame(width: 30, height: 30)
-                        }
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.circle)
-                        .accessibilityLabel("Stop")
+                    SendButton(conversation: conversation, canSend: canSend && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                               send: send, tint: Color.place(cloud: identity?.place.isCloud ?? false))
                         .transition(.scale.combined(with: .opacity))
-                    } else if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button(action: send) {
-                            Image(systemName: "arrow.up").font(.body.weight(.bold)).frame(width: 30, height: 30)
-                        }
-                        .buttonStyle(.glassProminent)
-                        .buttonBorderShape(.circle)
-                        .tint(Color.place(cloud: identity?.place.isCloud ?? false))
-                        .accessibilityLabel("Send")
-                        .transition(.scale.combined(with: .opacity))
-                    }
                 }
                 .animation(.spring(duration: 0.3, bounce: 0.3), value: conversation.busy)
                 .animation(.spring(duration: 0.3, bounce: 0.3), value: draft.isEmpty)
+            }
+            if let status = conversation.status {
+                // How frog asks, and how full its context is, as under the Mac's composer.
+                HStack(spacing: 10) {
+                    ModePicker(conversation: conversation)
+                    Spacer()
+                    ContextRing(status: status)
+                }
+                .font(.caption)
+                .padding(.horizontal, 8)
             }
         }
         .padding(.horizontal, 12)

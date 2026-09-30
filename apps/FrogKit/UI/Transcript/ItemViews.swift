@@ -245,28 +245,7 @@ struct PermissionCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: request.name == "UseFolder" ? "folder.fill" : request.reason == nil ? "hand.raised.fill" : "lock.open.fill")
-                    .foregroundStyle(.orange)
-                Text(title).fontWeight(.semibold)
-                Spacer()
-            }
-            if let reason = request.reason {
-                Text(reason)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            if let diff = request.preview {
-                DiffView(diff: diff, maxLines: 40)
-            } else if !request.arg.isEmpty {
-                Text(request.arg)
-                    .font(.system(.callout, design: .monospaced))
-                    .textSelection(.enabled)
-                    .lineLimit(8)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.black.opacity(0.3), in: .rect(cornerRadius: 8))
-            }
+            QuestionBody(request: request)
             #if os(iOS)
             // For a thumb: two big answers side by side, the standing one as a line below.
             HStack(spacing: 10) {
@@ -311,7 +290,6 @@ struct PermissionCard: View {
         .glassEffect(.regular.tint(.orange.opacity(0.10)), in: .rect(cornerRadius: 14))
     }
 
-    private var title: String { request.question }
 
     private var alwaysLabel: String {
         request.always.prefix(1).uppercased() + request.always.dropFirst()

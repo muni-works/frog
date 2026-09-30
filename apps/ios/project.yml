@@ -70,7 +70,7 @@ targets:
       - path: Shared
       - path: ../FrogKit/Core
       - path: ../FrogKit/UI/Basics
-      - path: ../FrogKit/UI/Diff
+      - path: ../FrogKit/UI/Cards
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.notify
@@ -101,7 +101,7 @@ targets:
       - path: Shared
       - path: ../FrogKit/Core
       - path: ../FrogKit/UI/Basics
-      - path: ../FrogKit/UI/Diff
+      - path: ../FrogKit/UI/Cards
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.widgets
@@ -147,7 +147,7 @@ targets:
       - path: Shared
       - path: ../FrogKit/Core
       - path: ../FrogKit/UI/Basics
-      - path: ../FrogKit/UI/Diff
+      - path: ../FrogKit/UI/Cards
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.share

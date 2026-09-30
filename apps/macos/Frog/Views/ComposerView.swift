@@ -190,31 +190,8 @@ struct ComposerView: View {
         return new ? "Ask about the code or describe a change · @ a file · ! a command" : "Ask frog to do something · @ mentions a file"
     }
 
-    /// Send while there's something to send; stop while a turn runs and the field is empty.
-    @ViewBuilder
     private var sendButton: some View {
-        if conversation.busy, !canSend {
-            Button { conversation.interrupt() } label: {
-                Image(systemName: "stop.circle.fill")
-                    .font(.system(size: 17))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
-                    .hoverPlate(h: 3, v: 3)
-            }
-            .buttonStyle(.plain)
-            .help("Interrupt (Esc or ⌘.)")
-        } else {
-            Button(action: send) {
-                Image(systemName: "return")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
-                    .frame(width: 22, height: 22)
-                    .hoverPlate(h: 3, v: 3)
-            }
-            .buttonStyle(.plain)
-            .disabled(!canSend)
-            .help(conversation.busy ? "Queue (Return)" : "Send (Return)")
-        }
+        SendButton(conversation: conversation, canSend: canSend, send: send)
     }
 
     /// Under the field, without chrome: add things on the left, how frog works on the right.
@@ -436,67 +413,8 @@ private struct DictationProblemView: View {
     }
 }
 
-struct ModePicker: View {
-    let conversation: Conversation
-
-    var body: some View {
-        let mode = conversation.status?.mode ?? .default
-        Menu {
-            ForEach(Mode.allCases) { m in
-                Button {
-                    conversation.setMode(m)
-                } label: {
-                    Label(m.label, systemImage: m.symbol)
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(mode.label)
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
-            }
-            .foregroundStyle(mode == .yolo ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-            .hoverPlate()
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Permission mode")
-    }
-}
 
 
-struct ContextRing: View {
-    let status: Status
-
-    private var fraction: Double {
-        guard let used = status.contextTokens, status.contextWindow > 0 else { return 0 }
-        return min(1, Double(used) / Double(status.contextWindow))
-    }
-
-    private var color: Color {
-        fraction > 0.8 ? .red : fraction > 0.6 ? .orange : .secondary
-    }
-
-    var body: some View {
-        ZStack {
-            Circle().stroke(.quaternary, lineWidth: 3)
-            Circle()
-                .trim(from: 0, to: fraction)
-                .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .frame(width: 16, height: 16)
-        .animation(.smooth, value: fraction)
-        .help(helpText)
-    }
-
-    private var helpText: String {
-        let window = status.contextWindow.tokens
-        guard let used = status.contextTokens else { return "Context window: \(window) tokens" }
-        return "\(used.tokens) of \(window) tokens (\(Int(fraction * 100))%)"
-    }
-}
 
 /// The repository a conversation works in: folder, branch, and a shortcut to commit what's
 /// changed.
@@ -685,24 +603,3 @@ struct MentionList: View {
     }
 }
 
-struct QueuedMessages: View {
-    let conversation: Conversation
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(conversation.queue.map(\.text).enumerated()), id: \.offset) { i, text in
-                HStack(spacing: 6) {
-                    Image(systemName: "clock").foregroundStyle(.secondary)
-                    Text(text).lineLimit(1)
-                    Spacer()
-                    Button("Remove", systemImage: "xmark.circle.fill") { conversation.unqueue(at: i) }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                }
-                .font(.callout)
-            }
-        }
-        .padding(.horizontal, 4)
-    }
-}
