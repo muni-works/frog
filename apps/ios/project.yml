@@ -17,6 +17,7 @@ targets:
     platform: iOS
     dependencies:
       - target: FrogNotify
+      - target: FrogWidgets
     sources:
       - path: Frog
       - path: Shared
@@ -35,6 +36,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote
         PRODUCT_NAME: Frog
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) FROG_APP
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Frog
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -50,6 +52,10 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSUserActivityTypes: [eco.frog.conversation]
+        NSSupportsLiveActivities: true
+        CFBundleURLTypes:
+          - CFBundleURLName: eco.frog.remote
+            CFBundleURLSchemes: [frog]
   # Long-press a question from frog: the command or the diff, before you allow it.
   FrogNotify:
     type: app-extension
@@ -82,3 +88,31 @@ targets:
             UNNotificationExtensionCategory: PERMISSION
             UNNotificationExtensionDefaultContentHidden: true
             UNNotificationExtensionInitialContentSizeRatio: 0.5
+  # The lock screen and Dynamic Island while a turn runs; later, widgets and controls.
+  FrogWidgets:
+    type: app-extension
+    platform: iOS
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+      - sdk: ActivityKit.framework
+    sources:
+      - path: Widgets
+      - path: Shared
+      - path: ../macos/Frog/Engine/Protocol.swift
+        group: Shared
+      - path: ../macos/Frog/Engine/Diagram.swift
+        group: Shared
+      - path: ../macos/Frog/Views/FrogFace.swift
+        group: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.widgets
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Frog
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Frog
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

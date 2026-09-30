@@ -41,6 +41,10 @@ struct RootView: View {
                 }
             }
         }
+        .onOpenURL { url in
+            // frog://session/<id>, from the Live Activity and widgets.
+            if url.host() == "session", let id = url.pathComponents.last { remote.requested = id }
+        }
         .onContinueUserActivity(Handoff.conversation) { a in
             pending = a.userInfo?["session"] as? String
             openPending()

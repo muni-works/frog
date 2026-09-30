@@ -61,37 +61,45 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
     }
 
     // MARK: Delegate
+    //
+    // The completion-handler forms, finished on the main thread: UIKit asserts if the async
+    // forms complete anywhere else.
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
-        async -> UNNotificationPresentationOptions {
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler done: @escaping @Sendable (UNNotificationPresentationOptions) -> Void) {
         let session = notification.request.content.userInfo["session"] as? String
-        let reading = await MainActor.run { Remote.shared.open?.id }
-        // The thread on screen already shows it.
-        if session != nil, session == reading { return [] }
-        return [.banner, .sound, .list]
+        Task { @MainActor in
+            // The thread on screen already shows it.
+            done(session != nil && session == Remote.shared.open?.id ? [] : [.banner, .sound, .list])
+        }
     }
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler done: @escaping @Sendable () -> Void) {
         let info = response.notification.request.content.userInfo
-        guard let session = info["session"] as? String else { return }
+        let session = info["session"] as? String
         let permission = info["permission"] as? String
         let action = response.actionIdentifier
         let text = (response as? UNTextInputNotificationResponse)?.userText
-        var op: [String: Any]?
-        switch action {
-        case Action.allow, Action.deny:
-            if let permission { op = ["op": "permission", "id": permission, "decision": action == Action.allow ? "allow" : "deny"] }
-        case Action.reply:
-            if let text, !text.isEmpty { op = ["op": "submit", "text": text] }
-        case UNNotificationDefaultActionIdentifier:
-            await MainActor.run { Remote.shared.requested = session }
-        default:
-            break
-        }
-        guard let op else { return }
-        // Answered from the lock screen: connect if we must, and hold on until it's sent.
-        if await Remote.shared.perform(op: op, in: session) {
-            try? await Task.sleep(for: .milliseconds(400))
+        Task { @MainActor in
+            defer { done() }
+            guard let session else { return }
+            var op: [String: Any]?
+            switch action {
+            case Action.allow, Action.deny:
+                if let permission { op = ["op": "permission", "id": permission, "decision": action == Action.allow ? "allow" : "deny"] }
+            case Action.reply:
+                if let text, !text.isEmpty { op = ["op": "submit", "text": text] }
+            case UNNotificationDefaultActionIdentifier:
+                Remote.shared.requested = session
+            default:
+                break
+            }
+            guard let op else { return }
+            // Answered from the lock screen: connect if we must, and hold on until it's sent.
+            if await Remote.shared.perform(op: op, in: session) {
+                try? await Task.sleep(for: .milliseconds(400))
+            }
         }
     }
 }

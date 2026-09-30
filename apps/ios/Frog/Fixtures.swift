@@ -23,6 +23,9 @@ final class FixturePlayer: SessionLink {
         ])
     }
 
+    /// Recordings playing now, so answers from the Live Activity reach them.
+    static var playing: [String: FixturePlayer] = [:]
+
     let model: SessionModel
     private let events: [[String: Any]]
     private var seq: UInt64 = 1000
@@ -55,6 +58,7 @@ final class FixturePlayer: SessionLink {
 
     /// Play the recording: the first turn's prompt arrives as if you'd just sent it.
     func play() async {
+        Self.playing[model.id] = self
         var asked = false
         emit(["event": "status", "model": model.session.model, "mode": "default", "cwd": "/demo", "messages": 0,
               "context_window": 32768, "tool_mode": "native", "tier": "medium", "todos": []])

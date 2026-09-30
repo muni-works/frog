@@ -261,6 +261,7 @@ final class SessionModel: Identifiable {
         default:
             break
         }
+        if !loading, !env.event.isQuiet { LiveActivities.shared.follow(self) }
     }
 
     func close() {
@@ -300,6 +301,11 @@ final class SessionModel: Identifiable {
 }
 
 extension Event {
+    /// Streaming text: the lock screen doesn't need to hear about every word.
+    var isQuiet: Bool {
+        if case .itemDelta = self { true } else { false }
+    }
+
     /// Mirrors the engine's `Event::is_durable`: what the session log keeps.
     var isDurable: Bool {
         switch self {

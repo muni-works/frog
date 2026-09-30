@@ -113,6 +113,12 @@ final class RemotePush {
         // APNs takes 4 KB; the diff is the first thing to go.
         if (try? JSONSerialization.data(withJSONObject: payload))?.count ?? 0 > 3800 { payload["preview"] = nil }
         send(payload, collapse: "perm-\(session)")
+        let question = name == "Bash" ? "Run \(arg.split(separator: "\n").first.map(String.init) ?? arg)?"
+            : ["Edit", "Write"].contains(name) ? "\(name) \((arg as NSString).lastPathComponent)?" : "Use \(name)?"
+        sendActivity(session: session, event: "update", state: [
+            "mood": "waiting", "activity": question, "steps": steps[session, default: 0],
+            "waiting": true, "permission": obj["id"] as? String ?? "",
+        ])
     }
 
     private func finished(_ obj: [String: Any], session: String) {
