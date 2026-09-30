@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// What frog noticed while you were away, under the frog on its lily pad: a headline, the few
-/// things worth your time, and a receipt for how the brief was made. Click a line to open it;
-/// hover for ✕ when it isn't worth your time.
+/// What frog noticed while you were away, under the frog on its lily pad: one line on what to
+/// do first, what's next on your calendar, the few things worth your time, and beneath the
+/// card a receipt for how the brief was made. Click a row to open it; hover for ✕ when it
+/// isn't worth your time.
 struct PondBrief: View {
     @State private var pond = Pond.shared
 
@@ -10,84 +11,93 @@ struct PondBrief: View {
         // Always something on screen, so the task runs before there's a brief to show.
         VStack(spacing: 0) {
             if let brief = pond.brief {
-                card(brief)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                content(brief)
+                    .transition(.opacity.combined(with: .offset(y: 6)))
             }
         }
-        .animation(.snappy(duration: 0.3), value: pond.brief?.at)
+        .animation(.snappy(duration: 0.35), value: pond.brief?.at)
         .animation(.snappy(duration: 0.25), value: pond.brief?.items)
         .task { await pond.show() }
     }
 
+    private func content(_ brief: Brief) -> some View {
+        VStack(spacing: 10) {
+            card(brief)
+            ReceiptLine(brief: brief, refreshing: pond.refreshing) {
+                Task { await pond.refresh() }
+            }
+        }
+        .frame(maxWidth: 440)
+    }
+
     private func card(_ brief: Brief) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             Text(brief.headline)
-                .font(.callout.weight(.medium))
+                .font(.body.weight(.medium))
                 .fixedSize(horizontal: false, vertical: true)
-            if let today = brief.today, !today.isEmpty {
-                todayRow(today)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, brief.items.isEmpty && (brief.today ?? []).isEmpty ? 14 : 8)
+            if let today = brief.today, let line = NextUp(events: today) {
+                line
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
             }
             if !brief.items.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
+                Divider().padding(.horizontal, 16)
+                VStack(spacing: 0) {
                     ForEach(brief.items) { PondRow(line: $0) }
                 }
+                .padding(6)
             }
             if !brief.also.isEmpty {
-                Text(brief.also.count == 1 ? "and 1 quieter thing" : "and \(brief.also.count) quieter things")
+                Text(brief.also.count == 1 ? "1 quieter thing can wait" : "\(brief.also.count) quieter things can wait")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
             }
-            receipt(brief)
         }
         .multilineTextAlignment(.leading)
-        .padding(14)
-        .frame(maxWidth: 460, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+    }
+}
+
+/// "Standup in 40 min · then Design review 1:24 PM".
+private struct NextUp: View {
+    let first: Brief.Event
+    let rest: [Brief.Event]
+
+    init?(events: [Brief.Event]) {
+        let timed = events.filter { $0.allDay != true && ($0.date ?? .distantPast) > .now }
+        guard let first = timed.first else { return nil }
+        self.first = first
+        rest = Array(timed.dropFirst().prefix(1))
     }
 
-    /// What's left of today, as a quiet row: "10:30 Standup · 1:00 PM Design review".
-    private func todayRow(_ events: [Brief.Event]) -> some View {
+    private var when: String {
+        guard let d = first.date else { return "" }
+        let minutes = Int(d.timeIntervalSinceNow / 60)
+        if minutes < 1 { return "now" }
+        if minutes < 90 { return "in \(minutes) min" }
+        return "at \(first.clock ?? "")"
+    }
+
+    var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "calendar")
-                .foregroundStyle(.tertiary)
-            ForEach(Array(events.prefix(4).enumerated()), id: \.offset) { _, e in
-                HStack(spacing: 4) {
-                    if let clock = e.clock {
-                        Text(clock).monospacedDigit().foregroundStyle(.secondary)
-                    }
-                    Text(e.title).lineLimit(1)
-                }
-                .padding(.horizontal, 8)
-                .frame(height: 22)
-                .background(.quaternary.opacity(0.5), in: .capsule)
-            }
-        }
-        .font(.caption)
-    }
-
-    private func receipt(_ brief: Brief) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: brief.receipt.privateBytes == 0 ? "lock" : "arrow.up.forward")
-            Text(brief.receipt.summary)
+                .foregroundStyle(.tint)
+            (Text(first.title).foregroundStyle(.primary) + Text(" \(when)").foregroundStyle(.secondary))
                 .lineLimit(1)
-            Spacer(minLength: 4)
-            if pond.refreshing {
-                ProgressView().controlSize(.mini)
-            } else {
-                Button { Task { await pond.refresh() } } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .help("Look again")
+            if !rest.isEmpty {
+                Text("· then " + rest.map { "\($0.title) \($0.clock ?? "")" }.joined(separator: ", "))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
-        .font(.caption2)
-        .foregroundStyle(.tertiary)
-        .help(when(brief) + brief.receipt.detail + (brief.trouble ?? []).map { "\n\($0)" }.joined())
-    }
-
-    private func when(_ brief: Brief) -> String {
-        brief.date.map { "Written \($0.formatted(.relative(presentation: .named)))\n" } ?? ""
+        .font(.callout)
     }
 }
 
@@ -96,36 +106,136 @@ private struct PondRow: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            // New since the last brief: filled.
-            Circle()
-                .fill(line.new ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary))
-                .frame(width: 6, height: 6)
-                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-            VStack(alignment: .leading, spacing: 1) {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: Self.symbol(line.kind))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Self.tint(line.kind))
+                .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(line.title)
+                    .font(.callout)
                     .lineLimit(1)
-                Text("\(line.place) · \(line.note)")
+                Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            Spacer(minLength: 4)
-            Button { Pond.shared.dismiss(line) } label: {
-                Image(systemName: "xmark")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            ZStack(alignment: .trailing) {
+                HStack(spacing: 5) {
+                    // New since the last brief.
+                    if line.new {
+                        Circle().fill(.tint).frame(width: 5, height: 5)
+                    }
+                    Text(age)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                .opacity(hovering ? 0 : 1)
+                Button { Pond.shared.dismiss(line) } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .opacity(hovering ? 1 : 0)
+                .help("Not worth my time")
             }
-            .buttonStyle(.plain)
-            .opacity(hovering ? 1 : 0)
-            .help("Not worth my time")
+            .frame(minWidth: 24, alignment: .trailing)
+            .padding(.top, 1)
         }
-        .padding(.vertical, 5)
-        .padding(.horizontal, 6)
-        .background(.quaternary.opacity(hovering ? 0.5 : 0), in: .rect(cornerRadius: 8))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.primary.opacity(hovering ? 0.05 : 0), in: .rect(cornerRadius: 12))
         .contentShape(.rect)
         .onHover { hovering = $0 }
         .onTapGesture { if let url = line.link { NSWorkspace.shared.open(url) } }
         .help(line.url)
+    }
+
+    /// "ecto/frog · alex asked for a review".
+    private var detail: String {
+        let what: String = switch line.kind {
+        case "review": line.who.map { "\($0) asked for a review" } ?? "review requested"
+        case "failing": "checks failing"
+        case "changes_requested": "changes requested"
+        case "mention": "mentioned you"
+        case "assigned": "assigned to you"
+        case "ready": "approved, ready to merge"
+        default: line.note
+        }
+        return "\(line.place) · \(what)"
+    }
+
+    /// "now", "40m", "14h", "3d".
+    private var age: String {
+        guard let d = line.date else { return "" }
+        let s = Int(Date.now.timeIntervalSince(d))
+        switch s {
+        case ..<60: return "now"
+        case ..<3600: return "\(s / 60)m"
+        case ..<86400: return "\(s / 3600)h"
+        default: return "\(s / 86400)d"
+        }
+    }
+
+    static func symbol(_ kind: String) -> String {
+        switch kind {
+        case "review": "eye"
+        case "failing": "xmark.circle"
+        case "changes_requested": "arrow.uturn.backward.circle"
+        case "mention": "at"
+        case "assigned": "person.crop.circle"
+        case "ready": "checkmark.circle"
+        default: "circle"
+        }
+    }
+
+    static func tint(_ kind: String) -> Color {
+        switch kind {
+        case "failing": .red
+        case "changes_requested": .orange
+        case "ready": .green
+        case "mention": .purple
+        default: .accentColor
+        }
+    }
+}
+
+/// Under the card, like a footnote: what was read, what wrote it, what left this Mac.
+private struct ReceiptLine: View {
+    let brief: Brief
+    let refreshing: Bool
+    let refresh: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: brief.receipt.privateBytes == 0 ? "lock.fill" : "arrow.up.forward")
+                .font(.system(size: 9))
+            Text(brief.receipt.summary)
+                .lineLimit(1)
+            Group {
+                if refreshing {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Button(action: refresh) { Image(systemName: "arrow.clockwise") }
+                        .buttonStyle(.plain)
+                        .help("Look again")
+                }
+            }
+            .opacity(hovering || refreshing ? 1 : 0)
+        }
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+        .contentShape(.rect)
+        .onHover { hovering = $0 }
+        .help(when + brief.receipt.detail + (brief.trouble ?? []).map { "\n\($0)" }.joined())
+    }
+
+    private var when: String {
+        brief.date.map { "Written \($0.formatted(.relative(presentation: .named)))\n" } ?? ""
     }
 }

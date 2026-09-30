@@ -73,12 +73,6 @@ pub fn clock(t: DateTime<Utc>) -> String {
     t.with_timezone(&Local).format("%-H:%M").to_string()
 }
 
-/// The next timed event, for the template headline: "Next: Standup at 10:30."
-pub fn next_up(events: &[Event], now: DateTime<Utc>) -> Option<String> {
-    let e = events.iter().find(|e| !e.all_day && e.start > now)?;
-    Some(format!("Next: {} at {}.", e.title, clock(e.start)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,14 +104,5 @@ mod tests {
         assert!(what.contains("today"));
         assert!(read(&dir, now + Duration::hours(40)).is_none());
         std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn next_up_skips_all_day_and_started_events() {
-        let now = Utc::now();
-        let mut all_day = ev("Holiday", now + Duration::minutes(5), 600);
-        all_day.all_day = true;
-        let events = [ev("Running", now - Duration::minutes(5), 30), all_day, ev("Standup", now + Duration::minutes(30), 15)];
-        assert!(next_up(&events, now).unwrap().starts_with("Next: Standup at "));
     }
 }

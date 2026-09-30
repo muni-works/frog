@@ -81,10 +81,12 @@ struct Brief: Codable, Sendable {
         var url: String
         var place: String
         var who: String?
+        var updated: String
         var note: String
         var new: Bool
 
         var link: URL? { URL(string: url) }
+        var date: Date? { try? Date(String(updated.prefix(19)) + "Z", strategy: .iso8601) }
     }
 
     struct Event: Codable, Sendable, Equatable {
@@ -92,10 +94,12 @@ struct Brief: Codable, Sendable {
         var start: String
         var allDay: Bool?
 
-        /// "10:30", local time; all-day events have none.
+        var date: Date? { try? Date(String(start.prefix(19)) + "Z", strategy: .iso8601) }
+
+        /// "10:30 AM", local time; all-day events have none.
         var clock: String? {
-            guard allDay != true, let d = try? Date(String(start.prefix(19)) + "Z", strategy: .iso8601) else { return nil }
-            return d.formatted(date: .omitted, time: .shortened)
+            guard allDay != true, let date else { return nil }
+            return date.formatted(date: .omitted, time: .shortened)
         }
     }
 
