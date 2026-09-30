@@ -1,0 +1,41 @@
+name: FrogRemote
+options:
+  bundleIdPrefix: eco.frog
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: 54SNZV8YN8
+    CODE_SIGN_STYLE: Automatic
+targets:
+  Frog:
+    type: application
+    platform: iOS
+    sources:
+      - path: Frog
+      # The engine protocol, shared with the Mac app.
+      - path: ../macos/Frog/Engine/Protocol.swift
+        group: Shared
+      - path: ../macos/Frog/Engine/Diagram.swift
+        group: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote
+        PRODUCT_NAME: Frog
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Frog
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Frog connects to frog on your Mac."
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+    info:
+      path: Frog/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
