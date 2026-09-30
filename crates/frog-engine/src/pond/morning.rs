@@ -47,6 +47,50 @@ pub async fn check(cfg: &crate::config::Config) -> Result<Option<Notice>> {
     Ok(Some(notice))
 }
 
+/// From the watcher, after a pass: when a notice would be due and Frog isn't running (it asks
+/// on its own when it is), wake it hidden to post it. Frog decides and counts the day as usual;
+/// this only peeks, and wakes it once a day at most. Only for a watcher running from inside
+/// Frog.app (the Settings toggle installs it that way), which is how it knows which app to wake.
+pub fn wake_app(brief: &Brief) -> Result<()> {
+    let Some(app) = app_bundle() else { return Ok(()) };
+    let now = Local::now();
+    if !after_start(now.time()) {
+        return Ok(());
+    }
+    let today = now.date_naive();
+    let dir = super::dir();
+    let _lock = Lock::take(&dir)?;
+    let mut pond = Pond::load(&dir);
+    if pond.woke_on == Some(today) || decide(brief, pond.notified_on, today).is_none() || running(&app) {
+        return Ok(());
+    }
+    pond.woke_on = Some(today);
+    pond.save(&dir)?;
+    // Hidden and in the background: no window, no focus taken. It posts and quits.
+    std::process::Command::new("open")
+        .args(["-g", "-j", "-a"])
+        .arg(&app)
+        .args(["--args", "-FrogMorningNotice", "YES"])
+        .status()?;
+    Ok(())
+}
+
+/// The Frog.app this engine runs from (`Frog.app/Contents/Resources/frog`), if any.
+fn app_bundle() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    exe.ancestors()
+        .find(|p| p.extension().is_some_and(|e| e == "app") && p.join("Contents/MacOS").is_dir())
+        .map(Into::into)
+}
+
+fn running(app: &std::path::Path) -> bool {
+    std::process::Command::new("pgrep")
+        .args(["-f", &format!("{}/Contents/MacOS/", app.display())])
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 fn after_start(t: NaiveTime) -> bool {
     t >= NaiveTime::from_hms_opt(FROM.0, FROM.1, 0).unwrap()
 }

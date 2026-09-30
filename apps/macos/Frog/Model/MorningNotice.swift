@@ -9,10 +9,34 @@ enum MorningNotice {
 
     static var enabled: Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
 
+    /// Launched by the watcher (`open -g -j Frog.app --args -FrogMorningNotice YES`) just to
+    /// post the notice. AppKit reads `-Key value` arguments into UserDefaults' volatile argument
+    /// domain, so this never sticks.
+    static let headless = UserDefaults.standard.bool(forKey: "FrogMorningNotice")
+
+    /// The notice was clicked before a window was up to show the brief (clicking it launched
+    /// frog): the first window shows it.
+    static var pendingShow = false
+
+    /// Clicked: the brief, now or as soon as there's a window.
+    static func show() {
+        pendingShow = true
+        NotificationCenter.default.post(name: .showBrief, object: nil)
+    }
+
     private static var timer: Timer?
 
     static func start() {
         guard !SingleInstance.isTesting, timer == nil else { return }
+        if headless {
+            // Post it if it's due, give the post a moment, and go.
+            Task {
+                await check()
+                try? await Task.sleep(for: .seconds(3))
+                NSApp.terminate(nil)
+            }
+            return
+        }
         let ws = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
             ws.addObserver(forName: name, object: nil, queue: .main) { _ in

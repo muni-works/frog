@@ -131,6 +131,10 @@ pub struct Pond {
     /// The local day of the last morning notice: one a day at most.
     #[serde(default)]
     pub notified_on: Option<chrono::NaiveDate>,
+    /// The local day the watcher last woke Frog to post the notice: once a day, even if
+    /// Frog couldn't post it (notifications off), so it isn't woken every pass.
+    #[serde(default)]
+    pub woke_on: Option<chrono::NaiveDate>,
 }
 
 pub fn dir() -> PathBuf {
