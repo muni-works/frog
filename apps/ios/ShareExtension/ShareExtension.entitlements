@@ -6,5 +6,9 @@
 	<array>
 		<string>group.eco.frog.remote</string>
 	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)eco.frog.remote</string>
+	</array>
 </dict>
 </plist>

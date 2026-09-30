@@ -30,8 +30,8 @@ final class Remote: SessionLink {
     }
     var code: String {
         didSet {
-            UserDefaults.standard.set(code, forKey: "remoteCode")
-            Snapshot.remember(host: host, code: code)
+            PairingCode.write(code)
+            Snapshot.remember(host: host)
         }
     }
 
@@ -46,7 +46,13 @@ final class Remote: SessionLink {
     init() {
         let env = ProcessInfo.processInfo.environment
         host = env["FROG_REMOTE_HOST"] ?? UserDefaults.standard.string(forKey: "remoteHost") ?? ""
-        code = env["FROG_REMOTE_CODE"] ?? UserDefaults.standard.string(forKey: "remoteCode") ?? ""
+        // Codes kept in defaults by earlier builds move to the Keychain.
+        if let old = UserDefaults.standard.string(forKey: "remoteCode") {
+            PairingCode.write(old)
+            UserDefaults.standard.removeObject(forKey: "remoteCode")
+            Snapshot.defaults.removeObject(forKey: "code")
+        }
+        code = env["FROG_REMOTE_CODE"] ?? PairingCode.read() ?? ""
     }
 
     var isConnected: Bool {
@@ -130,7 +136,7 @@ final class Remote: SessionLink {
         switch msg["type"] as? String {
         case "welcome":
             state = .connected(host: msg["host"] as? String ?? "Mac")
-            Snapshot.remember(host: host, code: code)
+            Snapshot.remember(host: host)
             registerForPushes()
             for m in outbox { send(m) }
             outbox = []

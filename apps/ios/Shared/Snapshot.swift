@@ -34,14 +34,13 @@ struct Snapshot: Codable, Equatable {
         Self.defaults.set(try? JSONEncoder().encode(self), forKey: "snapshot")
     }
 
-    /// Where the Mac is and the code it wants, for extensions that talk to it themselves.
+    /// Where the Mac is and the code it wants (from the Keychain), for extensions that talk to it.
     static var connection: (host: String, code: String)? {
-        guard let code = defaults.string(forKey: "code"), !code.isEmpty else { return nil }
-        return (defaults.string(forKey: "host") ?? "127.0.0.1:8913", code)
+        guard let code = PairingCode.read(), !code.isEmpty, let host = defaults.string(forKey: "host") else { return nil }
+        return (host, code)
     }
 
-    static func remember(host: String, code: String) {
+    static func remember(host: String) {
         defaults.set(host, forKey: "host")
-        defaults.set(code, forKey: "code")
     }
 }

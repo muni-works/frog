@@ -59,6 +59,7 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSUserActivityTypes: [eco.frog.conversation]
+        FrogKeychainGroup: $(AppIdentifierPrefix)eco.frog.remote
         NSSupportsLiveActivities: true
         NSBonjourServices: [_frog._tcp]
         CFBundleURLTypes:
@@ -181,6 +182,7 @@ targets:
       path: ShareExtension/Info.plist
       properties:
         CFBundleDisplayName: Send to frog
+        FrogKeychainGroup: $(AppIdentifierPrefix)eco.frog.remote
         NSBonjourServices: [_frog._tcp]
         NSLocalNetworkUsageDescription: "frog sends what you share to frog on your Mac."
         NSAppTransportSecurity:
