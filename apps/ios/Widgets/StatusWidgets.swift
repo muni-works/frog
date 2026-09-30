@@ -34,7 +34,12 @@ struct StatusWidget: Widget {
         }
         .configurationDisplayName("frog")
         .description("What needs you, and what's running on your Mac.")
+        #if os(watchOS)
+        // A complication on the watch face.
+        .supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryInline, .accessoryCorner])
+        #else
         .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular, .accessoryInline])
+        #endif
     }
 }
 
@@ -70,13 +75,23 @@ struct StatusView: View {
             .widgetURL(url(waiting.first ?? running.first))
         case .accessoryInline:
             Text(waiting.isEmpty ? (running.isEmpty ? "frog: all quiet" : "frog: \(headline)") : "frog: \(headline)")
+        #if os(watchOS)
+        case .accessoryCorner:
+            FrogFace(mood: mood, size: 22)
+                .widgetLabel { Text(waiting.isEmpty ? (running.isEmpty ? "All quiet" : "Working") : "Needs you") }
+                .widgetURL(url(waiting.first ?? running.first))
+        default:
+            EmptyView()
+        #else
         case .systemMedium:
             medium
         default:
             small
+        #endif
         }
     }
 
+    #if os(iOS)
     private var small: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -149,11 +164,14 @@ struct StatusView: View {
         }
     }
 
+    #endif
+
     private func url(_ r: Snapshot.Row?) -> URL? {
         URL(string: r.map { "frog://session/\($0.id)" } ?? "frog://")
     }
 }
 
+#if os(iOS)
 /// Control Center (and the Action button): how many conversations need you, one tap to them.
 struct NeedsYouControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
@@ -184,3 +202,4 @@ struct OpenFrogIntent: AppIntent {
         return .result(opensIntent: OpenURLIntent(url))
     }
 }
+#endif

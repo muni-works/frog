@@ -1,7 +1,10 @@
+#if os(iOS)
 import ActivityKit
+#endif
 import SwiftUI
 import WidgetKit
 
+#if os(iOS)
 @main
 struct FrogWidgets: WidgetBundle {
     var body: some Widget {
@@ -10,6 +13,8 @@ struct FrogWidgets: WidgetBundle {
         NeedsYouControl()
     }
 }
+
+#endif
 
 extension FrogMood {
     init(name: String) {
@@ -25,6 +30,7 @@ extension FrogMood {
     }
 }
 
+#if os(iOS)
 struct TurnLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: TurnActivity.self) { context in
@@ -148,3 +154,4 @@ struct LockScreenTurn: View {
         .padding(16)
     }
 }
+#endif

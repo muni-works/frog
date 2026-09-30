@@ -1,5 +1,6 @@
 import SwiftUI
 import WatchConnectivity
+import WidgetKit
 
 /// frog on your wrist: what needs you, answered with a tap, and what's running. The phone keeps
 /// it current and carries the answers to the Mac.
@@ -51,6 +52,15 @@ final class WristLink: NSObject, WCSessionDelegate {
             guard let id = r["id"] else { return nil }
             return Row(id: id, title: r["title"] ?? "frog", live: r["live"] ?? "", activity: r["activity"],
                        question: r["question"], permission: r["permission"])
+        }
+        // The complication reads the same snapshot the phone's widgets do.
+        let snapshot = Snapshot(rows: rows.map { r in
+            Snapshot.Row(id: r.id, title: r.title, live: r.live, activity: r.activity, question: r.question,
+                         permission: r.permission, local: true, open: true)
+        }, host: nil, at: .now)
+        if snapshot.rows != Snapshot.load()?.rows {
+            snapshot.save()
+            WidgetCenter.shared.reloadAllTimelines()
         }
     }
 
