@@ -2201,20 +2201,21 @@ Don't repeat it. Change the arguments or try a different approach.",
             }
             ToolMode::Native | ToolMode::Auto => (self.system.clone(), messages, specs, None),
         };
+        let prompt = self
+            .est
+            .tokens(fixed_chars(&system, tools) + context::history_chars(messages));
         // A local server fills whatever's left of the window unless told otherwise, and
         // overflows it; hosted APIs have their own output limits.
         let max_tokens = if crate::harness::is_cloud(&self.profile) {
             self.profile.max_tokens
         } else {
-            let prompt = self
-                .est
-                .tokens(fixed_chars(&system, tools) + context::history_chars(messages));
             Some(context::reply_budget(
                 self.window,
                 prompt,
                 self.profile.max_tokens,
             ))
         };
+        let call = NEXT_CALL.fetch_add(1, Ordering::Relaxed) + 1;
         let req = Request {
             system: &system,
             messages,
@@ -2236,6 +2237,39 @@ Don't repeat it. Change the arguments or try a different approach.",
                 ..Default::default()
             };
             let sent = Instant::now();
+            // The engine log: what was sent, and a note while nothing has come back, so a
+            // slow provider or a hang shows up while it's happening, not just after.
+            let heard = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let watchdog = self.cfg.log_calls.then(|| {
+                eprintln!(
+                    "call {call} {label} → {} · ~{prompt} tokens in · {} tools{}{}",
+                    self.profile_name,
+                    specs.len(),
+                    max_tokens
+                        .map(|n| format!(" · reply up to {n}"))
+                        .unwrap_or_default(),
+                    if attempt > 0 {
+                        format!(" · attempt {}", attempt + 1)
+                    } else {
+                        String::new()
+                    },
+                );
+                let heard = heard.clone();
+                tokio::spawn(async move {
+                    let mut waited = 0;
+                    for step in [30, 30, 60, 120, 240] {
+                        tokio::time::sleep(Duration::from_secs(step)).await;
+                        waited += step;
+                        if heard.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        eprintln!(
+                            "call {call}: nothing back after {}",
+                            secs(Duration::from_secs(waited))
+                        );
+                    }
+                })
+            });
             // When the first event arrived, and the first that wasn't reasoning.
             let (mut first, mut answer) = (None::<Instant>, None::<Instant>);
             let mut filter = TagFilter::default();
@@ -2257,6 +2291,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                 .provider
                 .complete(&req, &mut |e| {
                     started = true;
+                    heard.store(true, Ordering::Relaxed);
                     let now = Instant::now();
                     first.get_or_insert(now);
                     if !matches!(e, StreamEvent::Thinking(_)) {
@@ -2305,6 +2340,22 @@ Don't repeat it. Change the arguments or try a different approach.",
                 text(&mut streamed, rest);
             }
             let done = Instant::now();
+            if let Some(w) = watchdog {
+                w.abort();
+                match &r {
+                    Ok(resp) => eprintln!(
+                        "call {call} done in {} · first token {} · {} in, {} out · {:?}",
+                        secs(done - sent),
+                        first
+                            .map(|f| secs(f - sent))
+                            .unwrap_or_else(|| "none".into()),
+                        resp.usage.input + resp.usage.cache_read,
+                        resp.usage.output,
+                        resp.stop,
+                    ),
+                    Err(e) => eprintln!("call {call} failed after {}: {e:#}", secs(done - sent)),
+                }
+            }
             let first = first.unwrap_or(done);
             streamed.ttft = first - sent;
             streamed.decode = done - first;
@@ -2690,6 +2741,19 @@ fn memory_root(store: &std::path::Path) -> PathBuf {
 }
 
 /// Prompt chars that don't live in the history: system prompt and tool schemas.
+/// Model calls this engine has made, numbering them in the log.
+static NEXT_CALL: AtomicU64 = AtomicU64::new(0);
+
+/// "0.4s", "12.3s", "3m 05s".
+fn secs(d: Duration) -> String {
+    let s = d.as_secs_f64();
+    if s < 60.0 {
+        format!("{s:.1}s")
+    } else {
+        format!("{}m {:02}s", (s / 60.0) as u64, (s % 60.0) as u64)
+    }
+}
+
 fn fixed_chars(system: &str, specs: &[ToolSpec]) -> usize {
     let tools: usize = specs
         .iter()

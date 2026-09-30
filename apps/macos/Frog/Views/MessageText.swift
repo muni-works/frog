@@ -107,7 +107,12 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         }
         layout.ensureLayout(for: container)
-        return ceil(layout.usedRect(for: container).height)
+        let full = ceil(layout.usedRect(for: container).height)
+        // While the pen is still writing, the view is only as tall as what's written: text that
+        // has arrived but isn't revealed yet is laid out, drawn clear, and shouldn't make the
+        // transcript scroll, stop at the top, or count as "more lines" before anyone can read it.
+        guard let written = reveal.writtenHeight() else { return full }
+        return min(full, ceil(written))
     }
 
     override func setFrameSize(_ newSize: NSSize) {

@@ -163,6 +163,10 @@ pub struct Config {
     /// is on). Off by default: it keeps a thread reading the power sensor.
     #[serde(skip)]
     pub energy: bool,
+    /// Log each model call's timing to stderr (the Mac app's engine log): sent, still waiting,
+    /// done or failed. `--serve` turns it on; the TUI draws on the terminal and leaves it off.
+    #[serde(skip)]
+    pub log_calls: bool,
     /// Run shell commands in a sandbox (writes only in the project, credentials hidden), so
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]
