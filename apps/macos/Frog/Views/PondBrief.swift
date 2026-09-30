@@ -70,10 +70,6 @@ struct PondBrief: View {
             Image(systemName: brief.receipt.privateBytes == 0 ? "lock" : "arrow.up.forward")
             Text(brief.receipt.summary)
                 .lineLimit(1)
-            if let date = brief.date {
-                Text("· \(date.formatted(.relative(presentation: .named)))")
-                    .lineLimit(1)
-            }
             Spacer(minLength: 4)
             if pond.refreshing {
                 ProgressView().controlSize(.mini)
@@ -87,7 +83,11 @@ struct PondBrief: View {
         }
         .font(.caption2)
         .foregroundStyle(.tertiary)
-        .help(brief.receipt.detail + (brief.trouble ?? []).map { "\n\($0)" }.joined())
+        .help(when(brief) + brief.receipt.detail + (brief.trouble ?? []).map { "\n\($0)" }.joined())
+    }
+
+    private func when(_ brief: Brief) -> String {
+        brief.date.map { "Written \($0.formatted(.relative(presentation: .named)))\n" } ?? ""
     }
 }
 

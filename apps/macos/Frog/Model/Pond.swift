@@ -128,8 +128,7 @@ struct Brief: Codable, Sendable {
         var summary: String {
             var parts = [read.map(\.source).joined(separator: ", ")]
             if let model {
-                let short = model.name.split(separator: "/").last.map(String.init) ?? model.name
-                parts.append("\(short) \(Self.where(model.place))")
+                parts.append("\(Self.short(model.name)) \(Self.where(model.place))")
             }
             let left = privateBytes
             parts.append(left == 0 ? "nothing left this Mac" : "\(ByteCountFormatter.string(fromByteCount: Int64(left), countStyle: .file)) left this Mac")
@@ -149,6 +148,15 @@ struct Brief: Codable, Sendable {
                 lines.append("Sent \(ByteCountFormatter.string(fromByteCount: Int64(s.bytes), countStyle: .file)) to \(s.to): \(s.what)")
             }
             return lines.joined(separator: "\n")
+        }
+
+        /// "tang/mlx-community/Qwen3-4B-4bit" → "Qwen3-4B".
+        private static func short(_ name: String) -> String {
+            var s = name.split(separator: "/").last.map(String.init) ?? name
+            for suffix in ["-4bit", "-8bit", "-bf16", "-fp16", "-MLX", "-GGUF"] where s.hasSuffix(suffix) {
+                s.removeLast(suffix.count)
+            }
+            return s
         }
 
         private static func `where`(_ place: String) -> String {
