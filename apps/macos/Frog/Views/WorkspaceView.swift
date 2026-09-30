@@ -450,6 +450,19 @@ struct WorkspaceView: View {
             // The viewer draws its own glass capsule; without this the toolbar adds a second.
             .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button("Terminal", systemImage: "terminal", action: showTerminal)
+                    Button("Preview", systemImage: "globe", action: showPreview)
+                    if focused.changeCount > 0 {
+                        Button("Changes", systemImage: "plusminus") { revealPanes(focused) }
+                    }
+                } label: {
+                    Label("Panes", systemImage: "sidebar.right")
+                }
+                .help("Panes: terminal (⇧⌘T), preview (⇧⌘P), changes (⌥⌘0)")
+                .disabled(focused.conversation == nil)
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Button("Split", systemImage: "rectangle.split.2x1") { split() }
                     .contextMenu {
                         Button("Split Right") { split(nil, .right) }
