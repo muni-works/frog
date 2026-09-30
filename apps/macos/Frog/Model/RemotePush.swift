@@ -51,6 +51,11 @@ final class RemotePush {
         save()
     }
 
+    func forget(_ address: String) {
+        devices.removeAll { $0.address == address }
+        save()
+    }
+
     private func save() {
         UserDefaults.standard.set(try? JSONEncoder().encode(devices), forKey: "remoteDevices")
     }
@@ -255,7 +260,12 @@ final class RemotePush {
             ]
             if let collapse { body["collapse_id"] = collapse }
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            URLSession.shared.dataTask(with: req).resume()
+            let address = d.address
+            URLSession.shared.dataTask(with: req) { _, response, _ in
+                // 410: the app was deleted or pushes turned off; stop sending to it.
+                guard (response as? HTTPURLResponse)?.statusCode == 410, activityToken == nil else { return }
+                Task { @MainActor in RemotePush.shared.forget(address) }
+            }.resume()
         default:
             break
         }
