@@ -1,0 +1,5 @@
+module TangLLM {
+    header "tang_llm.h"
+    link "tang_llm_ios"
+    export *
+}
