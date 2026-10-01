@@ -78,7 +78,10 @@ struct EnergySettings: View {
             }
         }
         .formStyle(.grouped)
+        #if os(macOS)
+        // The session logs are on the Mac; the phone's record comes from it.
         .task { await stats.backfillEnergy() }
+        #endif
     }
 
     private var summary: String {

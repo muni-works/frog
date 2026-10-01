@@ -51,6 +51,9 @@ struct EnergyHint: View {
         .help("Energy for this turn")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             EnergyCard(energy: energy, usage: usage)
+                #if os(iOS)
+                .presentationCompactAdaptation(.popover)
+                #endif
         }
     }
 }
@@ -58,6 +61,7 @@ struct EnergyHint: View {
 struct EnergyCard: View {
     let energy: TurnEnergy
     let usage: TurnUsage
+    @Environment(\.showEnergyHistory) private var showEnergyHistory
 
     private var total: Double { max(energy.totalWh, 0) }
 
@@ -117,6 +121,15 @@ struct EnergyCard: View {
                 }
                 .buttonStyle(.plain)
                 .simultaneousGesture(TapGesture().onEnded { UserDefaults.standard.set("energy", forKey: "settingsTab") })
+                #else
+                if let showEnergyHistory {
+                    Button { showEnergyHistory() } label: {
+                        Label("History", systemImage: "chart.bar.xaxis")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                }
                 #endif
             }
         }
@@ -147,6 +160,9 @@ struct PriceHint: View {
         .help("Cost of this turn")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             PriceCard(cost: cost, usage: usage)
+                #if os(iOS)
+                .presentationCompactAdaptation(.popover)
+                #endif
         }
     }
 }
@@ -386,4 +402,9 @@ private struct Fact: View {
 
 private extension String {
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+extension EnvironmentValues {
+    /// Where the energy card's "History" goes, on a phone (the Mac has Settings › Energy).
+    @Entry var showEnergyHistory: (() -> Void)?
 }

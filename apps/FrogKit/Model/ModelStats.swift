@@ -48,6 +48,20 @@ final class ModelStats {
         if let d = try? JSONEncoder().encode(store) { defaults.set(d, forKey: Self.key) }
     }
 
+    // MARK: Mirror
+
+    /// Everything recorded here, to hand to a phone: it only shows what the Mac recorded.
+    var exported: Data? { try? JSONEncoder().encode(store) }
+
+    /// The Mac's record, in place of this one's (the phone's side of `exported`); kept, so the
+    /// numbers are there before the Mac is.
+    func adopt(_ data: Data, cap: Double) {
+        guard let s = try? JSONDecoder().decode(Store.self, from: data) else { return }
+        store = s
+        save()
+        monthlyCap = cap
+    }
+
     /// Remember what the models frog lists cost, so turns can be priced when they end.
     func learnPrices(_ models: [ModelEntry]) {
         var changed = false

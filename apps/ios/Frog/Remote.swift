@@ -179,6 +179,14 @@ final class Remote {
             if let p = msg["providers"].flatMap({ try? JSONSerialization.data(withJSONObject: $0) }) {
                 providers = (try? dec.decode([ProviderInfo].self, from: p)) ?? providers
             }
+        case "stats":
+            // The Mac's spend and energy record; the phone records nothing of its own.
+            if let st = msg["stats"].flatMap({ try? JSONSerialization.data(withJSONObject: $0) }) {
+                ModelStats.shared.adopt(st, cap: msg["cap"] as? Double ?? 0)
+            }
+            if UserDefaults.standard.object(forKey: ModelStats.energyKey) == nil, let show = msg["show_energy"] as? Bool {
+                UserDefaults.standard.set(show, forKey: ModelStats.energyKey)
+            }
         case "sessions":
             let rows = msg["sessions"] as? [[String: Any]] ?? []
             sessions = rows.compactMap(RemoteSession.init)

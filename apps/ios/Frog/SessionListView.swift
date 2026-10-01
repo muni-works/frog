@@ -6,8 +6,8 @@ struct SessionListView: View {
     /// iPad: rows select the conversation shown beside the list instead of pushing it.
     var selection: Binding<String?>? = nil
     @Namespace private var zoom
-    @AppStorage("playfulSounds") private var sounds = true
     @State private var composing = false
+    @State private var settings = false
 
     var body: some View {
         List(selection: selection) {
@@ -31,14 +31,10 @@ struct SessionListView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
             Button("New", systemImage: "square.and.pencil") { composing = true }
-            Menu {
-                Toggle("Frog sounds", systemImage: "speaker.wave.2", isOn: $sounds)
-                Button("Disconnect", systemImage: "xmark.circle", role: .destructive) { remote.disconnect(forget: true) }
-            } label: {
-                Image(systemName: "ellipsis")
-            }
+            Button("Settings", systemImage: "gearshape") { settings = true }
             }
         }
+        .sheet(isPresented: $settings) { SettingsSheet(remote: remote) }
         .sheet(isPresented: $composing) {
             NewConversationSheet(remote: remote) { id in remote.requested = id }
         }

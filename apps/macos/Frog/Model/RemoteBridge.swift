@@ -125,6 +125,10 @@ final class RemoteBridge {
         RemotePush.shared.observe(line)
         if ["turn_started", "turn_ended", "idle", "permission_request", "permission_resolved", "item_started", "titled"]
             .contains(head.event) { listChanged() }
+        // After the app has recorded the turn (it folds the line in after this).
+        if head.event == "turn_ended" {
+            Task { @MainActor in self.sendStats(to: Array(self.clients.values)) }
+        }
         for c in clients.values where c.attached.keys.contains(head.session) {
             c.deliver(line, head: head)
         }
@@ -219,6 +223,7 @@ final class RemoteBridge {
             client.authed = true
             client.send(["type": "welcome", "host": Host.current().localizedName ?? "Mac"])
             sendContext(to: client)
+            sendStats(to: [client])
         case "list":
             client.send(["type": "sessions", "sessions": sessionList()])
         case "attach":
@@ -332,6 +337,16 @@ final class RemoteBridge {
                   let mj = try? JSONSerialization.jsonObject(with: m), let pj = try? JSONSerialization.jsonObject(with: p) else { return }
             client.send(["type": "context", "models": mj, "providers": pj])
         }
+    }
+
+    /// What frog has recorded on this Mac (spend, prices, energy), which the phone shows as is,
+    /// and whether this Mac shows energy, which the phone follows until it's set there.
+    private func sendStats(to clients: [Client]) {
+        let stats = ModelStats.shared
+        guard let data = stats.exported, let json = try? JSONSerialization.jsonObject(with: data) else { return }
+        let msg: [String: Any] = ["type": "stats", "stats": json, "cap": stats.monthlyCap,
+                                  "show_energy": UserDefaults.standard.bool(forKey: ModelStats.energyKey)]
+        for c in clients where c.authed { c.send(msg) }
     }
 
     /// Constant-time comparison, so the code can't be guessed a character at a time.

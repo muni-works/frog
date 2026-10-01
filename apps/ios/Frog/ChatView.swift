@@ -12,6 +12,7 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var opening = false
     @State private var openError: String?
+    @State private var energyHistory = false
 
     private var identity: ModelIdentity? {
         conversation.status.map { ModelIdentity.of($0.model, in: models) }
@@ -32,6 +33,8 @@ struct ChatView: View {
     var body: some View {
         TranscriptView(conversation: conversation, actions: turnActions)
             .environment(\.pinsQuestions, true)
+            .environment(\.showEnergyHistory) { energyHistory = true }
+            .sheet(isPresented: $energyHistory) { EnergyHistorySheet() }
             .safeAreaInset(edge: .bottom) {
                 ZStack {
                     if let p = conversation.permission {
