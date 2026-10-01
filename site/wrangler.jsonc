@@ -1,0 +1,21 @@
+// frog.eco on Cloudflare. Deploy: cd site && npm run deploy
+// One-time: npx wrangler r2 bucket create frog-releases
+//           npx wrangler secret put APNS_KEY      (the .p8's contents)
+//           npx wrangler secret put APNS_KEY_ID
+//           npx wrangler secret put APNS_TEAM_ID
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "frog-eco",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-01",
+  "routes": [{ "pattern": "frog.eco", "custom_domain": true }],
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    // /energy serves energy/index.html, with no trailing slash.
+    "html_handling": "drop-trailing-slash",
+    "run_worker_first": ["/api/*", "/download", "/appcast.xml", "/releases/*"]
+  },
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "frog-releases" }],
+  "observability": { "enabled": true }
+}

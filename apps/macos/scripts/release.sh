@@ -1,8 +1,8 @@
 #!/bin/zsh
 # Build, sign, notarize and publish a release of Frog.app for download from the web.
 #
-#   apps/macos/scripts/release.sh 0.2.0            # build, notarize, publish to GitHub
-#   apps/macos/scripts/release.sh 0.2.0 --local    # stop before GitHub: dist/ only
+#   apps/macos/scripts/release.sh 0.2.0            # build, notarize, publish to frog.eco
+#   apps/macos/scripts/release.sh 0.2.0 --local    # stop before publishing: dist/ only
 #
 # One-time setup on the release Mac:
 #   1. A "Developer ID Application" certificate in the login Keychain (developer.apple.com).
@@ -11,16 +11,19 @@
 #      Keychain). Its public half is project.yml's SPARKLE_PUBLIC_KEY. To move it to another
 #      Mac: generate_keys -x key.txt here, generate_keys -f key.txt there (Sparkle's bin/).
 #   4. A tang checkout (TANG_DIR, else ../tang): a release always ships tang-llm.
+#   5. Cloudflare: cd site && npm install && npx wrangler login (Node 22+). The bucket is
+#      created once with: npx wrangler r2 bucket create frog-releases
 #
-# The release lands on $FROG_RELEASE_REPO (ecto/frog) as Frog.dmg and appcast.xml. frog.eco
-# redirects /download and /appcast.xml to the latest release's copies (site/vercel.json).
+# The release lands in the frog-releases R2 bucket: releases/<version>/Frog.dmg, plus Frog.dmg
+# and appcast.xml for the latest. frog.eco serves /download, /appcast.xml and /releases/…
+# from it (site/worker/index.js), and the version is tagged v<version> on origin.
 set -euo pipefail
 
 VERSION=${1:?usage: release.sh <version> [--local]}
 LOCAL=${2:-}
 SIGN_ID=${FROG_SIGN_ID:-Developer ID Application}
 NOTARY_PROFILE=${FROG_NOTARY_PROFILE:-frog}
-REPO=${FROG_RELEASE_REPO:-ecto/frog}
+BUCKET=${FROG_RELEASE_BUCKET:-frog-releases}
 TAG="v$VERSION"
 
 HERE=${0:A:h}
@@ -40,8 +43,11 @@ fail() { print -P "%F{red}error:%f $*" >&2; exit 1 }
 security find-identity -v -p codesigning | grep -q "$SIGN_ID" || fail "no \"$SIGN_ID\" certificate in the Keychain"
 xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
     || fail "no notary credentials; run: xcrun notarytool store-credentials $NOTARY_PROFILE"
+wrangler() { (cd "$ROOT/site" && npx --no-install wrangler "$@") }
 if [[ $LOCAL != --local ]]; then
-    gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && fail "$TAG already exists on $REPO"
+    (( ${$(node -v 2>/dev/null)[2,3]:-0} >= 22 )) || fail "wrangler needs Node 22 or newer (node -v: $(node -v 2>/dev/null))"
+    git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1 && fail "$TAG already exists on origin"
+    wrangler whoami 2>/dev/null | grep -q "associated with" || fail "wrangler isn't logged in; run: cd site && npx wrangler login"
 fi
 
 step "Building Frog $VERSION ($BUILD_NUMBER)"
@@ -112,8 +118,7 @@ cat > "$DIST/appcast.xml" <<EOF
       <sparkle:version>$BUILD_NUMBER</sparkle:version>
       <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-      <sparkle:releaseNotesLink>https://github.com/$REPO/releases/tag/$TAG</sparkle:releaseNotesLink>
-      <enclosure url="https://github.com/$REPO/releases/download/$TAG/Frog.dmg" type="application/octet-stream" $ED/>
+      <enclosure url="https://frog.eco/releases/$VERSION/Frog.dmg" type="application/octet-stream" $ED/>
     </item>
   </channel>
 </rss>
@@ -124,7 +129,11 @@ if [[ $LOCAL == --local ]]; then
     exit 0
 fi
 
-step "Publishing $TAG to $REPO"
-gh release create "$TAG" "$DMG" "$DIST/appcast.xml" --repo "$REPO" \
-    --target "$(git rev-parse HEAD)" --title "Frog $VERSION" --generate-notes
-step "Done: https://github.com/$REPO/releases/tag/$TAG"
+# The appcast goes last, so it never points at a DMG that isn't there yet.
+step "Publishing $VERSION to frog.eco"
+put() { wrangler r2 object put "$BUCKET/$1" --remote --file "$2" --content-type "$3" }
+put "releases/$VERSION/Frog.dmg" "$DMG" application/x-apple-diskimage
+put Frog.dmg "$DMG" application/x-apple-diskimage
+put appcast.xml "$DIST/appcast.xml" application/xml
+git tag "$TAG" && git push origin "$TAG"
+step "Done: https://frog.eco/releases/$VERSION/Frog.dmg"

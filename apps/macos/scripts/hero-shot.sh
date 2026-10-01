@@ -1,6 +1,6 @@
 #!/bin/zsh
 # frog.eco's hero screenshots: the real app, replaying scripts/hero_fixture.py's session, captured
-# with its window shadow in light and dark, into site/shot-{light,dark}.png.
+# with its window shadow in light and dark, into site/public/shot-{light,dark}.png.
 #
 #   apps/macos/scripts/hero-shot.sh
 #
@@ -67,5 +67,5 @@ shoot() {
 }
 
 # One at a time: a second copy with the same bundle id would hand its folder to the first.
-shoot light "$ROOT/site/shot-light.png"
-shoot dark "$ROOT/site/shot-dark.png"
+shoot light "$ROOT/site/public/shot-light.png"
+shoot dark "$ROOT/site/public/shot-dark.png"

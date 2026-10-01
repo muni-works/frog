@@ -61,7 +61,7 @@ SIMCTL_CHILD_FROG_REMOTE_CODE=<code> xcrun simctl launch booted eco.frog.remote
 ```
 
 Once connected, the phone registers with the Mac for pushes. In the Simulator the Mac delivers
-them with `xcrun simctl push`; real phones go through the relay (`site/api/push.js`), which needs
+them with `xcrun simctl push`; real phones go through the relay (`site/worker/apns.js`), which needs
 a paid team's APNs key and isn't deployed yet.
 
 ## Not done yet

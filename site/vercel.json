@@ -1,7 +1,0 @@
-{
-  "cleanUrls": true,
-  "redirects": [
-    { "source": "/download", "destination": "https://github.com/ecto/frog/releases/latest/download/Frog.dmg", "permanent": false },
-    { "source": "/appcast.xml", "destination": "https://github.com/ecto/frog/releases/latest/download/appcast.xml", "permanent": false }
-  ]
-}
