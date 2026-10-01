@@ -23,6 +23,11 @@ replayed from the session log, then the engine's lines live) and sends ops (`sub
 a `new` one; a Mac window opens it without replacing what's on screen. On the phone the code
 lives in the Keychain.
 
+The Mac stays the authority: it sends what it has recorded (`stats`: spend, prices, energy), and
+a phone asks rather than decides. A `model` choice goes to the pane showing the conversation,
+which does what the Mac's picker would (switch, download first, or ask about the cloud); `manage`
+is the sidebar's row menu (archive, pin, rename).
+
 ## Targets
 
 | target | what |
@@ -63,6 +68,9 @@ a paid team's APNs key and isn't deployed yet.
 
 - A paid team: a real device, APNs (and deploying the relay, with rate limits), TestFlight.
 - The complication is built and fed, but hasn't been placed on a watch face in the Simulator.
+- Still Mac-only: races, the morning brief, the terminal and preview panes, the timeline rail,
+  moving a conversation to another folder, `@file` and `/skill` in the composer, and Settings
+  beyond spending and energy (models, keys, permissions, MCP).
 
 Everything a phone shows of a conversation is FrogKit's (see ../FrogKit/README.md): change a
 component there and the Mac, iPhone, iPad and extensions all change with it.
