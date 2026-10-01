@@ -125,6 +125,12 @@ final class RemoteBridge {
         RemotePush.shared.observe(line)
         if ["turn_started", "turn_ended", "idle", "permission_request", "permission_resolved", "item_started", "titled"]
             .contains(head.event) { listChanged() }
+        // A conversation new to the list (started here or from a phone): list it once its file
+        // is on disk, which it is by the time it does anything. The list goes to phones after.
+        if ["turn_started", "permission_request", "turn_ended"].contains(head.event),
+           !Library.shared.sessions.contains(where: { $0.id == head.session }) {
+            Library.shared.refresh()
+        }
         // After the app has recorded the turn (it folds the line in after this).
         if head.event == "turn_ended" {
             Task { @MainActor in self.sendStats(to: Array(self.clients.values)) }
@@ -340,11 +346,8 @@ final class RemoteBridge {
                 // A fresh conversation learns its session from the engine's first event.
                 for _ in 0..<100 {
                     if let id = c?.sessionID {
+                        // Listed when its turn starts (see `forward`), which the phone waits for.
                         client?.send(["type": "opened", "session": id, "ref": ref])
-                        // The engine writes a new session's file with its first message; list it
-                        // once that's on disk, so the phone can find it before the turn ends.
-                        try? await Task.sleep(for: .seconds(1))
-                        Library.shared.refresh()
                         return
                     }
                     try? await Task.sleep(for: .milliseconds(100))

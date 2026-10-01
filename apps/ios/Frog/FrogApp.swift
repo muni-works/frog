@@ -44,7 +44,7 @@ struct RootView: View {
                 NavigationSplitView {
                     SessionListView(remote: remote, selection: $selection)
                 } detail: {
-                    if let id = selection, let s = remote.sessions.first(where: { $0.id == id }) {
+                    if let id = selection, let s = remote.session(id) {
                         let c = remote.conversation(s)
                         ChatView(conversation: c, link: remote.openLink, title: s.title) { remote.close(c) }.id(id)
                     } else {
@@ -91,7 +91,7 @@ struct RootView: View {
 
 
     private func openPending() {
-        guard let id = pending, let s = remote.sessions.first(where: { $0.id == id }) else { return }
+        guard let id = pending, let s = remote.session(id) else { return }
         pending = nil
         if size == .regular { selection = s.id } else { path = [s] }
     }

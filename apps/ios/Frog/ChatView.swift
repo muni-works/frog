@@ -21,6 +21,12 @@ struct ChatView: View {
     @State private var attachments: [ToolImage] = []
     @State private var pickingPhotos = false
     @State private var photoItems: [PhotosPickerItem] = []
+    @State private var showChanges = false
+    @State private var renaming = false
+    @State private var newTitle = ""
+
+    /// This conversation as the Mac's list has it (pinned or not).
+    private var row: RemoteSession? { link.flatMap { l in Remote.shared.sessions.first { $0.id == l.session } } }
 
     private var identity: ModelIdentity? {
         conversation.status.map { ModelIdentity.of($0.model, in: models) }
@@ -59,6 +65,54 @@ struct ChatView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) { header }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    let changes = conversation.sessionChanges
+                    if !changes.isEmpty {
+                        Button { showChanges = true } label: {
+                            Label("\(changes.count) changed", systemImage: "plusminus")
+                        }
+                        .accessibilityLabel("\(changes.count) file\(changes.count == 1 ? "" : "s") changed")
+                    }
+                    if let link {
+                        Menu {
+                            Button("Rename…", systemImage: "pencil") {
+                                newTitle = conversation.title ?? title
+                                renaming = true
+                            }
+                            if let row {
+                                Button(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.slash" : "pin") {
+                                    Remote.shared.manage(link.session, row.pinned ? "unpin" : "pin")
+                                }
+                            }
+                            Divider()
+                            Button("Archive", systemImage: "archivebox") {
+                                Remote.shared.manage(link.session, "archive")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showChanges) {
+                NavigationStack {
+                    GeometryReader { g in
+                        ChangesInspector(conversation: conversation, maxHeight: g.size.height)
+                    }
+                        .navigationTitle("Changes")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done", systemImage: "checkmark") { showChanges = false }
+                            }
+                        }
+                }
+                .presentationDetents([.medium, .large])
+            }
+            .alert("Rename", isPresented: $renaming) {
+                TextField("Title", text: $newTitle)
+                Button("Rename") { if let link { Remote.shared.manage(link.session, "rename", title: newTitle) } }
+                Button("Cancel", role: .cancel) {}
             }
             .sensoryFeedback(.impact(weight: .light, intensity: 0.5), trigger: conversation.stepsDone)
             .sensoryFeedback(.success, trigger: conversation.turnsDone)

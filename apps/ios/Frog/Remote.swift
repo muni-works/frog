@@ -25,6 +25,11 @@ final class Remote {
     private(set) var sessions: [RemoteSession] = []
     /// The Mac's archive, for its own page.
     private(set) var archived: [RemoteSession] = []
+
+    /// A conversation by id, archived or not.
+    func session(_ id: String) -> RemoteSession? {
+        sessions.first { $0.id == id } ?? archived.first { $0.id == id }
+    }
     /// The conversation on screen, and how it reaches the Mac.
     private(set) var open: Conversation?
     @ObservationIgnored private(set) var openLink: RemoteLink?

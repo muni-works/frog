@@ -51,6 +51,7 @@ struct ChangesInspector: View {
                             .foregroundStyle(.secondary)
                             .padding(.leading, 4)
                             .help("Hide changes (⌥⌘0)")
+                            .accessibilityLabel("Hide changes")
                         }
                     }
                     .font(.callout.monospacedDigit())
