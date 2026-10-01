@@ -57,7 +57,8 @@ final class Remote {
     @ObservationIgnored private var generation = 0
     /// Said before the Mac let us in; sent as soon as it does.
     @ObservationIgnored private var outbox: [[String: Any]] = []
-    @ObservationIgnored private var waiters: [CheckedContinuation<Bool, Never>] = []
+    /// `perform` calls waiting to be let in, each under its own token.
+    @ObservationIgnored private var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     @ObservationIgnored private var listWaiters: [CheckedContinuation<[RemoteSession], Never>] = []
     /// Requests waiting on the Mac's answer, by ref: a session id, or why not.
     @ObservationIgnored private var asks: [String: CheckedContinuation<Result<Reply, AskError>, Never>] = [:]
@@ -173,8 +174,8 @@ final class Remote {
             registerForPushes()
             for m in outbox { send(m) }
             outbox = []
-            waiters.forEach { $0.resume(returning: true) }
-            waiters = []
+            waiters.values.forEach { $0.resume(returning: true) }
+            waiters = [:]
             refresh()
             // Back after a drop: carry on where the transcript left off.
             if let openLink { attach(openLink.session, after: openLink.lastSeq) }
@@ -284,13 +285,12 @@ final class Remote {
         outbox.append(message)
         if state != .connecting { connect() }
         return await withCheckedContinuation { cont in
-            waiters.append(cont)
+            let token = UUID()
+            waiters[token] = cont
             Task {
                 try? await Task.sleep(for: .seconds(8))
-                // Still not let in: give up on everyone waiting.
-                let late = self.waiters
-                self.waiters = []
-                late.forEach { $0.resume(returning: false) }
+                // Still not let in: give up on this one (others have their own timers).
+                self.waiters.removeValue(forKey: token)?.resume(returning: false)
             }
         }
     }
