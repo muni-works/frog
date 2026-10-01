@@ -478,6 +478,23 @@ fn now_ms() -> i64 {
 }
 
 /// Items opened while streaming one model response.
+/// A model call's request in the current tool mode (see `Engine::wire`).
+struct Wire {
+    system: String,
+    /// The messages, when the tool mode or images changed them.
+    messages: Option<Vec<Message>>,
+    /// Tools go as native specs (else they're described in the system prompt).
+    native_tools: bool,
+    /// JSON schema the reply must match.
+    format: Option<Value>,
+}
+
+impl Wire {
+    fn messages<'a>(&'a self, original: &'a [Message]) -> &'a [Message] {
+        self.messages.as_deref().unwrap_or(original)
+    }
+}
+
 #[derive(Default)]
 struct Streamed {
     message: Option<String>,
@@ -563,6 +580,8 @@ struct Agent {
     budget_ok: bool,
     /// The server keeps a prompt cache per conversation, keyed by the session id (probed).
     cache_key_ok: bool,
+    /// The server can prefill a conversation without answering (probed).
+    prefill_ok: bool,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
     session_allow: HashSet<String>,
@@ -727,6 +746,7 @@ impl Agent {
             vision: false,
             budget_ok: false,
             cache_key_ok: false,
+            prefill_ok: false,
             session_allow: HashSet::new(),
             pending: Vec::new(),
             shared,
@@ -1658,6 +1678,7 @@ impl Agent {
         let ext = self.provider.extensions().await;
         self.budget_ok = ext.thinking_budget;
         self.cache_key_ok = ext.cache_key;
+        self.prefill_ok = ext.prefill;
         let configured = self.profile.context_window;
         let probed = self.provider.probe_context().await;
         self.window = match (configured, probed) {
@@ -1682,6 +1703,39 @@ impl Agent {
         }
         self.sync_specs();
         self.apply_harness();
+        self.warm();
+    }
+
+    /// Have the server prefill this conversation as it stands (it was just opened, or the model
+    /// changed), so the next turn starts warm instead of re-reading everything. In the
+    /// background: a failure only costs the head start.
+    fn warm(&self) {
+        if !self.prefill_ok || !self.cache_key_ok || self.messages.is_empty() {
+            return;
+        }
+        let wire = self.wire(&self.messages, &self.specs);
+        let req = Request {
+            system: &wire.system,
+            messages: wire.messages(&self.messages),
+            tools: if wire.native_tools { &self.specs } else { &[] },
+            max_tokens: None,
+            format: wire.format.as_ref(),
+            think: None,
+            think_budget: None,
+            cache_key: Some(&self.session_id),
+        };
+        let Some(prefill) = self.provider.prefill(&req) else {
+            return;
+        };
+        let log = self.cfg.log_calls;
+        tokio::spawn(async move {
+            let started = Instant::now();
+            match prefill.await {
+                Ok(()) if log => eprintln!("warmed in {:.1}s", started.elapsed().as_secs_f64()),
+                Err(e) if log => eprintln!("warming failed: {e:#}"),
+                _ => {}
+            }
+        });
     }
 
     fn fixed_chars(&self) -> usize {
@@ -2240,6 +2294,32 @@ Don't repeat it. Change the arguments or try a different approach.",
         })
     }
 
+    /// What a model call sends for `messages` in the current tool mode.
+    fn wire(&self, messages: &[Message], specs: &[ToolSpec]) -> Wire {
+        let with_images = self.prepare_images(messages);
+        let prepared = with_images.as_deref().unwrap_or(messages);
+        match self.tool_mode {
+            ToolMode::Text => Wire {
+                system: format!("{}{}", self.system, prompt::text_tools_prompt(specs)),
+                messages: Some(prompt::to_text_mode(prepared)),
+                native_tools: false,
+                format: None,
+            },
+            ToolMode::Json => Wire {
+                system: format!("{}{}", self.system, prompt::json_tools_prompt(specs)),
+                messages: Some(prompt::to_json_mode(prepared)),
+                native_tools: false,
+                format: Some(prompt::json_schema(specs)),
+            },
+            ToolMode::Native | ToolMode::Auto => Wire {
+                system: self.system.clone(),
+                messages: with_images,
+                native_tools: true,
+                format: None,
+            },
+        }
+    }
+
     /// Images as the model should get them: the last few as images for a model that can see,
     /// the rest (and all of them, for one that can't) as a short note. `None` when there are
     /// no images to change.
@@ -2300,29 +2380,15 @@ Don't repeat it. Change the arguments or try a different approach.",
         think_budget: Option<u32>,
     ) -> Result<(Response, Streamed)> {
         let json_mode = self.tool_mode == ToolMode::Json;
-        let with_images = self.prepare_images(messages);
-        let messages = with_images.as_deref().unwrap_or(messages);
         let specs = if offer_tools {
             &self.specs[..]
         } else {
             &[][..]
         };
-        let converted;
-        let schema;
-        let (system, messages, tools, format) = match self.tool_mode {
-            ToolMode::Text => {
-                converted = prompt::to_text_mode(messages);
-                let system = format!("{}{}", self.system, prompt::text_tools_prompt(specs));
-                (system, &converted[..], &[][..], None)
-            }
-            ToolMode::Json => {
-                converted = prompt::to_json_mode(messages);
-                schema = prompt::json_schema(specs);
-                let system = format!("{}{}", self.system, prompt::json_tools_prompt(specs));
-                (system, &converted[..], &[][..], Some(&schema))
-            }
-            ToolMode::Native | ToolMode::Auto => (self.system.clone(), messages, specs, None),
-        };
+        let wire = self.wire(messages, specs);
+        let (system, messages, format) =
+            (&wire.system, wire.messages(messages), wire.format.as_ref());
+        let tools = if wire.native_tools { specs } else { &[][..] };
         let prompt = self
             .est
             .tokens(fixed_chars(&system, tools) + context::history_chars(messages));

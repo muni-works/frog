@@ -46,6 +46,8 @@ pub struct Request<'a> {
 pub struct Extensions {
     pub thinking_budget: bool,
     pub cache_key: bool,
+    /// Prefills a request without answering ([`Provider::prefill`]).
+    pub prefill: bool,
 }
 
 pub enum StreamEvent {
@@ -172,6 +174,18 @@ impl Provider {
         }
     }
 
+    /// Prefill `req` on servers that can ([`Extensions::prefill`]); the future owns what it
+    /// needs, so it can run in the background.
+    pub fn prefill(
+        &self,
+        req: &Request,
+    ) -> Option<impl std::future::Future<Output = Result<()>> + Send + 'static> {
+        match self {
+            Self::OpenAi(c) => Some(c.prefill(req)),
+            _ => None,
+        }
+    }
+
     /// What the server takes beyond the standard API: a per-request reasoning cap, and a
     /// conversation key for its KV cache. OpenAI keys its prompt cache by
     /// `prompt_cache_key`; tang-llm lists both among the model's capabilities. Bounded by a
@@ -179,8 +193,8 @@ impl Provider {
     pub async fn extensions(&self) -> Extensions {
         match self {
             Self::OpenAi(c) if c.is_openai() => Extensions {
-                thinking_budget: false,
                 cache_key: true,
+                ..Extensions::default()
             },
             Self::OpenAi(c) => {
                 let caps = tokio::time::timeout(Duration::from_secs(3), c.capabilities())
@@ -192,6 +206,7 @@ impl Provider {
                 Extensions {
                     thinking_budget: has("thinking_budget"),
                     cache_key: has("prompt_cache_key"),
+                    prefill: has("prefill"),
                 }
             }
             _ => Extensions::default(),
