@@ -70,12 +70,15 @@ enum Op: Encodable, Sendable {
     case paneMention(id: String, mention: String, context: String? = nil)
     /// What this client can do, sent once after the engine starts.
     case setClientCaps(panes: Bool)
+    /// Have the model server prefill the conversation now (plus `draft`, the message being
+    /// typed), so the next turn starts warm. Fire and forget: nothing comes back.
+    case warm(draft: String?)
     case shutdown
 
     private enum Key: String, CodingKey {
         case op, text, command, id, decision, mode, spec, focus, after, title
         case action, content, server, tool, arguments, images
-        case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes
+        case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
     }
 
     func encode(to encoder: Encoder) throws {
@@ -165,6 +168,9 @@ enum Op: Encodable, Sendable {
         case .setClientCaps(let panes):
             try c.encode("set_client_caps", forKey: .op)
             try c.encode(panes, forKey: .panes)
+        case .warm(let draft):
+            try c.encode("warm", forKey: .op)
+            try c.encodeIfPresent(draft, forKey: .draft)
         case .shutdown:
             try c.encode("shutdown", forKey: .op)
         }

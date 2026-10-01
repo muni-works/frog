@@ -72,6 +72,8 @@ final class ProtocolTests: XCTestCase {
         enc.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let json = { (op: Op) in String(decoding: try enc.encode(op), as: UTF8.self) }
         XCTAssertEqual(try json(.setClientCaps(panes: true)), #"{"op":"set_client_caps","panes":true}"#)
+        XCTAssertEqual(try json(.warm(draft: nil)), #"{"op":"warm"}"#)
+        XCTAssertEqual(try json(.warm(draft: "fix")), #"{"draft":"fix","op":"warm"}"#)
         XCTAssertEqual(try json(.paneOpen(kind: .terminal, cwd: "/p", cols: 80, rows: 24)), #"{"cols":80,"cwd":"/p","kind":"terminal","op":"pane_open","rows":24}"#)
         XCTAssertEqual(try json(.paneOpen(kind: .preview, url: "http://localhost:3000")), #"{"kind":"preview","op":"pane_open","url":"http://localhost:3000"}"#)
         XCTAssertEqual(try json(.paneInput(id: "t1", data: "ls\r")), #"{"data":"ls\r","id":"t1","op":"pane_input"}"#)
