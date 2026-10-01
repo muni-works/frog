@@ -53,6 +53,8 @@ struct EnergyHint: View {
             EnergyCard(energy: energy, usage: usage)
                 #if os(iOS)
                 .presentationCompactAdaptation(.popover)
+                // Glass dims the text and lets the transcript through; a card reads better.
+                .presentationBackground(Color.windowBackground)
                 #endif
         }
     }
@@ -135,6 +137,8 @@ struct EnergyCard: View {
         }
         .padding(16)
         .frame(width: 290)
+        // Not the footer's quiet tint, which a popover inherits.
+        .foregroundStyle(.primary)
     }
 
     private var explainer: String {
@@ -162,6 +166,8 @@ struct PriceHint: View {
             PriceCard(cost: cost, usage: usage)
                 #if os(iOS)
                 .presentationCompactAdaptation(.popover)
+                // Glass dims the text and lets the transcript through; a card reads better.
+                .presentationBackground(Color.windowBackground)
                 #endif
         }
     }
@@ -230,6 +236,8 @@ struct PriceCard: View {
         }
         .padding(16)
         .frame(width: 290)
+        // Not the footer's quiet tint, which a popover inherits.
+        .foregroundStyle(.primary)
     }
 
     /// "4.2¢", "$1.84", "<0.1¢".
@@ -321,11 +329,10 @@ private struct PriceList: View {
                 Rate(label: "In", value: prices.input)
                 Rate(label: "Out", value: prices.output)
             }
-            HStack(spacing: 4) {
-                Text("List prices from").foregroundStyle(.secondary)
-                Link(source.name, destination: source.url).foregroundStyle(Color.accentColor)
-            }
-            .font(.caption)
+            // One line that wraps as text, with the link inline.
+            (Text("List prices from ").foregroundStyle(.secondary) + Text(.init("[\(source.name)](\(source.url.absoluteString))")))
+                .font(.caption)
+                .tint(Color.accentColor)
             Text("A million tokens is about \(Int(1_000_000 * ModelStats.wordsPerToken / 1000))k words, roughly \(Int(1_000_000 * ModelStats.wordsPerToken / 90_000)) novels.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
