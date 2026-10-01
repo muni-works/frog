@@ -13,6 +13,8 @@ struct ChatView: View {
     @State private var opening = false
     @State private var openError: String?
     @State private var energyHistory = false
+    @State private var showActivity = false
+    @State private var jump: TurnState.ID?
 
     private var identity: ModelIdentity? {
         conversation.status.map { ModelIdentity.of($0.model, in: models) }
@@ -31,7 +33,7 @@ struct ChatView: View {
     }
 
     var body: some View {
-        TranscriptView(conversation: conversation, actions: turnActions)
+        TranscriptView(conversation: conversation, actions: turnActions, jump: $jump)
             .environment(\.pinsQuestions, true)
             .environment(\.showEnergyHistory) { energyHistory = true }
             .sheet(isPresented: $energyHistory) { EnergyHistorySheet() }
@@ -50,16 +52,7 @@ struct ChatView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    HStack(spacing: 8) {
-                        FrogFace(mood: conversation.mood, size: 24).tint(Color.frog)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(conversation.title ?? title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                            if let identity { ModelLabel(model: identity, size: .caption).font(.caption2) }
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                }
+                ToolbarItem(placement: .principal) { header }
             }
             .sensoryFeedback(.impact(weight: .light, intensity: 0.5), trigger: conversation.stepsDone)
             .sensoryFeedback(.success, trigger: conversation.turnsDone)
@@ -70,6 +63,51 @@ struct ChatView: View {
                 a.isEligibleForHandoff = true
             }
             .onDisappear(perform: onClose)
+    }
+
+    /// The title, and what frog is doing under it (the Mac's activity viewer); tap for the
+    /// turn's steps.
+    private var header: some View {
+        Button { showActivity = true } label: {
+            HStack(spacing: 8) {
+                FrogFace(mood: conversation.mood, size: 24).tint(Color.frog)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(conversation.title ?? title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Group {
+                        if let waiting = ActivityLabel.waiting(conversation) {
+                            Label(waiting, systemImage: "hand.raised.fill").foregroundStyle(.orange).lineLimit(1)
+                        } else if conversation.busy || identity == nil {
+                            ActivityLabel(conversation: conversation, playful: false, maxWidth: 180)
+                        } else if let identity {
+                            HStack(spacing: 6) {
+                                ActivityLabel(conversation: conversation, playful: false, maxWidth: 110)
+                                ModelLabel(model: identity, size: .pill).layoutPriority(-1)
+                            }
+                        }
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            // UIKit drops a title that doesn't fit, rather than squeezing it.
+            .frame(maxWidth: 250)
+            .overlay(alignment: .bottom) {
+                if conversation.busy { WorkingLine().offset(y: 5) }
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Shows this turn's steps")
+        .popover(isPresented: $showActivity) {
+            ActivityPanel(conversation: conversation) { id in
+                showActivity = false
+                jump = id
+            }
+            .presentationCompactAdaptation(.popover)
+            .presentationBackground(Color.windowBackground)
+        }
+        .animation(.snappy(duration: 0.2), value: conversation.busy)
     }
 
     private var composer: some View {
@@ -115,7 +153,7 @@ struct ChatView: View {
                 HStack(spacing: 10) {
                     ModePicker(conversation: conversation)
                     Spacer()
-                    ContextRing(status: status)
+                    ContextButton(conversation: conversation, status: status)
                 }
                 .font(.caption)
                 .padding(.horizontal, 8)

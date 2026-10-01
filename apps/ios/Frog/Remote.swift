@@ -231,7 +231,9 @@ final class Remote {
 
     /// The conversation for `session`, reaching the Mac through the bridge.
     func conversation(_ session: RemoteSession) -> Conversation {
-        if let open, open.sessionID == session.id { return open }
+        // By the link: the conversation only learns its id once the history is in, and the view
+        // asks again before then.
+        if let open, openLink?.session == session.id { return open }
         open?.stop()
         let link = RemoteLink(session: session.id, remote: self, open: session.open)
         let folder = URL(fileURLWithPath: session.cwd ?? FrogPaths.chatSuffix)

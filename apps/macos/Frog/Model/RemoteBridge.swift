@@ -399,14 +399,22 @@ final class RemoteBridge {
             let lines = Self.durable(in: log, after: after)
             await MainActor.run {
                 for l in lines.events { client.sendRaw(#"{"type":"event","env":"# + l + "}") }
-                client.send(["type": "synced", "session": id, "upto": lines.upto])
+                // What's live (the model, an open question) before `synced`, so the phone folds
+                // it in with the history in one go: arriving just after, SwiftUI could miss it.
                 let state = self.live[id]
-                let buffered: [(Head, String)]
-                if case .replaying(let b) = client.attached[id] { buffered = b } else { buffered = [] }
-                client.attached[id] = .live(upto: lines.upto)
                 for l in [state?.status, state?.permission].compactMap({ $0 }) {
                     client.sendRaw(#"{"type":"event","env":"# + l + "}")
                 }
+                // The engine started long ago: say it's idle, or the phone takes the idle that
+                // ends its first turn for the engine finishing startup, and stays busy.
+                if state?.busy != true {
+                    let created = Int64(Date().timeIntervalSince1970 * 1000)
+                    client.sendRaw(#"{"type":"event","env":{"seq":0,"session":"\#(id)","created":\#(created),"event":"idle"}}"#)
+                }
+                client.send(["type": "synced", "session": id, "upto": lines.upto])
+                let buffered: [(Head, String)]
+                if case .replaying(let b) = client.attached[id] { buffered = b } else { buffered = [] }
+                client.attached[id] = .live(upto: lines.upto)
                 for (head, line) in buffered { client.deliver(line, head: head) }
             }
         }
