@@ -256,19 +256,7 @@ struct SessionList: View {
     }
 
     private func byDay(_ list: [SessionInfo]) -> [(String, [SessionInfo])] {
-        let cal = Calendar.current
-        let now = Date()
-        var out: [(String, [SessionInfo])] = []
-        func add(_ title: String, _ items: [SessionInfo]) { if !items.isEmpty { out.append((title, items.sorted(by: before))) } }
-        add("Today", list.filter { cal.isDateInToday(day($0)) })
-        add("Yesterday", list.filter { cal.isDateInYesterday(day($0)) })
-        let week = cal.date(byAdding: .day, value: -7, to: now)!
-        let month = cal.date(byAdding: .day, value: -30, to: now)!
-        let older = list.filter { !cal.isDateInToday(day($0)) && !cal.isDateInYesterday(day($0)) }
-        add("Previous 7 Days", older.filter { day($0) >= week })
-        add("Previous 30 Days", older.filter { day($0) < week && day($0) >= month })
-        add("Older", older.filter { day($0) < month })
-        return out
+        SessionDays.group(list, day: day).map { ($0.0, $0.1.sorted(by: before)) }
     }
 
     /// Rows under day headings.

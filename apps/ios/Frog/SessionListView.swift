@@ -8,6 +8,19 @@ struct SessionListView: View {
     @Namespace private var zoom
     @State private var composing = false
     @State private var settings = false
+    @State private var query = ""
+    @State private var renaming: RemoteSession?
+    @State private var newTitle = ""
+
+    /// What the search matches, as the sidebar's does: title, first message, folder.
+    private func matches(_ s: RemoteSession) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return true }
+        return [s.title, s.info.firstInput, s.folder].compactMap { $0?.lowercased() }.contains { $0.contains(q) }
+    }
+
+    private var shown: [RemoteSession] { remote.sessions.filter(matches) }
+    private func isLive(_ s: RemoteSession) -> Bool { s.live == .waiting || s.live == .running }
 
     var body: some View {
         List(selection: selection) {
@@ -16,13 +29,35 @@ struct SessionListView: View {
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
-            section("Needs you", remote.sessions.filter { $0.live == .waiting })
-            section("Running", remote.sessions.filter { $0.live == .running })
-            section("Open on your Mac", remote.sessions.filter { $0.open && $0.live != .waiting && $0.live != .running })
-            section("Recent", remote.sessions.filter { !$0.open && $0.live != .waiting && $0.live != .running })
+            section("Needs you", shown.filter { $0.live == .waiting })
+            section("Running", shown.filter { $0.live == .running })
+            section("Pinned", shown.filter { $0.pinned && !isLive($0) })
+            section("Open on your Mac", shown.filter { $0.open && !$0.pinned && !isLive($0) })
+            // The rest by day, as in the Mac's sidebar.
+            ForEach(SessionDays.group(shown.filter { !$0.open && !$0.pinned && !isLive($0) }, day: \.modified), id: \.0) { title, rows in
+                section(title, rows)
+            }
+            if !remote.archived.isEmpty, query.isEmpty {
+                Section {
+                    NavigationLink {
+                        ArchivedListView(remote: remote)
+                    } label: {
+                        Label("Archived (\(remote.archived.count))", systemImage: "archivebox")
+                    }
+                }
+            }
         }
         .listStyle(.insetGrouped)
+        .searchable(text: $query, prompt: "Search conversations")
         .navigationTitle(title)
+        .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Title", text: $newTitle)
+            Button("Rename") {
+                if let r = renaming { remote.manage(r.id, "rename", title: newTitle) }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        }
         .navigationDestination(for: RemoteSession.self) { s in
             let c = remote.conversation(s)
             ChatView(conversation: c, link: remote.openLink, title: s.title) { remote.close(c) }
@@ -77,9 +112,70 @@ struct SessionListView: View {
                                 .tint(Color(red: 0.18, green: 0.62, blue: 0.31))
                             Button("Deny", systemImage: "xmark") { remote.answer(q, in: s.id, allow: false) }
                                 .tint(.gray)
+                        } else {
+                            Button("Archive", systemImage: "archivebox") { remote.manage(s.id, "archive") }
+                                .tint(.indigo)
                         }
                     }
+                    .swipeActions(edge: .leading) {
+                        Button(s.pinned ? "Unpin" : "Pin", systemImage: s.pinned ? "pin.slash" : "pin") {
+                            remote.manage(s.id, s.pinned ? "unpin" : "pin")
+                        }
+                        .tint(.orange)
+                    }
+                    .contextMenu {
+                        Button("Rename…", systemImage: "pencil") {
+                            newTitle = s.title
+                            renaming = s
+                        }
+                        Button(s.pinned ? "Unpin" : "Pin", systemImage: s.pinned ? "pin.slash" : "pin") {
+                            remote.manage(s.id, s.pinned ? "unpin" : "pin")
+                        }
+                        Divider()
+                        Button("Archive", systemImage: "archivebox") { remote.manage(s.id, "archive") }
+                    }
                 }
+            }
+        }
+    }
+}
+
+/// The Mac's archive: open any of them, or swipe one back.
+struct ArchivedListView: View {
+    let remote: Remote
+    @State private var query = ""
+
+    private var shown: [RemoteSession] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return remote.archived }
+        return remote.archived.filter { s in
+            [s.title, s.info.firstInput, s.folder].compactMap { $0?.lowercased() }.contains { $0.contains(q) }
+        }
+    }
+
+    var body: some View {
+        List {
+            ForEach(SessionDays.group(shown, day: \.modified), id: \.0) { title, rows in
+                Section(title) {
+                    ForEach(rows) { s in
+                        NavigationLink(value: s) { SessionRow(session: s) }
+                            .swipeActions(edge: .trailing) {
+                                Button("Unarchive", systemImage: "tray.and.arrow.up") { remote.manage(s.id, "unarchive") }
+                                    .tint(.indigo)
+                            }
+                            .contextMenu {
+                                Button("Unarchive", systemImage: "tray.and.arrow.up") { remote.manage(s.id, "unarchive") }
+                            }
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .searchable(text: $query, prompt: "Search the archive")
+        .navigationTitle("Archived")
+        .overlay {
+            if shown.isEmpty {
+                ContentUnavailableView(query.isEmpty ? "Nothing archived" : "No matches", systemImage: "archivebox")
             }
         }
     }

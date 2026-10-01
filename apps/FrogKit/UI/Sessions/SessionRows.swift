@@ -116,6 +116,24 @@ struct ConversationRowLabel: View {
     }
 }
 
+/// Conversations filed under days, as the sidebar and the phone's list show them: Today,
+/// Yesterday, Previous 7 Days, Previous 30 Days, Older. Empty groups are left out.
+enum SessionDays {
+    static func group<T>(_ items: [T], now: Date = Date(), day: (T) -> Date) -> [(String, [T])] {
+        let cal = Calendar.current
+        let week = cal.date(byAdding: .day, value: -7, to: now)!
+        let month = cal.date(byAdding: .day, value: -30, to: now)!
+        let older = items.filter { !cal.isDateInToday(day($0)) && !cal.isDateInYesterday(day($0)) }
+        return [
+            ("Today", items.filter { cal.isDateInToday(day($0)) }),
+            ("Yesterday", items.filter { cal.isDateInYesterday(day($0)) }),
+            ("Previous 7 Days", older.filter { day($0) >= week }),
+            ("Previous 30 Days", older.filter { day($0) < week && day($0) >= month }),
+            ("Older", older.filter { day($0) < month }),
+        ].filter { !$0.1.isEmpty }
+    }
+}
+
 enum SessionAge {
     /// "now", "5m", "3h", "2d", "4w", then a date.
     static func short(_ date: Date) -> String {

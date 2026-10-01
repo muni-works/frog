@@ -23,6 +23,8 @@ final class Remote {
         didSet { UserDefaults.standard.set(paired, forKey: "remotePaired") }
     }
     private(set) var sessions: [RemoteSession] = []
+    /// The Mac's archive, for its own page.
+    private(set) var archived: [RemoteSession] = []
     /// The conversation on screen, and how it reaches the Mac.
     private(set) var open: Conversation?
     @ObservationIgnored private(set) var openLink: RemoteLink?
@@ -188,8 +190,9 @@ final class Remote {
                 UserDefaults.standard.set(show, forKey: ModelStats.energyKey)
             }
         case "sessions":
-            let rows = msg["sessions"] as? [[String: Any]] ?? []
-            sessions = rows.compactMap(RemoteSession.init)
+            let rows = (msg["sessions"] as? [[String: Any]] ?? []).compactMap(RemoteSession.init)
+            sessions = rows.filter { !$0.archived }
+            archived = rows.filter(\.archived)
             listWaiters.forEach { $0.resume(returning: sessions) }
             listWaiters = []
             WatchLink.shared.share(sessions)
@@ -332,6 +335,14 @@ final class Remote {
         }
     }
 
+    /// The sidebar's row menu: "archive", "unarchive", "pin", "unpin", or "rename" with `title`.
+    /// The Mac sends the list back changed.
+    func manage(_ session: String, _ action: String, title: String? = nil) {
+        var m: [String: Any] = ["type": "manage", "session": session, "action": action]
+        if let title { m["title"] = title }
+        send(m)
+    }
+
     /// A Mermaid diagram laid out by the Mac's engine.
     func layoutMermaid(_ code: String) async -> Diagram? {
         guard case .success(let msg) = await ask(["type": "mermaid", "code": code, "session": openLink?.session ?? ""]),
@@ -420,6 +431,8 @@ struct RemoteSession: Identifiable, Hashable {
     /// Open in a window on the Mac, so it can take messages.
     let open: Bool
     let pinned: Bool
+    /// In the Mac's archive.
+    let archived: Bool
     let live: Live?
     /// The session as the Mac's sidebar knows it.
     let info: SessionInfo
@@ -448,6 +461,7 @@ struct RemoteSession: Identifiable, Hashable {
         chat = row["chat"] as? Bool ?? false
         open = row["open"] as? Bool ?? false
         pinned = row["pinned"] as? Bool ?? false
+        archived = row["archived"] as? Bool ?? false
         live = (row["live"] as? String).flatMap(Live.init)
         activity = row["activity"] as? String
         let decoded = (row["info"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }

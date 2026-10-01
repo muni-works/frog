@@ -273,6 +273,21 @@ final class RemoteBridge {
                 try? await Task.sleep(for: .milliseconds(500))
                 if !r.claimed { client.send(["type": "error", "ref": ref, "message": "Open this conversation on your Mac first."]) }
             }
+        case "manage":
+            // The sidebar's row menu, from a phone: archive, pin, rename.
+            guard let id = msg["session"] as? String, let action = msg["action"] as? String else { return }
+            let lib = Library.shared
+            switch action {
+            case "archive": lib.setArchived(id, true)
+            case "unarchive": lib.setArchived(id, false)
+            case "pin": if !lib.pinned.contains(id) { lib.togglePin(id) }
+            case "unpin": if lib.pinned.contains(id) { lib.togglePin(id) }
+            case "rename":
+                guard let title = msg["title"] as? String else { return }
+                Task { await lib.rename(id, to: title); self.listChanged() }
+            default: return
+            }
+            listChanged()
         case "model":
             // A model chosen on the phone: the pane showing the conversation does what the
             // Mac's own picker would (switch, download first, or ask about the cloud).
@@ -378,11 +393,15 @@ final class RemoteBridge {
 
     private func sessionList() -> [[String: Any]] {
         let lib = Library.shared
-        return lib.sessions.filter { !lib.archived.contains($0.id) }.prefix(200).map { s in
+        // The sidebar's, then its archive (the phone shows that on its own page).
+        let active = lib.sessions.filter { !lib.archived.contains($0.id) }.prefix(200)
+        let archived = lib.sessions.filter { lib.archived.contains($0.id) }.prefix(200)
+        return (active + archived).map { s in
             let c = lib.conversation(s.id)
             var row: [String: Any] = [
                 "id": s.id, "title": s.displayTitle, "modified": s.modified, "model": s.model,
                 "chat": s.isChat, "open": c != nil, "pinned": lib.pinned.contains(s.id),
+                "archived": lib.archived.contains(s.id),
             ]
             if let cwd = s.cwd {
                 row["folder"] = (cwd as NSString).lastPathComponent
