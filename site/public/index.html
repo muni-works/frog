@@ -104,6 +104,7 @@
   .download:hover svg { transform: translateY(2px); }
   .req { margin: 14px 0 0; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .req .dot { color: var(--faint); margin: 0 4px; }
+  .req .nowrap { white-space: nowrap; }
 
   /* The app itself, captured by apps/macos/scripts/hero-shot.sh. The PNG carries the window's own
      shadow, so it sits on the page as the window would on a desktop. */
@@ -441,7 +442,7 @@
       <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 2a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42L9 11.6V3a1 1 0 0 1 1-1Zm-6 14a1 1 0 0 1 1-1h10a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z"/></svg>
       Download for Mac
     </a>
-    <p class="req">macOS 26 on Apple silicon<span class="dot">·</span>updates itself</p>
+    <p class="req">macOS 26 on Apple silicon<span class="dot">·</span>updates itself<span class="dot">·</span><span class="nowrap">CLI included</span></p>
   </section>
 
   <picture class="shot">
