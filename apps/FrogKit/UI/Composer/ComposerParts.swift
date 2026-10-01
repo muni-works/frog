@@ -144,3 +144,52 @@ struct ContextRing: View {
         return "\(used.tokens) of \(window) tokens (\(Int(fraction * 100))%)"
     }
 }
+
+/// Images waiting to be sent: thumbnails with a remove button, and a note when the model can't
+/// see them.
+struct AttachmentStrip: View {
+    @Binding var images: [ToolImage]
+    /// The model's name, when it can't see images.
+    let blind: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { i, img in
+                        if let image = img.image {
+                            Image(platformImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 56, height: 56)
+                                .clipShape(.rect(cornerRadius: 10))
+                                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+                                .opensInLightbox(images, at: i)
+                                .overlay(alignment: .topTrailing) {
+                                    Button {
+                                        images.remove(at: i)
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .symbolRenderingMode(.palette)
+                                            .foregroundStyle(.white, .black.opacity(0.6))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .offset(x: 5, y: -5)
+                                    .help("Remove")
+                                    .accessibilityLabel("Remove image")
+                                }
+                        }
+                    }
+                }
+                .padding(.top, 6)
+                .padding(.trailing, 6)
+            }
+            .scrollIndicators(.never)
+            if let blind {
+                Label("\(blind) can't see images; pick a vision model (like gemma3 or qwen2.5vl) to include them.", systemImage: "eye.slash")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+}

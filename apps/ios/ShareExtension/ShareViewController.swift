@@ -30,6 +30,8 @@ struct ShareSheet: View {
     @State private var note = ""
     @State private var shared = ""
     @State private var image: UIImage?
+    /// The image as it's sent: sized and encoded as a drop on the Mac would be.
+    @State private var attachment: ToolImage?
     @State private var target: String?
     @State private var sending = false
     @State private var sent = false
@@ -98,9 +100,13 @@ struct ShareSheet: View {
         for p in providers {
             if p.hasItemConformingToTypeIdentifier(UTType.image.identifier),
                let item = try? await p.loadItem(forTypeIdentifier: UTType.image.identifier) {
-                if let url = item as? URL, let data = try? Data(contentsOf: url) { image = UIImage(data: data) }
-                else if let data = item as? Data { image = UIImage(data: data) }
-                else if let img = item as? UIImage { image = img }
+                let data: Data? = if let url = item as? URL { try? Data(contentsOf: url) }
+                    else if let data = item as? Data { data }
+                    else { (item as? UIImage)?.jpegData(compressionQuality: 1) }
+                if let data {
+                    image = UIImage(data: data)
+                    attachment = Attachments.image(from: data)
+                }
             } else if p.hasItemConformingToTypeIdentifier(UTType.url.identifier),
                       let url = try? await p.loadItem(forTypeIdentifier: UTType.url.identifier) as? URL {
                 shared = url.absoluteString
@@ -118,8 +124,8 @@ struct ShareSheet: View {
         var text = note.trimmingCharacters(in: .whitespacesAndNewlines)
         if !shared.isEmpty { text += (text.isEmpty ? "" : "\n\n") + shared }
         var op: [String: Any] = ["op": "submit", "text": text]
-        if let image, let jpeg = image.shrunk(to: 1600).jpegData(compressionQuality: 0.8) {
-            op["images"] = [["mime": "image/jpeg", "data": jpeg.base64EncodedString()]]
+        if let attachment {
+            op["images"] = [["mime": attachment.mime, "data": attachment.data]]
         }
         do {
             try await QuickLink.send(op, to: target)
@@ -132,15 +138,5 @@ struct ShareSheet: View {
             failure = "Couldn't reach frog on your Mac."
         }
         sending = false
-    }
-}
-
-extension UIImage {
-    /// At most `side` points on the long edge: enough for a model to read, small enough to send.
-    func shrunk(to side: CGFloat) -> UIImage {
-        let scale = min(1, side / max(size.width, size.height))
-        guard scale < 1 else { return self }
-        let target = CGSize(width: size.width * scale, height: size.height * scale)
-        return UIGraphicsImageRenderer(size: target).image { _ in draw(in: CGRect(origin: .zero, size: target)) }
     }
 }

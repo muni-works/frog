@@ -87,7 +87,9 @@ struct LightboxHost: ViewModifier {
             .overlay {
                 if lightbox.isOpen {
                     LightboxView(lightbox: lightbox)
+                        #if os(macOS)
                         .ignoresSafeArea()
+                        #endif
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.94)),
                             removal: .opacity.combined(with: .scale(scale: 0.97))
@@ -97,6 +99,8 @@ struct LightboxHost: ViewModifier {
             // The title bar's controls would float over the image.
             #if os(macOS)
             .toolbar(lightbox.isOpen ? .hidden : .automatic, for: .windowToolbar)
+            #else
+            .toolbar(lightbox.isOpen ? .hidden : .automatic, for: .navigationBar)
             #endif
     }
 }

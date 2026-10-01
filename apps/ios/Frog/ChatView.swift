@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// One conversation: the Mac's own transcript (`TranscriptView`, shared), with frog's questions
@@ -16,6 +17,10 @@ struct ChatView: View {
     @State private var showActivity = false
     @State private var jump: TurnState.ID?
     @State private var pickingModel = false
+    /// Images going with the next message.
+    @State private var attachments: [ToolImage] = []
+    @State private var pickingPhotos = false
+    @State private var photoItems: [PhotosPickerItem] = []
 
     private var identity: ModelIdentity? {
         conversation.status.map { ModelIdentity.of($0.model, in: models) }
@@ -64,6 +69,20 @@ struct ChatView: View {
                 a.isEligibleForHandoff = true
             }
             .onDisappear(perform: onClose)
+            // Images anywhere in the conversation open large, as on the Mac.
+            .modifier(LightboxHost())
+            .photosPicker(isPresented: $pickingPhotos, selection: $photoItems, maxSelectionCount: 6, matching: .images)
+            .onChange(of: photoItems) { _, items in
+                guard !items.isEmpty else { return }
+                photoItems = []
+                Task {
+                    for item in items {
+                        if let data = try? await item.loadTransferable(type: Data.self), let img = Attachments.image(from: data) {
+                            attachments.append(img)
+                        }
+                    }
+                }
+            }
     }
 
     /// The title, and what frog is doing under it (the Mac's activity viewer); tap for the
@@ -133,8 +152,13 @@ struct ChatView: View {
             if !conversation.queue.isEmpty {
                 QueuedMessages(conversation: conversation)
             }
+            if !attachments.isEmpty {
+                AttachmentStrip(images: $attachments, blind: conversation.status?.vision == false ? identity?.name : nil)
+                    .padding(.horizontal, 4)
+            }
             GlassEffectContainer(spacing: 8) {
                 HStack(alignment: .bottom, spacing: 8) {
+                    attachMenu
                     TextField(conversation.busy ? "Queue a follow-up" : "Message frog", text: $draft, axis: .vertical)
                         .lineLimit(1...6)
                         .padding(.horizontal, 16)
@@ -142,7 +166,7 @@ struct ChatView: View {
                         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
                         .disabled(!canSend)
                         .onSubmit(send)
-                    SendButton(conversation: conversation, canSend: canSend && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    SendButton(conversation: conversation, canSend: canSend && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty),
                                send: send, tint: Color.place(cloud: identity?.place.isCloud ?? false))
                         .transition(.scale.combined(with: .opacity))
                 }
@@ -175,10 +199,31 @@ struct ChatView: View {
         .padding(.bottom, 8)
     }
 
+    /// Images for the next message: from Photos, or what's been copied.
+    private var attachMenu: some View {
+        Menu {
+            Button("Photo Library", systemImage: "photo.on.rectangle") { pickingPhotos = true }
+            Button("Paste Image", systemImage: "doc.on.clipboard") {
+                let found = (UIPasteboard.general.images ?? []).compactMap { $0.jpegData(compressionQuality: 1).flatMap(Attachments.image(from:)) }
+                attachments.append(contentsOf: found)
+            }
+            .disabled(!UIPasteboard.general.hasImages)
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(.circle)
+        }
+        .glassEffect(.regular.interactive(), in: .circle)
+        .disabled(!canSend)
+        .accessibilityLabel("Attach images")
+    }
+
     private func send() {
         guard canSend else { return }
         FrogSounds.shared.play(.plip)
-        conversation.submit(draft)
+        conversation.submit(draft, images: attachments)
         draft = ""
+        attachments = []
     }
 }
