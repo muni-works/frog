@@ -29,7 +29,10 @@ struct RootView: View {
     let remote: Remote
     @Environment(\.scenePhase) private var phase
     @Environment(\.horizontalSizeClass) private var size
-    @State private var path: [RemoteSession] = []
+    @State private var path = NavigationPath()
+    /// Landed somewhere since launch (or since coming back after a while).
+    @State private var landed = false
+    @State private var leftAt: Date?
     /// iPad: the conversation beside the list.
     @State private var selection: String?
     /// A conversation to open once the list knows it (from Handoff or a notification).
@@ -43,22 +46,22 @@ struct RootView: View {
                 // iPad: the list beside the conversation, like Messages.
                 NavigationSplitView {
                     SessionListView(remote: remote, selection: $selection)
+                        .environment(\.startNewChat) { selection = nil }
                 } detail: {
                     if let id = selection, let s = remote.session(id) {
                         let c = remote.conversation(s)
                         ChatView(conversation: c, link: remote.openLink, title: s.title) { remote.close(c) }.id(id)
+                            .environment(\.startNewChat) { selection = nil }
                     } else {
-                        ContentUnavailableView {
-                            Label { Text("Pick a conversation") } icon: { FrogFace(mood: .idle, size: 56).tint(.frog) }
-                        } description: {
-                            Text("What frog is doing on your Mac shows up here.")
-                        }
+                        // Never a blank page: a new chat until you pick one.
+                        NavigationStack { NewChatView(remote: remote) }
                     }
                 }
             } else {
                 NavigationStack(path: $path) {
                     if connected { SessionListView(remote: remote) } else { ConnectView(remote: remote) }
                 }
+                .environment(\.startNewChat) { if size != .regular { go(NewChat(), animated: true) } }
             }
         }
         .onOpenURL { url in
@@ -71,7 +74,10 @@ struct RootView: View {
             pending = a.userInfo?["session"] as? String
             openPending()
         }
-        .onChange(of: remote.sessions) { openPending() }
+        .onChange(of: remote.sessions) {
+            openPending()
+            land()
+        }
         .onChange(of: remote.requested) { _, id in
             guard let id else { return }
             remote.requested = nil
@@ -84,8 +90,13 @@ struct RootView: View {
             }
         }
         .onChange(of: phase) { _, p in
+            if p == .background { leftAt = .now }
+            guard p == .active else { return }
+            // Back after a while: start from what's fresh, as on launch.
+            if let leftAt, Date.now.timeIntervalSince(leftAt) > Self.away { landed = false; land() }
+            leftAt = nil
             // iOS drops the socket in the background; come back where we were.
-            if p == .active, !remote.code.isEmpty, !remote.isConnected { remote.connect() }
+            if !remote.code.isEmpty, !remote.isConnected { remote.connect() }
         }
     }
 
@@ -93,7 +104,38 @@ struct RootView: View {
     private func openPending() {
         guard let id = pending, let s = remote.session(id) else { return }
         pending = nil
-        if size == .regular { selection = s.id } else { path = [s] }
+        landed = true
+        if size == .regular { selection = s.id } else { go(s) }
+    }
+
+    /// Gone this long, the phone starts from what's fresh rather than where you left off.
+    static let away: TimeInterval = 30 * 60
+    /// A conversation touched this recently is the one to pick up; older, a new chat.
+    static let fresh: TimeInterval = 60 * 60
+
+    /// Never a bare list: on an iPhone, open the latest conversation if it's fresh, else a new
+    /// chat. Once per launch (or return), once the Mac's list is in, unless a link already chose.
+    private func land() {
+        guard !landed, size != .regular, connected, remote.isConnected, pending == nil, remote.requested == nil else { return }
+        landed = true
+        if let latest = remote.sessions.max(by: { $0.modified < $1.modified }),
+           latest.live != nil || Date.now.timeIntervalSince(latest.modified) < Self.fresh {
+            go(latest)
+        } else {
+            go(NewChat())
+        }
+    }
+
+    /// Show `place` with the list one step back: dropped straight in (on launch, from a link, a
+    /// new chat turning into its conversation), or pushed when you asked for it.
+    private func go(_ place: some Hashable, animated: Bool = false) {
+        var t = Transaction()
+        t.disablesAnimations = !animated
+        withTransaction(t) {
+            var p = NavigationPath()
+            p.append(place)
+            path = p
+        }
     }
 }
 

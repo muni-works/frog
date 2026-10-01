@@ -10,6 +10,7 @@ struct ChatView: View {
     let title: String
     var onClose: () -> Void = {}
     @Environment(\.models) private var models
+    @Environment(\.startNewChat) private var startNewChat
     @State private var draft = ""
     @State private var opening = false
     @State private var openError: String?
@@ -67,14 +68,15 @@ struct ChatView: View {
                 ToolbarItem(placement: .principal) { header }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     let changes = conversation.sessionChanges
-                    if !changes.isEmpty {
-                        Button { showChanges = true } label: {
-                            Label("\(changes.count) changed", systemImage: "plusminus")
+                    Menu {
+                        if !changes.isEmpty {
+                            Button { showChanges = true } label: {
+                                Label("Changes", systemImage: "plusminus")
+                                Text("\(changes.count) file\(changes.count == 1 ? "" : "s"), +\(changes.reduce(0) { $0 + $1.added }) −\(changes.reduce(0) { $0 + $1.removed })")
+                            }
+                            Divider()
                         }
-                        .accessibilityLabel("\(changes.count) file\(changes.count == 1 ? "" : "s") changed")
-                    }
-                    if let link {
-                        Menu {
+                        if let link {
                             Button("Rename…", systemImage: "pencil") {
                                 newTitle = conversation.title ?? title
                                 renaming = true
@@ -88,9 +90,12 @@ struct ChatView: View {
                             Button("Archive", systemImage: "archivebox") {
                                 Remote.shared.manage(link.session, "archive")
                             }
-                        } label: {
-                            Image(systemName: "ellipsis")
                         }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
+                    if link != nil {
+                        Button("New Chat", systemImage: "square.and.pencil") { startNewChat() }
                     }
                 }
             }

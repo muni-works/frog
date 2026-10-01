@@ -6,7 +6,7 @@ struct SessionListView: View {
     /// iPad: rows select the conversation shown beside the list instead of pushing it.
     var selection: Binding<String?>? = nil
     @Namespace private var zoom
-    @State private var composing = false
+    @Environment(\.startNewChat) private var startNewChat
     @State private var settings = false
     @State private var query = ""
     @State private var renaming: RemoteSession?
@@ -58,6 +58,7 @@ struct SessionListView: View {
             }
             Button("Cancel", role: .cancel) { renaming = nil }
         }
+        .navigationDestination(for: NewChat.self) { _ in NewChatView(remote: remote) }
         .navigationDestination(for: RemoteSession.self) { s in
             let c = remote.conversation(s)
             ChatView(conversation: c, link: remote.openLink, title: s.title) { remote.close(c) }
@@ -65,14 +66,11 @@ struct SessionListView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-            Button("New", systemImage: "square.and.pencil") { composing = true }
-            Button("Settings", systemImage: "gearshape") { settings = true }
+                Button("New Chat", systemImage: "square.and.pencil") { startNewChat() }
+                Button("Settings", systemImage: "gearshape") { settings = true }
             }
         }
         .sheet(isPresented: $settings) { SettingsSheet(remote: remote) }
-        .sheet(isPresented: $composing) {
-            NewConversationSheet(remote: remote) { id in remote.requested = id }
-        }
         .refreshable { remote.refresh() }
         // The Mac sends changes as they happen; this is for coming back to the list.
         .task { remote.refresh() }

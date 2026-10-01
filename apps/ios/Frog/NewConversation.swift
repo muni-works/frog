@@ -1,15 +1,24 @@
 import SwiftUI
 
-/// Start something new on the Mac from the phone: what frog should do, and where (a plain chat,
-/// or one of your projects). Opens the conversation once the Mac has it going.
-struct NewConversationSheet: View {
+/// A new chat, as a place in the navigation (the phone opens on one when nothing is fresh).
+struct NewChat: Hashable {}
+
+extension EnvironmentValues {
+    /// Go to a new chat, from wherever you are.
+    @Entry var startNewChat: () -> Void = {}
+}
+
+/// Start something new on the Mac: what frog should do, and where (a plain chat, or one of your
+/// projects). Like a fresh thread in a chat app: the frog, a question, and the composer ready.
+/// Becomes the conversation once the Mac has it going.
+struct NewChatView: View {
     let remote: Remote
-    let opened: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     /// A conversation whose folder to start in; nil for a chat.
     @State private var like: String?
     @State private var sending = false
+    /// What was sent, shown as sent while the Mac starts it.
+    @State private var sent: String?
     @State private var failure: String?
     @FocusState private var focused: Bool
 
@@ -22,57 +31,115 @@ struct NewConversationSheet: View {
         }
     }
 
+    private var place: String { like.flatMap { id in places.first { $0.id == id }?.folder } ?? "Chat" }
+    private var canSend: Bool { !sending && remote.isConnected && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("What should frog do?", text: $text, axis: .vertical)
-                        .lineLimit(3...10)
-                        .focused($focused)
-                }
-                Section("Where") {
-                    Picker("Where", selection: $like) {
-                        Label("A chat", systemImage: "bubble.left").tag(String?.none)
-                        ForEach(places) { s in
-                            Label(s.folder ?? s.title, systemImage: "folder").tag(Optional(s.id))
-                        }
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                }
-                if let failure {
-                    Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.footnote)
-                }
+        VStack(spacing: 14) {
+            Spacer()
+            FrogFace(mood: sending ? .thinking : .idle, size: 64).tint(Color.frog)
+            Text(sending ? "Starting on your Mac…" : "What should frog do?")
+                .font(.title3.weight(.semibold))
+                .contentTransition(.opacity)
+            placeMenu
+            if let failure {
+                Label(failure, systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 24)
+                    .multilineTextAlignment(.center)
             }
-            .navigationTitle("New")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    if sending {
-                        ProgressView()
-                    } else {
-                        Button("Start") { Task { await start() } }
-                            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
+            Spacer()
+            Spacer()
+            if let sent {
+                Text(sent)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Color.frog, in: .rect(cornerRadius: 20))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            .onAppear { focused = true }
         }
-        .presentationDetents([.medium, .large])
+        .frame(maxWidth: .infinity)
+        .contentShape(.rect)
+        .onTapGesture { focused = false }
+        .safeAreaInset(edge: .bottom) { composer }
+        .navigationTitle("New Chat")
+        .navigationBarTitleDisplayMode(.inline)
+        .animation(.snappy, value: sending)
+        .onAppear { focused = true }
+    }
+
+    /// Where it runs: a chat, or one of your projects.
+    private var placeMenu: some View {
+        Menu {
+            Picker("Where", selection: $like) {
+                Label("Chat", systemImage: "bubble.left").tag(String?.none)
+                ForEach(places) { s in
+                    Label(s.folder ?? s.title, systemImage: "folder").tag(Optional(s.id))
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: like == nil ? "bubble.left" : "folder")
+                Text(place)
+                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+            }
+            .font(.subheadline.weight(.medium))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+        }
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .disabled(sending)
+        .accessibilityLabel("Where: \(place)")
+    }
+
+    private var composer: some View {
+        GlassEffectContainer(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Message frog", text: $text, axis: .vertical)
+                    .lineLimit(1...6)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 11)
+                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
+                    .focused($focused)
+                    .disabled(sending)
+                    .onSubmit { Task { await start() } }
+                Button { Task { await start() } } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(canSend ? .white : .secondary)
+                        .frame(width: 44, height: 44)
+                }
+                .glassEffect(canSend ? .regular.tint(Color.frog).interactive() : .regular, in: .circle)
+                .disabled(!canSend)
+                .accessibilityLabel("Start")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
     }
 
     private func start() async {
+        guard canSend else { return }
+        let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
         sending = true
         failure = nil
-        switch await remote.startNew(text.trimmingCharacters(in: .whitespacesAndNewlines), like: like) {
+        sent = message
+        text = ""
+        FrogSounds.shared.play(.plip)
+        switch await remote.startNew(message, like: like) {
         case .success(let id):
-            FrogSounds.shared.play(.plip)
-            dismiss()
-            opened(id)
+            // The root swaps this screen for the conversation once the list has it.
+            remote.requested = id
         case .failure(let e):
             failure = e.message
+            sending = false
+            sent = nil
+            text = message
         }
-        sending = false
     }
 }
