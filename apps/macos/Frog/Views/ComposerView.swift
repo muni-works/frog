@@ -185,6 +185,23 @@ struct ComposerView: View {
             controller.insert(mention)
         }
         .onChange(of: text, initial: true) { conversation.panes.draft = text }
+        // Keep the model warm for what's about to be sent: when the conversation is shown, and
+        // after each pause in typing (`.task(id:)` restarts on every keystroke).
+        .task(id: text) {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            warm()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in warm() }
+    }
+
+    /// Ask the engine to prefill the conversation and the draft. `/skill` and `!command` are
+    /// rewritten before they're sent, so they warm the conversation alone.
+    private func warm() {
+        guard !conversation.busy else { return }
+        let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let usable = !draft.isEmpty && !draft.hasPrefix("/") && !draft.hasPrefix("!")
+        conversation.send(.warm(draft: usable ? text : nil))
     }
 
     private var placeholder: String {

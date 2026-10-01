@@ -21,7 +21,7 @@ use anyhow::Result;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
@@ -145,6 +145,8 @@ struct Shared {
     journal: Arc<Journal>,
     /// Terminal and preview panes, driven by the router so they work mid-turn.
     panes: Arc<crate::panes::Panes>,
+    /// The agent is handling an op (a turn, mostly); the router drops `Warm` meanwhile.
+    working: AtomicBool,
 }
 
 /// Event numbering and the session log. Shared, so events raised outside the agent loop (MCP
@@ -280,6 +282,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         mcp: Default::default(),
         subagents: Default::default(),
         ready: Default::default(),
+        working: Default::default(),
         journal,
         panes,
     });
@@ -321,6 +324,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     journal.emit(Event::Synced { upto });
                 }
                 Op::Interrupt => router.cancel.lock().unwrap().cancel(),
+                // Mid-turn the server is busy with the turn itself, which leaves it warm.
+                Op::Warm { .. } if router.working.load(Ordering::Relaxed) => {}
                 // Stopping mid-turn ends the turn first (cancelled, and logged as such), rather
                 // than waiting behind it: a client that stops an engine gives it about a second
                 // before killing it, and a turn cut off there would stay open in the log.
@@ -392,6 +397,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             if let Op::Shutdown = op {
                 break;
             }
+            // In the background, and not an op the client waits on: no `Idle` after it.
+            if let Op::Warm { draft } = op {
+                agent.warm(draft.as_deref());
+                continue;
+            }
+            shared.working.store(true, Ordering::Relaxed);
             agent.meter_busy(true);
             let token = CancellationToken::new();
             *shared.cancel.lock().unwrap() = token.clone();
@@ -416,6 +427,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     (None, _) => agent.notice(Level::Warn, "interrupted"),
                 }
             }
+            shared.working.store(false, Ordering::Relaxed);
             agent.emit_status();
             agent.emit(Event::Idle);
             agent.meter_busy(false);
@@ -478,6 +490,9 @@ fn now_ms() -> i64 {
 }
 
 /// Items opened while streaming one model response.
+/// A warm-up request on its way to the server (see `Agent::warm`).
+type Warming = std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>>;
+
 /// A model call's request in the current tool mode (see `Engine::wire`).
 struct Wire {
     system: String,
@@ -582,6 +597,8 @@ struct Agent {
     cache_key_ok: bool,
     /// The server can prefill a conversation without answering (probed).
     prefill_ok: bool,
+    /// A warm-up is running, and the one to send after it (see `warm`).
+    warming: Arc<Mutex<(bool, Option<Warming>)>>,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
     session_allow: HashSet<String>,
@@ -747,6 +764,7 @@ impl Agent {
             budget_ok: false,
             cache_key_ok: false,
             prefill_ok: false,
+            warming: Default::default(),
             session_allow: HashSet::new(),
             pending: Vec::new(),
             shared,
@@ -1063,6 +1081,7 @@ impl Agent {
             | Op::PaneReport { .. }
             | Op::PaneReply { .. }
             | Op::PaneMention { .. }
+            | Op::Warm { .. }
             | Op::Shutdown => {}
         }
         Ok(())
@@ -1204,6 +1223,8 @@ impl Agent {
             images: images.clone(),
         });
         self.active_turn = Some(turn);
+        // A draft still waiting to warm is stale now; the turn itself leaves the cache warm.
+        self.warming.lock().unwrap().1 = None;
         self.shared.panes.set_in_turn(true);
         self.inputs.push(input.to_string());
         self.turn_clock = Some(Instant::now());
@@ -1703,20 +1724,34 @@ impl Agent {
         }
         self.sync_specs();
         self.apply_harness();
-        self.warm();
+        self.warm(None);
     }
 
-    /// Have the server prefill this conversation as it stands (it was just opened, or the model
-    /// changed), so the next turn starts warm instead of re-reading everything. In the
-    /// background: a failure only costs the head start.
-    fn warm(&self) {
-        if !self.prefill_ok || !self.cache_key_ok || self.messages.is_empty() {
+    /// Have the server prefill this conversation as it stands (it was just opened or shown,
+    /// or the model changed), plus `draft` as the next message when the user is typing one,
+    /// so the next turn starts warm instead of re-reading everything. In the background, one
+    /// at a time: newer drafts replace a queued one. A failure only costs the head start.
+    fn warm(&self, draft: Option<&str>) {
+        if !self.prefill_ok || !self.cache_key_ok || (self.messages.is_empty() && draft.is_none()) {
             return;
         }
-        let wire = self.wire(&self.messages, &self.specs);
+        let mut messages = self.messages.clone();
+        if let Some(draft) = draft {
+            // As `turn` will send it: shell output waiting to go along, then the words.
+            let mut text = self.pending.join("\n");
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(draft);
+            match messages.last_mut() {
+                Some(m) if m.role == Role::User => m.content.push(Block::Text { text }),
+                _ => messages.push(Message::user(text)),
+            }
+        }
+        let wire = self.wire(&messages, &self.specs);
         let req = Request {
             system: &wire.system,
-            messages: wire.messages(&self.messages),
+            messages: wire.messages(&messages),
             tools: if wire.native_tools { &self.specs } else { &[] },
             max_tokens: None,
             format: wire.format.as_ref(),
@@ -1727,13 +1762,30 @@ impl Agent {
         let Some(prefill) = self.provider.prefill(&req) else {
             return;
         };
+        let prefill: Warming = Box::pin(prefill);
+        let mut w = self.warming.lock().unwrap();
+        if w.0 {
+            w.1 = Some(prefill);
+            return;
+        }
+        w.0 = true;
+        drop(w);
+        let warming = self.warming.clone();
         let log = self.cfg.log_calls;
         tokio::spawn(async move {
-            let started = Instant::now();
-            match prefill.await {
-                Ok(()) if log => eprintln!("warmed in {:.1}s", started.elapsed().as_secs_f64()),
-                Err(e) if log => eprintln!("warming failed: {e:#}"),
-                _ => {}
+            let mut next = Some(prefill);
+            while let Some(prefill) = next {
+                let started = Instant::now();
+                match prefill.await {
+                    Ok(()) if log => {
+                        eprintln!("warmed in {:.1}s", started.elapsed().as_secs_f64())
+                    }
+                    Err(e) if log => eprintln!("warming failed: {e:#}"),
+                    _ => {}
+                }
+                let mut w = warming.lock().unwrap();
+                next = w.1.take();
+                w.0 = next.is_some();
             }
         });
     }

@@ -119,6 +119,14 @@ pub enum Op {
         #[serde(default)]
         arguments: serde_json::Value,
     },
+    /// Have the model server prefill this conversation now, so the next turn starts warm:
+    /// when a client shows the conversation, and as the user types (`draft`, the composer's
+    /// text so far, as the next message). Dropped mid-turn and on servers that can't prefill;
+    /// emits nothing.
+    Warm {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        draft: Option<String>,
+    },
     /// What this client can do beyond the basics. Sent once after connecting; defaults to nothing.
     SetClientCaps {
         /// The client shows terminal panes and hosts preview panes (webviews it observes and
@@ -778,6 +786,14 @@ mod tests {
         assert_eq!((u.model_calls, &u.timing), (1, &None));
         // And it serializes back without the new field.
         assert_eq!(serde_json::to_string(&u).unwrap(), old);
+    }
+
+    #[test]
+    fn warm_takes_an_optional_draft() {
+        let bare: Op = serde_json::from_str(r#"{"op":"warm"}"#).unwrap();
+        assert!(matches!(bare, Op::Warm { draft: None }));
+        let typing: Op = serde_json::from_str(r#"{"op":"warm","draft":"fix the"}"#).unwrap();
+        assert!(matches!(typing, Op::Warm { draft: Some(d) } if d == "fix the"));
     }
 
     #[test]
