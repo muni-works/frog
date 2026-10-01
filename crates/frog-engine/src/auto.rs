@@ -153,6 +153,7 @@ impl Classifier {
             format: Some(&schema),
             think: self.think,
             think_budget: None,
+            cache_key: None,
         };
         let mut ignore = |_| {};
         let answer = tokio::time::timeout(

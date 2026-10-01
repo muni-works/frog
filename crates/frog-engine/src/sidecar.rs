@@ -154,6 +154,9 @@ pub async fn ensure(p: &Profile) -> Result<()> {
         if let Some(n) = p.context_window {
             cmd.args(["--ctx", &n.to_string()]);
         }
+        // A KV cache per conversation, as many as fit, so switching back to one doesn't
+        // re-prefill it. An environment variable, which older builds ignore.
+        cmd.env("TANG_KV_SLOTS", "auto");
     }
     cmd.args(["--port", &k.port.to_string()])
         .stdin(Stdio::null())

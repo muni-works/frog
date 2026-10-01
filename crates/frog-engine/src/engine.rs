@@ -561,6 +561,8 @@ struct Agent {
     vision: bool,
     /// The server takes a per-call reasoning budget (probed).
     budget_ok: bool,
+    /// The server keeps a prompt cache per conversation, keyed by the session id (probed).
+    cache_key_ok: bool,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
     session_allow: HashSet<String>,
@@ -724,6 +726,7 @@ impl Agent {
             classifier: None,
             vision: false,
             budget_ok: false,
+            cache_key_ok: false,
             session_allow: HashSet::new(),
             pending: Vec::new(),
             shared,
@@ -1652,7 +1655,9 @@ impl Agent {
             Some(v) => v,
             None => self.provider.supports_vision().await.unwrap_or(false),
         };
-        self.budget_ok = self.provider.supports_thinking_budget().await;
+        let ext = self.provider.extensions().await;
+        self.budget_ok = ext.thinking_budget;
+        self.cache_key_ok = ext.cache_key;
         let configured = self.profile.context_window;
         let probed = self.provider.probe_context().await;
         self.window = match (configured, probed) {
@@ -2341,6 +2346,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             format,
             think,
             think_budget,
+            cache_key: self.cache_key_ok.then_some(self.session_id.as_str()),
         };
         let mut attempt = 0;
         loop {
