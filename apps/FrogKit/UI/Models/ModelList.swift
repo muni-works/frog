@@ -57,13 +57,6 @@ struct ModelListRow<Accessory: View>: View {
     }
 }
 
-extension ModelListRow where Accessory == ModelStateAction {
-    /// The standard row: what makes the model usable, done in place.
-    init(model: ModelIdentity, current: Bool = false) {
-        self.init(model: model, current: current) { ModelStateAction(model: model) }
-    }
-}
-
 extension ModelIdentity {
     /// The row's second line when the model is ready: what's worth knowing to choose it.
     @MainActor

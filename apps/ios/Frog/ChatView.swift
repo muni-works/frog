@@ -15,6 +15,7 @@ struct ChatView: View {
     @State private var energyHistory = false
     @State private var showActivity = false
     @State private var jump: TurnState.ID?
+    @State private var pickingModel = false
 
     private var identity: ModelIdentity? {
         conversation.status.map { ModelIdentity.of($0.model, in: models) }
@@ -150,8 +151,18 @@ struct ChatView: View {
             }
             if let status = conversation.status {
                 // How frog asks, and how full its context is, as under the Mac's composer.
-                HStack(spacing: 10) {
+                HStack(spacing: 12) {
                     ModePicker(conversation: conversation)
+                    if let link, canSend, let identity {
+                        ModelButton(identity: identity) { pickingModel = true }
+                            .disabled(conversation.busy)
+                            .sheet(isPresented: $pickingModel) {
+                                ModelSheet(remote: Remote.shared, session: link.session, current: status.model) { note in
+                                    conversation.flash(note)
+                                }
+                                .environment(\.models, models)
+                            }
+                    }
                     Spacer()
                     ContextButton(conversation: conversation, status: status)
                 }

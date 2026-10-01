@@ -309,6 +309,29 @@ final class Remote {
         return r
     }
 
+    /// What the Mac did with a model chosen here.
+    enum ModelChoice {
+        case switched
+        case downloading(String)
+        /// The project keeps code on your devices unless you say otherwise: ask, then choose
+        /// again with the answer ("once" or "always").
+        case askCloud(project: String, provider: String)
+    }
+
+    /// Use `spec` in a conversation, as the Mac's own picker would: switch, download first, or
+    /// say what's in the way.
+    func useModel(_ spec: String, in session: String, cloud: String? = nil) async -> Result<ModelChoice, AskError> {
+        var m: [String: Any] = ["type": "model", "session": session, "spec": spec]
+        if let cloud { m["cloud"] = cloud }
+        return await ask(m).map { msg in
+            switch msg["result"] as? String {
+            case "downloading": .downloading(msg["name"] as? String ?? spec)
+            case "ask_cloud": .askCloud(project: msg["project"] as? String ?? "this project", provider: msg["provider"] as? String ?? "the provider")
+            default: .switched
+            }
+        }
+    }
+
     /// A Mermaid diagram laid out by the Mac's engine.
     func layoutMermaid(_ code: String) async -> Diagram? {
         guard case .success(let msg) = await ask(["type": "mermaid", "code": code, "session": openLink?.session ?? ""]),

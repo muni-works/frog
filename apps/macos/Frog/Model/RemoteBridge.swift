@@ -273,6 +273,26 @@ final class RemoteBridge {
                 try? await Task.sleep(for: .milliseconds(500))
                 if !r.claimed { client.send(["type": "error", "ref": ref, "message": "Open this conversation on your Mac first."]) }
             }
+        case "model":
+            // A model chosen on the phone: the pane showing the conversation does what the
+            // Mac's own picker would (switch, download first, or ask about the cloud).
+            guard let id = msg["session"] as? String, let spec = msg["spec"] as? String else { return }
+            let ref = msg["ref"] ?? ""
+            let r = ModelRequest(session: id, spec: spec, cloud: (msg["cloud"] as? String).flatMap(ModelRequest.Cloud.init))
+            r.done = { [weak client] outcome in
+                switch outcome {
+                case .switched: client?.send(["type": "model", "ref": ref, "result": "switched"])
+                case .downloading(let name): client?.send(["type": "model", "ref": ref, "result": "downloading", "name": name])
+                case .askCloud(let project, let provider):
+                    client?.send(["type": "model", "ref": ref, "result": "ask_cloud", "project": project, "provider": provider])
+                case .failed(let why): client?.send(["type": "error", "ref": ref, "message": why])
+                }
+            }
+            NotificationCenter.default.post(name: ModelRequest.name, object: r)
+            Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                if !r.claimed { client.send(["type": "error", "ref": ref, "message": "Open this conversation on your Mac first."]) }
+            }
         case "mermaid":
             // Lay out a diagram for a phone, which has no engine of its own.
             guard let code = msg["code"] as? String else { return }
@@ -470,6 +490,38 @@ final class RemoteBridge {
         default:
             client.send(["type": "error", "session": id, "message": "Not supported from the phone yet."])
         }
+    }
+}
+
+/// A phone choosing a model for a conversation. The pane showing the session claims it.
+@MainActor
+final class ModelRequest {
+    static let name = Notification.Name("eco.frog.remote.model")
+    /// The phone's answer to "Use cloud models in <project>?".
+    enum Cloud: String { case once, always }
+    enum Outcome {
+        case switched
+        case downloading(String)
+        /// Cloud models need the project's say-so first: ask, then send again with `cloud`.
+        case askCloud(project: String, provider: String)
+        case failed(String)
+    }
+
+    let session: String
+    let spec: String
+    let cloud: Cloud?
+    private(set) var claimed = false
+    var done: (Outcome) -> Void = { _ in }
+
+    init(session: String, spec: String, cloud: Cloud?) {
+        self.session = session
+        self.spec = spec
+        self.cloud = cloud
+    }
+
+    func claim() -> Bool {
+        defer { claimed = true }
+        return !claimed
     }
 }
 

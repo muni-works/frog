@@ -51,3 +51,10 @@ extension Workspace {
         ModelIdentity.of(spec, in: models)
     }
 }
+
+extension ModelListRow where Accessory == ModelStateAction {
+    /// The standard row: what makes the model usable, done in place.
+    init(model: ModelIdentity, current: Bool = false) {
+        self.init(model: model, current: current) { ModelStateAction(model: model) }
+    }
+}
