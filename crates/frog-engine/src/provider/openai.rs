@@ -170,6 +170,25 @@ impl Client {
         body
     }
 
+    /// Have the server prefill `req` without answering (tang-llm's `/v1/prefill`), so the
+    /// call that follows starts from a warm cache.
+    pub fn prefill(&self, req: &Request<'_>) -> impl Future<Output = Result<()>> + Send + 'static {
+        let url = format!("{}/prefill", self.base.trim_end_matches('/'));
+        let mut body = self.body(req);
+        if let Some(o) = body.as_object_mut() {
+            o.remove("stream");
+            o.remove("stream_options");
+        }
+        let mut rb = self.http.post(url).json(&body);
+        if let Some(k) = &self.key {
+            rb = rb.bearer_auth(k);
+        }
+        async move {
+            rb.send().await?.error_for_status()?;
+            Ok(())
+        }
+    }
+
     pub async fn complete(
         &self,
         req: &Request<'_>,
