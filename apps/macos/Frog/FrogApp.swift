@@ -28,6 +28,7 @@ struct FrogApp: App {
         }
         MorningNotice.start()
         _ = Updates.shared
+        if !SingleInstance.isTesting && !MorningNotice.headless { AppLocation.checkOnLaunch() }
         RemoteBridge.shared.startIfEnabled()
     }
 

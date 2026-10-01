@@ -21,15 +21,8 @@ final class CommandLineTool {
 
     private var bundled: URL? { Bundle.main.url(forResource: "frog", withExtension: nil) }
 
-    /// Run from the disk image or Downloads, macOS moves the app somewhere random and read-only
-    /// (App Translocation); a link there would break as soon as it's ejected or moved.
-    var movable: String? {
-        let path = Bundle.main.bundlePath
-        if path.hasPrefix("/Volumes/") || path.contains("/AppTranslocation/") {
-            return "Move Frog to Applications first."
-        }
-        return nil
-    }
+    /// A link into the disk image (or a translocated copy) would break as soon as it's ejected.
+    var movable: String? { AppLocation.isTemporary ? "Move Frog to Applications first." : nil }
 
     private init() { refresh() }
 
