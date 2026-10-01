@@ -242,6 +242,7 @@ async fn words(profile: &Profile, prompt: &str) -> anyhow::Result<(Words, crate:
         // The schema is the shape of the answer; there's nothing to reason out.
         think: Some(false),
         think_budget: None,
+        cache_key: None,
     };
     let mut ignore = |_| {};
     let r = tokio::time::timeout(Duration::from_secs(90), provider.complete(&req, &mut ignore))

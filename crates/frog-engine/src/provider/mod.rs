@@ -36,6 +36,16 @@ pub struct Request<'a> {
     /// answer. Sent as `thinking_budget` to OpenAI-compatible servers other than OpenAI's own;
     /// only set for servers that list the `thinking_budget` capability (tang-llm).
     pub think_budget: Option<u32>,
+    /// The conversation this call continues, so the server keeps its prompt cached (sent as
+    /// `prompt_cache_key`); only set for servers that take it.
+    pub cache_key: Option<&'a str>,
+}
+
+/// Request fields a server takes beyond the standard API (see [`Provider::extensions`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Extensions {
+    pub thinking_budget: bool,
+    pub cache_key: bool,
 }
 
 pub enum StreamEvent {
@@ -162,18 +172,29 @@ impl Provider {
         }
     }
 
-    /// Whether the server caps reasoning per request (tang-llm lists `thinking_budget` among
-    /// the model's capabilities). Bounded by a short timeout.
-    pub async fn supports_thinking_budget(&self) -> bool {
+    /// What the server takes beyond the standard API: a per-request reasoning cap, and a
+    /// conversation key for its KV cache. OpenAI keys its prompt cache by
+    /// `prompt_cache_key`; tang-llm lists both among the model's capabilities. Bounded by a
+    /// short timeout.
+    pub async fn extensions(&self) -> Extensions {
         match self {
-            Self::OpenAi(c) if !c.is_openai() => {
-                tokio::time::timeout(Duration::from_secs(3), c.capabilities())
+            Self::OpenAi(c) if c.is_openai() => Extensions {
+                thinking_budget: false,
+                cache_key: true,
+            },
+            Self::OpenAi(c) => {
+                let caps = tokio::time::timeout(Duration::from_secs(3), c.capabilities())
                     .await
                     .ok()
                     .flatten()
-                    .is_some_and(|caps| caps.iter().any(|c| c == "thinking_budget"))
+                    .unwrap_or_default();
+                let has = |name: &str| caps.iter().any(|c| c == name);
+                Extensions {
+                    thinking_budget: has("thinking_budget"),
+                    cache_key: has("prompt_cache_key"),
+                }
             }
-            _ => false,
+            _ => Extensions::default(),
         }
     }
 

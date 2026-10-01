@@ -161,6 +161,9 @@ impl Client {
         {
             body["thinking_budget"] = json!(n);
         }
+        if let Some(k) = req.cache_key {
+            body["prompt_cache_key"] = json!(k);
+        }
         if let Some(extra) = &self.extra {
             deep_merge(&mut body, extra);
         }
@@ -304,6 +307,7 @@ mod tests {
             format: None,
             think: None,
             think_budget: None,
+            cache_key: None,
         };
         let body = c.body(&req);
         let m = body["messages"].as_array().unwrap();
@@ -333,6 +337,7 @@ mod tests {
             format: None,
             think: None,
             think_budget,
+            cache_key: None,
         };
         let tang = client("http://192.168.2.12:8420/v1");
         assert_eq!(tang.body(&req(Some(1024)))["thinking_budget"], 1024);
@@ -344,6 +349,30 @@ mod tests {
                 .get("thinking_budget")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn cache_key_is_sent_as_prompt_cache_key() {
+        let c = Client {
+            http: reqwest::Client::new(),
+            base: "http://127.0.0.1:8911/v1".into(),
+            model: "m".into(),
+            key: None,
+            extra: None,
+        };
+        let msgs = vec![Message::user("hi")];
+        let req = |cache_key| Request {
+            system: "s",
+            messages: &msgs,
+            tools: &[],
+            max_tokens: None,
+            format: None,
+            think: None,
+            think_budget: None,
+            cache_key,
+        };
+        assert_eq!(c.body(&req(Some("abc")))["prompt_cache_key"], "abc");
+        assert!(c.body(&req(None)).get("prompt_cache_key").is_none());
     }
 
     #[test]
@@ -364,6 +393,7 @@ mod tests {
             format: None,
             think,
             think_budget: None,
+            cache_key: None,
         };
         let local = client("http://localhost:8911/v1", None);
         assert_eq!(
