@@ -21,8 +21,14 @@ struct FrogApp: App {
         // cards and materials (the per-app form of System Settings' "Allow wallpaper tinting").
         UserDefaults.standard.set(true, forKey: "AppleReduceDesktopTinting")
         Notifier.shared.setup()
+        Conversation.effects = MacEffects.shared
+        ModelContext.useMac()
+        DiagramLayout.mermaid = { source, cwd in
+            await Diagram.fromMermaid(source, cwd: cwd ?? FileManager.default.homeDirectoryForCurrentUser)
+        }
         MorningNotice.start()
         _ = Updates.shared
+        RemoteBridge.shared.startIfEnabled()
     }
 
     var body: some Scene {

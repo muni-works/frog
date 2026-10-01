@@ -27,6 +27,17 @@ struct PaneView: View {
     private var margin: CGFloat { WorkspaceView.margin }
 
     var body: some View {
+        paneBody
+            .onReceive(NotificationCenter.default.publisher(for: TurnRequest.name)) { note in
+                if let r = note.object as? TurnRequest { handle(r) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: ModelRequest.name)) { note in
+                if let r = note.object as? ModelRequest { handle(r) }
+            }
+    }
+
+    @ViewBuilder
+    private var paneBody: some View {
         ZStack(alignment: .topLeading) {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -239,6 +250,57 @@ struct PaneView: View {
     /// The latest finished turn that changed files (what Edit > Undo Last Turn reverts).
     private var undoTurn: TurnState? {
         conversation?.turns.last { $0.finished && $0.number != nil && !TurnParts($0).changes.isEmpty }
+    }
+
+    /// A phone asked to fork or rewind a turn of what this pane shows: do it here, as the
+    /// transcript's own actions would, and say which session it continues in.
+    /// What the model picker's `choose` does, for a phone: it can't add keys or open Settings,
+    /// so those come back as what to do on the Mac.
+    private func handle(_ r: ModelRequest) {
+        guard let c = conversation, c.sessionID == r.session, r.claim() else { return }
+        let m = workspace.allowing(workspace.identity(r.spec))
+        let provider: String = if case .cloud(let p) = m.place { p } else { "the provider" }
+        Task {
+            if m.place.isCloud {
+                switch r.cloud {
+                case .always: await workspace.setCloud(.allow)
+                case .once:
+                    // Enforced by frog: a folder that said no has to be asked again.
+                    if workspace.cloud == .deny { await workspace.setCloud(.ask) }
+                    workspace.cloudForThisConversation = true
+                case nil: break
+                }
+            }
+            let now = workspace.allowing(workspace.identity(r.spec))
+            switch now.state {
+            case .ready where now.place.isCloud && workspace.mustAskForCloud, .notAllowed:
+                r.done(.askCloud(project: workspace.policyName, provider: provider))
+            case .ready, .wontFit, .unreachable:
+                workspace.use(r.spec)
+                r.done(.switched)
+            case .notDownloaded, .downloadFailed, .downloading:
+                workspace.useWhenReady(now)
+                r.done(.downloading(now.name))
+            case .needsKey:
+                r.done(.failed("\(now.name) needs a key for \(provider). Add it in frog's settings on your Mac."))
+            case .overCap:
+                r.done(.failed("Cloud models are paused: this month's cap is reached. Change it in frog's settings on your Mac."))
+            }
+        }
+    }
+
+    private func handle(_ r: TurnRequest) {
+        guard let c = conversation, c.sessionID == r.session, r.claim() else { return }
+        Task {
+            switch r.action {
+            case .fork:
+                let next = workspace.fork(afterTurn: r.turn)
+                for _ in 0..<100 where next?.sessionID == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                r.done(next?.sessionID)
+            case .rewind:
+                r.done(await workspace.rewind(toBefore: r.turn))
+            }
+        }
     }
 
     private var turnActions: TurnActions {

@@ -197,31 +197,8 @@ struct ComposerView: View {
         return new ? "Ask about the code or describe a change · @ a file · ! a command" : "Ask frog to do something · @ mentions a file"
     }
 
-    /// Send while there's something to send; stop while a turn runs and the field is empty.
-    @ViewBuilder
     private var sendButton: some View {
-        if conversation.busy, !canSend {
-            Button { conversation.interrupt() } label: {
-                Image(systemName: "stop.circle.fill")
-                    .font(.system(size: 17))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
-                    .hoverPlate(h: 3, v: 3)
-            }
-            .buttonStyle(.plain)
-            .help("Interrupt (Esc or ⌘.)")
-        } else {
-            Button(action: send) {
-                Image(systemName: "return")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
-                    .frame(width: 22, height: 22)
-                    .hoverPlate(h: 3, v: 3)
-            }
-            .buttonStyle(.plain)
-            .disabled(!canSend)
-            .help(conversation.busy ? "Queue (Return)" : "Send (Return)")
-        }
+        SendButton(conversation: conversation, canSend: canSend, send: send)
     }
 
     /// Under the field, without chrome: add things on the left, how frog works on the right.
@@ -443,67 +420,8 @@ private struct DictationProblemView: View {
     }
 }
 
-struct ModePicker: View {
-    let conversation: Conversation
-
-    var body: some View {
-        let mode = conversation.status?.mode ?? .default
-        Menu {
-            ForEach(Mode.allCases) { m in
-                Button {
-                    conversation.setMode(m)
-                } label: {
-                    Label(m.label, systemImage: m.symbol)
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(mode.label)
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
-            }
-            .foregroundStyle(mode == .yolo ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-            .hoverPlate()
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Permission mode")
-    }
-}
 
 
-struct ContextRing: View {
-    let status: Status
-
-    private var fraction: Double {
-        guard let used = status.contextTokens, status.contextWindow > 0 else { return 0 }
-        return min(1, Double(used) / Double(status.contextWindow))
-    }
-
-    private var color: Color {
-        fraction > 0.8 ? .red : fraction > 0.6 ? .orange : .secondary
-    }
-
-    var body: some View {
-        ZStack {
-            Circle().stroke(.quaternary, lineWidth: 3)
-            Circle()
-                .trim(from: 0, to: fraction)
-                .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .frame(width: 16, height: 16)
-        .animation(.smooth, value: fraction)
-        .help(helpText)
-    }
-
-    private var helpText: String {
-        let window = status.contextWindow.tokens
-        guard let used = status.contextTokens else { return "Context window: \(window) tokens" }
-        return "\(used.tokens) of \(window) tokens (\(Int(fraction * 100))%)"
-    }
-}
 
 /// The repository a conversation works in: folder, branch, and a shortcut to commit what's
 /// changed.
@@ -564,54 +482,6 @@ struct ContextBar<Content: View>: View {
             .frame(height: 38)
             .background(FrogCanvas.color, in: .rect(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.055)).allowsHitTesting(false))
-    }
-}
-
-/// Images waiting to be sent: thumbnails with a remove button, and a note when the model can't
-/// see them.
-struct AttachmentStrip: View {
-    @Binding var images: [ToolImage]
-    /// The model's name, when it can't see images.
-    let blind: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    ForEach(Array(images.enumerated()), id: \.offset) { i, img in
-                        if let data = Data(base64Encoded: img.data), let ns = NSImage(data: data) {
-                            Image(nsImage: ns)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 56, height: 56)
-                                .clipShape(.rect(cornerRadius: 10))
-                                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
-                                .opensInLightbox(images, at: i)
-                                .overlay(alignment: .topTrailing) {
-                                    Button {
-                                        images.remove(at: i)
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .symbolRenderingMode(.palette)
-                                            .foregroundStyle(.white, .black.opacity(0.6))
-                                    }
-                                    .buttonStyle(.plain)
-                                    .offset(x: 5, y: -5)
-                                    .help("Remove")
-                                }
-                        }
-                    }
-                }
-                .padding(.top, 6)
-                .padding(.trailing, 6)
-            }
-            .scrollIndicators(.never)
-            if let blind {
-                Label("\(blind) can't see images; pick a vision model (like gemma3 or qwen2.5vl) to include them.", systemImage: "eye.slash")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
-        }
     }
 }
 
@@ -692,50 +562,3 @@ struct MentionList: View {
     }
 }
 
-struct QueuedMessages: View {
-    let conversation: Conversation
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(conversation.queue.map(\.text).enumerated()), id: \.offset) { i, text in
-                HStack(spacing: 6) {
-                    Image(systemName: "clock").foregroundStyle(.secondary)
-                    Text(text).lineLimit(1)
-                    Spacer()
-                    Button("Remove", systemImage: "xmark.circle.fill") { conversation.unqueue(at: i) }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                }
-                .font(.callout)
-            }
-        }
-        .padding(.horizontal, 4)
-    }
-}
-
-extension View {
-    /// A soft rounded plate behind a plain control while the pointer is over it, so chromeless
-    /// buttons and menus still answer the pointer. The padding is the plate's margin.
-    func hoverPlate(h: CGFloat = 7, v: CGFloat = 3, radius: CGFloat = 7) -> some View {
-        modifier(HoverPlate(h: h, v: v, radius: radius))
-    }
-}
-
-private struct HoverPlate: ViewModifier {
-    let h: CGFloat
-    let v: CGFloat
-    let radius: CGFloat
-    @State private var hovering = false
-    @Environment(\.isEnabled) private var enabled
-
-    func body(content: Content) -> some View {
-        content
-            .padding(.horizontal, h)
-            .padding(.vertical, v)
-            .background(Color.primary.opacity(hovering && enabled ? 0.08 : 0), in: .rect(cornerRadius: radius, style: .continuous))
-            .contentShape(.rect)
-            .onHover { hovering = $0 }
-            .animation(.easeOut(duration: 0.12), value: hovering)
-    }
-}

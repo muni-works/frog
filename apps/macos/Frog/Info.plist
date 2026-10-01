@@ -22,14 +22,24 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_frog._tcp</string>
+	</array>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Frog reads your calendar on this Mac to shape your brief around your day. It never leaves this Mac.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Cam Pedersen</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>frog on your iPhone connects to this Mac over your network.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Frog turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>eco.frog.conversation</string>
+	</array>
 	<key>SUFeedURL</key>
 	<string>https://frog.eco/appcast.xml</string>
 	<key>SUPublicEDKey</key>

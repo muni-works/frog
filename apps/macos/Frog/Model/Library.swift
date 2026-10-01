@@ -10,11 +10,7 @@ import Observation
 final class Library {
     static let shared = Library()
 
-    enum Live: Equatable {
-        case running
-        case waiting
-        case unread
-    }
+    typealias Live = SessionLive
 
     private(set) var sessions: [SessionInfo] = []
     private(set) var pinned: Set<String>
@@ -49,6 +45,7 @@ final class Library {
                     return FileManager.default.fileExists(atPath: cwd)
                 }
                 archiveQuietChats()
+                RemoteBridge.shared.listChanged()
             }
         }
     }
@@ -104,11 +101,19 @@ final class Library {
 
     // MARK: Live status
 
+    /// The conversation open on this Mac for session `id`, if any.
+    func conversation(_ id: String) -> Conversation? {
+        conversations[id]?.value
+    }
+
     /// An open conversation's state; called as its events arrive.
     func report(_ id: String, conversation: Conversation, running: Bool, waiting: Bool) {
         conversations[id] = WeakConversation(value: conversation)
         let now: Live? = waiting ? .waiting : running ? .running : (live[id] == .unread ? .unread : nil)
-        if live[id] != now { live[id] = now }
+        if live[id] != now {
+            live[id] = now
+            RemoteBridge.shared.listChanged()
+        }
     }
 
     /// A turn finished: unread unless it's what the user is looking at.

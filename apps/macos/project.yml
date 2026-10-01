@@ -26,6 +26,9 @@ targets:
     sources:
       - path: Frog
         excludes: ["Frog.entitlements"]
+      # Shared with the iOS app and its extensions (see FrogKit/README.md).
+      - path: ../FrogKit
+        excludes: ["README.md"]
     dependencies:
       - package: Sparkle
     info:
@@ -39,6 +42,9 @@ targets:
         SUFeedURL: https://frog.eco/appcast.xml
         SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
         LSApplicationCategoryType: public.app-category.developer-tools
+        NSUserActivityTypes: [eco.frog.conversation]
+        NSLocalNetworkUsageDescription: "frog on your iPhone connects to this Mac over your network."
+        NSBonjourServices: [_frog._tcp]
         NSHumanReadableCopyright: "© 2026 Cam Pedersen"
         NSMicrophoneUsageDescription: "Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it."
         NSCalendarsFullAccessUsageDescription: "Frog reads your calendar on this Mac to shape your brief around your day. It never leaves this Mac."
