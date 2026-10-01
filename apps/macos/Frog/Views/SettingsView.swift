@@ -56,6 +56,7 @@ private struct GeneralSettings: View {
                 }
             }
             Toggle("Notify me when a turn finishes while I'm in another app", isOn: $notifyWhenDone)
+            CommandLineToolSection()
             Section {
                 Toggle("Keep the brief fresh while Frog is closed", isOn: Binding(
                     get: { pond.background ?? false },
@@ -96,6 +97,37 @@ private struct GeneralSettings: View {
         }
         .formStyle(.grouped)
         .task { await pond.loadBackground() }
+    }
+}
+
+/// `frog` in a terminal, linked to the engine inside this app.
+private struct CommandLineToolSection: View {
+    @State private var tool = CommandLineTool.shared
+
+    var body: some View {
+        Section {
+            LabeledContent("Command line") {
+                switch tool.state {
+                case .installed:
+                    Label("frog is installed", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                case .other, .missing:
+                    Button(tool.state == .missing ? "Install" : "Use This Frog") { Task { await tool.install() } }
+                        .disabled(tool.movable != nil)
+                }
+            }
+            if let message = tool.error ?? tool.movable {
+                Text(message).foregroundStyle(.red)
+            }
+        } footer: {
+            switch tool.state {
+            case .other(let path):
+                Text("\(CommandLineTool.link.path) is \(path). Use This Frog links it to this app instead.")
+            default:
+                Text("Run `frog` in any terminal: the same engine, models and sessions as this app, updated with it. It's a link at \(CommandLineTool.link.path).")
+            }
+        }
+        .onAppear { tool.refresh() }
     }
 }
 

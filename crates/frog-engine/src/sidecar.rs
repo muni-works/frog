@@ -59,12 +59,13 @@ pub fn base_url(model: &str) -> String {
     format!("http://127.0.0.1:{}/v1", kind(model).port)
 }
 
-/// `$FROG_*_BIN`, else next to this executable (the app bundles them), else `$PATH`.
+/// `$FROG_*_BIN`, else next to this executable (the app bundles them; through a link like
+/// /usr/local/bin/frog, next to what it points at), else `$PATH`.
 fn binary(k: &Kind) -> PathBuf {
     if let Some(p) = std::env::var_os(k.env) {
         return p.into();
     }
-    if let Ok(exe) = std::env::current_exe()
+    if let Ok(exe) = std::env::current_exe().and_then(|e| e.canonicalize())
         && let Some(dir) = exe.parent()
         && dir.join(k.bin).exists()
     {

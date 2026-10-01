@@ -49,11 +49,13 @@ struct FrogCommands: Commands {
     }
 
     var body: some Commands {
-        if Updates.shared.enabled {
-            CommandGroup(after: .appInfo) {
+        CommandGroup(after: .appInfo) {
+            if Updates.shared.enabled {
                 Button("Check for Updates…") { Updates.shared.check() }
                     .disabled(!Updates.shared.canCheck)
             }
+            Button("Install Command Line Tool…") { Task { await CommandLineTool.shared.installFromMenu() } }
+                .disabled(CommandLineTool.shared.state == .installed || CommandLineTool.shared.movable != nil)
         }
 
         // ⌘N starts a chat where you are; windows and tabs are ⌘T and ⌥⌘N.
