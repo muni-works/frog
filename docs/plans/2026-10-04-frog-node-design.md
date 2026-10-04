@@ -29,6 +29,9 @@ Each machine runs `tang-llm serve` as today. It gains these endpoints:
 
 - **Config:** a `nodes` list (address and API key). A `tang/<model>` profile names a model; the node set is wherever that model is loaded, or can load into free memory.
 - **Polling:** each `/node` about once a second while frog is active, backing off when idle. A node is marked down after two missed polls.
+  - **Recovery:** a down node keeps being polled at the idle rate, and comes back up after two successful polls in a row.
+  - **Ramp-up:** its rates and KV are taken fresh from `/node`, so it competes for new calls straight away.
+  - **Nothing is rescheduled onto it:** work placed elsewhere while it was down stays there. Warming targets it again only once the scheduler predicts it for the next turn.
 - **Placement:** for each model call, finish = queue wait + uncached prompt ÷ prefill rate + expected output ÷ decode rate + round trip (+ load time). The earliest finish wins.
   - The uncached prompt comes from the node's block hashes, so KV affinity needs no special rule.
   - Expected output is a moving average per step kind: short for tool calls, long for answers and big writes.
@@ -36,6 +39,9 @@ Each machine runs `tang-llm serve` as today. It gains these endpoints:
 - **Background work** only goes to nodes whose interactive queue is empty.
 - **Warming** (`/v1/prefill`: on open, while typing, after a turn-end prune) targets the node predicted for the next turn.
 - **Failover:** a node that drops mid-call means a retry on the next-best node. Never retry after a tool with side effects has run.
+  - **Why retrying is safe:** a model call has no side effects of its own, and tools run only after a reply is complete. So a dropped node always means "re-run this call", and the history already holds every tool result logged before it.
+  - **When the retry fails too, or there's no other node:** the turn ends with a typed `incomplete` reason and a notice naming the node, the same as a provider error today.
+  - **What's kept:** everything already logged stays in the session, including the turn's checkpoint, finished tool calls and their results. Partial streamed text isn't logged (deltas never are), so the user can just send the turn again.
 - **What the user sees:** each turn is tagged with where it ran ("on mew" or "on Mac"). A Devices pane comes with N2.
 
 ## 3. Proof: `frog bench --nodes`
@@ -61,6 +67,8 @@ The big model runs whole on one node (the verifier). Another node runs a small m
 - **Network cost:** one round trip per round, so LAN or Wi-Fi latency (1–3 ms) is small next to a big model's verify pass.
 - **The local suffix drafter goes first,** because it's free and strongest on edits. The remote drafter covers the rest.
 - **tang to tang:** the verifier calls the drafter's new `/v1/draft` endpoint directly. Acceptance stats come back in usage.
+  - **Auth:** `/v1/draft` is behind the drafter's API key, the same as `/v1/*`. The engine passes that key to the verifier with the pairing, per request and never stored, so the verifier only reaches drafters the engine is already allowed to use.
+  - **Later:** with pairing (N1–N3), node-to-node calls move to the same mutual TLS with pinned keys.
 - **When it's used:** the engine pairs verifier and drafter per request. The finish-time estimate has a "with drafter" variant based on measured acceptance, and drafting is used only when that variant wins.
 - **Expected gain:** 1.5–2× decode on long generations. Unmeasured.
 
