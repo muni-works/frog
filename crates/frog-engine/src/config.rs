@@ -171,6 +171,11 @@ pub struct Config {
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]
     pub sandbox_shell: bool,
+    /// Start read-only tool calls (Read, Grep, Glob) as soon as their arguments arrive, while
+    /// the model is still writing the rest of its reply. Results, history and events are the
+    /// same as without it; only the waiting overlaps.
+    #[serde(default = "default_true")]
+    pub early_tools: bool,
     /// The model auto mode's classifier uses (a profile or provider/model). Default: Apple's
     /// on-device model when available, else the session's model.
     #[serde(default)]

@@ -5,11 +5,15 @@ use crate::message::Block;
 use anyhow::{Result, anyhow};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 pub struct Client {
     pub responses: Mutex<VecDeque<Response>>,
     /// Each request as the server would see it: the system prompt, then the messages as JSON.
     pub sent: Arc<Mutex<Vec<String>>>,
+    /// Stream each tool call's arguments as `StreamEvent::ToolReady`, then keep "decoding" for
+    /// this long before the next block, as a model still writing its reply would.
+    pub tool_args: Option<Duration>,
 }
 
 impl Client {
@@ -17,10 +21,11 @@ impl Client {
         Self {
             responses: Mutex::new(responses.into()),
             sent: Default::default(),
+            tool_args: None,
         }
     }
 
-    pub fn complete(
+    pub async fn complete(
         &self,
         req: &Request<'_>,
         on: &mut (dyn FnMut(StreamEvent) + Send),
@@ -36,11 +41,34 @@ impl Client {
             .unwrap()
             .pop_front()
             .ok_or_else(|| anyhow!("script exhausted"))?;
+        let mut index = 0;
         for b in &r.message.content {
             match b {
                 Block::Thinking { text, .. } => on(StreamEvent::Thinking(text.clone())),
+                // Text-mode calls stream as text: a pause after each one closes.
+                Block::Text { text } if self.tool_args.is_some() => {
+                    for piece in text.split_inclusive("</tool_call>") {
+                        on(StreamEvent::Text(piece.to_string()));
+                        if let Some(wait) = self.tool_args
+                            && piece.ends_with("</tool_call>")
+                        {
+                            tokio::time::sleep(wait).await;
+                        }
+                    }
+                }
                 Block::Text { text } => on(StreamEvent::Text(text.clone())),
-                Block::ToolUse { name, .. } => on(StreamEvent::ToolCall(name.clone())),
+                Block::ToolUse { name, input, .. } => {
+                    on(StreamEvent::ToolCall(name.clone()));
+                    if let Some(wait) = self.tool_args {
+                        on(StreamEvent::ToolReady {
+                            index,
+                            name: name.clone(),
+                            input: input.clone(),
+                        });
+                        index += 1;
+                        tokio::time::sleep(wait).await;
+                    }
+                }
                 Block::ToolResult { .. } | Block::Image { .. } => {}
             }
         }

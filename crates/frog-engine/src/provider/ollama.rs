@@ -177,6 +177,11 @@ impl Client {
                     Value::String(s) => super::parse_args(s),
                     v => v.clone(),
                 };
+                on(StreamEvent::ToolReady {
+                    index: calls.len(),
+                    name: name.clone(),
+                    input: args.clone(),
+                });
                 calls.push((tc["id"].as_str().unwrap_or("").to_string(), name, args));
             }
             if v["done"].as_bool() == Some(true) {
