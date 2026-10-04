@@ -6,7 +6,9 @@
 //!
 //! Pruning rewrites the prompt prefix, which throws away provider-side prompt/KV caches, so it
 //! runs with hysteresis: start at [`PRUNE_AT`] of the window and cut down to [`PRUNE_TO`], so it
-//! happens rarely and in one big step.
+//! happens rarely and in one big step. And between turns: once a turn ends, with the result
+//! warmed in the background, so no turn pays to prefill it. Inside a turn it waits until
+//! [`COMPACT_AT`].
 
 use crate::message::{Block, Message};
 use std::collections::HashMap;
