@@ -116,6 +116,7 @@ Shipped:
 - JSONL results, a summary table, a task grid, and session logs for replay
 - per-turn usage totals in the protocol
 - the `--sandbox` workspace confinement it needs (macOS seatbelt for Bash; Write/Edit path checks)
+- multi-turn tasks (`[[then]]` turns: same, resumed or new conversation) and a prompt cache report: per call, prompt, cached and prefilled tokens and time to first token; per task, the hit rate, tokens prefilled per call, and cold calls (the request only appended to the last, yet was mostly prefilled). `frog-bench run --tasks bench/cache` (shipped 2026-10-04; first run on tang + Qwen3-4B: follow-up calls prefill 66–600 tokens in 0.2–1.6 s, a new conversation in the same project finds 99% cached, and a resume after an edit was cold: the repo map is rebuilt on resume)
 
 Still to do:
 - harder, multi-file tasks, plus tasks where the right move is to ask or do nothing
