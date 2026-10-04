@@ -164,6 +164,20 @@ impl Client {
                         _ => {}
                     }
                 }
+                "content_block_stop" => {
+                    if let Some(Partial::Tool(_, name, args)) = parts.last() {
+                        let index = parts
+                            .iter()
+                            .filter(|p| matches!(p, Partial::Tool(..)))
+                            .count()
+                            - 1;
+                        on(StreamEvent::ToolReady {
+                            index,
+                            name: name.clone(),
+                            input: parse_args(args),
+                        });
+                    }
+                }
                 "message_delta" => {
                     if let Some(r) = v["delta"]["stop_reason"].as_str() {
                         stop = Some(Stop::from_reason(r));

@@ -55,6 +55,14 @@ pub enum StreamEvent {
     Thinking(String),
     /// A tool call started streaming (its arguments may take a while).
     ToolCall(String),
+    /// A tool call's arguments are complete while the reply is still streaming: the `index`th
+    /// call of this reply, with its input as the final response will have it, unless the reply
+    /// goes wrong later. Lets the engine start read-only tools early.
+    ToolReady {
+        index: usize,
+        name: String,
+        input: Value,
+    },
 }
 
 #[derive(Clone)]
@@ -253,7 +261,7 @@ impl Provider {
             Self::Anthropic(c) => c.complete(req, on).await,
             Self::Ollama(c) => c.complete(req, on).await,
             #[cfg(test)]
-            Self::Scripted(c) => c.complete(req, on),
+            Self::Scripted(c) => c.complete(req, on).await,
         }
     }
 }
