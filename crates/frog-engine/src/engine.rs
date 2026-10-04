@@ -3280,6 +3280,7 @@ mod tests {
     fn engine_sent(
         script: Vec<Response>,
         store: Option<PathBuf>,
+        resume: Option<String>,
         window: Option<u64>,
         cwd: PathBuf,
     ) -> (Handle, Arc<Mutex<Vec<String>>>) {
@@ -3293,7 +3294,7 @@ mod tests {
             cwd,
             mode: Mode::AcceptEdits,
             can_ask: true,
-            resume: None,
+            resume,
             store,
             sandbox: false,
             rich: false,
@@ -4126,7 +4127,7 @@ mod tests {
         let read_chars: usize = big.lines().map(|l| 6 + 1 + l.len() + 1).sum();
         let window = context::Estimator::default()
             .tokens(((fixed as f64 + 1.8 * read_chars as f64) / context::PRUNE_AT) as usize);
-        let (mut h, sent) = engine_sent(script, Some(dir.clone()), Some(window), dir.clone());
+        let (mut h, sent) = engine_sent(script, Some(dir.clone()), None, Some(window), dir.clone());
         let evs = run(&mut h, "look at big.rs twice").await;
         let sid = evs[0].session.clone();
         // Past PRUNE_AT but short of COMPACT_AT: nothing in the turn rewrote what was sent.
@@ -4207,7 +4208,7 @@ mod tests {
             reply(vec![text("wrote it")], Stop::End),
             reply(vec![text("ok")], Stop::End),
         ];
-        let (mut h, sent) = engine_sent(script, Some(dir.clone()), None, dir.clone());
+        let (mut h, sent) = engine_sent(script, Some(dir.clone()), None, None, dir.clone());
         let first = calls(&run(&mut h, "add two.rs").await);
         h.ops
             .send(Op::Submit {
@@ -4227,6 +4228,40 @@ mod tests {
         let reusable = second[0].reusable.unwrap();
         assert!(reusable > 0.9 && reusable < 1.0, "{reusable}");
         shutdown(h).await;
+    }
+
+    /// Fails today: a resumed engine builds the repo map (in the system prompt) from the files as
+    /// they are now, so after an edit the resumed request differs from the first lines of the
+    /// map on, and the server re-prefills the whole conversation (warm-on-open does it in the
+    /// background). The map a session last sent isn't in its log to reuse.
+    #[tokio::test]
+    #[ignore = "known cache bust: the repo map is rebuilt on resume"]
+    async fn a_resumed_session_sends_the_prompt_it_left_off_with() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("lib.rs"), "pub fn one() {}\n").unwrap();
+        let write = Block::ToolUse {
+            id: "w1".into(),
+            name: "Write".into(),
+            input: json!({ "file_path": "two.rs", "content": "pub fn two() {}\n" }),
+        };
+        let script = vec![
+            reply(vec![write], Stop::ToolUse),
+            reply(vec![text("wrote it")], Stop::End),
+        ];
+        let (mut h, before) = engine_sent(script, Some(dir.clone()), None, None, dir.clone());
+        let sid = run(&mut h, "add two.rs").await[0].session.clone();
+        shutdown(h).await;
+        // Reopened by a new engine, as when the app quits and comes back.
+        let script = vec![reply(vec![text("ok")], Stop::End)];
+        let (mut h, after) = engine_sent(script, Some(dir.clone()), Some(sid), None, dir.clone());
+        run(&mut h, "thanks").await;
+        shutdown(h).await;
+        let (before, after) = (before.lock().unwrap(), after.lock().unwrap());
+        // The server cached the last request; the resumed one should only append to it.
+        assert!(
+            extends(before.last().unwrap(), &after[0]),
+            "the resumed request rewrites the prefix"
+        );
     }
 
     /// Every block the session log holds, in order.
