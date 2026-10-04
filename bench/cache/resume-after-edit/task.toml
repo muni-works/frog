@@ -1,0 +1,10 @@
+# An edit, then the conversation is closed and resumed by a new engine (quit and reopen): the
+# server should still hold the conversation (memory or disk), so the resumed turn prefills only
+# what's new.
+prompt = "python3 test_inventory.py fails. Fix inventory.py so it passes; don't change the test."
+check = "python3 test_inventory.py && python3 -c 'from inventory import Inventory; i = Inventory(); i.add(\"a\", 2); i.add(\"b\", 3); assert i.total_quantity() == 5'"
+timeout_secs = 480
+
+[[then]]
+conversation = "resume"
+prompt = "Add a method total_quantity() to Inventory that returns the sum of every item's quantity."

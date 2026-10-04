@@ -1,0 +1,11 @@
+# Follow-ups in one conversation, each after an edit: every request should only append to the
+# one before, so after the first call each prefills just the new turn.
+prompt = "Add a function median(xs) to stats.py that returns the median of a non-empty list of numbers (the mean of the two middle values when the length is even)."
+check = "python3 test_stats.py && python3 -c 'import stats; assert stats.median([3, 1, 2]) == 2; assert stats.median([4, 1, 3, 2]) == 2.5; assert stats.spread([5, 1, 9]) == 8'"
+timeout_secs = 480
+
+[[then]]
+prompt = "Now add spread(xs) to stats.py too: the largest value minus the smallest."
+
+[[then]]
+prompt = "Run python3 test_stats.py and tell me whether it passes."
