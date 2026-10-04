@@ -102,6 +102,11 @@ pub enum Record {
     Reset {
         messages: Vec<Message>,
     },
+    /// The repo map the system prompt carries from here on, so a resumed session sends the
+    /// prompt it left off with instead of one rebuilt from the files as they are now.
+    RepoMap {
+        map: crate::repomap::Map,
+    },
 }
 
 fn path(dir: &Path, id: &str) -> PathBuf {
@@ -196,6 +201,8 @@ pub struct Loaded {
     pub snapshots: Vec<(u64, PathBuf, Option<String>)>,
     /// Working-tree checkpoints: (turn, repo root, commit).
     pub checkpoints: Vec<(u64, PathBuf, String)>,
+    /// The repo map last sent, if one was logged.
+    pub repo_map: Option<crate::repomap::Map>,
 }
 
 impl Loaded {
@@ -247,6 +254,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
     let mut events = Vec::new();
     let mut snapshots = Vec::new();
     let mut checkpoints = Vec::new();
+    let mut repo_map = None;
     for r in records {
         match r {
             Record::Header(_) => bail!("session {id} has a second header"),
@@ -260,6 +268,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
             Record::Snapshot { turn, path, before } => snapshots.push((turn, path, before)),
             Record::Checkpoint { turn, root, commit } => checkpoints.push((turn, root, commit)),
             Record::Reset { messages: m } => messages = m,
+            Record::RepoMap { map } => repo_map = Some(map),
         }
     }
     Ok(Loaded {
@@ -268,6 +277,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
         events,
         snapshots,
         checkpoints,
+        repo_map,
     })
 }
 

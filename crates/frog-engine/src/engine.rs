@@ -622,6 +622,8 @@ struct Agent {
     /// The ranked repo map in the system prompt (small and mid-size models only), rebuilt
     /// between turns when files change.
     repo_map: crate::repomap::Map,
+    /// Whether the session log holds the current `repo_map`.
+    map_logged: bool,
     /// Files edited this session, relative to the root, for ranking the map.
     edited: Vec<String>,
     /// The model can see images (probed, or `vision` in the profile).
@@ -658,12 +660,14 @@ impl Agent {
         // Panes open when the session was last saved, to close in the log (their shells died
         // with that process) so a resumed client doesn't expect them.
         let mut stale_panes: Vec<String> = Vec::new();
+        let mut resumed_map = None;
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
                 let l = session::load(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let (seq, turn) = (l.last_seq(), l.last_turn());
+                resumed_map = l.repo_map.clone();
                 let inputs = l
                     .events
                     .iter()
@@ -794,6 +798,7 @@ impl Agent {
             rules,
             rules_seen: HashSet::new(),
             repo_map: Default::default(),
+            map_logged: false,
             edited: Vec::new(),
             classifier: None,
             vision: false,
@@ -814,7 +819,15 @@ impl Agent {
             }
         }
         agent.sync_specs();
-        agent.refresh_repo_map(&[]);
+        // A resumed session keeps the map it last sent: one rebuilt from the files as they are
+        // now would rewrite the prompt the server has cached, after any edit.
+        match resumed_map {
+            Some(map) => {
+                agent.repo_map = map;
+                agent.map_logged = true;
+            }
+            None => agent.refresh_repo_map(&[]),
+        }
         agent.apply_harness();
         if agent.cfg.energy && !agent.subagent {
             agent.meter = crate::energy::Meter::new();
@@ -1317,6 +1330,7 @@ impl Agent {
         if self.messages.is_empty() {
             self.refresh_repo_map(&mentioned);
         }
+        self.log_map();
         self.apply_harness();
         self.push_user(text);
         if !images.is_empty() {
@@ -1525,6 +1539,8 @@ impl Agent {
         if budget == 0 {
             if have {
                 self.repo_map = Default::default();
+                self.map_logged = false;
+                self.log_map();
             }
             return;
         }
@@ -1539,7 +1555,24 @@ impl Agent {
             mentioned,
             edited: &self.edited,
         };
-        self.repo_map = crate::repomap::build(&self.root, cache.as_deref(), &seeds, budget);
+        let map = crate::repomap::build(&self.root, cache.as_deref(), &seeds, budget);
+        if map.text != self.repo_map.text {
+            self.map_logged = false;
+        }
+        self.repo_map = map;
+        self.log_map();
+    }
+
+    /// Log the repo map if the session log doesn't hold it yet. Only into a log that exists: a
+    /// conversation opened and never used shouldn't get one just for its map.
+    fn log_map(&mut self) {
+        if self.map_logged || self.store.is_none() || !self.shared.journal.has_log() {
+            return;
+        }
+        self.record(Record::RepoMap {
+            map: self.repo_map.clone(),
+        });
+        self.map_logged = true;
     }
 
     /// `path` relative to the project root, for rules and the repo map.
@@ -4230,12 +4263,10 @@ mod tests {
         shutdown(h).await;
     }
 
-    /// Fails today: a resumed engine builds the repo map (in the system prompt) from the files as
-    /// they are now, so after an edit the resumed request differs from the first lines of the
-    /// map on, and the server re-prefills the whole conversation (warm-on-open does it in the
-    /// background). The map a session last sent isn't in its log to reuse.
+    /// A resumed engine sends the repo map (in the system prompt) its session last logged, not
+    /// one rebuilt from the files as they are now: after an edit, that would differ from the map
+    /// on, and the server would re-prefill the whole conversation.
     #[tokio::test]
-    #[ignore = "known cache bust: the repo map is rebuilt on resume"]
     async fn a_resumed_session_sends_the_prompt_it_left_off_with() {
         let dir = tmp_store();
         std::fs::write(dir.join("lib.rs"), "pub fn one() {}\n").unwrap();

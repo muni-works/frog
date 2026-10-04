@@ -46,7 +46,7 @@ struct Cache {
 }
 
 /// The rendered map, and what it was built from.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Map {
     pub text: String,
     /// The files shown, so a mention of one that isn't can trigger a rebuild.
