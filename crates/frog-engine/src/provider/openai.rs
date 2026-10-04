@@ -204,6 +204,8 @@ impl Client {
         let mut text = String::new();
         let mut thinking = String::new();
         let mut calls: Vec<(String, String, String)> = Vec::new();
+        // Calls whose arguments already parsed (`StreamEvent::ToolReady` went out).
+        let mut ready: Vec<bool> = Vec::new();
         let mut usage = Usage::default();
         let mut stop = None;
 
@@ -254,6 +256,7 @@ impl Client {
                     .unwrap_or(calls.len());
                 if calls.len() <= idx {
                     calls.resize_with(idx + 1, Default::default);
+                    ready.resize(idx + 1, false);
                 }
                 let c = &mut calls[idx];
                 if let Some(id) = tc["id"].as_str().filter(|s| !s.is_empty()) {
@@ -270,6 +273,18 @@ impl Client {
                     // Some servers send arguments as an object instead of a string.
                     obj @ Value::Object(_) => c.2 = obj.to_string(),
                     _ => {}
+                }
+                // A JSON object can't grow once it closes, so arguments that parse are done.
+                if !ready[idx]
+                    && !c.1.is_empty()
+                    && c.2.trim_end().ends_with('}')
+                    && let Ok(input @ Value::Object(_)) = serde_json::from_str::<Value>(&c.2)
+                {
+                    ready[idx] = true;
+                    let name = c.1.clone();
+                    // Its place among the calls the response will keep (the named ones).
+                    let index = calls[..idx].iter().filter(|c| !c.1.is_empty()).count();
+                    on(StreamEvent::ToolReady { index, name, input });
                 }
             }
             Ok(())

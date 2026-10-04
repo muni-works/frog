@@ -703,8 +703,14 @@ pub struct TurnTiming {
     /// The part of `decode_ms` spent streaming reasoning before any answer or tool call.
     #[serde(default)]
     pub think_ms: u64,
-    /// Tools running (not counting permission prompts or the auto-mode classifier).
+    /// Tools running (not counting permission prompts or the auto-mode classifier). A tool
+    /// started early, while its call was still streaming, counts only the time the turn
+    /// waited for it after the reply ended.
     pub tool_ms: u64,
+    /// Tool time that overlapped other work (mostly decoding the reply that asked for it), so
+    /// it isn't in `tool_ms` and the turn didn't wait for it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub early_ms: u64,
     /// Waiting for the user to answer permission prompts.
     pub user_ms: u64,
     /// Auto mode's classifier deciding whether a tool call may run.
@@ -746,8 +752,12 @@ pub struct ToolTiming {
     /// The tool call's item id.
     pub id: String,
     pub name: String,
-    /// Running the tool; zero if it was denied.
+    /// Running the tool; zero if it was denied. For a tool started early, only the part the
+    /// turn waited for.
     pub ms: u64,
+    /// Started while the reply that asked for it was still streaming.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub early: bool,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub user_ms: u64,
     #[serde(default, skip_serializing_if = "is_zero")]

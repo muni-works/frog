@@ -525,6 +525,8 @@ struct Streamed {
     no_think: bool,
     /// The reasoning-token cap sent with this call.
     think_budget: Option<u32>,
+    /// Read-only tool calls started while the reply streamed (see `early`).
+    early: crate::early::Early,
 }
 
 struct Agent {
@@ -1397,7 +1399,7 @@ impl Agent {
             }
 
             used_tools = true;
-            match self.run_tools(uses, &mut repeats).await? {
+            match self.run_tools(uses, &mut repeats, streamed.early).await? {
                 Batch::Continue => {}
                 Batch::Denied => break EndReason::Denied,
                 Batch::Looping => break EndReason::Looping,
@@ -2233,10 +2235,45 @@ impl Agent {
             || (name.starts_with("mcp__") && self.mcp.handles(name))
     }
 
+    /// A context to run `name` in while its reply is still streaming, if it may: one of the
+    /// read-only tools (`early::TOOLS`) that this step offers and that never asks. Its own
+    /// context, so nothing it records reaches `self.ctx` unless its result is used.
+    fn early_ctx(&self, name: &str, input: &Value) -> Option<Ctx> {
+        let ok = crate::early::TOOLS.contains(&name)
+            && tools::kind(name) == Kind::Read
+            && self.offers(name)
+            && !self.mcp.handles(name)
+            && input.get("_invalid_json").is_none();
+        ok.then(|| Ctx {
+            cwd: self.ctx.cwd.clone(),
+            read_files: HashMap::new(),
+            todos: Vec::new(),
+            sandbox: self.ctx.sandbox.clone(),
+            shell_sandbox: self.ctx.shell_sandbox.clone(),
+            progress: None,
+            web: self.ctx.web.clone(),
+        })
+    }
+
+    /// The result of a call that started early, as running it now would give, and how long
+    /// it ran before `now` (time the turn didn't wait for it).
+    async fn finish_early(
+        &mut self,
+        call: crate::early::Call,
+        now: Instant,
+    ) -> Option<(Result<tools::Output>, Duration)> {
+        let ran = call.finish().await?;
+        // What it read counts as read, as if it had run now.
+        self.ctx.read_files.extend(ran.read_files);
+        let overlap = ran.done.min(now).saturating_duration_since(ran.started);
+        Some((ran.out, overlap))
+    }
+
     async fn run_tools(
         &mut self,
         uses: Vec<(String, String, Value)>,
         repeats: &mut HashMap<String, u32>,
+        mut early: crate::early::Early,
     ) -> Result<Batch> {
         // Results accumulate in place so an interrupt keeps what already ran.
         self.push_msg(Message {
@@ -2245,7 +2282,9 @@ impl Agent {
         });
         let mut denied = false;
         let mut looping = false;
-        for (id, name, input) in uses {
+        for (index, (id, name, input)) in uses.into_iter().enumerate() {
+            // Taken for every call, so a mismatch drops all the early runs after it.
+            let started_early = early.take(index, &name, &input);
             let seen = repeats.entry(format!("{name}\u{0}{input}")).or_insert(0);
             // Reading a pane again is polling, not looping: what's there changes.
             if !crate::panes::is_read(&name, &input) {
@@ -2309,11 +2348,21 @@ Don't repeat it. Change the arguments or try a different approach.",
             } else {
                 let started = Instant::now();
                 self.snapshot(&name, &input);
-                let r = self.run_tool(&id, &name, &input).await;
+                let ran = match started_early {
+                    Some(call) => self.finish_early(call, started).await,
+                    None => None,
+                };
+                let early = ran.as_ref().map(|(_, overlap)| ms(*overlap));
+                let r = match ran {
+                    Some((r, _)) => r,
+                    None => self.run_tool(&id, &name, &input).await,
+                };
                 let took = ms(started.elapsed());
                 self.timing.tool_ms += took;
+                self.timing.early_ms += early.unwrap_or(0);
                 if let Some(t) = self.timing.tools.last_mut() {
                     t.ms = took;
+                    t.early = early.is_some();
                 }
                 match r {
                     Ok(o) => (ToolOutcome::Ok, o),
@@ -2469,6 +2518,9 @@ Don't repeat it. Change the arguments or try a different approach.",
         think_budget: Option<u32>,
     ) -> Result<(Response, Streamed)> {
         let json_mode = self.tool_mode == ToolMode::Json;
+        // A JSON-mode reply is one object whose action comes last, so it's done by the time
+        // its call is: nothing to gain.
+        let early_tools = self.cfg.early_tools && offer_tools && !quiet && !json_mode;
         let specs = if offer_tools {
             &self.specs[..]
         } else {
@@ -2596,9 +2648,18 @@ Don't repeat it. Change the arguments or try a different approach.",
                         StreamEvent::ToolCall(name) => self.emit(Event::Progress {
                             label: format!("{name}…"),
                         }),
+                        StreamEvent::ToolReady { index, name, input } => {
+                            if early_tools {
+                                let ctx = self.early_ctx(&name, &input);
+                                streamed.early.ready(index, name, input, ctx);
+                            }
+                        }
                         // JSON-mode output is raw JSON; the parsed answer is shown when complete.
                         StreamEvent::Text(_) if json_mode => {}
                         StreamEvent::Text(s) => {
+                            if early_tools {
+                                streamed.early.text(&s, |n, i| self.early_ctx(n, i));
+                            }
                             let was_inside = filter.inside;
                             let visible = filter.push(&s);
                             if !visible.is_empty() {
@@ -2674,6 +2735,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             id: item.to_string(),
             name: name.to_string(),
             ms: 0,
+            early: false,
             user_ms: t.user_ms - user,
             classifier_ms: t.classifier_ms - classifier,
         };
@@ -5025,6 +5087,372 @@ mod tests {
         assert!(logged.contains(&"pane_opened".to_string()));
         assert!(logged.contains(&"pane_closed".to_string()));
         assert!(!logged.contains(&"pane_screen".to_string()));
+    }
+
+    /// An engine in `dir` (edits allowed) whose provider streams each tool call's arguments
+    /// and then keeps decoding for `decode`, with early tools on or off. Its session log goes
+    /// to `store`, outside the project, as it does outside tests: a log inside the project
+    /// changes between a reply ending and its tools running, so an early Grep would see an
+    /// older log than a late one.
+    fn engine_early(
+        script: Vec<Response>,
+        early: bool,
+        tool_mode: ToolMode,
+        decode: Duration,
+        dir: &Path,
+        store: &Path,
+    ) -> (Handle, Arc<Mutex<Vec<String>>>) {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = tool_mode;
+        let mut cfg = Config::default();
+        cfg.early_tools = early;
+        let opts = Options {
+            cfg,
+            profile_name: "test".into(),
+            profile,
+            cwd: dir.to_path_buf(),
+            mode: Mode::AcceptEdits,
+            can_ask: false,
+            resume: None,
+            store: Some(store.to_path_buf()),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut client = scripted::Client::new(script);
+        client.tool_args = Some(decode);
+        let sent = client.sent.clone();
+        (start(opts, Provider::Scripted(client)).unwrap(), sent)
+    }
+
+    fn turn_timing(evs: &[Envelope]) -> TurnTiming {
+        evs.iter()
+            .find_map(|e| match &e.event {
+                Event::TurnEnded { usage, .. } => usage.timing.clone(),
+                _ => None,
+            })
+            .expect("turn_ended carries timing")
+    }
+
+    /// A logged event with what differs from run to run (clock, session id, generated ids,
+    /// timing) taken out.
+    fn stable(env: &Envelope) -> Value {
+        fn scrub(v: &mut Value) {
+            match v {
+                Value::Object(m) => {
+                    for k in ["created", "session", "timing", "tokens_per_sec"] {
+                        m.remove(k);
+                    }
+                    m.values_mut().for_each(scrub);
+                }
+                Value::Array(a) => a.iter_mut().for_each(scrub),
+                Value::String(s) if s.starts_with("call_") => *s = "call_".into(),
+                _ => {}
+            }
+        }
+        let mut v = serde_json::to_value(env).unwrap();
+        scrub(&mut v);
+        v
+    }
+
+    /// One prompt through a fresh engine in a fresh project: the requests the model got, the
+    /// session as logged (history, then events), and the turn's timing.
+    async fn early_run(
+        script: Vec<Response>,
+        early: bool,
+        tool_mode: ToolMode,
+        files: &[(&str, &str)],
+    ) -> (Vec<String>, String, Vec<String>, TurnTiming) {
+        let (dir, store) = (tmp_store(), tmp_store());
+        for (name, body) in files {
+            std::fs::write(dir.join(name), body).unwrap();
+        }
+        let decode = Duration::from_millis(80);
+        let (mut h, sent) = engine_early(script, early, tool_mode, decode, &dir, &store);
+        let evs = run(&mut h, "look").await;
+        let sid = evs[0].session.clone();
+        shutdown(h).await;
+        let logged = session::load(&store, &sid).unwrap();
+        let here = |s: &str| s.replace(dir.to_str().unwrap(), "<dir>");
+        let sent = sent.lock().unwrap().iter().map(|s| here(s)).collect();
+        let history = here(&serde_json::to_string(&logged.messages).unwrap());
+        let events = logged
+            .events
+            .iter()
+            .map(|e| here(&stable(e).to_string()))
+            .collect();
+        (sent, history, events, turn_timing(&evs))
+    }
+
+    fn read_call(id: &str, path: &str) -> Block {
+        Block::ToolUse {
+            id: id.into(),
+            name: "Read".into(),
+            input: json!({ "file_path": path }),
+        }
+    }
+
+    fn result_of(history: &str, call: &str) -> String {
+        serde_json::from_str::<Vec<Message>>(history)
+            .unwrap()
+            .into_iter()
+            .flat_map(|m| m.content)
+            .find_map(|b| match b {
+                Block::ToolResult { id, content, .. } if id == call => Some(content),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn early_reads_match_the_late_path_exactly() {
+        let script = || {
+            vec![
+                reply(
+                    vec![
+                        text("Looking."),
+                        read_call("r1", "a.rs"),
+                        Block::ToolUse {
+                            id: "g1".into(),
+                            name: "Grep".into(),
+                            input: json!({ "pattern": "fn", "output_mode": "content" }),
+                        },
+                        read_call("r2", "missing.rs"),
+                    ],
+                    Stop::ToolUse,
+                ),
+                reply(vec![text("done")], Stop::End),
+            ]
+        };
+        let files = [("a.rs", "fn a() {}\n"), ("b.rs", "fn b() {}\n")];
+        let on = early_run(script(), true, ToolMode::Native, &files).await;
+        let off = early_run(script(), false, ToolMode::Native, &files).await;
+        let early: Vec<bool> = on.3.tools.iter().map(|t| t.early).collect();
+        assert_eq!(early, [true, true, true]);
+        assert!(off.3.tools.iter().all(|t| !t.early));
+        assert_eq!(off.3.early_ms, 0);
+        // The model saw the same thing, the session logged the same history and events.
+        assert_eq!(on.0, off.0);
+        assert_eq!(on.1, off.1);
+        assert_eq!(on.2, off.2);
+        assert!(result_of(&on.1, "r1").contains("fn a()"));
+        assert!(result_of(&on.1, "g1").contains("b.rs"));
+        assert!(result_of(&on.1, "r2").contains("cannot read"));
+        // They ran while the reply was still streaming, so the turn barely waited, and that
+        // time isn't counted twice.
+        let t = &on.3;
+        assert!(t.tool_ms < 80, "waited {}ms", t.tool_ms);
+        assert!(t.wall_ms >= t.prefill_ms + t.decode_ms + t.tool_ms);
+    }
+
+    #[tokio::test]
+    async fn text_mode_calls_start_early_too() {
+        let call = |path: &str| {
+            format!(
+                "<tool_call>\n{{\"name\": \"Read\", \"arguments\": {{\"file_path\": \"{path}\"}}}}\n</tool_call>\n"
+            )
+        };
+        let script = || {
+            vec![
+                reply(
+                    vec![text(&format!(
+                        "Let me look.\n{}{}",
+                        call("a.rs"),
+                        call("b.rs")
+                    ))],
+                    Stop::End,
+                ),
+                reply(vec![text("done")], Stop::End),
+            ]
+        };
+        let files = [("a.rs", "fn a() {}\n"), ("b.rs", "fn b() {}\n")];
+        let on = early_run(script(), true, ToolMode::Text, &files).await;
+        let off = early_run(script(), false, ToolMode::Text, &files).await;
+        let early: Vec<bool> = on.3.tools.iter().map(|t| t.early).collect();
+        assert_eq!(early, [true, true]);
+        // Text-mode calls get fresh ids; everything else is the same.
+        let unid = |v: String| {
+            let re = regex::Regex::new(r#"call_[0-9a-f]+"#).unwrap();
+            re.replace_all(&v, "call_").into_owned()
+        };
+        let unid_all = |v: &[String]| v.iter().cloned().map(unid).collect::<Vec<_>>();
+        assert_eq!(unid_all(&on.0), unid_all(&off.0));
+        assert_eq!(unid(on.1), unid(off.1));
+        assert_eq!(on.2, off.2);
+    }
+
+    #[tokio::test]
+    async fn edits_and_commands_never_start_early_nor_anything_after_them() {
+        let edit = Block::ToolUse {
+            id: "e1".into(),
+            name: "Edit".into(),
+            input: json!({ "file_path": "a.rs", "old_string": "fn a()", "new_string": "fn z()" }),
+        };
+        let bash = Block::ToolUse {
+            id: "b1".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "echo hi" }),
+        };
+        let script = || {
+            vec![
+                reply(vec![read_call("r1", "a.rs")], Stop::ToolUse),
+                reply(
+                    vec![
+                        edit.clone(),
+                        read_call("r2", "a.rs"),
+                        bash.clone(),
+                        read_call("r3", "b.rs"),
+                    ],
+                    Stop::ToolUse,
+                ),
+                reply(vec![text("done")], Stop::End),
+            ]
+        };
+        let files = [("a.rs", "fn a() {}\n"), ("b.rs", "fn b() {}\n")];
+        let on = early_run(script(), true, ToolMode::Native, &files).await;
+        let off = early_run(script(), false, ToolMode::Native, &files).await;
+        let early: Vec<(&str, bool)> =
+            on.3.tools
+                .iter()
+                .map(|t| (t.name.as_str(), t.early))
+                .collect();
+        assert_eq!(
+            early,
+            [
+                ("Read", true),
+                ("Edit", false),
+                ("Read", false),
+                ("Bash", false),
+                ("Read", false)
+            ]
+        );
+        assert_eq!(on.1, off.1);
+        assert_eq!(on.2, off.2);
+        // The read after the edit saw the edit.
+        let r2 = result_of(&on.1, "r2");
+        assert!(r2.contains("fn z()"), "{r2}");
+    }
+
+    #[tokio::test]
+    async fn a_broken_stream_discards_what_started_early() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+        let edit = Block::ToolUse {
+            id: "e1".into(),
+            name: "Edit".into(),
+            input: json!({ "file_path": "a.rs", "old_string": "fn a()", "new_string": "fn z()" }),
+        };
+        let script = vec![
+            // The read streams, then the stream ends without the server saying it's done.
+            reply(vec![read_call("r1", "a.rs")], Stop::Incomplete),
+            reply(vec![edit], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let (mut h, _) = engine_early(
+            script,
+            true,
+            ToolMode::Native,
+            Duration::from_millis(30),
+            &dir,
+            &dir,
+        );
+        let evs = run(&mut h, "look").await;
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Error { .. },
+                ..
+            }
+        )));
+        let tool_item = |e: &Envelope| {
+            matches!(
+                e.event,
+                Event::ItemStarted {
+                    kind: ItemKind::ToolCall { .. },
+                    ..
+                }
+            )
+        };
+        assert!(!evs.iter().any(tool_item));
+        // The early read never counted: the edit still needs a read first.
+        h.ops
+            .send(Op::Submit {
+                text: "edit it".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        let sid = evs[0].session.clone();
+        shutdown(h).await;
+        let results: Vec<(String, String)> = logged_blocks(&dir, &sid)
+            .into_iter()
+            .filter_map(|(_, b)| match b {
+                Block::ToolResult { id, content, .. } => Some((id, content)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results.len(), 1, "{results:?}");
+        assert!(results[0].1.contains("must Read"), "{}", results[0].1);
+    }
+
+    #[tokio::test]
+    async fn interrupting_cancels_early_tools() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+        let script = vec![
+            reply(vec![read_call("r1", "a.rs")], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let (mut h, _) = engine_early(
+            script,
+            true,
+            ToolMode::Native,
+            Duration::from_secs(30),
+            &dir,
+            &dir,
+        );
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "look".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let read = matches!(&env.event, Event::Progress { label } if label == "Read…");
+            evs.push(env);
+            if read {
+                break;
+            }
+        }
+        // The read started; the model is still "decoding" the rest of its reply.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        h.ops.send(Op::Interrupt).unwrap();
+        evs.extend(until_idle(&mut h).await);
+        let sid = evs[0].session.clone();
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Cancelled,
+                ..
+            }
+        )));
+        assert!(!evs.iter().any(|e| matches!(
+            e.event,
+            Event::ItemStarted {
+                kind: ItemKind::ToolCall { .. },
+                ..
+            }
+        )));
+        shutdown(h).await;
+        assert!(
+            !logged_blocks(&dir, &sid)
+                .iter()
+                .any(|(_, b)| matches!(b, Block::ToolResult { .. }))
+        );
     }
 
     #[test]
