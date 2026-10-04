@@ -723,6 +723,18 @@ pub struct TurnTiming {
 pub struct CallTiming {
     /// Prompt tokens as the provider reported them (including cache reads).
     pub prompt_tokens: u64,
+    /// The part of `prompt_tokens` the server had cached; the rest it prefilled.
+    #[serde(default)]
+    pub cached_tokens: u64,
+    /// Whether this request only appended to the one before it in the conversation (a model
+    /// call or a warm-up), so a server could answer all of that one from its cache. Absent for
+    /// the first request an engine sends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extends: Option<bool>,
+    /// How much of this request (0–1, by its text) repeats the start of the one before: about
+    /// the share of `prompt_tokens` a server's cache could cover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reusable: Option<f64>,
     pub output_tokens: u64,
     pub ttft_ms: u64,
     pub decode_ms: u64,

@@ -80,6 +80,9 @@ class Stats:
         self.prefill_tps = []
         self.decode_tps = []
         self.calls = 0
+        # Prompt tokens over the calls, and how many of them the server had cached.
+        self.prompt = 0
+        self.cached = 0
         # Per model call, split by whether thinking was switched off (`no_think`):
         # [calls, output tokens, decode ms, think ms]
         self.by_think = {True: [0, 0, 0, 0], False: [0, 0, 0, 0]}
@@ -102,8 +105,12 @@ class Stats:
             b[2] += decode
             b[3] += c.get("think_ms", 0)
             self.ttft.append(ttft)
-            if ttft > 0 and c.get("prompt_tokens"):
-                self.prefill_tps.append(c["prompt_tokens"] / (ttft / 1000))
+            # Cached tokens weren't prefilled, so they don't count toward prefill speed.
+            prefilled = c.get("prompt_tokens", 0) - c.get("cached_tokens", 0)
+            self.prompt += c.get("prompt_tokens", 0)
+            self.cached += c.get("cached_tokens", 0)
+            if ttft > 0 and prefilled > 0:
+                self.prefill_tps.append(prefilled / (ttft / 1000))
             if decode > 0 and c.get("output_tokens"):
                 self.decode_tps.append(c["output_tokens"] / (decode / 1000))
         for tool in t.get("tools", []):
@@ -121,6 +128,8 @@ class Stats:
         self.prefill_tps += other.prefill_tps
         self.decode_tps += other.decode_tps
         self.calls += other.calls
+        self.prompt += other.prompt
+        self.cached += other.cached
         for k in self.by_think:
             self.by_think[k] = [a + b for a, b in zip(self.by_think[k], other.by_think[k])]
         for k, v in other.tools.items():
@@ -145,6 +154,8 @@ class Stats:
         return {
             "turns": self.turns,
             "model_calls": self.calls,
+            "prompt_tokens": self.prompt,
+            "cached_tokens": self.cached,
             "thinking": {
                 ("off" if off else "on"): {
                     "calls": n,
@@ -207,6 +218,10 @@ def main():
         print(f"  {p:<11} {o['share'][p]:6.1%}{extra}")
     print(f"\nmedian ttft {o['median_ttft_s']:.2f}s · prefill {tps(o['median_prefill_tps'])} tok/s"
           f" · decode {tps(o['median_decode_tps'])} tok/s")
+    if o["cached_tokens"]:
+        print(f"prompt cache: {o['cached_tokens']:,} of {o['prompt_tokens']:,} prompt tokens cached"
+              f" ({o['cached_tokens'] / o['prompt_tokens']:.0%}),"
+              f" {(o['prompt_tokens'] - o['cached_tokens']) / o['model_calls']:,.0f} prefilled per call")
     off = o["thinking"]["off"]
     if off["calls"]:
         on = o["thinking"]["on"]

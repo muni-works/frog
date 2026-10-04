@@ -525,6 +525,38 @@ struct Streamed {
     no_think: bool,
     /// The reasoning-token cap sent with this call.
     think_budget: Option<u32>,
+    /// How this request compares with the one sent before it (see [`CallTiming::extends`]).
+    extends: Option<bool>,
+    reusable: Option<f64>,
+}
+
+/// A request as a server's prompt cache sees it, flattened: the system prompt, the tools, then
+/// the messages as JSON. A request that only appends to an earlier one starts with that one's
+/// text, less the closing `]`.
+fn flatten(system: &str, tools: &[ToolSpec], messages: &[Message]) -> String {
+    let mut s = system.to_string();
+    for t in tools {
+        s.push_str(&t.name);
+        s.push_str(&t.description);
+        s.push_str(&t.schema.to_string());
+    }
+    s.push_str(&serde_json::to_string(messages).unwrap_or_default());
+    s
+}
+
+/// Whether `cur` only appends to `prev` (both [`flatten`]ed), and the share of `cur` that
+/// repeats the start of `prev`. Nothing to compare with when `prev` is empty.
+fn reuse(prev: &str, cur: &str) -> (Option<bool>, Option<f64>) {
+    if prev.is_empty() || cur.is_empty() {
+        return (None, None);
+    }
+    let shared = prev
+        .bytes()
+        .zip(cur.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let extends = cur.starts_with(prev.strip_suffix(']').unwrap_or(prev));
+    (Some(extends), Some(shared as f64 / cur.len() as f64))
 }
 
 struct Agent {
@@ -563,6 +595,9 @@ struct Agent {
     /// Where the current turn's time went, and when it started.
     timing: TurnTiming,
     turn_clock: Option<Instant>,
+    /// The last request sent to this conversation's server cache (a model call or a warm-up),
+    /// [`flatten`]ed, to tell whether the next one only appends to it.
+    sent: Mutex<String>,
     /// The power meter, with `--energy`, and where this turn started on it (with the idle
     /// power to subtract).
     meter: Option<crate::energy::Meter>,
@@ -744,6 +779,7 @@ impl Agent {
             turn_usage: TurnUsage::default(),
             timing: TurnTiming::default(),
             turn_clock: None,
+            sent: Mutex::default(),
             meter: None,
             energy_mark: None,
             root: o.cwd,
@@ -878,6 +914,9 @@ impl Agent {
         }
         t.calls.push(CallTiming {
             prompt_tokens: u.input + u.cache_read,
+            cached_tokens: u.cache_read,
+            extends: streamed.extends,
+            reusable: streamed.reusable,
             output_tokens: u.output,
             ttft_ms: ttft,
             decode_ms: decode,
@@ -1781,6 +1820,7 @@ impl Agent {
         let Some(prefill) = self.provider.prefill(&req) else {
             return;
         };
+        *self.sent.lock().unwrap() = flatten(req.system, req.tools, req.messages);
         let prefill: Warming = Box::pin(prefill);
         let mut w = self.warming.lock().unwrap();
         if w.0 {
@@ -2503,6 +2543,13 @@ Don't repeat it. Change the arguments or try a different approach.",
             think_budget,
             cache_key: self.cache_key_ok.then_some(self.session_id.as_str()),
         };
+        let (extends, reusable) = {
+            let flat = flatten(&system, tools, messages);
+            let mut sent = self.sent.lock().unwrap();
+            let r = reuse(&sent, &flat);
+            *sent = flat;
+            r
+        };
         let mut attempt = 0;
         loop {
             self.emit(Event::Progress {
@@ -2512,6 +2559,8 @@ Don't repeat it. Change the arguments or try a different approach.",
             let mut streamed = Streamed {
                 no_think: think == Some(false),
                 think_budget,
+                extends,
+                reusable,
                 ..Default::default()
             };
             let sent = Instant::now();
@@ -3259,6 +3308,16 @@ mod tests {
     /// Whether request `b` only appends to request `a`, so a server's cache of `a` still holds.
     fn extends(a: &str, b: &str) -> bool {
         b.starts_with(a.strip_suffix(']').unwrap())
+    }
+
+    /// The model calls a turn's `TurnEnded` recorded.
+    fn calls(evs: &[Envelope]) -> Vec<CallTiming> {
+        evs.iter()
+            .find_map(|e| match &e.event {
+                Event::TurnEnded { usage, .. } => usage.timing.as_ref().map(|t| t.calls.clone()),
+                _ => None,
+            })
+            .expect("a timed TurnEnded")
     }
 
     /// Submit one prompt and collect every event through the following `Idle`.
@@ -4056,6 +4115,7 @@ mod tests {
             reply(vec![read("r1")], Stop::ToolUse),
             reply(vec![read("r2")], Stop::ToolUse),
             reply(vec![text("done")], Stop::End),
+            reply(vec![text("again")], Stop::End),
         ];
         // Size the window so the fixed prompt plus one read fits under PRUNE_AT, and two land
         // past it but short of COMPACT_AT.
@@ -4102,6 +4162,18 @@ mod tests {
                 ..
             }
         )));
+        // The prune rewrote what the server has cached, and the next turn's call says so (here
+        // nothing warms it: the scripted provider has no prefill).
+        h.ops
+            .send(Op::Submit {
+                text: "again".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let next = calls(&until_idle(&mut h).await);
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].extends, Some(false));
+        assert!(next[0].reusable.unwrap() < 0.9);
         shutdown(h).await;
 
         // The pruning is in the log, so a resumed session sees the same history.
@@ -4136,19 +4208,24 @@ mod tests {
             reply(vec![text("ok")], Stop::End),
         ];
         let (mut h, sent) = engine_sent(script, Some(dir.clone()), None, dir.clone());
-        run(&mut h, "add two.rs").await;
+        let first = calls(&run(&mut h, "add two.rs").await);
         h.ops
             .send(Op::Submit {
                 text: "thanks".into(),
                 images: Vec::new(),
             })
             .unwrap();
-        until_idle(&mut h).await;
+        let second = calls(&until_idle(&mut h).await);
         let sent = sent.lock().unwrap().clone();
         assert_eq!(sent.len(), 3);
         assert!(sent[0].contains("lib.rs"), "the repo map is in the prompt");
         // The new file changed the project, but not the system prompt the next turn sends.
         assert!(extends(&sent[1], &sent[2]));
+        // And the calls say so, for `frog bench` to hold the server's cache to.
+        let flags: Vec<_> = first.iter().chain(&second).map(|c| c.extends).collect();
+        assert_eq!(flags, [None, Some(true), Some(true)]);
+        let reusable = second[0].reusable.unwrap();
+        assert!(reusable > 0.9 && reusable < 1.0, "{reusable}");
         shutdown(h).await;
     }
 
