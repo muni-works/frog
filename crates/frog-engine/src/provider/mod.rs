@@ -253,7 +253,7 @@ impl Provider {
             Self::Anthropic(c) => c.complete(req, on).await,
             Self::Ollama(c) => c.complete(req, on).await,
             #[cfg(test)]
-            Self::Scripted(c) => c.complete(on),
+            Self::Scripted(c) => c.complete(req, on),
         }
     }
 }

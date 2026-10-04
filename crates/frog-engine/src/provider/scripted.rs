@@ -1,23 +1,35 @@
 //! A provider that replays canned responses, for engine tests.
 
-use super::{Response, StreamEvent};
+use super::{Request, Response, StreamEvent};
 use crate::message::Block;
 use anyhow::{Result, anyhow};
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub struct Client {
     pub responses: Mutex<VecDeque<Response>>,
+    /// Each request as the server would see it: the system prompt, then the messages as JSON.
+    pub sent: Arc<Mutex<Vec<String>>>,
 }
 
 impl Client {
     pub fn new(responses: Vec<Response>) -> Self {
         Self {
             responses: Mutex::new(responses.into()),
+            sent: Default::default(),
         }
     }
 
-    pub fn complete(&self, on: &mut (dyn FnMut(StreamEvent) + Send)) -> Result<Response> {
+    pub fn complete(
+        &self,
+        req: &Request<'_>,
+        on: &mut (dyn FnMut(StreamEvent) + Send),
+    ) -> Result<Response> {
+        self.sent.lock().unwrap().push(format!(
+            "{}{}",
+            req.system,
+            serde_json::to_string(req.messages)?
+        ));
         let r = self
             .responses
             .lock()

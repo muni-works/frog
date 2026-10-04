@@ -1256,8 +1256,9 @@ impl Agent {
         // Only the user's own words: not skill text or shell output.
         let (extra, named) = self.attach_named(&typed);
         text.push_str(&extra);
-        // Files the user pointed at (`@path` or by name): their scoped rules, and a fresh
-        // repo map if they aren't on it. Both happen before the first model call of the turn.
+        // Files the user pointed at (`@path` or by name): their scoped rules, and on a session's
+        // first turn a fresh repo map if they aren't on it. Both happen before the first model
+        // call of the turn.
         let pointed: Vec<PathBuf> = typed
             .split_whitespace()
             .filter_map(|t| t.strip_prefix('@'))
@@ -1271,7 +1272,12 @@ impl Agent {
             text.push_str(&self.rules_for(p));
         }
         let mentioned: Vec<String> = pointed.iter().filter_map(|p| self.rel(p)).collect();
-        self.refresh_repo_map(&mentioned);
+        // The map is part of the system prompt, so after the first turn it's rebuilt only where
+        // the history is rewritten anyway (`rebased`): rebuilding it whenever a file changed
+        // would re-prefill the whole conversation on the turn after every edit.
+        if self.messages.is_empty() {
+            self.refresh_repo_map(&mentioned);
+        }
         self.apply_harness();
         self.push_user(text);
         if !images.is_empty() {
@@ -1310,7 +1316,14 @@ impl Agent {
             if !reports.is_empty() {
                 self.push_user(reports.join("\n"));
             }
-            self.fit_context(&mut compacted).await?;
+            // Between turns, pruning starts at PRUNE_AT; inside one, only once the window is
+            // nearly full, since a prune rewrites the prefix the server has cached.
+            let start = if steps == 1 {
+                context::PRUNE_AT
+            } else {
+                context::COMPACT_AT
+            };
+            self.fit_context(&mut compacted, start).await?;
             let sent = self.fixed_chars() + context::history_chars(&self.messages);
             let think = self.think_switch(thinking::wanted(&self.messages, self.quiet));
             self.quiet = if think == Some(false) {
@@ -1390,6 +1403,12 @@ impl Agent {
                 Batch::Looping => break EndReason::Looping,
             }
         };
+        // Prune now, while the user reads the reply, and warm the result: the next turn then
+        // starts from a prefix that's already cached instead of prefilling all of it.
+        if self.prune(context::PRUNE_AT) {
+            self.rebased();
+            self.warm(None);
+        }
         self.active_turn = None;
         self.shared.panes.set_in_turn(false);
         self.end_turn(turn, reason);
@@ -1799,38 +1818,56 @@ impl Agent {
             .tokens(self.fixed_chars() + context::history_chars(&self.messages))
     }
 
-    /// Stage 1: prune stale and old tool output (no LLM). Stage 2: summarize, at most once per turn.
-    async fn fit_context(&mut self, compacted: &mut bool) -> Result<()> {
-        let window = self.window as f64;
-        let before = self.estimate();
-        if (before as f64) < window * context::PRUNE_AT {
-            return Ok(());
-        }
-        let target = self.est.chars((window * context::PRUNE_TO) as u64);
-        let plan = context::plan_prune(&self.messages, target.saturating_sub(self.fixed_chars()));
-        if !plan.is_empty() {
-            for (id, content) in &plan {
-                self.record(Record::Replace {
-                    id: id.clone(),
-                    content: content.clone(),
-                });
-                context::apply(&mut self.messages, id, content);
-            }
-            self.emit(Event::ContextPruned {
-                results: plan.len(),
-                tokens_before: before,
-                tokens_after: self.estimate(),
-            });
-        }
-        if (self.estimate() as f64) > window * context::COMPACT_AT && !*compacted {
+    /// Stage 1: prune stale and old tool output (no LLM), once the prompt passes `start` of the
+    /// window. Stage 2: summarize, at most once per turn.
+    async fn fit_context(&mut self, compacted: &mut bool, start: f64) -> Result<()> {
+        let pruned = self.prune(start);
+        if (self.estimate() as f64) > self.window as f64 * context::COMPACT_AT && !*compacted {
             self.notice(
                 Level::Warn,
                 "context is still nearly full after pruning; summarizing…",
             );
             self.compact(None).await?;
             *compacted = true;
+        } else if pruned {
+            self.rebased();
         }
         Ok(())
+    }
+
+    /// Prune down to PRUNE_TO once the prompt passes `start` of the window, logging each
+    /// replacement. Whether anything was pruned.
+    fn prune(&mut self, start: f64) -> bool {
+        let window = self.window as f64;
+        let before = self.estimate();
+        if (before as f64) < window * start {
+            return false;
+        }
+        let target = self.est.chars((window * context::PRUNE_TO) as u64);
+        let plan = context::plan_prune(&self.messages, target.saturating_sub(self.fixed_chars()));
+        if plan.is_empty() {
+            return false;
+        }
+        for (id, content) in &plan {
+            self.record(Record::Replace {
+                id: id.clone(),
+                content: content.clone(),
+            });
+            context::apply(&mut self.messages, id, content);
+        }
+        self.emit(Event::ContextPruned {
+            results: plan.len(),
+            tokens_before: before,
+            tokens_after: self.estimate(),
+        });
+        true
+    }
+
+    /// The history was just rewritten, so the cached prefix is gone anyway: the one time to
+    /// bring the repo map (and with it the system prompt) up to date for free.
+    fn rebased(&mut self) {
+        self.refresh_repo_map(&[]);
+        self.apply_harness();
     }
 
     /// Pin the working tree before the turn touches anything (git repos, persisted sessions only).
@@ -2900,6 +2937,7 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
             tokens_before: before,
             tokens_after: resp.usage.output,
         });
+        self.rebased();
         Ok(())
     }
 
@@ -3187,6 +3225,40 @@ mod tests {
             chat: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// Like `engine_with` (edits allowed), also handing back every request the provider was sent.
+    fn engine_sent(
+        script: Vec<Response>,
+        store: Option<PathBuf>,
+        window: Option<u64>,
+        cwd: PathBuf,
+    ) -> (Handle, Arc<Mutex<Vec<String>>>) {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.context_window = window;
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config::default(),
+            profile_name: "test".into(),
+            profile,
+            cwd,
+            mode: Mode::AcceptEdits,
+            can_ask: true,
+            resume: None,
+            store,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let client = scripted::Client::new(script);
+        let sent = client.sent.clone();
+        (start(opts, Provider::Scripted(client)).unwrap(), sent)
+    }
+
+    /// Whether request `b` only appends to request `a`, so a server's cache of `a` still holds.
+    fn extends(a: &str, b: &str) -> bool {
+        b.starts_with(a.strip_suffix(']').unwrap())
     }
 
     /// Submit one prompt and collect every event through the following `Idle`.
@@ -3971,7 +4043,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_reads_are_pruned_before_the_call_and_logged() {
+    async fn stale_reads_are_pruned_when_the_turn_ends_and_logged() {
         let dir = tmp_store();
         let big: String = (0..800).map(|i| format!("fn line_{i}() {{}}\n")).collect();
         std::fs::write(dir.join("big.rs"), &big).unwrap();
@@ -3985,24 +4057,33 @@ mod tests {
             reply(vec![read("r2")], Stop::ToolUse),
             reply(vec![text("done")], Stop::End),
         ];
-        // Size the window so the fixed prompt plus one read fits under PRUNE_AT but two don't.
+        // Size the window so the fixed prompt plus one read fits under PRUNE_AT, and two land
+        // past it but short of COMPACT_AT.
         let fixed = fixed_chars(
             &prompt::system_prompt(&dir, &Config::default(), "test"),
             &tools::specs(),
         );
         let read_chars: usize = big.lines().map(|l| 6 + 1 + l.len() + 1).sum();
         let window = context::Estimator::default()
-            .tokens(((fixed as f64 + 1.5 * read_chars as f64) / context::PRUNE_AT) as usize);
-        let mut h = engine_with(
-            script,
-            true,
-            Some(dir.clone()),
-            None,
-            Some(window),
-            dir.clone(),
-        );
+            .tokens(((fixed as f64 + 1.8 * read_chars as f64) / context::PRUNE_AT) as usize);
+        let (mut h, sent) = engine_sent(script, Some(dir.clone()), Some(window), dir.clone());
         let evs = run(&mut h, "look at big.rs twice").await;
         let sid = evs[0].session.clone();
+        // Past PRUNE_AT but short of COMPACT_AT: nothing in the turn rewrote what was sent.
+        let sent = sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 3);
+        assert!(extends(&sent[0], &sent[1]) && extends(&sent[1], &sent[2]));
+        assert!(sent[2].matches("fn line_799").count() == 2);
+        // The prune comes after the reply, still inside the turn.
+        let at = |name: &str| names(&evs).iter().position(|n| n == name).unwrap();
+        assert!(
+            at("context_pruned")
+                > names(&evs)
+                    .iter()
+                    .rposition(|n| n == "item_completed")
+                    .unwrap()
+        );
+        assert!(at("context_pruned") < at("turn_ended"));
         let pruned = evs.iter().find_map(|e| match e.event {
             Event::ContextPruned {
                 results,
@@ -4038,6 +4119,37 @@ mod tests {
             .collect();
         assert!(contents[0].starts_with("[stale: big.rs"));
         assert!(contents[1].contains("fn line_799"));
+    }
+
+    #[tokio::test]
+    async fn an_edit_leaves_the_next_turns_prompt_cached() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("lib.rs"), "pub fn one() {}\n").unwrap();
+        let write = Block::ToolUse {
+            id: "w1".into(),
+            name: "Write".into(),
+            input: json!({ "file_path": "two.rs", "content": "pub fn two() {}\n" }),
+        };
+        let script = vec![
+            reply(vec![write], Stop::ToolUse),
+            reply(vec![text("wrote it")], Stop::End),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, Some(dir.clone()), None, dir.clone());
+        run(&mut h, "add two.rs").await;
+        h.ops
+            .send(Op::Submit {
+                text: "thanks".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        until_idle(&mut h).await;
+        let sent = sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 3);
+        assert!(sent[0].contains("lib.rs"), "the repo map is in the prompt");
+        // The new file changed the project, but not the system prompt the next turn sends.
+        assert!(extends(&sent[1], &sent[2]));
+        shutdown(h).await;
     }
 
     /// Every block the session log holds, in order.
