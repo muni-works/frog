@@ -16,6 +16,7 @@ from test_image_tool import Fixture, Frog, png
 class VisualFixture(Fixture):
     judge_calls = 0
     capture_calls = 0
+    capture_args = {'url':'page.html','width':320,'height':192,'output_path':'actual.png'}
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         if self.path == '/v1/screenshots':
@@ -32,7 +33,7 @@ class VisualFixture(Fixture):
             return
         results = [m for m in body['messages'] if m['role'] == 'tool']
         if not results:
-            name, args = 'Screenshot', {'url':'page.html','width':320,'height':192,'output_path':'actual.png'}
+            name, args = 'Screenshot', type(self).capture_args
         elif len(results) < 3:
             # Second Compare must fail before another judge call: first one matched.
             name, args = 'Compare', {'target':'target.png','actual':'actual.png','loop_id':'fixture','threshold':85,'max_rounds':6}
@@ -46,6 +47,9 @@ class VisualFixture(Fixture):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--frog',type=Path,required=True);parser.add_argument('--screenshot-endpoint');parser.add_argument('--judge-endpoint');parser.add_argument('--judge-model');parser.add_argument('--output',type=Path)
+    parser.add_argument('--target',type=Path,help='Existing raster target instead of capturing an identical reference')
+    parser.add_argument('--page',type=Path,help='Existing HTML/SVG implementation to capture')
+    parser.add_argument('--width',type=int,default=320);parser.add_argument('--height',type=int,default=192)
     args=parser.parse_args();output=(args.output or Path(tempfile.mkdtemp(prefix='frog-visual-test-'))).resolve();output.mkdir(parents=True,exist_ok=True)
     server=ThreadingHTTPServer(('127.0.0.1',0),VisualFixture);port=server.server_address[1];threading.Thread(target=server.serve_forever,daemon=True).start()
     endpoint=args.screenshot_endpoint or f'http://127.0.0.1:{port}/v1/screenshots'
@@ -70,9 +74,14 @@ context_window = 8192
 vision = true
 ''')
     (output/'target.png').write_bytes(png());(output/'page.html').write_text('<!doctype html><style>html,body{margin:0;background:#508764;width:100%;height:100%}</style><h1>Frog capture</h1>')
-    if args.screenshot_endpoint:
+    page=args.page.resolve().as_uri() if args.page else (output/'page.html').as_uri()
+    VisualFixture.capture_args={'url':page,'width':args.width,'height':args.height,'output_path':'actual.png'}
+    if args.target:
+        assert args.screenshot_endpoint and args.page, 'an existing target requires a real renderer and --page'
+        (output/'target.png').write_bytes(args.target.read_bytes())
+    elif args.screenshot_endpoint:
         import urllib.request
-        request=urllib.request.Request(endpoint,data=json.dumps({'url':(output/'page.html').as_uri(),'width':320,'height':192,'settle_ms':200}).encode(),headers={'Content-Type':'application/json'})
+        request=urllib.request.Request(endpoint,data=json.dumps({'url':page,'width':args.width,'height':args.height,'settle_ms':200}).encode(),headers={'Content-Type':'application/json'})
         with urllib.request.urlopen(request,timeout=45) as response:
             (output/'target.png').write_bytes(base64.b64decode(json.load(response)['data'][0]['b64_json']))
     frog=Frog(args.frog.resolve(),cfg,output)
@@ -83,6 +92,7 @@ vision = true
             if event['event']=='turn_ended': break
             frog.send(op='permission',id=event['id'],decision='allow')
         frog.until(lambda e:e['event']=='idle')
+        (output/'events.jsonl').write_text(''.join(json.dumps(e)+'\n' for e in frog.events))
         completed=[e['item'] for e in frog.events if e['event']=='item_completed' and e['item'].get('name') in ('Screenshot','Compare')]
         assert [x['name'] for x in completed]==['Screenshot','Compare','Compare'],completed
         assert completed[0]['outcome']=='ok' and completed[0]['images'],completed[0]

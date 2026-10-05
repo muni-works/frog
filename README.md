@@ -281,6 +281,8 @@ matching aspect ratios. With `loop_id`, state in `.frog/visual-loops/` enforces 
 on a match, two improvements below one point, or the round limit across restarts.
 Each tool has separate session permission. The bundled `/visual-loop` skill guides
 capture, comparison and focused edits; a project skill can override it.
+For generated flat icons and sprites, the optional [SVG tracing utility](scripts/ASSETS.md)
+retains the raster and creates a new vector asset for capture and comparison.
 
 ```bash
 python3 scripts/test_visual_tools.py --frog target/debug/frog
