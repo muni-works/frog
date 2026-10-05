@@ -191,7 +191,7 @@ def run_case(binary, output, cfg, name, decision='allow', resume=None, timeout=3
                 (cwd / f'image-{i}.png').write_bytes(base64.b64decode(image['data']))
             # A replay fixture directly from the real binary's event envelopes.
             header = {'type': 'header', 'version': 1, 'id': name, 'cwd': str(cwd), 'model': 'fixture', 'created': frog.events[0]['created']}
-            durable = [e for e in frog.events if e['event'] in ('turn_started', 'item_started', 'item_completed', 'turn_ended')]
+            durable = [e for e in frog.events if e['event'] in ('turn_started', 'item_started', 'item_completed', 'turn_ended') or (e['event'] == 'item_delta' and e['delta']['type'] == 'image_preview')]
             (output / f'{name}.jsonl').write_text(json.dumps(header) + '\n' + ''.join(json.dumps({'type': 'event', 'env': e}) + '\n' for e in durable))
     print(f'PASS {name}', flush=True)
     return frog.events[-1]['session']
@@ -204,6 +204,7 @@ def main():
     parser.add_argument('--server-only', action='store_true')
     parser.add_argument('--image-endpoint', help='Test an explicitly selected real tang image backend; chat remains a local fixture')
     parser.add_argument('--size', default='320x192', help='Image size for the real-backend test')
+    parser.add_argument('--expect-previews', action='store_true', help='Require bounded, ordered image previews and their durable replay')
     parser.add_argument('--expect-model-hash', action='store_true', help='Require a SHA256 checkpoint fingerprint from the real backend')
     args = parser.parse_args()
     output = (args.output or Path(tempfile.mkdtemp(prefix='frog-image-test-'))).resolve()
@@ -222,13 +223,29 @@ def main():
         if args.image_endpoint:
             Fixture.tool_args = {'prompt': 'A small green frog sitting on a mossy stone beside a pond, natural daylight, photograph', 'size': args.size, 'count': 1, 'seed': 42, 'steps': 8, 'output_dir': 'assets'}
             tang = config(output, port, 'tang', args.image_endpoint)
-            run_case(binary, output, tang, 'trained-tang', timeout=300)
+            sid = run_case(binary, output, tang, 'trained-tang', timeout=300)
             cwd = output / 'trained-tang'
             events = [json.loads(line) for line in (cwd / 'events.jsonl').read_text().splitlines()]
             image_id = next(e['id'] for e in events if e['event'] == 'item_started' and e['kind'].get('name') == 'Image')
             progress = [e['delta'].get('text', '') for e in events if e['event'] == 'item_delta' and e['id'] == image_id]
             for step in range(9):
                 assert f'Generating images: step {step}/8…' in progress, f'missing step {step}'
+            if args.expect_previews:
+                previews = [e['delta'] for e in events if e['event'] == 'item_delta' and e['id'] == image_id and e['delta']['type'] == 'image_preview']
+                assert [p['step'] for p in previews] == list(range(1, 9)), previews
+                for preview in previews:
+                    assert preview['of'] == 8 and preview['image_index'] == 0
+                    png_bytes = base64.b64decode(preview['image']['data'], validate=True)
+                    assert preview['image']['mime'] == 'image/png' and len(png_bytes) <= 65536
+                    dimensions = struct.unpack('>II', png_bytes[16:24])
+                    assert all(0 < dim <= 128 for dim in dimensions)
+                resumed = Frog(binary, tang, cwd, sid)
+                resumed.send(op='subscribe', after=0)
+                resumed.until(lambda e: e['event'] == 'synced')
+                replayed = [e['delta'] for e in resumed.events if e['event'] == 'item_delta' and e['delta']['type'] == 'image_preview']
+                assert replayed == previews, 'preview replay differs from live generation'
+                resumed.close()
+                print('PASS ordered bounded previews and durable replay', flush=True)
             manifests = list((cwd / 'assets').glob('*.json'))
             assert manifests, 'generation manifest missing'
             manifest = json.loads(manifests[-1].read_text())

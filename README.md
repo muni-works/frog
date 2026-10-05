@@ -237,7 +237,13 @@ on supported macOS releases and is disabled by Apple on macOS 27+; this backend
 therefore returns an availability error there. See [Apple's API documentation](https://developer.apple.com/documentation/imageplayground/imagecreator/init%28%29).
 Tang endpoints support `x-frog-progress: sse` step streaming; Frog accepts streamed
 progress plus the final image result. Optional `steps` requires backend support.
-Automatic backend selection and image previews remain subsequent milestones.
+Tang backends advertising `latent_previews` stream approximate step images into the
+transcript. Frog keeps the latest preview, labels it as approximate, and replaces it
+with final attachments. Bounded preview frames replay after reopening a session;
+only final images enter the model’s vision context. Enable them by explicitly
+[calibrating Tang’s installed VAE](https://github.com/ecto/tang/blob/codex/z-image-native/docs/image-previews.md)
+and installing `preview.json` at the pipeline root. Older backends retain numeric
+progress. Automatic backend selection remains a subsequent milestone.
 
 With `output_dir`, new PNG assets and a JSON manifest containing prompt, backend,
 model, requested size/seed/steps and returned generation parameters are saved inside the workspace. Existing files are not

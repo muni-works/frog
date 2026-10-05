@@ -15,6 +15,8 @@ struct ItemState: Identifiable {
     /// Live output from a running tool.
     var output = ""
     var result: Item.ToolResult?
+    var imagePreview: ToolImage?
+    var displayImages: [ToolImage] { result?.images ?? (imagePreview.map { [$0] } ?? []) }
     var done = false
     var needsPermission = false
     /// Reported by a running MCP tool.
@@ -69,10 +71,12 @@ struct SubagentRun {
                 switch delta {
                 case .text(let t), .reasoning(let t): item.text += t
                 case .output(let t): item.output += t
+                case .imagePreview(let image, _, _, _): item.imagePreview = image
                 }
             }
         case .itemCompleted(let id, let item):
             upsert(id) { state in
+                state.imagePreview = nil
                 state.done = true
                 switch item {
                 case .message(let t): state.kind = .message; state.text = t
@@ -80,6 +84,8 @@ struct SubagentRun {
                 case .toolCall(let r): state.kind = .tool(name: r.name, arg: r.arg); state.result = r
                 }
             }
+        case .turnEnded:
+            for index in items.indices { items[index].imagePreview = nil }
         case .status(let s):
             tokensPerSec = s.tokensPerSec
             contextTokens = s.contextTokens

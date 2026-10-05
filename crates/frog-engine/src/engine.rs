@@ -2307,6 +2307,8 @@ impl Agent {
         }
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         self.ctx.progress = Some(tx);
+        let (preview_tx, mut preview_rx) = mpsc::unbounded_channel();
+        self.ctx.preview = Some(preview_tx);
         // The tool holds `ctx` mutably, so deltas go out through a detached emitter.
         let emit = {
             let (journal, id) = (self.shared.journal.clone(), id.to_string());
@@ -2324,13 +2326,21 @@ impl Agent {
                 tokio::select! {
                     out = &mut run => break out,
                     Some(chunk) = rx.recv() => emit(chunk),
+                    Some(delta) = preview_rx.recv() => { self.shared.journal.emit(Event::ItemDelta { id: id.to_string(), delta }); },
                 }
             }
         };
         while let Ok(chunk) = rx.try_recv() {
             emit(chunk);
         }
+        while let Ok(delta) = preview_rx.try_recv() {
+            self.shared.journal.emit(Event::ItemDelta {
+                id: id.to_string(),
+                delta,
+            });
+        }
         self.ctx.progress = None;
+        self.ctx.preview = None;
         out
     }
 
@@ -2359,6 +2369,7 @@ impl Agent {
             sandbox: self.ctx.sandbox.clone(),
             shell_sandbox: self.ctx.shell_sandbox.clone(),
             progress: None,
+            preview: None,
             web: self.ctx.web.clone(),
             image: self.ctx.image.clone(),
             screenshot_endpoint: self.ctx.screenshot_endpoint.clone(),

@@ -288,6 +288,13 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                     }
                 }
             }
+            Event::ItemDelta {
+                delta: frog_engine::Delta::ImagePreview { .. },
+                ..
+            } => {
+                p.wait(gap).await?;
+                p.emit(env.event.clone());
+            }
             Event::ItemCompleted { .. } => {
                 p.wait(gap.min(900.0)).await?;
                 p.emit(env.event.clone());

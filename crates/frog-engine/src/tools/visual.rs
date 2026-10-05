@@ -102,6 +102,8 @@ pub async fn save(ctx: &Ctx, path: &Path, bytes: &[u8]) -> Result<()> {
         .open(path)
         .await?;
     file.write_all(bytes).await?;
+    // Tokio writes may still be pending after write_all; consumers read assets immediately.
+    file.flush().await?;
     Ok(())
 }
 

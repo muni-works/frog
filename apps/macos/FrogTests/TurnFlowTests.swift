@@ -4,6 +4,26 @@ import XCTest
 
 /// A turn reads in the order it happened, with each run of steps summed up in one sentence.
 final class TurnFlowTests: XCTestCase {
+    func testPreviewReplacementAndCompletionInReplay() {
+        var run = SubagentRun()
+        run.apply(.itemStarted(id: "image", kind: .toolCall(name: "Image", arg: "frog")))
+        let first = ToolImage(mime: "image/png", data: "first")
+        let second = ToolImage(mime: "image/png", data: "second")
+        run.apply(.itemDelta(id: "image", delta: .imagePreview(first, step: 1, of: 8, imageIndex: 0)))
+        run.apply(.itemDelta(id: "image", delta: .imagePreview(second, step: 2, of: 8, imageIndex: 0)))
+        XCTAssertEqual(run.items[0].displayImages, [second])
+        XCTAssertEqual(outline(TurnFlow(run.items)), ["visual: image"])
+        let final = ToolImage(mime: "image/png", data: "final")
+        let result = Item.ToolResult(name: "Image", arg: "frog", input: nil, outcome: .ok, output: "Images ready.", images: [final])
+        run.apply(.itemCompleted(id: "image", item: .toolCall(result)))
+        XCTAssertNil(run.items[0].imagePreview)
+        XCTAssertEqual(run.items[0].displayImages, [final])
+        run.apply(.itemStarted(id: "cancelled", kind: .toolCall(name: "Image", arg: "frog")))
+        run.apply(.itemDelta(id: "cancelled", delta: .imagePreview(first, step: 1, of: 8, imageIndex: 0)))
+        run.apply(.turnEnded(turn: 1, reason: .cancelled, usage: TurnUsage(inputTokens: 0, outputTokens: 0, modelCalls: 0)))
+        XCTAssertNil(run.items.last?.imagePreview)
+    }
+
     func testTitleContextIncludesSuccessfulVisualResults() {
         var image = ItemState(id: "image", kind: .tool(name: "Image", arg: "frog"), done: true)
         image.result = Item.ToolResult(name: "Image", arg: "frog", input: nil, outcome: .ok,

@@ -7,6 +7,13 @@ final class ProtocolTests: XCTestCase {
         try JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8))
     }
 
+    func testImagePreviewDeltaDecodesWithoutText() throws {
+        let env = try decode(#"{"seq":1,"session":"s","created":0,"event":"item_delta","id":"image","delta":{"type":"image_preview","image":{"mime":"image/png","data":"png"},"step":3,"of":8,"image_index":0}}"#)
+        guard case .itemDelta("image", .imagePreview(let image, let step, let of, let index)) = env.event else { return XCTFail() }
+        XCTAssertEqual(image.mime, "image/png")
+        XCTAssertEqual(step, 3); XCTAssertEqual(of, 8); XCTAssertEqual(index, 0)
+    }
+
     func testFixturesAllDecode() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "events", withExtension: "jsonl"))
         let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")

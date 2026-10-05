@@ -5,7 +5,7 @@
 //! - Every event travels in an [`Envelope`] with a per-session monotonic `seq`.
 //! - Work is `Turn > Item`. Items go `ItemStarted → ItemDelta* → ItemCompleted`.
 //! - Events are either durable facts (worth persisting and replaying) or ephemeral
-//!   hints (deltas, spinners, status). See [`Event::is_durable`]. Deltas are never persisted.
+//!   hints (deltas, spinners, status). See [`Event::is_durable`]. Text deltas are never persisted; bounded image previews are replayable.
 //! - Turns always end with [`Event::TurnEnded`] carrying a typed [`EndReason`].
 
 use crate::config::ToolMode;
@@ -451,7 +451,10 @@ impl Event {
     pub fn is_durable(&self) -> bool {
         matches!(
             self,
-            Self::TurnStarted { .. }
+            Self::ItemDelta {
+                delta: Delta::ImagePreview { .. },
+                ..
+            } | Self::TurnStarted { .. }
                 | Self::TurnEnded { .. }
                 | Self::ItemStarted { .. }
                 | Self::ItemCompleted { .. }
@@ -585,6 +588,13 @@ pub enum Delta {
     },
     Reasoning {
         text: String,
+    },
+    /// Approximate image for display while generation runs; never model input.
+    ImagePreview {
+        image: Image,
+        step: u64,
+        of: u64,
+        image_index: usize,
     },
     /// Live output from a running tool (e.g. a shell command). May contain ANSI colors.
     Output {

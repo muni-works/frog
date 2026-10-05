@@ -378,7 +378,7 @@ async fn pump(
                         TextContent::new(text),
                     ))),
                 ),
-                Delta::Output { .. } => {}
+                Delta::Output { .. } | Delta::ImagePreview { .. } => {}
             },
             Event::ItemStarted {
                 id,

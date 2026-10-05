@@ -24,10 +24,11 @@ struct ItemView: View {
             SubagentCard(arg: arg, item: item, conversation: conversation)
         case .tool(let name, _) where item.result?.app != nil && showsApp:
             McpAppCard(name: name, item: item, app: item.result!.app!, conversation: conversation)
-        case .tool(let name, let arg) where !(item.result?.images ?? []).isEmpty:
+        case .tool(let name, let arg) where !item.displayImages.isEmpty:
             VStack(alignment: .leading, spacing: 8) {
                 ToolCallView(name: name, arg: arg, item: item, conversation: conversation)
-                ToolImages(images: item.result!.images!)
+                ToolImages(images: item.displayImages, preview: !item.done)
+                if !item.done { Text("Approximate step preview").font(.caption).foregroundStyle(.secondary) }
             }
         case .tool(let name, let arg):
             ToolCallView(name: name, arg: arg, item: item, conversation: conversation)

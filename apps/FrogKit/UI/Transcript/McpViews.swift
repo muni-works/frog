@@ -181,6 +181,7 @@ struct ElicitationCard: View {
 /// Images a tool returned (renders, plots, screenshots). Click one to see it large.
 struct ToolImages: View {
     let images: [ToolImage]
+    var preview = false
 
     var body: some View {
         ScrollView(.horizontal) {
@@ -191,6 +192,7 @@ struct ToolImages: View {
                             .resizable()
                             .interpolation(.high)
                             .aspectRatio(contentMode: .fit)
+                            .frame(width: preview ? 256 : nil)
                             .frame(maxWidth: images.count == 1 ? 560 : 320, maxHeight: 360)
                             .clipShape(.rect(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))

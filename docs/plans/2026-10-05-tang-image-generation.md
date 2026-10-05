@@ -31,7 +31,13 @@ model/seed/steps/dimensions are retained in asset manifests, together with model
 when supplied by the backend. Tang fingerprints actual checkpoint bytes at resident load
 and streams step progress with JSON fallback. The Apple API
 adapter returns availability errors because its non-UI API is unavailable on macOS 27+.
-Step previews and backend autodiscovery remain later work. See the README for limits.
+Calibrated Tang step previews now reach the Frog transcript as bounded, replayable
+image deltas. The latest approximate frame is replaced by final attachments and never
+enters model vision context. Real eight-step generation verifies ordering, replay,
+final-only vision input and byte-identical final PNGs with previews on/off. Native
+protocol/replacement/cancellation tests pass; a running preview was visually inspected.
+Final native replacement inspection remains pending because the Mac locked during
+replay. General backend autodiscovery remains later work. See the README for limits.
 
 ## Native tang dependency status
 
@@ -66,7 +72,10 @@ convolution keep the VAE on device. Three resident 320×192 requests take
 byte-identical to the preceding device-normalization implementation, and all 83
 Metal compute tests plus selected trained/random VAE references pass at unchanged
 tolerances. Real Frog streaming and hash-manifest validation also pass at 128×128.
-Final-layer channel modulation now stays on device and preserves the previous 256×256 PNG bytes, including a resident repeat. Packing and preview work remain open.
+Final-layer channel modulation now stays on device and preserves the previous 256×256 PNG bytes, including a resident repeat. Native unary SiLU also preserves these final PNG bytes. Explicit VAE-calibrated latent
+previews pass real generation and held-out projection checks; a resident 256×256 pair
+measured 5.742 seconds with previews and 5.882 without. This pair does not establish a
+general performance bound. Packing and the staged draft/refinement workflow remain open.
 
 The local host has 48 GiB RAM. The public checkpoint was downloaded at pinned
 revision `f332072aa78be7aecdf3ee76d5c247082da564a6`, with upstream LFS hash checks and

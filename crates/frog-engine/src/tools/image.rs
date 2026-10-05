@@ -1,6 +1,9 @@
 //! Explicitly configured image generation; no implicit paid backend or silent stub fallback.
 use super::{Ctx, Output};
-use crate::{protocol::Image, provider::ToolSpec};
+use crate::{
+    protocol::{Delta, Image},
+    provider::ToolSpec,
+};
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
@@ -166,6 +169,12 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                 .timeout(Duration::from_secs(300))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?;
+            if backend == "tang"
+                && ctx.preview.is_some()
+                && preview_capability(&client, &url, model, settings.api_key_env.as_deref()).await
+            {
+                body["preview"] = json!(true);
+            }
             let mut http = client.post(url).json(&body);
             if backend == "tang" {
                 http = http.header("x-frog-progress", "sse");
@@ -183,7 +192,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                 .send()
                 .await
                 .map_err(|e| anyhow::anyhow!("image request failed: {}", e.without_url()))?;
-            let value = receive_response(response, ctx).await?;
+            let value = receive_response(response, ctx, request.count).await?;
             generation_metadata = json!({"model":value["model"].as_str().filter(|s| s.len() <= 128), "model_hash":value["model_hash"].as_str().filter(|s| s.len() <= 128), "images":value["data"].as_array().map(|items| items.iter().take(4).map(|item| json!({"seed":item["seed"].as_u64(),"steps":item["steps"].as_u64(),"width":item["width"].as_u64(),"height":item["height"].as_u64()})).collect::<Vec<_>>())});
             (decode_response(&value, request.count)?, model.to_string())
         }
@@ -241,7 +250,97 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
 
 /// Tang's optional SSE transport carries bounded numeric step progress and a final
 /// OpenAI-compatible data array. Parsing handles arbitrary TCP chunk boundaries.
-async fn receive_response(mut response: reqwest::Response, ctx: &Ctx) -> Result<Value> {
+async fn preview_capability(
+    client: &reqwest::Client,
+    endpoint: &reqwest::Url,
+    model: &str,
+    key_env: Option<&str>,
+) -> bool {
+    let Some(prefix) = endpoint.path().strip_suffix("/images/generations") else {
+        return false;
+    };
+    let mut url = endpoint.clone();
+    url.set_path(&format!("{prefix}/models"));
+    url.set_query(None);
+    let mut request = client.get(url).timeout(Duration::from_secs(2));
+    if let Some(token) = key_env.and_then(|name| std::env::var(name).ok()) {
+        request = request.bearer_auth(token);
+    }
+    let Ok(mut response) = request.send().await else {
+        return false;
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    let mut bytes = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) if bytes.len() + chunk.len() <= 65536 => {
+                bytes.extend_from_slice(&chunk)
+            }
+            Ok(None) => break,
+            _ => return false,
+        }
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        return false;
+    };
+    value["data"].as_array().is_some_and(|items| {
+        items.iter().any(|item| {
+            item["id"] == model
+                && item["capabilities"]
+                    .as_array()
+                    .is_some_and(|caps| caps.iter().any(|cap| cap == "latent_previews"))
+        })
+    })
+}
+
+fn preview_delta(value: &Value, count: usize) -> Result<Option<Delta>> {
+    let Some(data) = value.get("preview_b64") else {
+        return Ok(None);
+    };
+    let data = data.as_str().context("invalid image preview base64")?;
+    if data.len() > 90_000 || value["preview_kind"] != "approximate_latent" {
+        bail!("invalid image preview encoding");
+    }
+    let step = value["step"].as_u64().context("invalid preview step")?;
+    let of = value["of"].as_u64().context("invalid preview total")?;
+    let image_index = value["image_index"]
+        .as_u64()
+        .context("invalid preview image index")?;
+    if of == 0 || of > 400 || step == 0 || step > of || image_index >= count as u64 {
+        bail!("invalid image preview progress");
+    }
+    let bytes = STANDARD
+        .decode(data)
+        .context("invalid image preview base64")?;
+    if bytes.len() > 65536 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        bail!("invalid image preview PNG");
+    }
+    let reader = png::Decoder::new(std::io::Cursor::new(&bytes))
+        .read_info()
+        .context("invalid image preview PNG")?;
+    let info = reader.info();
+    if info.width == 0 || info.height == 0 || info.width > 128 || info.height > 128 {
+        bail!("image preview dimensions exceed 128 pixels");
+    }
+    super::visual::decode(&bytes).context("invalid image preview pixels")?;
+    Ok(Some(Delta::ImagePreview {
+        image: Image {
+            mime: "image/png".into(),
+            data: data.into(),
+        },
+        step,
+        of,
+        image_index: image_index as usize,
+    }))
+}
+
+async fn receive_response(
+    mut response: reqwest::Response,
+    ctx: &Ctx,
+    count: usize,
+) -> Result<Value> {
     if !response.status().is_success() {
         bail!("image endpoint returned HTTP {}", response.status());
     }
@@ -253,6 +352,7 @@ async fn receive_response(mut response: reqwest::Response, ctx: &Ctx) -> Result<
     let mut parser = Sse::default();
     let mut bytes = Vec::new();
     let mut total = 0usize;
+    let mut last_preview = vec![0u64; count];
     while let Some(chunk) = response.chunk().await.context("reading image response")? {
         total = total.saturating_add(chunk.len());
         if total > MAX_RESPONSE {
@@ -260,14 +360,34 @@ async fn receive_response(mut response: reqwest::Response, ctx: &Ctx) -> Result<
         }
         if streaming {
             for value in parser.push(&chunk)? {
+                if let Some(delta) = preview_delta(&value, count)? {
+                    if let Delta::ImagePreview {
+                        step, image_index, ..
+                    } = &delta
+                    {
+                        if *step <= last_preview[*image_index] {
+                            bail!("image previews out of order");
+                        }
+                        last_preview[*image_index] = *step;
+                    }
+                    if let Some(tx) = &ctx.preview {
+                        let _ = tx.send(delta);
+                    }
+                }
                 if let (Some(step), Some(of)) = (value["step"].as_u64(), value["of"].as_u64()) {
                     if of > 0 && of <= 400 && step <= of {
                         progress(ctx, &format!("Generating images: step {step}/{of}…"));
                     }
                 }
                 if value.get("error").is_some() {
-                    let detail = value["error"]["message"].as_str().or(value["error"].as_str()).unwrap_or("unspecified backend error");
-                    bail!("image generation stream reported an error: {}", detail.chars().take(1024).collect::<String>());
+                    let detail = value["error"]["message"]
+                        .as_str()
+                        .or(value["error"].as_str())
+                        .unwrap_or("unspecified backend error");
+                    bail!(
+                        "image generation stream reported an error: {}",
+                        detail.chars().take(1024).collect::<String>()
+                    );
                 }
                 if value["data"].is_array() {
                     if parser.result.replace(value).is_some() {
@@ -371,6 +491,59 @@ fn decode_response(value: &Value, count: usize) -> Result<Vec<Image>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn previews_validate_png_bounds_and_progress_before_display() {
+        let png = |width: u32| {
+            let mut bytes = Vec::new();
+            {
+                let mut encoder = png::Encoder::new(&mut bytes, width, 1);
+                encoder.set_color(png::ColorType::Rgb);
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder
+                    .write_header()
+                    .unwrap()
+                    .write_image_data(&vec![0; width as usize * 3])
+                    .unwrap();
+            }
+            STANDARD.encode(bytes)
+        };
+        let valid = json!({"preview_b64":png(32),"preview_kind":"approximate_latent","step":1,"of":8,"image_index":0});
+        let delta = preview_delta(&valid, 1).unwrap().unwrap();
+        assert!(matches!(
+            &delta,
+            Delta::ImagePreview {
+                step: 1,
+                of: 8,
+                image_index: 0,
+                ..
+            }
+        ));
+        let event = crate::protocol::Event::ItemDelta {
+            id: "image".into(),
+            delta,
+        };
+        assert!(event.is_durable());
+        let serialized = serde_json::to_value(&event).unwrap();
+        let restored =
+            serde_json::from_value::<crate::protocol::Event>(serialized.clone()).unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), serialized);
+        for (key, value) in [
+            ("preview_b64", json!(png(129))),
+            ("preview_b64", json!("!!!")),
+            ("preview_kind", json!("final")),
+            ("step", json!(9)),
+            ("image_index", json!(1)),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[key] = value;
+            assert!(preview_delta(&invalid, 1).is_err(), "{key}");
+        }
+        assert!(
+            preview_delta(&json!({"step":1,"of":8}), 1)
+                .unwrap()
+                .is_none()
+        );
+    }
     #[test]
     fn image_events_handle_fragmented_utf8_and_crlf() {
         let stream = "event: progress\r\ndata: {\"step\":1,\"of\":8}\r\n\r\nevent: result\ndata: {\"data\":[],\"note\":\"🐸\"}\n\ndata: [DONE]\n\n";
@@ -502,7 +675,9 @@ mod tests {
                 body,
                 json!({"model":"test-image", "prompt":"a frog", "size":"64x64", "n":1, "seed":42, "response_format":"b64_json"})
             );
-            let response = json!({"model_hash":"sha256:test-checkpoint", "data":[{"b64_json": image.data}]}).to_string();
+            let response =
+                json!({"model_hash":"sha256:test-checkpoint", "data":[{"b64_json": image.data}]})
+                    .to_string();
             socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).as_bytes()).await.unwrap();
         });
         ctx.image = Settings {

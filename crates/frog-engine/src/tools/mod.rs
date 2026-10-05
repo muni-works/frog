@@ -35,6 +35,8 @@ pub struct Ctx {
     pub shell_sandbox: Option<PathBuf>,
     /// Live output from the running tool, if someone is listening.
     pub progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    /// Bounded approximate image deltas for transcript display, never model context.
+    pub preview: Option<tokio::sync::mpsc::UnboundedSender<crate::protocol::Delta>>,
     /// Web settings, the page cache and the search backend.
     pub web: std::sync::Arc<web::Web>,
 }
@@ -51,6 +53,7 @@ impl Ctx {
             sandbox: None,
             shell_sandbox: None,
             progress: None,
+            preview: None,
             web: Default::default(),
         }
     }

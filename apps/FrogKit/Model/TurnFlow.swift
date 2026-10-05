@@ -33,6 +33,7 @@ struct TurnFlow {
         }
         func isVisual(_ item: ItemState) -> Bool {
             guard case .tool(let name, _) = item.kind else { return false }
+            if !item.done && item.imagePreview != nil { return true }
             if name == "Diagram" { return item.result?.diagram != nil || !item.done }
             guard let r = item.result, r.outcome == .ok else { return false }
             if let app = r.app { return latestApp[app.server + app.uri] == item.id }
