@@ -12,6 +12,21 @@ Surveyed against `~/Developer/tang-serve` at e4ee81e.
 - **The loop must be closed.** Generating images is the means. The point is an agent that generates a target, builds toward it, looks at the result, and keeps going until they match (section 7). Real-time generation is a cherry on top (section 8) and never blocks the loop.
 - **The frog side ships first, on a stub backend.** Lock down the tool and the UX while the tang port is in progress.
 
+## I0 implementation status
+
+Implemented in frog: `Image` tool with explicit `[image]` configuration, PNG stub
+placeholders and a remote OpenAI-compatible base64 backend. Existing `Output.images`
+provides transcript/lightbox delivery and vision input. Generation uses its own session
+permission key and emits start/completion progress. The remote path is tested against
+an HTTP fixture; no paid service was called during validation.
+
+The stub uses PNG rather than SVG so it exercises the raster attachment path. Remote
+responses must contain `data[].b64_json`; URL fetching is deliberately unsupported.
+Requests preserve prompt, dimensions, count and optional seed in durable tool events.
+Remote reproducibility still depends on the provider; model hashes and inference steps
+are not available from this API. Step previews, backend autodiscovery and Apple/tang
+integration remain later work. See the README for configuration and limits.
+
 ## 1. What tang already has
 
 The SigLIP vision tower (`Vision::project`) is a bidirectional transformer over image patches. Its op list is most of a DiT block:

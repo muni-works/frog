@@ -91,7 +91,7 @@ Named profiles live in `~/.config/frog/config.toml`. See [config.example.toml](c
 
 ## Tools
 
-`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Diagram` · `CodeMap` · `Docs` · `WebFetch` · `WebSearch`
+`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Image` · `Diagram` · `CodeMap` · `Docs` · `WebFetch` · `WebSearch`
 
 The tools behave like Claude Code's: Edit replaces an exact string that must be unique, and a file has to be Read before it can be edited, with a check that it hasn't changed since. Bash keeps its working directory between calls.
 
@@ -201,6 +201,36 @@ They go to the model as images:
 Images tools return also reach the model: MCP renders like vcad's `render_view`, and computer use's `look` screenshots.
 
 Vision support is detected: ollama reports it, and Anthropic and OpenAI's own models have it. Set `vision = true` on any other profile. A model that can't see images gets a short note in each image's place, and the composer says so. Only the three most recent images are sent, and each counts as about 1.5k tokens in the context budget.
+
+## Image generation
+
+`Image` takes `{prompt, size?, seed?, count?}` and returns images to the transcript and
+lightbox, including vision input for models that support it. Use it when the user asks
+for images. Generation asks permission in default mode; session approval is separate
+from shell approval. Images and the request are retained in the session log.
+
+Configure an explicit backend in `~/.config/frog/config.toml`:
+
+```toml
+[image]
+backend = "remote"
+endpoint = "http://localhost:8080/v1/images/generations"
+model = "z-image-turbo"
+# api_key_env = "IMAGE_API_KEY"
+```
+
+The endpoint is the full generations URL. Requests use the OpenAI-compatible fields
+`model`, `prompt`, `size`, `n`, `response_format = "b64_json"`, and optional `seed`.
+The server must support these fields and return `data[].b64_json` with PNG, JPEG or
+WebP bytes. URL responses are rejected. Seeds depend on backend support and do not
+guarantee reproducibility on remote services. Requests time out after five minutes;
+responses are bounded to 64 MiB. Tool progress reports generation start and completion.
+
+For offline testing, set `backend = "stub"`: it returns deterministic PNG checkerboards
+at the requested dimensions, labeled as placeholders. An unset backend fails with
+configuration guidance. There is no automatic fallback. Counts range from 1–4;
+dimensions range from 64–2048 per axis, defaulting to `1024x1024`.
+Tang/Apple backend discovery and step previews are subsequent milestones.
 
 ## Diagrams
 

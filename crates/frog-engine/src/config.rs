@@ -123,6 +123,9 @@ fn default_thinking_budget() -> u32 {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
+    /// Explicit image generation backend; disabled when unset.
+    #[serde(default)]
+    pub image: crate::tools::image::Settings,
     pub default_model: Option<String>,
     #[serde(default)]
     pub models: BTreeMap<String, Profile>,

@@ -2,6 +2,7 @@ pub mod bash;
 pub mod diagram;
 pub mod docs;
 pub mod fs;
+pub mod image;
 pub mod rank;
 pub mod search;
 pub mod todo;
@@ -16,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 pub struct Ctx {
+    pub image: image::Settings,
     pub cwd: PathBuf,
     /// Files the model has seen, with the mtime at read time. Guards Edit/Write.
     pub read_files: HashMap<PathBuf, Option<SystemTime>>,
@@ -36,6 +38,7 @@ impl Ctx {
     pub fn new(cwd: PathBuf) -> Self {
         Self {
             cwd,
+            image: Default::default(),
             read_files: HashMap::new(),
             todos: Vec::new(),
             sandbox: None,
@@ -151,6 +154,7 @@ pub fn specs() -> Vec<ToolSpec> {
         search::grep_spec(),
         todo::spec(),
         diagram::spec(),
+        image::spec(),
         diagram::map_spec(),
         web::spec(),
         docs::spec(),
@@ -159,7 +163,7 @@ pub fn specs() -> Vec<ToolSpec> {
 
 pub fn kind(name: &str) -> Kind {
     match name {
-        "Bash" => Kind::Exec,
+        "Bash" | "Image" => Kind::Exec,
         // Their read actions are exempted per call (`panes::is_read`).
         crate::panes::TERMINAL | crate::panes::PREVIEW => Kind::Exec,
         "Write" | "Edit" => Kind::Edit,
@@ -189,12 +193,13 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "Grep" => search::grep(input, ctx).await,
         "TodoWrite" => todo::run(input, ctx),
         "Diagram" => diagram::run(input, ctx),
+        "Image" => image::run(input, ctx).await,
         "CodeMap" => diagram::run_map(input, ctx),
         "WebFetch" => web::run(input, ctx).await,
         "WebSearch" => websearch::run(input, ctx).await,
         "Docs" => docs::run(input, ctx).await,
         _ => bail!(
-            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, CodeMap, WebFetch, Docs"
+            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, Image, CodeMap, WebFetch, Docs"
         ),
     }
 }
@@ -207,6 +212,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "Read" | "Write" | "Edit" => ctx.display(&ctx.resolve(&s("file_path"))),
         "Glob" | "Grep" => s("pattern"),
         "Diagram" => s("title"),
+        "Image" => s("prompt"),
         "CodeMap" => s("path"),
         "WebFetch" => s("url"),
         "WebSearch" => s("query"),

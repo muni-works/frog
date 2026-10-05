@@ -743,6 +743,7 @@ impl Agent {
         let shell_sandbox = o.cfg.sandbox_shell && tools::bash::available() && !o.chat;
         let window = o.profile.context_window();
         let web = Arc::new(tools::web::Web::from_config(&o.cfg));
+        let image = o.cfg.image.clone();
         let resumed = o.resume.is_some();
         let shell_root = o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone());
         shared.panes.configure(o.cwd.clone());
@@ -755,6 +756,7 @@ impl Agent {
             ctx: {
                 let mut ctx = Ctx::new(o.cwd.clone());
                 ctx.web = web;
+                ctx.image = image;
                 if o.sandbox {
                     ctx.sandbox = Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
                 }
@@ -1100,6 +1102,7 @@ impl Agent {
                 self.ctx.sandbox = sandbox;
                 self.ctx.shell_sandbox = shell_sandbox;
                 self.ctx.web = web;
+                self.ctx.image = self.cfg.image.clone();
                 self.usage = Usage::default();
                 self.session_id = session::new_id();
                 self.shared
@@ -2064,7 +2067,7 @@ impl Agent {
         }
         if self.chat {
             // No project to work in: only the tools that don't touch files or run commands.
-            specs.retain(|s| matches!(&*s.name, "Diagram" | "WebFetch" | "WebSearch"));
+            specs.retain(|s| matches!(&*s.name, "Diagram" | "Image" | "WebFetch" | "WebSearch"));
             specs.push(crate::folder::spec());
         }
         // Terminal panes are engine-owned, so every client gets them; previews need a client
@@ -2168,6 +2171,7 @@ impl Agent {
         let sandbox = self.ctx.sandbox.is_some();
         self.ctx = Ctx::new(root.clone());
         self.ctx.web = web;
+        self.ctx.image = self.cfg.image.clone();
         self.ctx.todos = todos;
         if sandbox {
             self.ctx.sandbox = Some(root.clone());
@@ -2325,6 +2329,7 @@ impl Agent {
             shell_sandbox: self.ctx.shell_sandbox.clone(),
             progress: None,
             web: self.ctx.web.clone(),
+            image: self.ctx.image.clone(),
         })
     }
 
@@ -2861,6 +2866,7 @@ Don't repeat it. Change the arguments or try a different approach.",
         let key = match kind {
             Kind::Edit => "edits".to_string(),
             Kind::Net => format!("web:{}", web_host(name, input)),
+            _ if name == "Image" => "image".to_string(),
             _ if mcp => format!("mcp:{name}"),
             _ if pane => format!("{}:{pane_action}", name.to_lowercase()),
             _ if leaves_sandbox => format!("bash-unsandboxed:{prefix}"),
@@ -2874,7 +2880,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                         && crate::auto::hard_rule(name, input, &self.root).is_none())
             }
             Kind::Net => false,
-            _ if mcp || leaves_sandbox || pane => false,
+            _ if name == "Image" || mcp || leaves_sandbox || pane => false,
             _ => bash_allowed(cmd, &self.cfg.allow_bash),
         };
         if auto || self.session_allow.contains(&key) {
@@ -2921,6 +2927,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                 "always allow fetching from {} this session",
                 web_host(name, input)
             ),
+            _ if name == "Image" => "always allow image generation this session".to_string(),
             _ if mcp => {
                 let pretty = name
                     .strip_prefix("mcp__")
