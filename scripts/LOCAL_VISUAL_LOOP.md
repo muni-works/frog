@@ -34,3 +34,10 @@ Initial Gemma 3 4B JSON-mode runs generated targets and CSS pages but stopped be
 Compare; one emitted a fenced valid action, now recovered by Frog, while subsequent
 replies broke the format or failed the implementation requirements. Those runs do
 not pass the benchmark. Keep failed event logs rather than manually fixing output.
+
+Tang PR #32 now enforces JSON schemas during sampling against the local tokenizer.
+Real Qwen3-4B coding runs execute the visual tools and revisions with valid JSON,
+but repeat ineffective edits. The evidence-first Compare rubric supplies independent
+target/actual descriptions and rejects the inaccurate CSS page; it does not establish
+an unattended visual match. Retain and inspect the generated target and final capture
+even when a small judge reports a high score.

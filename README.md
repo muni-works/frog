@@ -274,7 +274,9 @@ compare_model = "local-vision" # a configured model profile; otherwise the sessi
 
 `Compare` takes saved `target` and `actual` images plus optional `notes`, `loop_id`,
 `threshold` (85) and `max_rounds` (6). It sends full images and up to three paired
-crops from the worst regions to a vision model and returns structured differences,
+crops from the worst regions to a vision model. The judge first describes each full
+image independently, then scores geometry, content, color and style. These descriptions
+reach the coding model alongside structured differences,
 SSIM, judge score and a combined score (judge score capped at `100 * SSIM + 20`).
 For targets with a nearly uniform border and visible foreground, coarse foreground
 overlap supplies an additional `100 * overlap + 20` cap. This rejects missing subjects

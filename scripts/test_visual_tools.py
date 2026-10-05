@@ -27,8 +27,12 @@ class VisualFixture(Fixture):
             type(self).judge_calls += 1
             images = [p for m in body['messages'] if isinstance(m['content'], list) for p in m['content'] if p.get('type') == 'image_url']
             assert len(images) >= 4, 'judge missing full images/crop pairs'
+            schema = body['response_format']['json_schema']['schema']
+            assert {'target_description', 'actual_description', 'score', 'diffs'} == set(schema['required'])
+            assert schema['properties']['diffs']['maxItems'] == 8
+            verdict = {'target_description':'A matching reference page.', 'actual_description':'The same rendered page.', 'score':92, 'diffs':[]}
             self.send_response(200); self.send_header('Content-Type','text/event-stream');self.end_headers()
-            self.wfile.write(('data: '+json.dumps({'choices':[{'index':0,'delta':{'content':json.dumps({'score':92,'diffs':[]})},'finish_reason':None}]})+'\n\n').encode())
+            self.wfile.write(('data: '+json.dumps({'choices':[{'index':0,'delta':{'content':json.dumps(verdict)},'finish_reason':None}]})+'\n\n').encode())
             self.wfile.write(('data: '+json.dumps({'choices':[{'index':0,'delta':{},'finish_reason':'stop'}]})+'\n\ndata: [DONE]\n\n').encode());self.wfile.flush()
             return
         results = [m for m in body['messages'] if m['role'] == 'tool']
@@ -98,6 +102,8 @@ vision = true
         assert completed[0]['outcome']=='ok' and completed[0]['images'],completed[0]
         assert completed[1]['outcome']=='ok',completed[1]
         verdict=json.loads(completed[1]['output']);assert verdict['stop_reason']=='matched',verdict
+        if not args.judge_endpoint:
+            assert verdict['target_description']=='A matching reference page.' and verdict['actual_description']=='The same rendered page.',verdict
         assert completed[2]['outcome']=='error' and 'already stopped' in completed[2]['output'],completed[2]
         assert VisualFixture.judge_calls==(0 if args.judge_endpoint else 1),VisualFixture.judge_calls
         state=json.loads((output/'.frog/visual-loops/fixture.json').read_text());assert state['stopped'] and len(state['target'])<500,state
