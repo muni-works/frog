@@ -11,7 +11,7 @@ const MAX_RESPONSE: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Settings {
-    /// "stub" or "remote". Unset disables generation.
+    /// "stub", "remote", "tang", or "apple". Unset disables generation.
     pub backend: Option<String>,
     /// Full OpenAI-compatible generations URL, including /v1/images/generations.
     pub endpoint: Option<String>,
@@ -29,6 +29,7 @@ struct Request {
     seed: Option<u64>,
     #[serde(default = "default_count")]
     count: usize,
+    output_dir: Option<String>,
 }
 fn default_size() -> String {
     "1024x1024".into()
@@ -65,7 +66,8 @@ pub fn spec() -> ToolSpec {
             "prompt":{"type":"string"},
             "size":{"type":"string", "description":"WIDTHxHEIGHT, 64–2048 per dimension; default 1024x1024"},
             "seed":{"type":"integer", "minimum":0},
-            "count":{"type":"integer", "minimum":1, "maximum":4, "default":1}
+            "count":{"type":"integer", "minimum":1, "maximum":4, "default":1},
+            "output_dir":{"type":"string", "description":"Optional workspace directory for new PNG assets and generation metadata"}
         }, "required":["prompt"], "additionalProperties":false}),
     }
 }
@@ -78,11 +80,18 @@ fn progress(ctx: &Ctx, message: &str) {
 
 pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     let (request, width, height) = Request::parse(input)?;
+    let output_dir = request.output_dir.as_ref().map(|p| ctx.resolve(p));
+    if let Some(dir) = &output_dir {
+        super::visual::workspace_path(ctx, &dir.join("asset.png"))?;
+    }
     let settings = &ctx.image;
     let backend = settings
         .backend
         .as_deref()
-        .context("Image is not configured. Set [image].backend to remote or stub in config.toml")?;
+        .context("Image is not configured. Set [image].backend to remote, tang, apple or stub in config.toml")?;
+    if backend == "apple" && request.seed.is_some() {
+        bail!("Apple ImageCreator does not support seeds");
+    }
     progress(ctx, "Generating images…");
     let (images, model) = match backend {
         "stub" => {
@@ -109,12 +118,25 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             };
             (vec![image; request.count], "stub placeholder".to_string())
         }
-        "remote" => {
-            let endpoint = settings
-                .endpoint
-                .as_deref()
-                .context("[image].endpoint is required for remote generation")?;
-            let url = reqwest::Url::parse(endpoint).context("invalid image endpoint")?;
+        "remote" | "tang" | "apple" => {
+            let endpoint = if backend == "apple" {
+                let mut profile = crate::config::Profile::new(
+                    crate::config::ProviderKind::Openai,
+                    crate::sidecar::APPLE,
+                );
+                profile.sidecar = Some(crate::sidecar::APPLE.into());
+                crate::sidecar::ensure(&profile).await?;
+                format!(
+                    "{}/images/generations",
+                    crate::sidecar::base_url(crate::sidecar::APPLE)
+                )
+            } else {
+                settings
+                    .endpoint
+                    .clone()
+                    .context("[image].endpoint is required for remote/tang generation")?
+            };
+            let url = reqwest::Url::parse(&endpoint).context("invalid image endpoint")?;
             if !matches!(url.scheme(), "http" | "https")
                 || !url.username().is_empty()
                 || url.password().is_some()
@@ -124,6 +146,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             let model = settings
                 .model
                 .as_deref()
+                .or((backend == "apple").then_some("apple/illustration"))
                 .filter(|m| !m.trim().is_empty())
                 .context("[image].model is required for remote generation")?;
             let mut body = json!({"model":model, "prompt":request.prompt, "size":request.size, "n":request.count, "response_format":"b64_json"});
@@ -162,12 +185,29 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                 serde_json::from_slice(&bytes).context("invalid JSON from image endpoint")?;
             (decode_response(&value, request.count)?, model.to_string())
         }
-        _ => bail!("unknown image backend `{backend}`; expected stub or remote"),
+        _ => bail!("unknown image backend `{backend}`; expected stub, remote, tang or apple"),
     };
+    let mut saved = Vec::new();
+    if let Some(dir) = output_dir {
+        let id = crate::session::new_id();
+        for (i, image) in images.iter().enumerate() {
+            let raster = super::visual::decode(&STANDARD.decode(&image.data)?)?;
+            let path = dir.join(format!("image-{id}-{}.png", i + 1));
+            super::visual::save(ctx, &path, &super::visual::png(&raster)?).await?;
+            saved.push(path.display().to_string());
+        }
+        let metadata = json!({"backend":backend,"model":model,"prompt":request.prompt,"requested_size":request.size,"seed":request.seed,"files":saved});
+        super::visual::save(
+            ctx,
+            &dir.join(format!("image-{id}.json")),
+            &serde_json::to_vec_pretty(&metadata)?,
+        )
+        .await?;
+    }
     progress(ctx, "Images ready.");
     Ok(Output {
         content: format!(
-            "{} image(s) shown to the user. Backend: {backend}; model: {model}; size: {}; seed: {}.{}",
+            "{} image(s) shown to the user. Backend: {backend}; model: {model}; requested size: {}; seed: {}.{} Saved assets: {}",
             images.len(),
             request.size,
             request
@@ -178,7 +218,8 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                 " These are test placeholders, not generated artwork."
             } else {
                 ""
-            }
+            },
+            serde_json::to_string(&saved)?
         ),
         display: Some(format!(
             "{} {} · {}",
@@ -213,6 +254,7 @@ fn decode_response(value: &Value, count: usize) -> Result<Vec<Image>> {
             let bytes = STANDARD
                 .decode(encoded)
                 .context("image endpoint returned invalid base64")?;
+            super::visual::decode(&bytes)?;
             let mime = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
                 "image/png"
             } else if bytes.starts_with(b"\xff\xd8\xff") {
@@ -249,6 +291,7 @@ mod tests {
             json!({"data":[{"url":"https://example.com/x"}]}),
             json!({"data":[{"b64_json":"!!!"}]}),
             json!({"data":[{"b64_json":STANDARD.encode(b"not an image")}]}),
+            json!({"data":[{"b64_json":STANDARD.encode(b"\x89PNG\r\n\x1a\ntruncated")}]} ),
         ] {
             assert!(decode_response(&value, 1).is_err());
         }
@@ -268,6 +311,41 @@ mod tests {
             .unwrap();
         assert_eq!((reader.info().width, reader.info().height), (128, 64));
         assert!(super::super::kind("Image") == super::super::Kind::Exec);
+    }
+    #[tokio::test]
+    async fn saves_new_assets_and_metadata_inside_workspace() {
+        let root = std::env::temp_dir().join(format!("frog-assets-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut ctx = Ctx::new(root.clone());
+        ctx.image.backend = Some("stub".into());
+        let output = run(
+            &json!({"prompt":"sprite", "size":"64x64", "output_dir":"assets", "seed":42}),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(output.content.contains("assets/image-"));
+        let paths: Vec<_> = std::fs::read_dir(root.join("assets"))
+            .unwrap()
+            .map(|p| p.unwrap().path())
+            .collect();
+        assert_eq!(paths.len(), 2);
+        let meta = paths
+            .iter()
+            .find(|p| p.extension().is_some_and(|e| e == "json"))
+            .unwrap();
+        let meta: Value = serde_json::from_slice(&std::fs::read(meta).unwrap()).unwrap();
+        assert_eq!(meta["seed"], 42);
+        assert_eq!(meta["prompt"], "sprite");
+        assert!(
+            run(
+                &json!({"prompt":"sprite", "output_dir":"../outside"}),
+                &mut ctx
+            )
+            .await
+            .is_err()
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
     async fn remote_posts_parameters_and_returns_images_with_progress() {

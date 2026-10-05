@@ -12,6 +12,8 @@ enum ToolIcon {
         case "Grep": "text.magnifyingglass"
         case "TodoWrite": "checklist"
         case "Image": "photo"
+        case "Screenshot": "camera.viewfinder"
+        case "Compare": "square.split.2x1"
         case "Diagram": "point.3.connected.trianglepath.dotted"
         case "CodeMap": "map"
         case "WebFetch": "globe"

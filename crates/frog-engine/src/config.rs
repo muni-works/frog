@@ -123,6 +123,12 @@ fn default_thinking_budget() -> u32 {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
+    /// Optional screenshot service; defaults to bundled frog-apple WebKit.
+    #[serde(default)]
+    pub screenshot_endpoint: Option<String>,
+    /// Vision judge profile; defaults to the session model when it supports vision.
+    #[serde(default)]
+    pub compare_model: Option<String>,
     /// Explicit image generation backend; disabled when unset.
     #[serde(default)]
     pub image: crate::tools::image::Settings,

@@ -27,8 +27,36 @@ The stub uses PNG rather than SVG so it exercises the raster attachment path. Re
 responses must contain `data[].b64_json`; URL fetching is deliberately unsupported.
 Requests preserve prompt, dimensions, count and optional seed in durable tool events.
 Remote reproducibility still depends on the provider; model hashes and inference steps
-are not available from this API. Step previews, backend autodiscovery and Apple/tang
-integration remain later work. See the README for configuration and limits.
+are not available from this API. Explicit tang-compatible endpoints and the Apple API adapter are implemented;
+Apple's non-UI API is unavailable on macOS 27+. Step previews, backend autodiscovery
+and native tang inference remain later work. See the README for configuration and limits.
+
+## L1 implementation status
+
+Implemented: Screenshot with WebKit capture in frog-apple and configurable renderer
+endpoint; Compare with full-image and worst-region crop vision judging plus local SSIM;
+bundled visual-loop skill; persisted match/stall/round stops; new PNG asset output and
+prompt/model/seed manifests. Real WebKit capture was exercised through frog --serve,
+with a fixture vision judge; its scores are not evidence of production judge quality.
+Native replay verifies retained screenshot output. Existing output files are never overwritten.
+Chromium support, raster-to-SVG vectorization, production judge validation and backend
+resident scheduling remain unfinished.
+
+## Verified upstream corrections
+
+The official [Z-Image-Turbo config](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/blob/main/transformer/config.json)
+uses dim 3840, 30 attention heads and head_dim 128, with RoPE axis widths 32/48/48.
+The [diffusers implementation](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_z_image.py)
+uses RMSNorm, SwiGLU and scale/gate modulation with tanh gates, rather than the
+simplified adaLN/GELU sketch below. Tang's currently named forward_hidden returns
+logits; a genuine hidden-state extraction path is still required. Verify all mappings
+against upstream tensors before claiming I1 complete.
+
+Environment blockers verified on 2026-10-05: no image weights installed locally or
+in mew's ComfyUI; mew reports less than 1 GiB of free VRAM under existing workloads;
+the Mac has about 28 GiB disk space free. Apple ImageCreator returns notSupported
+on this macOS 27.0.1 host, consistent with Apple's documented API removal. Do not
+evict active workloads or silently switch to a paid endpoint to bypass these constraints.
 
 ## 1. What tang already has
 

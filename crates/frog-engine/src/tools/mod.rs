@@ -1,10 +1,13 @@
 pub mod bash;
+pub mod compare;
 pub mod diagram;
 pub mod docs;
 pub mod fs;
 pub mod image;
 pub mod rank;
 pub mod search;
+pub mod screenshot;
+pub mod visual;
 pub mod todo;
 pub mod web;
 pub mod websearch;
@@ -17,6 +20,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 pub struct Ctx {
+    pub screenshot_endpoint: Option<String>,
+    pub judge: Option<crate::config::Profile>,
     pub image: image::Settings,
     pub cwd: PathBuf,
     /// Files the model has seen, with the mtime at read time. Guards Edit/Write.
@@ -39,6 +44,8 @@ impl Ctx {
         Self {
             cwd,
             image: Default::default(),
+            screenshot_endpoint: None,
+            judge: None,
             read_files: HashMap::new(),
             todos: Vec::new(),
             sandbox: None,
@@ -155,6 +162,8 @@ pub fn specs() -> Vec<ToolSpec> {
         todo::spec(),
         diagram::spec(),
         image::spec(),
+        screenshot::spec(),
+        compare::spec(),
         diagram::map_spec(),
         web::spec(),
         docs::spec(),
@@ -163,7 +172,7 @@ pub fn specs() -> Vec<ToolSpec> {
 
 pub fn kind(name: &str) -> Kind {
     match name {
-        "Bash" | "Image" => Kind::Exec,
+        "Bash" | "Image" | "Screenshot" | "Compare" => Kind::Exec,
         // Their read actions are exempted per call (`panes::is_read`).
         crate::panes::TERMINAL | crate::panes::PREVIEW => Kind::Exec,
         "Write" | "Edit" => Kind::Edit,
@@ -194,12 +203,14 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "TodoWrite" => todo::run(input, ctx),
         "Diagram" => diagram::run(input, ctx),
         "Image" => image::run(input, ctx).await,
+        "Screenshot" => screenshot::run(input, ctx).await,
+        "Compare" => compare::run(input, ctx).await,
         "CodeMap" => diagram::run_map(input, ctx),
         "WebFetch" => web::run(input, ctx).await,
         "WebSearch" => websearch::run(input, ctx).await,
         "Docs" => docs::run(input, ctx).await,
         _ => bail!(
-            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, Image, CodeMap, WebFetch, Docs"
+            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, Image, Screenshot, Compare, CodeMap, WebFetch, Docs"
         ),
     }
 }
@@ -213,6 +224,8 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "Glob" | "Grep" => s("pattern"),
         "Diagram" => s("title"),
         "Image" => s("prompt"),
+        "Screenshot" => s("url"),
+        "Compare" => format!("{} → {}",s("target"),s("actual")),
         "CodeMap" => s("path"),
         "WebFetch" => s("url"),
         "WebSearch" => s("query"),

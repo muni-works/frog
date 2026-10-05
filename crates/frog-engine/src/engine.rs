@@ -744,6 +744,11 @@ impl Agent {
         let window = o.profile.context_window();
         let web = Arc::new(tools::web::Web::from_config(&o.cfg));
         let image = o.cfg.image.clone();
+        let screenshot_endpoint = o.cfg.screenshot_endpoint.clone();
+        let judge = Some(match &o.cfg.compare_model {
+            Some(model) => o.cfg.resolve(Some(model))?.1,
+            None => o.profile.clone(),
+        });
         let resumed = o.resume.is_some();
         let shell_root = o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone());
         shared.panes.configure(o.cwd.clone());
@@ -757,6 +762,8 @@ impl Agent {
                 let mut ctx = Ctx::new(o.cwd.clone());
                 ctx.web = web;
                 ctx.image = image;
+                ctx.screenshot_endpoint = screenshot_endpoint;
+                ctx.judge = judge;
                 if o.sandbox {
                     ctx.sandbox = Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
                 }
@@ -1061,6 +1068,9 @@ impl Agent {
                     Provider::new(&profile).map_err(|e| ConfigError(format!("{e:#}")))?;
                 self.profile_name = name;
                 self.profile = profile;
+                if self.cfg.compare_model.is_none() {
+                    self.ctx.judge = Some(self.profile.clone());
+                }
                 self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
                 self.caps = (self.store.is_some() && !harness::is_hosted(&self.profile))
                     .then(|| harness::cached(&self.profile))
@@ -1103,6 +1113,11 @@ impl Agent {
                 self.ctx.shell_sandbox = shell_sandbox;
                 self.ctx.web = web;
                 self.ctx.image = self.cfg.image.clone();
+                self.ctx.screenshot_endpoint = self.cfg.screenshot_endpoint.clone();
+                self.ctx.judge = Some(match &self.cfg.compare_model {
+                    Some(model) => self.cfg.resolve(Some(model))?.1,
+                    None => self.profile.clone(),
+                });
                 self.usage = Usage::default();
                 self.session_id = session::new_id();
                 self.shared
@@ -2172,6 +2187,11 @@ impl Agent {
         self.ctx = Ctx::new(root.clone());
         self.ctx.web = web;
         self.ctx.image = self.cfg.image.clone();
+        self.ctx.screenshot_endpoint = self.cfg.screenshot_endpoint.clone();
+        self.ctx.judge = Some(match &self.cfg.compare_model {
+            Some(model) => self.cfg.resolve(Some(model))?.1,
+            None => self.profile.clone(),
+        });
         self.ctx.todos = todos;
         if sandbox {
             self.ctx.sandbox = Some(root.clone());
@@ -2330,6 +2350,8 @@ impl Agent {
             progress: None,
             web: self.ctx.web.clone(),
             image: self.ctx.image.clone(),
+            screenshot_endpoint: self.ctx.screenshot_endpoint.clone(),
+            judge: self.ctx.judge.clone(),
         })
     }
 
@@ -2866,7 +2888,7 @@ Don't repeat it. Change the arguments or try a different approach.",
         let key = match kind {
             Kind::Edit => "edits".to_string(),
             Kind::Net => format!("web:{}", web_host(name, input)),
-            _ if name == "Image" => "image".to_string(),
+            _ if matches!(name, "Image" | "Screenshot" | "Compare") => format!("visual:{name}"),
             _ if mcp => format!("mcp:{name}"),
             _ if pane => format!("{}:{pane_action}", name.to_lowercase()),
             _ if leaves_sandbox => format!("bash-unsandboxed:{prefix}"),
@@ -2880,7 +2902,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                         && crate::auto::hard_rule(name, input, &self.root).is_none())
             }
             Kind::Net => false,
-            _ if name == "Image" || mcp || leaves_sandbox || pane => false,
+            _ if matches!(name, "Image" | "Screenshot" | "Compare") || mcp || leaves_sandbox || pane => false,
             _ => bash_allowed(cmd, &self.cfg.allow_bash),
         };
         if auto || self.session_allow.contains(&key) {
@@ -2928,6 +2950,8 @@ Don't repeat it. Change the arguments or try a different approach.",
                 web_host(name, input)
             ),
             _ if name == "Image" => "always allow image generation this session".to_string(),
+            _ if name == "Screenshot" => "always allow screenshots this session".to_string(),
+            _ if name == "Compare" => "always allow visual comparisons this session".to_string(),
             _ if mcp => {
                 let pretty = name
                     .strip_prefix("mcp__")

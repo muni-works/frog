@@ -91,7 +91,7 @@ Named profiles live in `~/.config/frog/config.toml`. See [config.example.toml](c
 
 ## Tools
 
-`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Image` · `Diagram` · `CodeMap` · `Docs` · `WebFetch` · `WebSearch`
+`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Image` · `Screenshot` · `Compare` · `Diagram` · `CodeMap` · `Docs` · `WebFetch` · `WebSearch`
 
 The tools behave like Claude Code's: Edit replaces an exact string that must be unique, and a file has to be Read before it can be edited, with a check that it hasn't changed since. Bash keeps its working directory between calls.
 
@@ -204,7 +204,7 @@ Vision support is detected: ollama reports it, and Anthropic and OpenAI's own mo
 
 ## Image generation
 
-`Image` takes `{prompt, size?, seed?, count?}` and returns images to the transcript and
+`Image` takes `{prompt, size?, seed?, count?, output_dir?}` and returns images to the transcript and
 lightbox, including vision input for models that support it. Use it when the user asks
 for images. Generation asks permission in default mode; session approval is separate
 from shell approval. Images and the request are retained in the session log.
@@ -230,7 +230,16 @@ For offline testing, set `backend = "stub"`: it returns deterministic PNG checke
 at the requested dimensions, labeled as placeholders. An unset backend fails with
 configuration guidance. There is no automatic fallback. Counts range from 1–4;
 dimensions range from 64–2048 per axis, defaulting to `1024x1024`.
-Tang/Apple backend discovery and step previews are subsequent milestones.
+Use `backend = "tang"` with the same endpoint/model configuration for a tang-compatible
+service. `backend = "apple"` starts the bundled Apple sidecar and uses ImageCreator;
+Apple chooses dimensions and rejects seeds. ImageCreator requires foreground creation
+on supported macOS releases and is disabled by Apple on macOS 27+; this backend
+therefore returns an availability error there. See [Apple's API documentation](https://developer.apple.com/documentation/imageplayground/imagecreator/init%28%29).
+Automatic backend selection and step previews remain subsequent milestones.
+
+With `output_dir`, new PNG assets and a JSON manifest containing prompt, backend,
+model, requested size and seed are saved inside the workspace. Existing files are not
+replaced. Remote rasters are fully decoded with dimension/allocation bounds.
 
 Test the complete tool path through the real executable with local chat/image fixtures:
 
@@ -246,6 +255,36 @@ and writes isolated `stub.toml` and `remote.toml` configurations. `frog --config
 loads an explicit configuration without replacing the normal user config; missing files
 are errors, and Claude MCP imports are not implicitly enabled. The native image snapshot
 test uses a captured run in `apps/macos/Fixtures/image-generation.jsonl`.
+
+## Visual iteration
+
+`Screenshot` renders an HTTP(S) URL or local HTML/SVG file at a fixed viewport, shows
+its PNG in the transcript, and optionally saves a new `output_path`. On macOS it uses
+the bundled `frog-apple` WebKit sidecar, waits for fonts/images, and normalizes Retina
+captures to viewport pixels. Other renderers can expose the same JSON endpoint:
+
+```toml
+screenshot_endpoint = "http://localhost:8912/v1/screenshots"
+compare_model = "local-vision" # a configured model profile; otherwise the session model
+```
+
+`Compare` takes saved `target` and `actual` images plus optional `notes`, `loop_id`,
+`threshold` (85) and `max_rounds` (6). It sends full images and up to three paired
+crops from the worst regions to a vision model and returns structured differences,
+SSIM, judge score and a combined score (judge score capped at `100 * SSIM + 20`).
+The score is a heuristic, not a guarantee of visual equivalence. Images must have
+matching aspect ratios. With `loop_id`, state in `.frog/visual-loops/` enforces stopping
+on a match, two improvements below one point, or the round limit across restarts.
+Each tool has separate session permission. The bundled `/visual-loop` skill guides
+capture, comparison and focused edits; a project skill can override it.
+
+```bash
+python3 scripts/test_visual_tools.py --frog target/debug/frog
+# Include real WebKit capture while keeping the vision judge a fixture:
+python3 scripts/test_visual_tools.py --frog target/debug/frog \
+  --screenshot-endpoint http://localhost:8912/v1/screenshots
+```
+
 
 ## Diagrams
 

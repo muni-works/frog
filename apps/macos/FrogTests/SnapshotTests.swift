@@ -159,6 +159,29 @@ final class SnapshotTests: XCTestCase {
         }
     }
 
+    /// A captured page stays visible; comparison output remains available after completion.
+    func testRenderVisualLoop() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Fixtures/visual-loop.jsonl")
+        let conversation = Conversation(preview: URL(fileURLWithPath: "/tmp/frog-visual-test"))
+        try events(url).forEach(conversation.ingest)
+        let turn = try XCTUnwrap(conversation.turns.first)
+        let captures = turn.items.filter { $0.result?.name == "Screenshot" }
+        let capture = try XCTUnwrap(captures.first?.result)
+        XCTAssertEqual(capture.outcome, .ok)
+        XCTAssertEqual(capture.images?.first?.image?.size, CGSize(width: 320, height: 192))
+        let comparisons = turn.items.compactMap(\.result).filter { $0.name == "Compare" }
+        XCTAssertEqual(comparisons.count, 2)
+        XCTAssertTrue(comparisons.first?.output.contains("matched") ?? false)
+        XCTAssertEqual(comparisons.last?.outcome, .error)
+        let visuals = TurnFlow(turn.items).segments.filter { if case .visual = $0 { true } else { false } }
+        XCTAssertEqual(visuals.count, 1)
+        for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
+            try render(transcript(conversation), size: CGSize(width: 900, height: 650),
+                       to: "visual-loop-\(name)", appearance: look)
+        }
+    }
+
     /// Opening a conversation that's slow to load: "Loading session…" (after a beat), never the
     /// new-conversation page.
     func testRenderReopening() throws {

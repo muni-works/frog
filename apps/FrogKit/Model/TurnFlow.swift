@@ -210,6 +210,8 @@ enum ActivityWords {
             return [.text(calls.count == 1 ? "ran a subagent" : "ran \(count(calls.count, "subagent"))")]
         case "TodoWrite": return [.text("updated the plan")]
         case "Image": return [.text("generated images")]
+        case "Screenshot": return [.text("captured the page")]
+        case "Compare": return [.text("compared the images")]
         case "Diagram": return [.text("drew a diagram")]
         case "CodeMap": return [.text("mapped the code")]
         case "Docs": return [.text("read the docs")]
@@ -275,6 +277,8 @@ enum ActivityWords {
             case "Task": return item.subagent?.activity.appending("…") ?? "Starting a subagent…"
             case "TodoWrite": return "Updating the plan…"
             case "Image": return "Generating images…"
+            case "Screenshot": return "Capturing the page…"
+            case "Compare": return "Comparing images…"
             case "Diagram": return "Drawing a diagram…"
             case "CodeMap": return "Mapping the code…"
             case "Docs": return "Reading the docs…"
