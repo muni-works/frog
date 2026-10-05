@@ -28,6 +28,7 @@ def png(variant=0):
 
 
 class Fixture(BaseHTTPRequestHandler):
+    tool_args = None
     image_requests = []
     vision_requests = []
     image_started = threading.Event()
@@ -89,6 +90,8 @@ class Fixture(BaseHTTPRequestHandler):
         else:
             assert any(t['function']['name'] == 'Image' for t in body.get('tools', [])), 'Image not offered'
             args = {'prompt': prompt, 'size': '320x192', 'count': 2, 'seed': 42}
+            if self.tool_args is not None:
+                args = self.tool_args
             delta = {'tool_calls': [{'index': 0, 'id': 'image-call', 'type': 'function', 'function': {'name': 'Image', 'arguments': json.dumps(args)}}]}
             finish = 'tool_calls'
         self.send_response(200)
@@ -100,7 +103,7 @@ class Fixture(BaseHTTPRequestHandler):
         self.wfile.flush()
 
 
-def config(output, port, backend):
+def config(output, port, backend, image_endpoint=None):
     path = output / f'{backend}.toml'
     path.write_text(f'''default_model = "fixture"
 load_claude_md = false
@@ -113,8 +116,8 @@ tool_mode = "native"
 vision = true
 [image]
 backend = "{backend}"
-endpoint = "http://127.0.0.1:{port}/v1/images/generations"
-model = "fixture-image"
+endpoint = "{image_endpoint or f'http://127.0.0.1:{port}/v1/images/generations'}"
+model = "{'z-image-turbo' if image_endpoint else 'fixture-image'}"
 ''')
     return path
 
@@ -155,7 +158,7 @@ class Frog:
         self.err.close()
 
 
-def run_case(binary, output, cfg, name, decision='allow', resume=None):
+def run_case(binary, output, cfg, name, decision='allow', resume=None, timeout=30):
     cwd = output / name
     cwd.mkdir(exist_ok=True)
     frog = Frog(binary, cfg, cwd, resume)
@@ -167,7 +170,7 @@ def run_case(binary, output, cfg, name, decision='allow', resume=None):
     if name == 'cancel':
         assert Fixture.image_started.wait(10), 'generation never started'
         frog.send(op='interrupt')
-    frog.until(lambda e: e['event'] == 'turn_ended')
+    frog.until(lambda e: e['event'] == 'turn_ended', timeout=timeout)
     frog.until(lambda e: e['event'] == 'idle')
     frog.close()
     (cwd / 'events.jsonl').write_text(''.join(json.dumps(e) + '\n' for e in frog.events))
@@ -180,9 +183,10 @@ def run_case(binary, output, cfg, name, decision='allow', resume=None):
         result = completed[-1]['item']
         expected = 'denied' if decision == 'deny' else ('error' if name in ('malformed', 'http-error') else 'ok')
         assert result['outcome'] == expected, result
-        assert len(result.get('images', [])) == (2 if expected == 'ok' else 0)
+        count = Fixture.tool_args['count'] if Fixture.tool_args else 2
+        assert len(result.get('images', [])) == (count if expected == 'ok' else 0)
         if expected == 'ok':
-            assert len(Fixture.vision_requests[-1]) == 2, 'images did not reach vision model'
+            assert len(Fixture.vision_requests[-1]) == count, 'images did not reach vision model'
             for i, image in enumerate(result['images']):
                 (cwd / f'image-{i}.png').write_bytes(base64.b64decode(image['data']))
             # A replay fixture directly from the real binary's event envelopes.
@@ -198,6 +202,7 @@ def main():
     parser.add_argument('--frog', type=Path, default=Path('target/debug/frog'))
     parser.add_argument('--output', type=Path)
     parser.add_argument('--server-only', action='store_true')
+    parser.add_argument('--image-endpoint', help='Test an explicitly selected real tang image backend; chat remains a local fixture')
     args = parser.parse_args()
     output = (args.output or Path(tempfile.mkdtemp(prefix='frog-image-test-'))).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -212,6 +217,11 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     binary = args.frog.resolve()
     try:
+        if args.image_endpoint:
+            Fixture.tool_args = {'prompt': 'A small green frog sitting on a mossy stone beside a pond, natural daylight, photograph', 'size': '320x192', 'count': 1, 'seed': 42, 'steps': 8, 'output_dir': 'assets'}
+            tang = config(output, port, 'tang', args.image_endpoint)
+            run_case(binary, output, tang, 'trained-tang', timeout=300)
+            return
         sid = run_case(binary, output, stub, 'stub')
         resumed = Frog(binary, stub, output / 'stub', sid)
         resumed.send(op='subscribe', after=0)
