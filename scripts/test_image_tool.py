@@ -204,6 +204,7 @@ def main():
     parser.add_argument('--server-only', action='store_true')
     parser.add_argument('--image-endpoint', help='Test an explicitly selected real tang image backend; chat remains a local fixture')
     parser.add_argument('--size', default='320x192', help='Image size for the real-backend test')
+    parser.add_argument('--expect-model-hash', action='store_true', help='Require a SHA256 checkpoint fingerprint from the real backend')
     args = parser.parse_args()
     output = (args.output or Path(tempfile.mkdtemp(prefix='frog-image-test-'))).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -233,6 +234,10 @@ def main():
             manifest = json.loads(manifests[-1].read_text())
             width, height = map(int, args.size.split('x'))
             assert manifest['generation']['images'] == [{'seed': 42, 'steps': 8, 'width': width, 'height': height}], manifest
+            if args.expect_model_hash:
+                digest = manifest['generation']['model_hash']
+                assert digest.startswith('sha256:') and len(digest) == 71, digest
+                assert all(c in '0123456789abcdef' for c in digest[7:]), digest
             print('PASS trained progress and actual generation manifest', flush=True)
             return
         sid = run_case(binary, output, stub, 'stub')

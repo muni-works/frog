@@ -184,7 +184,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                 .await
                 .map_err(|e| anyhow::anyhow!("image request failed: {}", e.without_url()))?;
             let value = receive_response(response, ctx).await?;
-            generation_metadata = json!({"model":value["model"].as_str().filter(|s| s.len() <= 128), "images":value["data"].as_array().map(|items| items.iter().take(4).map(|item| json!({"seed":item["seed"].as_u64(),"steps":item["steps"].as_u64(),"width":item["width"].as_u64(),"height":item["height"].as_u64()})).collect::<Vec<_>>())});
+            generation_metadata = json!({"model":value["model"].as_str().filter(|s| s.len() <= 128), "model_hash":value["model_hash"].as_str().filter(|s| s.len() <= 128), "images":value["data"].as_array().map(|items| items.iter().take(4).map(|item| json!({"seed":item["seed"].as_u64(),"steps":item["steps"].as_u64(),"width":item["width"].as_u64(),"height":item["height"].as_u64()})).collect::<Vec<_>>())});
             (decode_response(&value, request.count)?, model.to_string())
         }
         _ => bail!("unknown image backend `{backend}`; expected stub, remote, tang or apple"),
@@ -266,7 +266,8 @@ async fn receive_response(mut response: reqwest::Response, ctx: &Ctx) -> Result<
                     }
                 }
                 if value.get("error").is_some() {
-                    bail!("image generation stream reported an error");
+                    let detail = value["error"]["message"].as_str().or(value["error"].as_str()).unwrap_or("unspecified backend error");
+                    bail!("image generation stream reported an error: {}", detail.chars().take(1024).collect::<String>());
                 }
                 if value["data"].is_array() {
                     if parser.result.replace(value).is_some() {
@@ -501,7 +502,7 @@ mod tests {
                 body,
                 json!({"model":"test-image", "prompt":"a frog", "size":"64x64", "n":1, "seed":42, "response_format":"b64_json"})
             );
-            let response = json!({"data":[{"b64_json": image.data}]}).to_string();
+            let response = json!({"model_hash":"sha256:test-checkpoint", "data":[{"b64_json": image.data}]}).to_string();
             socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).as_bytes()).await.unwrap();
         });
         ctx.image = Settings {
@@ -522,6 +523,7 @@ mod tests {
         assert_eq!(out.images.len(), 1);
         assert_eq!(out.images[0].mime, "image/png");
         assert!(out.content.contains("test-image"));
+        assert!(out.content.contains("sha256:test-checkpoint"));
         assert_eq!(rx.try_recv().unwrap(), "Generating images…");
         assert_eq!(rx.try_recv().unwrap(), "Images ready.");
     }

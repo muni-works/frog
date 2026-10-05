@@ -27,8 +27,9 @@ The stub uses PNG rather than SVG so it exercises the raster attachment path. Re
 responses must contain `data[].b64_json`; URL fetching is deliberately unsupported.
 Requests preserve prompt, dimensions, count and optional seed in durable tool events.
 Remote reproducibility still depends on the provider. Requested seed/steps and returned
-model/seed/steps/dimensions are retained in asset manifests; model hashes are not supplied
-by the image API. Tang endpoints stream step progress with JSON fallback. The Apple API
+model/seed/steps/dimensions are retained in asset manifests, together with model hashes
+when supplied by the backend. Tang fingerprints actual checkpoint bytes at resident load
+and streams step progress with JSON fallback. The Apple API
 adapter returns availability errors because its non-UI API is unavailable on macOS 27+.
 Step previews and backend autodiscovery remain later work. See the README for limits.
 
