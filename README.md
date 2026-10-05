@@ -204,7 +204,7 @@ Vision support is detected: ollama reports it, and Anthropic and OpenAI's own mo
 
 ## Image generation
 
-`Image` takes `{prompt, size?, seed?, count?, output_dir?}` and returns images to the transcript and
+`Image` takes `{prompt, size?, seed?, count?, steps?, output_dir?}` and returns images to the transcript and
 lightbox, including vision input for models that support it. Use it when the user asks
 for images. Generation asks permission in default mode; session approval is separate
 from shell approval. Images and the request are retained in the session log.
@@ -235,10 +235,12 @@ service. `backend = "apple"` starts the bundled Apple sidecar and uses ImageCrea
 Apple chooses dimensions and rejects seeds. ImageCreator requires foreground creation
 on supported macOS releases and is disabled by Apple on macOS 27+; this backend
 therefore returns an availability error there. See [Apple's API documentation](https://developer.apple.com/documentation/imageplayground/imagecreator/init%28%29).
-Automatic backend selection and step previews remain subsequent milestones.
+Tang endpoints support `x-frog-progress: sse` step streaming; Frog accepts streamed
+progress plus the final image result. Optional `steps` requires backend support.
+Automatic backend selection and image previews remain subsequent milestones.
 
 With `output_dir`, new PNG assets and a JSON manifest containing prompt, backend,
-model, requested size and seed are saved inside the workspace. Existing files are not
+model, requested size/seed/steps and returned generation parameters are saved inside the workspace. Existing files are not
 replaced. Remote rasters are fully decoded with dimension/allocation bounds.
 
 Test the complete tool path through the real executable with local chat/image fixtures:

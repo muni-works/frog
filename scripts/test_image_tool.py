@@ -62,7 +62,16 @@ class Fixture(BaseHTTPRequestHandler):
             elif 'http-error' in body['prompt']:
                 self.json({'error': 'fixture failure'}, 503)
             else:
-                self.json({'data': [{'b64_json': base64.b64encode(png(i)).decode()} for i in range(body['n'])]})
+                result = {'data': [{'b64_json': base64.b64encode(png(i)).decode()} for i in range(body['n'])]}
+                if self.headers.get('x-frog-progress') == 'sse':
+                    self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.end_headers()
+                    frames = ''.join('event: progress\ndata: ' + json.dumps({'step': step, 'of': 8}) + '\n\n' for step in [0, 1, 8])
+                    frames += 'event: result\ndata: ' + json.dumps(result) + '\n\n'
+                    data = frames.encode()
+                    for offset in range(0, len(data), 7): self.wfile.write(data[offset:offset + 7])
+                    self.wfile.flush()
+                else:
+                    self.json(result)
             return
         if self.path != '/v1/chat/completions':
             self.json({}, 404)
@@ -214,6 +223,8 @@ def main():
         run_case(binary, output, remote, 'deny', 'deny')
         assert not Fixture.image_requests, 'denied generation reached backend'
         run_case(binary, output, remote, 'remote')
+        tang = config(output, port, 'tang')
+        run_case(binary, output, tang, 'tang-stream')
         assert Fixture.image_requests[-1]['seed'] == 42
         run_case(binary, output, remote, 'malformed')
         run_case(binary, output, remote, 'http-error')

@@ -30,6 +30,7 @@ struct Request {
     #[serde(default = "default_count")]
     count: usize,
     output_dir: Option<String>,
+    steps: Option<usize>,
 }
 fn default_size() -> String {
     "1024x1024".into()
@@ -46,6 +47,9 @@ impl Request {
         }
         if !(1..=4).contains(&req.count) {
             bail!("count must be between 1 and 4");
+        }
+        if req.steps.is_some_and(|steps| !(1..=100).contains(&steps)) {
+            bail!("steps must be between 1 and 100");
         }
         let dimensions = req
             .size
@@ -67,7 +71,8 @@ pub fn spec() -> ToolSpec {
             "size":{"type":"string", "description":"WIDTHxHEIGHT, 64–2048 per dimension; default 1024x1024"},
             "seed":{"type":"integer", "minimum":0},
             "count":{"type":"integer", "minimum":1, "maximum":4, "default":1},
-            "output_dir":{"type":"string", "description":"Optional workspace directory for new PNG assets and generation metadata"}
+            "output_dir":{"type":"string", "description":"Optional workspace directory for new PNG assets and generation metadata"},
+            "steps":{"type":"integer","minimum":1,"maximum":100,"description":"Optional inference steps; requires backend support"}
         }, "required":["prompt"], "additionalProperties":false}),
     }
 }
@@ -89,10 +94,11 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .backend
         .as_deref()
         .context("Image is not configured. Set [image].backend to remote, tang, apple or stub in config.toml")?;
-    if backend == "apple" && request.seed.is_some() {
-        bail!("Apple ImageCreator does not support seeds");
+    if backend == "apple" && (request.seed.is_some() || request.steps.is_some()) {
+        bail!("Apple ImageCreator does not support seeds or inference steps");
     }
     progress(ctx, "Generating images…");
+    let mut generation_metadata = Value::Null;
     let (images, model) = match backend {
         "stub" => {
             let mut bytes = Vec::new();
@@ -153,11 +159,17 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             if let Some(seed) = request.seed {
                 body["seed"] = json!(seed);
             }
+            if let Some(steps) = request.steps {
+                body["steps"] = json!(steps);
+            }
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(300))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?;
             let mut http = client.post(url).json(&body);
+            if backend == "tang" {
+                http = http.header("x-frog-progress", "sse");
+            }
             if let Some(env) = &settings.api_key_env {
                 let token = std::env::var(env).with_context(|| {
                     format!("image API key environment variable {env} is missing")
@@ -167,22 +179,12 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                 }
                 http = http.bearer_auth(token);
             }
-            let mut response = http
+            let response = http
                 .send()
                 .await
                 .map_err(|e| anyhow::anyhow!("image request failed: {}", e.without_url()))?;
-            if !response.status().is_success() {
-                bail!("image endpoint returned HTTP {}", response.status());
-            }
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await.context("reading image response")? {
-                if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE {
-                    bail!("image response exceeds 64 MiB");
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            let value: Value =
-                serde_json::from_slice(&bytes).context("invalid JSON from image endpoint")?;
+            let value = receive_response(response, ctx).await?;
+            generation_metadata = json!({"model":value["model"].as_str().filter(|s| s.len() <= 128), "images":value["data"].as_array().map(|items| items.iter().take(4).map(|item| json!({"seed":item["seed"].as_u64(),"steps":item["steps"].as_u64(),"width":item["width"].as_u64(),"height":item["height"].as_u64()})).collect::<Vec<_>>())});
             (decode_response(&value, request.count)?, model.to_string())
         }
         _ => bail!("unknown image backend `{backend}`; expected stub, remote, tang or apple"),
@@ -196,7 +198,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             super::visual::save(ctx, &path, &super::visual::png(&raster)?).await?;
             saved.push(path.display().to_string());
         }
-        let metadata = json!({"backend":backend,"model":model,"prompt":request.prompt,"requested_size":request.size,"seed":request.seed,"files":saved});
+        let metadata = json!({"backend":backend,"model":model,"prompt":request.prompt,"requested_size":request.size,"seed":request.seed,"steps":request.steps,"generation":generation_metadata,"files":saved});
         super::visual::save(
             ctx,
             &dir.join(format!("image-{id}.json")),
@@ -207,7 +209,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     progress(ctx, "Images ready.");
     Ok(Output {
         content: format!(
-            "{} image(s) shown to the user. Backend: {backend}; model: {model}; requested size: {}; seed: {}.{} Saved assets: {}",
+            "{} image(s) shown to the user. Backend: {backend}; model: {model}; requested size: {}; seed: {}.{} Saved assets: {}. Generation parameters: {}",
             images.len(),
             request.size,
             request
@@ -219,7 +221,8 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             } else {
                 ""
             },
-            serde_json::to_string(&saved)?
+            serde_json::to_string(&saved)?,
+            generation_metadata
         ),
         display: Some(format!(
             "{} {} · {}",
@@ -234,6 +237,98 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         images,
         ..Default::default()
     })
+}
+
+/// Tang's optional SSE transport carries bounded numeric step progress and a final
+/// OpenAI-compatible data array. Parsing handles arbitrary TCP chunk boundaries.
+async fn receive_response(mut response: reqwest::Response, ctx: &Ctx) -> Result<Value> {
+    if !response.status().is_success() {
+        bail!("image endpoint returned HTTP {}", response.status());
+    }
+    let streaming = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("text/event-stream"));
+    let mut parser = Sse::default();
+    let mut bytes = Vec::new();
+    let mut total = 0usize;
+    while let Some(chunk) = response.chunk().await.context("reading image response")? {
+        total = total.saturating_add(chunk.len());
+        if total > MAX_RESPONSE {
+            bail!("image response exceeds 64 MiB");
+        }
+        if streaming {
+            for value in parser.push(&chunk)? {
+                if let (Some(step), Some(of)) = (value["step"].as_u64(), value["of"].as_u64()) {
+                    if of > 0 && of <= 400 && step <= of {
+                        progress(ctx, &format!("Generating images: step {step}/{of}…"));
+                    }
+                }
+                if value.get("error").is_some() {
+                    bail!("image generation stream reported an error");
+                }
+                if value["data"].is_array() {
+                    if parser.result.replace(value).is_some() {
+                        bail!("duplicate final image response");
+                    }
+                }
+            }
+        } else {
+            bytes.extend_from_slice(&chunk);
+        }
+    }
+    if streaming {
+        if !parser.buffer.iter().all(u8::is_ascii_whitespace) {
+            bail!("truncated image event stream");
+        }
+        parser
+            .result
+            .context("image event stream ended without a result")
+    } else {
+        serde_json::from_slice(&bytes).context("invalid JSON from image endpoint")
+    }
+}
+#[derive(Default)]
+struct Sse {
+    buffer: Vec<u8>,
+    searched: usize,
+    result: Option<Value>,
+}
+impl Sse {
+    fn push(&mut self, chunk: &[u8]) -> Result<Vec<Value>> {
+        self.buffer.extend_from_slice(chunk);
+        let mut values = Vec::new();
+        loop {
+            let boundary = (self.searched..self.buffer.len()).find_map(|i| {
+                if self.buffer[i..].starts_with(b"\r\n\r\n") {
+                    Some((i, 4))
+                } else if self.buffer[i..].starts_with(b"\n\n") {
+                    Some((i, 2))
+                } else {
+                    None
+                }
+            });
+            let Some((end, delimiter)) = boundary else {
+                self.searched = self.buffer.len().saturating_sub(3);
+                break;
+            };
+            let frame =
+                std::str::from_utf8(&self.buffer[..end]).context("invalid UTF-8 image event")?;
+            let data = frame
+                .lines()
+                .filter_map(|line| line.strip_prefix("data:"))
+                .map(|s| s.strip_prefix(' ').unwrap_or(s))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !data.is_empty() && data != "[DONE]" {
+                values.push(serde_json::from_str(&data).context("invalid image event JSON")?);
+            }
+            self.buffer.drain(..end + delimiter);
+            self.searched = 0;
+        }
+        Ok(values)
+    }
 }
 
 fn decode_response(value: &Value, count: usize) -> Result<Vec<Image>> {
@@ -275,6 +370,22 @@ fn decode_response(value: &Value, count: usize) -> Result<Vec<Image>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn image_events_handle_fragmented_utf8_and_crlf() {
+        let stream = "event: progress\r\ndata: {\"step\":1,\"of\":8}\r\n\r\nevent: result\ndata: {\"data\":[],\"note\":\"🐸\"}\n\ndata: [DONE]\n\n";
+        for size in 1..32 {
+            let mut parser = Sse::default();
+            let values: Vec<_> = stream
+                .as_bytes()
+                .chunks(size)
+                .flat_map(|c| parser.push(c).unwrap())
+                .collect();
+            assert_eq!(values.len(), 2);
+            assert_eq!(values[0]["step"], 1);
+            assert_eq!(values[1]["note"], "🐸");
+            assert!(parser.buffer.is_empty());
+        }
+    }
     #[test]
     fn rejects_invalid_arguments_and_responses() {
         for input in [
