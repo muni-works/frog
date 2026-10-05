@@ -59,8 +59,14 @@ dependency retains these diagnostics rather than relaxing the acceptance bounds.
 Fused Metal RMS scale and gated residual kernels reduce three resident 320×192
 requests from 13.79/12.91/13.24 seconds to 8.68/8.74/8.75 seconds. The three fused
 outputs are byte-identical; their largest RGB difference from the unfused output is
-one channel value. A fused 512×512 request passes at 37.79 seconds. Convolution,
-group-normalization, upsampling and preview work remain open.
+one channel value. A fused 512×512 request passes at 37.79 seconds.
+Subsequent Metal group normalization, nearest upsampling and implicit tiled
+convolution keep the VAE on device. Three resident 320×192 requests take
+5.824/5.905/5.980 seconds, and 512×512 takes 24.534 seconds. The tested outputs are
+byte-identical to the preceding device-normalization implementation, and all 83
+Metal compute tests plus selected trained/random VAE references pass at unchanged
+tolerances. Real Frog streaming and hash-manifest validation also pass at 128×128.
+Final-layer modulation/packing and preview work remain open.
 
 The local host has 48 GiB RAM. The public checkpoint was downloaded at pinned
 revision `f332072aa78be7aecdf3ee76d5c247082da564a6`, with upstream LFS hash checks and

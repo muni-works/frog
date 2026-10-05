@@ -18,6 +18,9 @@ def main():
     parser.add_argument('--frog', type=Path, required=True)
     parser.add_argument('--base-url', required=True)
     parser.add_argument('--model', required=True)
+    parser.add_argument('--judge-base-url')
+    parser.add_argument('--judge-model')
+    parser.add_argument('--coder-no-vision', action='store_true')
     parser.add_argument('--image-endpoint', required=True)
     parser.add_argument('--screenshot-endpoint', required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -25,7 +28,9 @@ def main():
     parser.add_argument('--timeout', type=int, default=900)
     parser.add_argument('--tool-mode', choices=('json', 'text'), default='json')
     args = parser.parse_args()
-    for endpoint in (args.base_url, args.image_endpoint, args.screenshot_endpoint):
+    assert bool(args.judge_base_url) == bool(args.judge_model), 'specify both judge endpoint and model'
+    assert not args.coder_no_vision or args.judge_base_url, 'a non-vision coder requires a separate vision judge'
+    for endpoint in (args.base_url, args.image_endpoint, args.screenshot_endpoint, args.judge_base_url or args.base_url):
         url = urlsplit(endpoint)
         assert url.scheme == 'http' and url.hostname in ('localhost', '127.0.0.1', '::1'), 'benchmark endpoints must be local'
     output = args.output.resolve()
@@ -34,7 +39,7 @@ def main():
     # JSON quoting is also valid TOML string syntax and preserves paths literally.
     q = json.dumps
     cfg.write_text(f'''default_model = "local"
-compare_model = "local"
+compare_model = {q('judge' if args.judge_base_url else 'local')}
 load_claude_md = false
 sandbox_shell = false
 screenshot_endpoint = {q(args.screenshot_endpoint)}
@@ -49,9 +54,22 @@ base_url = {q(args.base_url)}
 context_window = {args.context_window}
 max_tokens = 2048
 tool_mode = {q(args.tool_mode)}
-vision = true
+vision = {'false' if args.coder_no_vision else 'true'}
 thinking = "never"
 [models.local.extra]
+temperature = 0.0
+''')
+    if args.judge_base_url:
+        with cfg.open('a') as f:
+            f.write(f'''\n[models.judge]
+provider = "openai"
+model = {q(args.judge_model)}
+base_url = {q(args.judge_base_url)}
+context_window = 8192
+max_tokens = 2048
+vision = true
+thinking = "never"
+[models.judge.extra]
 temperature = 0.0
 ''')
     frog = Frog(args.frog.resolve(), cfg, output)
@@ -65,6 +83,9 @@ Use only Image, Write, Edit, Read, Screenshot and Compare. Do not use Bash, Task
 4. Compare the generated saved PNG target against the screenshot, notes "Match the frog shape, eye placement, colors and white background; ignore minor antialiasing", loop_id "bench", threshold 85, max_rounds 6.
 5. If stop_reason is continue, fix index.html using the differences, then screenshot and compare again with the SAME target and loop_id. Do not regenerate the target. Stop when matched, stalled or max_rounds.
 Do not finish before the real Compare result. Report the final score and saved paths. Execute one tool action at a time.'''
+    if args.coder_no_vision:
+        prompt = prompt.replace('The Image result already includes the target image as vision input.',
+            'Your coding model has no direct vision input. The Compare vision judge sees both the generated target and your captured page; use its differences and coordinates to refine your implementation.')
     try:
         frog.send(op='submit', text=prompt)
         while True:

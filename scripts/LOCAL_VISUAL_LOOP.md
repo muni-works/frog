@@ -23,6 +23,13 @@ limited to that directory, and shell/task permissions are denied. Read follows
 Frog's ordinary permissions. Run only with local services and files intended for
 the benchmark. A completed tool integration test does not establish coding quality.
 
+For a separate local coding model and vision judge, add `--judge-base-url` and
+`--judge-model`. Add `--coder-no-vision` if the coding model cannot consume images;
+it must then use the vision judge's differences rather than claiming direct visual
+inspection. This option requires the separate judge profile. Both endpoints must
+remain local. The existing Z-Image Qwen3 text encoder can be exposed through an
+isolated model-directory view with its tokenizer, without downloading new weights.
+
 Initial Gemma 3 4B JSON-mode runs generated targets and CSS pages but stopped before
 Compare; one emitted a fenced valid action, now recovered by Frog, while subsequent
 replies broke the format or failed the implementation requirements. Those runs do

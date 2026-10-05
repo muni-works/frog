@@ -365,7 +365,18 @@ pub fn parse_action(text: &str) -> Option<(String, Action)> {
         .or_else(|| text.strip_prefix("```\n"))
         .and_then(|body| body.strip_suffix("```"))
         .unwrap_or(text);
-    let v: Value = serde_json::from_str(text.trim()).ok()?;
+    let text = text.trim();
+    let v: Value = serde_json::from_str(text)
+        .or_else(|error| {
+            // Recover a complete action whose root closing brace was omitted.
+            // One brace cannot repair truncated strings, arguments or multiple levels.
+            if error.is_eof() && text.starts_with('{') && text.ends_with('}') {
+                serde_json::from_str(&format!("{text}}}"))
+            } else {
+                Err(error)
+            }
+        })
+        .ok()?;
     let thought = v["thought"].as_str().unwrap_or("").to_string();
     let a = &v["action"];
     if let Some(name) = a["tool"].as_str() {
@@ -409,6 +420,27 @@ mod tests {
         assert!(
             parse_action(&format!("```json\n{action}\n```\n```json\n{action}\n``` ")).is_none()
         );
+    }
+
+    #[test]
+    fn json_action_recovers_only_one_missing_root_brace() {
+        let action = r#"{"thought":"write","action":{"tool":"Write","args":{"file_path":"index.html","content":"<div>frog</div>"}}"#;
+        assert!(
+            matches!(parse_action(action), Some((_, Action::Tool { name, .. })) if name == "Write")
+        );
+        assert!(parse_action(&action[..action.len() - 1]).is_none());
+        assert!(parse_action(action.trim_end_matches('}')).is_none());
+        assert!(
+            parse_action(
+                r#"{"thought":"write","action":{"tool":"Write","args":{"content":"unfinished}"#
+            )
+            .is_none()
+        );
+        assert!(
+            parse_action(r#"{"thought":"write","action":{"tool":"Write","args":{"content":}}}"#)
+                .is_none()
+        );
+        assert!(parse_action(&format!("Example: {action}")).is_none());
     }
 
     #[test]
