@@ -71,7 +71,7 @@ final class MacEffects: ConversationEffects {
 
     /// Name the session with the on-device model after its first completed turn.
     private func nameSession(_ c: Conversation, from turn: TurnState) {
-        let answer = turn.items.last { $0.kind == .message }?.text ?? ""
+        let answer = Titler.answerContext(for: turn)
         let request = turn.input
         Task { [weak c] in
             guard let t = await Titler.title(for: request, answer: answer) else { return }

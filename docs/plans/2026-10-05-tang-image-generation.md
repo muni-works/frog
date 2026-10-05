@@ -39,10 +39,15 @@ the Z-Image DiT, tiled VAE decode, static-shift Euler scheduling and a lazy resi
 image worker. CPU and Metal reference checks cover every selected boundary, production
 128-wide attention heads and 256×256 VAE output; maximum errors are below 1.1e-5 for
 the DiT and 2e-5 for the VAE. These deterministic random checkpoints establish operator
-parity. Trained-weight quality and performance remain unverified. The worker currently
+parity. The pinned trained checkpoint passed real Frog generation at 320×192 and 512×512,
+including all streamed steps and actual asset metadata. Native transcript and lightbox
+display were inspected. Repeating seed 42 with the resident pipeline produced a byte-identical
+PNG. One eight-step 320×192 request took 52.3 seconds including loading, its resident
+repeat took 11.1 seconds, and 512×512 took 52.2 seconds. These individual smoke tests do
+not establish broad quality or speed. Production vision judging remains unverified. The worker currently
 runs separately from coding and vision models; shared residency remains unfinished.
 
-The local host has 48 GiB RAM. The public checkpoint is being downloaded at pinned
+The local host has 48 GiB RAM. The public checkpoint was downloaded at pinned
 revision `f332072aa78be7aecdf3ee76d5c247082da564a6`, with upstream LFS hash checks and
 streamed F32-matrix conversion to BF16. This reduces disk output from about 32.8 GB to
 20.5 GB while retaining 4 GiB headroom. No existing model or workload is evicted.

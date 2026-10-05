@@ -92,7 +92,7 @@ class Fixture(BaseHTTPRequestHandler):
             args = {'prompt': prompt, 'size': '320x192', 'count': 2, 'seed': 42}
             if self.tool_args is not None:
                 args = self.tool_args
-            delta = {'tool_calls': [{'index': 0, 'id': 'image-call', 'type': 'function', 'function': {'name': 'Image', 'arguments': json.dumps(args)}}]}
+            delta = {'tool_calls': [{'index': 0, 'id': f'image-call-{start}', 'type': 'function', 'function': {'name': 'Image', 'arguments': json.dumps(args)}}]}
             finish = 'tool_calls'
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
@@ -203,6 +203,7 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--server-only', action='store_true')
     parser.add_argument('--image-endpoint', help='Test an explicitly selected real tang image backend; chat remains a local fixture')
+    parser.add_argument('--size', default='320x192', help='Image size for the real-backend test')
     args = parser.parse_args()
     output = (args.output or Path(tempfile.mkdtemp(prefix='frog-image-test-'))).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -218,9 +219,21 @@ def main():
     binary = args.frog.resolve()
     try:
         if args.image_endpoint:
-            Fixture.tool_args = {'prompt': 'A small green frog sitting on a mossy stone beside a pond, natural daylight, photograph', 'size': '320x192', 'count': 1, 'seed': 42, 'steps': 8, 'output_dir': 'assets'}
+            Fixture.tool_args = {'prompt': 'A small green frog sitting on a mossy stone beside a pond, natural daylight, photograph', 'size': args.size, 'count': 1, 'seed': 42, 'steps': 8, 'output_dir': 'assets'}
             tang = config(output, port, 'tang', args.image_endpoint)
             run_case(binary, output, tang, 'trained-tang', timeout=300)
+            cwd = output / 'trained-tang'
+            events = [json.loads(line) for line in (cwd / 'events.jsonl').read_text().splitlines()]
+            image_id = next(e['id'] for e in events if e['event'] == 'item_started' and e['kind'].get('name') == 'Image')
+            progress = [e['delta'].get('text', '') for e in events if e['event'] == 'item_delta' and e['id'] == image_id]
+            for step in range(9):
+                assert f'Generating images: step {step}/8…' in progress, f'missing step {step}'
+            manifests = list((cwd / 'assets').glob('*.json'))
+            assert manifests, 'generation manifest missing'
+            manifest = json.loads(manifests[-1].read_text())
+            width, height = map(int, args.size.split('x'))
+            assert manifest['generation']['images'] == [{'seed': 42, 'steps': 8, 'width': width, 'height': height}], manifest
+            print('PASS trained progress and actual generation manifest', flush=True)
             return
         sid = run_case(binary, output, stub, 'stub')
         resumed = Frog(binary, stub, output / 'stub', sid)

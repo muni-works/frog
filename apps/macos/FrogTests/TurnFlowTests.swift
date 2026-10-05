@@ -4,6 +4,17 @@ import XCTest
 
 /// A turn reads in the order it happened, with each run of steps summed up in one sentence.
 final class TurnFlowTests: XCTestCase {
+    func testTitleContextIncludesSuccessfulVisualResults() {
+        var image = ItemState(id: "image", kind: .tool(name: "Image", arg: "frog"), done: true)
+        image.result = Item.ToolResult(name: "Image", arg: "frog", input: nil, outcome: .ok,
+                                      output: "Images ready.", images: [ToolImage(mime: "image/png", data: "png")])
+        let turn = TurnState(input: "Generate a frog", items: [image, message("answer", "Done.")])
+        XCTAssertEqual(Titler.answerContext(for: turn), "Completed Image: returned 1 image(s).\nDone.")
+        image.result?.outcome = .error
+        let failed = TurnState(input: "Generate a frog", items: [image, message("answer", "Failed.")])
+        XCTAssertEqual(Titler.answerContext(for: failed), "Failed.")
+    }
+
     private let t0 = Date(timeIntervalSince1970: 1_000_000)
 
     private func tool(_ id: String, _ name: String, _ arg: String, outcome: ToolOutcome = .ok,
