@@ -45,7 +45,7 @@ class VisualFixture(Fixture):
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--frog',type=Path,required=True);parser.add_argument('--screenshot-endpoint');parser.add_argument('--output',type=Path)
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--frog',type=Path,required=True);parser.add_argument('--screenshot-endpoint');parser.add_argument('--judge-endpoint');parser.add_argument('--judge-model');parser.add_argument('--output',type=Path)
     args=parser.parse_args();output=(args.output or Path(tempfile.mkdtemp(prefix='frog-visual-test-'))).resolve();output.mkdir(parents=True,exist_ok=True)
     server=ThreadingHTTPServer(('127.0.0.1',0),VisualFixture);port=server.server_address[1];threading.Thread(target=server.serve_forever,daemon=True).start()
     endpoint=args.screenshot_endpoint or f'http://127.0.0.1:{port}/v1/screenshots'
@@ -60,6 +60,15 @@ context_window = 65536
 tool_mode = "native"
 vision = true
 ''')
+    if args.judge_endpoint:
+        assert args.judge_model, '--judge-model is required with --judge-endpoint'
+        text=cfg.read_text();cfg.write_text('compare_model = "judge"\n'+text+f'''\n[models.judge]
+provider = "openai"
+model = "{args.judge_model}"
+base_url = "{args.judge_endpoint}"
+context_window = 8192
+vision = true
+''')
     (output/'target.png').write_bytes(png());(output/'page.html').write_text('<!doctype html><style>html,body{margin:0;background:#508764;width:100%;height:100%}</style><h1>Frog capture</h1>')
     if args.screenshot_endpoint:
         import urllib.request
@@ -70,7 +79,7 @@ vision = true
     try:
         frog.send(op='submit',text='Rebuild the target with a bounded visual loop.')
         while True:
-            event=frog.until(lambda e:e['event'] in ('permission_request','turn_ended'))
+            event=frog.until(lambda e:e['event'] in ('permission_request','turn_ended'),timeout=300 if args.judge_endpoint else 30)
             if event['event']=='turn_ended': break
             frog.send(op='permission',id=event['id'],decision='allow')
         frog.until(lambda e:e['event']=='idle')
@@ -80,7 +89,7 @@ vision = true
         assert completed[1]['outcome']=='ok',completed[1]
         verdict=json.loads(completed[1]['output']);assert verdict['stop_reason']=='matched',verdict
         assert completed[2]['outcome']=='error' and 'already stopped' in completed[2]['output'],completed[2]
-        assert VisualFixture.judge_calls==1,VisualFixture.judge_calls
+        assert VisualFixture.judge_calls==(0 if args.judge_endpoint else 1),VisualFixture.judge_calls
         state=json.loads((output/'.frog/visual-loops/fixture.json').read_text());assert state['stopped'] and len(state['target'])<500,state
         assert (output/'actual.png').exists()
         (output/'events.jsonl').write_text(''.join(json.dumps(e)+'\n' for e in frog.events))
@@ -90,11 +99,11 @@ vision = true
         frog=Frog(args.frog.resolve(),cfg,output)
         frog.send(op='submit',text='Verify the stopped visual loop after restarting Frog.')
         while True:
-            event=frog.until(lambda e:e['event'] in ('permission_request','turn_ended'))
+            event=frog.until(lambda e:e['event'] in ('permission_request','turn_ended'),timeout=300 if args.judge_endpoint else 30)
             if event['event']=='turn_ended':break
             frog.send(op='permission',id=event['id'],decision='allow')
         frog.until(lambda e:e['event']=='idle')
-        assert VisualFixture.judge_calls==1,'restarting bypassed durable stop'
+        assert VisualFixture.judge_calls==(0 if args.judge_endpoint else 1),'restarting bypassed durable stop'
         print(f'PASS capture, crop judging, score and durable stop across restart: {output}')
     finally: frog.close();server.shutdown();server.server_close()
 

@@ -44,8 +44,13 @@ including all streamed steps and actual asset metadata. Native transcript and li
 display were inspected. Repeating seed 42 with the resident pipeline produced a byte-identical
 PNG. One eight-step 320×192 request took 52.3 seconds including loading, its resident
 repeat took 11.1 seconds, and 512×512 took 52.2 seconds. These individual smoke tests do
-not establish broad quality or speed. Production vision judging remains unverified. The worker currently
-runs separately from coding and vision models; shared residency remains unfinished.
+not establish broad quality or speed. The dependency now also mounts images in the chat/vision
+service, retains both models and serializes heavy inference with a shared resource lock.
+Real Frog generation passed against that combined service. A local Gemma 3 4B vision
+judge passed the Screenshot/Compare integration and durable-stop test, but invented
+some missing-letter differences; broad judge-quality validation remains unfinished.
+Full trained DiT reference checks still fail at several late boundaries despite small
+final-output error; deterministic random-checkpoint parity does not cover that failure.
 
 The local host has 48 GiB RAM. The public checkpoint was downloaded at pinned
 revision `f332072aa78be7aecdf3ee76d5c247082da564a6`, with upstream LFS hash checks and
@@ -60,8 +65,8 @@ bundled visual-loop skill; persisted match/stall/round stops; new PNG asset outp
 prompt/model/seed manifests. Real WebKit capture was exercised through frog --serve,
 with a fixture vision judge; its scores are not evidence of production judge quality.
 Native replay verifies retained screenshot output. Existing output files are never overwritten.
-Chromium support, raster-to-SVG vectorization, production judge validation and backend
-resident scheduling remain unfinished.
+Chromium support, raster-to-SVG vectorization, judge quality and cross-queue priority
+scheduling remain unfinished. Shared image/vision residency is implemented in Tang PR #32.
 
 ## Verified upstream corrections
 
