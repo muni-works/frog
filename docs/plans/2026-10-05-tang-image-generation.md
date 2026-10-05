@@ -65,7 +65,8 @@ bundled visual-loop skill; persisted match/stall/round stops; new PNG asset outp
 prompt/model/seed manifests. Real WebKit capture was exercised through frog --serve,
 with a fixture vision judge; its scores are not evidence of production judge quality.
 Native replay verifies retained screenshot output. Existing output files are never overwritten.
-Chromium support, raster-to-SVG vectorization, judge quality and cross-queue priority
+An optional Chromium sidecar now passes the real Frog Screenshot/Compare regression.
+Raster-to-SVG vectorization, judge quality and cross-queue priority
 scheduling remain unfinished. Shared image/vision residency is implemented in Tang PR #32.
 
 ## Verified upstream corrections

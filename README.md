@@ -263,7 +263,9 @@ test uses a captured run in `apps/macos/Fixtures/image-generation.jsonl`.
 `Screenshot` renders an HTTP(S) URL or local HTML/SVG file at a fixed viewport, shows
 its PNG in the transcript, and optionally saves a new `output_path`. On macOS it uses
 the bundled `frog-apple` WebKit sidecar, waits for fonts/images, and normalizes Retina
-captures to viewport pixels. Other renderers can expose the same JSON endpoint:
+captures to viewport pixels. Other renderers can expose the same JSON endpoint.
+The optional [Chromium sidecar](sidecars/frog-chromium/README.md) supports the same
+endpoint on other platforms and uses an isolated browser context per capture.
 
 ```toml
 screenshot_endpoint = "http://localhost:8912/v1/screenshots"
@@ -285,6 +287,10 @@ python3 scripts/test_visual_tools.py --frog target/debug/frog
 # Include real WebKit capture while keeping the vision judge a fixture:
 python3 scripts/test_visual_tools.py --frog target/debug/frog \
   --screenshot-endpoint http://localhost:8912/v1/screenshots
+# Use an explicitly selected local vision judge as well:
+python3 scripts/test_visual_tools.py --frog target/debug/frog \
+  --screenshot-endpoint http://localhost:8912/v1/screenshots \
+  --judge-endpoint http://localhost:8911/v1 --judge-model local-vision-model
 ```
 
 
