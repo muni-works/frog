@@ -1,5 +1,6 @@
 //! Summaries of bench results.
 
+use crate::cache::{Call, Summary};
 use crate::run::RunResult;
 use std::collections::BTreeMap;
 
@@ -150,5 +151,87 @@ pub fn print(results: &[RunResult]) {
     }
     for (i, (model, mode)) in configs.iter().enumerate() {
         println!("  [{}] {model} · {mode}", i + 1);
+    }
+    print_cache(&groups);
+}
+
+fn pct(x: Option<f64>) -> String {
+    x.map(|x| format!("{:.0}%", x * 100.0))
+        .unwrap_or_else(|| "—".into())
+}
+
+fn cache_row(name: &str, s: &Summary) {
+    println!(
+        "  {:<26} {:>6} {:>6} {:>10} {:>9} {:>5} {:>8} {:>9}",
+        name,
+        s.calls,
+        pct(s.hit_rate()),
+        s.prefilled_per_call()
+            .map(|n| format!("{n:.0}"))
+            .unwrap_or_default(),
+        s.prefill_s_per_call()
+            .map(|n| format!("{n:.2}"))
+            .unwrap_or_default(),
+        s.cold,
+        s.rewrites,
+        if s.reopened > 0 {
+            pct(s.reopened_hit_rate())
+        } else {
+            "·".into()
+        },
+    );
+}
+
+/// How much prefill the server's prompt cache saved, per model × mode and task, and the calls
+/// where it should have saved more (see `cache`). Only for runs that recorded calls.
+fn print_cache(groups: &BTreeMap<Config, Vec<&RunResult>>) {
+    if !groups.values().flatten().any(|r| !r.calls.is_empty()) {
+        return;
+    }
+    println!(
+        "\nprompt cache{:<16} {:>6} {:>6} {:>10} {:>9} {:>5} {:>8} {:>9}",
+        "", "calls", "hit", "prefill/c", "pf s/c", "cold", "rewrites", "reopened"
+    );
+    let mut cold = Vec::new();
+    for ((model, mode), runs) in groups {
+        println!("{model} · {mode}");
+        let mut tasks: BTreeMap<&str, Vec<&Call>> = BTreeMap::new();
+        for r in runs {
+            tasks.entry(&r.task).or_default().extend(&r.calls);
+            cold.extend(r.calls.iter().filter(|c| c.cold).map(|c| (*r, c)));
+        }
+        for (task, calls) in &tasks {
+            cache_row(task, &Summary::of(calls.iter().copied()));
+        }
+        cache_row("all", &Summary::of(runs.iter().flat_map(|r| &r.calls)));
+    }
+    println!(
+        "  hit: cached share of prompt tokens · prefill/c: tokens prefilled per call · cold: calls \
+         that only appended to the last request yet prefilled most of it · rewrites: calls frog \
+         sent that didn't extend the last · reopened: hit on a resumed or new conversation's \
+         first call"
+    );
+    if cold.is_empty() {
+        return;
+    }
+    println!("\ncold calls (cache busts):");
+    for (r, c) in cold.iter().take(12) {
+        println!(
+            "  {} · {} · rep {} · turn {}: {} prompt tokens, {} cached of ~{} expected, {:.2}s · session {}",
+            r.task,
+            r.model,
+            r.rep,
+            c.turn + 1,
+            c.prompt_tokens,
+            c.cached_tokens,
+            c.expected_cached(),
+            c.prefill_ms as f64 / 1000.0,
+            r.sessions
+                .get(c.conversation as usize)
+                .unwrap_or(&r.session),
+        );
+    }
+    if cold.len() > 12 {
+        println!("  … and {} more", cold.len() - 12);
     }
 }

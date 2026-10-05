@@ -1,0 +1,9 @@
+# Two conversations in one project: the second opens with the same system prompt and tools as
+# the first, so a server that shares cached blocks across conversations prefills only what's new.
+prompt = "In two sentences, what does src/server.py do? Don't change any files."
+check = "[ \"$(tr -d '[:space:]' < answer.txt)\" = 8431 ]"
+timeout_secs = 360
+
+[[then]]
+conversation = "new"
+prompt = "What TCP port does the HTTP server in this project listen on in production? Write just the number to answer.txt."

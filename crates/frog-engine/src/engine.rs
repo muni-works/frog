@@ -525,8 +525,40 @@ struct Streamed {
     no_think: bool,
     /// The reasoning-token cap sent with this call.
     think_budget: Option<u32>,
+    /// How this request compares with the one sent before it (see [`CallTiming::extends`]).
+    extends: Option<bool>,
+    reusable: Option<f64>,
     /// Read-only tool calls started while the reply streamed (see `early`).
     early: crate::early::Early,
+}
+
+/// A request as a server's prompt cache sees it, flattened: the system prompt, the tools, then
+/// the messages as JSON. A request that only appends to an earlier one starts with that one's
+/// text, less the closing `]`.
+fn flatten(system: &str, tools: &[ToolSpec], messages: &[Message]) -> String {
+    let mut s = system.to_string();
+    for t in tools {
+        s.push_str(&t.name);
+        s.push_str(&t.description);
+        s.push_str(&t.schema.to_string());
+    }
+    s.push_str(&serde_json::to_string(messages).unwrap_or_default());
+    s
+}
+
+/// Whether `cur` only appends to `prev` (both [`flatten`]ed), and the share of `cur` that
+/// repeats the start of `prev`. Nothing to compare with when `prev` is empty.
+fn reuse(prev: &str, cur: &str) -> (Option<bool>, Option<f64>) {
+    if prev.is_empty() || cur.is_empty() {
+        return (None, None);
+    }
+    let shared = prev
+        .bytes()
+        .zip(cur.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let extends = cur.starts_with(prev.strip_suffix(']').unwrap_or(prev));
+    (Some(extends), Some(shared as f64 / cur.len() as f64))
 }
 
 struct Agent {
@@ -565,6 +597,9 @@ struct Agent {
     /// Where the current turn's time went, and when it started.
     timing: TurnTiming,
     turn_clock: Option<Instant>,
+    /// The last request sent to this conversation's server cache (a model call or a warm-up),
+    /// [`flatten`]ed, to tell whether the next one only appends to it.
+    sent: Mutex<String>,
     /// The power meter, with `--energy`, and where this turn started on it (with the idle
     /// power to subtract).
     meter: Option<crate::energy::Meter>,
@@ -589,6 +624,8 @@ struct Agent {
     /// The ranked repo map in the system prompt (small and mid-size models only), rebuilt
     /// between turns when files change.
     repo_map: crate::repomap::Map,
+    /// Whether the session log holds the current `repo_map`.
+    map_logged: bool,
     /// Files edited this session, relative to the root, for ranking the map.
     edited: Vec<String>,
     /// The model can see images (probed, or `vision` in the profile).
@@ -625,12 +662,14 @@ impl Agent {
         // Panes open when the session was last saved, to close in the log (their shells died
         // with that process) so a resumed client doesn't expect them.
         let mut stale_panes: Vec<String> = Vec::new();
+        let mut resumed_map = None;
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
                 let l = session::load(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let (seq, turn) = (l.last_seq(), l.last_turn());
+                resumed_map = l.repo_map.clone();
                 let inputs = l
                     .events
                     .iter()
@@ -746,6 +785,7 @@ impl Agent {
             turn_usage: TurnUsage::default(),
             timing: TurnTiming::default(),
             turn_clock: None,
+            sent: Mutex::default(),
             meter: None,
             energy_mark: None,
             root: o.cwd,
@@ -760,6 +800,7 @@ impl Agent {
             rules,
             rules_seen: HashSet::new(),
             repo_map: Default::default(),
+            map_logged: false,
             edited: Vec::new(),
             classifier: None,
             vision: false,
@@ -780,7 +821,15 @@ impl Agent {
             }
         }
         agent.sync_specs();
-        agent.refresh_repo_map(&[]);
+        // A resumed session keeps the map it last sent: one rebuilt from the files as they are
+        // now would rewrite the prompt the server has cached, after any edit.
+        match resumed_map {
+            Some(map) => {
+                agent.repo_map = map;
+                agent.map_logged = true;
+            }
+            None => agent.refresh_repo_map(&[]),
+        }
         agent.apply_harness();
         if agent.cfg.energy && !agent.subagent {
             agent.meter = crate::energy::Meter::new();
@@ -880,6 +929,9 @@ impl Agent {
         }
         t.calls.push(CallTiming {
             prompt_tokens: u.input + u.cache_read,
+            cached_tokens: u.cache_read,
+            extends: streamed.extends,
+            reusable: streamed.reusable,
             output_tokens: u.output,
             ttft_ms: ttft,
             decode_ms: decode,
@@ -1280,6 +1332,7 @@ impl Agent {
         if self.messages.is_empty() {
             self.refresh_repo_map(&mentioned);
         }
+        self.log_map();
         self.apply_harness();
         self.push_user(text);
         if !images.is_empty() {
@@ -1488,6 +1541,8 @@ impl Agent {
         if budget == 0 {
             if have {
                 self.repo_map = Default::default();
+                self.map_logged = false;
+                self.log_map();
             }
             return;
         }
@@ -1502,7 +1557,24 @@ impl Agent {
             mentioned,
             edited: &self.edited,
         };
-        self.repo_map = crate::repomap::build(&self.root, cache.as_deref(), &seeds, budget);
+        let map = crate::repomap::build(&self.root, cache.as_deref(), &seeds, budget);
+        if map.text != self.repo_map.text {
+            self.map_logged = false;
+        }
+        self.repo_map = map;
+        self.log_map();
+    }
+
+    /// Log the repo map if the session log doesn't hold it yet. Only into a log that exists: a
+    /// conversation opened and never used shouldn't get one just for its map.
+    fn log_map(&mut self) {
+        if self.map_logged || self.store.is_none() || !self.shared.journal.has_log() {
+            return;
+        }
+        self.record(Record::RepoMap {
+            map: self.repo_map.clone(),
+        });
+        self.map_logged = true;
     }
 
     /// `path` relative to the project root, for rules and the repo map.
@@ -1783,6 +1855,7 @@ impl Agent {
         let Some(prefill) = self.provider.prefill(&req) else {
             return;
         };
+        *self.sent.lock().unwrap() = flatten(req.system, req.tools, req.messages);
         let prefill: Warming = Box::pin(prefill);
         let mut w = self.warming.lock().unwrap();
         if w.0 {
@@ -2555,6 +2628,13 @@ Don't repeat it. Change the arguments or try a different approach.",
             think_budget,
             cache_key: self.cache_key_ok.then_some(self.session_id.as_str()),
         };
+        let (extends, reusable) = {
+            let flat = flatten(&system, tools, messages);
+            let mut sent = self.sent.lock().unwrap();
+            let r = reuse(&sent, &flat);
+            *sent = flat;
+            r
+        };
         let mut attempt = 0;
         loop {
             self.emit(Event::Progress {
@@ -2564,6 +2644,8 @@ Don't repeat it. Change the arguments or try a different approach.",
             let mut streamed = Streamed {
                 no_think: think == Some(false),
                 think_budget,
+                extends,
+                reusable,
                 ..Default::default()
             };
             let sent = Instant::now();
@@ -3293,6 +3375,7 @@ mod tests {
     fn engine_sent(
         script: Vec<Response>,
         store: Option<PathBuf>,
+        resume: Option<String>,
         window: Option<u64>,
         cwd: PathBuf,
     ) -> (Handle, Arc<Mutex<Vec<String>>>) {
@@ -3306,7 +3389,7 @@ mod tests {
             cwd,
             mode: Mode::AcceptEdits,
             can_ask: true,
-            resume: None,
+            resume,
             store,
             sandbox: false,
             rich: false,
@@ -3321,6 +3404,16 @@ mod tests {
     /// Whether request `b` only appends to request `a`, so a server's cache of `a` still holds.
     fn extends(a: &str, b: &str) -> bool {
         b.starts_with(a.strip_suffix(']').unwrap())
+    }
+
+    /// The model calls a turn's `TurnEnded` recorded.
+    fn calls(evs: &[Envelope]) -> Vec<CallTiming> {
+        evs.iter()
+            .find_map(|e| match &e.event {
+                Event::TurnEnded { usage, .. } => usage.timing.as_ref().map(|t| t.calls.clone()),
+                _ => None,
+            })
+            .expect("a timed TurnEnded")
     }
 
     /// Submit one prompt and collect every event through the following `Idle`.
@@ -4118,6 +4211,7 @@ mod tests {
             reply(vec![read("r1")], Stop::ToolUse),
             reply(vec![read("r2")], Stop::ToolUse),
             reply(vec![text("done")], Stop::End),
+            reply(vec![text("again")], Stop::End),
         ];
         // Size the window so the fixed prompt plus one read fits under PRUNE_AT, and two land
         // past it but short of COMPACT_AT.
@@ -4128,7 +4222,7 @@ mod tests {
         let read_chars: usize = big.lines().map(|l| 6 + 1 + l.len() + 1).sum();
         let window = context::Estimator::default()
             .tokens(((fixed as f64 + 1.8 * read_chars as f64) / context::PRUNE_AT) as usize);
-        let (mut h, sent) = engine_sent(script, Some(dir.clone()), Some(window), dir.clone());
+        let (mut h, sent) = engine_sent(script, Some(dir.clone()), None, Some(window), dir.clone());
         let evs = run(&mut h, "look at big.rs twice").await;
         let sid = evs[0].session.clone();
         // Past PRUNE_AT but short of COMPACT_AT: nothing in the turn rewrote what was sent.
@@ -4164,6 +4258,18 @@ mod tests {
                 ..
             }
         )));
+        // The prune rewrote what the server has cached, and the next turn's call says so (here
+        // nothing warms it: the scripted provider has no prefill).
+        h.ops
+            .send(Op::Submit {
+                text: "again".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let next = calls(&until_idle(&mut h).await);
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].extends, Some(false));
+        assert!(next[0].reusable.unwrap() < 0.9);
         shutdown(h).await;
 
         // The pruning is in the log, so a resumed session sees the same history.
@@ -4197,21 +4303,58 @@ mod tests {
             reply(vec![text("wrote it")], Stop::End),
             reply(vec![text("ok")], Stop::End),
         ];
-        let (mut h, sent) = engine_sent(script, Some(dir.clone()), None, dir.clone());
-        run(&mut h, "add two.rs").await;
+        let (mut h, sent) = engine_sent(script, Some(dir.clone()), None, None, dir.clone());
+        let first = calls(&run(&mut h, "add two.rs").await);
         h.ops
             .send(Op::Submit {
                 text: "thanks".into(),
                 images: Vec::new(),
             })
             .unwrap();
-        until_idle(&mut h).await;
+        let second = calls(&until_idle(&mut h).await);
         let sent = sent.lock().unwrap().clone();
         assert_eq!(sent.len(), 3);
         assert!(sent[0].contains("lib.rs"), "the repo map is in the prompt");
         // The new file changed the project, but not the system prompt the next turn sends.
         assert!(extends(&sent[1], &sent[2]));
+        // And the calls say so, for `frog bench` to hold the server's cache to.
+        let flags: Vec<_> = first.iter().chain(&second).map(|c| c.extends).collect();
+        assert_eq!(flags, [None, Some(true), Some(true)]);
+        let reusable = second[0].reusable.unwrap();
+        assert!(reusable > 0.9 && reusable < 1.0, "{reusable}");
         shutdown(h).await;
+    }
+
+    /// A resumed engine sends the repo map (in the system prompt) its session last logged, not
+    /// one rebuilt from the files as they are now: after an edit, that would differ from the map
+    /// on, and the server would re-prefill the whole conversation.
+    #[tokio::test]
+    async fn a_resumed_session_sends_the_prompt_it_left_off_with() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("lib.rs"), "pub fn one() {}\n").unwrap();
+        let write = Block::ToolUse {
+            id: "w1".into(),
+            name: "Write".into(),
+            input: json!({ "file_path": "two.rs", "content": "pub fn two() {}\n" }),
+        };
+        let script = vec![
+            reply(vec![write], Stop::ToolUse),
+            reply(vec![text("wrote it")], Stop::End),
+        ];
+        let (mut h, before) = engine_sent(script, Some(dir.clone()), None, None, dir.clone());
+        let sid = run(&mut h, "add two.rs").await[0].session.clone();
+        shutdown(h).await;
+        // Reopened by a new engine, as when the app quits and comes back.
+        let script = vec![reply(vec![text("ok")], Stop::End)];
+        let (mut h, after) = engine_sent(script, Some(dir.clone()), Some(sid), None, dir.clone());
+        run(&mut h, "thanks").await;
+        shutdown(h).await;
+        let (before, after) = (before.lock().unwrap(), after.lock().unwrap());
+        // The server cached the last request; the resumed one should only append to it.
+        assert!(
+            extends(before.last().unwrap(), &after[0]),
+            "the resumed request rewrites the prefix"
+        );
     }
 
     /// Every block the session log holds, in order.

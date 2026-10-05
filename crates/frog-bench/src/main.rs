@@ -3,6 +3,7 @@
 //! Every harness change should be measured, not guessed. Harness choices move results
 //! 40–139x in tokens and up to 30 points in score (arXiv 2607.22585, 2608.08654, 2609.17394).
 
+mod cache;
 mod export;
 mod report;
 mod run;
