@@ -2120,11 +2120,20 @@ impl Agent {
         } else if self.small_window() && !self.subagent {
             // In a project, a small window holds the core tools and little else: the rest
             // (diagrams, the code map, docs, recall, skills, the plan) cost more room than
-            // they're worth at 8k. The panes stay: the user can see them, and asks for them.
+            // they're worth at 8k. Visual tools and panes stay: the user can ask for
+            // generation or a capture/compare loop even with a compact local model.
             specs.retain(|s| {
                 matches!(
                     &*s.name,
-                    "Bash" | "Read" | "Write" | "Edit" | "Glob" | "Grep"
+                    "Bash"
+                        | "Read"
+                        | "Write"
+                        | "Edit"
+                        | "Glob"
+                        | "Grep"
+                        | "Image"
+                        | "Screenshot"
+                        | "Compare"
                 ) || matches!(&*s.name, crate::panes::TERMINAL | crate::panes::PREVIEW)
                     || &*s.name == crate::mcp::SEARCH_TOOL
                     || &*s.name == crate::folder::TOOL
@@ -2902,7 +2911,13 @@ Don't repeat it. Change the arguments or try a different approach.",
                         && crate::auto::hard_rule(name, input, &self.root).is_none())
             }
             Kind::Net => false,
-            _ if matches!(name, "Image" | "Screenshot" | "Compare") || mcp || leaves_sandbox || pane => false,
+            _ if matches!(name, "Image" | "Screenshot" | "Compare")
+                || mcp
+                || leaves_sandbox
+                || pane =>
+            {
+                false
+            }
             _ => bash_allowed(cmd, &self.cfg.allow_bash),
         };
         if auto || self.session_allow.contains(&key) {
@@ -5081,6 +5096,36 @@ mod tests {
                 "clicked #go"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_small_project_window_still_offers_visual_tools() {
+        let mut script = Vec::new();
+        for name in ["Image", "Screenshot", "Compare"] {
+            script.push(reply(
+                vec![Block::ToolUse {
+                    id: name.into(),
+                    name: name.into(),
+                    input: json!({}),
+                }],
+                Stop::ToolUse,
+            ));
+        }
+        script.push(reply(vec![text("done")], Stop::End));
+        let mut h = engine_with(script, false, None, None, Some(8_192), std::env::temp_dir());
+        let evs = run(&mut h, "generate, capture and compare").await;
+        for name in ["Image", "Screenshot", "Compare"] {
+            let outcome = evs.iter().find_map(|e| match &e.event {
+                Event::ItemCompleted {
+                    id,
+                    item: Item::ToolCall { outcome, .. },
+                } if id == name => Some(*outcome),
+                _ => None,
+            });
+            // Offered tools reach their permission gate; missing tools return Error.
+            assert_eq!(outcome, Some(ToolOutcome::Denied), "{name}");
+        }
+        shutdown(h).await;
     }
 
     #[tokio::test]
