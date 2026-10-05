@@ -117,10 +117,9 @@ struct PaneView: View {
         .id(ObjectIdentifier(workspace))
     }
 
-    /// Tell the sidebar which window shows this conversation, and whether it's in front.
+    /// Tell the sidebar whether this conversation is in front.
     private func noteSession() {
         guard let id = workspace.conversation?.sessionID else { return }
-        Library.shared.register(window: window, for: id)
         if activeState == .key && focused {
             Library.shared.focused = id
             Library.shared.markRead(id)

@@ -395,7 +395,10 @@ struct WorkspaceView: View {
         .toolbarTitleMenu { if let c = workspace.conversation { titleMenu(c) } }
         // One backdrop for the whole canvas, so the conversation reads as a single surface.
         .background(FrogCanvas.color.ignoresSafeArea())
-        .background(WindowReader { window = $0 })
+        .background(WindowReader {
+            window = $0
+            Library.shared.register(window: $0, panes: panes)
+        })
         .animation(Motion.panel(reduced: reduceMotion), value: sessionsVisible)
         .animation(Motion.panel(reduced: reduceMotion), value: docked)
         .animation(resizing ? nil : Motion.panel(reduced: reduceMotion), value: panes.layout)
