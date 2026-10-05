@@ -66,7 +66,7 @@ convolution keep the VAE on device. Three resident 320×192 requests take
 byte-identical to the preceding device-normalization implementation, and all 83
 Metal compute tests plus selected trained/random VAE references pass at unchanged
 tolerances. Real Frog streaming and hash-manifest validation also pass at 128×128.
-Final-layer modulation/packing and preview work remain open.
+Final-layer channel modulation now stays on device and preserves the previous 256×256 PNG bytes, including a resident repeat. Packing and preview work remain open.
 
 The local host has 48 GiB RAM. The public checkpoint was downloaded at pinned
 revision `f332072aa78be7aecdf3ee76d5c247082da564a6`, with upstream LFS hash checks and
@@ -87,6 +87,14 @@ An optional workspace-contained SVG tracer now passes generated PNG → SVG → 
 by default. Judge quality and cross-queue priority
 scheduling remain unfinished. Shared image/vision residency is implemented in Tang PR #32.
 
+## Current validation and open gates
+
+Tang’s checkpoint attention scale is now applied to queries after normalization and RoPE. This matters for Gemma 3 27B (128-wide heads, attention scalar 168); 4B/12B use equal head dimension and scalar. CPU and CUDA-enabled LLM suites pass 56 tests (one ignored), including independently rescaled query-projection equivalence; CUDA compute passes 65 tests (one ignored). The corrected CUDA release build and Tang CI pass.
+
+A pinned, upstream-hash-verified Gemma 3 27B checkpoint loads on mew with a 12,288-token context, one KV slot and a 2 GB KV budget. Real structured-response checks pass conflicting prompts, numeric bounds, invalid-schema rejection and streamed JSON. Frog accesses this test service through a loopback-only SSH tunnel; no user model was evicted. The autonomous generation → editable CSS → WebKit capture → Compare benchmark remains an open acceptance gate. Its first real comparison rejects a poor silhouette at 35/100; this is evidence of rejection, not convergence.
+
+Frog now retains Image/Screenshot/Compare in compact project contexts, preserves the initial task and generated-target identity through compaction, and bounds verbose judge feedback. The 8K compaction regression verifies the original target path and model-visible reference image after resume. Native replay also verifies distinct generated/captured image cards, target lightbox rendering, zoom and Escape dismissal. These integration results do not establish unattended coding or judge quality.
+
 ## Verified upstream corrections
 
 The official [Z-Image-Turbo config](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/blob/main/transformer/config.json)
@@ -97,8 +105,7 @@ simplified adaLN/GELU sketch below. The dependency adds a genuine penultimate-st
 extraction path; the previously named forward_hidden returns logits. Trained-weight
 validation is still required before claiming the complete local pipeline is finished.
 
-Environment checks on 2026-10-05: no image weights were initially installed locally or
-in mew's ComfyUI; mew reports less than 1 GiB of free VRAM under existing workloads.
+Initial environment checks on 2026-10-05 found no image weights locally or in mew’s ComfyUI and less than 1 GiB of free VRAM on mew. A later read-only check found about 22.8 GiB free on its RTX 3090; the earlier availability constraint is obsolete.
 The original checkpoint exceeded local free disk space; the streamed conversion above
 addresses that download constraint. Apple ImageCreator returns notSupported
 on this macOS 27.0.1 host, consistent with Apple's documented API removal. Do not
