@@ -26,10 +26,26 @@ snapshot and lightbox regression test. No paid service was called during validat
 The stub uses PNG rather than SVG so it exercises the raster attachment path. Remote
 responses must contain `data[].b64_json`; URL fetching is deliberately unsupported.
 Requests preserve prompt, dimensions, count and optional seed in durable tool events.
-Remote reproducibility still depends on the provider; model hashes and inference steps
-are not available from this API. Explicit tang-compatible endpoints and the Apple API adapter are implemented;
-Apple's non-UI API is unavailable on macOS 27+. Step previews, backend autodiscovery
-and native tang inference remain later work. See the README for configuration and limits.
+Remote reproducibility still depends on the provider. Requested seed/steps and returned
+model/seed/steps/dimensions are retained in asset manifests; model hashes are not supplied
+by the image API. Tang endpoints stream step progress with JSON fallback. The Apple API
+adapter returns availability errors because its non-UI API is unavailable on macOS 27+.
+Step previews and backend autodiscovery remain later work. See the README for limits.
+
+## Native tang dependency status
+
+[Tang PR #32](https://github.com/ecto/tang/pull/32) adds penultimate Qwen conditioning,
+the Z-Image DiT, tiled VAE decode, static-shift Euler scheduling and a lazy resident
+image worker. CPU and Metal reference checks cover every selected boundary, production
+128-wide attention heads and 256×256 VAE output; maximum errors are below 1.1e-5 for
+the DiT and 2e-5 for the VAE. These deterministic random checkpoints establish operator
+parity. Trained-weight quality and performance remain unverified. The worker currently
+runs separately from coding and vision models; shared residency remains unfinished.
+
+The local host has 48 GiB RAM. The public checkpoint is being downloaded at pinned
+revision `f332072aa78be7aecdf3ee76d5c247082da564a6`, with upstream LFS hash checks and
+streamed F32-matrix conversion to BF16. This reduces disk output from about 32.8 GB to
+20.5 GB while retaining 4 GiB headroom. No existing model or workload is evicted.
 
 ## L1 implementation status
 
@@ -48,13 +64,14 @@ The official [Z-Image-Turbo config](https://huggingface.co/Tongyi-MAI/Z-Image-Tu
 uses dim 3840, 30 attention heads and head_dim 128, with RoPE axis widths 32/48/48.
 The [diffusers implementation](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/transformers/transformer_z_image.py)
 uses RMSNorm, SwiGLU and scale/gate modulation with tanh gates, rather than the
-simplified adaLN/GELU sketch below. Tang's currently named forward_hidden returns
-logits; a genuine hidden-state extraction path is still required. Verify all mappings
-against upstream tensors before claiming I1 complete.
+simplified adaLN/GELU sketch below. The dependency adds a genuine penultimate-state
+extraction path; the previously named forward_hidden returns logits. Trained-weight
+validation is still required before claiming the complete local pipeline is finished.
 
-Environment blockers verified on 2026-10-05: no image weights installed locally or
-in mew's ComfyUI; mew reports less than 1 GiB of free VRAM under existing workloads;
-the Mac has about 28 GiB disk space free. Apple ImageCreator returns notSupported
+Environment checks on 2026-10-05: no image weights were initially installed locally or
+in mew's ComfyUI; mew reports less than 1 GiB of free VRAM under existing workloads.
+The original checkpoint exceeded local free disk space; the streamed conversion above
+addresses that download constraint. Apple ImageCreator returns notSupported
 on this macOS 27.0.1 host, consistent with Apple's documented API removal. Do not
 evict active workloads or silently switch to a paid endpoint to bypass these constraints.
 
