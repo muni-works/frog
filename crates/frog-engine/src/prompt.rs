@@ -298,7 +298,7 @@ pub fn json_tools_prompt(tools: &[ToolSpec]) -> String {
         "\n# Response format\nEvery reply is one JSON object: {\"thought\": \"...\", \"action\": ...}.\n\
 - To reply to the user (when no tool is needed, or you're done): \"action\": {\"answer\": \"your reply\"}. Most messages need no tool.\n\
 - To use a tool: \"action\": {\"tool\": \"ToolName\", \"args\": {...}}. One tool per reply; its result comes back \
-in the next message as <tool_result>.\n\
+in the next message as <tool_result>. Use schema property order, supplying user-requested optional arguments before later properties.\n\
 Keep \"thought\" short.\n\nTools:\n",
     );
     for t in tools {

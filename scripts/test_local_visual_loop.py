@@ -3,6 +3,8 @@
 Requires running local image, vision/chat and screenshot services. No fixtures.
 """
 import argparse
+import base64
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -74,7 +76,7 @@ thinking = "never"
 temperature = 0.0
 ''')
     frog = Frog(args.frog.resolve(), cfg, output)
-    format_prompt = ('Every response MUST be a single JSON object with thought and action. To execute a tool use {"thought":"brief reason","action":{"tool":"Image","args":{"prompt":"...","size":"256x256","count":1,"seed":43,"steps":8,"output_dir":"assets"}}}. Use the same action structure for every other tool. Never write Python, tool_code, Markdown fences or simulated tool results. An answer action ends your turn, so use it only after Compare has stopped.' if args.tool_mode == 'json' else
+    format_prompt = ('Every response MUST be a single JSON object with thought and action. To execute a tool use {"thought":"brief reason","action":{"tool":"Image","args":{"prompt":"...","size":"256x256","seed":43,"count":1,"output_dir":"assets","steps":8}}}. Use the schema property order, including user-requested optional arguments before moving to later properties. Use the same action structure for every other tool. Never write Python, tool_code, Markdown fences or simulated tool results. An answer action ends your turn, so use it only after Compare has stopped.' if args.tool_mode == 'json' else
         'Execute tools using <tool_call>{"name":"Image","arguments":{"prompt":"...","size":"256x256","count":1,"seed":43,"steps":8,"output_dir":"assets"}}</tool_call>. Use this tool_call format for every other tool. Never write Python, tool_code or simulated tool results. Stop after one tool call and wait for its result. Do not give a final answer until Compare has stopped.')
     prompt = format_prompt + '''\nComplete this small visual benchmark autonomously, working only in the current directory.
 Use only Image, Write, Edit, Read, Screenshot and Compare. Do not use Bash, Task or other tools.
@@ -83,7 +85,7 @@ Use only Image, Write, Edit, Read, Screenshot and Compare. Do not use Bash, Task
 3. Screenshot index.html at width 256 and height 256 with a fresh output_path for every round, such as round-1.png.
 4. Compare the generated saved PNG target against the screenshot, notes "Match the frog shape, eye placement, colors and white background; ignore minor antialiasing", loop_id "bench", threshold 85, max_rounds 6.
 5. If stop_reason is continue, fix index.html using the differences, then screenshot and compare again with the SAME target and loop_id. Do not regenerate the target. Stop when matched, stalled or max_rounds.
-Do not finish before the real Compare result. Report the final score and saved paths. Execute one tool action at a time.'''
+Do not finish before the real Compare result. Report the final score and saved paths. Execute one tool action at a time. Your first action must call Image; wait for its successful result before writing any HTML.'''
     if args.coder_no_vision:
         prompt = prompt.replace('The Image result already includes the target image as vision input.',
             'Your coding model has no direct vision input. The Compare vision judge sees both the generated target and your captured page; use its differences and coordinates to refine your implementation.')
@@ -107,9 +109,32 @@ Do not finish before the real Compare result. Report the final score and saved p
         successful = [e['item'] for e in frog.events if e['event'] == 'item_completed' and e['item'].get('outcome') == 'ok']
         names = [item.get('name') for item in successful]
         assert all(name in names for name in ('Image', 'Screenshot', 'Compare')) and any(name in names for name in ('Write', 'Edit')), names
+        generated = [item for item in successful if item.get('name') == 'Image']
+        assert len(generated) == 1, 'benchmark must keep one generated target across revisions'
+        image_args = generated[0]['input']
+        assert image_args.get('seed') == 43 and image_args.get('size') == '256x256' and image_args.get('steps', 8) == 8, image_args
+        manifests = list((output / 'assets').glob('*.json'))
+        assert len(manifests) == 1, 'expected one retained generation manifest'
+        manifest = json.loads(manifests[0].read_text())
+        actual_generation = manifest['generation']
+        assert actual_generation['model_hash'], 'backend must identify the actual checkpoint'
+        assert actual_generation['images'] == [{'seed':43, 'steps':8, 'width':256, 'height':256}], actual_generation
+        target = Path(manifest['files'][0]).resolve()
+        assert target.read_bytes() == base64.b64decode(generated[0]['images'][0]['data']), 'generated target was modified'
+        def saved_path(value):
+            path = Path(value)
+            return (output / path).resolve() if not path.is_absolute() else path.resolve()
+        captures = [item['input'] for item in successful if item.get('name') == 'Screenshot']
+        capture_paths = [saved_path(item['output_path']) for item in captures]
+        assert len(capture_paths) == len(set(capture_paths)), 'every round requires a fresh capture'
+        for item in successful:
+            if item.get('name') == 'Compare':
+                assert saved_path(item['input']['target']) == target, 'Compare must use the generated target'
+                assert saved_path(item['input']['actual']) in capture_paths and saved_path(item['input']['actual']) != target, 'Compare must use a captured implementation'
         html = (output / 'index.html').read_text()
         assert not re.search(r'<(?:img|svg|canvas)\b|data:image|url\s*\(', html, re.I), 'implementation embeds an image instead of editable CSS'
         state = json.loads((output / '.frog/visual-loops/bench.json').read_text())
+        assert state['target'] == f'{target}:{hashlib.sha256(target.read_bytes()).hexdigest()}', state
         assert state['stopped'] and state['scores'][-1] >= 85, state
         reports = [e['item']['text'] for e in frog.events if e['event'] == 'item_completed' and e['item'].get('type') == 'message']
         assert reports and not reports[-1].lstrip().startswith('{"thought"'), 'model ended with an unexecuted action instead of a final report'
