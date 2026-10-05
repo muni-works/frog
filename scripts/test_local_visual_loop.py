@@ -80,6 +80,7 @@ temperature = 0.0
         'Execute tools using <tool_call>{"name":"Image","arguments":{"prompt":"...","size":"256x256","count":1,"seed":43,"steps":8,"output_dir":"assets"}}</tool_call>. Use this tool_call format for every other tool. Never write Python, tool_code or simulated tool results. Stop after one tool call and wait for its result. Do not give a final answer until Compare has stopped.')
     prompt = format_prompt + '''\nComplete this small visual benchmark autonomously, working only in the current directory.
 Use only Image, Write, Edit, Read, Screenshot and Compare. Do not use Bash, Task or other tools.
+Reproducibility is mandatory: the Image arguments must explicitly include "seed":43 and "steps":8. Omitting either fails this benchmark; copy these exact numeric values into the tool call.
 1. Generate ONE target with Image: prompt "A simple flat vector icon of a green frog face, two round eyes, symmetrical, centered, solid green shapes, white background, no text, no gradients, no shadows, minimalist app icon", size "256x256", count 1, seed 43, steps 8, output_dir "assets".
 2. The Image result already includes the target image as vision input. Do not Read the binary PNG or Screenshot the PNG. Recreate its geometry and colors as editable HTML and CSS shapes in index.html, at a 256x256 viewport. Use CSS circles/ellipses. Do not embed the target or any raster image; no img, SVG, canvas, data URLs or CSS image URLs.
 3. Screenshot index.html at width 256 and height 256 with a fresh output_path for every round, such as round-1.png.

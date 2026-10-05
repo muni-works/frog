@@ -65,11 +65,11 @@ impl Request {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "Image".into(),
-        description: "Generate images only when the user requests them. Pictures appear in the transcript and lightbox. Uses the configured image backend; remote generation may incur costs. Stub results are labeled placeholders. Do not call this tool unprompted.".into(),
+        description: "Generate images only when the user requests them. Pictures appear in the transcript and lightbox. Uses the configured image backend; remote generation may incur costs. Stub results are labeled placeholders. Preserve any seed and inference steps explicitly requested by the user. Do not call this tool unprompted.".into(),
         schema: json!({"type":"object", "properties": {
             "prompt":{"type":"string"},
             "size":{"type":"string", "description":"WIDTHxHEIGHT, 64–2048 per dimension; default 1024x1024"},
-            "seed":{"type":"integer", "minimum":0},
+            "seed":{"type":"integer", "minimum":0,"description":"Reproducible generation seed; include it when the user specifies one"},
             "count":{"type":"integer", "minimum":1, "maximum":4, "default":1},
             "output_dir":{"type":"string", "description":"Optional workspace directory for new PNG assets and generation metadata"},
             "steps":{"type":"integer","minimum":1,"maximum":100,"description":"Optional inference steps; requires backend support"}
