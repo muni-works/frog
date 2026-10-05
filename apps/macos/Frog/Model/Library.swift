@@ -18,7 +18,7 @@ final class Library {
     private(set) var live: [String: Live] = [:]
     /// The session shown in the key window: finishing there doesn't count as unread.
     @ObservationIgnored var focused: String?
-    @ObservationIgnored private var windows: [String: WeakWindow] = [:]
+    @ObservationIgnored private var windows: [ObjectIdentifier: WeakWindow] = [:]
     @ObservationIgnored private var conversations: [String: WeakConversation] = [:]
     @ObservationIgnored private var refreshing: Task<Void, Never>?
 
@@ -76,7 +76,7 @@ final class Library {
         let cutoff = Date().addingTimeInterval(-Self.chatLifetime)
         let quiet = sessions.filter { s in
             s.isChat && s.modifiedDate < cutoff && !pinned.contains(s.id) && !archived.contains(s.id)
-                && live[s.id] == nil && windows[s.id]?.window == nil
+                && live[s.id] == nil && window(for: s.id) == nil
         }
         guard !quiet.isEmpty else { return }
         archived.formUnion(quiet.map(\.id))
@@ -129,20 +129,38 @@ final class Library {
 
     // MARK: Windows
 
-    func register(window: NSWindow?, for id: String) {
-        // A window can show several sessions (one per pane); only forget closed windows.
-        windows = windows.filter { $0.value.window != nil }
-        if let window { windows[id] = WeakWindow(window: window) }
+    /// Register the window's pane owner once; session membership is read from its current panes.
+    func register(window: NSWindow?, panes: Panes) {
+        windows = windows.filter { $0.value.window != nil && $0.value.panes != nil }
+        windows[ObjectIdentifier(panes)] = window.map { WeakWindow(window: $0, panes: panes) }
     }
 
-    /// The window already showing this session, if any.
+    private func location(for id: String) -> (NSWindow, Panes)? {
+        for entry in windows.values {
+            if let window = entry.window, let panes = entry.panes, panes.paneShowing(id) != nil {
+                return (window, panes)
+            }
+        }
+        return nil
+    }
+
+    /// The window currently showing this session, if any.
     func window(for id: String) -> NSWindow? {
-        windows[id]?.window
+        location(for: id)?.0
+    }
+
+    /// Focus the actual pane as well as its window, including another tab in the same group.
+    func focusSession(_ id: String, excluding window: NSWindow?) -> Bool {
+        guard let (target, panes) = location(for: id), target !== window else { return false }
+        guard panes.focusSession(id) else { return false }
+        target.makeKeyAndOrderFront(nil)
+        return true
     }
 }
 
 private struct WeakWindow {
     weak var window: NSWindow?
+    weak var panes: Panes?
 }
 
 private struct WeakConversation {

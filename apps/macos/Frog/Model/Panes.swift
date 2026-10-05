@@ -244,6 +244,17 @@ final class Panes {
         items.first { $0.workspace.conversation?.sessionID == id }
     }
 
+    /// Focus a session already on screen, cancelling any navigation that would replace it.
+    @discardableResult
+    func focusSession(_ id: String) -> Bool {
+        guard let pane = paneShowing(id) else { return false }
+        pane.incoming?.stop()
+        pane.incoming = nil
+        pane.workspace.open(id)
+        focus(pane)
+        return true
+    }
+
     /// Pane numbers (1-based) by the session each shows, for the sidebar. Empty unless split.
     var numbers: [String: Int] {
         guard isSplit else { return [:] }
@@ -314,19 +325,9 @@ final class Panes {
     /// Show a session in a pane. If a pane already shows it, focus that one; if another window
     /// does, bring that window forward.
     func open(_ s: SessionInfo, in pane: Pane, window: NSWindow?) {
-        if let p = paneShowing(s.id) {
-            // Back to what it shows: drop anything still on its way in.
-            p.incoming?.stop()
-            p.incoming = nil
-            p.workspace.open(s.id)
-            focus(p)
-            return
-        }
+        if focusSession(s.id) { return }
         guard let url = s.folder, pane.incoming?.conversation?.sessionID != s.id else { return }
-        if let w = Library.shared.window(for: s.id), w !== window {
-            w.makeKeyAndOrderFront(nil)
-            return
-        }
+        if Library.shared.focusSession(s.id, excluding: window) { return }
         pane.incoming?.stop()
         pane.incoming = nil
         if pane.workspace.folder.standardizedFileURL.path == url.standardizedFileURL.path {
@@ -353,18 +354,12 @@ final class Panes {
     /// A new pane beside the focused one (or `target`): a session from the sidebar, or a fresh
     /// conversation in that pane's folder.
     func split(_ s: SessionInfo? = nil, beside target: Pane? = nil, on edge: PaneEdge = .right, window: NSWindow? = nil) {
-        if let s, let p = paneShowing(s.id) {
-            focus(p)
-            return
-        }
+        if let s, focusSession(s.id) { return }
         guard canSplit else { return }
         let target = target ?? focused
         let workspace: Workspace
         if let s, let url = s.folder {
-            if let w = Library.shared.window(for: s.id), w !== window {
-                w.makeKeyAndOrderFront(nil)
-                return
-            }
+            if Library.shared.focusSession(s.id, excluding: window) { return }
             workspace = Workspace(folder: url, resume: s.id)
         } else {
             workspace = Workspace(folder: target.workspace.folder, fresh: true)
@@ -437,6 +432,7 @@ final class Panes {
     }
 
     func stopAll() {
+        Library.shared.register(window: nil, panes: self)
         items.forEach {
             $0.incoming?.stop()
             $0.workspace.stop()
