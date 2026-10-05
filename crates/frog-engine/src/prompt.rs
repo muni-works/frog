@@ -357,6 +357,14 @@ pub enum Action {
 
 /// Parse a JSON-mode reply. `None` if the model (or server) didn't honor the format.
 pub fn parse_action(text: &str) -> Option<(String, Action)> {
+    let text = text.trim();
+    // Some local servers accept response_format without enforcing it. Recover only
+    // a whole fenced JSON response, never a JSON example embedded in prose.
+    let text = text
+        .strip_prefix("```json\n")
+        .or_else(|| text.strip_prefix("```\n"))
+        .and_then(|body| body.strip_suffix("```"))
+        .unwrap_or(text);
     let v: Value = serde_json::from_str(text.trim()).ok()?;
     let thought = v["thought"].as_str().unwrap_or("").to_string();
     let a = &v["action"];
@@ -382,6 +390,26 @@ pub fn parse_action(text: &str) -> Option<(String, Action)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_action_recovers_only_whole_fenced_reply() {
+        let action =
+            r#"{"thought":"capture","action":{"tool":"Screenshot","args":{"url":"index.html"}}}"#;
+        for reply in [
+            action.to_string(),
+            format!("```json\n{action}\n```"),
+            format!("```\n{action}\n```"),
+        ] {
+            assert!(
+                matches!(parse_action(&reply), Some((_, Action::Tool { name, .. })) if name == "Screenshot")
+            );
+        }
+        assert!(parse_action(&format!("Example:\n```json\n{action}\n``` ")).is_none());
+        assert!(parse_action(&format!("```json\n{action}\n```\nDone")).is_none());
+        assert!(
+            parse_action(&format!("```json\n{action}\n```\n```json\n{action}\n``` ")).is_none()
+        );
+    }
 
     #[test]
     fn extracts_calls() {

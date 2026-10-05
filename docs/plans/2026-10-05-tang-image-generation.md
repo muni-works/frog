@@ -52,6 +52,15 @@ judge passed the Screenshot/Compare integration and durable-stop test, but inven
 some missing-letter differences; broad judge-quality validation remains unfinished.
 Full trained DiT reference checks still fail at several late boundaries despite small
 final-output error; deterministic random-checkpoint parity does not cover that failure.
+An independent PyTorch math-versus-CPU-flash attention audit also fails the same
+pointwise tolerance at ten late boundaries (final relative L2 about 5.9e-6). The
+dependency retains these diagnostics rather than relaxing the acceptance bounds.
+
+Fused Metal RMS scale and gated residual kernels reduce three resident 320×192
+requests from 13.79/12.91/13.24 seconds to 8.68/8.74/8.75 seconds. The three fused
+outputs are byte-identical; their largest RGB difference from the unfused output is
+one channel value. A fused 512×512 request passes at 37.79 seconds. Convolution,
+group-normalization, upsampling and preview work remain open.
 
 The local host has 48 GiB RAM. The public checkpoint was downloaded at pinned
 revision `f332072aa78be7aecdf3ee76d5c247082da564a6`, with upstream LFS hash checks and
