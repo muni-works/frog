@@ -1365,7 +1365,7 @@ impl Agent {
             );
         }
 
-        let mut compacted = false;
+        let mut compacted = None;
         let mut repeats: HashMap<String, u32> = HashMap::new();
         let mut steps = 0;
         // A reply asking for files it could Read is nudged once, before any tool has run.
@@ -1912,16 +1912,18 @@ impl Agent {
     }
 
     /// Stage 1: prune stale and old tool output (no LLM), once the prompt passes `start` of the
-    /// window. Stage 2: summarize, at most once per turn.
-    async fn fit_context(&mut self, compacted: &mut bool, start: f64) -> Result<()> {
+    /// window. Stage 2: summarize again when new messages fill the window.
+    async fn fit_context(&mut self, compacted: &mut Option<usize>, start: f64) -> Result<()> {
         let pruned = self.prune(start);
-        if (self.estimate() as f64) > self.window as f64 * context::COMPACT_AT && !*compacted {
+        if (self.estimate() as f64) > self.window as f64 * context::COMPACT_AT
+            && compacted.is_none_or(|len| self.messages.len() > len)
+        {
             self.notice(
                 Level::Warn,
                 "context is still nearly full after pruning; summarizing…",
             );
             self.compact(None).await?;
-            *compacted = true;
+            *compacted = Some(self.messages.len());
         } else if pruned {
             self.rebased();
         }
@@ -4538,6 +4540,51 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[tokio::test]
+    async fn long_tool_turn_compacts_again_after_new_messages_fill_the_window() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("small.txt"), "small result").unwrap();
+        let work = |id: &str| {
+            reply(
+                vec![
+                    text(&"Long implementation analysis. ".repeat(1200)),
+                    Block::ToolUse {
+                        id: id.into(),
+                        name: "Read".into(),
+                        input: json!({"file_path":"small.txt"}),
+                    },
+                ],
+                Stop::ToolUse,
+            )
+        };
+        let script = vec![
+            work("first"),
+            reply(vec![text("First summary.")], Stop::End),
+            work("second"),
+            reply(vec![text("Second summary.")], Stop::End),
+            reply(vec![text("Finished.")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, None, None, Some(8192), dir);
+        let events = run(
+            &mut h,
+            "Keep the original target and continue until complete.",
+        )
+        .await;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e.event, Event::Compacted { .. }))
+                .count(),
+            2
+        );
+        let requests = sent.lock().unwrap();
+        assert_eq!(requests.len(), 5);
+        assert!(requests[4].contains("Second summary."));
+        assert!(requests[4].contains("Keep the original target"));
+        drop(requests);
+        shutdown(h).await;
     }
 
     #[tokio::test]

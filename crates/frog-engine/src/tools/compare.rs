@@ -42,7 +42,7 @@ struct LoopState {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "Compare".into(),
-        description: "Compare saved target and actual PNG/JPEG/WebP images using a vision rubric and SSIM-selected crops. Returns JSON {score,judge_score,ssim,diffs,round,stop_reason}; score is 0–100. Match structure/style, honor ignore notes, and avoid copying invented text. Optional loop_id persists scores and enforces a threshold, two stalled rounds, or max_rounds. Every round should first call Screenshot so the user sees progress.".into(),
+        description: "Compare saved target and actual PNG/JPEG/WebP images using a vision rubric and SSIM-selected crops. Returns JSON {score,judge_score,ssim,diffs,round,stop_reason}; score is 0–100. When foreground_geometry is available, use its measured RGB colors, bounds and horizontal occupancy spans to correct positions and silhouettes; separate spans can require separate shapes. Match structure/style, honor ignore notes, and avoid copying invented text. Optional loop_id persists scores and enforces a threshold, two stalled rounds, or max_rounds. Every round should first call Screenshot so the user sees progress.".into(),
         schema: json!({"type":"object","properties": {
             "target":{"type":"string"},"actual":{"type":"string"},
             "notes":{"type":"string","description":"User annotations, e.g. ignore the logo or preserve the real copy"},
