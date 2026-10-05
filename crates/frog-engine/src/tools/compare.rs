@@ -45,9 +45,62 @@ pub fn spec() -> ToolSpec {
     }
 }
 
+/// Coarse foreground overlap for targets with a nearly uniform border. This
+/// guard prevents common whitespace from dominating icon/diagram comparisons.
+/// Photos and targets without a reliable background retain the vision/SSIM gate.
+fn foreground_overlap(target: &DynamicImage, actual: &DynamicImage) -> Option<f64> {
+    let (width, height) = target.thumbnail(512, 512).dimensions();
+    let target = target
+        .resize_exact(width, height, FilterType::Triangle)
+        .to_rgb8();
+    let actual = actual
+        .resize_exact(target.width(), target.height(), FilterType::Triangle)
+        .to_rgb8();
+    let (w, h) = target.dimensions();
+    let border: Vec<_> = (0..w)
+        .flat_map(|x| [*target.get_pixel(x, 0), *target.get_pixel(x, h - 1)])
+        .chain((0..h).flat_map(|y| [*target.get_pixel(0, y), *target.get_pixel(w - 1, y)]))
+        .collect();
+    let mut bg = [0u8; 3];
+    for channel in 0..3 {
+        let mut values: Vec<_> = border.iter().map(|p| p[channel]).collect();
+        values.sort_unstable();
+        bg[channel] = values[values.len() / 2];
+    }
+    let foreground = |p: &image::Rgb<u8>| (0..3).any(|c| p[c].abs_diff(bg[c]) > 24);
+    if border.iter().filter(|p| !foreground(p)).count() as f64 / (border.len() as f64) < 0.95 {
+        return None;
+    }
+    let count = target.pixels().filter(|p| foreground(p)).count();
+    let coverage = count as f64 / (w * h) as f64;
+    if !(0.005..=0.85).contains(&coverage) {
+        return None;
+    }
+    let (mut intersection, mut union) = (0usize, 0usize);
+    // Pool occupancy to tolerate antialiasing and small positioning differences.
+    for y in (0..h).step_by(8) {
+        for x in (0..w).step_by(8) {
+            let (mut a, mut b) = (false, false);
+            for yy in y..(y + 8).min(h) {
+                for xx in x..(x + 8).min(w) {
+                    a |= foreground(target.get_pixel(xx, yy));
+                    b |= foreground(actual.get_pixel(xx, yy));
+                }
+            }
+            intersection += usize::from(a && b);
+            union += usize::from(a || b);
+        }
+    }
+    Some(intersection as f64 / union.max(1) as f64)
+}
+
 /// Mean local SSIM over 8x8 luminance windows, and the worst non-overlapping regions.
 fn metrics(target: &DynamicImage, actual: &DynamicImage) -> (f64, Vec<[u32; 4]>) {
-    let target = target.thumbnail(512, 512).to_rgb8();
+    let original = target.dimensions();
+    let (width, height) = target.thumbnail(512, 512).dimensions();
+    let target = target
+        .resize_exact(width, height, FilterType::Triangle)
+        .to_rgb8();
     let actual = actual
         .resize_exact(target.width(), target.height(), FilterType::Triangle)
         .to_rgb8();
@@ -116,6 +169,20 @@ fn metrics(target: &DynamicImage, actual: &DynamicImage) -> (f64, Vec<[u32; 4]>)
             break;
         }
     }
+    let regions = regions
+        .into_iter()
+        .map(|r| {
+            let x = r[0] * original.0 / target.width();
+            let y = r[1] * original.1 / target.height();
+            let w = (r[2] * original.0 / target.width())
+                .max(1)
+                .min(original.0 - x);
+            let h = (r[3] * original.1 / target.height())
+                .max(1)
+                .min(original.1 - y);
+            [x, y, w, h]
+        })
+        .collect();
     (ssim, regions)
 }
 
@@ -248,13 +315,9 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "Full ACTUAL implementation".into(),
         &actual.thumbnail(1024, 1024),
     )?;
-    let (tw, th) = target.thumbnail(512, 512).dimensions();
     let actual = actual.resize_exact(target.width(), target.height(), FilterType::Triangle);
     for r in &regions {
-        let x = r[0] * target.width() / tw;
-        let y = r[1] * target.height() / th;
-        let w = (r[2] * target.width() / tw).min(target.width() - x);
-        let h = (r[3] * target.height() / th).min(target.height() - y);
+        let [x, y, w, h] = *r;
         add(
             format!("TARGET crop at [{x},{y},{w},{h}]; partial view, not the full image"),
             &target.crop_imm(x, y, w, h),
@@ -295,7 +358,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .strip_prefix("```json")
         .and_then(|s| s.trim().strip_suffix("```"))
         .unwrap_or(text.trim());
-    let verdict: Verdict =
+    let mut verdict: Verdict =
         serde_json::from_str(text).context("judge returned invalid comparison JSON")?;
     if !verdict.score.is_finite()
         || !(0.0..=100.0).contains(&verdict.score)
@@ -316,7 +379,19 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             bail!("judge returned invalid difference");
         }
     }
-    let score = verdict.score.min((100. * ssim + 20.).min(100.));
+    let foreground = foreground_overlap(&target, &actual);
+    let mut score = verdict.score.min((100. * ssim + 20.).min(100.));
+    if let Some(overlap) = foreground {
+        score = score.min(100. * overlap + 20.);
+        if 100. * overlap + 20. < state.threshold {
+            verdict.diffs.truncate(7);
+            verdict.diffs.push(Difference {
+                region: [0, 0, target.width(), target.height()],
+                issue: format!("Foreground layout differs: coarse subject overlap is {:.1}%; shared background cannot establish a match.", overlap * 100.),
+                fix_hint: "Correct the subject's position, size and silhouette using the full target/actual pair before refining small details.".into(),
+            });
+        }
+    }
     state.scores.push(score);
     let reason = stop(&state.scores, state.threshold, state.max_rounds);
     state.stopped = reason != "continue";
@@ -329,7 +404,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         tokio::fs::write(&temp, serde_json::to_vec(&state)?).await?;
         tokio::fs::rename(temp, path).await?;
     }
-    Ok(Output{content:json!({"score":score,"judge_score":verdict.score,"ssim":ssim,"diffs":verdict.diffs,"round":state.scores.len(),"threshold":state.threshold,"max_rounds":state.max_rounds,"stop_reason":reason,"crop_regions":regions}).to_string(),display:Some(format!("{score:.1}/100 · round {} · {reason}",state.scores.len())),..Default::default()})
+    Ok(Output{content:json!({"score":score,"judge_score":verdict.score,"ssim":ssim,"foreground_overlap":foreground,"diffs":verdict.diffs,"round":state.scores.len(),"threshold":state.threshold,"max_rounds":state.max_rounds,"stop_reason":reason,"crop_regions":regions}).to_string(),display:Some(format!("{score:.1}/100 · round {} · {reason}",state.scores.len())),..Default::default()})
 }
 
 #[cfg(test)]
@@ -353,6 +428,53 @@ mod tests {
         assert!(score < 0.8);
         assert!(regions[0][0] >= 64 && regions[0][1] >= 64);
     }
+    #[test]
+    fn uniform_background_does_not_hide_missing_content() {
+        let mut image = image::RgbImage::from_pixel(256, 256, image::Rgb([255, 255, 255]));
+        for y in 80..176 {
+            for x in 80..176 {
+                image.put_pixel(x, y, image::Rgb([60, 180, 60]));
+            }
+        }
+        let target = DynamicImage::ImageRgb8(image);
+        let blank = DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            256,
+            256,
+            image::Rgb([255, 255, 255]),
+        ));
+        assert_eq!(foreground_overlap(&target, &target), Some(1.));
+        assert_eq!(foreground_overlap(&target, &blank), Some(0.));
+        let mut shifted = blank.to_rgb8();
+        for y in 82..178 {
+            for x in 82..178 {
+                shifted.put_pixel(x, y, image::Rgb([60, 180, 60]));
+            }
+        }
+        assert!(foreground_overlap(&target, &DynamicImage::ImageRgb8(shifted)).unwrap() > 0.85);
+        for r in metrics(&target, &blank).1 {
+            assert!(r[0] + r[2] <= 256 && r[1] + r[3] <= 256);
+        }
+        let photo = DynamicImage::ImageRgb8(image::RgbImage::from_fn(256, 256, |x, y| {
+            image::Rgb([x as u8, y as u8, 0])
+        }));
+        assert!(foreground_overlap(&photo, &photo).is_none());
+    }
+
+    #[test]
+    fn real_false_positive_is_rejected_by_foreground_overlap() {
+        let target = image::load_from_memory(include_bytes!(
+            "../../tests/fixtures/visual/foreground-target.png"
+        ))
+        .unwrap();
+        let actual = image::load_from_memory(include_bytes!(
+            "../../tests/fixtures/visual/foreground-wrong.png"
+        ))
+        .unwrap();
+        assert!(metrics(&target, &actual).0 > 0.8);
+        let overlap = foreground_overlap(&target, &actual).unwrap();
+        assert!(95f64.min(100. * overlap + 20.) < 85.);
+    }
+
     #[test]
     fn loops_stop_on_match_stall_or_budget() {
         assert_eq!(stop(&[90.], 85., 6), "matched");

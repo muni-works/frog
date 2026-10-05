@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--judge-base-url')
     parser.add_argument('--judge-model')
     parser.add_argument('--coder-no-vision', action='store_true')
+    parser.add_argument('--write-only', action='store_true', help='Ask the model to revise by replacing the full file rather than using Edit')
     parser.add_argument('--image-endpoint', required=True)
     parser.add_argument('--screenshot-endpoint', required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -86,6 +87,8 @@ Do not finish before the real Compare result. Report the final score and saved p
     if args.coder_no_vision:
         prompt = prompt.replace('The Image result already includes the target image as vision input.',
             'Your coding model has no direct vision input. The Compare vision judge sees both the generated target and your captured page; use its differences and coordinates to refine your implementation.')
+    if args.write_only:
+        prompt += '\nFor every revision replace the complete index.html using Write. Do not use Edit; this avoids escaping a large old_string. You must still independently choose and execute the image, file, capture and comparison actions.'
     try:
         frog.send(op='submit', text=prompt)
         while True:
@@ -108,6 +111,9 @@ Do not finish before the real Compare result. Report the final score and saved p
         assert not re.search(r'<(?:img|svg|canvas)\b|data:image|url\s*\(', html, re.I), 'implementation embeds an image instead of editable CSS'
         state = json.loads((output / '.frog/visual-loops/bench.json').read_text())
         assert state['stopped'] and state['scores'][-1] >= 85, state
+        reports = [e['item']['text'] for e in frog.events if e['event'] == 'item_completed' and e['item'].get('type') == 'message']
+        assert reports and not reports[-1].lstrip().startswith('{"thought"'), 'model ended with an unexecuted action instead of a final report'
+        assert 'index.html' in reports[-1] and str(int(state['scores'][-1])) in reports[-1], 'final report must identify the implementation and score'
         print(f'PASS unattended local CSS visual loop: {state["scores"]}', flush=True)
     finally:
         (output / 'events.jsonl').write_text(''.join(json.dumps(e) + '\n' for e in frog.events))

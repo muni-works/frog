@@ -276,6 +276,10 @@ compare_model = "local-vision" # a configured model profile; otherwise the sessi
 `threshold` (85) and `max_rounds` (6). It sends full images and up to three paired
 crops from the worst regions to a vision model and returns structured differences,
 SSIM, judge score and a combined score (judge score capped at `100 * SSIM + 20`).
+For targets with a nearly uniform border and visible foreground, coarse foreground
+overlap supplies an additional `100 * overlap + 20` cap. This rejects missing subjects
+even when background similarity is high; photos retain the SSIM/vision gate. Crop
+coordinates refer to the original target pixels.
 The score is a heuristic, not a guarantee of visual equivalence. Images must have
 matching aspect ratios. With `loop_id`, state in `.frog/visual-loops/` enforces stopping
 on a match, two improvements below one point, or the round limit across restarts.
