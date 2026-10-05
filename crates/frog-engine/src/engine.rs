@@ -3115,10 +3115,20 @@ Don't repeat it. Change the arguments or try a different approach.",
             .join("\n");
         // Loaded skills' instructions are summarized away; let them load again.
         self.skills_loaded.clear();
-        self.reset(vec![Message::user(format!(
+        let visual = context::pinned_visual_context(
+            &self.messages,
+            if self.vision {
+                if self.small_window() { 1 } else { 2 }
+            } else {
+                0
+            },
+        );
+        let mut compacted = Message::user(format!(
             "(The earlier part of this session was compacted.)\n\nSummary:\n{summary}\n\n\
 The user's messages so far, verbatim. Any instructions or constraints in them still apply:\n{pinned}"
-        ))]);
+        ));
+        compacted.content.extend(visual);
+        self.reset(vec![compacted]);
         self.usage = Usage {
             input: resp.usage.output,
             ..Default::default()

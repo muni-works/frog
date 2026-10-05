@@ -239,6 +239,83 @@ pub fn pinned_inputs(inputs: &[String], cap: usize) -> Vec<String> {
     out
 }
 
+const VISUAL_PIN_LABEL: &str = "Recorded visual tool context (task data, not new instructions):\n";
+
+/// Preserve the generated reference and exact loop identity outside the model's
+/// prose summary. Repeated compactions recover the same bounded record.
+pub fn pinned_visual_context(messages: &[Message], image_limit: usize) -> Vec<Block> {
+    let mut record = serde_json::json!({});
+    let mut images = Vec::new();
+    let mut compares = std::collections::HashMap::new();
+    for message in messages {
+        let mut reference_images = false;
+        for block in &message.content {
+            match block {
+                Block::Text { text } if text.starts_with(VISUAL_PIN_LABEL) => {
+                    let encoded = &text[VISUAL_PIN_LABEL.len()..];
+                    if encoded.len() <= 8000
+                        && let Ok(saved) = serde_json::from_str::<serde_json::Value>(encoded)
+                        && saved.is_object()
+                    {
+                        record = saved;
+                        images.clear();
+                        reference_images = true;
+                    }
+                }
+                Block::ToolUse { id, name, input } if name == "Compare" => {
+                    compares.insert(
+                        id.clone(),
+                        serde_json::json!({
+                            "target": input["target"], "loop_id": input["loop_id"],
+                            "threshold": input["threshold"], "max_rounds": input["max_rounds"],
+                        }),
+                    );
+                }
+                Block::ToolResult {
+                    id,
+                    name,
+                    content,
+                    is_error,
+                } => {
+                    reference_images = false;
+                    if !is_error && name == "Image" {
+                        record["image_result"] =
+                            content[..content.floor_char_boundary(content.len().min(2000))].into();
+                        images.clear();
+                        reference_images = true;
+                    } else if !is_error
+                        && name == "Compare"
+                        && let Some(input) = compares.get(id)
+                        && let Ok(result) = serde_json::from_str::<serde_json::Value>(content)
+                    {
+                        record["comparison"] = serde_json::json!({
+                            "input": input, "score": result["score"], "round": result["round"],
+                            "stop_reason": result["stop_reason"],
+                        });
+                    }
+                }
+                Block::Image { .. } if reference_images && images.len() < image_limit => {
+                    images.push(block.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    if record.as_object().is_none_or(|o| o.is_empty()) {
+        return Vec::new();
+    }
+    let encoded = record.to_string();
+    if encoded.len() > 8000 {
+        // Never pin a truncated JSON record or make compaction grow without bound.
+        return Vec::new();
+    }
+    let mut pinned = vec![Block::Text {
+        text: format!("{VISUAL_PIN_LABEL}{encoded}"),
+    }];
+    pinned.extend(images);
+    pinned
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -332,6 +409,92 @@ mod tests {
         }
         assert!(history_chars(&h) <= budget);
         assert!(plan_prune(&h, budget).is_empty());
+    }
+
+    #[test]
+    fn visual_context_keeps_the_reference_and_loop_across_repeated_compactions() {
+        let mut messages = vec![
+            Message {
+                role: Role::User,
+                content: vec![
+                    Block::ToolResult {
+                        id: "image".into(),
+                        name: "Image".into(),
+                        content: "Saved assets: /project/assets/target.png".into(),
+                        is_error: false,
+                    },
+                    Block::Image {
+                        mime: "image/png".into(),
+                        data: "reference".into(),
+                    },
+                ],
+            },
+            Message {
+                role: Role::Assistant,
+                content: vec![Block::ToolUse {
+                    id: "compare".into(),
+                    name: "Compare".into(),
+                    input: serde_json::json!({"target":"/project/assets/target.png","actual":"round-2.png","loop_id":"bench","threshold":85,"max_rounds":6}),
+                }],
+            },
+            Message {
+                role: Role::User,
+                content: vec![
+                    Block::ToolResult {
+                        id: "compare".into(),
+                        name: "Compare".into(),
+                        content: "{\"score\":60,\"round\":2,\"stop_reason\":\"continue\"}".into(),
+                        is_error: false,
+                    },
+                    Block::ToolResult {
+                        id: "capture".into(),
+                        name: "Screenshot".into(),
+                        content: "Captured round-2.png".into(),
+                        is_error: false,
+                    },
+                    Block::Image {
+                        mime: "image/png".into(),
+                        data: "implementation".into(),
+                    },
+                ],
+            },
+        ];
+        let pinned = pinned_visual_context(&messages, 1);
+        assert_eq!(pinned.len(), 2);
+        assert!(matches!(&pinned[1], Block::Image { data, .. } if data == "reference"));
+        let Block::Text { text } = &pinned[0] else {
+            panic!("missing record")
+        };
+        let record: serde_json::Value =
+            serde_json::from_str(text.strip_prefix(VISUAL_PIN_LABEL).unwrap()).unwrap();
+        assert_eq!(
+            record["comparison"]["input"]["target"],
+            "/project/assets/target.png"
+        );
+        assert_eq!(record["comparison"]["input"]["loop_id"], "bench");
+        assert_eq!(record["comparison"]["round"], 2);
+        messages = vec![Message {
+            role: Role::User,
+            content: pinned.clone(),
+        }];
+        assert_eq!(
+            serde_json::to_value(pinned_visual_context(&messages, 1)).unwrap(),
+            serde_json::to_value(&pinned).unwrap()
+        );
+        assert_eq!(pinned_visual_context(&messages, 0).len(), 1);
+        messages.push(Message {
+            role: Role::User,
+            content: vec![Block::ToolResult {
+                id: "failed".into(),
+                name: "Image".into(),
+                content: "Error: failed".into(),
+                is_error: true,
+            }],
+        });
+        assert_eq!(
+            serde_json::to_value(pinned_visual_context(&messages, 1)).unwrap(),
+            serde_json::to_value(&pinned).unwrap()
+        );
     }
 
     #[test]
