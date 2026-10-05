@@ -35,6 +35,9 @@ struct Cli {
     /// Profile name from config.toml, or provider/model (e.g. ollama/qwen3, lmstudio/qwen3-coder, anthropic/claude-sonnet-5)
     #[arg(short, long)]
     model: Option<String>,
+    /// Load an alternate config file (useful for isolated setups and testing).
+    #[arg(long)]
+    config: Option<std::path::PathBuf>,
     /// Override the provider's base URL.
     #[arg(long)]
     base_url: Option<String>,
@@ -232,7 +235,10 @@ async fn run() -> Result<bool> {
         replay::run(spec, cli.speed, cli.replay_ask).await?;
         return Ok(true);
     }
-    let mut cfg = Config::load()?;
+    let mut cfg = match &cli.config {
+        Some(path) => Config::load_from(path)?,
+        None => Config::load()?,
+    };
     cfg.computer_use |= cli.computer_use;
     cfg.energy |= cli.energy;
     // The engine log is stderr, which only a client like the Mac app keeps.

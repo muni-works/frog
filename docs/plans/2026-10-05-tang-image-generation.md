@@ -17,8 +17,11 @@ Surveyed against `~/Developer/tang-serve` at e4ee81e.
 Implemented in frog: `Image` tool with explicit `[image]` configuration, PNG stub
 placeholders and a remote OpenAI-compatible base64 backend. Existing `Output.images`
 provides transcript/lightbox delivery and vision input. Generation uses its own session
-permission key and emits start/completion progress. The remote path is tested against
-an HTTP fixture; no paid service was called during validation.
+permission key and emits start/completion progress. The remote path is tested through the real `frog --serve` executable against
+local chat/image fixtures, including approval, denial, vision delivery, replay, errors
+and cancellation. Native Frog testing verified thumbnails, lightbox navigation/zoom,
+session reopening and byte-exact PNG export. A captured session backs the dark/light
+snapshot and lightbox regression test. No paid service was called during validation.
 
 The stub uses PNG rather than SVG so it exercises the raster attachment path. Remote
 responses must contain `data[].b64_json`; URL fetching is deliberately unsupported.

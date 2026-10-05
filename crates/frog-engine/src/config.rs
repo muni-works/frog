@@ -246,6 +246,13 @@ impl Config {
         Ok(cfg)
     }
 
+    /// Explicit configuration: a missing file is an error, and user MCP imports are not loaded.
+    pub fn load_from(path: &std::path::Path) -> Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+    }
+
     /// Resolve a profile name or a `provider/model` spec.
     pub fn resolve(&self, spec: Option<&str>) -> Result<(String, Profile)> {
         let spec = spec

@@ -232,6 +232,21 @@ configuration guidance. There is no automatic fallback. Counts range from 1–4;
 dimensions range from 64–2048 per axis, defaulting to `1024x1024`.
 Tang/Apple backend discovery and step previews are subsequent milestones.
 
+Test the complete tool path through the real executable with local chat/image fixtures:
+
+```bash
+cargo build -p frog
+python3 scripts/test_image_tool.py --frog target/debug/frog
+```
+
+This covers approval/denial, stub and remote output, vision delivery, session replay,
+backend errors and cancellation. It saves replay fixtures and PNGs under a temporary
+folder. `--server-only --output /tmp/frog-image-ui` keeps the fixture endpoint running
+and writes isolated `stub.toml` and `remote.toml` configurations. `frog --config <file>`
+loads an explicit configuration without replacing the normal user config; missing files
+are errors, and Claude MCP imports are not implicitly enabled. The native image snapshot
+test uses a captured run in `apps/macos/Fixtures/image-generation.jsonl`.
+
 ## Diagrams
 
 The agent draws when a picture explains better than prose: architecture, data flow, a request's path through the code, or the order of calls between parts.

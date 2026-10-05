@@ -11,6 +11,7 @@ enum ToolIcon {
         case "Glob": "folder.badge.questionmark"
         case "Grep": "text.magnifyingglass"
         case "TodoWrite": "checklist"
+        case "Image": "photo"
         case "Diagram": "point.3.connected.trianglepath.dotted"
         case "CodeMap": "map"
         case "WebFetch": "globe"

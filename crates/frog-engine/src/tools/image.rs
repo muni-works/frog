@@ -180,6 +180,16 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                 ""
             }
         ),
+        display: Some(format!(
+            "{} {} · {}",
+            images.len(),
+            if backend == "stub" {
+                "test placeholders"
+            } else {
+                "images"
+            },
+            request.size
+        )),
         images,
         ..Default::default()
     })

@@ -194,6 +194,8 @@ struct ToolImages: View {
                             .frame(maxWidth: images.count == 1 ? 560 : 320, maxHeight: 360)
                             .clipShape(.rect(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+                            .accessibilityLabel("Image \(i + 1) of \(images.count)")
+                            .accessibilityAddTraits(.isButton)
                             .opensInLightbox(images, at: i)
                             .draggable(Image(platformImage: ns))
                             .contextMenu {
