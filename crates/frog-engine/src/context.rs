@@ -201,22 +201,28 @@ pub fn apply(msgs: &mut [Message], id: &str, replacement: &str) {
 }
 
 /// The user's own words, which a summary must not paraphrase away (arXiv 2606.22528,
-/// 2608.22752). Keeps the first request plus as many recent ones as fit in `cap` chars.
+/// 2608.22752). Keeps the first request plus as many recent ones as fit in `cap` bytes.
 pub fn pinned_inputs(inputs: &[String], cap: usize) -> Vec<String> {
-    let clip = |s: &str| -> String {
-        if s.len() > 2000 {
-            format!("{}…", &s[..s.floor_char_boundary(2000)])
+    let clip = |s: &str, limit: usize| -> String {
+        if s.len() > limit && limit >= 3 {
+            format!("{}…", &s[..s.floor_char_boundary(limit - 3)])
         } else {
-            s.to_string()
+            s[..s.floor_char_boundary(s.len().min(limit))].to_string()
         }
     };
+    if cap == 0 {
+        return Vec::new();
+    }
     let Some(first) = inputs.first() else {
         return Vec::new();
     };
-    let mut used = first.len().min(2000);
+    // The first request defines the task. Do not discard its later constraints
+    // at an arbitrary 2K boundary when the pin budget can preserve it verbatim.
+    let first = clip(first, cap);
+    let mut used = first.len();
     let mut recent: Vec<String> = Vec::new();
     for s in inputs[1..].iter().rev() {
-        let s = clip(s);
+        let s = clip(s, cap.min(2000));
         if used + s.len() > cap {
             break;
         }
@@ -225,7 +231,7 @@ pub fn pinned_inputs(inputs: &[String], cap: usize) -> Vec<String> {
     }
     recent.reverse();
     let skipped = inputs.len() - 1 - recent.len();
-    let mut out = vec![clip(first)];
+    let mut out = vec![first];
     if skipped > 0 {
         out.push(format!("[{skipped} earlier messages omitted]"));
     }
@@ -326,6 +332,29 @@ mod tests {
         }
         assert!(history_chars(&h) <= budget);
         assert!(plan_prune(&h, budget).is_empty());
+    }
+
+    #[test]
+    fn pinned_inputs_preserve_late_constraints_in_a_long_first_request() {
+        let first = format!(
+            "{}\nDo not regenerate the target. Keep the same loop_id.",
+            "x".repeat(3500)
+        );
+        let recent = "continue".to_string();
+        assert_eq!(
+            pinned_inputs(&[first.clone(), recent.clone()], 8000),
+            [first, recent]
+        );
+    }
+
+    #[test]
+    fn pinned_inputs_clip_an_oversized_first_request_within_utf8_budget() {
+        let first = "🐸".repeat(3000);
+        let pinned = pinned_inputs(&[first], 2000);
+        assert!(pinned[0].len() <= 2000);
+        assert!(pinned[0].ends_with('…'));
+        assert!(pinned_inputs(&["hello".into()], 0).is_empty());
+        assert_eq!(pinned_inputs(&["hello".into()], 2), ["he"]);
     }
 
     #[test]
