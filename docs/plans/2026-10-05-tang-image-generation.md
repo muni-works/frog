@@ -224,3 +224,11 @@ Redraw on every keystroke at low resolution, then do a full render on enter.
 - Is Z-Image's head_dim within `flash_prefill`'s ≤128 limit? Check the config before I1.
 - Is the im2col VAE at 1024² (about 128×128×512 channels × 9) too big for memory? Fall back to tiled decode if so.
 - Should the agent generate images unprompted (UI mocks, icons), or only when asked? Start with only when asked, with the default permission ask.
+
+## Follow-up: judge-led scoring blocks convergence (2026-10-06)
+
+The autonomous benchmark is deferred, not passed. Re-scoring the six rounds of the Gemma 3 27B run (`frog-unattended-gemma27-repeat-compaction-1`) shows that the judge, not the coder, prevents convergence:
+- Judge scores were 55/65/55/65/35/45. The pooled foreground IoU ranked the same rounds 0.53/0.50/0.64/0.64/0.63/0.63, and visual inspection agrees with the IoU ordering.
+- `score = min(judge, ssim+20, overlap+20)` lets judge noise set the score.
+
+Proposed next step: for plain-background targets, derive the score from the measured geometry and color, and keep the VLM for the fix list and as a veto on gross content mismatches. This changes what the acceptance bar means, so it needs an explicit decision before it lands.
