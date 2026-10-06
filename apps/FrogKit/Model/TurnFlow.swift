@@ -33,6 +33,7 @@ struct TurnFlow {
         }
         func isVisual(_ item: ItemState) -> Bool {
             guard case .tool(let name, _) = item.kind else { return false }
+            if !item.done && item.imagePreview != nil { return true }
             if name == "Diagram" { return item.result?.diagram != nil || !item.done }
             guard let r = item.result, r.outcome == .ok else { return false }
             if let app = r.app { return latestApp[app.server + app.uri] == item.id }
@@ -209,6 +210,9 @@ enum ActivityWords {
         case "Task":
             return [.text(calls.count == 1 ? "ran a subagent" : "ran \(count(calls.count, "subagent"))")]
         case "TodoWrite": return [.text("updated the plan")]
+        case "Image": return [.text("generated images")]
+        case "Screenshot": return [.text("captured the page")]
+        case "Compare": return [.text("compared the images")]
         case "Diagram": return [.text("drew a diagram")]
         case "CodeMap": return [.text("mapped the code")]
         case "Docs": return [.text("read the docs")]
@@ -273,6 +277,9 @@ enum ActivityWords {
             case "WebSearch": return "Searching the web for “\(arg)”…"
             case "Task": return item.subagent?.activity.appending("…") ?? "Starting a subagent…"
             case "TodoWrite": return "Updating the plan…"
+            case "Image": return "Generating images…"
+            case "Screenshot": return "Capturing the page…"
+            case "Compare": return "Comparing images…"
             case "Diagram": return "Drawing a diagram…"
             case "CodeMap": return "Mapping the code…"
             case "Docs": return "Reading the docs…"

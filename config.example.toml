@@ -49,3 +49,12 @@ provider = "anthropic"
 model = "claude-sonnet-5"
 max_tokens = 32000
 # api_key_env = "ANTHROPIC_API_KEY"  (default)
+
+# Image generation is disabled unless explicitly configured. Uses the Image tool;
+# every call asks permission in default mode. No key is needed for a local server.
+# [image]
+# backend = "remote"
+# endpoint = "http://localhost:8080/v1/images/generations"
+# model = "z-image-turbo"
+# api_key_env = "IMAGE_API_KEY" # optional; environment variable containing a bearer token
+# For offline UI testing, use backend = "stub" (PNG checkerboard placeholders).

@@ -189,7 +189,7 @@ impl Renderer {
                     }
                     Delta::Reasoning { .. } => {}
                     // The TUI shows tool output when the tool finishes.
-                    Delta::Output { .. } => {}
+                    Delta::Output { .. } | Delta::ImagePreview { .. } => {}
                     Delta::Text { text } => {
                         self.enter(State::Text);
                         self.write(&text, false);

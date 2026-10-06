@@ -378,11 +378,16 @@ enum Delta: Decodable, Sendable {
     case text(String)
     case reasoning(String)
     case output(String)
+    case imagePreview(ToolImage, step: UInt64, of: UInt64, imageIndex: Int)
 
-    private enum Key: String, CodingKey { case type, text }
+    private enum Key: String, CodingKey { case type, text, image, step, of, imageIndex }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
+        if try c.decode(String.self, forKey: .type) == "image_preview" {
+            self = .imagePreview(try c.decode(ToolImage.self, forKey: .image), step: try c.decode(UInt64.self, forKey: .step), of: try c.decode(UInt64.self, forKey: .of), imageIndex: try c.decode(Int.self, forKey: .imageIndex))
+            return
+        }
         let text = try c.decode(String.self, forKey: .text)
         switch try c.decode(String.self, forKey: .type) {
         case "reasoning": self = .reasoning(text)

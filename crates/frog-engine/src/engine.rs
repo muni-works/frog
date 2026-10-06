@@ -743,6 +743,12 @@ impl Agent {
         let shell_sandbox = o.cfg.sandbox_shell && tools::bash::available() && !o.chat;
         let window = o.profile.context_window();
         let web = Arc::new(tools::web::Web::from_config(&o.cfg));
+        let image = o.cfg.image.clone();
+        let screenshot_endpoint = o.cfg.screenshot_endpoint.clone();
+        let judge = Some(match &o.cfg.compare_model {
+            Some(model) => o.cfg.resolve(Some(model))?.1,
+            None => o.profile.clone(),
+        });
         let resumed = o.resume.is_some();
         let shell_root = o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone());
         shared.panes.configure(o.cwd.clone());
@@ -755,6 +761,9 @@ impl Agent {
             ctx: {
                 let mut ctx = Ctx::new(o.cwd.clone());
                 ctx.web = web;
+                ctx.image = image;
+                ctx.screenshot_endpoint = screenshot_endpoint;
+                ctx.judge = judge;
                 if o.sandbox {
                     ctx.sandbox = Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
                 }
@@ -1059,6 +1068,9 @@ impl Agent {
                     Provider::new(&profile).map_err(|e| ConfigError(format!("{e:#}")))?;
                 self.profile_name = name;
                 self.profile = profile;
+                if self.cfg.compare_model.is_none() {
+                    self.ctx.judge = Some(self.profile.clone());
+                }
                 self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
                 self.caps = (self.store.is_some() && !harness::is_hosted(&self.profile))
                     .then(|| harness::cached(&self.profile))
@@ -1100,6 +1112,12 @@ impl Agent {
                 self.ctx.sandbox = sandbox;
                 self.ctx.shell_sandbox = shell_sandbox;
                 self.ctx.web = web;
+                self.ctx.image = self.cfg.image.clone();
+                self.ctx.screenshot_endpoint = self.cfg.screenshot_endpoint.clone();
+                self.ctx.judge = Some(match &self.cfg.compare_model {
+                    Some(model) => self.cfg.resolve(Some(model))?.1,
+                    None => self.profile.clone(),
+                });
                 self.usage = Usage::default();
                 self.session_id = session::new_id();
                 self.shared
@@ -1347,7 +1365,7 @@ impl Agent {
             );
         }
 
-        let mut compacted = false;
+        let mut compacted = None;
         let mut repeats: HashMap<String, u32> = HashMap::new();
         let mut steps = 0;
         // A reply asking for files it could Read is nudged once, before any tool has run.
@@ -1894,16 +1912,18 @@ impl Agent {
     }
 
     /// Stage 1: prune stale and old tool output (no LLM), once the prompt passes `start` of the
-    /// window. Stage 2: summarize, at most once per turn.
-    async fn fit_context(&mut self, compacted: &mut bool, start: f64) -> Result<()> {
+    /// window. Stage 2: summarize again when new messages fill the window.
+    async fn fit_context(&mut self, compacted: &mut Option<usize>, start: f64) -> Result<()> {
         let pruned = self.prune(start);
-        if (self.estimate() as f64) > self.window as f64 * context::COMPACT_AT && !*compacted {
+        if (self.estimate() as f64) > self.window as f64 * context::COMPACT_AT
+            && compacted.is_none_or(|len| self.messages.len() > len)
+        {
             self.notice(
                 Level::Warn,
                 "context is still nearly full after pruning; summarizing…",
             );
             self.compact(None).await?;
-            *compacted = true;
+            *compacted = Some(self.messages.len());
         } else if pruned {
             self.rebased();
         }
@@ -2064,7 +2084,7 @@ impl Agent {
         }
         if self.chat {
             // No project to work in: only the tools that don't touch files or run commands.
-            specs.retain(|s| matches!(&*s.name, "Diagram" | "WebFetch" | "WebSearch"));
+            specs.retain(|s| matches!(&*s.name, "Diagram" | "Image" | "WebFetch" | "WebSearch"));
             specs.push(crate::folder::spec());
         }
         // Terminal panes are engine-owned, so every client gets them; previews need a client
@@ -2102,11 +2122,20 @@ impl Agent {
         } else if self.small_window() && !self.subagent {
             // In a project, a small window holds the core tools and little else: the rest
             // (diagrams, the code map, docs, recall, skills, the plan) cost more room than
-            // they're worth at 8k. The panes stay: the user can see them, and asks for them.
+            // they're worth at 8k. Visual tools and panes stay: the user can ask for
+            // generation or a capture/compare loop even with a compact local model.
             specs.retain(|s| {
                 matches!(
                     &*s.name,
-                    "Bash" | "Read" | "Write" | "Edit" | "Glob" | "Grep"
+                    "Bash"
+                        | "Read"
+                        | "Write"
+                        | "Edit"
+                        | "Glob"
+                        | "Grep"
+                        | "Image"
+                        | "Screenshot"
+                        | "Compare"
                 ) || matches!(&*s.name, crate::panes::TERMINAL | crate::panes::PREVIEW)
                     || &*s.name == crate::mcp::SEARCH_TOOL
                     || &*s.name == crate::folder::TOOL
@@ -2168,6 +2197,12 @@ impl Agent {
         let sandbox = self.ctx.sandbox.is_some();
         self.ctx = Ctx::new(root.clone());
         self.ctx.web = web;
+        self.ctx.image = self.cfg.image.clone();
+        self.ctx.screenshot_endpoint = self.cfg.screenshot_endpoint.clone();
+        self.ctx.judge = Some(match &self.cfg.compare_model {
+            Some(model) => self.cfg.resolve(Some(model))?.1,
+            None => self.profile.clone(),
+        });
         self.ctx.todos = todos;
         if sandbox {
             self.ctx.sandbox = Some(root.clone());
@@ -2272,6 +2307,8 @@ impl Agent {
         }
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         self.ctx.progress = Some(tx);
+        let (preview_tx, mut preview_rx) = mpsc::unbounded_channel();
+        self.ctx.preview = Some(preview_tx);
         // The tool holds `ctx` mutably, so deltas go out through a detached emitter.
         let emit = {
             let (journal, id) = (self.shared.journal.clone(), id.to_string());
@@ -2289,13 +2326,21 @@ impl Agent {
                 tokio::select! {
                     out = &mut run => break out,
                     Some(chunk) = rx.recv() => emit(chunk),
+                    Some(delta) = preview_rx.recv() => { self.shared.journal.emit(Event::ItemDelta { id: id.to_string(), delta }); },
                 }
             }
         };
         while let Ok(chunk) = rx.try_recv() {
             emit(chunk);
         }
+        while let Ok(delta) = preview_rx.try_recv() {
+            self.shared.journal.emit(Event::ItemDelta {
+                id: id.to_string(),
+                delta,
+            });
+        }
         self.ctx.progress = None;
+        self.ctx.preview = None;
         out
     }
 
@@ -2324,7 +2369,11 @@ impl Agent {
             sandbox: self.ctx.sandbox.clone(),
             shell_sandbox: self.ctx.shell_sandbox.clone(),
             progress: None,
+            preview: None,
             web: self.ctx.web.clone(),
+            image: self.ctx.image.clone(),
+            screenshot_endpoint: self.ctx.screenshot_endpoint.clone(),
+            judge: self.ctx.judge.clone(),
         })
     }
 
@@ -2861,6 +2910,8 @@ Don't repeat it. Change the arguments or try a different approach.",
         let key = match kind {
             Kind::Edit => "edits".to_string(),
             Kind::Net => format!("web:{}", web_host(name, input)),
+            _ if name == "Screenshot" => format!("visual:Screenshot:{}", capture_host(input)),
+            _ if matches!(name, "Image" | "Compare") => format!("visual:{name}"),
             _ if mcp => format!("mcp:{name}"),
             _ if pane => format!("{}:{pane_action}", name.to_lowercase()),
             _ if leaves_sandbox => format!("bash-unsandboxed:{prefix}"),
@@ -2874,7 +2925,13 @@ Don't repeat it. Change the arguments or try a different approach.",
                         && crate::auto::hard_rule(name, input, &self.root).is_none())
             }
             Kind::Net => false,
-            _ if mcp || leaves_sandbox || pane => false,
+            _ if matches!(name, "Image" | "Screenshot" | "Compare")
+                || mcp
+                || leaves_sandbox
+                || pane =>
+            {
+                false
+            }
             _ => bash_allowed(cmd, &self.cfg.allow_bash),
         };
         if auto || self.session_allow.contains(&key) {
@@ -2921,6 +2978,12 @@ Don't repeat it. Change the arguments or try a different approach.",
                 "always allow fetching from {} this session",
                 web_host(name, input)
             ),
+            _ if name == "Image" => "always allow image generation this session".to_string(),
+            _ if name == "Screenshot" => format!(
+                "always allow screenshots of {} this session",
+                capture_host(input)
+            ),
+            _ if name == "Compare" => "always allow visual comparisons this session".to_string(),
             _ if mcp => {
                 let pretty = name
                     .strip_prefix("mcp__")
@@ -3069,10 +3132,20 @@ Don't repeat it. Change the arguments or try a different approach.",
             .join("\n");
         // Loaded skills' instructions are summarized away; let them load again.
         self.skills_loaded.clear();
-        self.reset(vec![Message::user(format!(
+        let visual = context::pinned_visual_context(
+            &self.messages,
+            if self.vision {
+                if self.small_window() { 1 } else { 2 }
+            } else {
+                0
+            },
+        );
+        let mut compacted = Message::user(format!(
             "(The earlier part of this session was compacted.)\n\nSummary:\n{summary}\n\n\
 The user's messages so far, verbatim. Any instructions or constraints in them still apply:\n{pinned}"
-        ))]);
+        ));
+        compacted.content.extend(visual);
+        self.reset(vec![compacted]);
         self.usage = Usage {
             input: resp.usage.output,
             ..Default::default()
@@ -3269,6 +3342,18 @@ fn web_host(name: &str, input: &Value) -> String {
     input["url"]
         .as_str()
         .and_then(|u| tools::web::parse_url(u).ok())
+        .and_then(|u| u.host_str().map(String::from))
+        .unwrap_or_default()
+}
+
+/// What a Screenshot approval covers: one http(s) host, or workspace files.
+fn capture_host(input: &Value) -> String {
+    let raw = input["url"].as_str().unwrap_or("");
+    if !(raw.starts_with("http://") || raw.starts_with("https://")) {
+        return "workspace files".into();
+    }
+    reqwest::Url::parse(raw)
+        .ok()
         .and_then(|u| u.host_str().map(String::from))
         .unwrap_or_default()
 }
@@ -4485,6 +4570,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn long_tool_turn_compacts_again_after_new_messages_fill_the_window() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("small.txt"), "small result").unwrap();
+        let work = |id: &str| {
+            reply(
+                vec![
+                    text(&"Long implementation analysis. ".repeat(1200)),
+                    Block::ToolUse {
+                        id: id.into(),
+                        name: "Read".into(),
+                        input: json!({"file_path":"small.txt"}),
+                    },
+                ],
+                Stop::ToolUse,
+            )
+        };
+        let script = vec![
+            work("first"),
+            reply(vec![text("First summary.")], Stop::End),
+            work("second"),
+            reply(vec![text("Second summary.")], Stop::End),
+            reply(vec![text("Finished.")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, None, None, Some(8192), dir);
+        let events = run(
+            &mut h,
+            "Keep the original target and continue until complete.",
+        )
+        .await;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e.event, Event::Compacted { .. }))
+                .count(),
+            2
+        );
+        let requests = sent.lock().unwrap();
+        assert_eq!(requests.len(), 5);
+        assert!(requests[4].contains("Second summary."));
+        assert!(requests[4].contains("Keep the original target"));
+        drop(requests);
+        shutdown(h).await;
+    }
+
+    #[tokio::test]
     async fn compaction_keeps_the_users_words_verbatim() {
         let dir = tmp_store();
         let script = vec![
@@ -5050,6 +5180,36 @@ mod tests {
                 "clicked #go"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_small_project_window_still_offers_visual_tools() {
+        let mut script = Vec::new();
+        for name in ["Image", "Screenshot", "Compare"] {
+            script.push(reply(
+                vec![Block::ToolUse {
+                    id: name.into(),
+                    name: name.into(),
+                    input: json!({}),
+                }],
+                Stop::ToolUse,
+            ));
+        }
+        script.push(reply(vec![text("done")], Stop::End));
+        let mut h = engine_with(script, false, None, None, Some(8_192), std::env::temp_dir());
+        let evs = run(&mut h, "generate, capture and compare").await;
+        for name in ["Image", "Screenshot", "Compare"] {
+            let outcome = evs.iter().find_map(|e| match &e.event {
+                Event::ItemCompleted {
+                    id,
+                    item: Item::ToolCall { outcome, .. },
+                } if id == name => Some(*outcome),
+                _ => None,
+            });
+            // Offered tools reach their permission gate; missing tools return Error.
+            assert_eq!(outcome, Some(ToolOutcome::Denied), "{name}");
+        }
+        shutdown(h).await;
     }
 
     #[tokio::test]

@@ -298,7 +298,7 @@ pub fn json_tools_prompt(tools: &[ToolSpec]) -> String {
         "\n# Response format\nEvery reply is one JSON object: {\"thought\": \"...\", \"action\": ...}.\n\
 - To reply to the user (when no tool is needed, or you're done): \"action\": {\"answer\": \"your reply\"}. Most messages need no tool.\n\
 - To use a tool: \"action\": {\"tool\": \"ToolName\", \"args\": {...}}. One tool per reply; its result comes back \
-in the next message as <tool_result>.\n\
+in the next message as <tool_result>. Use schema property order, supplying user-requested optional arguments before later properties.\n\
 Keep \"thought\" short.\n\nTools:\n",
     );
     for t in tools {
@@ -357,7 +357,26 @@ pub enum Action {
 
 /// Parse a JSON-mode reply. `None` if the model (or server) didn't honor the format.
 pub fn parse_action(text: &str) -> Option<(String, Action)> {
-    let v: Value = serde_json::from_str(text.trim()).ok()?;
+    let text = text.trim();
+    // Some local servers accept response_format without enforcing it. Recover only
+    // a whole fenced JSON response, never a JSON example embedded in prose.
+    let text = text
+        .strip_prefix("```json\n")
+        .or_else(|| text.strip_prefix("```\n"))
+        .and_then(|body| body.strip_suffix("```"))
+        .unwrap_or(text);
+    let text = text.trim();
+    let v: Value = serde_json::from_str(text)
+        .or_else(|error| {
+            // Recover a complete action whose root closing brace was omitted.
+            // One brace cannot repair truncated strings, arguments or multiple levels.
+            if error.is_eof() && text.starts_with('{') && text.ends_with('}') {
+                serde_json::from_str(&format!("{text}}}"))
+            } else {
+                Err(error)
+            }
+        })
+        .ok()?;
     let thought = v["thought"].as_str().unwrap_or("").to_string();
     let a = &v["action"];
     if let Some(name) = a["tool"].as_str() {
@@ -382,6 +401,47 @@ pub fn parse_action(text: &str) -> Option<(String, Action)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_action_recovers_only_whole_fenced_reply() {
+        let action =
+            r#"{"thought":"capture","action":{"tool":"Screenshot","args":{"url":"index.html"}}}"#;
+        for reply in [
+            action.to_string(),
+            format!("```json\n{action}\n```"),
+            format!("```\n{action}\n```"),
+        ] {
+            assert!(
+                matches!(parse_action(&reply), Some((_, Action::Tool { name, .. })) if name == "Screenshot")
+            );
+        }
+        assert!(parse_action(&format!("Example:\n```json\n{action}\n``` ")).is_none());
+        assert!(parse_action(&format!("```json\n{action}\n```\nDone")).is_none());
+        assert!(
+            parse_action(&format!("```json\n{action}\n```\n```json\n{action}\n``` ")).is_none()
+        );
+    }
+
+    #[test]
+    fn json_action_recovers_only_one_missing_root_brace() {
+        let action = r#"{"thought":"write","action":{"tool":"Write","args":{"file_path":"index.html","content":"<div>frog</div>"}}"#;
+        assert!(
+            matches!(parse_action(action), Some((_, Action::Tool { name, .. })) if name == "Write")
+        );
+        assert!(parse_action(&action[..action.len() - 1]).is_none());
+        assert!(parse_action(action.trim_end_matches('}')).is_none());
+        assert!(
+            parse_action(
+                r#"{"thought":"write","action":{"tool":"Write","args":{"content":"unfinished}"#
+            )
+            .is_none()
+        );
+        assert!(
+            parse_action(r#"{"thought":"write","action":{"tool":"Write","args":{"content":}}}"#)
+                .is_none()
+        );
+        assert!(parse_action(&format!("Example: {action}")).is_none());
+    }
 
     #[test]
     fn extracts_calls() {

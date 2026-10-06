@@ -91,7 +91,7 @@ Named profiles live in `~/.config/frog/config.toml`. See [config.example.toml](c
 
 ## Tools
 
-`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Diagram` · `CodeMap` · `Docs` · `WebFetch` · `WebSearch`
+`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Image` · `Screenshot` · `Compare` · `Diagram` · `CodeMap` · `Docs` · `WebFetch` · `WebSearch`
 
 The tools behave like Claude Code's: Edit replaces an exact string that must be unique, and a file has to be Read before it can be edited, with a check that it hasn't changed since. Bash keeps its working directory between calls.
 
@@ -201,6 +201,112 @@ They go to the model as images:
 Images tools return also reach the model: MCP renders like vcad's `render_view`, and computer use's `look` screenshots.
 
 Vision support is detected: ollama reports it, and Anthropic and OpenAI's own models have it. Set `vision = true` on any other profile. A model that can't see images gets a short note in each image's place, and the composer says so. Only the three most recent images are sent, and each counts as about 1.5k tokens in the context budget.
+
+## Image generation
+
+`Image` takes `{prompt, size?, seed?, count?, steps?, output_dir?}` and returns images to the transcript and
+lightbox, including vision input for models that support it. Use it when the user asks
+for images. Generation asks permission in default mode; session approval is separate
+from shell approval. Images and the request are retained in the session log.
+
+Configure an explicit backend in `~/.config/frog/config.toml`:
+
+```toml
+[image]
+backend = "remote"
+endpoint = "http://localhost:8080/v1/images/generations"
+model = "z-image-turbo"
+# api_key_env = "IMAGE_API_KEY"
+```
+
+The endpoint is the full generations URL. Requests use the OpenAI-compatible fields
+`model`, `prompt`, `size`, `n`, `response_format = "b64_json"`, and optional `seed`.
+The server must support these fields and return `data[].b64_json` with PNG, JPEG or
+WebP bytes. URL responses are rejected. Seeds depend on backend support and do not
+guarantee reproducibility on remote services. Requests time out after five minutes;
+responses are bounded to 64 MiB. Tool progress reports generation start and completion.
+
+For offline testing, set `backend = "stub"`: it returns deterministic PNG checkerboards
+at the requested dimensions, labeled as placeholders. An unset backend fails with
+configuration guidance. There is no automatic fallback. Counts range from 1–4;
+dimensions range from 64–2048 per axis, defaulting to `1024x1024`.
+Use `backend = "tang"` with the same endpoint/model configuration for a tang-compatible
+service. `backend = "apple"` starts the bundled Apple sidecar and uses ImageCreator;
+Apple chooses dimensions and rejects seeds. ImageCreator requires foreground creation
+on supported macOS releases and is disabled by Apple on macOS 27+; this backend
+therefore returns an availability error there. See [Apple's API documentation](https://developer.apple.com/documentation/imageplayground/imagecreator/init%28%29).
+Tang endpoints support `x-frog-progress: sse` step streaming; Frog accepts streamed
+progress plus the final image result. Optional `steps` requires backend support.
+Tang backends advertising `latent_previews` stream approximate step images into the
+transcript. Frog keeps the latest preview, labels it as approximate, and replaces it
+with final attachments. Bounded preview frames replay after reopening a session;
+only final images enter the model’s vision context. Enable them by explicitly
+[calibrating Tang’s installed VAE](https://github.com/ecto/tang/blob/codex/z-image-native/docs/image-previews.md)
+and installing `preview.json` at the pipeline root. Older backends retain numeric
+progress. Automatic backend selection remains a subsequent milestone.
+
+With `output_dir`, new PNG assets and a JSON manifest containing prompt, backend,
+model, requested size/seed/steps and returned generation parameters are saved inside the workspace. Existing files are not
+replaced. Remote rasters are fully decoded with dimension/allocation bounds.
+
+Test the complete tool path through the real executable with local chat/image fixtures:
+
+```bash
+cargo build -p frog
+python3 scripts/test_image_tool.py --frog target/debug/frog
+```
+
+This covers approval/denial, stub and remote output, vision delivery, session replay,
+backend errors and cancellation. It saves replay fixtures and PNGs under a temporary
+folder. `--server-only --output /tmp/frog-image-ui` keeps the fixture endpoint running
+and writes isolated `stub.toml` and `remote.toml` configurations. `frog --config <file>`
+loads an explicit configuration without replacing the normal user config; missing files
+are errors, and Claude MCP imports are not implicitly enabled. The native image snapshot
+test uses a captured run in `apps/macos/Fixtures/image-generation.jsonl`.
+
+## Visual iteration
+
+`Screenshot` renders an HTTP(S) URL or local HTML/SVG file at a fixed viewport, shows
+its PNG in the transcript, and optionally saves a new `output_path`. On macOS it uses
+the bundled `frog-apple` WebKit sidecar, waits for fonts/images, and normalizes Retina
+captures to viewport pixels. Other renderers can expose the same JSON endpoint.
+The optional [Chromium sidecar](sidecars/frog-chromium/README.md) supports the same
+endpoint on other platforms and uses an isolated browser context per capture.
+
+```toml
+screenshot_endpoint = "http://localhost:8912/v1/screenshots"
+compare_model = "local-vision" # a configured model profile; otherwise the session model
+```
+
+`Compare` takes saved `target` and `actual` images plus optional `notes`, `loop_id`,
+`threshold` (85) and `max_rounds` (6). It sends full images and up to three paired
+crops from the worst regions to a vision model. The judge first describes each full
+image independently, then scores geometry, content, color and style. These descriptions
+reach the coding model alongside structured differences,
+SSIM, judge score and a combined score (judge score capped at `100 * SSIM + 20`).
+For targets with a nearly uniform border and visible foreground, coarse foreground
+overlap supplies an additional `100 * overlap + 20` cap. This rejects missing subjects
+even when background similarity is high; photos retain the SSIM/vision gate. Crop
+coordinates refer to the original target pixels.
+The score is a heuristic, not a guarantee of visual equivalence. Images must have
+matching aspect ratios. With `loop_id`, state in `.frog/visual-loops/` enforces stopping
+on a match, two improvements below one point, or the round limit across restarts.
+Each tool has separate session permission. The bundled `/visual-loop` skill guides
+capture, comparison and focused edits; a project skill can override it.
+For generated flat icons and sprites, the optional [SVG tracing utility](scripts/ASSETS.md)
+retains the raster and creates a new vector asset for capture and comparison.
+
+```bash
+python3 scripts/test_visual_tools.py --frog target/debug/frog
+# Include real WebKit capture while keeping the vision judge a fixture:
+python3 scripts/test_visual_tools.py --frog target/debug/frog \
+  --screenshot-endpoint http://localhost:8912/v1/screenshots
+# Use an explicitly selected local vision judge as well:
+python3 scripts/test_visual_tools.py --frog target/debug/frog \
+  --screenshot-endpoint http://localhost:8912/v1/screenshots \
+  --judge-endpoint http://localhost:8911/v1 --judge-model local-vision-model
+```
+
 
 ## Diagrams
 

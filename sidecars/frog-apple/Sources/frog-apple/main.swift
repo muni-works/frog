@@ -8,6 +8,8 @@
 
 import Foundation
 import FoundationModels
+import AppKit
+import ImagePlayground
 
 let modelID = "apple"
 let args = CommandLine.arguments
@@ -168,6 +170,12 @@ let server = try HTTPServer(port: port) { req, res in
     case ("GET", "/props"): res.json(200, ["n_ctx": ctx, "default_generation_settings": ["n_ctx": ctx]])
     case ("GET", "/v1/models"):
         res.json(200, ["object": "list", "data": [["id": modelID, "object": "model", "owned_by": "apple", "max_model_len": ctx]]])
+    case ("POST", "/v1/screenshots"), ("POST", "/v1/images/generations"):
+        guard let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any] else {
+            res.json(400, ["error": ["message": "invalid JSON"]]); return
+        }
+        if req.path == "/v1/screenshots" { await screenshot(body, res) }
+        else { await createImages(body, res) }
     case ("POST", "/v1/chat/completions"):
         guard let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any] else {
             res.json(400, ["error": ["message": "invalid JSON"]])
@@ -179,4 +187,5 @@ let server = try HTTPServer(port: port) { req, res in
 }
 server.start()
 FileHandle.standardError.write(Data("frog-apple: listening on http://127.0.0.1:\(port) (context \(ctx))\n".utf8))
-dispatchMain()
+NSApplication.shared.setActivationPolicy(.prohibited)
+NSApplication.shared.run()

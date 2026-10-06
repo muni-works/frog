@@ -300,6 +300,7 @@ final class Conversation {
             if !replaying { busy = true }
         case .turnEnded(let n, let reason, let usage):
             if let i = turns.lastIndex(where: { $0.number == n }) {
+                for index in turns[i].items.indices { turns[i].items[index].imagePreview = nil }
                 turns[i].end = reason
                 turns[i].usage = usage
                 turns[i].endedAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
@@ -324,12 +325,14 @@ final class Conversation {
                 switch delta {
                 case .text(let t), .reasoning(let t): item.text += t
                 case .output(let t): item.output += t
+                case .imagePreview(let image, _, _, _): item.imagePreview = image
                 }
             }
             progress = nil
         case .itemCompleted(let id, let item):
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             upsert(id) { state in
+                state.imagePreview = nil
                 state.done = true
                 state.endedAt = at
                 state.needsPermission = false

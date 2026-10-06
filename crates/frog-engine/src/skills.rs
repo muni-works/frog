@@ -91,6 +91,12 @@ pub fn discover_in(cwd: &Path, user: bool) -> BTreeMap<String, Skill> {
             });
         }
     }
+    out.entry("visual-loop".into()).or_insert(Skill {
+        name: "visual-loop".into(),
+        description: "Rebuild a page, component, icon or sprite from a visual reference with Screenshot and Compare; bounded iteration and durable assets.".into(),
+        path: PathBuf::from("frog-builtin:visual-loop"),
+        project: false,
+    });
     out
 }
 
@@ -235,6 +241,10 @@ pub fn run(
 
 /// A skill's instructions, wrapped so they're recognizable later, with its files listed (not read).
 pub fn load(skill: &Skill) -> Result<String> {
+    if skill.path == Path::new("frog-builtin:visual-loop") {
+        let text = include_str!("skills/visual-loop.md");
+        return Ok(format!("<skill_content name=\"visual-loop\">\n{text}\n</skill_content>"));
+    }
     let text = std::fs::read_to_string(&skill.path)?;
     let body = split(&text).map(|(_, b)| b).unwrap_or(&text).trim();
     let dir = skill.dir();

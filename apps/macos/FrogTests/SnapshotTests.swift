@@ -128,6 +128,60 @@ final class SnapshotTests: XCTestCase {
         print("snapshots: \(outDir.path)")
     }
 
+    /// Generated images remain visible in a finished turn, and decode for the lightbox.
+    func testRenderImageGeneration() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Fixtures/image-generation.jsonl")
+        let conversation = Conversation(preview: URL(fileURLWithPath: "/tmp/frog-image-test"))
+        try events(url).forEach(conversation.ingest)
+        let turn = try XCTUnwrap(conversation.turns.first)
+        let visual = TurnFlow(turn.items).segments.compactMap { segment -> ItemState? in
+            if case .visual(let item) = segment { item } else { nil }
+        }
+        XCTAssertEqual(visual.count, 1, "generated images must not collapse into activity history")
+        let result = try XCTUnwrap(visual.first?.result)
+        XCTAssertEqual(result.name, "Image")
+        let images = try XCTUnwrap(result.images)
+        XCTAssertEqual(images.count, 2)
+        XCTAssertTrue(images.allSatisfy { $0.image?.size == CGSize(width: 320, height: 192) })
+        let lightbox = Lightbox()
+        lightbox.show(images, at: 0)
+        XCTAssertTrue(lightbox.isOpen)
+        lightbox.step(1)
+        XCTAssertEqual(lightbox.index, 1)
+        lightbox.step(1)
+        XCTAssertEqual(lightbox.index, 0)
+        lightbox.close()
+        XCTAssertFalse(lightbox.isOpen)
+        for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
+            try render(transcript(conversation), size: CGSize(width: 900, height: 650),
+                       to: "image-generation-\(name)", appearance: look)
+        }
+    }
+
+    /// A captured page stays visible; comparison output remains available after completion.
+    func testRenderVisualLoop() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Fixtures/visual-loop.jsonl")
+        let conversation = Conversation(preview: URL(fileURLWithPath: "/tmp/frog-visual-test"))
+        try events(url).forEach(conversation.ingest)
+        let turn = try XCTUnwrap(conversation.turns.first)
+        let captures = turn.items.filter { $0.result?.name == "Screenshot" }
+        let capture = try XCTUnwrap(captures.first?.result)
+        XCTAssertEqual(capture.outcome, .ok)
+        XCTAssertEqual(capture.images?.first?.image?.size, CGSize(width: 320, height: 192))
+        let comparisons = turn.items.compactMap(\.result).filter { $0.name == "Compare" }
+        XCTAssertEqual(comparisons.count, 2)
+        XCTAssertTrue(comparisons.first?.output.contains("matched") ?? false)
+        XCTAssertEqual(comparisons.last?.outcome, .error)
+        let visuals = TurnFlow(turn.items).segments.filter { if case .visual = $0 { true } else { false } }
+        XCTAssertEqual(visuals.count, 1)
+        for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
+            try render(transcript(conversation), size: CGSize(width: 900, height: 650),
+                       to: "visual-loop-\(name)", appearance: look)
+        }
+    }
+
     /// Opening a conversation that's slow to load: "Loading session…" (after a beat), never the
     /// new-conversation page.
     func testRenderReopening() throws {

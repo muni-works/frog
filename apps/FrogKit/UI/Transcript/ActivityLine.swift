@@ -271,8 +271,9 @@ struct ActivityStepRow: View {
             SubagentCard(arg: arg, item: item, conversation: conversation)
         case .tool(let name, _):
             VStack(alignment: .leading, spacing: 8) {
-                if let images = item.result?.images, !images.isEmpty {
-                    ToolImages(images: images)
+                if !item.displayImages.isEmpty {
+                    ToolImages(images: item.displayImages, preview: !item.done)
+                    if !item.done { Text("Approximate step preview").font(.caption).foregroundStyle(.secondary) }
                 }
                 ToolDetail(name: name, item: item)
                 if let why = item.autoReason {

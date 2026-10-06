@@ -123,6 +123,15 @@ fn default_thinking_budget() -> u32 {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
+    /// Optional screenshot service; defaults to bundled frog-apple WebKit.
+    #[serde(default)]
+    pub screenshot_endpoint: Option<String>,
+    /// Vision judge profile; defaults to the session model when it supports vision.
+    #[serde(default)]
+    pub compare_model: Option<String>,
+    /// Explicit image generation backend; disabled when unset.
+    #[serde(default)]
+    pub image: crate::tools::image::Settings,
     pub default_model: Option<String>,
     #[serde(default)]
     pub models: BTreeMap<String, Profile>,
@@ -241,6 +250,13 @@ impl Config {
         };
         cfg.claude_mcp = crate::imports::claude_mcp_on();
         Ok(cfg)
+    }
+
+    /// Explicit configuration: a missing file is an error, and user MCP imports are not loaded.
+    pub fn load_from(path: &std::path::Path) -> Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
     }
 
     /// Resolve a profile name or a `provider/model` spec.
