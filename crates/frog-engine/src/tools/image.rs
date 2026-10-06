@@ -201,10 +201,16 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     let mut saved = Vec::new();
     if let Some(dir) = output_dir {
         let id = crate::session::new_id();
-        for (i, image) in images.iter().enumerate() {
-            let raster = super::visual::decode(&STANDARD.decode(&image.data)?)?;
+        // Encode every image before writing any, so a bad one leaves no orphans.
+        let pngs = images
+            .iter()
+            .map(|image| {
+                super::visual::png(&super::visual::decode(&STANDARD.decode(&image.data)?)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for (i, png) in pngs.iter().enumerate() {
             let path = dir.join(format!("image-{id}-{}.png", i + 1));
-            super::visual::save(ctx, &path, &super::visual::png(&raster)?).await?;
+            super::visual::save(ctx, &path, png).await?;
             saved.push(path.display().to_string());
         }
         let metadata = json!({"backend":backend,"model":model,"prompt":request.prompt,"requested_size":request.size,"seed":request.seed,"steps":request.steps,"generation":generation_metadata,"files":saved});

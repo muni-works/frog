@@ -2910,7 +2910,8 @@ Don't repeat it. Change the arguments or try a different approach.",
         let key = match kind {
             Kind::Edit => "edits".to_string(),
             Kind::Net => format!("web:{}", web_host(name, input)),
-            _ if matches!(name, "Image" | "Screenshot" | "Compare") => format!("visual:{name}"),
+            _ if name == "Screenshot" => format!("visual:Screenshot:{}", capture_host(input)),
+            _ if matches!(name, "Image" | "Compare") => format!("visual:{name}"),
             _ if mcp => format!("mcp:{name}"),
             _ if pane => format!("{}:{pane_action}", name.to_lowercase()),
             _ if leaves_sandbox => format!("bash-unsandboxed:{prefix}"),
@@ -2978,7 +2979,10 @@ Don't repeat it. Change the arguments or try a different approach.",
                 web_host(name, input)
             ),
             _ if name == "Image" => "always allow image generation this session".to_string(),
-            _ if name == "Screenshot" => "always allow screenshots this session".to_string(),
+            _ if name == "Screenshot" => format!(
+                "always allow screenshots of {} this session",
+                capture_host(input)
+            ),
             _ if name == "Compare" => "always allow visual comparisons this session".to_string(),
             _ if mcp => {
                 let pretty = name
@@ -3338,6 +3342,18 @@ fn web_host(name: &str, input: &Value) -> String {
     input["url"]
         .as_str()
         .and_then(|u| tools::web::parse_url(u).ok())
+        .and_then(|u| u.host_str().map(String::from))
+        .unwrap_or_default()
+}
+
+/// What a Screenshot approval covers: one http(s) host, or workspace files.
+fn capture_host(input: &Value) -> String {
+    let raw = input["url"].as_str().unwrap_or("");
+    if !(raw.starts_with("http://") || raw.starts_with("https://")) {
+        return "workspace files".into();
+    }
+    reqwest::Url::parse(raw)
+        .ok()
         .and_then(|u| u.host_str().map(String::from))
         .unwrap_or_default()
 }

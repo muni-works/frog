@@ -30,18 +30,23 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     if !(64..=2048).contains(&width) || !(64..=2048).contains(&height) || settle > 5000 {
         bail!("invalid viewport or settle_ms");
     }
-    let url = if raw.starts_with("http://")
-        || raw.starts_with("https://")
-        || raw.starts_with("file://")
-    {
+    let url = if raw.starts_with("http://") || raw.starts_with("https://") {
         reqwest::Url::parse(raw).context("invalid capture URL")?
     } else {
-        reqwest::Url::from_file_path(
-            ctx.resolve(raw)
-                .canonicalize()
-                .context("capture file does not exist")?,
-        )
-        .map_err(|_| anyhow::anyhow!("invalid capture file path"))?
+        // Local files must stay inside the workspace, so a capture can't render secrets.
+        let file = match raw.strip_prefix("file://") {
+            Some(_) => reqwest::Url::parse(raw)
+                .context("invalid capture URL")?
+                .to_file_path()
+                .map_err(|_| anyhow::anyhow!("invalid capture file path"))?,
+            None => ctx.resolve(raw),
+        };
+        let file = file.canonicalize().context("capture file does not exist")?;
+        if !file.starts_with(ctx.cwd.canonicalize()?) {
+            bail!("local captures must be inside the workspace");
+        }
+        reqwest::Url::from_file_path(file)
+            .map_err(|_| anyhow::anyhow!("invalid capture file path"))?
     };
     if !matches!(url.scheme(), "http" | "https" | "file")
         || !url.username().is_empty()
@@ -118,4 +123,31 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         images: vec![visual::attachment(&image)?],
         ..Default::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn local_captures_stay_in_the_workspace() {
+        let root = std::env::temp_dir().join(format!("frog-shot-{}", std::process::id()));
+        let ws = root.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(root.join("secret.html"), "secret").unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        for url in [
+            "../secret.html".to_string(),
+            format!("file://{}", root.join("secret.html").display()),
+        ] {
+            let Err(err) = run(&json!({ "url": url }), &mut ctx).await else {
+                panic!("{url} was captured");
+            };
+            assert!(
+                err.to_string().contains("inside the workspace"),
+                "{url}: {err}"
+            );
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
