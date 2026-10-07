@@ -151,6 +151,11 @@ struct TranscriptView: View {
                             }
                         }
                 }
+                if let q = conversation.question {
+                    QuestionCard(question: q, conversation: conversation)
+                        .id(q.id)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
                 if let e = conversation.elicitation {
                     ElicitationCard(request: e, conversation: conversation)
                         .id(e.id)
@@ -160,6 +165,7 @@ struct TranscriptView: View {
                 if conversation.replaying {
                     LoadingIndicator(since: conversation.opened)
                 } else if conversation.busy, conversation.permission == nil, conversation.elicitation == nil,
+                   conversation.question == nil,
                    conversation.turns.last?.items.isEmpty ?? true {
                     WorkingIndicator(label: conversation.progress)
                 }
