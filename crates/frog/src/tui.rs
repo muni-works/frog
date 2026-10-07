@@ -372,19 +372,15 @@ impl Tui {
     fn input(&mut self, line: &str) -> bool {
         let line = line.trim();
         if let Some((id, _)) = self.asking.take() {
-            let decision = match line.to_lowercase().as_str() {
-                "" | "y" | "yes" => Decision::Allow,
-                "a" | "always" => Decision::AllowAlways,
-                _ => Decision::Deny,
-            };
-            let said = match decision {
-                Decision::Allow => "yes".green(),
-                Decision::AllowAlways => "always".green(),
-                Decision::Deny => "no".red(),
+            let (decision, said) = match line.to_lowercase().as_str() {
+                "" | "y" | "yes" => (Decision::Allow, "yes".green()),
+                "a" | "always" => (Decision::AllowAlways, "always".green()),
+                "n" | "no" => (Decision::Deny, "no".red()),
+                // Anything other than an answer is a message: deny, then send it.
+                _ => (Decision::Deny, "denied · sending your message".red()),
             };
             render::say(&format!("  {said}"));
             self.send(Op::Permission { id, decision });
-            // Anything other than an answer is a message: deny, then send it.
             if matches!(
                 line.to_lowercase().as_str(),
                 "" | "y" | "yes" | "a" | "always" | "n" | "no"

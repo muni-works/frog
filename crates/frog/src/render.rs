@@ -85,7 +85,7 @@ pub fn write_out(s: &str) {
             // A long streamed line wraps, at a word if there's one in its second half,
             // continuing indented like the renderer's own wraps.
             let at = match sink.buf[..at].rfind(' ') {
-                Some(sp) if sp > at / 2 => sp + 1,
+                Some(sp) if sp >= at / 2 => sp + 1,
                 _ => at,
             };
             let line: String = sink.buf.drain(..at).collect();
