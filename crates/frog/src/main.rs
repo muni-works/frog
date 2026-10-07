@@ -300,12 +300,7 @@ async fn run() -> Result<bool> {
         None => match frog_engine::models::last_used() {
             Some(m) => Some(m),
             None => match frog_engine::models::pick_default().await {
-                Some((m, why)) => {
-                    if !cli.print {
-                        eprintln!("  using {m} ({why}) · /model to change");
-                    }
-                    Some(m)
-                }
+                Some((m, _)) => Some(m),
                 None => {
                     eprintln!("{NO_MODEL}");
                     return Ok(false);

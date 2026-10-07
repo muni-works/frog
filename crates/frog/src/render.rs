@@ -270,7 +270,7 @@ impl Renderer {
             Event::Notice { level, message } => {
                 self.idle();
                 match level {
-                    Level::Info => info(&format!("  {message}")),
+                    Level::Info => info(&format!("  {}", shorten_notice(&message))),
                     Level::Warn => warn(&format!("  {message}")),
                 }
             }
@@ -723,4 +723,37 @@ fn live_line(l: &Live, cols: usize) -> String {
         out.push(styled);
     }
     out.join(&" · ".dark_grey().to_string())
+}
+
+/// The engine's MCP summary names every server and why; in a terminal, a count is enough.
+fn shorten_notice(message: &str) -> String {
+    let Some(rest) = message.strip_prefix("Some MCP servers aren't available: ") else {
+        return message.to_string();
+    };
+    // "a couldn't start; b and c need a sign-in …; d isn't running." → a, b, c, d
+    let names = rest
+        .split("; ")
+        .flat_map(|part| {
+            let who = part.split(" couldn't").next().unwrap_or(part);
+            let who = who.split(" need").next().unwrap_or(who);
+            let who = who.split(" isn't").next().unwrap_or(who);
+            who.split(" and ").map(str::to_string).collect::<Vec<_>>()
+        })
+        .count();
+    let s = if names == 1 { "" } else { "s" };
+    format!("{names} MCP server{s} unavailable · frog --mcp for details")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mcp_summary_becomes_a_count() {
+        assert_eq!(
+            super::shorten_notice(
+                "Some MCP servers aren't available: aws-mcp couldn't start; choji and runpod need a sign-in frog doesn't support yet; fusion isn't running."
+            ),
+            "4 MCP servers unavailable · frog --mcp for details"
+        );
+        assert_eq!(super::shorten_notice("hello"), "hello");
+    }
 }

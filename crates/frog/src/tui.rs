@@ -188,7 +188,7 @@ impl Tui {
             cwd.dark_grey()
         );
         render::info(
-            "   /help for commands · shift+tab cycles permission mode · alt+enter for newline\n",
+            "   /help for commands · shift+tab cycles permission mode · alt+enter for newline",
         );
         if s.messages > 0 {
             render::info(&format!(
@@ -293,7 +293,26 @@ impl Tui {
     }
 }
 
+/// Put the terminal back in cooked mode if something (a killed program) left it raw: output
+/// would otherwise stair-step, every line starting where the last ended.
+fn restore_cooked() {
+    use std::os::fd::AsRawFd;
+    let fd = std::io::stdin().as_raw_fd();
+    // SAFETY: tcgetattr/tcsetattr on stdin with a zeroed termios they fill in.
+    unsafe {
+        let mut t: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(fd, &mut t) != 0 || t.c_oflag & libc::OPOST != 0 {
+            return;
+        }
+        t.c_oflag |= libc::OPOST | libc::ONLCR;
+        t.c_lflag |= libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN;
+        t.c_iflag |= libc::ICRNL;
+        libc::tcsetattr(fd, libc::TCSANOW, &t);
+    }
+}
+
 pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<()> {
+    restore_cooked();
     let mut tui = Tui {
         h,
         cfg,
