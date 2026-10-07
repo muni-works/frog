@@ -281,8 +281,18 @@ impl Tui {
                 return true;
             }
         };
+        let switching = matches!(op, Op::SetModel { .. });
+        let before = self.status.as_ref().map(|s| s.model.clone());
         self.send(op);
-        self.drain().await
+        let alive = self.drain().await;
+        // A bare `frog` starts where you left off.
+        if let Some(now) = self.status.as_ref().map(|s| &s.model)
+            && switching
+            && before.as_ref() != Some(now)
+        {
+            frog_engine::models::remember_last_used(now);
+        }
+        alive
     }
 }
 

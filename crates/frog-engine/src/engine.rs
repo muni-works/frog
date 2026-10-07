@@ -2037,8 +2037,11 @@ impl Agent {
             .into_iter()
             .filter_map(|st| st.error.map(|e| (st.name, e)))
             .collect();
-        for (name, e) in &failed {
-            eprintln!("MCP `{name}` didn't connect: {e}");
+        // In a terminal the summary below says enough; the raw errors are for logs.
+        if !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+            for (name, e) in &failed {
+                eprintln!("MCP `{name}` didn't connect: {e}");
+            }
         }
         if let Some(line) = crate::mcp::unavailable_summary(&failed) {
             self.notice(Level::Info, line);

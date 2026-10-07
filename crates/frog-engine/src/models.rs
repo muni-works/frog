@@ -205,3 +205,74 @@ fn local_checkpoints() -> Vec<String> {
     out.sort();
     out
 }
+
+/// The model a bare `frog` starts on when nothing names one (no `-m`, `FROG_MODEL`,
+/// `default_model` or last pick): the first that would answer right now, and why it was
+/// chosen. Order: frog's own tang engine, a running ollama or LM Studio (whatever you pulled is
+/// likely bigger than anything frog would pick), Apple's on-device model, then a cloud model you
+/// turned on, then Anthropic with a key in the environment. None when nothing here can answer.
+pub async fn pick_default() -> Option<(String, String)> {
+    const TANG: &str = "tang/mlx-community/Qwen3-4B-4bit";
+    if crate::sidecar::available("tang") {
+        return Some((TANG.into(), "frog's own engine".into()));
+    }
+    let base = local_ollama();
+    let (ollama, lmstudio) = tokio::join!(
+        ollama_tags(&base),
+        server_models("http://localhost:1234/v1", None)
+    );
+    if let Some(tag) = best_local(&ollama) {
+        return Some((format!("ollama/{tag}"), "running in ollama".into()));
+    }
+    if let Some(id) = best_local(&lmstudio) {
+        return Some((format!("lmstudio/{id}"), "running in LM Studio".into()));
+    }
+    if crate::sidecar::available(crate::sidecar::APPLE) {
+        return Some(("apple/on-device".into(), "Apple Intelligence".into()));
+    }
+    // Cloud models you turned on (`--enable-model`), whose keys frog already has.
+    if let Some(spec) = crate::providers::State::load().enabled.into_iter().next() {
+        return Some((spec, "a cloud model you turned on".into()));
+    }
+    if std::env::var_os("ANTHROPIC_API_KEY").is_some() {
+        return Some((
+            "anthropic/claude-sonnet-5".into(),
+            "ANTHROPIC_API_KEY is set".into(),
+        ));
+    }
+    None
+}
+
+/// A coding model if one is installed, else the first chat model.
+fn best_local(names: &[String]) -> Option<&String> {
+    names
+        .iter()
+        .find(|n| n.to_lowercase().contains("coder"))
+        .or_else(|| names.first())
+}
+
+/// The model last picked with `/model`, which a bare `frog` starts on.
+pub fn last_used() -> Option<String> {
+    let s = std::fs::read_to_string(crate::config::data_dir().join("last-model")).ok()?;
+    Some(s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+pub fn remember_last_used(spec: &str) {
+    let _ = std::fs::write(crate::config::data_dir().join("last-model"), spec);
+}
+
+#[cfg(test)]
+mod pick_tests {
+    use super::*;
+
+    #[test]
+    fn best_local_prefers_coders() {
+        let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            best_local(&n(&["llama3", "qwen3-coder:30b"])).map(String::as_str),
+            Some("qwen3-coder:30b")
+        );
+        assert_eq!(best_local(&n(&["llama3"])).map(String::as_str), Some("llama3"));
+        assert_eq!(best_local(&[]), None);
+    }
+}

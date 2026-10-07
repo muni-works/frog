@@ -472,7 +472,10 @@ pub fn error(s: &str) {
 }
 
 pub fn fmt_tokens(n: u64) -> String {
-    if n >= 1000 {
+    if n >= 1_000_000 {
+        let m = format!("{:.1}", n as f64 / 1_000_000.0);
+        format!("{}M", m.trim_end_matches(".0"))
+    } else if n >= 1000 {
         format!("{:.1}k", n as f64 / 1000.0)
     } else {
         n.to_string()
