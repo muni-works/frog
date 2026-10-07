@@ -26,3 +26,8 @@ similar = "3.2.0"
 tokio = { version = "1.53.1", features = ["full"] }
 tokio-util = "0.7"
 toml = "1.1.6"
+
+# reedline with one fix: printing above a prompt that's taller than its input line (see
+# vendor/reedline/FROG.md).
+[patch.crates-io]
+reedline = { path = "vendor/reedline" }

@@ -18,32 +18,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// What the prompt shows, shared with the main loop, which changes it and asks reedline to
-/// repaint. `top` is a line above the input (empty for a one-line prompt), `right` sits at
-/// the end of the input line.
-#[derive(Default)]
-struct Shown {
-    top: String,
-    right: String,
-    /// Bumped each time reedline paints a one-line prompt, so the main loop knows it's safe to
-    /// print above it.
-    short_paints: u64,
-}
-
-struct FrogPrompt(Arc<Mutex<Shown>>);
+/// What the prompt shows above the input (the line still streaming, then the params or
+/// status line), shared with the main loop, which changes it and asks reedline to repaint.
+struct FrogPrompt(Arc<Mutex<String>>);
 
 impl Prompt for FrogPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
-        let mut s = self.0.lock().unwrap();
-        if s.top.is_empty() {
-            s.short_paints += 1;
-            Cow::Borrowed("")
-        } else {
-            Cow::Owned(format!("\n{}\n", s.top))
-        }
+        Cow::Owned(self.0.lock().unwrap().clone())
     }
     fn render_prompt_right(&self) -> Cow<'_, str> {
-        Cow::Owned(self.0.lock().unwrap().right.clone())
+        Cow::Borrowed("")
     }
     fn render_prompt_indicator(&self, _: PromptEditMode) -> Cow<'_, str> {
         Cow::Borrowed("> ")
@@ -59,6 +43,32 @@ impl Prompt for FrogPrompt {
     }
 }
 
+/// What a sent message keeps in the scrollback: just `> text`, without the streaming line or
+/// status above it (those are redrawn in the next prompt).
+struct Sent;
+
+impl Prompt for Sent {
+    fn render_prompt_left(&self) -> Cow<'_, str> {
+        Cow::Borrowed("\n")
+    }
+    fn render_prompt_right(&self) -> Cow<'_, str> {
+        Cow::Borrowed("")
+    }
+    fn render_prompt_indicator(&self, _: PromptEditMode) -> Cow<'_, str> {
+        Cow::Borrowed("> ")
+    }
+    fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+        Cow::Borrowed("  ")
+    }
+    fn render_prompt_history_search_indicator(&self, _: PromptHistorySearch) -> Cow<'_, str> {
+        Cow::Borrowed("> ")
+    }
+}
+
+/// ctrl+c as a host command, so the prompt stays where it is rather than being finished
+/// off (and left in the scrollback) like a submitted line.
+const CTRL_C: &str = "\u{3}";
+
 fn editor(cwd: PathBuf, models: Models) -> Result<Reedline> {
     let newline = || ReedlineEvent::Edit(vec![reedline::EditCommand::InsertNewline]);
     let cycle = || ReedlineEvent::ExecuteHostCommand("/mode".into());
@@ -67,6 +77,14 @@ fn editor(cwd: PathBuf, models: Models) -> Result<Reedline> {
     kb.add_binding(KeyModifiers::SHIFT, KeyCode::Enter, newline());
     kb.add_binding(KeyModifiers::SHIFT, KeyCode::BackTab, cycle());
     kb.add_binding(KeyModifiers::NONE, KeyCode::BackTab, cycle());
+    kb.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('c'),
+        ReedlineEvent::Multiple(vec![
+            ReedlineEvent::Edit(vec![reedline::EditCommand::Clear]),
+            ReedlineEvent::ExecuteHostCommand(CTRL_C.into()),
+        ]),
+    );
     kb.add_binding(
         KeyModifiers::NONE,
         KeyCode::Tab,
@@ -87,6 +105,7 @@ fn editor(cwd: PathBuf, models: Models) -> Result<Reedline> {
         .with_poll_interval(Duration::from_millis(30))
         .with_edit_mode(Box::new(Emacs::new(kb)))
         .with_history(Box::new(history))
+        .with_transient_prompt(Box::new(Sent))
         .with_completer(Box::new(FrogCompleter::new(cwd, models)))
         .with_menu(ReedlineMenu::EngineCompleter(Box::new(menu)))
         .with_quick_completions(true)
@@ -157,7 +176,7 @@ impl Tui {
         false
     }
 
-    /// While the engine works: what goes at the end of the input line.
+    /// While the engine works: the line above the input.
     fn working(&self) -> String {
         const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let t = self.since.map_or(0, |s| s.elapsed().as_millis());
@@ -166,14 +185,14 @@ impl Tui {
             n => format!(" · {} queued", n - 1),
         };
         format!(
-            "{} {}s{queued} · ctrl+c to interrupt",
-            FRAMES[(t / 100) as usize % FRAMES.len()],
-            t / 1000
+            "  {} {}",
+            FRAMES[(t / 100) as usize % FRAMES.len()].dark_yellow(),
+            format!("{}s{queued} · ctrl+c to interrupt", t / 1000).dark_grey()
         )
     }
 
     /// While idle (or asking): the line above the input.
-    fn top(&self) -> String {
+    fn idle_top(&self) -> String {
         if let Some((_, always)) = &self.asking {
             return format!(
                 "  {} yes · {} {always} · {} no",
@@ -450,6 +469,22 @@ impl Drop for Cooked {
     }
 }
 
+/// Above the input: the line the model is still writing, if any, then what the engine is
+/// doing or, idle, the params.
+fn prompt_left(tui: &Tui) -> String {
+    let top = if tui.inflight > 0 && tui.asking.is_none() {
+        tui.working()
+    } else {
+        tui.idle_top()
+    };
+    let partial = render::partial();
+    if partial.is_empty() {
+        format!("\n{top}\n")
+    } else {
+        format!("{partial}\n\n{top}\n")
+    }
+}
+
 pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
     restore_cooked();
     let _cooked = Cooked;
@@ -494,10 +529,7 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
     render::install_sink(printer.clone());
     let mut ed = editor(cwd, models)?.with_external_printer(printer);
     let repaint = ed.repaint_signal();
-    let shown = Arc::new(Mutex::new(Shown {
-        top: tui.top(),
-        ..Default::default()
-    }));
+    let shown = Arc::new(Mutex::new(prompt_left(&tui)));
     let (tx, mut inputs) = tokio::sync::mpsc::unbounded_channel();
     {
         let prompt = FrogPrompt(shown.clone());
@@ -519,8 +551,6 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
     let mut r = Renderer::new(tui.cfg.show_thinking, false);
     let mut finished = None;
     let mut tick = tokio::time::interval(Duration::from_millis(50));
-    // Short paints seen when the prompt was last made one line; more means it's been drawn.
-    let mut shrunk_at: Option<u64> = None;
     loop {
         tokio::select! {
             env = tui.h.events.recv() => {
@@ -532,6 +562,7 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
                 let keep = match signal {
                     None | Some(Err(_)) | Some(Ok(Signal::CtrlD)) => false,
                     Some(Ok(Signal::CtrlC)) => tui.ctrl_c(),
+                    Some(Ok(Signal::HostCommand(c))) if c == CTRL_C => tui.ctrl_c(),
                     Some(Ok(Signal::Success(s) | Signal::HostCommand(s))) => {
                         tui.armed = false;
                         tui.input(&s)
@@ -544,34 +575,11 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
             }
             _ = tick.tick() => {}
         }
-        // Output only prints above a one-line prompt (see `render::Sink`): shrink the prompt
-        // when there's something to print or the engine is working, and let output through
-        // once reedline has drawn it short; grow it back when everything has printed.
-        let busy = tui.inflight > 0 && tui.asking.is_none();
+        let left = prompt_left(&tui);
         let mut s = shown.lock().unwrap();
-        if busy || render::sink_held() {
-            if !s.top.is_empty() {
-                s.top.clear();
-                shrunk_at = Some(s.short_paints);
-                repaint.request_repaint();
-            }
-            if shrunk_at.is_some_and(|at| s.short_paints > at) {
-                shrunk_at = None;
-                render::sink_open(true);
-            }
-            let right = if busy { tui.working() } else { String::new() };
-            if s.right != right {
-                s.right = right;
-                repaint.request_repaint();
-            }
-        } else if shrunk_at.is_none() && render::sink_drained() {
-            let top = tui.top();
-            if s.top != top || !s.right.is_empty() {
-                render::sink_open(false);
-                s.top = top;
-                s.right.clear();
-                repaint.request_repaint();
-            }
+        if *s != left {
+            *s = left;
+            repaint.request_repaint();
         }
     }
     render::flush_out();

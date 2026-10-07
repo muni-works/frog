@@ -12,17 +12,12 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// Where rendered output goes once the composer is live: reedline's external printer, which
-/// prints whole lines above the prompt while you type. A partial line waits in `buf` until a
-/// newline, or until it would wrap. Before that (startup, replaying a session) output goes
+/// prints whole lines above the prompt while you type. A partial line waits in `buf` (shown
+/// live in the prompt) until a newline, or until it would wrap. Before that (startup, replaying a session) output goes
 /// straight to stdout.
 struct Sink {
     printer: reedline::ExternalPrinter<String>,
     buf: String,
-    /// reedline prints a message over the input row only, so a prompt with a line above the
-    /// input would be left behind in the scrollback. Lines are held while that taller prompt
-    /// is up, and let through once the TUI has swapped in a one-line prompt.
-    open: bool,
-    held: Vec<String>,
 }
 
 static SINK: std::sync::Mutex<Option<Sink>> = std::sync::Mutex::new(None);
@@ -31,41 +26,20 @@ pub fn install_sink(printer: reedline::ExternalPrinter<String>) {
     *SINK.lock().unwrap() = Some(Sink {
         printer,
         buf: String::new(),
-        open: false,
-        held: Vec::new(),
     });
-}
-
-/// Whether lines are waiting for the prompt to shrink.
-pub fn sink_held() -> bool {
-    SINK.lock()
-        .unwrap()
-        .as_ref()
-        .is_some_and(|s| !s.held.is_empty())
-}
-
-/// Whether reedline has printed everything it was given.
-pub fn sink_drained() -> bool {
-    SINK.lock()
-        .unwrap()
-        .as_ref()
-        .is_none_or(|s| s.held.is_empty() && s.printer.receiver().is_empty())
-}
-
-/// Let lines through (the prompt is one line) or hold them (it's about to grow).
-pub fn sink_open(open: bool) {
-    let mut guard = SINK.lock().unwrap();
-    let Some(sink) = guard.as_mut() else { return };
-    sink.open = open;
-    if open {
-        for line in std::mem::take(&mut sink.held) {
-            let _ = sink.printer.print(line);
-        }
-    }
 }
 
 fn sink_active() -> bool {
     SINK.lock().unwrap().is_some()
+}
+
+/// The line still streaming, which the TUI shows live above the composer until it's whole.
+pub fn partial() -> String {
+    SINK.lock()
+        .unwrap()
+        .as_ref()
+        .map(|s| s.buf.clone())
+        .unwrap_or_default()
 }
 
 /// Byte index where `s` has used `cols` columns on screen (skipping ANSI escapes), or None
@@ -89,14 +63,10 @@ fn cut_at(s: &str, cols: usize) -> Option<usize> {
     None
 }
 
-fn send_line(sink: &mut Sink, line: &str) {
+fn send_line(sink: &Sink, line: &str) {
     // An empty message prints nothing, so a blank line goes as a space.
-    let line = if line.is_empty() { " " } else { line }.to_string();
-    if sink.open {
-        let _ = sink.printer.print(line);
-    } else {
-        sink.held.push(line);
-    }
+    let line = if line.is_empty() { " " } else { line };
+    let _ = sink.printer.print(line.to_string());
 }
 
 pub fn write_out(s: &str) {
