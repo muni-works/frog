@@ -58,7 +58,7 @@ pub enum Decision {
 
 /// Client → engine.
 ///
-/// `Interrupt`, `Permission`, `Elicit`, `AppCall` and `StopSubagent` take effect immediately. Everything else is queued
+/// `Interrupt`, `Permission`, `Answer`, `Elicit`, `AppCall` and `StopSubagent` take effect immediately. Everything else is queued
 /// and handled in order; each queued op ends with [`Event::Idle`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -77,6 +77,12 @@ pub enum Op {
     Permission {
         id: String,
         decision: Decision,
+    },
+    /// Answer an [`Event::Question`]. No choices and no `other` dismisses it.
+    Answer {
+        id: String,
+        #[serde(flatten)]
+        answer: Answer,
     },
     SetMode {
         mode: Mode,
@@ -133,6 +139,10 @@ pub enum Op {
         /// drives for the engine).
         #[serde(default)]
         panes: bool,
+        /// The client shows [`Event::Question`]s to a person who can answer them, so the model
+        /// gets the `Ask` tool.
+        #[serde(default)]
+        ask: bool,
     },
     /// Open a pane. The engine mints the id and answers with [`Event::PaneOpened`]. Terminal
     /// panes are engine-owned shells; preview panes are the client's webviews.
@@ -288,6 +298,12 @@ pub enum Event {
         id: String,
         decision: Decision,
     },
+    /// The user answered (or dismissed) a [`Event::Question`].
+    QuestionResolved {
+        id: String,
+        #[serde(flatten)]
+        answer: Answer,
+    },
     /// Auto mode's classifier let tool call `item` run without asking.
     AutoApproved {
         item: String,
@@ -356,6 +372,19 @@ pub enum Event {
         /// Why this one asks when similar calls don't (e.g. a command leaving the sandbox).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+    },
+    /// The model asks the user to choose (`Ask`). Reply with [`Op::Answer`] using the same id.
+    /// `item` is the tool call waiting on it.
+    Question {
+        id: String,
+        item: String,
+        question: String,
+        options: Vec<AskOption>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        multi: bool,
+        /// The user may type their own answer instead.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        allow_other: bool,
     },
     /// An MCP server asks the user for input mid-call: a form (`schema`, a flat JSON Schema
     /// object) or a URL to open. Reply with [`Op::Elicit`].
@@ -459,6 +488,7 @@ impl Event {
                 | Self::ItemStarted { .. }
                 | Self::ItemCompleted { .. }
                 | Self::PermissionResolved { .. }
+                | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
                 | Self::Compacted { .. }
                 | Self::ContextPruned { .. }
@@ -507,6 +537,9 @@ pub enum Item {
         /// Set for Diagram: validated and laid out, ready to draw.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diagram: Option<Box<crate::diagram::Diagram>>,
+        /// Set for Present: validated blocks, ready to draw.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        present: Option<Box<crate::present::Present>>,
         /// Images the tool returned (MCP servers), shown to the user.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<Image>,
@@ -514,6 +547,30 @@ pub enum Item {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         app: Option<Box<AppView>>,
     },
+}
+
+/// One choice offered by `Ask`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AskOption {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// What the user picked for a question: the chosen labels, their own words, or (both empty)
+/// nothing, because they dismissed it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Answer {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other: Option<String>,
+}
+
+impl Answer {
+    pub fn dismissed(&self) -> bool {
+        self.choices.is_empty() && self.other.as_deref().is_none_or(|o| o.trim().is_empty())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -826,6 +883,71 @@ mod tests {
         assert!(matches!(bare, Op::Warm { draft: None }));
         let typing: Op = serde_json::from_str(r#"{"op":"warm","draft":"fix the"}"#).unwrap();
         assert!(matches!(typing, Op::Warm { draft: Some(d) } if d == "fix the"));
+    }
+
+    #[test]
+    fn answer_is_flat_on_the_wire() {
+        let op: Op =
+            serde_json::from_str(r#"{"op":"answer","id":"q1","choices":["Truncate"]}"#).unwrap();
+        let Op::Answer { id, answer } = op else {
+            panic!("not an answer")
+        };
+        assert_eq!(
+            (id.as_str(), answer.choices.as_slice()),
+            ("q1", &["Truncate".to_string()][..])
+        );
+        assert!(!answer.dismissed());
+        let bare: Op = serde_json::from_str(r#"{"op":"answer","id":"q1"}"#).unwrap();
+        assert!(matches!(bare, Op::Answer { answer, .. } if answer.dismissed()));
+        let blank = Answer {
+            choices: vec![],
+            other: Some("  ".into()),
+        };
+        assert!(blank.dismissed());
+    }
+
+    #[test]
+    fn question_resolved_is_durable_and_question_is_not() {
+        let resolved = Event::QuestionResolved {
+            id: "q1".into(),
+            answer: Answer {
+                choices: vec![],
+                other: Some("neither".into()),
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&resolved).unwrap(),
+            r#"{"event":"question_resolved","id":"q1","other":"neither"}"#
+        );
+        assert!(resolved.is_durable());
+        let asked = Event::Question {
+            id: "q1".into(),
+            item: "t1".into(),
+            question: "Which?".into(),
+            options: vec![AskOption {
+                label: "A".into(),
+                detail: None,
+            }],
+            multi: false,
+            allow_other: true,
+        };
+        assert_eq!(
+            serde_json::to_string(&asked).unwrap(),
+            r#"{"event":"question","id":"q1","item":"t1","question":"Which?","options":[{"label":"A"}],"allow_other":true}"#
+        );
+        assert!(!asked.is_durable());
+    }
+
+    #[test]
+    fn client_caps_default_off() {
+        let old: Op = serde_json::from_str(r#"{"op":"set_client_caps","panes":true}"#).unwrap();
+        assert!(matches!(
+            old,
+            Op::SetClientCaps {
+                panes: true,
+                ask: false
+            }
+        ));
     }
 
     #[test]

@@ -41,6 +41,8 @@ final class Conversation {
     private(set) var permission: PermissionRequest?
     /// An MCP server waiting on the user.
     private(set) var elicitation: Elicitation?
+    /// The model's open `Ask`.
+    private(set) var question: Question?
     /// Files dropped anywhere on the conversation, for the composer to attach or mention.
     var dropped: [URL] = []
     /// The terminal and preview panes the engine shares with this session.
@@ -187,6 +189,14 @@ final class Conversation {
         link?.send(.permission(id: p.id, decision: decision))
         permission = nil
         Conversation.effects?.answered(self, permission: p.id)
+    }
+
+    /// Answer the open `Ask`: the picked labels and/or the user's own words. Neither dismisses it.
+    func answer(question choices: [String], other: String? = nil) {
+        guard let q = question else { return }
+        let other = other?.trimmingCharacters(in: .whitespacesAndNewlines)
+        link?.send(.answer(id: q.id, choices: choices, other: other?.isEmpty == false ? other : nil))
+        question = nil
     }
 
     /// Answer the pending MCP elicitation.
@@ -365,6 +375,12 @@ final class Conversation {
             progress = nil
         case .elicitationDone(let id):
             if elicitation?.id == id { elicitation = nil }
+        case .question(let q):
+            question = q
+            if isNews(env) { FrogSounds.shared.play(.drip) }
+            progress = nil
+        case .questionResolved(let id):
+            if question?.id == id { question = nil }
         case .toolProgress(let id, let p):
             upsert(id) { $0.progress = p }
         case .autoApproved(let item, let reason):
@@ -417,6 +433,7 @@ final class Conversation {
             progress = nil
             permission = nil
             elicitation = nil
+            question = nil
             // While the history loads, what's queued waits for it (see `.synced`).
             if !replaying, !queue.isEmpty {
                 let next = queue.removeFirst()
@@ -443,7 +460,7 @@ final class Conversation {
         guard let id = sessionID, !replaying else { return }
         _ = id
         let running = turns.last.map { !$0.finished } ?? false
-        Conversation.effects?.live(self, running: running && busy, waiting: permission != nil || elicitation != nil)
+        Conversation.effects?.live(self, running: running && busy, waiting: permission != nil || elicitation != nil || question != nil)
     }
 
     /// One line for a notification: the start of the answer, or how the turn ended.
@@ -512,7 +529,7 @@ final class Conversation {
 extension Conversation {
     /// What the frog's face shows for this conversation.
     var mood: FrogMood {
-        if permission != nil || elicitation != nil { return .waiting }
+        if permission != nil || elicitation != nil || question != nil { return .waiting }
         if justFinished {
             if case .error? = turns.last?.end { return .sad }
             return .done

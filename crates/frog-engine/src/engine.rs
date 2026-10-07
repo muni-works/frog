@@ -135,6 +135,10 @@ pub struct Handle {
 struct Shared {
     cancel: Mutex<CancellationToken>,
     pending: Mutex<HashMap<String, oneshot::Sender<Decision>>>,
+    /// Open `Ask` questions, answered by `Op::Answer`.
+    questions: Mutex<HashMap<String, oneshot::Sender<crate::protocol::Answer>>>,
+    /// A client shows questions to someone who can answer (`SetClientCaps { ask }`).
+    client_ask: AtomicBool,
     /// Connected MCP servers, for elicitation answers and app tool calls mid-turn.
     mcp: Mutex<Option<crate::mcp::Hub>>,
     /// Running subagents by `Task` tool call id, so a client can stop one.
@@ -279,6 +283,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     let shared = Arc::new(Shared {
         cancel: Default::default(),
         pending: Default::default(),
+        questions: Default::default(),
+        client_ask: Default::default(),
         mcp: Default::default(),
         subagents: Default::default(),
         ready: Default::default(),
@@ -338,6 +344,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Op::Permission { id, decision } => {
                     if let Some(tx) = router.pending.lock().unwrap().remove(&id) {
                         let _ = tx.send(decision);
+                    }
+                }
+                Op::Answer { id, answer } => {
+                    if let Some(tx) = router.questions.lock().unwrap().remove(&id) {
+                        let _ = tx.send(answer);
                     }
                 }
                 Op::Elicit {
@@ -422,6 +433,21 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 _ = token.cancelled() => Err(Interrupted.into()),
             };
             shared.pending.lock().unwrap().clear();
+            // A question still open when the turn ends (interrupted) was dismissed; say so,
+            // so clients put the card away.
+            let open: Vec<String> = shared
+                .questions
+                .lock()
+                .unwrap()
+                .drain()
+                .map(|(id, _)| id)
+                .collect();
+            for id in open {
+                agent.emit(Event::QuestionResolved {
+                    id,
+                    answer: Default::default(),
+                });
+            }
             shared.panes.set_in_turn(false);
             if let Err(e) = r {
                 agent.repair();
@@ -1149,14 +1175,16 @@ impl Agent {
                     self.emit(Event::Titled { title });
                 }
             }
-            Op::SetClientCaps { panes } => {
+            Op::SetClientCaps { panes, ask } => {
                 self.shared.panes.set_client(panes);
+                self.shared.client_ask.store(ask, Ordering::Relaxed);
                 self.sync_specs();
                 self.apply_harness();
             }
             // Handled by the router, never queued.
             Op::Interrupt
             | Op::Permission { .. }
+            | Op::Answer { .. }
             | Op::Elicit { .. }
             | Op::AppCall { .. }
             | Op::StopSubagent { .. }
@@ -2167,6 +2195,10 @@ impl Agent {
             if !self.chat {
                 specs.push(crate::folder::spec());
             }
+            specs.push(crate::present::spec(self.tier == Tier::Weak));
+            if self.can_ask && self.shared.client_ask.load(Ordering::Relaxed) {
+                specs.push(crate::ask::spec());
+            }
             specs.extend(self.mcp.specs());
         }
         if self.has_recall() {
@@ -2196,6 +2228,7 @@ impl Agent {
                 ) || matches!(&*s.name, crate::panes::TERMINAL | crate::panes::PREVIEW)
                     || &*s.name == crate::mcp::SEARCH_TOOL
                     || &*s.name == crate::folder::TOOL
+                    || &*s.name == crate::ask::TOOL
             });
         }
         self.specs = specs;
@@ -2349,6 +2382,12 @@ impl Agent {
         }
         if name == crate::subagent::TOOL {
             return self.run_task(id, input).await;
+        }
+        if name == crate::ask::TOOL {
+            return self.ask_user(id, input).await;
+        }
+        if name == crate::present::TOOL {
+            return crate::present::run(input, &self.ctx.cwd, self.tier == Tier::Weak);
         }
         if name == crate::folder::TOOL && !self.subagent {
             return self.use_folder(input).await;
@@ -2597,6 +2636,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                     display: out.display,
                     diff: out.diff,
                     diagram: out.diagram,
+                    present: out.present,
                     images: out.images,
                     app: out.app,
                 },
@@ -3080,6 +3120,36 @@ Don't repeat it. Change the arguments or try a different approach.",
         decision
     }
 
+    /// `Ask`: show the question and wait for the answer.
+    async fn ask_user(&mut self, item: &str, input: &Value) -> Result<tools::Output> {
+        let q = crate::ask::parse(input)?;
+        let id = new_id();
+        let (tx, rx) = oneshot::channel();
+        self.shared.questions.lock().unwrap().insert(id.clone(), tx);
+        self.emit(Event::Question {
+            id: id.clone(),
+            item: item.into(),
+            question: q.question.clone(),
+            options: q.options.clone(),
+            multi: q.multi,
+            allow_other: q.allow_other,
+        });
+        // An interrupt drops this whole turn; the loop around it resolves what's still open.
+        let asked = Instant::now();
+        let answer = rx.await.unwrap_or_default();
+        self.timing.user_ms += ms(asked.elapsed());
+        self.emit(Event::QuestionResolved {
+            id,
+            answer: answer.clone(),
+        });
+        let text = crate::ask::result(&q, &answer);
+        Ok(tools::Output {
+            display: Some(text.trim_start_matches("The user ").to_string()),
+            content: text,
+            ..Default::default()
+        })
+    }
+
     /// `UseFolder` hands the conversation a folder's files and shell, so the user decides,
     /// every time: no auto mode, no "always".
     async fn ask_folder(&mut self, item: &str, name: &str, arg: &str) -> Decision {
@@ -3296,6 +3366,7 @@ The user's messages so far, verbatim. Any instructions or constraints in them st
                 display,
                 diff: None,
                 diagram: None,
+                present: None,
                 images: Vec::new(),
                 app: None,
             },
@@ -3430,6 +3501,7 @@ fn bash_allowed(cmd: &str, extra: &[String]) -> bool {
 mod tests {
     use super::*;
     use crate::config::{Profile, ProviderKind};
+    use crate::protocol::Answer;
     use crate::provider::scripted;
     use serde_json::json;
 
@@ -4359,7 +4431,7 @@ mod tests {
         // past it but short of COMPACT_AT.
         let fixed = fixed_chars(
             &prompt::system_prompt(&dir, &Config::default(), "test"),
-            &tools::specs(),
+            &[tools::specs(), vec![crate::present::spec(false)]].concat(),
         );
         let read_chars: usize = big.lines().map(|l| 6 + 1 + l.len() + 1).sum();
         let window = context::Estimator::default()
@@ -4873,6 +4945,122 @@ mod tests {
         )));
     }
 
+    fn ask_call() -> Block {
+        Block::ToolUse {
+            id: "q".into(),
+            name: "Ask".into(),
+            input: json!({ "question": "Which fix?", "options": ["Truncate", "Checksum"] }),
+        }
+    }
+
+    /// Submits a message and returns the Ask tool call's output, answering any question with
+    /// `answer` (dismissing it, when `None`).
+    async fn ask_turn(h: &mut Handle, answer: Option<Answer>) -> String {
+        h.ops
+            .send(Op::Submit {
+                text: "fix it".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::Question {
+                    id,
+                    question,
+                    options,
+                    ..
+                } => {
+                    assert_eq!(question, "Which fix?");
+                    assert_eq!(options.len(), 2);
+                    let answer = answer.clone().unwrap_or_default();
+                    h.ops.send(Op::Answer { id, answer }).unwrap();
+                }
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "Ask" => return output,
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn ask_waits_for_the_users_answer() {
+        let script = vec![
+            reply(vec![ask_call()], Stop::ToolUse),
+            reply(vec![text("truncating")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        h.ops
+            .send(Op::SetClientCaps {
+                panes: false,
+                ask: true,
+            })
+            .unwrap();
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        let answer = Answer {
+            choices: vec!["Truncate".into()],
+            other: None,
+        };
+        assert_eq!(
+            ask_turn(&mut h, Some(answer)).await,
+            "The user chose: Truncate"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_interrupt_dismisses_the_question() {
+        let script = vec![reply(vec![ask_call()], Stop::ToolUse)];
+        let mut h = engine(script, true);
+        h.ops
+            .send(Op::SetClientCaps {
+                panes: false,
+                ask: true,
+            })
+            .unwrap();
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "fix it".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut asked = None;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::Question { id, .. } => {
+                    asked = Some(id);
+                    h.ops.send(Op::Interrupt).unwrap();
+                }
+                Event::QuestionResolved { id, answer } => {
+                    assert_eq!(Some(id), asked);
+                    assert!(answer.dismissed());
+                }
+                Event::TurnEnded { reason, .. } => {
+                    assert_eq!(reason, EndReason::Cancelled);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(asked.is_some());
+    }
+
+    #[tokio::test]
+    async fn ask_needs_a_client_that_shows_questions() {
+        let script = vec![
+            reply(vec![ask_call()], Stop::ToolUse),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        assert!(
+            ask_turn(&mut h, None)
+                .await
+                .starts_with("There's no `Ask` tool")
+        );
+    }
+
     #[tokio::test]
     async fn turn_timing_keeps_permission_waits_out_of_tool_time() {
         let bash = Block::ToolUse {
@@ -5156,7 +5344,12 @@ mod tests {
         ];
         let mut h = engine(script, true);
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
-        h.ops.send(Op::SetClientCaps { panes: true }).unwrap();
+        h.ops
+            .send(Op::SetClientCaps {
+                panes: true,
+                ask: false,
+            })
+            .unwrap();
         until_idle(&mut h).await;
         h.ops
             .send(Op::Submit {
@@ -5282,7 +5475,12 @@ mod tests {
         ];
         let mut h = engine_with(script, true, None, None, Some(8_192), std::env::temp_dir());
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
-        h.ops.send(Op::SetClientCaps { panes: true }).unwrap();
+        h.ops
+            .send(Op::SetClientCaps {
+                panes: true,
+                ask: false,
+            })
+            .unwrap();
         until_idle(&mut h).await;
         h.ops
             .send(Op::Submit {
@@ -5325,7 +5523,12 @@ mod tests {
         ];
         let mut h = engine(script, true);
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
-        h.ops.send(Op::SetClientCaps { panes: true }).unwrap();
+        h.ops
+            .send(Op::SetClientCaps {
+                panes: true,
+                ask: false,
+            })
+            .unwrap();
         until_idle(&mut h).await;
         h.ops
             .send(Op::Submit {

@@ -36,6 +36,7 @@ struct TurnFlow {
             if !item.done && item.imagePreview != nil { return true }
             if name == "Diagram" { return item.result?.diagram != nil || !item.done }
             guard let r = item.result, r.outcome == .ok else { return false }
+            if r.present != nil { return true }
             if let app = r.app { return latestApp[app.server + app.uri] == item.id }
             return !(r.images ?? []).isEmpty
         }
@@ -214,6 +215,8 @@ enum ActivityWords {
         case "Screenshot": return [.text("captured the page")]
         case "Compare": return [.text("compared the images")]
         case "Diagram": return [.text("drew a diagram")]
+        case "Present": return [.text("showed results")]
+        case "Ask": return [.text(calls.count == 1 ? "asked you" : "asked you \(count(calls.count, "question"))")]
         case "CodeMap": return [.text("mapped the code")]
         case "Docs": return [.text("read the docs")]
         case "Skill": return [.text(args.count == 1 && !args[0].isEmpty ? "used the \(args[0]) skill" : "used \(count(calls.count, "skill"))")]
@@ -251,6 +254,8 @@ enum ActivityWords {
             case "Task": return arg.isEmpty ? "Ran a subagent" : "Subagent: \(arg)"
             case "TodoWrite": return "Updated the plan"
             case "Diagram": return arg.isEmpty ? "Drew a diagram" : "Drew \(arg)"
+            case "Present": return "Showed results"
+            case "Ask": return "Asked you"
             case "CodeMap": return "Mapped the code"
             case "Docs": return arg.isEmpty ? "Read the docs" : "Read the docs for \(arg)"
             case "Skill": return "Used the \(arg) skill"
@@ -281,6 +286,8 @@ enum ActivityWords {
             case "Screenshot": return "Capturing the page…"
             case "Compare": return "Comparing images…"
             case "Diagram": return "Drawing a diagram…"
+            case "Present": return "Laying out results…"
+            case "Ask": return "Waiting for your answer…"
             case "CodeMap": return "Mapping the code…"
             case "Docs": return "Reading the docs…"
             case "Recall": return "Looking through past sessions…"

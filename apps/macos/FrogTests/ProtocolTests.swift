@@ -74,6 +74,35 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(try json(.subscribe(after: 0)), #"{"after":0,"op":"subscribe"}"#)
     }
 
+    // The engine's own serialization, from `protocol::tests` and `present::tests`.
+    func testAskAndPresent() throws {
+        let asked = try decode(#"{"seq":4,"session":"s","created":0,"event":"question","id":"q1","item":"t1","question":"Which?","options":[{"label":"A"},{"label":"B","detail":"slower"}],"allow_other":true}"#)
+        guard case .question(let q) = asked.event else { return XCTFail() }
+        XCTAssertEqual(q.options.map(\.label), ["A", "B"])
+        XCTAssertEqual(q.options[1].detail, "slower")
+        XCTAssertEqual(q.allowOther, true)
+        XCTAssertNil(q.multi)
+        let resolved = try decode(#"{"seq":5,"session":"s","created":0,"event":"question_resolved","id":"q1","other":"neither"}"#)
+        guard case .questionResolved("q1") = resolved.event else { return XCTFail() }
+
+        let shown = try decode(#"{"seq":9,"session":"s","created":0,"event":"item_completed","id":"t2","item":{"type":"tool_call","name":"Present","arg":"","input":{},"outcome":"ok","output":"Shown","present":{"title":"Tests","blocks":[{"type":"table","columns":["test","ms"],"rows":[["resume","12"]]},{"type":"callout","tone":"warning","text":"careful"},{"type":"steps","items":["a","b"],"current":1},{"type":"sparkline"}]}}}"#)
+        guard case .itemCompleted(_, .toolCall(let r)) = shown.event, let p = r.present else { return XCTFail() }
+        XCTAssertEqual(p.title, "Tests")
+        XCTAssertEqual(p.blocks, [
+            .table(columns: ["test", "ms"], rows: [["resume", "12"]]),
+            .callout(tone: .warning, text: "careful"),
+            .steps(items: ["a", "b"], current: 1),
+            .unknown,
+        ])
+
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys]
+        let json = { (op: Op) in String(decoding: try enc.encode(op), as: UTF8.self) }
+        XCTAssertEqual(try json(.answer(id: "q1", choices: ["A"], other: nil)), #"{"choices":["A"],"id":"q1","op":"answer"}"#)
+        XCTAssertEqual(try json(.answer(id: "q1", choices: [], other: nil)), #"{"id":"q1","op":"answer"}"#)
+        XCTAssertEqual(try json(.setClientCaps(panes: true, ask: true)), #"{"ask":true,"op":"set_client_caps","panes":true}"#)
+    }
+
     func testPaneOpsEncode() throws {
         let enc = JSONEncoder()
         enc.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

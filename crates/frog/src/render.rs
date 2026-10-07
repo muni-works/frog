@@ -310,6 +310,13 @@ impl Renderer {
                     print_diagram(&d.to_ascii());
                 }
                 Item::ToolCall {
+                    present: Some(p),
+                    outcome: ToolOutcome::Ok,
+                    ..
+                } => {
+                    print_diagram(&p.to_text());
+                }
+                Item::ToolCall {
                     outcome,
                     output,
                     display,

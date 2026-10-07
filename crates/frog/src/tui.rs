@@ -5,7 +5,7 @@ use crate::render::{self, Renderer};
 use anyhow::Result;
 use crossterm::style::Stylize;
 use frog_engine::config::{Config, data_dir};
-use frog_engine::protocol::TurnUsage;
+use frog_engine::protocol::{Answer, TurnUsage};
 use frog_engine::tools::todo;
 use frog_engine::{Decision, EndReason, Event, Handle, Mode, Op, Status};
 use reedline::{
@@ -139,15 +139,79 @@ struct Tui {
     /// A permission prompt waiting for y / a / n from the composer: its id, and what
     /// "always" would allow.
     asking: Option<(String, String)>,
+    /// An `Ask` question waiting for an answer from the composer.
+    question: Option<Question>,
     /// A ctrl+c at an idle prompt clears it; a second one in a row exits.
     armed: bool,
+}
+
+struct Question {
+    id: String,
+    labels: Vec<String>,
+    multi: bool,
+    allow_other: bool,
+}
+
+impl Question {
+    /// What the composer line means as an answer: option numbers (several, with `multi`),
+    /// else the user's own words if allowed; empty skips. None when it's neither.
+    fn answer(&self, line: &str) -> Option<Answer> {
+        if line.is_empty() {
+            return Some(Answer::default());
+        }
+        let picks: Option<Vec<usize>> = line
+            .split([',', ' '])
+            .filter(|t| !t.is_empty())
+            .map(|t| {
+                t.parse::<usize>()
+                    .ok()
+                    .filter(|n| (1..=self.labels.len()).contains(n))
+            })
+            .collect();
+        match picks {
+            Some(mut p) if !p.is_empty() => {
+                if !self.multi {
+                    p.truncate(1);
+                }
+                p.dedup();
+                Some(Answer {
+                    choices: p.iter().map(|n| self.labels[n - 1].clone()).collect(),
+                    other: None,
+                })
+            }
+            _ if self.allow_other => Some(Answer {
+                choices: Vec::new(),
+                other: Some(line.to_string()),
+            }),
+            _ => None,
+        }
+    }
+
+    /// The line above the input while it's asked.
+    fn hint(&self) -> String {
+        let n = self.labels.len();
+        let mut parts = vec![if self.multi {
+            format!("1-{n}, several with commas")
+        } else {
+            format!("1-{n} to pick")
+        }];
+        if self.allow_other {
+            parts.push("or type an answer".into());
+        }
+        parts.push("enter skips".into());
+        format!("  {}", parts.join(" · ").dark_grey())
+    }
 }
 
 impl Tui {
     fn send(&mut self, op: Op) {
         if !matches!(
             op,
-            Op::Interrupt | Op::Permission { .. } | Op::Warm { .. } | Op::Shutdown
+            Op::Interrupt
+                | Op::Permission { .. }
+                | Op::Answer { .. }
+                | Op::Warm { .. }
+                | Op::Shutdown
         ) {
             if self.inflight == 0 {
                 self.since = Some(Instant::now());
@@ -193,6 +257,9 @@ impl Tui {
 
     /// While idle (or asking): the line above the input.
     fn idle_top(&self) -> String {
+        if let Some(q) = &self.question {
+            return q.hint();
+        }
         if let Some((_, always)) = &self.asking {
             return format!(
                 "  {} yes · {} {always} · {} no",
@@ -258,6 +325,37 @@ impl Tui {
                 render::flush_out();
                 self.asking = Some((id, always));
             }
+            Event::Question {
+                id,
+                question,
+                options,
+                multi,
+                allow_other,
+                ..
+            } => {
+                r.idle();
+                render::say(&format!("  {}", question.yellow().bold()));
+                for (i, o) in options.iter().enumerate() {
+                    let detail = o
+                        .detail
+                        .as_deref()
+                        .map(|d| format!("  {d}"))
+                        .unwrap_or_default();
+                    render::say(&format!(
+                        "  {} {}{}",
+                        format!("[{}]", i + 1).bold(),
+                        o.label,
+                        detail.dark_grey()
+                    ));
+                }
+                render::flush_out();
+                self.question = Some(Question {
+                    id,
+                    labels: options.into_iter().map(|o| o.label).collect(),
+                    multi,
+                    allow_other,
+                });
+            }
             Event::TurnEnded {
                 reason: EndReason::Complete,
                 usage,
@@ -294,6 +392,28 @@ impl Tui {
                 return true;
             }
         }
+        if let Some(q) = self.question.take() {
+            let Some(answer) = q.answer(line) else {
+                render::say(&format!("  {}", q.hint().trim_start()));
+                self.question = Some(q);
+                return true;
+            };
+            if answer.dismissed() {
+                render::say(&format!("  {}", "skipped".red()));
+            } else {
+                let mut said = answer.choices.join(", ");
+                if let Some(o) = &answer.other {
+                    said = if said.is_empty() {
+                        o.clone()
+                    } else {
+                        format!("{said} · {o}")
+                    };
+                }
+                render::say(&format!("  {}", said.green()));
+            }
+            self.send(Op::Answer { id: q.id, answer });
+            return true;
+        }
         if line.is_empty() {
             return true;
         }
@@ -323,7 +443,7 @@ impl Tui {
             self.send(Op::Interrupt);
             return true;
         }
-        if self.inflight > 0 {
+        if self.question.take().is_some() || self.inflight > 0 {
             self.send(Op::Interrupt);
             return true;
         }
@@ -472,7 +592,7 @@ impl Drop for Cooked {
 /// Above the input: the line the model is still writing, if any, then what the engine is
 /// doing or, idle, the params.
 fn prompt_left(tui: &Tui) -> String {
-    let top = if tui.inflight > 0 && tui.asking.is_none() {
+    let top = if tui.inflight > 0 && tui.asking.is_none() && tui.question.is_none() {
         tui.working()
     } else {
         tui.idle_top()
@@ -496,8 +616,18 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
         inflight: 0,
         since: None,
         asking: None,
+        question: None,
         armed: false,
     };
+    if !tui.drain_startup(false).await {
+        return Ok(());
+    }
+    // Someone's at the keyboard to answer `Ask`. Previews need a client that hosts them.
+    // Queued like any op, so it ends with its own `Idle`.
+    let _ = tui.h.ops.send(Op::SetClientCaps {
+        panes: false,
+        ask: true,
+    });
     if !tui.drain_startup(false).await {
         return Ok(());
     }
@@ -587,4 +717,41 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
     let _ = tui.h.ops.send(Op::Shutdown);
     while tui.h.events.recv().await.is_some() {}
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn q(multi: bool, allow_other: bool) -> Question {
+        Question {
+            id: "q".into(),
+            labels: vec!["red".into(), "green".into(), "blue".into()],
+            multi,
+            allow_other,
+        }
+    }
+
+    #[test]
+    fn numbers_pick_options() {
+        assert_eq!(q(false, false).answer("2").unwrap().choices, ["green"]);
+        assert_eq!(q(false, false).answer("2, 3").unwrap().choices, ["green"]);
+        assert_eq!(
+            q(true, false).answer("1,3").unwrap().choices,
+            ["red", "blue"]
+        );
+    }
+
+    #[test]
+    fn words_are_an_answer_only_when_allowed() {
+        assert!(q(false, false).answer("purple").is_none());
+        assert!(q(false, false).answer("7").is_none());
+        let a = q(false, true).answer("purple").unwrap();
+        assert_eq!((a.choices.len(), a.other.as_deref()), (0, Some("purple")));
+    }
+
+    #[test]
+    fn empty_skips() {
+        assert!(q(true, true).answer("").unwrap().dismissed());
+    }
 }
