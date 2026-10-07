@@ -1,4 +1,5 @@
 mod acp;
+mod complete;
 mod headless;
 mod render;
 mod replay;
@@ -293,7 +294,21 @@ async fn run() -> Result<bool> {
     if let Some(done) = pond(&cli, &cfg).await? {
         return Ok(done);
     }
-    let (profile_name, mut profile) = cfg.resolve(cli.model.as_deref())?;
+    let chosen = match &cli.model {
+        Some(m) => Some(m.clone()),
+        None if std::env::var_os("FROG_MODEL").is_some() || cfg.default_model.is_some() => None,
+        None => match frog_engine::models::last_used() {
+            Some(m) => Some(m),
+            None => match frog_engine::models::pick_default().await {
+                Some((m, _)) => Some(m),
+                None => {
+                    eprintln!("{NO_MODEL}");
+                    return Ok(false);
+                }
+            },
+        },
+    };
+    let (profile_name, mut profile) = cfg.resolve(chosen.as_deref())?;
     if let Some(b) = cli.base_url {
         profile.base_url = Some(b);
     }
@@ -575,6 +590,14 @@ async fn manage_providers(cli: &Cli) -> Result<Option<bool>> {
     }
     Ok(None)
 }
+
+const NO_MODEL: &str = "\
+frog didn't find a model to talk to. Any one of these works:
+
+  ollama pull qwen3-coder:30b      then run frog again
+  LM Studio                        load a model and start its server
+  export ANTHROPIC_API_KEY=…       use Claude
+  frog -m provider/model           anything else (frog --models lists what's here)";
 
 async fn list_models(cfg: &Config, json: bool) -> Result<bool> {
     let models = frog_engine::models::list(cfg).await;

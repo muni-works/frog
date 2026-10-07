@@ -1,16 +1,121 @@
 //! Inline terminal rendering of engine events, in the style of Claude Code.
 
-use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::Stylize;
 use crossterm::terminal;
-use frog_engine::protocol::{Answer, AskOption, TurnTiming, TurnUsage};
-use frog_engine::{Decision, Delta, EndReason, Event, Item, ItemKind, Level, ToolOutcome};
+use frog_engine::protocol::{TurnTiming, TurnUsage};
+use frog_engine::{Delta, EndReason, Event, Item, ItemKind, Level, ToolOutcome};
 use std::collections::HashSet;
 use std::io::{IsTerminal, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+
+/// Where rendered output goes once the composer is live: reedline's external printer, which
+/// prints whole lines above the prompt while you type. A partial line waits in `buf` (shown
+/// live in the prompt) until a newline, or until it would wrap. Before that (startup, replaying a session) output goes
+/// straight to stdout.
+struct Sink {
+    printer: reedline::ExternalPrinter<String>,
+    buf: String,
+}
+
+static SINK: std::sync::Mutex<Option<Sink>> = std::sync::Mutex::new(None);
+
+pub fn install_sink(printer: reedline::ExternalPrinter<String>) {
+    *SINK.lock().unwrap() = Some(Sink {
+        printer,
+        buf: String::new(),
+    });
+}
+
+fn sink_active() -> bool {
+    SINK.lock().unwrap().is_some()
+}
+
+/// The line still streaming, which the TUI shows live above the composer until it's whole.
+pub fn partial() -> String {
+    SINK.lock()
+        .unwrap()
+        .as_ref()
+        .map(|s| s.buf.clone())
+        .unwrap_or_default()
+}
+
+/// Byte index where `s` has used `cols` columns on screen (skipping ANSI escapes), or None
+/// if it's narrower than that.
+fn cut_at(s: &str, cols: usize) -> Option<usize> {
+    let mut n = 0;
+    let mut esc = false;
+    for (i, c) in s.char_indices() {
+        match (esc, c) {
+            (false, '\x1b') => esc = true,
+            (true, c) if c.is_ascii_alphabetic() => esc = false,
+            (true, _) => {}
+            (false, _) => {
+                if n == cols {
+                    return Some(i);
+                }
+                n += 1;
+            }
+        }
+    }
+    None
+}
+
+fn send_line(sink: &Sink, line: &str) {
+    // An empty message prints nothing, so a blank line goes as a space.
+    let line = if line.is_empty() { " " } else { line };
+    let _ = sink.printer.print(line.to_string());
+}
+
+pub fn write_out(s: &str) {
+    let mut guard = SINK.lock().unwrap();
+    let Some(sink) = guard.as_mut() else {
+        print!("{s}");
+        return;
+    };
+    sink.buf.push_str(s);
+    let cols = terminal::size().map_or(80, |(c, _)| c as usize).max(20) - 1;
+    loop {
+        if let Some(i) = sink.buf.find('\n') {
+            let line: String = sink.buf.drain(..=i).collect();
+            send_line(sink, line.trim_end_matches('\n'));
+        } else if let Some(at) = cut_at(&sink.buf, cols) {
+            // A long streamed line wraps, at a word if there's one in its second half,
+            // continuing indented like the renderer's own wraps.
+            let at = match sink.buf[..at].rfind(' ') {
+                Some(sp) if sp >= at / 2 => sp + 1,
+                _ => at,
+            };
+            let line: String = sink.buf.drain(..at).collect();
+            let line = line.trim_end().to_string();
+            send_line(sink, &line);
+            sink.buf.insert_str(0, "  ");
+        } else {
+            break;
+        }
+    }
+}
+
+/// Print the partial line that's waiting, if any.
+pub fn flush_out() {
+    let mut guard = SINK.lock().unwrap();
+    if let Some(sink) = guard.as_mut()
+        && !sink.buf.is_empty()
+    {
+        let line = std::mem::take(&mut sink.buf);
+        send_line(sink, &line);
+    }
+}
+
+macro_rules! out {
+    ($($t:tt)*) => { $crate::render::write_out(&format!($($t)*)) };
+}
+macro_rules! outln {
+    () => { $crate::render::write_out("\n") };
+    ($($t:tt)*) => { $crate::render::write_out(&format!("{}\n", format!($($t)*))) };
+}
 
 fn flush() {
     let _ = std::io::stdout().flush();
@@ -23,7 +128,7 @@ struct Spinner {
 
 impl Spinner {
     fn start(msg: String) -> Option<Self> {
-        if !std::io::stdout().is_terminal() {
+        if !std::io::stdout().is_terminal() || sink_active() {
             return None;
         }
         let stop = Arc::new(AtomicBool::new(false));
@@ -38,12 +143,12 @@ impl Spinner {
                     FRAMES[i % FRAMES.len()],
                     t0.elapsed().as_secs()
                 );
-                print!("\r\x1b[2K{}", line.dark_yellow());
+                out!("\r\x1b[2K{}", line.dark_yellow());
                 flush();
                 i += 1;
                 std::thread::park_timeout(Duration::from_millis(80));
             }
-            print!("\r\x1b[2K");
+            out!("\r\x1b[2K");
             flush();
         });
         Some(Self { stop, handle })
@@ -103,7 +208,7 @@ impl Renderer {
     pub fn idle(&mut self) {
         self.stop_spinner();
         if self.state != State::Idle {
-            println!();
+            outln!();
             self.state = State::Idle;
         }
     }
@@ -114,8 +219,8 @@ impl Renderer {
         }
         self.idle();
         match state {
-            State::Thinking => print!("\n{} ", "✻".dark_grey()),
-            State::Text => print!("\n{} ", "⏺".white()),
+            State::Thinking => out!("\n{} ", "✻".dark_grey()),
+            State::Text => out!("\n{} ", "⏺".white()),
             State::Idle => {}
         }
         self.state = state;
@@ -130,9 +235,9 @@ impl Renderer {
         self.fresh = false;
         let s = s.replace('\n', "\n  ");
         if dim {
-            print!("{}", s.dark_grey().italic())
+            out!("{}", s.dark_grey().italic())
         } else {
-            print!("{s}")
+            out!("{s}")
         }
         flush();
     }
@@ -141,7 +246,7 @@ impl Renderer {
         match ev {
             Event::TurnStarted { input, .. } if self.replay => {
                 self.idle();
-                println!("\n{} {}", ">".dark_grey(), input.dark_grey());
+                outln!("\n{} {}", ">".dark_grey(), input.dark_grey());
             }
             Event::Progress { label } => {
                 self.idle();
@@ -157,11 +262,11 @@ impl Renderer {
                 } else {
                     format!("({arg})")
                 };
-                println!("\n{} {}{}", "⏺".green(), name.bold(), arg);
+                outln!("\n{} {}{}", "⏺".green(), name.bold(), arg);
             }
             Event::AutoApproved { reason, .. } => {
                 self.idle();
-                println!("  {} {}", "auto:".dark_grey(), reason.dark_grey());
+                outln!("  {} {}", "auto:".dark_grey(), reason.dark_grey());
             }
             // A subagent's steps, indented under its Task call; its report arrives as the
             // call's output.
@@ -172,7 +277,7 @@ impl Renderer {
                 } = *inner
                 {
                     self.idle();
-                    println!(
+                    outln!(
                         "  {} {} {}",
                         "↳".dark_grey(),
                         name.dark_grey(),
@@ -248,7 +353,7 @@ impl Renderer {
             Event::Notice { level, message } => {
                 self.idle();
                 match level {
-                    Level::Info => info(&format!("  {message}")),
+                    Level::Info => info(&format!("  {}", shorten_notice(&message))),
                     Level::Warn => warn(&format!("  {message}")),
                 }
             }
@@ -288,7 +393,7 @@ impl Renderer {
             Event::TurnEnded { reason, .. } => {
                 self.idle();
                 match reason {
-                    EndReason::Cancelled => warn("\n  ⎿  interrupted"),
+                    EndReason::Cancelled => info("  ⎿  interrupted"),
                     EndReason::MaxTokens => warn("\n  ⎿  hit the output token limit"),
                     EndReason::Looping => {
                         warn("\n  ⎿  stopped: the model kept repeating the same tool call")
@@ -306,9 +411,9 @@ impl Renderer {
 }
 
 fn print_diagram(art: &str) {
-    println!();
+    outln!();
     for line in art.lines() {
-        println!("     {}", line.cyan());
+        outln!("     {}", line.cyan());
     }
 }
 
@@ -351,13 +456,13 @@ fn tool_result(text: &str, err: bool) {
         } else {
             line.dark_grey().to_string()
         };
-        println!("{}{styled}", prefix.dark_grey());
+        outln!("{}{styled}", prefix.dark_grey());
     }
     if lines.is_empty() {
-        println!("{}", "  ⎿  (no output)".dark_grey());
+        outln!("{}", "  ⎿  (no output)".dark_grey());
     }
     if lines.len() > max {
-        println!(
+        outln!(
             "{}",
             format!("     … +{} lines", lines.len() - max).dark_grey()
         );
@@ -370,11 +475,11 @@ pub fn preview(diff: &frog_engine::protocol::FileDiff) {
     let mut shown = 0;
     for (i, hunk) in diff.hunks.iter().enumerate() {
         if i > 0 {
-            println!("{}", "     ⋮".dark_grey());
+            outln!("{}", "     ⋮".dark_grey());
         }
         for line in &hunk.lines {
             if shown == 30 {
-                println!("{}", "     …".dark_grey());
+                outln!("{}", "     …".dark_grey());
                 return;
             }
             shown += 1;
@@ -385,183 +490,31 @@ pub fn preview(diff: &frog_engine::protocol::FileDiff) {
                 .unwrap_or_default();
             let text = format!("{n:>5} {}", line.text);
             match line.kind {
-                LineKind::Add => println!("  {}", format!("+{text}").green()),
-                LineKind::Remove => println!("  {}", format!("-{text}").red()),
-                LineKind::Context => println!("  {}", format!(" {text}").dark_grey()),
+                LineKind::Add => outln!("  {}", format!("+{text}").green()),
+                LineKind::Remove => outln!("  {}", format!("-{text}").red()),
+                LineKind::Context => outln!("  {}", format!(" {text}").dark_grey()),
             }
         }
     }
-}
-
-/// Returns `None` if the user hit ctrl+c.
-pub async fn ask_permission(always: &str) -> Option<Decision> {
-    println!(
-        "  {}  {} yes   {} {always}   {} no",
-        "Allow?".yellow().bold(),
-        "[y]".bold(),
-        "[a]".bold(),
-        "[n]".bold()
-    );
-    flush();
-    let answer = tokio::task::spawn_blocking(|| {
-        if terminal::enable_raw_mode().is_err() {
-            return Some(Decision::Deny);
-        }
-        let r = loop {
-            let Ok(event::Event::Key(k)) = event::read() else {
-                continue;
-            };
-            if k.kind != KeyEventKind::Press {
-                continue;
-            }
-            break match k.code {
-                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => None,
-                KeyCode::Char('y') | KeyCode::Enter => Some(Decision::Allow),
-                KeyCode::Char('a') => Some(Decision::AllowAlways),
-                KeyCode::Char('n') | KeyCode::Esc => Some(Decision::Deny),
-                _ => continue,
-            };
-        };
-        let _ = terminal::disable_raw_mode();
-        r
-    })
-    .await
-    .unwrap_or(Some(Decision::Deny));
-    let msg = match answer {
-        Some(Decision::Allow) => "yes".green(),
-        Some(Decision::AllowAlways) => "always".green(),
-        Some(Decision::Deny) => "no".red(),
-        None => "interrupted".red(),
-    };
-    println!("  {msg}");
-    answer
-}
-
-/// An `Ask` question: number keys pick (toggle, with `multi`, then enter), `o` types an
-/// answer, esc dismisses. `None` on ctrl-c.
-pub async fn ask_question(
-    question: &str,
-    options: &[AskOption],
-    multi: bool,
-    allow_other: bool,
-) -> Option<Answer> {
-    println!("  {}", question.yellow().bold());
-    for (i, o) in options.iter().enumerate() {
-        let detail = o
-            .detail
-            .as_deref()
-            .map(|d| format!("  {d}"))
-            .unwrap_or_default();
-        println!(
-            "  {} {}{}",
-            format!("[{}]", i + 1).bold(),
-            o.label,
-            detail.dark_grey()
-        );
-    }
-    let mut keys = Vec::new();
-    if multi {
-        keys.push("1-9 toggle, enter confirms");
-    }
-    if allow_other {
-        keys.push("[o] type an answer");
-    }
-    keys.push("esc skips");
-    info(&format!("  {}", keys.join(" · ")));
-    flush();
-    let labels: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
-    let picked = tokio::task::spawn_blocking(move || {
-        if terminal::enable_raw_mode().is_err() {
-            return Some((Vec::new(), false));
-        }
-        let mut on = vec![false; labels.len()];
-        let r = loop {
-            let Ok(event::Event::Key(k)) = event::read() else {
-                continue;
-            };
-            if k.kind != KeyEventKind::Press {
-                continue;
-            }
-            match k.code {
-                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => break None,
-                KeyCode::Esc => break Some((Vec::new(), false)),
-                KeyCode::Char('o') if allow_other => break Some((pick(&labels, &on), true)),
-                KeyCode::Enter if multi => break Some((pick(&labels, &on), false)),
-                KeyCode::Char(c) => {
-                    let Some(i) = c
-                        .to_digit(10)
-                        .map(|d| d as usize)
-                        .filter(|d| (1..=labels.len()).contains(d))
-                    else {
-                        continue;
-                    };
-                    if !multi {
-                        break Some((vec![labels[i - 1].clone()], false));
-                    }
-                    on[i - 1] = !on[i - 1];
-                }
-                _ => {}
-            }
-        };
-        let _ = terminal::disable_raw_mode();
-        r
-    })
-    .await
-    .unwrap_or(Some((Vec::new(), false)));
-    let (choices, typing) = picked?;
-    let other = if typing {
-        print!("  {} ", "›".bold());
-        flush();
-        tokio::task::spawn_blocking(|| {
-            let mut line = String::new();
-            std::io::stdin().read_line(&mut line).ok()?;
-            Some(line.trim().to_string()).filter(|l| !l.is_empty())
-        })
-        .await
-        .ok()
-        .flatten()
-    } else {
-        None
-    };
-    let answer = Answer { choices, other };
-    if answer.dismissed() {
-        println!("  {}", "skipped".red());
-    } else {
-        let mut said = answer.choices.join(", ");
-        if let Some(o) = &answer.other {
-            if !said.is_empty() {
-                said.push_str(" · ");
-            }
-            said.push_str(o);
-        }
-        println!("  {}", said.green());
-    }
-    Some(answer)
-}
-
-fn pick(labels: &[String], on: &[bool]) -> Vec<String> {
-    labels
-        .iter()
-        .zip(on)
-        .filter(|(_, on)| **on)
-        .map(|(l, _)| l.clone())
-        .collect()
 }
 
 pub fn info(s: &str) {
-    println!("{}", s.dark_grey());
+    outln!("{}", s.dark_grey());
 }
 
 pub fn warn(s: &str) {
-    println!("{}", s.yellow());
+    outln!("{}", s.yellow());
 }
 
 pub fn error(s: &str) {
-    println!("\n{} {}", "✗".red(), s.red());
+    outln!("\n{} {}", "✗".red(), s.red());
 }
 
 pub fn fmt_tokens(n: u64) -> String {
-    if n >= 1000 {
+    if n >= 1_000_000 {
+        let m = format!("{:.1}", n as f64 / 1_000_000.0);
+        format!("{}M", m.trim_end_matches(".0"))
+    } else if n >= 1000 {
         format!("{:.1}k", n as f64 / 1000.0)
     } else {
         n.to_string()
@@ -598,4 +551,115 @@ fn time_split(t: &TurnTiming) -> String {
         out.push_str(&format!(" · tools {}", secs(t.tool_ms)));
     }
     out
+}
+
+/// What sits above the composer: `28% of 32.8k · ollama/qwen3-coder:30b · accept-edits`.
+pub fn composer_line(s: &frog_engine::Status) -> String {
+    let window = s.context_window.max(1);
+    let ctx = match s.context_tokens {
+        Some(c) => format!("{}% of {}", (c * 100 / window).min(100), fmt_tokens(window)),
+        None => format!("{} context", fmt_tokens(window)),
+    }
+    .dark_grey();
+    let mode = s.mode.label().to_lowercase();
+    let mode = match s.mode {
+        frog_engine::Mode::Default => mode.dark_grey(),
+        _ => mode.yellow(),
+    };
+    let sep = " · ".dark_grey();
+    format!("{ctx}{sep}{}{sep}{mode}", s.model.clone().dark_grey())
+}
+
+/// After a response, what it took: `3.1s · ttft 0.4s · tools 1.2s · 9.0k in (94% cached) ·
+/// 312 out · 61 tok/s · ~0.4¢ · 0.02 Wh`. Cost needs a catalog price, energy `--energy`.
+pub fn turn_summary(u: &TurnUsage) {
+    let secs = |ms: u64| format!("{:.1}s", ms as f64 / 1000.0);
+    let mut parts = Vec::new();
+    if let Some(t) = &u.timing {
+        parts.push(secs(t.wall_ms));
+        parts.push(format!("ttft {}", secs(t.prefill_ms)));
+        if t.tool_ms > 0 {
+            parts.push(format!("tools {}", secs(t.tool_ms)));
+        }
+    }
+    let calls = u
+        .timing
+        .as_ref()
+        .map(|t| t.calls.as_slice())
+        .unwrap_or_default();
+    let cached: u64 = calls.iter().map(|c| c.cached_tokens).sum();
+    let prompt: u64 = calls.iter().map(|c| c.prompt_tokens).sum();
+    if u.input_tokens > 0 {
+        let hit = if cached > 0 && prompt > 0 {
+            format!(" ({}% cached)", cached * 100 / prompt)
+        } else {
+            String::new()
+        };
+        parts.push(format!("{} in{hit}", fmt_tokens(u.input_tokens)));
+        parts.push(format!("{} out", fmt_tokens(u.output_tokens)));
+    }
+    if let Some(t) = u.tokens_per_sec {
+        parts.push(format!("{t:.0} tok/s"));
+    }
+    if let Some(c) = u.model.as_deref().and_then(|m| cost(m, u)) {
+        parts.push(c);
+    }
+    if let Some(e) = &u.energy {
+        let wh = e.local_wh + e.remote_wh.unwrap_or(0.0);
+        if wh >= 0.005 {
+            parts.push(format!("{wh:.2} Wh"));
+        }
+    }
+    if !parts.is_empty() {
+        info(&format!("  {}", parts.join(" · ")));
+    }
+}
+
+/// `~0.4¢` or `~$1.20`, from the provider catalog's per-million prices.
+fn cost(model: &str, u: &TurnUsage) -> Option<String> {
+    let m = frog_engine::catalog::cached(model)?;
+    let usd = (u.input_tokens as f64 * m.cost_in? + u.output_tokens as f64 * m.cost_out?) / 1e6;
+    Some(if usd < 0.995 {
+        format!("~{:.1}¢", usd * 100.0)
+    } else {
+        format!("~${usd:.2}")
+    })
+}
+
+/// The engine's MCP summary names every server and why; in a terminal, a count is enough.
+fn shorten_notice(message: &str) -> String {
+    let Some(rest) = message.strip_prefix("Some MCP servers aren't available: ") else {
+        return message.to_string();
+    };
+    // "a couldn't start; b and c need a sign-in …; d isn't running." → a, b, c, d
+    let names = rest
+        .split("; ")
+        .flat_map(|part| {
+            let who = part.split(" couldn't").next().unwrap_or(part);
+            let who = who.split(" need").next().unwrap_or(who);
+            let who = who.split(" isn't").next().unwrap_or(who);
+            who.split(" and ").map(str::to_string).collect::<Vec<_>>()
+        })
+        .count();
+    let s = if names == 1 { "" } else { "s" };
+    format!("{names} MCP server{s} unavailable · frog --mcp for details")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mcp_summary_becomes_a_count() {
+        assert_eq!(
+            super::shorten_notice(
+                "Some MCP servers aren't available: aws-mcp couldn't start; choji and runpod need a sign-in frog doesn't support yet; fusion isn't running."
+            ),
+            "4 MCP servers unavailable · frog --mcp for details"
+        );
+        assert_eq!(super::shorten_notice("hello"), "hello");
+    }
+}
+
+/// One line of output, above the composer once it's live.
+pub fn say(s: &str) {
+    write_out(&format!("{s}\n"));
 }
