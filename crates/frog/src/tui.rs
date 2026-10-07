@@ -293,7 +293,8 @@ impl Tui {
     }
 }
 
-/// Put the terminal back in cooked mode if something (a killed program) left it raw: output
+/// Put the terminal back in cooked mode if something (a killed program, or a raw-mode prompt
+/// that didn't get to clean up) left it raw: output
 /// would otherwise stair-step, every line starting where the last ended.
 fn restore_cooked() {
     use std::os::fd::AsRawFd;
@@ -311,8 +312,18 @@ fn restore_cooked() {
     }
 }
 
+/// Restores cooked mode however `run` ends, errors included.
+struct Cooked;
+
+impl Drop for Cooked {
+    fn drop(&mut self) {
+        restore_cooked();
+    }
+}
+
 pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<()> {
     restore_cooked();
+    let _cooked = Cooked;
     let mut tui = Tui {
         h,
         cfg,

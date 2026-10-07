@@ -572,7 +572,7 @@ pub fn turn_summary(u: &TurnUsage) {
         }
     }
     if !parts.is_empty() {
-        info(&format!("\n  {}", parts.join(" · ")));
+        info(&format!("  {}", parts.join(" · ")));
     }
 }
 
