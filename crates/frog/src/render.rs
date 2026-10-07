@@ -386,7 +386,7 @@ impl Renderer {
             Event::TurnEnded { reason, .. } => {
                 self.idle();
                 match reason {
-                    EndReason::Cancelled => warn("\n  ⎿  interrupted"),
+                    EndReason::Cancelled => info("  ⎿  interrupted"),
                     EndReason::MaxTokens => warn("\n  ⎿  hit the output token limit"),
                     EndReason::Looping => {
                         warn("\n  ⎿  stopped: the model kept repeating the same tool call")
