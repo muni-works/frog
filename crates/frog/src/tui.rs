@@ -15,16 +15,35 @@ use reedline::{
 };
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-/// The line above the input: context, model and mode.
-struct FrogPrompt(String);
+/// What the prompt shows, shared with the main loop, which changes it and asks reedline to
+/// repaint. `top` is a line above the input (empty for a one-line prompt), `right` sits at
+/// the end of the input line.
+#[derive(Default)]
+struct Shown {
+    top: String,
+    right: String,
+    /// Bumped each time reedline paints a one-line prompt, so the main loop knows it's safe to
+    /// print above it.
+    short_paints: u64,
+}
+
+struct FrogPrompt(Arc<Mutex<Shown>>);
 
 impl Prompt for FrogPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.0)
+        let mut s = self.0.lock().unwrap();
+        if s.top.is_empty() {
+            s.short_paints += 1;
+            Cow::Borrowed("")
+        } else {
+            Cow::Owned(format!("\n{}\n", s.top))
+        }
     }
     fn render_prompt_right(&self) -> Cow<'_, str> {
-        Cow::Borrowed("")
+        Cow::Owned(self.0.lock().unwrap().right.clone())
     }
     fn render_prompt_indicator(&self, _: PromptEditMode) -> Cow<'_, str> {
         Cow::Borrowed("> ")
@@ -65,6 +84,7 @@ fn editor(cwd: PathBuf, models: Models) -> Result<Reedline> {
     std::fs::create_dir_all(data_dir())?;
     let history = FileBackedHistory::with_file(5000, data_dir().join("history.txt"))?;
     Ok(Reedline::create()
+        .with_poll_interval(Duration::from_millis(30))
         .with_edit_mode(Box::new(Emacs::new(kb)))
         .with_history(Box::new(history))
         .with_completer(Box::new(FrogCompleter::new(cwd, models)))
@@ -93,87 +113,206 @@ struct Tui {
     cfg: Config,
     status: Option<Status>,
     session: String,
-    /// The last finished turn, for the status bar.
-    last: Option<TurnUsage>,
+    /// Ops sent that the engine hasn't finished (each ends with `Idle`).
+    inflight: usize,
+    /// When the engine started on the current batch of ops.
+    since: Option<Instant>,
+    /// A permission prompt waiting for y / a / n from the composer: its id, and what
+    /// "always" would allow.
+    asking: Option<(String, String)>,
+    /// A ctrl+c at an idle prompt clears it; a second one in a row exits.
+    armed: bool,
 }
 
 impl Tui {
-    fn send(&self, op: Op) {
+    fn send(&mut self, op: Op) {
+        if !matches!(
+            op,
+            Op::Interrupt | Op::Permission { .. } | Op::Warm { .. } | Op::Shutdown
+        ) {
+            if self.inflight == 0 {
+                self.since = Some(Instant::now());
+            }
+            self.inflight += 1;
+        }
         let _ = self.h.ops.send(op);
     }
 
-    /// Render events until the engine is idle again. Returns false if the engine is gone.
-    async fn drain(&mut self) -> bool {
-        self.drain_with(false).await
-    }
-
-    /// With `replay`, past turns are being re-rendered: echo inputs, skip footers.
-    async fn drain_with(&mut self, replay: bool) -> bool {
+    /// Before the composer is up: render events until the engine is idle. With `replay`, past
+    /// turns are being re-rendered. Returns false if the engine is gone.
+    async fn drain_startup(&mut self, replay: bool) -> bool {
         let mut r = Renderer::new(self.cfg.show_thinking, replay);
-        let mut started = false;
-        let mut finished = None;
-        loop {
-            let env = tokio::select! {
-                env = self.h.events.recv() => env,
-                _ = tokio::signal::ctrl_c() => {
-                    self.send(Op::Interrupt);
-                    continue;
-                }
-            };
-            let Some(env) = env else { return false };
+        while let Some(env) = self.h.events.recv().await {
             self.session = env.session;
             match env.event {
                 Event::Idle => {
                     r.idle();
-                    r.bar = None;
-                    if let Some(u) = finished {
-                        render::turn_summary(&u);
-                        self.last = Some(u);
-                    }
                     return true;
                 }
-                Event::Status(s) => {
-                    if let Some(b) = &r.bar {
-                        b.status(s.clone());
-                    }
-                    self.status = Some(s);
-                }
-                Event::TurnStarted { .. } if !replay && !started => {
-                    started = true;
-                    r.bar = self.status.clone().and_then(render::LiveBar::start);
-                }
-                Event::PermissionRequest {
-                    id,
-                    always,
-                    preview,
-                    ..
-                } => {
-                    r.idle();
-                    if let Some(diff) = &preview {
-                        render::preview(diff);
-                    }
-                    match render::ask_permission(&always).await {
-                        Some(decision) => self.send(Op::Permission { id, decision }),
-                        None => {
-                            self.send(Op::Permission {
-                                id,
-                                decision: Decision::Deny,
-                            });
-                            self.send(Op::Interrupt);
-                        }
-                    }
-                }
-                Event::TurnEnded {
-                    reason: EndReason::Complete,
-                    usage,
-                    ..
-                } if !replay => {
-                    r.idle();
-                    finished = Some(usage);
-                }
+                Event::Status(s) => self.status = Some(s),
+                Event::TurnEnded { .. } if !replay => {}
                 ev => r.event(ev),
             }
         }
+        false
+    }
+
+    /// While the engine works: what goes at the end of the input line.
+    fn working(&self) -> String {
+        const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let t = self.since.map_or(0, |s| s.elapsed().as_millis());
+        let queued = match self.inflight {
+            0 | 1 => String::new(),
+            n => format!(" · {} queued", n - 1),
+        };
+        format!(
+            "{} {}s{queued} · ctrl+c to interrupt",
+            FRAMES[(t / 100) as usize % FRAMES.len()],
+            t / 1000
+        )
+    }
+
+    /// While idle (or asking): the line above the input.
+    fn top(&self) -> String {
+        if let Some((_, always)) = &self.asking {
+            return format!(
+                "  {} yes · {} {always} · {} no",
+                "y".bold(),
+                "a".bold(),
+                "n".bold()
+            );
+        }
+        if self.armed {
+            return "  press ctrl+c again to exit".dark_grey().to_string();
+        }
+        self.status
+            .as_ref()
+            .map(|s| format!("  {}", render::composer_line(s)))
+            .unwrap_or_else(|| " ".into())
+    }
+
+    fn event(&mut self, r: &mut Renderer, finished: &mut Option<TurnUsage>, event: Event) {
+        match event {
+            Event::Idle => {
+                self.inflight = self.inflight.saturating_sub(1);
+                r.idle();
+                if let Some(u) = finished.take() {
+                    render::turn_summary(&u);
+                }
+                render::flush_out();
+                if self.inflight == 0 {
+                    self.since = None;
+                } else {
+                    self.since = Some(Instant::now());
+                }
+            }
+            Event::Status(s) => self.status = Some(s),
+            Event::ModelChanged { model } => {
+                // A bare `frog` starts where you left off.
+                frog_engine::models::remember_last_used(&model);
+                r.event(Event::ModelChanged { model });
+            }
+            Event::PermissionRequest {
+                id,
+                name,
+                arg,
+                always,
+                preview,
+                reason,
+                ..
+            } => {
+                r.idle();
+                if let Some(diff) = &preview {
+                    render::preview(diff);
+                }
+                let why = reason.map(|r| format!(" ({r})")).unwrap_or_default();
+                let arg = if arg.is_empty() {
+                    String::new()
+                } else {
+                    format!("({arg})")
+                };
+                render::say(&format!(
+                    "  {} {}{arg}{why}?",
+                    "allow".yellow(),
+                    name.bold()
+                ));
+                render::flush_out();
+                self.asking = Some((id, always));
+            }
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                usage,
+                ..
+            } => {
+                r.idle();
+                *finished = Some(usage);
+            }
+            ev => r.event(ev),
+        }
+    }
+
+    /// A line from the composer. Returns false to quit.
+    fn input(&mut self, line: &str) -> bool {
+        let line = line.trim();
+        if let Some((id, _)) = self.asking.take() {
+            let decision = match line.to_lowercase().as_str() {
+                "" | "y" | "yes" => Decision::Allow,
+                "a" | "always" => Decision::AllowAlways,
+                _ => Decision::Deny,
+            };
+            let said = match decision {
+                Decision::Allow => "yes".green(),
+                Decision::AllowAlways => "always".green(),
+                Decision::Deny => "no".red(),
+            };
+            render::say(&format!("  {said}"));
+            self.send(Op::Permission { id, decision });
+            // Anything other than an answer is a message: deny, then send it.
+            if matches!(
+                line.to_lowercase().as_str(),
+                "" | "y" | "yes" | "a" | "always" | "n" | "no"
+            ) {
+                return true;
+            }
+        }
+        if line.is_empty() {
+            return true;
+        }
+        if let Some(cmd) = line.strip_prefix('/') {
+            return self.command(cmd);
+        }
+        if let Some(cmd) = line.strip_prefix('!') {
+            self.send(Op::Shell {
+                command: cmd.trim().into(),
+            });
+        } else {
+            self.send(Op::Submit {
+                text: line.into(),
+                images: Vec::new(),
+            });
+        }
+        true
+    }
+
+    /// Returns false to quit.
+    fn ctrl_c(&mut self) -> bool {
+        if let Some((id, _)) = self.asking.take() {
+            self.send(Op::Permission {
+                id,
+                decision: Decision::Deny,
+            });
+            self.send(Op::Interrupt);
+            return true;
+        }
+        if self.inflight > 0 {
+            self.send(Op::Interrupt);
+            return true;
+        }
+        if self.armed {
+            return false;
+        }
+        self.armed = true;
+        true
     }
 
     fn banner(&self) {
@@ -199,7 +338,7 @@ impl Tui {
     }
 
     /// Returns false to quit.
-    async fn command(&mut self, cmd: &str) -> bool {
+    fn command(&mut self, cmd: &str) -> bool {
         let (name, arg) = cmd
             .split_once(' ')
             .map(|(a, b)| (a, b.trim()))
@@ -223,7 +362,7 @@ impl Tui {
             }
             "todos" => {
                 match self.status.as_ref().map(|s| &s.todos) {
-                    Some(t) if !t.is_empty() => println!("{}", todo::render(t)),
+                    Some(t) if !t.is_empty() => render::say(&todo::render(t)),
                     _ => render::info("  no todos"),
                 }
                 return true;
@@ -278,18 +417,8 @@ impl Tui {
                 return true;
             }
         };
-        let switching = matches!(op, Op::SetModel { .. });
-        let before = self.status.as_ref().map(|s| s.model.clone());
         self.send(op);
-        let alive = self.drain().await;
-        // A bare `frog` starts where you left off.
-        if let Some(now) = self.status.as_ref().map(|s| &s.model)
-            && switching
-            && before.as_ref() != Some(now)
-        {
-            frog_engine::models::remember_last_used(now);
-        }
-        alive
+        true
     }
 }
 
@@ -321,7 +450,7 @@ impl Drop for Cooked {
     }
 }
 
-pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<()> {
+pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
     restore_cooked();
     let _cooked = Cooked;
     let mut tui = Tui {
@@ -329,15 +458,18 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
         cfg,
         status: None,
         session: String::new(),
-        last: None,
+        inflight: 0,
+        since: None,
+        asking: None,
+        armed: false,
     };
-    if !tui.drain().await {
+    if !tui.drain_startup(false).await {
         return Ok(());
     }
     tui.banner();
     if tui.status.as_ref().is_some_and(|s| s.messages > 0) {
-        tui.send(Op::Subscribe { after: 0 });
-        if !tui.drain_with(true).await {
+        let _ = tui.h.ops.send(Op::Subscribe { after: 0 });
+        if !tui.drain_startup(true).await {
             return Ok(());
         }
         println!();
@@ -355,68 +487,96 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
         .as_ref()
         .map(|s| s.cwd.clone())
         .unwrap_or_default();
-    let mut ed = editor(cwd, models)?;
-    // A ctrl+c at the prompt clears it; a second one in a row exits.
-    let mut armed = false;
-    loop {
-        let line = match queued.take() {
-            Some(q) => {
-                println!("> {q}");
-                q
-            }
-            None => {
-                let top = if armed {
-                    "  press ctrl+c again to exit".dark_grey().to_string()
-                } else {
-                    tui.status
-                        .as_ref()
-                        .map(|s| format!("  {}", render::composer_line(s)))
-                        .unwrap_or_default()
-                };
-                let signal = tokio::task::block_in_place(|| {
-                    ed.read_line(&FrogPrompt(format!("\n{top}\n")))
-                })?;
-                match signal {
-                    Signal::CtrlC if armed => break,
-                    Signal::CtrlC => {
-                        armed = true;
-                        continue;
-                    }
-                    Signal::CtrlD => break,
-                    Signal::Success(s) | Signal::HostCommand(s) => {
-                        armed = false;
-                        s
-                    }
-                    _ => continue,
+
+    // The composer runs on its own thread for the whole session, so you can type while the
+    // model answers; output prints above it.
+    let printer = reedline::ExternalPrinter::new(4096);
+    render::install_sink(printer.clone());
+    let mut ed = editor(cwd, models)?.with_external_printer(printer);
+    let repaint = ed.repaint_signal();
+    let shown = Arc::new(Mutex::new(Shown {
+        top: tui.top(),
+        ..Default::default()
+    }));
+    let (tx, mut inputs) = tokio::sync::mpsc::unbounded_channel();
+    {
+        let prompt = FrogPrompt(shown.clone());
+        std::thread::spawn(move || {
+            loop {
+                let signal = ed.read_line(&prompt);
+                let done = matches!(signal, Err(_) | Ok(Signal::CtrlD));
+                if tx.send(signal.map_err(|e| e.to_string())).is_err() || done {
+                    break;
                 }
             }
-        };
-        let line = line.trim();
-        let alive = if line.is_empty() {
-            true
-        } else if let Some(cmd) = line.strip_prefix('/') {
-            if !tui.command(cmd).await {
-                break;
+        });
+    }
+    if let Some(q) = queued {
+        render::say(&format!("> {q}"));
+        tui.input(&q);
+    }
+
+    let mut r = Renderer::new(tui.cfg.show_thinking, false);
+    let mut finished = None;
+    let mut tick = tokio::time::interval(Duration::from_millis(50));
+    // Short paints seen when the prompt was last made one line; more means it's been drawn.
+    let mut shrunk_at: Option<u64> = None;
+    loop {
+        tokio::select! {
+            env = tui.h.events.recv() => {
+                let Some(env) = env else { break };
+                tui.session = env.session;
+                tui.event(&mut r, &mut finished, env.event);
             }
-            true
-        } else if let Some(cmd) = line.strip_prefix('!') {
-            tui.send(Op::Shell {
-                command: cmd.trim().into(),
-            });
-            tui.drain().await
-        } else {
-            tui.send(Op::Submit {
-                text: line.into(),
-                images: Vec::new(),
-            });
-            tui.drain().await
-        };
-        if !alive {
-            break;
+            signal = inputs.recv() => {
+                let keep = match signal {
+                    None | Some(Err(_)) | Some(Ok(Signal::CtrlD)) => false,
+                    Some(Ok(Signal::CtrlC)) => tui.ctrl_c(),
+                    Some(Ok(Signal::Success(s) | Signal::HostCommand(s))) => {
+                        tui.armed = false;
+                        tui.input(&s)
+                    }
+                    Some(Ok(_)) => true,
+                };
+                if !keep {
+                    break;
+                }
+            }
+            _ = tick.tick() => {}
+        }
+        // Output only prints above a one-line prompt (see `render::Sink`): shrink the prompt
+        // when there's something to print or the engine is working, and let output through
+        // once reedline has drawn it short; grow it back when everything has printed.
+        let busy = tui.inflight > 0 && tui.asking.is_none();
+        let mut s = shown.lock().unwrap();
+        if busy || render::sink_held() {
+            if !s.top.is_empty() {
+                s.top.clear();
+                shrunk_at = Some(s.short_paints);
+                repaint.request_repaint();
+            }
+            if shrunk_at.is_some_and(|at| s.short_paints > at) {
+                shrunk_at = None;
+                render::sink_open(true);
+            }
+            let right = if busy { tui.working() } else { String::new() };
+            if s.right != right {
+                s.right = right;
+                repaint.request_repaint();
+            }
+        } else if shrunk_at.is_none() && render::sink_drained() {
+            let top = tui.top();
+            if s.top != top || !s.right.is_empty() {
+                render::sink_open(false);
+                s.top = top;
+                s.right.clear();
+                repaint.request_repaint();
+            }
         }
     }
+    render::flush_out();
     // Let the engine save before exiting.
-    tui.send(Op::Shutdown);
+    let _ = tui.h.ops.send(Op::Shutdown);
     while tui.h.events.recv().await.is_some() {}
     Ok(())
 }

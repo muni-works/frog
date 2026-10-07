@@ -1,16 +1,151 @@
 //! Inline terminal rendering of engine events, in the style of Claude Code.
 
-use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::Stylize;
 use crossterm::terminal;
 use frog_engine::protocol::{TurnTiming, TurnUsage};
-use frog_engine::{Decision, Delta, EndReason, Event, Item, ItemKind, Level, ToolOutcome};
+use frog_engine::{Delta, EndReason, Event, Item, ItemKind, Level, ToolOutcome};
 use std::collections::HashSet;
 use std::io::{IsTerminal, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+
+/// Where rendered output goes once the composer is live: reedline's external printer, which
+/// prints whole lines above the prompt while you type. A partial line waits in `buf` until a
+/// newline, or until it would wrap. Before that (startup, replaying a session) output goes
+/// straight to stdout.
+struct Sink {
+    printer: reedline::ExternalPrinter<String>,
+    buf: String,
+    /// reedline prints a message over the input row only, so a prompt with a line above the
+    /// input would be left behind in the scrollback. Lines are held while that taller prompt
+    /// is up, and let through once the TUI has swapped in a one-line prompt.
+    open: bool,
+    held: Vec<String>,
+}
+
+static SINK: std::sync::Mutex<Option<Sink>> = std::sync::Mutex::new(None);
+
+pub fn install_sink(printer: reedline::ExternalPrinter<String>) {
+    *SINK.lock().unwrap() = Some(Sink {
+        printer,
+        buf: String::new(),
+        open: false,
+        held: Vec::new(),
+    });
+}
+
+/// Whether lines are waiting for the prompt to shrink.
+pub fn sink_held() -> bool {
+    SINK.lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|s| !s.held.is_empty())
+}
+
+/// Whether reedline has printed everything it was given.
+pub fn sink_drained() -> bool {
+    SINK.lock()
+        .unwrap()
+        .as_ref()
+        .is_none_or(|s| s.held.is_empty() && s.printer.receiver().is_empty())
+}
+
+/// Let lines through (the prompt is one line) or hold them (it's about to grow).
+pub fn sink_open(open: bool) {
+    let mut guard = SINK.lock().unwrap();
+    let Some(sink) = guard.as_mut() else { return };
+    sink.open = open;
+    if open {
+        for line in std::mem::take(&mut sink.held) {
+            let _ = sink.printer.print(line);
+        }
+    }
+}
+
+fn sink_active() -> bool {
+    SINK.lock().unwrap().is_some()
+}
+
+/// Byte index where `s` has used `cols` columns on screen (skipping ANSI escapes), or None
+/// if it's narrower than that.
+fn cut_at(s: &str, cols: usize) -> Option<usize> {
+    let mut n = 0;
+    let mut esc = false;
+    for (i, c) in s.char_indices() {
+        match (esc, c) {
+            (false, '\x1b') => esc = true,
+            (true, c) if c.is_ascii_alphabetic() => esc = false,
+            (true, _) => {}
+            (false, _) => {
+                if n == cols {
+                    return Some(i);
+                }
+                n += 1;
+            }
+        }
+    }
+    None
+}
+
+fn send_line(sink: &mut Sink, line: &str) {
+    // An empty message prints nothing, so a blank line goes as a space.
+    let line = if line.is_empty() { " " } else { line }.to_string();
+    if sink.open {
+        let _ = sink.printer.print(line);
+    } else {
+        sink.held.push(line);
+    }
+}
+
+pub fn write_out(s: &str) {
+    let mut guard = SINK.lock().unwrap();
+    let Some(sink) = guard.as_mut() else {
+        print!("{s}");
+        return;
+    };
+    sink.buf.push_str(s);
+    let cols = terminal::size().map_or(80, |(c, _)| c as usize).max(20) - 1;
+    loop {
+        if let Some(i) = sink.buf.find('\n') {
+            let line: String = sink.buf.drain(..=i).collect();
+            send_line(sink, line.trim_end_matches('\n'));
+        } else if let Some(at) = cut_at(&sink.buf, cols) {
+            // A long streamed line wraps, at a word if there's one in its second half,
+            // continuing indented like the renderer's own wraps.
+            let at = match sink.buf[..at].rfind(' ') {
+                Some(sp) if sp > at / 2 => sp + 1,
+                _ => at,
+            };
+            let line: String = sink.buf.drain(..at).collect();
+            let line = line.trim_end().to_string();
+            send_line(sink, &line);
+            sink.buf.insert_str(0, "  ");
+        } else {
+            break;
+        }
+    }
+}
+
+/// Print the partial line that's waiting, if any.
+pub fn flush_out() {
+    let mut guard = SINK.lock().unwrap();
+    if let Some(sink) = guard.as_mut()
+        && !sink.buf.is_empty()
+    {
+        let line = std::mem::take(&mut sink.buf);
+        send_line(sink, &line);
+    }
+}
+
+macro_rules! out {
+    ($($t:tt)*) => { $crate::render::write_out(&format!($($t)*)) };
+}
+macro_rules! outln {
+    () => { $crate::render::write_out("\n") };
+    ($($t:tt)*) => { $crate::render::write_out(&format!("{}\n", format!($($t)*))) };
+}
 
 fn flush() {
     let _ = std::io::stdout().flush();
@@ -23,7 +158,7 @@ struct Spinner {
 
 impl Spinner {
     fn start(msg: String) -> Option<Self> {
-        if !std::io::stdout().is_terminal() {
+        if !std::io::stdout().is_terminal() || sink_active() {
             return None;
         }
         let stop = Arc::new(AtomicBool::new(false));
@@ -38,12 +173,12 @@ impl Spinner {
                     FRAMES[i % FRAMES.len()],
                     t0.elapsed().as_secs()
                 );
-                print!("\r\x1b[2K{}", line.dark_yellow());
+                out!("\r\x1b[2K{}", line.dark_yellow());
                 flush();
                 i += 1;
                 std::thread::park_timeout(Duration::from_millis(80));
             }
-            print!("\r\x1b[2K");
+            out!("\r\x1b[2K");
             flush();
         });
         Some(Self { stop, handle })
@@ -73,7 +208,6 @@ pub struct Renderer {
     streamed: HashSet<String>,
     /// Re-rendering a past session: show each turn's input.
     replay: bool,
-    pub bar: Option<LiveBar>,
 }
 
 impl Drop for Renderer {
@@ -91,7 +225,6 @@ impl Renderer {
             fresh: true,
             streamed: HashSet::new(),
             replay,
-            bar: None,
         }
     }
 
@@ -105,7 +238,7 @@ impl Renderer {
     pub fn idle(&mut self) {
         self.stop_spinner();
         if self.state != State::Idle {
-            println!();
+            outln!();
             self.state = State::Idle;
         }
     }
@@ -116,8 +249,8 @@ impl Renderer {
         }
         self.idle();
         match state {
-            State::Thinking => print!("\n{} ", "✻".dark_grey()),
-            State::Text => print!("\n{} ", "⏺".white()),
+            State::Thinking => out!("\n{} ", "✻".dark_grey()),
+            State::Text => out!("\n{} ", "⏺".white()),
             State::Idle => {}
         }
         self.state = state;
@@ -132,45 +265,18 @@ impl Renderer {
         self.fresh = false;
         let s = s.replace('\n', "\n  ");
         if dim {
-            print!("{}", s.dark_grey().italic())
+            out!("{}", s.dark_grey().italic())
         } else {
-            print!("{s}")
+            out!("{s}")
         }
         flush();
     }
 
-    fn phase(&self, p: impl Into<String>) {
-        if let Some(b) = &self.bar {
-            b.phase(p);
-        }
-    }
-
     pub fn event(&mut self, ev: Event) {
-        match &ev {
-            Event::ItemStarted {
-                kind: ItemKind::ToolCall { name, .. },
-                ..
-            } => self.phase(format!("running {name}")),
-            Event::ItemCompleted { .. } => self.phase("waiting for the model"),
-            Event::ItemDelta { delta, .. } => {
-                let (phase, n) = match delta {
-                    Delta::Reasoning { text } => ("thinking", text.len()),
-                    Delta::Text { text } => ("writing", text.len()),
-                    _ => ("", 0),
-                };
-                if n > 0 {
-                    self.phase(phase);
-                    if let Some(b) = &self.bar {
-                        b.streamed(n);
-                    }
-                }
-            }
-            _ => {}
-        }
         match ev {
             Event::TurnStarted { input, .. } if self.replay => {
                 self.idle();
-                println!("\n{} {}", ">".dark_grey(), input.dark_grey());
+                outln!("\n{} {}", ">".dark_grey(), input.dark_grey());
             }
             Event::Progress { label } => {
                 self.idle();
@@ -186,11 +292,11 @@ impl Renderer {
                 } else {
                     format!("({arg})")
                 };
-                println!("\n{} {}{}", "⏺".green(), name.bold(), arg);
+                outln!("\n{} {}{}", "⏺".green(), name.bold(), arg);
             }
             Event::AutoApproved { reason, .. } => {
                 self.idle();
-                println!("  {} {}", "auto:".dark_grey(), reason.dark_grey());
+                outln!("  {} {}", "auto:".dark_grey(), reason.dark_grey());
             }
             // A subagent's steps, indented under its Task call; its report arrives as the
             // call's output.
@@ -201,7 +307,7 @@ impl Renderer {
                 } = *inner
                 {
                     self.idle();
-                    println!(
+                    outln!(
                         "  {} {} {}",
                         "↳".dark_grey(),
                         name.dark_grey(),
@@ -328,9 +434,9 @@ impl Renderer {
 }
 
 fn print_diagram(art: &str) {
-    println!();
+    outln!();
     for line in art.lines() {
-        println!("     {}", line.cyan());
+        outln!("     {}", line.cyan());
     }
 }
 
@@ -373,13 +479,13 @@ fn tool_result(text: &str, err: bool) {
         } else {
             line.dark_grey().to_string()
         };
-        println!("{}{styled}", prefix.dark_grey());
+        outln!("{}{styled}", prefix.dark_grey());
     }
     if lines.is_empty() {
-        println!("{}", "  ⎿  (no output)".dark_grey());
+        outln!("{}", "  ⎿  (no output)".dark_grey());
     }
     if lines.len() > max {
-        println!(
+        outln!(
             "{}",
             format!("     … +{} lines", lines.len() - max).dark_grey()
         );
@@ -392,11 +498,11 @@ pub fn preview(diff: &frog_engine::protocol::FileDiff) {
     let mut shown = 0;
     for (i, hunk) in diff.hunks.iter().enumerate() {
         if i > 0 {
-            println!("{}", "     ⋮".dark_grey());
+            outln!("{}", "     ⋮".dark_grey());
         }
         for line in &hunk.lines {
             if shown == 30 {
-                println!("{}", "     …".dark_grey());
+                outln!("{}", "     …".dark_grey());
                 return;
             }
             shown += 1;
@@ -407,68 +513,24 @@ pub fn preview(diff: &frog_engine::protocol::FileDiff) {
                 .unwrap_or_default();
             let text = format!("{n:>5} {}", line.text);
             match line.kind {
-                LineKind::Add => println!("  {}", format!("+{text}").green()),
-                LineKind::Remove => println!("  {}", format!("-{text}").red()),
-                LineKind::Context => println!("  {}", format!(" {text}").dark_grey()),
+                LineKind::Add => outln!("  {}", format!("+{text}").green()),
+                LineKind::Remove => outln!("  {}", format!("-{text}").red()),
+                LineKind::Context => outln!("  {}", format!(" {text}").dark_grey()),
             }
         }
     }
 }
 
-/// Returns `None` if the user hit ctrl+c.
-pub async fn ask_permission(always: &str) -> Option<Decision> {
-    println!(
-        "  {}  {} yes   {} {always}   {} no",
-        "Allow?".yellow().bold(),
-        "[y]".bold(),
-        "[a]".bold(),
-        "[n]".bold()
-    );
-    flush();
-    let answer = tokio::task::spawn_blocking(|| {
-        if terminal::enable_raw_mode().is_err() {
-            return Some(Decision::Deny);
-        }
-        let r = loop {
-            let Ok(event::Event::Key(k)) = event::read() else {
-                continue;
-            };
-            if k.kind != KeyEventKind::Press {
-                continue;
-            }
-            break match k.code {
-                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => None,
-                KeyCode::Char('y') | KeyCode::Enter => Some(Decision::Allow),
-                KeyCode::Char('a') => Some(Decision::AllowAlways),
-                KeyCode::Char('n') | KeyCode::Esc => Some(Decision::Deny),
-                _ => continue,
-            };
-        };
-        let _ = terminal::disable_raw_mode();
-        r
-    })
-    .await
-    .unwrap_or(Some(Decision::Deny));
-    let msg = match answer {
-        Some(Decision::Allow) => "yes".green(),
-        Some(Decision::AllowAlways) => "always".green(),
-        Some(Decision::Deny) => "no".red(),
-        None => "interrupted".red(),
-    };
-    println!("  {msg}");
-    answer
-}
-
 pub fn info(s: &str) {
-    println!("{}", s.dark_grey());
+    outln!("{}", s.dark_grey());
 }
 
 pub fn warn(s: &str) {
-    println!("{}", s.yellow());
+    outln!("{}", s.yellow());
 }
 
 pub fn error(s: &str) {
-    println!("\n{} {}", "✗".red(), s.red());
+    outln!("\n{} {}", "✗".red(), s.red());
 }
 
 pub fn fmt_tokens(n: u64) -> String {
@@ -587,144 +649,6 @@ fn cost(model: &str, u: &TurnUsage) -> Option<String> {
     })
 }
 
-/// What the live bar shows while a turn runs.
-struct Live {
-    status: frog_engine::Status,
-    started: Instant,
-    phase: String,
-    /// Reply and reasoning text streamed so far, for a rough speed.
-    chars: usize,
-    first_token: Option<Instant>,
-}
-
-/// The status bar pinned to the terminal's last row while a turn streams. Output scrolls in a
-/// region above it; dropping the bar gives the row back.
-pub struct LiveBar {
-    live: Arc<std::sync::Mutex<Live>>,
-    stop: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
-}
-
-/// Terminal rows, or None when there's no room for a bar.
-fn rows() -> Option<u16> {
-    terminal::size().ok().map(|(_, h)| h).filter(|h| *h >= 6)
-}
-
-/// Confine scrolling to rows `1..h-1`, keeping the cursor where it was (setting the region
-/// moves it home).
-fn reserve(h: u16) {
-    print!("\x1b7\x1b[1;{}r\x1b8", h - 1);
-    flush();
-}
-
-impl LiveBar {
-    pub fn start(status: frog_engine::Status) -> Option<Self> {
-        if !std::io::stdout().is_terminal() || std::env::var_os("FROG_NO_BAR").is_some() {
-            return None;
-        }
-        let h = rows()?;
-        // Make sure the cursor isn't on the row the bar takes.
-        print!("\n\x1b[1A");
-        reserve(h);
-        let live = Arc::new(std::sync::Mutex::new(Live {
-            status,
-            started: Instant::now(),
-            phase: "waiting for the model".into(),
-            chars: 0,
-            first_token: None,
-        }));
-        let stop = Arc::new(AtomicBool::new(false));
-        let (l, s) = (live.clone(), stop.clone());
-        let handle = std::thread::spawn(move || {
-            let mut height = h;
-            while !s.load(Ordering::Relaxed) {
-                if let Some(now) = rows() {
-                    if now != height {
-                        height = now;
-                        reserve(height);
-                    }
-                    let (cols, _) = terminal::size().unwrap_or((80, height));
-                    let line = live_line(&l.lock().unwrap(), cols as usize);
-                    // One write, so it can't interleave with streamed output.
-                    print!("\x1b7\x1b[{height};1H\x1b[2K{line}\x1b8");
-                    flush();
-                }
-                std::thread::park_timeout(Duration::from_millis(250));
-            }
-            print!("\x1b7\x1b[r\x1b[{height};1H\x1b[2K\x1b8");
-            flush();
-        });
-        Some(Self {
-            live,
-            stop,
-            handle: Some(handle),
-        })
-    }
-
-    fn with(&self, f: impl FnOnce(&mut Live)) {
-        f(&mut self.live.lock().unwrap());
-        if let Some(h) = &self.handle {
-            h.thread().unpark();
-        }
-    }
-
-    pub fn status(&self, s: frog_engine::Status) {
-        self.with(|l| l.status = s);
-    }
-
-    fn phase(&self, p: impl Into<String>) {
-        let p = p.into();
-        self.with(|l| l.phase = p);
-    }
-
-    fn streamed(&self, n: usize) {
-        self.with(|l| {
-            l.first_token.get_or_insert_with(Instant::now);
-            l.chars += n;
-        });
-    }
-}
-
-impl Drop for LiveBar {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.handle.take() {
-            h.thread().unpark();
-            let _ = h.join();
-        }
-    }
-}
-
-/// `12s · writing · ~58 tok/s · default · ctrl+c to interrupt`,
-/// dropping parts from the end to fit `cols`.
-fn live_line(l: &Live, cols: usize) -> String {
-    let s = &l.status;
-    let mut parts: Vec<(String, String)> = Vec::new();
-    let mut plain = |t: String| parts.push((t.clone(), t.dark_grey().to_string()));
-    plain(format!("{}s", l.started.elapsed().as_secs()));
-    parts.push((l.phase.clone(), l.phase.clone().dark_yellow().to_string()));
-    let mut plain = |t: String| parts.push((t.clone(), t.dark_grey().to_string()));
-    if let Some(t0) = l.first_token {
-        let secs = t0.elapsed().as_secs_f64();
-        if secs >= 1.0 {
-            plain(format!("~{:.0} tok/s", l.chars as f64 / 4.0 / secs));
-        }
-    }
-    plain(s.mode.label().to_lowercase());
-    plain("ctrl+c to interrupt".into());
-    let mut width = 0;
-    let mut out = Vec::new();
-    for (p, styled) in parts {
-        let w = p.chars().count() + if out.is_empty() { 0 } else { 3 };
-        if width + w > cols {
-            break;
-        }
-        width += w;
-        out.push(styled);
-    }
-    out.join(&" · ".dark_grey().to_string())
-}
-
 /// The engine's MCP summary names every server and why; in a terminal, a count is enough.
 fn shorten_notice(message: &str) -> String {
     let Some(rest) = message.strip_prefix("Some MCP servers aren't available: ") else {
@@ -756,4 +680,9 @@ mod tests {
         );
         assert_eq!(super::shorten_notice("hello"), "hello");
     }
+}
+
+/// One line of output, above the composer once it's live.
+pub fn say(s: &str) {
+    write_out(&format!("{s}\n"));
 }

@@ -4,6 +4,8 @@ without a real model:
 
     python3 scripts/fake-model.py &
     OPENAI_BASE_URL=http://127.0.0.1:8765/v1 frog -m openai/fake --tool-mode native
+
+A message containing "tool" gets a Write call back, to try permission prompts.
 """
 import json, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -55,6 +57,19 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(c)}\n\n".encode())
             self.wfile.flush()
 
+        msgs = req.get("messages", [])
+        last = msgs[-1] if msgs else {}
+        text = json.dumps(last.get("content"))
+        if last.get("role") == "user" and "tool" in text:
+            # Ask to write a file, so permission prompts can be tried (sandboxed Bash
+            # commands don't ask).
+            args = {"file_path": "fake-model-was-here.txt", "content": "ribbit\n"}
+            call = {"index": 0, "id": "call_1", "type": "function",
+                    "function": {"name": "Write", "arguments": json.dumps(args)}}
+            chunk({"tool_calls": [call]})
+            chunk({}, "tool_calls", {"prompt_tokens": 9000, "completion_tokens": 20})
+            self.wfile.write(b"data: [DONE]\n\n")
+            return
         for i, w in enumerate(WORDS.split(" ")):
             chunk({"content": w + " "})
             if i % 20 == 19:
