@@ -113,6 +113,7 @@ impl Tui {
     /// With `replay`, past turns are being re-rendered: echo inputs, skip footers.
     async fn drain_with(&mut self, replay: bool) -> bool {
         let mut r = Renderer::new(self.cfg.show_thinking, replay);
+        let mut started = false;
         let mut finished = None;
         loop {
             let env = tokio::select! {
@@ -127,13 +128,23 @@ impl Tui {
             match env.event {
                 Event::Idle => {
                     r.idle();
+                    r.bar = None;
                     if let Some(u) = finished {
                         render::turn_time(&u);
                         self.last = Some(u);
                     }
                     return true;
                 }
-                Event::Status(s) => self.status = Some(s),
+                Event::Status(s) => {
+                    if let Some(b) = &r.bar {
+                        b.status(s.clone());
+                    }
+                    self.status = Some(s);
+                }
+                Event::TurnStarted { .. } if !replay && !started => {
+                    started = true;
+                    r.bar = self.status.clone().and_then(render::LiveBar::start);
+                }
                 Event::PermissionRequest {
                     id,
                     always,

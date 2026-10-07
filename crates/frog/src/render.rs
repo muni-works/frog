@@ -73,6 +73,7 @@ pub struct Renderer {
     streamed: HashSet<String>,
     /// Re-rendering a past session: show each turn's input.
     replay: bool,
+    pub bar: Option<LiveBar>,
 }
 
 impl Drop for Renderer {
@@ -90,6 +91,7 @@ impl Renderer {
             fresh: true,
             streamed: HashSet::new(),
             replay,
+            bar: None,
         }
     }
 
@@ -137,7 +139,34 @@ impl Renderer {
         flush();
     }
 
+    fn phase(&self, p: impl Into<String>) {
+        if let Some(b) = &self.bar {
+            b.phase(p);
+        }
+    }
+
     pub fn event(&mut self, ev: Event) {
+        match &ev {
+            Event::ItemStarted {
+                kind: ItemKind::ToolCall { name, .. },
+                ..
+            } => self.phase(format!("running {name}")),
+            Event::ItemCompleted { .. } => self.phase("waiting for the model"),
+            Event::ItemDelta { delta, .. } => {
+                let (phase, n) = match delta {
+                    Delta::Reasoning { text } => ("thinking", text.len()),
+                    Delta::Text { text } => ("writing", text.len()),
+                    _ => ("", 0),
+                };
+                if n > 0 {
+                    self.phase(phase);
+                    if let Some(b) = &self.bar {
+                        b.streamed(n);
+                    }
+                }
+            }
+            _ => {}
+        }
         match ev {
             Event::TurnStarted { input, .. } if self.replay => {
                 self.idle();
@@ -538,4 +567,161 @@ pub fn turn_time(u: &TurnUsage) {
     if let Some(t) = &u.timing {
         info(&format!("\n  {}", time_split(t).trim_start_matches(" · ")));
     }
+}
+
+/// What the live bar shows while a turn runs.
+struct Live {
+    status: frog_engine::Status,
+    started: Instant,
+    phase: String,
+    /// Reply and reasoning text streamed so far, for a rough speed.
+    chars: usize,
+    first_token: Option<Instant>,
+}
+
+/// The status bar pinned to the terminal's last row while a turn streams. Output scrolls in a
+/// region above it; dropping the bar gives the row back.
+pub struct LiveBar {
+    live: Arc<std::sync::Mutex<Live>>,
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+/// Terminal rows, or None when there's no room for a bar.
+fn rows() -> Option<u16> {
+    terminal::size().ok().map(|(_, h)| h).filter(|h| *h >= 6)
+}
+
+/// Confine scrolling to rows `1..h-1`, keeping the cursor where it was (setting the region
+/// moves it home).
+fn reserve(h: u16) {
+    print!("\x1b7\x1b[1;{}r\x1b8", h - 1);
+    flush();
+}
+
+impl LiveBar {
+    pub fn start(status: frog_engine::Status) -> Option<Self> {
+        if !std::io::stdout().is_terminal() || std::env::var_os("FROG_NO_BAR").is_some() {
+            return None;
+        }
+        let h = rows()?;
+        // Make sure the cursor isn't on the row the bar takes.
+        print!("\n\x1b[1A");
+        reserve(h);
+        let live = Arc::new(std::sync::Mutex::new(Live {
+            status,
+            started: Instant::now(),
+            phase: "waiting for the model".into(),
+            chars: 0,
+            first_token: None,
+        }));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (l, s) = (live.clone(), stop.clone());
+        let handle = std::thread::spawn(move || {
+            let mut height = h;
+            while !s.load(Ordering::Relaxed) {
+                if let Some(now) = rows() {
+                    if now != height {
+                        height = now;
+                        reserve(height);
+                    }
+                    let (cols, _) = terminal::size().unwrap_or((80, height));
+                    let line = live_line(&l.lock().unwrap(), cols as usize);
+                    // One write, so it can't interleave with streamed output.
+                    print!("\x1b7\x1b[{height};1H\x1b[2K{line}\x1b8");
+                    flush();
+                }
+                std::thread::park_timeout(Duration::from_millis(250));
+            }
+            print!("\x1b7\x1b[r\x1b[{height};1H\x1b[2K\x1b8");
+            flush();
+        });
+        Some(Self {
+            live,
+            stop,
+            handle: Some(handle),
+        })
+    }
+
+    fn with(&self, f: impl FnOnce(&mut Live)) {
+        f(&mut self.live.lock().unwrap());
+        if let Some(h) = &self.handle {
+            h.thread().unpark();
+        }
+    }
+
+    pub fn status(&self, s: frog_engine::Status) {
+        self.with(|l| l.status = s);
+    }
+
+    fn phase(&self, p: impl Into<String>) {
+        let p = p.into();
+        self.with(|l| l.phase = p);
+    }
+
+    fn streamed(&self, n: usize) {
+        self.with(|l| {
+            l.first_token.get_or_insert_with(Instant::now);
+            l.chars += n;
+        });
+    }
+}
+
+impl Drop for LiveBar {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            h.thread().unpark();
+            let _ = h.join();
+        }
+    }
+}
+
+/// `▰▰▰▱▱▱▱▱▱▱ 31% of 32k · 12s · writing · ~58 tok/s · default · ctrl+c to interrupt`,
+/// dropping parts from the end to fit `cols`.
+fn live_line(l: &Live, cols: usize) -> String {
+    let s = &l.status;
+    let mut parts: Vec<(String, String)> = Vec::new();
+    if let Some(c) = s.context_tokens {
+        let window = s.context_window.max(1);
+        let pct = (c * 100 / window).min(100);
+        let filled = (c * 10).div_ceil(window).min(10) as usize;
+        let bar = format!("{}{}", "▰".repeat(filled), "▱".repeat(10 - filled));
+        let styled = match pct {
+            0..60 => bar.clone().cyan(),
+            60..80 => bar.clone().yellow(),
+            _ => bar.clone().red(),
+        };
+        let tail = format!(" {pct}% of {}", fmt_tokens(window));
+        parts.push((
+            format!("{bar}{tail}"),
+            format!("{styled}{}", tail.dark_grey()),
+        ));
+    } else {
+        let t = format!("{} ctx", fmt_tokens(s.context_window));
+        parts.push((t.clone(), t.dark_grey().to_string()));
+    }
+    let mut plain = |t: String| parts.push((t.clone(), t.dark_grey().to_string()));
+    plain(format!("{}s", l.started.elapsed().as_secs()));
+    parts.push((l.phase.clone(), l.phase.clone().dark_yellow().to_string()));
+    let mut plain = |t: String| parts.push((t.clone(), t.dark_grey().to_string()));
+    if let Some(t0) = l.first_token {
+        let secs = t0.elapsed().as_secs_f64();
+        if secs >= 1.0 {
+            plain(format!("~{:.0} tok/s", l.chars as f64 / 4.0 / secs));
+        }
+    }
+    plain(s.mode.label().to_lowercase());
+    plain("ctrl+c to interrupt".into());
+    let mut width = 0;
+    let mut out = Vec::new();
+    for (p, styled) in parts {
+        let w = p.chars().count() + if out.is_empty() { 0 } else { 3 };
+        if width + w > cols {
+            break;
+        }
+        width += w;
+        out.push(styled);
+    }
+    out.join(&" · ".dark_grey().to_string())
 }
