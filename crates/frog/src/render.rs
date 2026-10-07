@@ -3,7 +3,7 @@
 use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::Stylize;
 use crossterm::terminal;
-use frog_engine::protocol::{TurnTiming, TurnUsage};
+use frog_engine::protocol::{Answer, AskOption, TurnTiming, TurnUsage};
 use frog_engine::{Decision, Delta, EndReason, Event, Item, ItemKind, Level, ToolOutcome};
 use std::collections::HashSet;
 use std::io::{IsTerminal, Write};
@@ -203,6 +203,13 @@ impl Renderer {
                     ..
                 } => {
                     print_diagram(&d.to_ascii());
+                }
+                Item::ToolCall {
+                    present: Some(p),
+                    outcome: ToolOutcome::Ok,
+                    ..
+                } => {
+                    print_diagram(&p.to_text());
                 }
                 Item::ToolCall {
                     outcome,
@@ -428,6 +435,117 @@ pub async fn ask_permission(always: &str) -> Option<Decision> {
     };
     println!("  {msg}");
     answer
+}
+
+/// An `Ask` question: number keys pick (toggle, with `multi`, then enter), `o` types an
+/// answer, esc dismisses. `None` on ctrl-c.
+pub async fn ask_question(
+    question: &str,
+    options: &[AskOption],
+    multi: bool,
+    allow_other: bool,
+) -> Option<Answer> {
+    println!("  {}", question.yellow().bold());
+    for (i, o) in options.iter().enumerate() {
+        let detail = o
+            .detail
+            .as_deref()
+            .map(|d| format!("  {d}"))
+            .unwrap_or_default();
+        println!(
+            "  {} {}{}",
+            format!("[{}]", i + 1).bold(),
+            o.label,
+            detail.dark_grey()
+        );
+    }
+    let mut keys = Vec::new();
+    if multi {
+        keys.push("1-9 toggle, enter confirms");
+    }
+    if allow_other {
+        keys.push("[o] type an answer");
+    }
+    keys.push("esc skips");
+    info(&format!("  {}", keys.join(" · ")));
+    flush();
+    let labels: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
+    let picked = tokio::task::spawn_blocking(move || {
+        if terminal::enable_raw_mode().is_err() {
+            return Some((Vec::new(), false));
+        }
+        let mut on = vec![false; labels.len()];
+        let r = loop {
+            let Ok(event::Event::Key(k)) = event::read() else {
+                continue;
+            };
+            if k.kind != KeyEventKind::Press {
+                continue;
+            }
+            match k.code {
+                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => break None,
+                KeyCode::Esc => break Some((Vec::new(), false)),
+                KeyCode::Char('o') if allow_other => break Some((pick(&labels, &on), true)),
+                KeyCode::Enter if multi => break Some((pick(&labels, &on), false)),
+                KeyCode::Char(c) => {
+                    let Some(i) = c
+                        .to_digit(10)
+                        .map(|d| d as usize)
+                        .filter(|d| (1..=labels.len()).contains(d))
+                    else {
+                        continue;
+                    };
+                    if !multi {
+                        break Some((vec![labels[i - 1].clone()], false));
+                    }
+                    on[i - 1] = !on[i - 1];
+                }
+                _ => {}
+            }
+        };
+        let _ = terminal::disable_raw_mode();
+        r
+    })
+    .await
+    .unwrap_or(Some((Vec::new(), false)));
+    let (choices, typing) = picked?;
+    let other = if typing {
+        print!("  {} ", "›".bold());
+        flush();
+        tokio::task::spawn_blocking(|| {
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).ok()?;
+            Some(line.trim().to_string()).filter(|l| !l.is_empty())
+        })
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    let answer = Answer { choices, other };
+    if answer.dismissed() {
+        println!("  {}", "skipped".red());
+    } else {
+        let mut said = answer.choices.join(", ");
+        if let Some(o) = &answer.other {
+            if !said.is_empty() {
+                said.push_str(" · ");
+            }
+            said.push_str(o);
+        }
+        println!("  {}", said.green());
+    }
+    Some(answer)
+}
+
+fn pick(labels: &[String], on: &[bool]) -> Vec<String> {
+    labels
+        .iter()
+        .zip(on)
+        .filter(|(_, on)| **on)
+        .map(|(l, _)| l.clone())
+        .collect()
 }
 
 pub fn info(s: &str) {

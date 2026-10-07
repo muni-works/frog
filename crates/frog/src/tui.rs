@@ -128,6 +128,20 @@ impl Tui {
                         }
                     }
                 }
+                Event::Question {
+                    id,
+                    question,
+                    options,
+                    multi,
+                    allow_other,
+                    ..
+                } => {
+                    r.idle();
+                    match render::ask_question(&question, &options, multi, allow_other).await {
+                        Some(answer) => self.send(Op::Answer { id, answer }),
+                        None => self.send(Op::Interrupt),
+                    }
+                }
                 Event::TurnEnded {
                     reason: EndReason::Complete,
                     usage,
@@ -255,6 +269,15 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
         status: None,
         session: String::new(),
     };
+    if !tui.drain().await {
+        return Ok(());
+    }
+    // Someone's at the keyboard to answer `Ask`. Previews need a client that hosts them.
+    // Queued like any op, so it ends with its own `Idle`.
+    tui.send(Op::SetClientCaps {
+        panes: false,
+        ask: true,
+    });
     if !tui.drain().await {
         return Ok(());
     }
