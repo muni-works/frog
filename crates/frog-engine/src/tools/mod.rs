@@ -135,6 +135,8 @@ pub struct Output {
     pub diff: Option<crate::protocol::FileDiff>,
     /// A laid-out diagram, for Diagram.
     pub diagram: Option<Box<crate::diagram::Diagram>>,
+    /// Validated blocks, for Present.
+    pub present: Option<Box<crate::present::Present>>,
     /// Images to show the user (MCP results).
     pub images: Vec<crate::protocol::Image>,
     /// An MCP App to host for this result.
@@ -148,6 +150,7 @@ impl Output {
             display: None,
             diff: None,
             diagram: None,
+            present: None,
             images: Vec::new(),
             app: None,
         }

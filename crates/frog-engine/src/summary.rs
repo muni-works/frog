@@ -408,6 +408,7 @@ mod tests {
                 display: None,
                 diff,
                 diagram: None,
+                present: None,
                 images: Vec::new(),
                 app: None,
             },
