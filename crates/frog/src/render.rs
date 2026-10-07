@@ -514,31 +514,14 @@ fn time_split(t: &TurnTiming) -> String {
     out
 }
 
-/// What sits under the composer: how full the context is, and what the next message goes to.
-/// `▰▱▱▱▱▱▱▱▱▱ 4% of 32.8k · ollama/qwen3-coder:30b · accept-edits`
+/// What sits above the composer: `28% of 32.8k · ollama/qwen3-coder:30b · accept-edits`.
 pub fn composer_line(s: &frog_engine::Status) -> String {
     let window = s.context_window.max(1);
     let ctx = match s.context_tokens {
-        Some(c) => {
-            let pct = (c * 100 / window).min(100);
-            let filled = (c * 10).div_ceil(window).min(10) as usize;
-            let bar = format!("{}{}", "▰".repeat(filled), "▱".repeat(10 - filled));
-            let bar = match pct {
-                0..60 => bar.dark_cyan(),
-                60..80 => bar.yellow(),
-                _ => bar.red(),
-            };
-            format!(
-                "{bar} {}",
-                format!("{pct}% of {}", fmt_tokens(window)).dark_grey()
-            )
-        }
-        None => format!(
-            "{}{}",
-            "▱".repeat(10).dark_grey(),
-            format!(" {} context", fmt_tokens(window)).dark_grey()
-        ),
-    };
+        Some(c) => format!("{}% of {}", (c * 100 / window).min(100), fmt_tokens(window)),
+        None => format!("{} context", fmt_tokens(window)),
+    }
+    .dark_grey();
     let mode = s.mode.label().to_lowercase();
     let mode = match s.mode {
         frog_engine::Mode::Default => mode.dark_grey(),

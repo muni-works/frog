@@ -15,6 +15,12 @@ DELAY = 0.04
 
 
 class H(BaseHTTPRequestHandler):
+    def handle(self):
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the client interrupted the reply
+
     def log_message(self, *a):
         pass
 
