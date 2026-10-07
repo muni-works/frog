@@ -195,7 +195,8 @@ struct TurnParts {
         func isDiagram(_ item: ItemState) -> Bool {
             if case .tool(let name, _) = item.kind, name == "Diagram" { true } else { false }
         }
-        // MCP results with their own UI (an app, or images) are shown like diagrams.
+        // MCP results with their own UI (an app, or images) and Present's blocks are shown like
+        // diagrams.
         // Each call to an app's tools remounts the app, so only the latest per app is shown.
         var latestApp: [String: String] = [:]
         for item in turn.items {
@@ -203,6 +204,7 @@ struct TurnParts {
         }
         func isVisual(_ item: ItemState) -> Bool {
             guard let r = item.result, r.outcome == .ok else { return false }
+            if r.present != nil { return true }
             if let app = r.app { return latestApp[app.server + app.uri] == item.id }
             return !(r.images ?? []).isEmpty
         }

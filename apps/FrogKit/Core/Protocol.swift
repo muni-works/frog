@@ -69,7 +69,9 @@ enum Op: Encodable, Sendable {
     /// The user clicked an element in inspect mode and mentioned it in the composer.
     case paneMention(id: String, mention: String, context: String? = nil)
     /// What this client can do, sent once after the engine starts.
-    case setClientCaps(panes: Bool)
+    case setClientCaps(panes: Bool, ask: Bool = false)
+    /// Answer a `question`: the picked labels, or the user's own words. Neither dismisses it.
+    case answer(id: String, choices: [String], other: String?)
     /// Have the model server prefill the conversation now (plus `draft`, the message being
     /// typed), so the next turn starts warm. Fire and forget: nothing comes back.
     case warm(draft: String?)
@@ -79,6 +81,7 @@ enum Op: Encodable, Sendable {
         case op, text, command, id, decision, mode, spec, focus, after, title
         case action, content, server, tool, arguments, images
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
+        case ask, choices, other
     }
 
     func encode(to encoder: Encoder) throws {
@@ -165,9 +168,15 @@ enum Op: Encodable, Sendable {
             try c.encode(id, forKey: .id)
             try c.encode(mention, forKey: .mention)
             try c.encodeIfPresent(context, forKey: .context)
-        case .setClientCaps(let panes):
+        case .setClientCaps(let panes, let ask):
             try c.encode("set_client_caps", forKey: .op)
             try c.encode(panes, forKey: .panes)
+            if ask { try c.encode(ask, forKey: .ask) }
+        case .answer(let id, let choices, let other):
+            try c.encode("answer", forKey: .op)
+            try c.encode(id, forKey: .id)
+            if !choices.isEmpty { try c.encode(choices, forKey: .choices) }
+            try c.encodeIfPresent(other, forKey: .other)
         case .warm(let draft):
             try c.encode("warm", forKey: .op)
             try c.encodeIfPresent(draft, forKey: .draft)
@@ -356,6 +365,8 @@ enum Item: Decodable, Sendable {
         var display: String?
         var diff: FileDiff?
         var diagram: Diagram?
+        /// Present's blocks, validated by the engine.
+        var present: Present?
         /// Images an MCP tool returned.
         var images: [ToolImage]?
         /// An MCP App to host for this result.
@@ -421,6 +432,21 @@ struct Elicitation: Decodable, Sendable, Identifiable {
     var url: String?
 }
 
+/// The model asking the user to choose (the `Ask` tool). Answered with `Op.answer`.
+struct Question: Decodable, Sendable, Identifiable {
+    struct Option: Decodable, Sendable, Hashable {
+        var label: String
+        var detail: String?
+    }
+    var id: String
+    /// The `Ask` tool call waiting on it.
+    var item: String
+    var question: String
+    var options: [Option]
+    var multi: Bool?
+    var allowOther: Bool?
+}
+
 struct ToolProgress: Sendable, Equatable {
     var progress: Double
     var total: Double?
@@ -457,6 +483,9 @@ enum Event: Decodable, Sendable {
     case progress(String)
     case elicitation(Elicitation)
     case elicitationDone(id: String)
+    case question(Question)
+    /// Answered or dismissed (an interrupt dismisses it), by any client.
+    case questionResolved(id: String)
     case toolProgress(id: String, ToolProgress)
     case appResult(id: String, result: JSONValue?, error: String?)
     /// Auto mode's classifier let tool call `item` run without asking.
@@ -551,6 +580,10 @@ extension Event {
             self = .progress(try c.decode(String.self, forKey: .label))
         case "elicitation":
             self = .elicitation(try Elicitation(from: decoder))
+        case "question":
+            self = .question(try Question(from: decoder))
+        case "question_resolved":
+            self = .questionResolved(id: try c.decode(String.self, forKey: .id))
         case "elicitation_done":
             self = .elicitationDone(id: try c.decode(String.self, forKey: .id))
         case "tool_progress":

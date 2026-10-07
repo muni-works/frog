@@ -2,14 +2,15 @@
 //! serve protocol with realistic timing.
 //!
 //! Session logs keep only durable events, so this synthesizes the live ones a client would have
-//! seen: progress, token-by-token deltas for messages and reasoning, status, idle. With `ask`,
-//! it stops at each edit or command for a permission answer. It exists so UI work can be done
+//! seen: progress, token-by-token deltas for messages and reasoning, questions, status, idle.
+//! With `ask`, it stops at each edit or command for a permission answer, and at each question
+//! for the user's. It exists so UI work can be done
 //! against the same session every time, without a model in the loop.
 
 use anyhow::{Context, Result};
 use frog_engine::config::ToolMode;
 use frog_engine::harness::Tier;
-use frog_engine::protocol::TurnUsage;
+use frog_engine::protocol::{Answer, TurnUsage};
 use frog_engine::session;
 use frog_engine::{EndReason, Envelope, Event, Item, ItemKind, Mode, Op, Status};
 use std::collections::HashMap;
@@ -70,6 +71,18 @@ impl Player {
                 None | Some(Op::Shutdown) => return Err(Interrupted::Quit),
                 Some(Op::Interrupt) => return Err(Interrupted::Stop),
                 Some(Op::Permission { .. }) => return Ok(()),
+                Some(_) => {}
+            }
+        }
+    }
+
+    /// Block until the client answers a question.
+    async fn answer_question(&mut self) -> Result<Answer, Interrupted> {
+        loop {
+            match self.ops.recv().await {
+                None | Some(Op::Shutdown) => return Err(Interrupted::Quit),
+                Some(Op::Interrupt) => return Err(Interrupted::Stop),
+                Some(Op::Answer { answer, .. }) => return Ok(answer),
                 Some(_) => {}
             }
         }
@@ -212,6 +225,20 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
         })
         .collect();
 
+    // What each `Ask` asked, to put the question again.
+    let asks: HashMap<&str, frog_engine::ask::Question> = events
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                id,
+                item: Item::ToolCall { name, input, .. },
+            } if name == frog_engine::ask::TOOL => {
+                Some((id.as_str(), frog_engine::ask::parse(input).ok()?))
+            }
+            _ => None,
+        })
+        .collect();
+
     p.wait(600.0).await?;
     let mut prev = events.first().map(|e| e.created).unwrap_or(0);
     let mut turn = 0;
@@ -276,6 +303,26 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                     });
                     p.answer().await?;
                 }
+                if let Some(q) = asks.get(id.as_str()) {
+                    let qid = format!("ask-{id}");
+                    p.emit(Event::Question {
+                        id: qid.clone(),
+                        item: id.clone(),
+                        question: q.question.clone(),
+                        options: q.options.clone(),
+                        multi: q.multi,
+                        allow_other: q.allow_other,
+                    });
+                    // Without `ask`, the question shows for a moment and the recorded answer
+                    // (in the tool's result) follows.
+                    let answer = if ask {
+                        p.answer_question().await?
+                    } else {
+                        p.wait(2000.0).await?;
+                        Answer::default()
+                    };
+                    p.emit(Event::QuestionResolved { id: qid, answer });
+                }
                 if let Some(out) = outputs.get(id.as_str()) {
                     for line in out.split_inclusive('\n') {
                         p.emit(Event::ItemDelta {
@@ -314,6 +361,8 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
             }
             // Ask mode synthesizes its own permission flow.
             Event::PermissionResolved { .. } if ask => {}
+            // Questions are put again above, under their own ids.
+            Event::QuestionResolved { .. } => {}
             _ => p.emit(env.event.clone()),
         }
     }

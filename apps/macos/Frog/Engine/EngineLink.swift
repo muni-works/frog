@@ -30,8 +30,9 @@ extension Conversation {
         engine.onLine = { RemoteBridge.shared.forward($0) }
         do {
             try engine.start()
-            // The Mac shows the engine's panes (a shared terminal, a live preview).
-            engine.send(.setClientCaps(panes: true))
+            // The Mac shows the engine's panes (a shared terminal, a live preview) and puts
+            // the model's questions to the user.
+            engine.send(.setClientCaps(panes: true, ask: true))
         } catch {
             self.init(folder: folder, link: nil, replay: replay, session: session,
                       failure: "Couldn't start frog: \(error.localizedDescription)")

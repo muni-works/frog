@@ -93,6 +93,7 @@ struct ActivityLabel: View {
         case .tool(let name, let arg):
             let verb = ["Bash": "Running", "Read": "Reading", "Edit": "Editing", "Write": "Writing",
                         "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "CodeMap": "Mapping",
+                        "Present": "Laying out", "Ask": "Asking",
                         "Task": "Delegating", "McpTools": "Finding tools", "Skill": "Loading skill",
                         "WebFetch": "Fetching", "WebSearch": "Searching the web", "Docs": "Reading docs"][name]
                 ?? ToolIcon.title(name)

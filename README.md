@@ -91,9 +91,13 @@ Named profiles live in `~/.config/frog/config.toml`. See [config.example.toml](c
 
 ## Tools
 
-`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Image` · `Screenshot` · `Compare` · `Diagram` · `CodeMap` · `Docs` · `WebFetch` · `WebSearch`
+`Bash` · `Read` · `Write` · `Edit` · `Glob` · `Grep` · `TodoWrite` · `Image` · `Screenshot` · `Compare` · `Diagram` · `Present` · `Ask` · `CodeMap` · `Docs` · `WebFetch` · `WebSearch`
 
 The tools behave like Claude Code's: Edit replaces an exact string that must be unique, and a file has to be Read before it can be edited, with a check that it hasn't changed since. Bash keeps its working directory between calls.
+
+**Showing and asking.** Two tools put structure in front of the user instead of prose:
+- `Present` shows typed blocks: `table`, `compare` (side by side), `steps`, `callout` and `diagram`. Each block is validated on its own, so a bad one is dropped and the model is told which to fix. The Mac app draws them natively; the terminal draws them as text. Weak models only get tables and callouts, and small windows don't get the tool.
+- `Ask` puts a question with 2-4 options to the user and waits (`question` event, answered with `{"op":"answer","id":…,"choices":[…],"other":…}`). The user can type their own answer or skip. It's only offered when a client says someone can answer (`set_client_caps` with `ask: true`; the TUI and the Mac app do), never in `-p` or to subagents, and an interrupt dismisses it.
 
 **Local-model affordances**
 - **Tool-call modes.** `tool_mode` (or `--tool-mode`) can be `native`, `text`, `json` or `auto`, the default.

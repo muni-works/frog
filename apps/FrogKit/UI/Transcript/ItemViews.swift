@@ -20,6 +20,8 @@ struct ItemView: View {
                 ProgressView().controlSize(.small)
                 Text(arg.isEmpty ? "Drawing a diagram…" : "Drawing \(arg)…").font(.callout).foregroundStyle(.secondary)
             }
+        case .tool("Present", _) where item.result?.present != nil:
+            PresentCard(present: item.result!.present!)
         case .tool("Task", let arg):
             SubagentCard(arg: arg, item: item, conversation: conversation)
         case .tool(let name, _) where item.result?.app != nil && showsApp:
