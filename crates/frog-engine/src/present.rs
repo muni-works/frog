@@ -108,11 +108,15 @@ pub fn spec(weak: bool) -> ToolSpec {
         variants.push(json!({"type": "object", "properties": {
             "type": {"const": "compare"}, "left": side, "right": side
         }, "required": ["type", "left", "right"]}));
+    }
+    if kinds.contains(&"steps") {
         variants.push(json!({"type": "object", "properties": {
             "type": {"const": "steps"},
             "items": {"type": "array", "items": {"type": "string"}},
             "current": {"type": "integer", "description": "0-based step in progress; earlier ones are done"}
         }, "required": ["type", "items"]}));
+    }
+    if kinds.contains(&"diagram") {
         variants.push(json!({"type": "object", "properties": {
             "type": {"const": "diagram"}
         }, "required": ["type", "nodes"], "description": "the Diagram tool's arguments, plus type"}));

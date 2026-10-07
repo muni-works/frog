@@ -62,7 +62,8 @@ struct QuestionCard: View {
             if multi {
                 if on { picked.remove(o.label) } else { picked.insert(o.label) }
             } else {
-                conversation.answer(question: [o.label], other: other)
+                // A pick answers on its own; a half-typed draft isn't part of it.
+                conversation.answer(question: [o.label])
             }
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
