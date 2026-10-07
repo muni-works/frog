@@ -382,7 +382,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     });
 
     tokio::spawn(async move {
-        agent.connect_mcp().await;
+        agent.connect_mcp();
         agent.resolve_window().await;
         agent.emit_status();
         {
@@ -393,7 +393,18 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         // Only seconds spent waiting for the user count toward the idle baseline: not startup
         // (MCP servers, a model loading), and not any op's work.
         agent.meter_busy(false);
-        while let Some(op) = work_rx.recv().await {
+        loop {
+            let op = tokio::select! {
+                op = work_rx.recv() => op,
+                hub = agent.mcp_ready() => {
+                    agent.mcp_pending = None;
+                    agent.install_mcp(hub);
+                    agent.emit_status();
+                    continue;
+                }
+            };
+            let Some(op) = op else { break };
+            agent.poll_mcp();
             if let Op::Shutdown = op {
                 break;
             }
@@ -609,6 +620,8 @@ struct Agent {
     specs: Vec<ToolSpec>,
     /// Connected MCP servers, whose tools are appended to `specs`.
     mcp: crate::mcp::Hub,
+    /// Servers still connecting in the background; installed into `mcp` when they're done.
+    mcp_pending: Option<tokio::sync::oneshot::Receiver<crate::mcp::Hub>>,
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
     skills_loaded: HashSet<String>,
@@ -801,6 +814,7 @@ impl Agent {
             system,
             specs: tools::specs(),
             mcp: crate::mcp::Hub::empty(),
+            mcp_pending: None,
             skills,
             skills_loaded: HashSet::new(),
             memory,
@@ -1380,6 +1394,7 @@ impl Agent {
             if steps > limit {
                 break EndReason::StepLimit;
             }
+            self.poll_mcp();
             if self.mcp.refresh().await {
                 self.apply_harness();
             }
@@ -2012,7 +2027,10 @@ impl Agent {
 
     /// Connect the configured MCP servers (config.toml and the project's `.mcp.json`) and add
     /// their tools. Failures and quarantined tools become notices; nothing here is fatal.
-    async fn connect_mcp(&mut self) {
+    /// Start connecting the project's MCP servers in the background, so the prompt (and the
+    /// first turn) doesn't wait on them; [`Self::poll_mcp`] installs them once they're up.
+    fn connect_mcp(&mut self) {
+        self.mcp_pending = None;
         if self.subagent {
             return;
         }
@@ -2020,16 +2038,52 @@ impl Agent {
         if servers.is_empty() {
             return;
         }
-        let n = servers.len();
-        self.emit(Event::Progress {
-            label: format!("connecting {n} MCP server{}", if n == 1 { "" } else { "s" }),
-        });
         let emit = {
             let journal = self.shared.journal.clone();
             move |event: Event| journal.emit(event)
         };
         let host = crate::mcp::Host::new(emit, self.rich && self.can_ask, &self.root);
-        let hub = crate::mcp::Hub::connect(servers, host).await;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            // Nobody's waiting any more (a folder change, shutdown): don't leave them running.
+            if let Err(hub) = tx.send(crate::mcp::Hub::connect(servers, host).await) {
+                hub.shutdown();
+            }
+        });
+        self.mcp_pending = Some(rx);
+    }
+
+    /// Install the background MCP connection if it has finished.
+    fn poll_mcp(&mut self) {
+        let Some(rx) = &mut self.mcp_pending else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(hub) => {
+                self.mcp_pending = None;
+                self.install_mcp(hub);
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+            Err(_) => self.mcp_pending = None,
+        }
+    }
+
+    /// Wait for the background MCP connection (for an idle engine, so its notices and tools
+    /// land as soon as they're ready). Never resolves when nothing is connecting.
+    async fn mcp_ready(&mut self) -> crate::mcp::Hub {
+        match &mut self.mcp_pending {
+            Some(rx) => match rx.await {
+                Ok(hub) => hub,
+                Err(_) => {
+                    self.mcp_pending = None;
+                    std::future::pending().await
+                }
+            },
+            None => std::future::pending().await,
+        }
+    }
+
+    fn install_mcp(&mut self, hub: crate::mcp::Hub) {
         // Servers that didn't connect get one plain sentence, by reason; the raw errors go to
         // the log, not the conversation.
         let failed: Vec<(String, String)> = hub
@@ -2232,7 +2286,7 @@ impl Agent {
         self.mcp.shutdown();
         self.mcp = crate::mcp::Hub::empty();
         *self.shared.mcp.lock().unwrap() = None;
-        self.connect_mcp().await;
+        self.connect_mcp();
         self.sync_specs();
         self.apply_harness();
         self.emit(Event::FolderChanged { cwd: root.clone() });
