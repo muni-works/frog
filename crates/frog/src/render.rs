@@ -481,3 +481,61 @@ fn time_split(t: &TurnTiming) -> String {
     }
     out
 }
+
+/// The line pinned above the prompt:
+/// `▰▰▰▱▱▱▱▱▱▱ 38% of 32k · 94% cached · 61 tok/s · prefill 0.3s · accept-edits · strong`.
+/// `last` is the most recent finished turn, for what only a turn measures.
+pub fn status_bar(s: &frog_engine::Status, last: Option<&TurnUsage>) -> String {
+    const CELLS: u64 = 10;
+    let window = s.context_window.max(1);
+    let mut parts = Vec::new();
+    match s.context_tokens {
+        Some(c) => {
+            let pct = (c * 100 / window).min(100);
+            let filled = (c * CELLS).div_ceil(window).min(CELLS) as usize;
+            let bar = format!(
+                "{}{}",
+                "▰".repeat(filled),
+                "▱".repeat(CELLS as usize - filled)
+            );
+            let bar = match pct {
+                0..60 => bar.cyan(),
+                60..80 => bar.yellow(),
+                _ => bar.red(),
+            };
+            parts.push(format!("{bar} {pct}% of {}", fmt_tokens(window)));
+        }
+        None => parts.push(format!("ctx ? of {}", fmt_tokens(window))),
+    }
+    let calls = last
+        .and_then(|u| u.timing.as_ref())
+        .map(|t| t.calls.as_slice())
+        .unwrap_or_default();
+    let prompt: u64 = calls.iter().map(|c| c.prompt_tokens).sum();
+    let cached: u64 = calls.iter().map(|c| c.cached_tokens).sum();
+    // Zero cached usually means the server doesn't report it, not a cold cache.
+    if prompt > 0 && cached > 0 {
+        parts.push(format!("{}% cached", cached * 100 / prompt));
+    }
+    if let Some(t) = s.tokens_per_sec {
+        parts.push(format!("{t:.0} tok/s"));
+    }
+    if let Some(c) = calls.last() {
+        parts.push(format!("prefill {:.1}s", c.ttft_ms as f64 / 1000.0));
+    }
+    let mode = s.mode.label().to_lowercase();
+    parts.push(match s.mode {
+        frog_engine::Mode::Default => mode,
+        _ => mode.yellow().to_string(),
+    });
+    parts.push(format!("{:?} · {:?}", s.tier, s.tool_mode).to_lowercase());
+    let sep = " · ".dark_grey().to_string();
+    parts.join(&sep)
+}
+
+/// After a turn: where its time went (the status bar has the rest).
+pub fn turn_time(u: &TurnUsage) {
+    if let Some(t) = &u.timing {
+        info(&format!("\n  {}", time_split(t).trim_start_matches(" · ")));
+    }
+}

@@ -719,6 +719,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "frog-engine",
+ "ignore",
  "reedline",
  "serde",
  "serde_json",

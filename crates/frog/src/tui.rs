@@ -1,24 +1,30 @@
 //! Interactive REPL client.
 
+use crate::complete::{FrogCompleter, Models};
 use crate::render::{self, Renderer};
 use anyhow::Result;
 use crossterm::style::Stylize;
 use frog_engine::config::{Config, data_dir};
+use frog_engine::protocol::TurnUsage;
 use frog_engine::tools::todo;
 use frog_engine::{Decision, EndReason, Event, Handle, Mode, Op, Status};
 use reedline::{
-    Emacs, FileBackedHistory, KeyCode, KeyModifiers, Prompt, PromptEditMode, PromptHistorySearch,
-    Reedline, ReedlineEvent, Signal, default_emacs_keybindings,
+    DescriptionMode, Emacs, FileBackedHistory, IdeMenu, KeyCode, KeyModifiers, MenuBuilder, Prompt,
+    PromptEditMode, PromptHistorySearch, Reedline, ReedlineEvent, ReedlineMenu, Signal,
+    default_emacs_keybindings,
 };
 use std::borrow::Cow;
+use std::path::PathBuf;
 
 struct FrogPrompt {
+    /// The status bar, on its own line above the input.
+    left: String,
     right: String,
 }
 
 impl Prompt for FrogPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
-        Cow::Borrowed("")
+        Cow::Borrowed(&self.left)
     }
     fn render_prompt_right(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.right)
@@ -37,7 +43,7 @@ impl Prompt for FrogPrompt {
     }
 }
 
-fn editor() -> Result<Reedline> {
+fn editor(cwd: PathBuf, models: Models) -> Result<Reedline> {
     let newline = || ReedlineEvent::Edit(vec![reedline::EditCommand::InsertNewline]);
     let cycle = || ReedlineEvent::ExecuteHostCommand("/mode".into());
     let mut kb = default_emacs_keybindings();
@@ -45,11 +51,29 @@ fn editor() -> Result<Reedline> {
     kb.add_binding(KeyModifiers::SHIFT, KeyCode::Enter, newline());
     kb.add_binding(KeyModifiers::SHIFT, KeyCode::BackTab, cycle());
     kb.add_binding(KeyModifiers::NONE, KeyCode::BackTab, cycle());
+    kb.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("completion".into()),
+            ReedlineEvent::MenuNext,
+        ]),
+    );
+    let menu = IdeMenu::default()
+        .with_name("completion")
+        .with_marker("> ")
+        .with_default_border()
+        .with_description_mode(DescriptionMode::PreferRight)
+        .with_max_completion_height(12);
     std::fs::create_dir_all(data_dir())?;
     let history = FileBackedHistory::with_file(5000, data_dir().join("history.txt"))?;
     Ok(Reedline::create()
         .with_edit_mode(Box::new(Emacs::new(kb)))
-        .with_history(Box::new(history)))
+        .with_history(Box::new(history))
+        .with_completer(Box::new(FrogCompleter::new(cwd, models)))
+        .with_menu(ReedlineMenu::EngineCompleter(Box::new(menu)))
+        .with_quick_completions(true)
+        .with_partial_completions(true))
 }
 
 const HELP: &str = "\
@@ -72,6 +96,8 @@ struct Tui {
     cfg: Config,
     status: Option<Status>,
     session: String,
+    /// The last finished turn, for the status bar.
+    last: Option<TurnUsage>,
 }
 
 impl Tui {
@@ -101,8 +127,9 @@ impl Tui {
             match env.event {
                 Event::Idle => {
                     r.idle();
-                    if let (Some(u), Some(s)) = (finished, &self.status) {
-                        render::footer(&u, s.context_window);
+                    if let Some(u) = finished {
+                        render::turn_time(&u);
+                        self.last = Some(u);
                     }
                     return true;
                 }
@@ -254,6 +281,7 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
         cfg,
         status: None,
         session: String::new(),
+        last: None,
     };
     if !tui.drain().await {
         return Ok(());
@@ -266,7 +294,20 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
         }
         println!();
     }
-    let mut ed = editor()?;
+    let models = Models::default();
+    {
+        let (cfg, models) = (tui.cfg.clone(), models.clone());
+        tokio::spawn(async move {
+            let list = frog_engine::models::list(&cfg).await;
+            *models.lock().unwrap() = list;
+        });
+    }
+    let cwd = tui
+        .status
+        .as_ref()
+        .map(|s| s.cwd.clone())
+        .unwrap_or_default();
+    let mut ed = editor(cwd, models)?;
     loop {
         let line = match queued.take() {
             Some(q) => {
@@ -274,15 +315,17 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
                 q
             }
             None => {
-                let right = tui
+                let (left, right) = tui
                     .status
                     .as_ref()
                     .map(|s| {
-                        format!("{} · {} · {:?}", s.mode.label(), s.model, s.tool_mode)
-                            .to_lowercase()
+                        (
+                            format!("{}\n", render::status_bar(s, tui.last.as_ref())),
+                            s.model.clone(),
+                        )
                     })
                     .unwrap_or_default();
-                match tokio::task::block_in_place(|| ed.read_line(&FrogPrompt { right }))? {
+                match tokio::task::block_in_place(|| ed.read_line(&FrogPrompt { left, right }))? {
                     Signal::Success(s) | Signal::HostCommand(s) => s,
                     Signal::CtrlD => break,
                     _ => continue,

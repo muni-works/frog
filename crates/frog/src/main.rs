@@ -1,4 +1,5 @@
 mod acp;
+mod complete;
 mod headless;
 mod render;
 mod replay;
