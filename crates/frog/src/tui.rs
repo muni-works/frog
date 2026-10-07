@@ -9,25 +9,22 @@ use frog_engine::protocol::TurnUsage;
 use frog_engine::tools::todo;
 use frog_engine::{Decision, EndReason, Event, Handle, Mode, Op, Status};
 use reedline::{
-    DescriptionMode, Emacs, FileBackedHistory, IdeMenu, KeyCode, KeyModifiers, MenuBuilder, Prompt,
-    PromptEditMode, PromptHistorySearch, Reedline, ReedlineEvent, ReedlineMenu, Signal,
-    default_emacs_keybindings,
+    DescriptionMode, Emacs, FileBackedHistory, Hinter, History, IdeMenu, KeyCode, KeyModifiers,
+    MenuBuilder, Prompt, PromptEditMode, PromptHistorySearch, Reedline, ReedlineEvent,
+    ReedlineMenu, Signal, default_emacs_keybindings,
 };
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
-struct FrogPrompt {
-    /// The status bar, on its own line above the input.
-    left: String,
-    right: String,
-}
+struct FrogPrompt;
 
 impl Prompt for FrogPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.left)
+        Cow::Borrowed("")
     }
     fn render_prompt_right(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.right)
+        Cow::Borrowed("")
     }
     fn render_prompt_indicator(&self, _: PromptEditMode) -> Cow<'_, str> {
         Cow::Borrowed("> ")
@@ -43,7 +40,28 @@ impl Prompt for FrogPrompt {
     }
 }
 
-fn editor(cwd: PathBuf, models: Models) -> Result<Reedline> {
+/// Draws a line under the composer. Reedline paints a hint after the buffer, so a hint that
+/// starts on a new line sits below what you're typing; it never completes into the buffer.
+struct Below(Arc<Mutex<String>>);
+
+impl Hinter for Below {
+    fn handle(&mut self, _: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+        let line = self.0.lock().unwrap();
+        if line.is_empty() {
+            String::new()
+        } else {
+            format!("\n  {line}")
+        }
+    }
+    fn complete_hint(&self) -> String {
+        String::new()
+    }
+    fn next_hint_token(&self) -> String {
+        String::new()
+    }
+}
+
+fn editor(cwd: PathBuf, models: Models, below: Arc<Mutex<String>>) -> Result<Reedline> {
     let newline = || ReedlineEvent::Edit(vec![reedline::EditCommand::InsertNewline]);
     let cycle = || ReedlineEvent::ExecuteHostCommand("/mode".into());
     let mut kb = default_emacs_keybindings();
@@ -70,6 +88,7 @@ fn editor(cwd: PathBuf, models: Models) -> Result<Reedline> {
     Ok(Reedline::create()
         .with_edit_mode(Box::new(Emacs::new(kb)))
         .with_history(Box::new(history))
+        .with_hinter(Box::new(Below(below)))
         .with_completer(Box::new(FrogCompleter::new(cwd, models)))
         .with_menu(ReedlineMenu::EngineCompleter(Box::new(menu)))
         .with_quick_completions(true)
@@ -130,7 +149,7 @@ impl Tui {
                     r.idle();
                     r.bar = None;
                     if let Some(u) = finished {
-                        render::turn_time(&u);
+                        render::turn_summary(&u);
                         self.last = Some(u);
                     }
                     return true;
@@ -328,7 +347,8 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
         .as_ref()
         .map(|s| s.cwd.clone())
         .unwrap_or_default();
-    let mut ed = editor(cwd, models)?;
+    let below = Arc::new(Mutex::new(String::new()));
+    let mut ed = editor(cwd, models, below.clone())?;
     loop {
         let line = match queued.take() {
             Some(q) => {
@@ -336,17 +356,12 @@ pub async fn run(h: Handle, cfg: Config, mut queued: Option<String>) -> Result<(
                 q
             }
             None => {
-                let (left, right) = tui
+                *below.lock().unwrap() = tui
                     .status
                     .as_ref()
-                    .map(|s| {
-                        (
-                            format!("{}\n", render::status_bar(s, tui.last.as_ref())),
-                            s.model.clone(),
-                        )
-                    })
+                    .map(render::composer_line)
                     .unwrap_or_default();
-                match tokio::task::block_in_place(|| ed.read_line(&FrogPrompt { left, right }))? {
+                match tokio::task::block_in_place(|| ed.read_line(&FrogPrompt))? {
                     Signal::Success(s) | Signal::HostCommand(s) => s,
                     Signal::CtrlD => break,
                     _ => continue,

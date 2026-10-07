@@ -514,62 +514,94 @@ fn time_split(t: &TurnTiming) -> String {
     out
 }
 
-/// The line pinned above the prompt:
-/// `▰▰▰▱▱▱▱▱▱▱ 38% of 32k · 94% cached · 61 tok/s · prefill 0.3s · accept-edits · strong`.
-/// `last` is the most recent finished turn, for what only a turn measures.
-pub fn status_bar(s: &frog_engine::Status, last: Option<&TurnUsage>) -> String {
-    const CELLS: u64 = 10;
+/// What sits under the composer: how full the context is, and what the next message goes to.
+/// `▰▱▱▱▱▱▱▱▱▱ 4% of 32.8k · ollama/qwen3-coder:30b · accept-edits`
+pub fn composer_line(s: &frog_engine::Status) -> String {
     let window = s.context_window.max(1);
-    let mut parts = Vec::new();
-    match s.context_tokens {
+    let ctx = match s.context_tokens {
         Some(c) => {
             let pct = (c * 100 / window).min(100);
-            let filled = (c * CELLS).div_ceil(window).min(CELLS) as usize;
-            let bar = format!(
-                "{}{}",
-                "▰".repeat(filled),
-                "▱".repeat(CELLS as usize - filled)
-            );
+            let filled = (c * 10).div_ceil(window).min(10) as usize;
+            let bar = format!("{}{}", "▰".repeat(filled), "▱".repeat(10 - filled));
             let bar = match pct {
-                0..60 => bar.cyan(),
+                0..60 => bar.dark_cyan(),
                 60..80 => bar.yellow(),
                 _ => bar.red(),
             };
-            parts.push(format!("{bar} {pct}% of {}", fmt_tokens(window)));
+            format!(
+                "{bar} {}",
+                format!("{pct}% of {}", fmt_tokens(window)).dark_grey()
+            )
         }
-        None => parts.push(format!("ctx ? of {}", fmt_tokens(window))),
-    }
-    let calls = last
-        .and_then(|u| u.timing.as_ref())
-        .map(|t| t.calls.as_slice())
-        .unwrap_or_default();
-    let prompt: u64 = calls.iter().map(|c| c.prompt_tokens).sum();
-    let cached: u64 = calls.iter().map(|c| c.cached_tokens).sum();
-    // Zero cached usually means the server doesn't report it, not a cold cache.
-    if prompt > 0 && cached > 0 {
-        parts.push(format!("{}% cached", cached * 100 / prompt));
-    }
-    if let Some(t) = s.tokens_per_sec {
-        parts.push(format!("{t:.0} tok/s"));
-    }
-    if let Some(c) = calls.last() {
-        parts.push(format!("prefill {:.1}s", c.ttft_ms as f64 / 1000.0));
-    }
+        None => format!(
+            "{}{}",
+            "▱".repeat(10).dark_grey(),
+            format!(" {} context", fmt_tokens(window)).dark_grey()
+        ),
+    };
     let mode = s.mode.label().to_lowercase();
-    parts.push(match s.mode {
-        frog_engine::Mode::Default => mode,
-        _ => mode.yellow().to_string(),
-    });
-    parts.push(format!("{:?} · {:?}", s.tier, s.tool_mode).to_lowercase());
-    let sep = " · ".dark_grey().to_string();
-    parts.join(&sep)
+    let mode = match s.mode {
+        frog_engine::Mode::Default => mode.dark_grey(),
+        _ => mode.yellow(),
+    };
+    let sep = " · ".dark_grey();
+    format!("{ctx}{sep}{}{sep}{mode}", s.model.clone().dark_grey())
 }
 
-/// After a turn: where its time went (the status bar has the rest).
-pub fn turn_time(u: &TurnUsage) {
+/// After a response, what it took: `3.1s · ttft 0.4s · tools 1.2s · 9.0k in (94% cached) ·
+/// 312 out · 61 tok/s · ~0.4¢ · 0.02 Wh`. Cost needs a catalog price, energy `--energy`.
+pub fn turn_summary(u: &TurnUsage) {
+    let secs = |ms: u64| format!("{:.1}s", ms as f64 / 1000.0);
+    let mut parts = Vec::new();
     if let Some(t) = &u.timing {
-        info(&format!("\n  {}", time_split(t).trim_start_matches(" · ")));
+        parts.push(secs(t.wall_ms));
+        parts.push(format!("ttft {}", secs(t.prefill_ms)));
+        if t.tool_ms > 0 {
+            parts.push(format!("tools {}", secs(t.tool_ms)));
+        }
     }
+    let calls = u
+        .timing
+        .as_ref()
+        .map(|t| t.calls.as_slice())
+        .unwrap_or_default();
+    let cached: u64 = calls.iter().map(|c| c.cached_tokens).sum();
+    let prompt: u64 = calls.iter().map(|c| c.prompt_tokens).sum();
+    if u.input_tokens > 0 {
+        let hit = if cached > 0 && prompt > 0 {
+            format!(" ({}% cached)", cached * 100 / prompt)
+        } else {
+            String::new()
+        };
+        parts.push(format!("{} in{hit}", fmt_tokens(u.input_tokens)));
+        parts.push(format!("{} out", fmt_tokens(u.output_tokens)));
+    }
+    if let Some(t) = u.tokens_per_sec {
+        parts.push(format!("{t:.0} tok/s"));
+    }
+    if let Some(c) = u.model.as_deref().and_then(|m| cost(m, u)) {
+        parts.push(c);
+    }
+    if let Some(e) = &u.energy {
+        let wh = e.local_wh + e.remote_wh.unwrap_or(0.0);
+        if wh >= 0.005 {
+            parts.push(format!("{wh:.2} Wh"));
+        }
+    }
+    if !parts.is_empty() {
+        info(&format!("\n  {}", parts.join(" · ")));
+    }
+}
+
+/// `~0.4¢` or `~$1.20`, from the provider catalog's per-million prices.
+fn cost(model: &str, u: &TurnUsage) -> Option<String> {
+    let m = frog_engine::catalog::cached(model)?;
+    let usd = (u.input_tokens as f64 * m.cost_in? + u.output_tokens as f64 * m.cost_out?) / 1e6;
+    Some(if usd < 0.995 {
+        format!("~{:.1}¢", usd * 100.0)
+    } else {
+        format!("~${usd:.2}")
+    })
 }
 
 /// What the live bar shows while a turn runs.
@@ -680,30 +712,11 @@ impl Drop for LiveBar {
     }
 }
 
-/// `▰▰▰▱▱▱▱▱▱▱ 31% of 32k · 12s · writing · ~58 tok/s · default · ctrl+c to interrupt`,
+/// `12s · writing · ~58 tok/s · default · ctrl+c to interrupt`,
 /// dropping parts from the end to fit `cols`.
 fn live_line(l: &Live, cols: usize) -> String {
     let s = &l.status;
     let mut parts: Vec<(String, String)> = Vec::new();
-    if let Some(c) = s.context_tokens {
-        let window = s.context_window.max(1);
-        let pct = (c * 100 / window).min(100);
-        let filled = (c * 10).div_ceil(window).min(10) as usize;
-        let bar = format!("{}{}", "▰".repeat(filled), "▱".repeat(10 - filled));
-        let styled = match pct {
-            0..60 => bar.clone().cyan(),
-            60..80 => bar.clone().yellow(),
-            _ => bar.clone().red(),
-        };
-        let tail = format!(" {pct}% of {}", fmt_tokens(window));
-        parts.push((
-            format!("{bar}{tail}"),
-            format!("{styled}{}", tail.dark_grey()),
-        ));
-    } else {
-        let t = format!("{} ctx", fmt_tokens(s.context_window));
-        parts.push((t.clone(), t.dark_grey().to_string()));
-    }
     let mut plain = |t: String| parts.push((t.clone(), t.dark_grey().to_string()));
     plain(format!("{}s", l.started.elapsed().as_secs()));
     parts.push((l.phase.clone(), l.phase.clone().dark_yellow().to_string()));
