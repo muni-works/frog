@@ -699,10 +699,7 @@ async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
         }
         let bin = background::status();
         if cli.json {
-            println!(
-                "{}",
-                serde_json::json!({ "on": bin.is_some(), "binary": bin })
-            );
+            println!("{}", serde_json::json!({ "on": bin.is_some(), "binary": bin }));
         } else {
             match bin {
                 Some(b) => println!("on: {} looks every 15 minutes", b.display()),
@@ -744,11 +741,7 @@ async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
         loop {
             match pond::pass(cfg).await {
                 Ok(b) => {
-                    eprintln!(
-                        "{} brief: {}",
-                        b.at.with_timezone(&chrono::Local).format("%H:%M"),
-                        b.headline
-                    );
+                    eprintln!("{} brief: {}", b.at.with_timezone(&chrono::Local).format("%H:%M"), b.headline);
                     if let Err(e) = pond::morning::wake_app(&b) {
                         eprintln!("couldn't wake Frog for the morning notice: {e:#}");
                     }
@@ -782,13 +775,7 @@ fn print_brief(b: &frog_engine::pond::brief::Brief) {
         let day: Vec<String> = b
             .today
             .iter()
-            .map(|e| {
-                if e.all_day {
-                    e.title.clone()
-                } else {
-                    format!("{} {}", clock(e.start), e.title)
-                }
-            })
+            .map(|e| if e.all_day { e.title.clone() } else { format!("{} {}", clock(e.start), e.title) })
             .collect();
         println!("  \x1b[2mtoday\x1b[0m  {}\n", day.join(" · "));
     }
@@ -799,21 +786,13 @@ fn print_brief(b: &frog_engine::pond::brief::Brief) {
         println!("    \x1b[2m{}\x1b[0m", l.url);
     }
     if !b.also.is_empty() {
-        println!(
-            "\n  \x1b[2malso: {} quieter thing{}\x1b[0m",
-            b.also.len(),
-            if b.also.len() == 1 { "" } else { "s" }
-        );
+        println!("\n  \x1b[2malso: {} quieter thing{}\x1b[0m", b.also.len(), if b.also.len() == 1 { "" } else { "s" });
     }
     for t in &b.trouble {
         println!("\n  \x1b[33m! {t}\x1b[0m");
     }
     let r = &b.receipt;
-    let read: Vec<String> = r
-        .read
-        .iter()
-        .map(|x| format!("{} ({})", x.source, x.what))
-        .collect();
+    let read: Vec<String> = r.read.iter().map(|x| format!("{} ({})", x.source, x.what)).collect();
     let model = match &r.model {
         Some(m) => format!(
             "{} {}",
@@ -832,14 +811,8 @@ fn print_brief(b: &frog_engine::pond::brief::Brief) {
     } else {
         format!("{} of your data left this Mac", bytes(private))
     };
-    let wh =
-        r.wh.filter(|w| *w >= 0.005)
-            .map(|w| format!(" · {w:.2} Wh"))
-            .unwrap_or_default();
-    println!(
-        "\n  \x1b[2mread {} · wrote with {model} · {left}{wh}\x1b[0m\n",
-        read.join(", ")
-    );
+    let wh = r.wh.filter(|w| *w >= 0.005).map(|w| format!(" · {w:.2} Wh")).unwrap_or_default();
+    println!("\n  \x1b[2mread {} · wrote with {model} · {left}{wh}\x1b[0m\n", read.join(", "));
 }
 
 fn bytes(n: u64) -> String {
