@@ -16,6 +16,12 @@ for d in "$here/quickshell" "$here/../share/frog/quickshell" /usr/share/frog/qui
 done
 [ -n "$qml" ] || { echo "frog-app: no QML found (set FROG_APP_QML)" >&2; exit 1; }
 
+# frog next to this script when it isn't on PATH (a ~/.local install
+# launched from a desktop whose PATH lacks ~/.local/bin)
+if [ -z "${FROG_BIN:-}" ] && ! command -v frog >/dev/null 2>&1 && [ -x "$here/frog" ]; then
+  export FROG_BIN="$here/frog"
+fi
+
 ipc() { qs -p "$qml" ipc call frog "$@" >/dev/null 2>&1; }
 # start the window in the background and wait until it answers
 launch() {

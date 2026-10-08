@@ -12,6 +12,9 @@ mkdir -p "$p/share/frog/quickshell"
 for f in "$here"/quickshell/*.qml "$here/quickshell/frog.svg"; do
   install -m644 "$f" "$p/share/frog/quickshell/"
 done
-install -Dm644 "$here/frog.desktop" "$p/share/applications/frog.desktop"
+# absolute Exec: a ~/.local prefix isn't on every desktop's PATH
+mkdir -p "$p/share/applications"
+sed "s|^Exec=frog-app|Exec=${PREFIX:-/usr/local}/bin/frog-app|" "$here/frog.desktop" > "$p/share/applications/frog.desktop"
+chmod 644 "$p/share/applications/frog.desktop"
 install -Dm644 "$here/quickshell/frog.svg" "$p/share/icons/hicolor/scalable/apps/frog.svg"
 echo "installed frog-app in $p"
