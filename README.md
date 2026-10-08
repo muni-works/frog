@@ -26,7 +26,7 @@ crates/frog-engine   headless agent: providers, tools, sessions, the agent loop
 crates/frog          clients: TUI (tui.rs/render.rs), -p and --serve (headless.rs)
 crates/frog-bench    another client: runs task suites across models and harness settings
 apps/macos           the native Mac app, another client (SwiftUI, speaks --serve)
-apps/linux           the Linux window, another client (Quickshell/QML, speaks --serve)
+apps/linux           the Linux app, another client (GTK 4 + libadwaita, speaks --serve)
 ```
 
 The engine runs as a background task. Clients talk to it only through `frog_engine::protocol`, which has two types:
@@ -206,18 +206,21 @@ model = "claude-sonnet-5"
 
 `frog -m <profile>` picks another for one run; the `tang/` provider is the Mac-only Metal sidecar and isn't used here.
 
-**The window** (`apps/linux`): a native client for niri/Wayland desktops, written in Quickshell (QML), in muon's Pilot Light design. It runs `frog --serve` and draws the same stream the Mac app does: the conversation with frog's words in mint, streaming output, folded thinking, tool calls with their output and diffs, permission prompts (drawn like narc's, where agent requests are heading), the model's questions, every folder's sessions to continue, and a model picker (ctrl k).
+**The app** (`apps/linux`, `eco.frog.Frog`): a native GTK 4 + libadwaita client that runs `frog --serve`, like the Mac app, in frog's own look translated to GNOME's conventions (header bars, a sessions sidebar that folds away on narrow windows, the system accent colour and light/dark). It shows the conversation streaming, thinking folded to a line, tool calls that open to their output or diff (GtkSourceView), permission cards (Allow, the "always" option, Deny; ctrl+enter / ctrl+.), the model's questions, every folder's sessions to continue or fork (right click), and a model picker (ctrl+k).
 
 ```
-apps/linux/install.sh                       # -> /usr/local; PREFIX=~/.local for one user
-frog-app [DIR]                              # open; new conversations work in DIR
-frog-app --ask "why does the build fail?"   # open and send
-frog-app --resume <id>
+cargo build --release -p frog -p frog-gtk   # needs gtk4, libadwaita, gtksourceview5 -devel
+apps/linux/install.sh                        # -> /usr/local; PREFIX=~/.local for one user
+frog-app [DIR]                               # open; new conversations work in DIR
+frog-app --ask "why does the build fail?"    # open and send
+frog-app --resume <id> | --new | --quit
 ```
 
-A second launch raises the first. It needs quickshell 0.2 (`qs`) and frog on `PATH` (or `FROG_BIN`). It's scriptable over Quickshell IPC (`qs -p <dir> ipc call frog ask|newChat|resume|models|allow|deny|shot|quit`), and `FROG_APP_REPLAY=<session.jsonl>` plays a recorded session instead of a model, for screenshots and design work (`apps/linux/screenshots/`).
+One instance per user (GApplication): a second `frog-app` hands its arguments to the first. It finds frog through `FROG_BIN`, beside itself, then `PATH`. `FROG_APP_REPLAY=<session.jsonl>` plays a recorded session instead of a model, and `frog-app --shot PATH` saves the window as a PNG, for screenshots (`apps/linux/screenshots/`). The workspace's default members leave it out, so `cargo build` on a Mac doesn't need GTK.
 
-On **muon** (the niri image) both ship in the image: `/usr/bin/frog`, `/usr/bin/frog-app`, the Frog dock pin and launcher entry, and an `/etc/frog/config.toml` pointing at the fleet's tang.
+**Flatpak:** `apps/linux/eco.frog.Frog.json` builds frog and the app on the GNOME 49 runtime (`flatpak-builder --user --install build apps/linux/eco.frog.Frog.json`). It fetches crates during the build, which is fine locally but not on Flathub (that needs `flatpak-cargo-generator` sources), and inside the sandbox frog's Bash tool runs in the Flatpak runtime rather than on the host.
+
+On **muon** (the niri image) both ship in the image: `/usr/bin/frog`, `/usr/bin/frog-app`, the Frog dock pin and launcher entry, and an `/etc/frog/config.toml` pointing at the fleet's tang. There it's an ordinary GTK app that muon's GTK theme styles.
 
 ## Editors (ACP)
 

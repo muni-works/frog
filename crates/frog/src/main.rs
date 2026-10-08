@@ -294,6 +294,17 @@ async fn run() -> Result<bool> {
     if let Some(done) = pond(&cli, &cfg).await? {
         return Ok(done);
     }
+    // Listing and naming sessions needs no model.
+    let cwd = std::env::current_dir()?;
+    let store = session::default_dir();
+    if let Some(r) = &cli.rename {
+        session::retitle(&store, &r[0], &r[1])?;
+        return Ok(true);
+    }
+    if cli.sessions {
+        list_sessions(&store, &cwd, cli.all, cli.json)?;
+        return Ok(true);
+    }
     let chosen = match &cli.model {
         Some(m) => Some(m.clone()),
         None if std::env::var_os("FROG_MODEL").is_some() || cfg.default_model.is_some() => None,
@@ -320,16 +331,6 @@ async fn run() -> Result<bool> {
     }
     if cli.probe {
         return probe(&profile_name, &profile).await;
-    }
-    let cwd = std::env::current_dir()?;
-    let store = session::default_dir();
-    if let Some(r) = &cli.rename {
-        session::retitle(&store, &r[0], &r[1])?;
-        return Ok(true);
-    }
-    if cli.sessions {
-        list_sessions(&store, &cwd, cli.all, cli.json)?;
-        return Ok(true);
     }
     if cli.session_tree {
         print_diagram(session_tree(&store, &cwd)?, &cwd, cli.json)?;

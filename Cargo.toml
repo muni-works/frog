@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "apps/linux"]
+# The GTK app needs GTK 4 and libadwaita; build it with `-p frog-gtk` (Linux).
+default-members = ["crates/frog", "crates/frog-engine", "crates/frog-bench", "crates/puck"]
 
 [workspace.package]
 version = "0.1.0"
