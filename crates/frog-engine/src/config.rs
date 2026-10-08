@@ -49,6 +49,10 @@ pub struct Profile {
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
+    /// A file holding the key (first line; `~/` is the home folder), e.g. a tang server's
+    /// `--api-key-file`. Checked after `api_key` and `api_key_env`.
+    #[serde(default)]
+    pub api_key_file: Option<String>,
     pub context_window: Option<u64>,
     pub max_tokens: Option<u32>,
     #[serde(default)]
@@ -79,6 +83,7 @@ impl Profile {
             base_url: None,
             api_key: None,
             api_key_env: None,
+            api_key_file: None,
             context_window: None,
             max_tokens: None,
             tool_mode: ToolMode::Auto,
@@ -101,8 +106,18 @@ impl Profile {
         if let Some(k) = &self.api_key {
             return Some(k.clone());
         }
-        if let Some(var) = &self.api_key_env {
-            return std::env::var(var).ok();
+        if let Some(k) = self.api_key_env.as_ref().and_then(|v| std::env::var(v).ok()) {
+            return Some(k);
+        }
+        if let Some(f) = &self.api_key_file {
+            let path = match f.strip_prefix("~/") {
+                Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
+                None => PathBuf::from(f),
+            };
+            return std::fs::read_to_string(path)
+                .ok()
+                .and_then(|t| t.lines().next().map(|l| l.trim().to_string()))
+                .filter(|k| !k.is_empty());
         }
         match self.provider {
             ProviderKind::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
@@ -215,6 +230,14 @@ pub fn config_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".config/frog")
 }
 
+/// The machine's config, used when the user has none (an OS image ships one, e.g. muon's
+/// pointing at the fleet's tang). `FROG_SYSTEM_CONFIG` overrides the path.
+pub fn system_config() -> PathBuf {
+    std::env::var_os("FROG_SYSTEM_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/etc/frog/config.toml"))
+}
+
 /// frog was called kiln. Move its config and data to the new places, leaving the old paths as
 /// symlinks so absolute paths recorded in old sessions (the chat folder, worktrees) still work.
 /// Does nothing once moved, or if both exist.
@@ -241,7 +264,10 @@ pub fn data_dir() -> PathBuf {
 
 impl Config {
     pub fn load() -> Result<Self> {
-        let path = config_dir().join("config.toml");
+        let mut path = config_dir().join("config.toml");
+        if !path.exists() && system_config().exists() {
+            path = system_config();
+        }
         let mut cfg: Self = if path.exists() {
             let text = std::fs::read_to_string(&path)?;
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
@@ -339,4 +365,38 @@ fn with_catalog(mut p: Profile, spec: &str) -> Profile {
         p.vision = p.vision.or(Some(m.vision()));
     }
     p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_key_file_reads_the_first_line_after_key_and_env() {
+        let dir = std::env::temp_dir().join(format!("frog-keyfile-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("tang.key");
+        std::fs::write(&file, "  sekrit \nignored\n").unwrap();
+        let mut p = Profile::new(ProviderKind::Openai, "m");
+        p.base_url = Some("http://mew:8420/v1".into());
+        p.api_key_file = Some(file.display().to_string());
+        assert_eq!(p.api_key().as_deref(), Some("sekrit"));
+        p.api_key_env = Some("FROG_TEST_UNSET_KEY_VAR".into());
+        assert_eq!(p.api_key().as_deref(), Some("sekrit"));
+        p.api_key = Some("inline".into());
+        assert_eq!(p.api_key().as_deref(), Some("inline"));
+        p.api_key = None;
+        p.api_key_file = Some(dir.join("missing").display().to_string());
+        assert_eq!(p.api_key(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn profile_parses_api_key_file() {
+        let c: Config = toml::from_str(
+            "[models.tang]\nprovider = \"openai\"\nmodel = \"m\"\napi_key_file = \"~/.config/frog/tang.key\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.models["tang"].api_key_file.as_deref(), Some("~/.config/frog/tang.key"));
+    }
 }

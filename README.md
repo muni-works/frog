@@ -26,6 +26,7 @@ crates/frog-engine   headless agent: providers, tools, sessions, the agent loop
 crates/frog          clients: TUI (tui.rs/render.rs), -p and --serve (headless.rs)
 crates/frog-bench    another client: runs task suites across models and harness settings
 apps/macos           the native Mac app, another client (SwiftUI, speaks --serve)
+apps/linux           the Linux window, another client (Quickshell/QML, speaks --serve)
 ```
 
 The engine runs as a background task. Clients talk to it only through `frog_engine::protocol`, which has two types:
@@ -175,6 +176,48 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
 - **How it acts:** it presses and types into elements by index, which usually works without taking over your screen. Coordinates and keystrokes are the fallback.
 - **Checking its work:** every action returns the refreshed list and how much changed, so the model can tell whether it worked.
 - **Guardrails:** every action asks permission, and it never types into password fields.
+
+## Linux and muon
+
+frog builds as one static binary (musl, rustls; no OpenSSL or glibc needed):
+
+```
+docker run --rm -v $PWD:/src -w /src rust:1-alpine \
+  sh -c 'apk add musl-dev && cargo build --release -p frog'
+install -m755 target/release/frog ~/.local/bin/frog
+```
+
+**Config.** `~/.config/frog/config.toml` wins; without one, frog reads the machine's `/etc/frog/config.toml` (`FROG_SYSTEM_CONFIG` overrides the path). That's how an OS image sets a default model. A tang server elsewhere on the network is an OpenAI-compatible profile; `api_key_file` reads its key from a file (first line, `~/` allowed) after `api_key` and `api_key_env`:
+
+```toml
+default_model = "tang"
+
+[models.tang]
+provider = "openai"
+base_url = "http://mew:8420/v1"            # tang-llm serve --host 0.0.0.0 --port 8420
+model = "mlx-community/Qwen3-8B-4bit"
+api_key_file = "~/.config/frog/tang.key"   # the server's --api-key-file
+context_window = 32768
+
+[models.sonnet]                            # cloud: ANTHROPIC_API_KEY
+provider = "anthropic"
+model = "claude-sonnet-5"
+```
+
+`frog -m <profile>` picks another for one run; the `tang/` provider is the Mac-only Metal sidecar and isn't used here.
+
+**The window** (`apps/linux`): a native client for niri/Wayland desktops, written in Quickshell (QML), in muon's Pilot Light design. It runs `frog --serve` and draws the same stream the Mac app does: the conversation with frog's words in mint, streaming output, folded thinking, tool calls with their output and diffs, permission prompts (drawn like narc's, where agent requests are heading), the model's questions, every folder's sessions to continue, and a model picker (ctrl k).
+
+```
+apps/linux/install.sh                       # -> /usr/local; PREFIX=~/.local for one user
+frog-app [DIR]                              # open; new conversations work in DIR
+frog-app --ask "why does the build fail?"   # open and send
+frog-app --resume <id>
+```
+
+A second launch raises the first. It needs quickshell 0.2 (`qs`) and frog on `PATH` (or `FROG_BIN`). It's scriptable over Quickshell IPC (`qs -p <dir> ipc call frog ask|newChat|resume|models|allow|deny|shot|quit`), and `FROG_APP_REPLAY=<session.jsonl>` plays a recorded session instead of a model, for screenshots and design work (`apps/linux/screenshots/`).
+
+On **muon** (the niri image) both ship in the image: `/usr/bin/frog`, `/usr/bin/frog-app`, the Frog dock pin and launcher entry, and an `/etc/frog/config.toml` pointing at the fleet's tang.
 
 ## Editors (ACP)
 

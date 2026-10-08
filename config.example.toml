@@ -44,6 +44,14 @@ context_window = 32768
 # If the server's chat template mangles tool calls, describe tools in the prompt instead:
 # tool_mode = "text"
 
+# A tang server on another machine (tang-llm serve --host 0.0.0.0 --port 8420):
+[models.tang-remote]
+provider = "openai"
+base_url = "http://mew:8420/v1"
+model = "mlx-community/Qwen3-8B-4bit"
+api_key_file = "~/.config/frog/tang.key"   # the server's --api-key-file; first line
+context_window = 32768
+
 [models.sonnet]
 provider = "anthropic"
 model = "claude-sonnet-5"
