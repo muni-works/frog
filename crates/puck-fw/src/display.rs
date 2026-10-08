@@ -19,8 +19,8 @@ const RESET: i32 = 39;
 const PCLK_HZ: u32 = 40_000_000;
 
 /// Rows per transfer. Windows must start on an even row and be an even number of rows tall;
-/// 466 = 29·16 + 2, so every strip, the last included, is even.
-pub const STRIP: usize = 16;
+/// 466 = 19·24 + 10, so every strip, the last included, is even.
+pub const STRIP: usize = 24;
 const STRIP_BYTES: usize = W * STRIP * 2;
 
 /// (command, parameters, delay after in ms), verbatim from the BSP.
@@ -69,7 +69,11 @@ impl Display {
             bus.max_transfer_sz = STRIP_BYTES as i32;
             bus.flags = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_QUAD;
             check(
-                spi_bus_initialize(spi_host_device_t_SPI2_HOST, &bus, spi_common_dma_t_SPI_DMA_CH_AUTO),
+                spi_bus_initialize(
+                    spi_host_device_t_SPI2_HOST,
+                    &bus,
+                    spi_common_dma_t_SPI_DMA_CH_AUTO,
+                ),
                 "spi bus",
             );
 
@@ -122,18 +126,29 @@ impl Display {
 
     fn cmd(&self, c: u8, params: &[u8]) {
         let op = (0x02 << 24) | ((c as i32) << 8);
-        let p = if params.is_empty() { ptr::null() } else { params.as_ptr() as *const _ };
-        unsafe { check(esp_lcd_panel_io_tx_param(self.io, op, p, params.len()), "tx_param") };
+        let p = if params.is_empty() {
+            ptr::null()
+        } else {
+            params.as_ptr() as *const _
+        };
+        unsafe {
+            check(
+                esp_lcd_panel_io_tx_param(self.io, op, p, params.len()),
+                "tx_param",
+            )
+        };
     }
 
     fn window(&self, x0: u16, y0: u16, x1: u16, y1: u16) {
         let (x0, x1) = (x0 + X_OFF, x1 + X_OFF);
-        self.cmd(0x2A, &[(x0 >> 8) as u8, x0 as u8, (x1 >> 8) as u8, x1 as u8]);
-        self.cmd(0x2B, &[(y0 >> 8) as u8, y0 as u8, (y1 >> 8) as u8, y1 as u8]);
-    }
-
-    pub fn set_brightness(&self, b: u8) {
-        self.cmd(0x51, &[b]);
+        self.cmd(
+            0x2A,
+            &[(x0 >> 8) as u8, x0 as u8, (x1 >> 8) as u8, x1 as u8],
+        );
+        self.cmd(
+            0x2B,
+            &[(y0 >> 8) as u8, y0 as u8, (y1 >> 8) as u8, y1 as u8],
+        );
     }
 
     /// Push a whole frame. `fill(row0, rows, out)` writes `rows` rows of big-endian RGB565 into

@@ -9,6 +9,7 @@
 //! - [`sound`]: the cue sounds, embedded as WAVs.
 
 pub mod canvas;
+pub mod demo;
 pub mod eyes;
 pub mod model;
 pub mod sound;

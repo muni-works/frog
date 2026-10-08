@@ -76,7 +76,24 @@ impl Canvas {
         ];
     }
 
+    /// The glass rows this canvas holds. Drawing outside them is skipped, so a host short on
+    /// memory can render the glass in bands by moving `origin`.
+    pub fn rows(&self) -> std::ops::Range<i32> {
+        let o = self.origin.1 as i32;
+        -o..self.h as i32 - o
+    }
+
+    /// The glass columns this canvas holds.
+    pub fn cols(&self) -> std::ops::Range<i32> {
+        let o = self.origin.0 as i32;
+        -o..self.w as i32 - o
+    }
+
     /// Fill everything where `sdf` < 0 inside the box, with one pixel of anti-aliasing.
+    ///
+    /// `sdf` must change by at most 1 per pixel (a true distance, or a bound on one). That lets a
+    /// single sample vouch for the pixels after it: deep inside they're all fully covered, far
+    /// outside they're all empty, so only the pixels near an edge pay for an evaluation.
     pub fn fill_sdf(
         &mut self,
         x0: f32,
@@ -87,11 +104,29 @@ impl Canvas {
         a: f32,
         sdf: impl Fn(f32, f32) -> f32,
     ) {
-        for y in (y0.floor() as i32 - 1)..=(y1.ceil() as i32 + 1) {
-            for x in (x0.floor() as i32 - 1)..=(x1.ceil() as i32 + 1) {
-                let cov = (0.5 - sdf(x as f32 + 0.5, y as f32 + 0.5)).clamp(0.0, 1.0);
-                if cov > 0.0 {
-                    self.blend(x, y, c, a * cov);
+        let (rows, cols) = (self.rows(), self.cols());
+        let ys = (y0.floor() as i32 - 1).max(rows.start)..(y1.ceil() as i32 + 2).min(rows.end);
+        let xs = (x0.floor() as i32 - 1).max(cols.start)..(x1.ceil() as i32 + 2).min(cols.end);
+        for y in ys {
+            let mut x = xs.start;
+            while x < xs.end {
+                let d = sdf(x as f32 + 0.5, y as f32 + 0.5);
+                if d >= 1.5 {
+                    // This pixel and the next ⌊d − 0.5⌋ − 1 are all at least half a pixel out.
+                    x += (d - 0.5) as i32;
+                } else if d <= -1.5 {
+                    // ... or all at least half a pixel in.
+                    let end = (x + (-0.5 - d) as i32).min(xs.end);
+                    while x < end {
+                        self.blend(x, y, c, a);
+                        x += 1;
+                    }
+                } else {
+                    let cov = (0.5 - d).clamp(0.0, 1.0);
+                    if cov > 0.0 {
+                        self.blend(x, y, c, a * cov);
+                    }
+                    x += 1;
                 }
             }
         }
@@ -99,14 +134,15 @@ impl Canvas {
 
     pub fn circle(&mut self, cx: f32, cy: f32, r: f32, c: Rgb, a: f32) {
         self.fill_sdf(cx - r, cy - r, cx + r, cy + r, c, a, |x, y| {
-            ((x - cx).hypot(y - cy)) - r
+            ((x - cx) * (x - cx) + (y - cy) * (y - cy)).sqrt() - r
         });
     }
 
     pub fn ellipse(&mut self, cx: f32, cy: f32, rx: f32, ry: f32, c: Rgb, a: f32) {
         // Scaled-circle distance: exact enough for one pixel of edge.
+        let (irx, iry) = (1.0 / rx, 1.0 / ry);
         self.fill_sdf(cx - rx, cy - ry, cx + rx, cy + ry, c, a, |x, y| {
-            let (u, v) = ((x - cx) / rx, (y - cy) / ry);
+            let (u, v) = ((x - cx) * irx, (y - cy) * iry);
             ((u * u + v * v).sqrt() - 1.0) * rx.min(ry)
         });
     }
@@ -118,7 +154,7 @@ impl Canvas {
                 ((px - cx).abs() - hx).max(0.0),
                 ((py - cy).abs() - hy).max(0.0),
             );
-            dx.hypot(dy) - r
+            (dx * dx + dy * dy).sqrt() - r
         });
     }
 
@@ -136,7 +172,8 @@ impl Canvas {
             a,
             |px, py| {
                 let t = (((px - x0) * dx + (py - y0) * dy) / len2).clamp(0.0, 1.0);
-                (px - (x0 + t * dx)).hypot(py - (y0 + t * dy)) - r
+                let (ex, ey) = (px - (x0 + t * dx), py - (y0 + t * dy));
+                (ex * ex + ey * ey).sqrt() - r
             },
         );
     }
