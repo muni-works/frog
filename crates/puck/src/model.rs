@@ -369,16 +369,21 @@ impl Puck {
 
 fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
+    let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
+        if c != '\u{1b}' {
+            out.push(c);
+        } else if chars.next_if_eq(&'[').is_some() {
+            // CSI: parameters, then one final byte in @..~
             for c in chars.by_ref() {
-                if c.is_ascii_alphabetic() {
+                if ('@'..='~').contains(&c) {
                     break;
                 }
             }
         } else {
-            out.push(c);
+            // Any other escape: intermediate bytes in ' '..'/', then one final character.
+            while chars.next_if(|c| (' '..='/').contains(c)).is_some() {}
+            chars.next();
         }
     }
     out
@@ -460,6 +465,12 @@ mod tests {
             (p.mode, p.error.as_str()),
             (Mode::Error, "model not loaded")
         );
+    }
+
+    #[test]
+    fn strip_ansi_keeps_text_after_escapes() {
+        assert_eq!(strip_ansi("\u{1b}[1;31mred\u{1b}[0m ok"), "red ok");
+        assert_eq!(strip_ansi("\u{1b}(Bplain"), "plain");
     }
 
     #[test]

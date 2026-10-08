@@ -395,7 +395,9 @@ impl Ui {
                 }
                 if let Some(why) = ask.and_then(|a| a.reason.as_deref()) {
                     let (_, w) = self.fonts.fit(Face::Regular, &[16.0], why, LINE, 1);
-                    self.text(cv, Face::Regular, 16.0, 234.0, &w[0], WHITE, 0.45);
+                    if let Some(w) = w.first() {
+                        self.text(cv, Face::Regular, 16.0, 234.0, w, WHITE, 0.45);
+                    }
                 }
                 // slide to run
                 cv.rrect(98.0, 262.0, 270.0, 68.0, 34.0, WHITE, 0.08);
@@ -558,13 +560,14 @@ impl Ui {
             };
             cv.circle(96.0, y - 6.0, 6.0, c, fade);
             let (_, l) = self.fonts.fit(Face::Mono, &[20.0], &r.arg, 250.0, 1);
+            let l = l.first().map(String::as_str).unwrap_or_default();
             self.fonts.draw(
                 cv,
                 Face::Mono,
                 20.0,
                 118.0,
                 y,
-                &l[0],
+                l,
                 Anchor::Start,
                 WHITE,
                 fade,
