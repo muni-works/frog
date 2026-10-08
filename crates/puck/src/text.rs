@@ -37,11 +37,22 @@ impl Fonts {
     pub fn new() -> Self {
         let load =
             |b: &[u8]| Font::from_bytes(b, FontSettings::default()).expect("embedded font parses");
+        // fontdue builds every glyph's outline up front: 9.5 MB for the full faces, more than the
+        // device's PSRAM. `small-fonts` swaps in Latin-only subsets (assets/small, ~3 MB).
+        macro_rules! face {
+            ($f:literal) => {
+                if cfg!(feature = "small-fonts") {
+                    include_bytes!(concat!("../assets/small/", $f)).as_slice()
+                } else {
+                    include_bytes!(concat!("../assets/", $f)).as_slice()
+                }
+            };
+        }
         Self {
             faces: [
-                load(include_bytes!("../assets/Nunito-Regular.ttf")),
-                load(include_bytes!("../assets/Nunito-Bold.ttf")),
-                load(include_bytes!("../assets/JetBrainsMono-Medium.ttf")),
+                load(face!("Nunito-Regular.ttf")),
+                load(face!("Nunito-Bold.ttf")),
+                load(face!("JetBrainsMono-Medium.ttf")),
             ],
             cache: RefCell::default(),
         }

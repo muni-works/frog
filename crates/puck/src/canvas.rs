@@ -157,6 +157,7 @@ impl Canvas {
             .collect()
     }
 
+    #[cfg(feature = "host")]
     pub fn save_png(&self, path: &std::path::Path) -> anyhow::Result<()> {
         let f = std::io::BufWriter::new(std::fs::File::create(path)?);
         let mut enc = png::Encoder::new(f, self.w as u32, self.h as u32);

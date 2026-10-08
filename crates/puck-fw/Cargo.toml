@@ -23,6 +23,7 @@ opt-level = "z"
 [dependencies]
 log = "0.4"
 esp-idf-svc = "0.53"
+puck = { path = "../puck", default-features = false, features = ["small-fonts"] }
 
 [build-dependencies]
 embuild = "0.33"
