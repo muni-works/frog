@@ -46,6 +46,12 @@ final class WristLink: NSObject, WCSessionDelegate {
     override init() {
         super.init()
         direct = UserDefaults.standard.string(forKey: "direct").flatMap(URL.init(string:))
+        // Development: a bridge (or a stand-in) named at launch, as the phone's FROG_REMOTE_HOST.
+        let env = ProcessInfo.processInfo.environment
+        if let url = env["FROG_DIRECT_URL"].flatMap(URL.init(string:)), let code = env["FROG_REMOTE_CODE"] {
+            direct = url
+            PairingCode.write(code)
+        }
         if let saved = Snapshot.load()?.rows { rows = saved }
         bridge.onRows = { [weak self] rows in self?.adopt(rows) }
         bridge.onState = { [weak self] _ in self?.reconsider() }
@@ -56,20 +62,25 @@ final class WristLink: NSObject, WCSessionDelegate {
 
     // MARK: Routes
 
-    /// The phone when it's in reach; otherwise the Mac directly, if we know where it is.
+    /// The phone, when it's in reach and has frog.
+    private var phone: Bool {
+        WCSession.isSupported() && WCSession.default.isReachable && WCSession.default.isCompanionAppInstalled
+    }
+
+    /// While on screen, also hold the Mac directly if we know where it is: reachability flickers,
+    /// and a question shouldn't wait on the phone coming back. Answers still prefer the phone.
     private func reconsider() {
-        let phone = WCSession.isSupported() && WCSession.default.isReachable
-        if active, !phone, let direct, let code = PairingCode.read(), !code.isEmpty {
+        if active, let direct, let code = PairingCode.read(), !code.isEmpty {
             bridge.connect(url: direct, code: code)
-        } else if phone || !active {
+        } else {
             bridge.disconnect()
         }
         switch bridge.state {
         case .connected: route = .direct
-        case .failed(let why) where !phone: route = .offline(why)
         case _ where phone: route = .phone
+        case .failed(let why): route = .offline(why)
         case .connecting: route = .offline("Reaching your Mac…")
-        default: route = direct == nil ? .offline("Your phone is out of reach") : .offline("Can't reach your Mac")
+        case .off: route = .offline("Your phone is out of reach")
         }
     }
 
@@ -97,26 +108,34 @@ final class WristLink: NSObject, WCSessionDelegate {
         }
     }
 
-    /// Through the phone if it answers, else straight to the Mac.
+    /// Straight to the Mac when we hold it; else through the phone; else try the Mac anyway.
     private func deliver(_ op: [String: Any], in session: String) async -> Bool {
-        if WCSession.default.isReachable, await viaPhone(["session": session, "op": op]) { return true }
+        if bridge.isConnected { return await bridge.perform(op: op, in: session) }
+        if phone, await viaPhone(["session": session, "op": op]) { return true }
         return await bridge.perform(op: op, in: session)
     }
 
+    /// A message to the phone, given up on after a few seconds (a reachable phone can still
+    /// sit on it).
     private func viaPhone(_ message: [String: Any]) async -> Bool {
         nonisolated(unsafe) let message = message
+        let once = Once()
         return await withCheckedContinuation { cont in
             WCSession.default.sendMessage(message, replyHandler: { reply in
-                cont.resume(returning: reply["ok"] as? Bool ?? false)
+                once.run { cont.resume(returning: reply["ok"] as? Bool ?? false) }
             }, errorHandler: { _ in
-                cont.resume(returning: false)
+                once.run { cont.resume(returning: false) }
             })
+            Task {
+                try? await Task.sleep(for: .seconds(5))
+                once.run { cont.resume(returning: false) }
+            }
         }
     }
 
     /// Bring this conversation up on the phone (a long press on what frog said).
     func showOnPhone(_ row: Row) {
-        guard WCSession.default.isReachable else { return Haptic.play(.failure) }
+        guard phone else { return Haptic.play(.failure) }
         WCSession.default.sendMessage(["show": row.id], replyHandler: nil)
         Haptic.play(.directionUp)
     }
@@ -165,6 +184,21 @@ final class WristLink: NSObject, WCSessionDelegate {
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         Task { @MainActor in self.reconsider() }
+    }
+}
+
+/// Runs its first caller only: a continuation resumed by whichever of reply, error or timeout
+/// comes first.
+private final class Once: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func run(_ body: () -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !done else { return }
+        done = true
+        body()
     }
 }
 
