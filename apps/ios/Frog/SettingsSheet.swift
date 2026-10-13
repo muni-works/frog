@@ -41,6 +41,16 @@ struct SettingsSheet: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        HouseView()
+                    } label: {
+                        Label("The House", systemImage: "house")
+                    }
+                } footer: {
+                    Text("frog on your home server, for Siri: “Ask Frog about the house”.")
+                }
+
+                Section {
                     Toggle(isOn: $sounds) { Label("Frog sounds", systemImage: "speaker.wave.2") }
                 }
 

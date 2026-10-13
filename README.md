@@ -17,6 +17,7 @@ frog --fork <id>@3                   # branch a session right after turn 3
 frog --sandbox                       # confine writes to this directory (bash too, on macOS)
 frog -p --json "..."                 # one-shot, every engine event as a JSON line
 frog --serve                         # speak the engine protocol over stdio
+frog --chat --listen 127.0.0.1:8915  # one turn per HTTP request, for Siri (docs/ios-siri.md)
 ```
 
 ## Architecture

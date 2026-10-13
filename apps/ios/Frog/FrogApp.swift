@@ -216,6 +216,15 @@ struct ConnectView: View {
                         .font(.footnote)
                 }
             }
+            Section {
+                NavigationLink {
+                    HouseView()
+                } label: {
+                    Label("Ask the House Instead", systemImage: "house")
+                }
+            } footer: {
+                Text("No Mac? frog on a home server answers Siri without one.")
+            }
         }
         .navigationTitle("Connect")
         .onAppear { finder.start() }
