@@ -123,7 +123,8 @@ final class RemoteBridge {
         guard listener != nil, let head = Head(line) else { return }
         track(head, line)
         RemotePush.shared.observe(line)
-        if ["turn_started", "turn_ended", "idle", "permission_request", "permission_resolved", "item_started", "titled"]
+        if ["turn_started", "turn_ended", "idle", "permission_request", "permission_resolved", "question", "question_resolved",
+          "item_started", "titled"]
             .contains(head.event) { listChanged() }
         // A conversation new to the list (started here or from a phone): list it once its file
         // is on disk, which it is by the time it does anything. The list goes to phones after.
@@ -428,6 +429,16 @@ final class RemoteBridge {
                     row["question"] = ["id": q["id"] ?? "", "name": q["name"] ?? "", "arg": String((q["arg"] as? String ?? "").prefix(200))]
                 }
             }
+            // The open Ask, so a watch can pick an option (or say its own) without the thread.
+            if let q = c?.question {
+                row["ask"] = ["id": q.id, "question": String(q.question.prefix(300)),
+                              "options": q.options.prefix(6).map(\.label), "other": q.allowOther ?? false]
+            }
+            // How the last turn ended, in frog's words, for the wrist.
+            if let text = c?.turns.last?.items.last(where: { $0.kind == .message })?.text,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                row["last"] = String(text.prefix(1200))
+            }
             return row
         }
     }
@@ -494,6 +505,10 @@ final class RemoteBridge {
             guard let pid = op["id"] as? String, c.permission?.id == pid,
                   let d = (op["decision"] as? String).flatMap(Decision.init(rawValue:)) else { return }
             c.answer(d)
+        case "answer":
+            // The open Ask, from a watch: the picked labels and/or words of its own.
+            guard let qid = op["id"] as? String, c.question?.id == qid else { return }
+            c.answer(question: op["choices"] as? [String] ?? [], other: op["other"] as? String)
         case "interrupt":
             c.interrupt()
         case "shell":

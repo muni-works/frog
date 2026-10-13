@@ -26,6 +26,18 @@ struct StatusProvider: TimelineProvider {
     }
 }
 
+extension StatusEntry {
+    /// Smart Stack: up top while frog waits on you, a little while after a turn ends, and out of
+    /// the way when all's quiet.
+    var relevance: TimelineEntryRelevance? {
+        guard let s = snapshot else { return nil }
+        if !s.waiting.isEmpty { return TimelineEntryRelevance(score: 100, duration: 30 * 60) }
+        if s.rows.contains(where: { $0.live == "unread" }) { return TimelineEntryRelevance(score: 40, duration: 15 * 60) }
+        if !s.running.isEmpty { return TimelineEntryRelevance(score: 20, duration: 10 * 60) }
+        return TimelineEntryRelevance(score: 0)
+    }
+}
+
 struct StatusWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "frog.status", provider: StatusProvider()) { entry in
@@ -62,6 +74,12 @@ struct StatusView: View {
             ZStack {
                 AccessoryWidgetBackground()
                 FrogFace(mood: mood, size: 30)
+                // How many wait on you, when it's more than one.
+                if waiting.count > 1 {
+                    Text("\(waiting.count)")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                }
             }
             .widgetURL(url(waiting.first ?? running.first))
         case .accessoryRectangular:
@@ -78,7 +96,9 @@ struct StatusView: View {
         #if os(watchOS)
         case .accessoryCorner:
             FrogFace(mood: mood, size: 22)
-                .widgetLabel { Text(waiting.isEmpty ? (running.isEmpty ? "All quiet" : "Working") : "Needs you") }
+                .widgetLabel {
+                    Text(waiting.count > 1 ? "\(waiting.count) need you" : waiting.isEmpty ? (running.isEmpty ? "All quiet" : "Working") : "Needs you")
+                }
                 .widgetURL(url(waiting.first ?? running.first))
         default:
             EmptyView()
