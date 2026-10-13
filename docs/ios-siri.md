@@ -15,7 +15,7 @@ Siri / Shortcuts / the Frog app
 caddy (TLS, frog.pedersen.garden) ─► frog --chat --listen 127.0.0.1:8915   (crates/frog/src/listen.rs)
                                         │ one engine per request, can_ask off
                                         ├─► model (ollama on the 3090)
-                                        └─► MCP: homelab-mcp (HA, Frigate, docker; read-only)
+                                        └─► MCP: homelab-mcp /act (HA, Frigate; allowlisted call_service)
   ◄── NDJSON: the engine's event envelopes, the same stream as --serve, until turn_ended + idle
 ```
 
@@ -29,9 +29,10 @@ caddy (TLS, frog.pedersen.garden) ─► frog --chat --listen 127.0.0.1:8915   (
   - Every request needs `Authorization: Bearer $FROG_LISTEN_TOKEN`, which must be 16 characters
     or more.
 - **Nobody can answer a permission prompt** over this transport, so anything that would ask is
-  denied. Run it with `--chat`, which has no file or shell tools, and `--yolo`, so the read-only
-  MCP tools run. Don't use `--yolo` once the server has tools that change things (see the open
-  questions below).
+  denied. Run it with `--chat`, which has no file or shell tools, and `--yolo`, so the MCP
+  tools run. That's safe only because homelab-mcp's one write tool, `call_service`, enforces
+  its own allowlist on the server. It never touches locks, alarms or entry doors (ADR 016 in
+  `~/Developer/home`). Don't point a `--yolo` listener at an MCP server without such a guard.
 - **If the client hangs up**, the turn keeps going. It finishes and is saved in the session log,
   where `/answer` finds it.
 - **The intent** waits about 8 seconds, because Siri gives an intent roughly 10.
@@ -57,7 +58,7 @@ After=network-online.target docker.service
 [Service]
 User=frog
 WorkingDirectory=/var/lib/frog
-EnvironmentFile=/etc/frog/listen.env        # FROG_LISTEN_TOKEN=…, HOMELAB_MCP_TOKEN=…
+EnvironmentFile=/etc/frog/listen.env        # FROG_LISTEN_TOKEN=…, MCP_TOKEN_ACT=…
 ExecStart=/usr/local/bin/frog --chat --yolo -m house --listen 127.0.0.1:8915
 Restart=on-failure
 
@@ -76,10 +77,11 @@ model = "qwen3:30b-a3b"
 context_window = 32768
 
 # Opt-in, per frog's MCP policy. trust = true because we run it, so its tool descriptions skip
-# the quarantine check.
+# the quarantine check. /act is the household tools plus call_service. Use /home/mcp and
+# MCP_TOKEN_HOME instead to keep Siri read-only.
 [mcp_servers.homelab]
-url = "https://mcp.pedersen.garden/mcp"
-headers = { Authorization = "Bearer ${HOMELAB_MCP_TOKEN}" }
+url = "https://mcp.pedersen.garden/act/mcp"
+headers = { Authorization = "Bearer ${MCP_TOKEN_ACT}" }
 trust = true
 ```
 
@@ -129,10 +131,10 @@ SIMCTL_CHILD_FROG_HOUSE_TOKEN=… xcrun simctl launch booted eco.frog.remote
   `.system.search` and domain schemas). So Siri routes on the phrase, then asks "What do you want
   to ask the house?" as a second step. "Ask Frog why the garage is cold" in one breath needs a
   schema Apple hasn't shipped, or an App Shortcut parameter that's an entity, not free text.
-- **Writing to the house.** If homelab-mcp has no `call_service` tool, add one in
-  `~/Developer/home`, not here. `homelab-mcp` wasn't in that repo when this was written. Once a
-  tool can change things, `--yolo` is wrong. Approvals would need to come back to the phone, for
-  example through the existing Live Activity Allow/Deny intents.
+- **Confirming changes.** `call_service` (ecto/home#32) runs without asking, inside its
+  allowlist. To confirm each change by voice or on the lock screen, the listener would have to
+  forward permission requests instead of denying them, and the phone would answer through the
+  existing Allow/Deny Live Activity intents.
 - **Watch.** A watch-native intent would need the phone to relay the request, or a
   public-but-authenticated endpoint the watch can reach on LTE. The Watch app already talks to the
   phone through WatchConnectivity.
