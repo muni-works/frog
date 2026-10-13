@@ -11,7 +11,8 @@
 //! prints them, ending after the turn's `idle`. Then the connection closes. Each request gets
 //! its own engine, so a dropped client never leaves a turn holding another one up. A client that
 //! hangs up early (Siri's time ran out) doesn't stop the turn: it runs to the end and is saved in
-//! the session log like any other. Nobody can
+//! the session log like any other, and `GET /v1/session/<id>/answer` reads it from there:
+//! `{"done": false}` while it runs, then `{"done": true, "text": "…"}`. Nobody can
 //! answer a permission prompt here, so anything that would ask is denied (`can_ask: false`);
 //! run with `--yolo` only when every tool is read-only, as with a chat plus read-only MCP.
 
@@ -24,6 +25,8 @@ use tokio::net::{TcpListener, TcpStream};
 
 /// Everything a request's engine starts from, minus the session.
 pub struct Template {
+    /// Where session logs live, for reading a finished answer back.
+    pub store: std::path::PathBuf,
     pub make: Box<dyn Fn(Option<String>, Option<String>) -> Result<Options> + Send + Sync>,
 }
 
@@ -94,6 +97,39 @@ fn parse_head(lines: &[String]) -> Option<Head> {
     })
 }
 
+/// The latest turn's answer in session `id`: its last message, once the turn has ended.
+fn answer(store: &std::path::Path, id: &str) -> Option<serde_json::Value> {
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    let events = frog_engine::session::events_after(store, id, 0).ok()?;
+    Some(last_answer(events.into_iter().map(|e| e.event)))
+}
+
+fn last_answer(events: impl Iterator<Item = Event>) -> serde_json::Value {
+    let (mut text, mut done) = (String::new(), false);
+    for e in events {
+        match e {
+            Event::TurnStarted { .. } => (text, done) = (String::new(), false),
+            Event::ItemCompleted {
+                item: frog_engine::Item::Message { text: t, .. },
+                ..
+            } => text = t,
+            Event::TurnEnded { .. } => done = true,
+            _ => {}
+        }
+    }
+    if done {
+        serde_json::json!({ "done": true, "text": text })
+    } else {
+        serde_json::json!({ "done": false })
+    }
+}
+
 /// Compare without leaking how much of the token matched.
 fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
@@ -130,6 +166,23 @@ async fn handle(mut sock: TcpStream, token: &str, t: &Template) -> Result<()> {
     }
     if head.method == "GET" && head.path == "/v1/health" {
         return respond(&mut sock, "200 OK", "ok").await;
+    }
+    if let Some(id) = head
+        .path
+        .strip_prefix("/v1/session/")
+        .and_then(|p| p.strip_suffix("/answer"))
+        .filter(|_| head.method == "GET")
+    {
+        let body = match answer(&t.store, id) {
+            Some(v) => v.to_string(),
+            None => return respond(&mut sock, "404 Not Found", "no such session").await,
+        };
+        let msg = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        sock.write_all(msg.as_bytes()).await?;
+        return Ok(());
     }
     if head.method != "POST" || head.path != "/v1/turn" {
         return respond(&mut sock, "404 Not Found", "not found").await;
@@ -216,5 +269,37 @@ mod tests {
         assert!(same("abcdef", "abcdef"));
         assert!(!same("abcdef", "abcdeg"));
         assert!(!same("abc", "abcdef"));
+    }
+
+    #[test]
+    fn answer_is_the_last_turns_last_message() {
+        let ev = |v: serde_json::Value| serde_json::from_value::<Event>(v).unwrap();
+        let msg = |t: &str| {
+            ev(
+                serde_json::json!({"event":"item_completed","id":"m","item":{"type":"message","text":t}}),
+            )
+        };
+        let started = || ev(serde_json::json!({"event":"turn_started","turn":1,"input":"q"}));
+        let ended = || Event::TurnEnded {
+            turn: 1,
+            reason: frog_engine::EndReason::Complete,
+            usage: Default::default(),
+        };
+        let done = last_answer(
+            [
+                started(),
+                msg("first"),
+                ended(),
+                started(),
+                msg("a"),
+                msg("b"),
+                ended(),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(done, serde_json::json!({"done": true, "text": "b"}));
+        let running =
+            last_answer([started(), msg("a"), ended(), started(), msg("half")].into_iter());
+        assert_eq!(running, serde_json::json!({"done": false}));
     }
 }

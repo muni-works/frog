@@ -473,7 +473,7 @@ async fn run() -> Result<bool> {
     }
     if let Some(addr) = &cli.listen {
         let token = std::env::var("FROG_LISTEN_TOKEN").unwrap_or_default();
-        let (cfg, sandbox, chat) = (cfg.clone(), cli.sandbox, cli.chat);
+        let (cfg, sandbox, chat, dir) = (cfg.clone(), cli.sandbox, cli.chat, store.clone());
         let make = move |resume, model: Option<String>| -> Result<Options> {
             let (profile_name, profile) = match model {
                 Some(m) => cfg.resolve(Some(&m))?,
@@ -487,7 +487,7 @@ async fn run() -> Result<bool> {
                 mode,
                 can_ask: false,
                 resume,
-                store: Some(store.clone()),
+                store: Some(dir.clone()),
                 sandbox,
                 rich: false,
                 subagent: false,
@@ -495,6 +495,7 @@ async fn run() -> Result<bool> {
             })
         };
         let template = listen::Template {
+            store: store.clone(),
             make: Box::new(make),
         };
         listen::run(addr, token, template).await?;
