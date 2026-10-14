@@ -169,7 +169,7 @@ struct PresentCard: View {
                         }
                     }
                     .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: 12))
                 }
             }
