@@ -1,9 +1,13 @@
+mod board;
 mod display;
 mod worker;
 
 use display::{Display, STRIP, W};
 use puck::canvas::Canvas;
+use board::Input;
+use esp_idf_svc::hal::gpio::{PinDriver, Pull};
 use puck::demo::{self, Player, Sim};
+use puck::touch::Touch;
 use std::time::{Duration, Instant};
 
 /// Big-endian RGB565 for the first `rows` rows of the band.
@@ -81,6 +85,15 @@ impl Timer {
 fn main() {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
+    let p = esp_idf_svc::hal::peripherals::Peripherals::take().expect("peripherals");
+    let bus = board::Bus::new(p.i2c0, p.pins.gpio15.into(), p.pins.gpio14.into());
+    let touch_rst = PinDriver::output(p.pins.gpio40).expect("touch reset");
+    let boot = PinDriver::input(p.pins.gpio0, Pull::Up).expect("boot button");
+    let inputs = board::spawn(bus, touch_rst, boot);
+    let mut touch = Touch::default();
+    let mut finger = None;
+    // The scripted turn plays until someone touches the puck.
+    let mut scripted = true;
     let mut band = band();
     let worker = worker::Worker::spawn(self::band());
     let mut lcd = Display::new();
@@ -94,7 +107,32 @@ fn main() {
     loop {
         let dt = last.elapsed().as_secs_f64().min(0.1);
         last = Instant::now();
-        player.run(&mut sim);
+        let now = sim.t;
+        let mut ops = Vec::new();
+        for i in inputs.try_iter() {
+            match i {
+                Input::Touch(f) => {
+                    log::info!("touch {f:?} ({:?})", sim.puck.mode);
+                    scripted = false;
+                    finger = f;
+                    ops.extend(touch.update(&mut sim.puck, f, now));
+                }
+                Input::Motion(down, shake) => (sim.down, sim.shake) = (down, shake),
+                Input::Button => {
+                    scripted = false;
+                    ops.extend(sim.puck.approve());
+                }
+            }
+        }
+        // Again with nothing new, so a held finger can count as a hold.
+        ops.extend(touch.update(&mut sim.puck, finger, now));
+        for op in ops {
+            // No bridge to frog yet.
+            log::info!("op: {op}");
+        }
+        if scripted {
+            player.run(&mut sim);
+        }
         physics.time(|| sim.step(dt));
         // Each strip is drawn into the band, then sent while the next one draws.
         let s = Instant::now();
@@ -132,7 +170,7 @@ fn main() {
             (frames, report) = (0, Instant::now());
         }
         // Once the script has played out, start over.
-        if player.done() && sim.t > 38.0 {
+        if scripted && player.done() && sim.t > 38.0 {
             sim = new_sim();
             player = Player::new(demo::script());
         }
