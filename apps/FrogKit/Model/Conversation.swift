@@ -38,6 +38,8 @@ final class Conversation {
     private(set) var turns: [TurnState] = []
     private(set) var busy = true
     private(set) var progress: String?
+    /// A `Present` call's blocks so far, while its arguments stream; gone once its item starts.
+    private(set) var presentPreview: Present?
     private(set) var permission: PermissionRequest?
     /// An MCP server waiting on the user.
     private(set) var elicitation: Elicitation?
@@ -335,9 +337,11 @@ final class Conversation {
                 }
             }
             progress = nil
+            presentPreview = nil
             // Replayed turns are old news; the sidebar hears once, when the history is in.
             if !replaying { onSessionChange?() }
         case .itemStarted(let id, let kind):
+            presentPreview = nil
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             upsert(id) { item in
                 item.kind = Self.kind(kind)
@@ -408,6 +412,8 @@ final class Conversation {
             appCalls.removeValue(forKey: id)?(result, error)
         case .progress(let label):
             progress = label
+        case .presentPreview(let p):
+            presentPreview = p
         case .notice(let level, let message):
             // Warnings and command answers belong in the transcript; other info is transient.
             if awaitingCommand {

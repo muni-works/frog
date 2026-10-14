@@ -487,6 +487,8 @@ enum Event: Decodable, Sendable {
     case itemDelta(id: String, delta: Delta)
     case permissionRequest(PermissionRequest)
     case progress(String)
+    /// A `Present` call's closed blocks while its arguments still stream.
+    case presentPreview(Present)
     case elicitation(Elicitation)
     case elicitationDone(id: String)
     case question(Question)
@@ -536,7 +538,7 @@ extension Event {
         case event
         case turn, input, reason, usage, id, kind, item, delta, decision
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
-        case progress, total, result, inner
+        case progress, total, result, inner, present
         case images
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image
     }
@@ -584,6 +586,8 @@ extension Event {
             self = .permissionRequest(try PermissionRequest(from: decoder))
         case "progress":
             self = .progress(try c.decode(String.self, forKey: .label))
+        case "present_preview":
+            self = .presentPreview(try c.decode(Present.self, forKey: .present))
         case "elicitation":
             self = .elicitation(try Elicitation(from: decoder))
         case "question":

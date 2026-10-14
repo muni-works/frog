@@ -2835,6 +2835,8 @@ Don't repeat it. Change the arguments or try a different approach.",
             // When the first event arrived, and the first that wasn't reasoning.
             let (mut first, mut answer) = (None::<Instant>, None::<Instant>);
             let mut filter = TagFilter::default();
+            let mut presenting = None::<crate::present::Stream>;
+            let (cwd, weak) = (self.ctx.cwd.clone(), self.tier == Tier::Weak);
             let text = |streamed: &mut Streamed, text: String| {
                 let id = streamed.message.get_or_insert_with(|| {
                     let id = new_id();
@@ -2877,9 +2879,23 @@ Don't repeat it. Change the arguments or try a different approach.",
                                 delta: Delta::Reasoning { text },
                             });
                         }
-                        StreamEvent::ToolCall(name) => self.emit(Event::Progress {
-                            label: format!("{name}…"),
-                        }),
+                        StreamEvent::ToolCall(name) => {
+                            presenting = (name == crate::present::TOOL).then(Default::default);
+                            self.emit(Event::Progress {
+                                label: format!("{name}…"),
+                            })
+                        }
+                        StreamEvent::ToolArgs { name, chunk } => {
+                            if name == crate::present::TOOL
+                                && let Some(p) = presenting
+                                    .as_mut()
+                                    .and_then(|s| s.push(&chunk, &cwd, weak))
+                            {
+                                self.emit(Event::PresentPreview {
+                                    present: Box::new(p),
+                                });
+                            }
+                        }
                         StreamEvent::ToolReady { index, name, input } => {
                             if early_tools {
                                 let ctx = self.early_ctx(&name, &input);

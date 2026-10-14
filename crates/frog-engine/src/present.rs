@@ -261,6 +261,100 @@ pub fn run(input: &Value, cwd: &Path, weak: bool) -> Result<Output> {
     })
 }
 
+/// Streaming `Present` arguments, previewed block by block as each one closes.
+#[derive(Default)]
+pub struct Stream {
+    text: String,
+    shown: usize,
+}
+
+impl Stream {
+    /// Add more argument text; returns a fresh preview when another block has closed.
+    pub fn push(&mut self, chunk: &str, cwd: &Path, weak: bool) -> Option<Present> {
+        self.text.push_str(chunk);
+        let input = closed_blocks(&self.text)?;
+        let n = input["blocks"].as_array().map_or(0, Vec::len);
+        if n <= self.shown {
+            return None;
+        }
+        self.shown = n;
+        let (p, _) = parse(&input, cwd, weak);
+        (!p.blocks.is_empty()).then_some(p)
+    }
+}
+
+/// The input so far with only the `blocks` that have closed (and `title`, once whole), or
+/// None while no block has. Scans the JSON text: a block's object ends at the brace that
+/// returns to the array's depth.
+fn closed_blocks(text: &str) -> Option<Value> {
+    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    let (mut key, mut str_start) = (String::new(), 0usize);
+    let (mut in_blocks, mut block_start) = (false, None::<usize>);
+    let mut title = None::<String>;
+    let mut blocks = Vec::new();
+    for (i, c) in text.char_indices() {
+        if in_str {
+            match c {
+                _ if esc => esc = false,
+                '\\' => esc = true,
+                '"' => {
+                    in_str = false;
+                    if depth == 1 {
+                        let s: String =
+                            serde_json::from_str(&text[str_start..=i]).unwrap_or_default();
+                        if key.is_empty() {
+                            key = s;
+                        } else if key == "title" {
+                            title = Some(s);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_str = true;
+                str_start = i;
+            }
+            ':' if depth == 1 => {}
+            ',' if depth == 1 => key.clear(),
+            '{' | '[' => {
+                depth += 1;
+                if depth == 2 && c == '[' && key == "blocks" {
+                    in_blocks = true;
+                } else if depth == 3 && in_blocks && c == '{' {
+                    block_start = Some(i);
+                }
+            }
+            '}' | ']' => {
+                if depth == 3
+                    && in_blocks
+                    && c == '}'
+                    && let Some(s) = block_start.take()
+                    && let Ok(v) = serde_json::from_str::<Value>(&text[s..=i])
+                {
+                    blocks.push(v);
+                }
+                if depth == 2 && in_blocks {
+                    in_blocks = false;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    if blocks.is_empty() {
+        return None;
+    }
+    let mut v = serde_json::json!({ "blocks": blocks });
+    if let Some(t) = title {
+        v["title"] = t.into();
+    }
+    Some(v)
+}
+
 /// Parse the tool's input: every block that validates, and a note for each that doesn't
 /// (`blocks[2]: …`). Diagram blocks are finished (checked against `cwd` and laid out).
 pub fn parse(input: &Value, cwd: &Path, weak: bool) -> (Present, Vec<String>) {
@@ -689,6 +783,33 @@ mod tests {
             errors,
             ["blocks[1]: `actions` blocks aren't available here"]
         );
+    }
+
+    #[test]
+    fn streams_block_by_block() {
+        let full = r#"{"title": "Disk {usage}", "blocks": [{"type": "stats", "items": [{"label": "a\"}", "value": "1"}]}, {"type": "callout", "text": "b"}, {"type": "callout", "text": ""}]}"#;
+        let mut s = Stream::default();
+        let mut previews = Vec::new();
+        for c in full.chars() {
+            if let Some(p) = s.push(&c.to_string(), cwd(), false) {
+                previews.push(p);
+            }
+        }
+        // One preview per closed block; the third (invalid) block changes nothing shown.
+        assert_eq!(previews.len(), 3);
+        assert_eq!(previews[0].title, "Disk {usage}");
+        assert_eq!(previews[0].blocks.len(), 1);
+        assert_eq!(previews[1].blocks.len(), 2);
+        assert_eq!(previews[2].blocks.len(), 2);
+        assert!(
+            matches!(&previews[0].blocks[0], Block::Stats { items } if items[0].label == "a\"}")
+        );
+    }
+
+    #[test]
+    fn nothing_closed_means_no_preview() {
+        assert!(closed_blocks(r#"{"blocks": [{"type": "table", "columns": ["#).is_none());
+        assert!(closed_blocks(r#"{"title": "x"}"#).is_none());
     }
 
     #[test]

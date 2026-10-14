@@ -431,6 +431,11 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// The blocks of a `Present` call that have finished streaming so far, validated. Each
+    /// preview replaces the last; the tool call's own item supersedes them all.
+    PresentPreview {
+        present: Box<crate::present::Present>,
+    },
     /// Something is in flight with nothing to show yet (a model request, a tool call's
     /// arguments streaming). Clients typically show a spinner.
     Progress {
