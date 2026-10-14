@@ -98,7 +98,7 @@
 
 <header>
   <h1>frog on Apple Watch</h1>
-  <p>Mockups for <code>apps/ios/Watch/DESIGN.md</code>. 45 mm screen at 198×242 pt, system type, always dark. The frog is the app mark from <code>FrogFace</code>; green is <code>Color.frog</code> (dark), orange means frog needs you.</p>
+  <p>Mockups for <code>apps/ios/Watch/DESIGN.md</code>, on top of today’s watch app: what exists is kept, and captions say what’s new. 45 mm screen at 198×242 pt, system type, always dark. The frog is the app mark from <code>FrogFace</code>; green is <code>Color.frog</code> (dark), orange means frog needs you.</p>
 </header>
 
 <section>
@@ -180,22 +180,52 @@
           <div class="hdr orange">Needs you</div>
           <div class="cell">
             <div class="meta"><svg class="frog" width="14" height="14" fill="var(--frog)"><use href="#frog-wait"/></svg>~/frog</div>
-            <div class="h mono" style="font-size:14px">git push origin claude/fix-wrap</div>
+            <div class="mono" style="font-size:14px;font-weight:600;line-height:1.2">git push origin claude/fix-wrap</div>
+            <div class="sec" style="font-size:11px;margin:3px 0 7px">uses the network · outside the sandbox</div>
+            <div style="display:flex;gap:5px"><div class="btn" style="flex:1;height:34px;font-size:14px">Deny</div><div class="btn frog" style="flex:1;height:34px;font-size:14px">Allow</div></div>
+            <div style="font-size:12px;color:var(--frog);text-align:center;margin-top:6px">Always allow “git push”</div>
           </div>
+        </div>
+      </div></div>
+      <figcaption><b>List · permission</b>Answer inline, as today, but in words: command, reason, Deny / Allow, Always allow. Tap the row for the full Request.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="watch"><div class="screen">
+        <div class="sb"><span class="t">frog</span><span class="clock">10:10</span></div>
+        <div class="scroll">
+          <div class="hdr orange">Needs you</div>
+          <div class="cell">
+            <div class="meta"><svg class="frog" width="14" height="14" fill="var(--frog)"><use href="#frog-wait"/></svg>weather-api</div>
+            <div class="orange" style="font-size:15px;font-weight:600;margin-bottom:7px">Which cache should the client use?</div>
+            <div class="btn" style="height:34px;font-size:14px;margin-bottom:5px">In memory</div>
+            <div class="btn" style="height:34px;font-size:14px;margin-bottom:5px">Redis</div>
+            <div class="btn" style="height:34px;font-size:14px;gap:5px"><svg class="glyph" viewBox="0 0 20 20" fill="#fff"><rect x="7" y="2" width="6" height="11" rx="3"/><path d="M4 10a6 6 0 0 0 12 0" fill="none" stroke="#fff" stroke-width="1.6"/><rect x="9.2" y="15" width="1.6" height="3"/></svg>Say something else</div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption><b>List · Ask</b>Unchanged from today: options as buttons, and your own words by voice.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="watch"><div class="screen">
+        <div class="sb"><span class="t">frog</span><span class="clock">10:12</span></div>
+        <div class="scroll">
           <div class="hdr">Working</div>
           <div class="cell">
             <div class="meta"><svg class="frog" width="14" height="14" fill="var(--frog)"><use href="#frog"/></svg>weather-api <span class="timer" style="margin-left:auto">0:12</span></div>
             <div style="font-size:14px">Running the tests…</div>
           </div>
-          <div class="hdr">Earlier</div>
+          <div class="hdr">Done</div>
           <div class="cell">
-            <div class="meta"><svg class="frog" width="14" height="14" fill="var(--frog)"><use href="#frog"/></svg>Chats</div>
-            <div style="font-size:14px" class="sec">Trains to Kyoto run every…</div>
+            <div class="meta">~/frog</div>
+            <div style="font-size:14px">1 test failing. tui::wrap breaks mid-word at column 40…</div>
           </div>
+          <div class="sec" style="display:flex;align-items:center;gap:5px;justify-content:center;font-size:11px;margin-top:8px">
+            <svg width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10" cy="10" r="8"/><path d="M2 10h16M10 2c3 3 3 13 0 16M10 2c-3 3-3 13 0 16"/></svg>Straight to your Mac</div>
         </div>
-        <div style="position:absolute;top:6px;left:12px;width:30px;height:30px;border-radius:50%;background:var(--g2);display:none"></div>
       </div></div>
-      <figcaption><b>List</b>Needs you, Working, Earlier today. Rows don't carry buttons; tap to answer with full context.</figcaption>
+      <figcaption><b>List · headers</b>Needs you, Working, Done as section headers. The route footer stays as it is today.</figcaption>
     </figure>
 
     <figure>
@@ -229,7 +259,7 @@
           <div class="btn frog">Allow</div>
         </div>
       </div></div>
-      <figcaption><b>Request</b>Allow is prominent and takes double tap (<code>handGestureShortcut(.primaryAction)</code>). Always allow sits under the fold.</figcaption>
+      <figcaption><b>Request</b>From a tap on the row: room for a long command. Allow takes double tap (<code>handGestureShortcut(.primaryAction)</code>).</figcaption>
     </figure>
 
     <figure>
@@ -273,25 +303,22 @@
           <div class="btn circ red"><svg class="glyph" viewBox="0 0 20 20" fill="var(--red)"><rect x="5" y="5" width="10" height="10" rx="2"/></svg></div>
         </div>
       </div></div>
-      <figcaption><b>Conversation · working</b>Activity and timer, your last message, one-line steps. Reply (mic) and Stop.</figcaption>
+      <figcaption><b>Reply screen · working</b>New: live timer, one-line steps, and Stop (sends <code>interrupt</code>).</figcaption>
     </figure>
 
     <figure>
       <div class="watch"><div class="screen">
         <div class="sb"><span class="t">‹ ~/frog</span><span class="clock">10:12</span></div>
         <div class="scroll" style="padding-top:2px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-            <svg class="frog" width="40" height="40" fill="var(--frog)"><use href="#frog"/></svg>
-            <div><div style="font-size:15px;font-weight:600">Done in 41s</div><div class="sec" style="font-size:13px">2 steps</div></div>
-          </div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <svg class="frog" width="20" height="20" fill="var(--frog)"><use href="#frog"/></svg><span class="sec" style="font-size:12px">Done</span></div>
           <div style="font-size:15px">1 test failing. <span class="mono" style="font-size:13px">tui::wrap</span> breaks mid-word at column 40. Want me to fix it?</div>
+          <div class="sec" style="font-size:12px;margin:6px 0;font-variant-numeric:tabular-nums">41s · 2 steps</div>
+          <div class="btn" style="height:34px;font-size:14px">Fix it</div>
         </div>
-        <div class="toolbar">
-          <div class="btn" style="flex:1">
-            <svg class="glyph" viewBox="0 0 20 20" fill="#fff"><rect x="7" y="2" width="6" height="11" rx="3"/><path d="M4 10a6 6 0 0 0 12 0" fill="none" stroke="#fff" stroke-width="1.6"/><rect x="9.2" y="15" width="1.6" height="3"/></svg>Reply</div>
-        </div>
+        <div class="toolbar"><div class="btn" style="flex:1"><svg class="glyph" viewBox="0 0 20 20" fill="#fff"><rect x="7" y="2" width="6" height="11" rx="3"/><path d="M4 10a6 6 0 0 0 12 0" fill="none" stroke="#fff" stroke-width="1.6"/><rect x="9.2" y="15" width="1.6" height="3"/></svg>Reply</div></div>
       </div></div>
-      <figcaption><b>Conversation · done</b>The answer, scrolled with the Crown. The frog hops once and a <code>.success</code> haptic plays.</figcaption>
+      <figcaption><b>Reply screen · done</b>Today's: the answer, stats, next steps (“Fix it”). New: Reply in the toolbar for your own words.</figcaption>
     </figure>
 
     <figure>
@@ -308,7 +335,7 @@
           <div class="cell" style="border-radius:20px">Stop after this</div>
         </div>
       </div></div>
-      <figcaption><b>Reply</b>System text input: dictation first, then suggestions. Sends <code>submit</code> to this conversation.</figcaption>
+      <figcaption><b>Reply input</b>Dictation first, then the turn’s next steps as suggestions. Sends <code>submit</code>.</figcaption>
     </figure>
 
     <figure>
@@ -317,10 +344,10 @@
         <div style="position:absolute;inset:40px 14px 14px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px">
           <svg class="frog" width="56" height="56" fill="var(--frog)"><use href="#frog-sad"/></svg>
           <div style="font-size:17px;font-weight:600">Can't reach your Mac</div>
-          <div class="sec" style="font-size:13px">Answers will send when your iPhone is near.</div>
+          <div class="sec" style="font-size:13px">Your phone is out of reach, and so is the Mac.</div>
         </div>
       </div></div>
-      <figcaption><b>Away from iPhone</b>Answers queue (<code>transferUserInfo</code>); the list keeps its last state, dimmed.</figcaption>
+      <figcaption><b>Offline</b>Today a footer line in the list; when there's nothing else to show, the whole screen.</figcaption>
     </figure>
 
   </div>
