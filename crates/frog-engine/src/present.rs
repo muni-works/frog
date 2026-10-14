@@ -124,7 +124,7 @@ pub enum Tone {
 }
 
 impl Block {
-    fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             Self::Table { .. } => "table",
             Self::Compare { .. } => "compare",

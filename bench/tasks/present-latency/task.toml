@@ -1,0 +1,5 @@
+# Numbers across two files: worth showing, not narrating. Passes when the answer is right and
+# the model drew it (a chart, table or stats) rather than writing it out.
+prompt = "Compare bench-before.csv with bench-after.csv and show me how each endpoint's p50 changed. Then write the endpoint that regressed most to answer.txt."
+check = "[ \"$(tr -d '[:space:]' < answer.txt)\" = /search ] && case \",$FROG_PRESENTED,\" in *,chart,*|*,table,*|*,stats,*) true;; *) echo \"presented: $FROG_PRESENTED\"; false;; esac"
+timeout_secs = 240

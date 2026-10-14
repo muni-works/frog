@@ -1,0 +1,5 @@
+endpoint,p50_ms
+/login,41
+/search,88
+/cart,52
+/checkout,120
