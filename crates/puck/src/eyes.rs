@@ -13,7 +13,7 @@ use phyz::{Mat3, Model, ModelBuilder, SpatialInertia, SpatialTransform, State, V
 /// How far the pendulum may swing before it hits the socket wall (radians).
 const LIMIT: f64 = 0.6;
 /// The physics runs on its own fixed step, independent of the frame rate.
-const DT: f64 = 1.0 / 240.0;
+const HZ: f64 = 240.0;
 /// Gravity is artistic, not 9.81: it sets how strongly a tilt beats the gaze spring.
 const G: f64 = 200.0;
 
@@ -37,6 +37,7 @@ pub struct Eyes {
     model: Model,
     state: State,
     acc: f64,
+    dt: f64,
     /// Where the frog wants to look, each axis in -1..=1 (x right, y up).
     pub gaze: (f64, f64),
 }
@@ -49,6 +50,13 @@ impl Default for Eyes {
 
 impl Eyes {
     pub fn new() -> Self {
+        Self::with_rate(HZ)
+    }
+
+    /// Step the physics `hz` times a second. The device can't afford 240 Hz in f64; the pendulums
+    /// stay stable down to about 60.
+    pub fn with_rate(hz: f64) -> Self {
+        let dt = 1.0 / hz;
         let link = SpatialInertia::new(
             1e-3,
             Vec3::zeros(),
@@ -69,7 +77,7 @@ impl Eyes {
             j.limit_damping = 30.0;
             j
         };
-        let mut b = ModelBuilder::new().gravity(Vec3::new(0.0, 0.0, -G)).dt(DT);
+        let mut b = ModelBuilder::new().gravity(Vec3::new(0.0, 0.0, -G)).dt(dt);
         for (eye, t) in TUNE.iter().enumerate() {
             // pitch about x, then yaw about y, then the bob one unit behind the pivot
             let base = (eye * 2) as i32;
@@ -93,6 +101,7 @@ impl Eyes {
             model,
             state,
             acc: 0.0,
+            dt,
             gaze: (0.0, 0.0),
         }
     }
@@ -121,14 +130,15 @@ impl Eyes {
             self.model.joints[eye * 2 + 1].spring_ref = (tx * s).asin() * YAW_SIGN;
         }
         self.acc += dt.min(0.1);
-        while self.acc >= DT {
+        let dt = self.dt;
+        while self.acc >= dt {
             // Semi-implicit Euler over aba, which already includes the springs, damping and soft
             // limits. Every joint is revolute, so q += v·dt is exact bookkeeping.
             let qdd = aba(&self.model, &self.state);
-            self.state.v += &(&qdd * DT);
+            self.state.v += &(&qdd * dt);
             let v = self.state.v.clone();
-            self.state.q += &(&v * DT);
-            self.acc -= DT;
+            self.state.q += &(&v * dt);
+            self.acc -= dt;
         }
     }
 
@@ -155,6 +165,9 @@ const YAW_SIGN: f64 = -1.0;
 mod tests {
     use super::*;
 
+    /// The host's rate and the device's.
+    const RATES: [f64; 2] = [HZ, 60.0];
+
     fn settle(e: &mut Eyes) {
         for _ in 0..600 {
             e.step(1.0 / 60.0);
@@ -163,48 +176,56 @@ mod tests {
 
     #[test]
     fn flat_and_looking_ahead_means_centered() {
-        let mut e = Eyes::new();
-        settle(&mut e);
-        for (x, y) in e.pupils() {
-            assert!(x.abs() < 0.02 && y.abs() < 0.02, "{x} {y}");
+        for hz in RATES {
+            let mut e = Eyes::with_rate(hz);
+            settle(&mut e);
+            for (x, y) in e.pupils() {
+                assert!(x.abs() < 0.02 && y.abs() < 0.02, "{x} {y}");
+            }
         }
     }
 
     #[test]
     fn tilting_rolls_pupils_downhill() {
         // Bottom edge lowered: gravity points down the glass (-y), so pupils move down (+y on screen).
-        let mut e = Eyes::new();
-        e.set_gravity([0.0, -0.7, -0.7], [0.0; 3]);
-        settle(&mut e);
-        for (x, y) in e.pupils() {
-            assert!(y > 0.3 && x.abs() < 0.05, "{x} {y}");
-        }
-        // Right edge lowered: pupils roll right.
-        e.set_gravity([0.7, 0.0, -0.7], [0.0; 3]);
-        settle(&mut e);
-        for (x, y) in e.pupils() {
-            assert!(x > 0.3 && y.abs() < 0.05, "{x} {y}");
+        for hz in RATES {
+            let mut e = Eyes::with_rate(hz);
+            e.set_gravity([0.0, -0.7, -0.7], [0.0; 3]);
+            settle(&mut e);
+            for (x, y) in e.pupils() {
+                assert!(y > 0.3 && x.abs() < 0.05, "{x} {y}");
+            }
+            // Right edge lowered: pupils roll right.
+            e.set_gravity([0.7, 0.0, -0.7], [0.0; 3]);
+            settle(&mut e);
+            for (x, y) in e.pupils() {
+                assert!(x > 0.3 && y.abs() < 0.05, "{x} {y}");
+            }
         }
     }
 
     #[test]
     fn gaze_pulls_against_gravity() {
-        let mut e = Eyes::new();
-        e.gaze = (0.8, 0.8); // up and to the right
-        settle(&mut e);
-        for (x, y) in e.pupils() {
-            assert!(x > 0.3 && y < -0.3, "{x} {y}");
+        for hz in RATES {
+            let mut e = Eyes::with_rate(hz);
+            e.gaze = (0.8, 0.8); // up and to the right
+            settle(&mut e);
+            for (x, y) in e.pupils() {
+                assert!(x > 0.3 && y < -0.3, "{x} {y}");
+            }
         }
     }
 
     #[test]
     fn pupils_stay_in_their_sockets() {
-        let mut e = Eyes::new();
-        e.set_gravity([0.0, -1.0, 0.0], [0.0, 3.0, 0.0]); // on its edge, being shaken
-        for _ in 0..300 {
-            e.step(1.0 / 60.0);
-            for (x, y) in e.pupils() {
-                assert!((x * x + y * y).sqrt() <= 1.0 + 1e-6, "{x} {y}");
+        for hz in RATES {
+            let mut e = Eyes::with_rate(hz);
+            e.set_gravity([0.0, -1.0, 0.0], [0.0, 3.0, 0.0]); // on its edge, being shaken
+            for _ in 0..300 {
+                e.step(1.0 / 60.0);
+                for (x, y) in e.pupils() {
+                    assert!((x * x + y * y).sqrt() <= 1.0 + 1e-6, "{x} {y}");
+                }
             }
         }
     }

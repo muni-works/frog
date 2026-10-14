@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# Firmware for the puck: its own target and toolchain (see crates/puck-fw/README.md).
+exclude = ["crates/puck-fw"]
 
 [workspace.package]
 version = "0.1.0"

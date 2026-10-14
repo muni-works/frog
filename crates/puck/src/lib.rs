@@ -9,10 +9,12 @@
 //! - [`sound`]: the cue sounds, embedded as WAVs.
 
 pub mod canvas;
+pub mod demo;
 pub mod eyes;
 pub mod model;
 pub mod sound;
 pub mod text;
+pub mod touch;
 pub mod ui;
 
 /// The panel is 466×466; the glass is the circle inscribed in it.
