@@ -27,6 +27,8 @@ use puck::canvas::{Canvas, hex, lerp};
 use puck::demo::{self, Player, Sim};
 use puck::model::Mode;
 use puck::sound::Cue;
+use puck::touch::Touch;
+use puck::ui::{Shape, Ui};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -46,6 +48,9 @@ struct Args {
     /// Render one frame of the demo to this PNG and exit.
     #[arg(long, value_name = "PNG")]
     shot: Option<PathBuf>,
+    /// With --shot: render the Apple Watch layout (45 mm) instead of the puck.
+    #[arg(long)]
+    watch: bool,
     /// Seconds into the demo for --shot.
     #[arg(long, default_value_t = 14.0)]
     at: f64,
@@ -81,24 +86,24 @@ fn step(sim: &mut Sim, dt: f64) {
 
 /// The glass inside the bezel.
 fn draw(sim: &Sim, cv: &mut Canvas) {
-        let mut glass = Canvas::new(puck::SCREEN as usize, puck::SCREEN as usize);
-        sim.ui.draw(&mut glass, &sim.puck, &sim.eyes, sim.t);
-        bezel(cv);
-        // Only the circle shows through the case.
-        let n = glass.w;
-        for y in 0..n {
-            for x in 0..n {
-                let d = (x as f32 + 0.5 - puck::C).hypot(y as f32 + 0.5 - puck::C);
-                let a = (puck::C - d + 0.5).clamp(0.0, 1.0);
-                cv.blend(
-                    x as i32 + INSET as i32,
-                    y as i32 + INSET as i32,
-                    glass.px[y * n + x],
-                    a,
-                );
-            }
+    let mut glass = Canvas::new(puck::SCREEN as usize, puck::SCREEN as usize);
+    sim.ui.draw(&mut glass, &sim.puck, &sim.eyes, sim.t);
+    bezel(cv);
+    // Only the circle shows through the case.
+    let n = glass.w;
+    for y in 0..n {
+        for x in 0..n {
+            let d = (x as f32 + 0.5 - puck::C).hypot(y as f32 + 0.5 - puck::C);
+            let a = (puck::C - d + 0.5).clamp(0.0, 1.0);
+            cv.blend(
+                x as i32 + INSET as i32,
+                y as i32 + INSET as i32,
+                glass.px[y * n + x],
+                a,
+            );
         }
     }
+}
 
 fn tilde(p: &std::path::Path) -> String {
     match std::env::var_os("HOME").map(PathBuf::from) {
@@ -146,8 +151,16 @@ fn demo_until(at: f64) -> Sim {
 
 // ---- the demo ----
 
-fn shot(path: &std::path::Path, at: f64) -> Result<()> {
-    let sim = demo_until(at);
+fn shot(path: &std::path::Path, at: f64, watch: bool) -> Result<()> {
+    let mut sim = demo_until(at);
+    if watch {
+        // Just the screen, laid out for the watch; it shows its own clock.
+        let shape = Shape::WATCH;
+        sim.ui = Ui::with_shape(shape);
+        let mut cv = Canvas::new(shape.w, shape.h);
+        sim.ui.draw(&mut cv, &sim.puck, &sim.eyes, sim.t);
+        return cv.save_png(path);
+    }
     let mut cv = Canvas::new(WIN, WIN);
     draw(&sim, &mut cv);
     cv.save_png(path)
@@ -284,7 +297,11 @@ fn run(args: &Args) -> Result<()> {
     } else {
         Some(Frog::spawn(&args.frog, &args.frog_args)?)
     };
-    let mut player = Player::new(if args.demo { demo::script() } else { Vec::new() });
+    let mut player = Player::new(if args.demo {
+        demo::script()
+    } else {
+        Vec::new()
+    });
     let speaker = Speaker::new();
     let mut sim = new_sim();
     let mut cv = Canvas::new(WIN, WIN);
@@ -297,8 +314,7 @@ fn run(args: &Args) -> Result<()> {
 
     let mut last = Instant::now();
     let glass = |x: f32, y: f32| (x - INSET, y - INSET);
-    let mut press: Option<(f32, f32, f64, bool)> = None; // where, when, on the knob
-    let mut held_fired = false;
+    let mut touch = Touch::default();
     let mut tilt_v = [0.0f64; 3];
 
     while win.is_open() {
@@ -351,43 +367,8 @@ fn run(args: &Args) -> Result<()> {
 
         // mouse: tap, hold, slide, decline
         let m = win.get_mouse_pos(MouseMode::Pass).map(|(x, y)| glass(x, y));
-        let down = win.get_mouse_down(MouseButton::Left);
-        match (down, press, m) {
-            (true, None, Some((x, y))) => {
-                let on_knob = sim.puck.mode == Mode::Ask
-                    && (x - (132.0 + sim.puck.slide * 202.0)).hypot(y - 296.0) < 34.0;
-                press = Some((x, y, now, on_knob));
-                held_fired = false;
-            }
-            (true, Some((_, _, t0, knob)), Some((x, _))) => {
-                if knob {
-                    sim.puck.slide = ((x - 132.0) / 202.0).clamp(0.0, 1.0);
-                } else if now - t0 > 0.6 && !held_fired && sim.puck.busy() {
-                    ops.extend(sim.puck.interrupt());
-                    held_fired = true;
-                }
-            }
-            (false, Some((x0, y0, _, knob)), _) => {
-                if knob {
-                    if sim.puck.slide > 0.95 {
-                        ops.extend(sim.puck.approve());
-                    } else {
-                        sim.puck.slide = 0.0;
-                    }
-                } else if !held_fired {
-                    let on_x =
-                        sim.puck.mode == Mode::Ask && (x0 - puck::C).hypot(y0 - 372.0) < 26.0;
-                    let on_glass = (x0 - puck::C).hypot(y0 - puck::C) < puck::C;
-                    if on_x {
-                        ops.extend(sim.puck.deny());
-                    } else if on_glass {
-                        ops.extend(sim.puck.tap(now));
-                    }
-                }
-                press = None;
-            }
-            _ => {}
-        }
+        let finger = m.filter(|_| win.get_mouse_down(MouseButton::Left));
+        ops.extend(touch.update(&mut sim.puck, finger, now));
 
         // tilt: right-drag leans the puck toward the pointer; let go and it settles flat
         let want = match (win.get_mouse_down(MouseButton::Right), m) {
@@ -445,7 +426,7 @@ fn main() -> Result<()> {
         return gallery(p);
     }
     if let Some(p) = &args.shot {
-        return shot(p, args.at);
+        return shot(p, args.at, args.watch);
     }
     run(&args)
 }

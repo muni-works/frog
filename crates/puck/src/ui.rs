@@ -61,19 +61,24 @@ struct GlowMap {
 const TURN_BITS: u32 = 15;
 
 impl GlowMap {
-    fn new() -> Self {
-        let n = SCREEN as usize;
-        let mut rows = Vec::with_capacity(n + 1);
+    fn new(shape: Shape) -> Self {
+        let (cx, cy) = (shape.w as f32 / 2.0, shape.h as f32 / 2.0);
+        let (bx, by, r) = (cx - shape.corner, cy - shape.corner, shape.corner);
+        let mut rows = Vec::with_capacity(shape.h + 1);
         let mut px = Vec::new();
-        for y in 0..n {
+        for y in 0..shape.h {
             rows.push(px.len() as u32);
-            for x in 0..n {
-                let (dx, dy) = (x as f32 + 0.5 - C, y as f32 + 0.5 - C);
-                let d = dx.hypot(dy);
-                if !(150.0..=C).contains(&d) {
+            for x in 0..shape.w {
+                let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
+                // How far inside the screen's edge: a rounded rectangle, which for the round
+                // glass is the circle.
+                let (qx, qy) = (dx.abs() - bx, dy.abs() - by);
+                let outside = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+                let inset = -outside;
+                if !(0.0..=C - 150.0).contains(&inset) {
                     continue;
                 }
-                let radial = ((-((d - 218.0) / 24.0).powi(2)).exp() * 255.0).round() as u32;
+                let radial = ((-((inset - (C - 218.0)) / 24.0).powi(2)).exp() * 255.0).round() as u32;
                 if radial == 0 {
                     continue;
                 }
@@ -89,7 +94,7 @@ impl GlowMap {
         Self { rows, px, around }
     }
 
-    fn draw(&self, cv: &mut Canvas, g: &Glow, t: f32) {
+    fn draw(&self, cv: &mut Canvas, off: (i32, i32), g: &Glow, t: f32) {
         let start = g.start + if g.spin > 0.0 { t / g.spin } else { 0.0 };
         let pulse = if g.breathe > 0.0 {
             0.675 + 0.325 * (t * std::f32::consts::TAU / g.breathe).cos()
@@ -110,9 +115,10 @@ impl GlowMap {
         let start = (start.rem_euclid(1.0) * one as f32) as u32;
         let (arc, inv_arc) = ((g.arc.min(1.0) * one as f32) as u32, 1.0 / g.arc);
         let (from, step) = (g.from, [0, 1, 2].map(|i| g.to[i] - g.from[i]));
-        let (ox, oy) = (cv.origin.0 as i32, cv.origin.1 as i32);
-        let rows = cv.rows();
-        for y in rows.start.max(0)..rows.end.min(SCREEN as i32) {
+        // The map is in screen pixels; `Ui::draw` has shifted the origin to center the layout.
+        let (ox, oy) = (cv.origin.0 as i32 - off.0, cv.origin.1 as i32 - off.1);
+        let rows = -oy..cv.h as i32 - oy;
+        for y in rows.start.max(0)..rows.end.min(self.rows.len() as i32 - 1) {
             let (a, b) = (self.rows[y as usize], self.rows[y as usize + 1]);
             let row = (y + oy) as usize * cv.w;
             for &e in &self.px[a as usize..b as usize] {
@@ -231,7 +237,24 @@ pub fn gaze(p: &Puck, t: f64) -> (f64, f64) {
     }
 }
 
+/// The screen the UI is laid out on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shape {
+    pub w: usize,
+    pub h: usize,
+    /// Corner radius; half the width for a round screen.
+    pub corner: f32,
+}
+
+impl Shape {
+    /// The puck: a 466×466 round AMOLED.
+    pub const ROUND: Shape = Shape { w: 466, h: 466, corner: C };
+    /// Apple Watch, 45 mm: 396×484 with rounded corners.
+    pub const WATCH: Shape = Shape { w: 396, h: 484, corner: 92.0 };
+}
+
 pub struct Ui {
+    pub shape: Shape,
     pub fonts: Fonts,
     glow: GlowMap,
     /// Wall-clock text for Idle, set by the host.
@@ -240,9 +263,14 @@ pub struct Ui {
 
 impl Ui {
     pub fn new() -> Self {
+        Self::with_shape(Shape::ROUND)
+    }
+
+    pub fn with_shape(shape: Shape) -> Self {
         Self {
+            shape,
             fonts: Fonts::new(),
-            glow: GlowMap::new(),
+            glow: GlowMap::new(shape),
             clock: String::new(),
         }
     }
@@ -253,9 +281,26 @@ impl Ui {
             .draw(cv, f, size, C, y, s, Anchor::Middle, c, a, 0.0);
     }
 
-    /// Draw the glass for `p` at time `t` (seconds since boot) into a 466×466 canvas. The panel
-    /// is square; everything outside the inscribed circle is hidden by the case.
+    /// Where the round 466 layout sits on this screen: centered across, and down so the frog
+    /// stays on the bottom edge.
+    fn offset(&self) -> (i32, i32) {
+        (
+            (self.shape.w as i32 - SCREEN as i32) / 2,
+            self.shape.h as i32 - SCREEN as i32,
+        )
+    }
+
+    /// Draw the screen for `p` at time `t` (seconds since boot) into a canvas the size of
+    /// `shape`. On the puck the panel is square and the case hides everything outside the circle.
     pub fn draw(&self, cv: &mut Canvas, p: &Puck, eyes: &Eyes, t: f64) {
+        let (dx, dy) = self.offset();
+        let o = cv.origin;
+        cv.origin = (o.0 + dx as f32, o.1 + dy as f32);
+        self.draw_layout(cv, p, eyes, t);
+        cv.origin = o;
+    }
+
+    fn draw_layout(&self, cv: &mut Canvas, p: &Puck, eyes: &Eyes, t: f64) {
         let t32 = t as f32;
         let age = (t - p.since) as f32;
         let pupils = eyes.pupils();
@@ -286,6 +331,7 @@ impl Ui {
                 let fade = (1.0 - (age - BOOT_SECS as f32 + 0.6).max(0.0) / 0.6).clamp(0.0, 1.0);
                 self.glow.draw(
                     cv,
+                    self.offset(),
                     &Glow {
                         arc: 0.5,
                         start: 0.25,
@@ -299,6 +345,7 @@ impl Ui {
             Mode::Idle => {
                 self.glow.draw(
                     cv,
+                    self.offset(),
                     &Glow {
                         arc: 0.5,
                         start: 0.25,
@@ -308,14 +355,19 @@ impl Ui {
                     },
                     t32,
                 );
-                self.text(cv, Face::Regular, 84.0, 150.0, &self.clock, WHITE, 1.0);
-                self.text(cv, Face::Mono, 20.0, 190.0, &p.cwd, WHITE, 0.4);
+                // Hosts with a clock of their own (a watch) leave this empty.
+                if !self.clock.is_empty() {
+                    self.text(cv, Face::Regular, 84.0, 150.0, &self.clock, WHITE, 1.0);
+                }
+                let (_, cwd) = self.fonts.fit(Face::Mono, &[20.0], &p.cwd, LINE, 1);
+                self.text(cv, Face::Mono, 20.0, 190.0, &cwd.concat(), WHITE, 0.4);
                 look.lid = 0.45;
                 draw_frog(cv, &look, pupils, blink);
             }
             Mode::Listening => {
                 self.glow.draw(
                     cv,
+                    self.offset(),
                     &Glow {
                         spin: 3.2,
                         breathe: 0.7,
@@ -349,6 +401,7 @@ impl Ui {
             Mode::Thinking => {
                 self.glow.draw(
                     cv,
+                    self.offset(),
                     &Glow {
                         arc: 0.55,
                         spin: 2.4,
@@ -372,6 +425,7 @@ impl Ui {
             Mode::Running => {
                 self.glow.draw(
                     cv,
+                    self.offset(),
                     &Glow {
                         arc: 0.7,
                         spin: 5.0,
@@ -426,6 +480,7 @@ impl Ui {
             Mode::Ask => {
                 self.glow.draw(
                     cv,
+                    self.offset(),
                     &Glow {
                         breathe: 1.6,
                         ..Glow::ring(AMBER, hex(0xff6b3d))
@@ -498,6 +553,7 @@ impl Ui {
                 let fade = 1.0 - (age / DONE_SECS as f32).clamp(0.0, 1.0) * 0.7;
                 self.glow.draw(
                     cv,
+                    self.offset(),
                     &Glow {
                         arc: 0.6,
                         start: 0.333,
@@ -535,6 +591,7 @@ impl Ui {
             Mode::Error => {
                 self.glow.draw(
                     cv,
+                    self.offset(),
                     &Glow {
                         arc: 0.5,
                         start: 0.25,
