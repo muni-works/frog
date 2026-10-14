@@ -439,6 +439,19 @@ final class RemoteBridge {
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 row["last"] = String(text.prefix(1200))
             }
+            // The last turn's headline numbers and next steps (Present), once it's done.
+            if let turn = c?.turns.last, turn.end != nil {
+                let blocks = turn.items.compactMap(\.result?.present).flatMap(\.blocks)
+                let stats = blocks.flatMap { b -> [String] in
+                    guard case .stats(let items) = b else { return [] }
+                    return items.map { "\($0.label): \($0.value)" }
+                }
+                if !stats.isEmpty { row["stats"] = Array(stats.prefix(4)) }
+                if let actions = blocks.last(where: { if case .actions = $0 { true } else { false } }),
+                   case .actions(_, let options) = actions {
+                    row["actions"] = options.prefix(4).map { ["label": $0.label, "send": $0.send ?? ""] }
+                }
+            }
             return row
         }
     }
@@ -509,6 +522,10 @@ final class RemoteBridge {
             // The open Ask, from a watch: the picked labels and/or words of its own.
             guard let qid = op["id"] as? String, c.question?.id == qid else { return }
             c.answer(question: op["choices"] as? [String] ?? [], other: op["other"] as? String)
+        case "act":
+            // A press on a Present actions button, from a watch.
+            guard let label = op["label"] as? String else { return }
+            c.act(Present.Choice(label: label, send: op["send"] as? String))
         case "interrupt":
             c.interrupt()
         case "shell":

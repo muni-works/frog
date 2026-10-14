@@ -18,6 +18,9 @@ struct Snapshot: Codable, Equatable {
         var ask: Ask? = nil
         /// The last thing frog said, for the wrist.
         var last: String? = nil
+        /// The last turn's headline stats ("disk: 42 GB") and next-step buttons (Present).
+        var stats: [String]? = nil
+        var actions: [Action]? = nil
 
         var waiting: Bool { live == "waiting" }
     }
@@ -28,6 +31,12 @@ struct Snapshot: Codable, Equatable {
         var question: String
         var options: [String]
         var other: Bool
+    }
+
+    /// A Present actions button: `send` (or the label) becomes the next message.
+    struct Action: Codable, Hashable {
+        var label: String
+        var send: String
     }
 
     var rows: [Row]
@@ -70,7 +79,11 @@ extension Snapshot.Row {
                   activity: r["activity"] as? String,
                   question: q.map { _ in PermissionRequest.question(name: name, arg: arg) },
                   permission: q?["id"] as? String, local: true, open: r["open"] as? Bool ?? false,
-                  ask: Snapshot.Ask(r["ask"]), last: r["last"] as? String)
+                  ask: Snapshot.Ask(r["ask"]), last: r["last"] as? String,
+                  stats: r["stats"] as? [String],
+                  actions: (r["actions"] as? [[String: String]])?.compactMap { a in
+                      a["label"].map { Snapshot.Action(label: $0, send: a["send"] ?? "") }
+                  })
     }
 }
 
