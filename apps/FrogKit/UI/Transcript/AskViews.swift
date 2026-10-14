@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 
 // MARK: - Ask
@@ -106,6 +107,9 @@ struct QuestionCard: View {
 /// diagrams.
 struct PresentCard: View {
     let present: Present
+    /// Presses on actions buttons; nil where there's nobody to press them (the buttons are hidden).
+    var act: ((Present.Choice) -> Void)?
+    @State private var pressed: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -151,6 +155,36 @@ struct PresentCard: View {
             .background(color(tone).opacity(0.10), in: .rect(cornerRadius: 10))
         case .diagram(let d):
             DiagramCard(diagram: d)
+        case .chart(let kind, let labels, let series, let unit):
+            PresentChart(kind: kind, labels: labels, series: series, unit: unit)
+        case .stats(let items):
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10, alignment: .topLeading)], alignment: .leading, spacing: 10) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, s in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(s.label).font(.caption).foregroundStyle(.secondary)
+                        Text(s.value).font(.title2.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(s.tone.map(color) ?? .primary)
+                        if let d = s.detail, !d.isEmpty {
+                            Text(d).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: 12))
+                }
+            }
+        case .actions(let prompt, let options):
+            if let act {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let p = prompt, !p.isEmpty {
+                        Text(p).foregroundStyle(.secondary)
+                    }
+                    FlowButtons(options: options, pressed: pressed) { o in
+                        pressed = o.label
+                        act(o)
+                    }
+                }
+            }
         case .unknown:
             EmptyView()
         }
@@ -194,6 +228,75 @@ struct PresentCard: View {
         case .warning: .orange
         case .danger: .red
         }
+    }
+}
+
+/// Actions as a wrapping row of buttons; once one is pressed the rest go quiet.
+private struct FlowButtons: View {
+    let options: [Present.Choice]
+    let pressed: String?
+    let press: (Present.Choice) -> Void
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { buttons }
+            VStack(alignment: .leading, spacing: 8) { buttons }
+        }
+    }
+
+    @ViewBuilder private var buttons: some View {
+        ForEach(Array(options.enumerated()), id: \.offset) { _, o in
+            Button {
+                press(o)
+            } label: {
+                Text(o.label).padding(.horizontal, 4)
+            }
+            .buttonStyle(.bordered)
+            .tint(pressed == o.label ? .accentColor : nil)
+            .disabled(pressed != nil)
+        }
+    }
+}
+
+private struct PresentChart: View {
+    let kind: Present.ChartKind
+    let labels: [String]
+    let series: [Present.Series]
+    let unit: String?
+
+    private struct Point: Identifiable {
+        let id: Int
+        let label: String
+        let series: String
+        let value: Double
+    }
+
+    private var points: [Point] {
+        series.enumerated().flatMap { s, ser in
+            zip(labels, ser.values).enumerated().map { i, lv in
+                Point(id: s * 1000 + i, label: lv.0, series: ser.name ?? "", value: lv.1)
+            }
+        }
+    }
+
+    var body: some View {
+        Chart(points) { p in
+            switch kind {
+            case .bar:
+                BarMark(x: .value("label", p.label), y: .value(unit ?? "value", p.value))
+                    .foregroundStyle(by: .value("series", p.series))
+                    .position(by: .value("series", p.series))
+            case .line:
+                LineMark(x: .value("label", p.label), y: .value(unit ?? "value", p.value))
+                    .foregroundStyle(by: .value("series", p.series))
+                    .symbol(by: .value("series", p.series))
+            }
+        }
+        .chartLegend(series.count > 1 ? .visible : .hidden)
+        .chartYAxisLabel(unit ?? "")
+        .frame(height: 180)
+        .padding(12)
+        .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: 12))
     }
 }
 

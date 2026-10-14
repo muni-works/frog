@@ -42,6 +42,8 @@ enum Decision: String, Codable, Sendable {
 enum Op: Encodable, Sendable {
     case submit(String, images: [ToolImage] = [])
     case shell(String)
+    /// A press on a `Present` actions button; runs a turn with `send` (or the label).
+    case act(label: String, send: String)
     case interrupt
     case permission(id: String, decision: Decision)
     case setMode(Mode)
@@ -81,7 +83,7 @@ enum Op: Encodable, Sendable {
         case op, text, command, id, decision, mode, spec, focus, after, title
         case action, content, server, tool, arguments, images
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
-        case ask, choices, other
+        case ask, choices, other, label, send
     }
 
     func encode(to encoder: Encoder) throws {
@@ -91,6 +93,10 @@ enum Op: Encodable, Sendable {
             try c.encode("submit", forKey: .op)
             try c.encode(text, forKey: .text)
             if !images.isEmpty { try c.encode(images, forKey: .images) }
+        case .act(let label, let send):
+            try c.encode("act", forKey: .op)
+            try c.encode(label, forKey: .label)
+            if !send.isEmpty { try c.encode(send, forKey: .send) }
         case .shell(let command):
             try c.encode("shell", forKey: .op)
             try c.encode(command, forKey: .command)

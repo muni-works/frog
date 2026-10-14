@@ -69,6 +69,13 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<Image>,
     },
+    /// The user pressed a button in a `Present` actions block. Runs a turn like [`Op::Submit`]
+    /// with `send` (or `label` when `send` is empty) as the message.
+    Act {
+        label: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        send: String,
+    },
     /// Run a shell command directly; its output is attached to the next message.
     Shell {
         command: String,

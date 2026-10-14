@@ -170,6 +170,19 @@ final class Conversation {
         link?.send(.submit(text, images: images))
     }
 
+    /// A press on a `Present` actions button: the model gets `send` (or the label) as the
+    /// user's next message.
+    func act(_ choice: Present.Choice) {
+        let text = (choice.send ?? "").isEmpty ? choice.label : choice.send!
+        if busy || replaying {
+            queue.append(Queued(text: text, images: []))
+            return
+        }
+        turns.append(TurnState(number: nil, input: text, sentAt: .now))
+        busy = true
+        link?.send(.act(label: choice.label, send: choice.send ?? ""))
+    }
+
     private static func isMemoryCommand(_ text: String) -> Bool {
         let name = text.split(whereSeparator: \.isWhitespace).first ?? ""
         return ["/remember", "/forget", "/memory"].contains(String(name))

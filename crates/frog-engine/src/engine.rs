@@ -1092,6 +1092,10 @@ impl Agent {
                     self.turn(&text, images).await?
                 }
             }
+            Op::Act { label, send } => {
+                let text = if send.trim().is_empty() { label } else { send };
+                self.turn(&text, Vec::new()).await?
+            }
             Op::Shell { command } => self.shell(&command).await,
             Op::SetMode { mode } => {
                 self.mode = mode;
