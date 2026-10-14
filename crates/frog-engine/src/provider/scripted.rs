@@ -59,6 +59,21 @@ impl Client {
                 Block::Text { text } => on(StreamEvent::Text(text.clone())),
                 Block::ToolUse { name, input, .. } => {
                     on(StreamEvent::ToolCall(name.clone()));
+                    // Arguments arrive in pieces, as from a real server.
+                    let args = input.to_string();
+                    let mut rest = args.as_str();
+                    while !rest.is_empty() {
+                        let mut cut = rest.len().min(16);
+                        while !rest.is_char_boundary(cut) {
+                            cut += 1;
+                        }
+                        let (chunk, tail) = rest.split_at(cut);
+                        on(StreamEvent::ToolArgs {
+                            name: name.clone(),
+                            chunk: chunk.into(),
+                        });
+                        rest = tail;
+                    }
                     if let Some(wait) = self.tool_args {
                         on(StreamEvent::ToolReady {
                             index,

@@ -17,6 +17,10 @@ const MAX_BLOCKS: usize = 8;
 const MAX_COLUMNS: usize = 8;
 const MAX_ROWS: usize = 50;
 const MAX_STEPS: usize = 20;
+const MAX_SERIES: usize = 4;
+const MAX_POINTS: usize = 24;
+const MAX_STATS: usize = 6;
+const MAX_ACTIONS: usize = 6;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Present {
@@ -49,6 +53,58 @@ pub enum Block {
         text: String,
     },
     Diagram(Box<Diagram>),
+    /// Numbers over a few labels: bars for categories, a line for a trend.
+    Chart {
+        #[serde(default)]
+        kind: ChartKind,
+        labels: Vec<String>,
+        series: Vec<Series>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        unit: String,
+    },
+    /// A few headline numbers.
+    Stats {
+        items: Vec<Stat>,
+    },
+    /// Buttons the user can press; a press comes back as their next message ([`crate::protocol::Op::Act`]).
+    Actions {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        prompt: String,
+        options: Vec<Choice>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChartKind {
+    #[default]
+    Bar,
+    Line,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Series {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    pub values: Vec<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Stat {
+    pub label: String,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<Tone>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Choice {
+    pub label: String,
+    /// Sent instead of the label when set: the message the press stands for.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub send: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -68,13 +124,16 @@ pub enum Tone {
 }
 
 impl Block {
-    fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             Self::Table { .. } => "table",
             Self::Compare { .. } => "compare",
             Self::Steps { .. } => "steps",
             Self::Callout { .. } => "callout",
             Self::Diagram(_) => "diagram",
+            Self::Chart { .. } => "chart",
+            Self::Stats { .. } => "stats",
+            Self::Actions { .. } => "actions",
         }
     }
 }
@@ -83,9 +142,11 @@ impl Block {
 /// hard to get wrong.
 pub fn kinds(weak: bool) -> &'static [&'static str] {
     if weak {
-        &["table", "callout"]
+        &["table", "callout", "stats"]
     } else {
-        &["table", "compare", "steps", "callout", "diagram"]
+        &[
+            "table", "compare", "steps", "callout", "diagram", "chart", "stats", "actions",
+        ]
     }
 }
 
@@ -103,6 +164,39 @@ pub fn spec(weak: bool) -> ToolSpec {
             "text": {"type": "string"}
         }, "required": ["type", "text"]}),
     ];
+    if kinds.contains(&"stats") {
+        variants.push(json!({"type": "object", "properties": {
+            "type": {"const": "stats"},
+            "items": {"type": "array", "maxItems": MAX_STATS, "items": {"type": "object", "properties": {
+                "label": {"type": "string"},
+                "value": {"type": "string", "description": "short, e.g. \"42 GB\" or \"3/5\""},
+                "detail": {"type": "string"},
+                "tone": {"type": "string", "enum": ["info", "success", "warning", "danger"]}
+            }, "required": ["label", "value"]}}
+        }, "required": ["type", "items"]}));
+    }
+    if kinds.contains(&"chart") {
+        variants.push(json!({"type": "object", "properties": {
+            "type": {"const": "chart"},
+            "kind": {"type": "string", "enum": ["bar", "line"], "description": "bar for categories, line for a trend over time"},
+            "labels": {"type": "array", "maxItems": MAX_POINTS, "items": {"type": "string"}},
+            "series": {"type": "array", "maxItems": MAX_SERIES, "items": {"type": "object", "properties": {
+                "name": {"type": "string"},
+                "values": {"type": "array", "items": {"type": "number"}, "description": "one per label"}
+            }, "required": ["values"]}},
+            "unit": {"type": "string"}
+        }, "required": ["type", "labels", "series"]}));
+    }
+    if kinds.contains(&"actions") {
+        variants.push(json!({"type": "object", "properties": {
+            "type": {"const": "actions"},
+            "prompt": {"type": "string"},
+            "options": {"type": "array", "maxItems": MAX_ACTIONS, "items": {"type": "object", "properties": {
+                "label": {"type": "string", "description": "a few words"},
+                "send": {"type": "string", "description": "the message a press sends, if not the label"}
+            }, "required": ["label"]}}
+        }, "required": ["type", "options"]}));
+    }
     if kinds.contains(&"compare") {
         let side = json!({"type": "object", "properties": {"label": {"type": "string"}, "text": {"type": "string"}}, "required": ["label", "text"]});
         variants.push(json!({"type": "object", "properties": {
@@ -126,7 +220,9 @@ pub fn spec(weak: bool) -> ToolSpec {
         description: format!(
             "Show the user structured results instead of prose: blocks of {}. Use it when \
 a shape reads faster than paragraphs: test results or options as a table, a before/after, a \
-plan's progress, one line that must not be missed. Don't use it for short answers, and don't \
+plan's progress, one line that must not be missed, numbers as a chart or headline stats, \
+or the next steps the user can pick with one press (actions; a press arrives as their next \
+message). Don't use it for short answers, and don't \
 repeat what it shows in text. The user sees the blocks; you get a confirmation and any errors \
 (fix only the blocks named).",
             kinds.join(", ")
@@ -163,6 +259,100 @@ pub fn run(input: &Value, cwd: &Path, weak: bool) -> Result<Output> {
         present: Some(Box::new(p)),
         ..Default::default()
     })
+}
+
+/// Streaming `Present` arguments, previewed block by block as each one closes.
+#[derive(Default)]
+pub struct Stream {
+    text: String,
+    shown: usize,
+}
+
+impl Stream {
+    /// Add more argument text; returns a fresh preview when another block has closed.
+    pub fn push(&mut self, chunk: &str, cwd: &Path, weak: bool) -> Option<Present> {
+        self.text.push_str(chunk);
+        let input = closed_blocks(&self.text)?;
+        let n = input["blocks"].as_array().map_or(0, Vec::len);
+        if n <= self.shown {
+            return None;
+        }
+        self.shown = n;
+        let (p, _) = parse(&input, cwd, weak);
+        (!p.blocks.is_empty()).then_some(p)
+    }
+}
+
+/// The input so far with only the `blocks` that have closed (and `title`, once whole), or
+/// None while no block has. Scans the JSON text: a block's object ends at the brace that
+/// returns to the array's depth.
+fn closed_blocks(text: &str) -> Option<Value> {
+    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    let (mut key, mut str_start) = (String::new(), 0usize);
+    let (mut in_blocks, mut block_start) = (false, None::<usize>);
+    let mut title = None::<String>;
+    let mut blocks = Vec::new();
+    for (i, c) in text.char_indices() {
+        if in_str {
+            match c {
+                _ if esc => esc = false,
+                '\\' => esc = true,
+                '"' => {
+                    in_str = false;
+                    if depth == 1 {
+                        let s: String =
+                            serde_json::from_str(&text[str_start..=i]).unwrap_or_default();
+                        if key.is_empty() {
+                            key = s;
+                        } else if key == "title" {
+                            title = Some(s);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_str = true;
+                str_start = i;
+            }
+            ':' if depth == 1 => {}
+            ',' if depth == 1 => key.clear(),
+            '{' | '[' => {
+                depth += 1;
+                if depth == 2 && c == '[' && key == "blocks" {
+                    in_blocks = true;
+                } else if depth == 3 && in_blocks && c == '{' {
+                    block_start = Some(i);
+                }
+            }
+            '}' | ']' => {
+                if depth == 3
+                    && in_blocks
+                    && c == '}'
+                    && let Some(s) = block_start.take()
+                    && let Ok(v) = serde_json::from_str::<Value>(&text[s..=i])
+                {
+                    blocks.push(v);
+                }
+                if depth == 2 && in_blocks {
+                    in_blocks = false;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    if blocks.is_empty() {
+        return None;
+    }
+    let mut v = serde_json::json!({ "blocks": blocks });
+    if let Some(t) = title {
+        v["title"] = t.into();
+    }
+    Some(v)
 }
 
 /// Parse the tool's input: every block that validates, and a note for each that doesn't
@@ -255,6 +445,60 @@ fn check(block: Block, cwd: &Path) -> Result<Block, String> {
             }
             Block::Callout { tone, text }
         }
+        Block::Chart {
+            kind,
+            labels,
+            series,
+            unit,
+        } => {
+            if labels.is_empty() || labels.len() > MAX_POINTS {
+                return Err(format!("a chart needs 1-{MAX_POINTS} labels"));
+            }
+            if series.is_empty() || series.len() > MAX_SERIES {
+                return Err(format!("a chart needs 1-{MAX_SERIES} series"));
+            }
+            if let Some(s) = series.iter().position(|s| s.values.len() != labels.len()) {
+                return Err(format!(
+                    "series {s} has {} values but there are {} labels",
+                    series[s].values.len(),
+                    labels.len()
+                ));
+            }
+            if series
+                .iter()
+                .flat_map(|s| &s.values)
+                .any(|v| !v.is_finite())
+            {
+                return Err("chart values must be finite numbers".into());
+            }
+            Block::Chart {
+                kind,
+                labels,
+                series,
+                unit,
+            }
+        }
+        Block::Stats { items } => {
+            if items.is_empty() || items.len() > MAX_STATS {
+                return Err(format!("stats need 1-{MAX_STATS} items"));
+            }
+            if items
+                .iter()
+                .any(|s| s.label.trim().is_empty() || s.value.trim().is_empty())
+            {
+                return Err("every stat needs a label and a value".into());
+            }
+            Block::Stats { items }
+        }
+        Block::Actions { prompt, options } => {
+            if options.is_empty() || options.len() > MAX_ACTIONS {
+                return Err(format!("actions need 1-{MAX_ACTIONS} options"));
+            }
+            if options.iter().any(|o| o.label.trim().is_empty()) {
+                return Err("every action needs a label".into());
+            }
+            Block::Actions { prompt, options }
+        }
         Block::Diagram(mut d) => {
             d.finish(cwd);
             if d.nodes.is_empty() {
@@ -302,10 +546,80 @@ impl Present {
                     format!("{mark} {text}")
                 }
                 Block::Diagram(d) => d.to_ascii(),
+                Block::Chart {
+                    labels,
+                    series,
+                    unit,
+                    ..
+                } => chart(labels, series, unit),
+                Block::Stats { items } => items
+                    .iter()
+                    .map(|s| {
+                        let mut line = format!("{}: {}", s.label, s.value);
+                        if !s.detail.is_empty() {
+                            line.push_str(&format!(" ({})", s.detail));
+                        }
+                        line
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                Block::Actions { prompt, options } => {
+                    let mut lines: Vec<String> = (!prompt.is_empty())
+                        .then(|| prompt.clone())
+                        .into_iter()
+                        .collect();
+                    lines.extend(
+                        options
+                            .iter()
+                            .enumerate()
+                            .map(|(i, o)| format!("[{}] {}", i + 1, o.label)),
+                    );
+                    lines.join("\n")
+                }
             });
         }
         out.join("\n\n")
     }
+}
+
+/// Horizontal bars, one row per label and series, scaled to the largest magnitude.
+fn chart(labels: &[String], series: &[Series], unit: &str) -> String {
+    const WIDTH: f64 = 24.0;
+    let max = series
+        .iter()
+        .flat_map(|s| &s.values)
+        .fold(0.0_f64, |m, v| m.max(v.abs()));
+    let named = series.len() > 1;
+    let name_w = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let mut out = Vec::new();
+    for (i, label) in labels.iter().enumerate() {
+        for (j, s) in series.iter().enumerate() {
+            let v = s.values[i];
+            let n = if max > 0.0 {
+                (v.abs() / max * WIDTH).round() as usize
+            } else {
+                0
+            };
+            let head = if j == 0 { label.as_str() } else { "" };
+            let pad = " ".repeat(name_w - head.chars().count());
+            let tag = if named {
+                format!(" {}", s.name)
+            } else {
+                String::new()
+            };
+            let num = format!("{}", (v * 100.0).round() / 100.0);
+            let unit = if unit.is_empty() {
+                String::new()
+            } else {
+                format!(" {unit}")
+            };
+            out.push(format!(
+                "{head}{pad} {} {num}{unit}{tag}",
+                "█".repeat(n.max(1))
+            ));
+        }
+    }
+    out.join("\n")
 }
 
 /// A box-drawn table. Multi-line cells are flattened; widths are in chars.
@@ -421,6 +735,81 @@ mod tests {
 └────────┴────┘\n\n\
 ✓ 1. read\n▸ 2. fix\n· 3. test"
         );
+    }
+
+    #[test]
+    fn charts_must_line_up_with_their_labels() {
+        let input = json!({"blocks": [
+            {"type": "chart", "labels": ["a", "b"], "series": [{"values": [1, 2, 3]}]},
+            {"type": "chart", "kind": "line", "labels": ["mon", "tue"], "series": [{"name": "ms", "values": [4, 8]}]}
+        ]});
+        let (p, errors) = parse(&input, cwd(), false);
+        assert_eq!(p.blocks.len(), 1);
+        assert_eq!(
+            errors,
+            ["blocks[0]: series 0 has 3 values but there are 2 labels"]
+        );
+        assert_eq!(
+            p.to_text(),
+            "mon ████████████ 4\ntue ████████████████████████ 8"
+        );
+    }
+
+    #[test]
+    fn stats_and_actions() {
+        let input = json!({"blocks": [
+            {"type": "stats", "items": [{"label": "disk", "value": "42 GB", "detail": "of 500"}]},
+            {"type": "actions", "prompt": "next?", "options": [{"label": "Clean caches", "send": "clean the caches"}, {"label": "Skip"}]},
+            {"type": "actions", "options": []}
+        ]});
+        let (p, errors) = parse(&input, cwd(), false);
+        assert_eq!(p.blocks.len(), 2);
+        assert_eq!(errors, ["blocks[2]: actions need 1-6 options"]);
+        assert_eq!(
+            p.to_text(),
+            "disk: 42 GB (of 500)\n\nnext?\n[1] Clean caches\n[2] Skip"
+        );
+    }
+
+    #[test]
+    fn weak_models_get_stats_but_not_actions() {
+        let input = json!({"blocks": [
+            {"type": "stats", "items": [{"label": "a", "value": "1"}]},
+            {"type": "actions", "options": [{"label": "go"}]}
+        ]});
+        let (p, errors) = parse(&input, cwd(), true);
+        assert_eq!(p.blocks.len(), 1);
+        assert_eq!(
+            errors,
+            ["blocks[1]: `actions` blocks aren't available here"]
+        );
+    }
+
+    #[test]
+    fn streams_block_by_block() {
+        let full = r#"{"title": "Disk {usage}", "blocks": [{"type": "stats", "items": [{"label": "a\"}", "value": "1"}]}, {"type": "callout", "text": "b"}, {"type": "callout", "text": ""}]}"#;
+        let mut s = Stream::default();
+        let mut previews = Vec::new();
+        for c in full.chars() {
+            if let Some(p) = s.push(&c.to_string(), cwd(), false) {
+                previews.push(p);
+            }
+        }
+        // One preview per closed block; the third (invalid) block changes nothing shown.
+        assert_eq!(previews.len(), 3);
+        assert_eq!(previews[0].title, "Disk {usage}");
+        assert_eq!(previews[0].blocks.len(), 1);
+        assert_eq!(previews[1].blocks.len(), 2);
+        assert_eq!(previews[2].blocks.len(), 2);
+        assert!(
+            matches!(&previews[0].blocks[0], Block::Stats { items } if items[0].label == "a\"}")
+        );
+    }
+
+    #[test]
+    fn nothing_closed_means_no_preview() {
+        assert!(closed_blocks(r#"{"blocks": [{"type": "table", "columns": ["#).is_none());
+        assert!(closed_blocks(r#"{"title": "x"}"#).is_none());
     }
 
     #[test]

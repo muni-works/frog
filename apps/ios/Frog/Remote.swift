@@ -449,6 +449,9 @@ struct RemoteSession: Identifiable, Hashable {
     let ask: Snapshot.Ask?
     /// The last thing frog said.
     let last: String?
+    /// The last turn's headline stats and next-step buttons (Present), for the wrist.
+    let stats: [String]?
+    let actions: [Snapshot.Action]?
 
     struct Question: Hashable {
         let id: String
@@ -473,6 +476,9 @@ struct RemoteSession: Identifiable, Hashable {
         archived = row["archived"] as? Bool ?? false
         live = (row["live"] as? String).flatMap(Live.init)
         activity = row["activity"] as? String
+        let wrist = Snapshot.Row(bridge: row)
+        stats = wrist?.stats
+        actions = wrist?.actions
         let decoded = (row["info"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
             .flatMap { try? JSONDecoder().decode(SessionInfo.self, from: $0) }
         let modifiedMs = Int64((row["modified"] as? NSNumber)?.doubleValue ?? 0)

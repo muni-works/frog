@@ -25,7 +25,8 @@ final class WatchLink: NSObject, WCSessionDelegate {
         let rows = sessions.filter { $0.live == .waiting || $0.live == .running || $0.live == .unread }.prefix(12).map { s in
             Snapshot.Row(id: s.id, title: s.title, live: s.live?.rawValue ?? "", activity: s.activity,
                          question: s.question?.text, permission: s.question?.id, local: s.isLocal, open: s.open,
-                         ask: s.ask, last: s.last.map { String($0.prefix(1200)) })
+                         ask: s.ask, last: s.last.map { String($0.prefix(1200)) },
+                         stats: s.stats, actions: s.actions)
         }
         guard let data = try? JSONEncoder().encode(Array(rows)) else { return }
         let direct = UserDefaults.standard.string(forKey: Self.directKey) ?? ""

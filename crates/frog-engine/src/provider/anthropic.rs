@@ -158,8 +158,13 @@ impl Client {
                         (Some(Partial::Thinking(_, sig)), "signature_delta") => {
                             sig.push_str(&s("signature"))
                         }
-                        (Some(Partial::Tool(_, _, args)), "input_json_delta") => {
-                            args.push_str(&s("partial_json"))
+                        (Some(Partial::Tool(_, name, args)), "input_json_delta") => {
+                            let chunk = s("partial_json");
+                            args.push_str(&chunk);
+                            on(StreamEvent::ToolArgs {
+                                name: name.clone(),
+                                chunk,
+                            });
                         }
                         _ => {}
                     }

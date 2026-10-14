@@ -99,6 +99,13 @@ final class WristLink: NSObject, WCSessionDelegate {
         send(op, in: row)
     }
 
+    /// A next-step button pressed: runs a turn on the Mac.
+    func act(_ row: Row, _ action: Snapshot.Action) {
+        var op: [String: Any] = ["op": "act", "label": action.label]
+        if !action.send.isEmpty { op["send"] = action.send }
+        send(op, in: row)
+    }
+
     private func send(_ op: [String: Any], in row: Row) {
         sending.insert(row.id)
         Task {
@@ -330,6 +337,14 @@ struct ReplyView: View {
                 Text(row.last ?? (row.live == "running" ? "frog is still going." : "Nothing said yet."))
                     .font(.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(row.stats ?? [], id: \.self) { s in
+                    Text(s).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                if row.live != "running" {
+                    ForEach(row.actions ?? [], id: \.self) { a in
+                        Button(a.label) { link.act(row, a) }
+                    }
+                }
             }
             .onLongPressGesture { link.showOnPhone(row) }
         }

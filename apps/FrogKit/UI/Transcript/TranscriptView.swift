@@ -169,6 +169,11 @@ struct TranscriptView: View {
                    conversation.turns.last?.items.isEmpty ?? true {
                     WorkingIndicator(label: conversation.progress)
                 }
+                if let preview = conversation.presentPreview {
+                    PresentCard(present: preview)
+                        .opacity(0.85)
+                        .transition(.opacity)
+                }
                 if let failure = conversation.failure {
                     Label(failure, systemImage: "exclamationmark.octagon")
                         .foregroundStyle(.red)
