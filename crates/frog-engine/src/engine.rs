@@ -3548,7 +3548,7 @@ mod tests {
 
     fn engine_qwen3_mode(script: Vec<Response>, mode: ToolMode) -> Handle {
         let model = "mlx-community/Qwen3-8B-4bit".to_string();
-        let mut profile = Profile::new(ProviderKind::Openai, model.clone());
+        let mut profile = Profile::new(ProviderKind::Openai, &model.clone());
         profile.sidecar = Some(model);
         profile.tool_mode = mode;
         let opts = Options {
