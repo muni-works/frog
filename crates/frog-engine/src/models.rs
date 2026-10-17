@@ -3,6 +3,7 @@
 use crate::config::{Config, Profile, ProviderKind, ToolMode};
 use crate::harness::{self, Caps, Tier};
 use serde::Serialize;
+use std::path::Path;
 use std::time::Duration;
 
 #[derive(Debug, Serialize)]
@@ -187,23 +188,31 @@ fn local_checkpoints() -> Vec<String> {
                 .strip_prefix("models--")?
                 .replace("--", "/");
             let snaps = std::fs::read_dir(e.path().join("snapshots")).ok()?;
-            let runnable = snaps.filter_map(|s| s.ok()).any(|s| {
-                let dir = s.path();
-                let has_weights = std::fs::read_dir(&dir).is_ok_and(|mut d| {
-                    d.any(|f| {
-                        f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "safetensors"))
-                    })
-                });
-                let cfg: Option<serde_json::Value> = std::fs::read(dir.join("config.json"))
-                    .ok()
-                    .and_then(|b| serde_json::from_slice(&b).ok());
-                has_weights && cfg.is_some_and(|c| c["model_type"] == "qwen3")
-            });
+            let runnable = snaps
+                .filter_map(|s| s.ok())
+                .any(|s| runnable_snapshot(&s.path()));
             runnable.then_some(name)
         })
         .collect();
     out.sort();
     out
+}
+
+/// A tang checkpoint needs its weights, Qwen config and tokenizer artifacts. A partial Hugging
+/// Face download can have the first two, but tang cannot start without the tokenizer.
+fn runnable_snapshot(dir: &Path) -> bool {
+    let has_weights = std::fs::read_dir(dir).is_ok_and(|mut d| {
+        d.any(|f| {
+            f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "safetensors"))
+        })
+    });
+    let cfg: Option<serde_json::Value> = std::fs::read(dir.join("config.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok());
+    has_weights
+        && dir.join("tokenizer.json").is_file()
+        && dir.join("tokenizer_config.json").is_file()
+        && cfg.is_some_and(|c| c["model_type"] == "qwen3")
 }
 
 /// The model a bare `frog` starts on when nothing names one (no `-m`, `FROG_MODEL`,
@@ -264,6 +273,7 @@ pub fn remember_last_used(spec: &str) {
 #[cfg(test)]
 mod pick_tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn best_local_prefers_coders() {
@@ -274,5 +284,21 @@ mod pick_tests {
         );
         assert_eq!(best_local(&n(&["llama3"])).map(String::as_str), Some("llama3"));
         assert_eq!(best_local(&[]), None);
+    }
+
+    #[test]
+    fn checkpoint_requires_tokenizer_artifacts() {
+        let dir = std::env::temp_dir().join(format!(
+            "frog-models-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), r#"{"model_type":"qwen3"}"#).unwrap();
+        std::fs::write(dir.join("model.safetensors"), []).unwrap();
+        assert!(!runnable_snapshot(&dir));
+        std::fs::write(dir.join("tokenizer.json"), "{}").unwrap();
+        std::fs::write(dir.join("tokenizer_config.json"), "{}").unwrap();
+        assert!(runnable_snapshot(&dir));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

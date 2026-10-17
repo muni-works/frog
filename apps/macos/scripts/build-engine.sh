@@ -7,7 +7,9 @@ PROFILE=release
 cargo build --manifest-path "$REPO/Cargo.toml" --release -p frog
 DEST="$BUILT_PRODUCTS_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
 mkdir -p "$DEST"
-rm -f "$DEST/frog"; cp "$REPO/target/$PROFILE/frog" "$DEST/frog"
+# This workspace, like tang below, may configure a shared Cargo target directory.
+FROG_TARGET="$(cargo metadata --manifest-path "$REPO/Cargo.toml" --no-deps --format-version 1 --quiet | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
+rm -f "$DEST/frog"; cp "$FROG_TARGET/$PROFILE/frog" "$DEST/frog"
 
 # Inference sidecars, next to the engine (frog looks there): frog-apple from this repo, and
 # tang-llm from a tang checkout if there is one (TANG_DIR, else ../tang next to this repo).
@@ -22,7 +24,10 @@ fi
 TANG_DIR="${TANG_DIR:-$REPO/../tang}"
 if [ -f "$TANG_DIR/crates/tang-llm/Cargo.toml" ]; then
     cargo build --manifest-path "$TANG_DIR/Cargo.toml" --release -p tang-llm --features metal
-    rm -f "$DEST/tang-llm"; cp "$TANG_DIR/target/release/tang-llm" "$DEST/tang-llm"
+    # tang may set a shared target directory in .cargo/config.toml. Ask Cargo where it put
+    # the release binary rather than assuming the workspace-local target/ directory.
+    TANG_TARGET="$(cargo metadata --manifest-path "$TANG_DIR/Cargo.toml" --no-deps --format-version 1 --quiet | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
+    rm -f "$DEST/tang-llm"; cp "$TANG_TARGET/release/tang-llm" "$DEST/tang-llm"
 elif [ -n "$FROG_REQUIRE_TANG" ]; then
     echo "error: no tang checkout at $TANG_DIR; a release must ship tang-llm (set TANG_DIR)" >&2
     exit 1

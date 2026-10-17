@@ -440,6 +440,12 @@ pub enum Event {
     /// arguments streaming). Clients typically show a spinner.
     Progress {
         label: String,
+        /// Completed setup steps, when this operation has a known length.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completed: Option<u16>,
+        /// Total setup steps, when this operation has a known length.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total: Option<u16>,
     },
     Notice {
         level: Level,

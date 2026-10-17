@@ -248,7 +248,7 @@ impl Renderer {
                 self.idle();
                 outln!("\n{} {}", ">".dark_grey(), input.dark_grey());
             }
-            Event::Progress { label } => {
+            Event::Progress { label, .. } => {
                 self.idle();
                 self.spinner = Spinner::start(label);
             }

@@ -459,6 +459,19 @@ struct ToolProgress: Sendable, Equatable {
     var message: String?
 }
 
+/// Work reported by the engine. `completed` and `total` are present when the operation has
+/// discrete stages, such as capability profiling.
+struct EngineProgress: Decodable, Sendable, Equatable {
+    var label: String
+    var completed: Int?
+    var total: Int?
+
+    var fraction: Double? {
+        guard let completed, let total, total > 0 else { return nil }
+        return min(1, max(0, Double(completed) / Double(total)))
+    }
+}
+
 struct PermissionRequest: Decodable, Sendable, Identifiable {
     var id: String
     var item: String
@@ -486,7 +499,7 @@ enum Event: Decodable, Sendable {
     case titled(String)
     case itemDelta(id: String, delta: Delta)
     case permissionRequest(PermissionRequest)
-    case progress(String)
+    case progress(EngineProgress)
     /// A `Present` call's closed blocks while its arguments still stream.
     case presentPreview(Present)
     case elicitation(Elicitation)
@@ -585,7 +598,7 @@ extension Event {
         case "permission_request":
             self = .permissionRequest(try PermissionRequest(from: decoder))
         case "progress":
-            self = .progress(try c.decode(String.self, forKey: .label))
+            self = .progress(try EngineProgress(from: decoder))
         case "present_preview":
             self = .presentPreview(try c.decode(Present.self, forKey: .present))
         case "elicitation":

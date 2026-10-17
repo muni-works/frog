@@ -360,3 +360,66 @@ struct LiveStatus: View {
         return " " + ActivityWords.duration(secs)
     }
 }
+
+/// The first Tang request loads the selected model's weights. Tang does not expose a byte count
+/// for that operation, so this is deliberately an indeterminate sweep rather than a made-up
+/// percentage.
+struct ModelLoadingStatus: View {
+    let model: String
+    let since: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.08)) { timeline in
+            let elapsed = max(0, timeline.date.timeIntervalSince(since))
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 8) {
+                    Image(systemName: "cpu")
+                        .foregroundStyle(.tint)
+                    Text("Loading \(model) into memory")
+                        .font(.callout.weight(.medium))
+                    Spacer(minLength: 0)
+                    Text(Self.elapsed(elapsed))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                ModelLoadBar(elapsed: elapsed)
+                Text("Starting the first response")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: 440, alignment: .leading)
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Loading \(model) into memory")
+    }
+
+    private static func elapsed(_ seconds: TimeInterval) -> String {
+        let wholeSeconds = Int(seconds.rounded(.down))
+        return wholeSeconds < 60 ? "\(wholeSeconds)s" : "\(wholeSeconds / 60)m \(wholeSeconds % 60)s"
+    }
+}
+
+private struct ModelLoadBar: View {
+    let elapsed: TimeInterval
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let beamWidth = min(width * 0.34, max(40, width * 0.16))
+            let phase = CGFloat(elapsed.truncatingRemainder(dividingBy: 1.35) / 1.35)
+            let offset = max(0, width - beamWidth) * phase
+
+            ZStack(alignment: .leading) {
+                Capsule().fill(.primary.opacity(0.12))
+                Capsule()
+                    .fill(LinearGradient(colors: [.accentColor.opacity(0.2), .accentColor, .accentColor.opacity(0.2)], startPoint: .leading, endPoint: .trailing))
+                    .frame(width: beamWidth)
+                    .offset(x: offset)
+            }
+            .clipShape(Capsule())
+        }
+        .frame(height: 7)
+        .accessibilityHidden(true)
+    }
+}

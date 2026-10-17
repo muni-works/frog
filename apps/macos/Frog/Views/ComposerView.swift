@@ -14,10 +14,19 @@ struct ComposerView: View {
     /// Images to send with the message.
     @State private var attachments: [ToolImage] = []
     @State private var dictation = Dictation()
+    @State private var downloads = ModelDownloads.shared
     @Environment(\.switchFolder) private var switchFolder
 
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
+        !waitingForModel && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+    }
+
+    private var waitingForModel: Bool {
+        guard let model = workspace.pendingDownloadModel else { return false }
+        return switch model.state {
+        case .notDownloaded, .downloading, .downloadFailed: true
+        default: false
+        }
     }
 
     private var suggestions: [String] {
@@ -88,6 +97,12 @@ struct ComposerView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            if let model = workspace.pendingDownloadModel {
+                ModelDownloadStatus(model: model, downloads: downloads) {
+                    workspace.useWhenReady(model)
+                }
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if let problem = dictation.problem {
@@ -205,6 +220,9 @@ struct ComposerView: View {
     }
 
     private var placeholder: String {
+        if let model = workspace.pendingDownloadModel {
+            return "Downloading \(model.name)… messages send when it’s ready"
+        }
         if conversation.busy { return "Working… Esc interrupts · Return queues a follow-up" }
         // A new conversation's placeholder is its only hint (the empty page is just a question).
         let new = conversation.turns.isEmpty && !conversation.replaying
@@ -576,6 +594,61 @@ struct MentionList: View {
         .padding(6)
         .frame(width: 420, alignment: .leading)
         .glassEffect(.regular, in: .rect(cornerRadius: 12))
+    }
+}
+
+/// The composer owns the pause between selecting a local model and its snapshot becoming usable.
+/// Keeping this here makes the reason Send is disabled visible where someone is trying to send.
+private struct ModelDownloadStatus: View {
+    let model: ModelIdentity
+    let downloads: ModelDownloads
+    let retry: () -> Void
+
+    var body: some View {
+        // Reads the observable state so progress redraws even though `model` is rebuilt by
+        // Workspace on each update.
+        let state = model.repo.flatMap { downloads.states[$0] }
+        switch state {
+        case .downloading(let fraction):
+            HStack(spacing: 8) {
+                ProgressView(value: fraction)
+                    .frame(maxWidth: 150)
+                Text("Downloading \(model.name) · \(Self.size(fraction, of: model.downloadGB))")
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Button { if let repo = model.repo { downloads.cancel(repo) } } label: {
+                    Image(systemName: "stop.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Stop downloading")
+            }
+            .foregroundStyle(.secondary)
+        case .failed(let error):
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text("Couldn't download \(model.name): \(error)").lineLimit(1)
+                Spacer(minLength: 0)
+                Button("Retry", action: retry)
+                    .controlSize(.small)
+            }
+            .font(.callout)
+        case nil:
+            HStack(spacing: 8) {
+                Image(systemName: "pause.circle").foregroundStyle(.secondary)
+                Text("Download paused for \(model.name). Messages send when it’s ready.")
+                Spacer(minLength: 0)
+                Button("Resume", action: retry).controlSize(.small)
+            }
+            .font(.callout)
+        default:
+            EmptyView()
+        }
+    }
+
+    private static func size(_ fraction: Double, of total: Double?) -> String {
+        guard let total else { return "\(Int((fraction * 100).rounded()))%" }
+        return String(format: "%.1f GB of %.1f GB", fraction * total, total)
     }
 }
 

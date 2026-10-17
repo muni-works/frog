@@ -167,7 +167,7 @@ struct TranscriptView: View {
                 } else if conversation.busy, conversation.permission == nil, conversation.elicitation == nil,
                    conversation.question == nil,
                    conversation.turns.last?.items.isEmpty ?? true {
-                    WorkingIndicator(label: conversation.progress)
+                    WorkingIndicator(progress: conversation.progress, since: conversation.progressSince)
                 }
                 if let preview = conversation.presentPreview {
                     PresentCard(present: preview)
@@ -368,17 +368,125 @@ struct EndView: View {
 }
 
 struct WorkingIndicator: View {
-    let label: String?
+    let progress: EngineProgress?
+    let since: Date?
+
+    init(progress: EngineProgress?, since: Date? = nil) {
+        self.progress = progress
+        self.since = since
+    }
+
+    init(label: String?) {
+        self.progress = label.map { EngineProgress(label: $0, completed: nil, total: nil) }
+        self.since = nil
+    }
 
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text(label.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Working…")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .contentTransition(.opacity)
+        if let progress, let completed = progress.completed, let total = progress.total, total > 0 {
+            ProbeProgress(progress: progress, completed: completed, total: total, since: since ?? .now)
+        } else {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(progress.map { Self.title($0.label) } ?? "Working…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.opacity)
+            }
+            .animation(.default, value: progress)
         }
-        .animation(.default, value: label)
+    }
+
+    fileprivate static func title(_ label: String) -> String {
+        label.prefix(1).uppercased() + label.dropFirst()
+    }
+}
+
+/// Capability profiling has discrete requests. The solid portion is the exact number done;
+/// the moving highlight stays inside the request currently in flight.
+private struct ProbeProgress: View {
+    let progress: EngineProgress
+    let completed: Int
+    let total: Int
+    let since: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.08)) { timeline in
+            let elapsed = max(0, timeline.date.timeIntervalSince(since))
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(Self.probeTitle(for: progress.label))
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Text("Step \(min(completed + 1, total)) of \(total)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                ProbeProgressBar(completed: completed, total: total, elapsed: elapsed)
+                Text("\(Self.phase(for: progress.label, elapsed: elapsed)) · \(Self.elapsed(elapsed))")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .contentTransition(.numericText())
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(Self.probeTitle(for: progress.label)), step \(min(completed + 1, total)) of \(total), \(Self.phase(for: progress.label, elapsed: Date.now.timeIntervalSince(since)))")
+    }
+
+    private static func probeTitle(for label: String) -> String {
+        let normalized = label.lowercased()
+        if normalized.contains("text tool") { return "Testing text tool calls" }
+        if normalized.contains("native tool") { return "Testing native tool calls" }
+        if normalized.contains("direct answer") { return "Testing direct answers" }
+        if normalized.contains("json") { return "Testing structured output" }
+        if normalized.contains("thinking") { return "Testing thinking controls" }
+        return WorkingIndicator.title(label)
+    }
+
+    private static func phase(for label: String, elapsed: TimeInterval) -> String {
+        if elapsed < 1 { return "Preparing a small compatibility request" }
+        let normalized = label.lowercased()
+        let operation: String
+        if normalized.contains("tool") { operation = "Checking the model's tool-call format" }
+        else if normalized.contains("json") { operation = "Checking the model's schema-constrained reply" }
+        else if normalized.contains("thinking") { operation = "Checking the model's response controls" }
+        else { operation = "Waiting for the model's reply" }
+        return elapsed < 12 ? operation : "Still waiting for this request"
+    }
+
+    private static func elapsed(_ seconds: TimeInterval) -> String {
+        let wholeSeconds = Int(seconds.rounded(.down))
+        return wholeSeconds < 60 ? "\(wholeSeconds)s elapsed" : "\(wholeSeconds / 60)m \(wholeSeconds % 60)s elapsed"
+    }
+}
+
+private struct ProbeProgressBar: View {
+    let completed: Int
+    let total: Int
+    let elapsed: TimeInterval
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let doneFraction = CGFloat(min(max(Double(completed) / Double(total), 0), 1))
+            let doneWidth = width * doneFraction
+            let slotWidth = width / CGFloat(total)
+            let beamWidth = min(slotWidth, max(22, slotWidth * 0.42))
+            let phase = CGFloat(elapsed.truncatingRemainder(dividingBy: 1.25) / 1.25)
+            let beamOffset = doneWidth + max(0, slotWidth - beamWidth) * phase
+
+            ZStack(alignment: .leading) {
+                Capsule().fill(.primary.opacity(0.12))
+                Capsule().fill(.green).frame(width: doneWidth)
+                Capsule()
+                    .fill(LinearGradient(colors: [.green.opacity(0.35), .green, .green.opacity(0.35)], startPoint: .leading, endPoint: .trailing))
+                    .frame(width: beamWidth)
+                    .offset(x: beamOffset)
+            }
+            .clipShape(Capsule())
+        }
+        .frame(height: 8)
+        .accessibilityHidden(true)
     }
 }
 
