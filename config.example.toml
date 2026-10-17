@@ -45,7 +45,7 @@ context_window = 32768
 # tool_mode = "text"
 
 # frog's own engine (tang-llm), started on demand. draft_model adds a small model that drafts
-# tokens for the big one to verify: same output, ~1.4x on CUDA, usually slower on Metal today.
+# tokens for the big one to verify: ~1.4x on CUDA, ~1.15x on Metal (needs tang-llm with draft-model support).
 [models.qwen32]
 provider = "openai"
 model = "mlx-community/Qwen3-32B-4bit"
