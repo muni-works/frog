@@ -71,7 +71,44 @@ Measured on an M4 Max (release), 100,000 documents, every score equal to the pla
 | decrypt every score (client GPU) | 110 ms |
 | query / response | 16 KB / **52 MB** |
 
-The open problem is the response. Decrypting a score needs the whole a·p polynomial, so it costs ~0.5 KB per document. That is fine to your own gateway on a LAN, and wrong over the internet. The known fixes are hint compression (Tiptoe) and LWE-to-RLWE packing keys (HintlessPIR, YPIR); this is now step 5's first item.
+The response was the open problem: decrypting a score needed the whole a·p polynomial, ~0.5 KB per document.
+
+### Response packing (2026-10-17, tang `claude/hush-retrieval` 3f286ae)
+
+We attacked two fixes before building either.
+
+**The offline hint failed three ways.** In that design the library publishes a fixed a and the hint a·p, and each query sends only b.
+- A short a (a = 1) chosen by the server reveals the query outright.
+- Two queries under one a and one s reveal m₁ − m₂ exactly.
+- Worst, a is invertible in the NTT domain, so the hint reveals every library polynomial: p̂ = Ĥ / â slot by slot. At 51 MB, the hint was the plaintext library (6.4 MB) eight times over.
+
+**Packing keys survived.** The client uploads seven automorphism switching keys once a session (1.4 MB). The server then:
+1. traces each scored ciphertext onto ℤ[x^d], which keeps the 16 score coefficients and multiplies them by d;
+2. shifts poly j by x^j and merges 128 of them as a tree, one key switch per merge;
+3. switches the result down to one prime.
+
+Each output ciphertext carries 2,048 scores.
+
+The cost of packing is noise. With an odd t = 12,545 (the query is pre-scaled by d⁻¹ mod t), the worst case is 2^31.4. That needs Q = q₀·q₁ = 1,809,678,337 · 40,961 ≈ 2^46: two RNS primes, still under the standard's 54 bits. Decryption stays **exact** by a worst-case bound, which the tests check, including an adversarial encryption error.
+
+| | before | packed |
+|---|---|---|
+| response, 100k docs | 51.6 MB | **0.80 MB** (49 ciphertexts) |
+| query | 16 KB | 16 KB (a from a seed) |
+| session keys | — | 1.38 MB, once |
+| server: score + pack | 125 ms | 1.33 s (78 ms Metal scoring + CPU packing) |
+| client decrypt | 110 ms | 66 ms |
+
+The hard rules, each enforced in code or a test:
+- the client derives a, the server never chooses it;
+- a never repeats: a per-client counter enters every derivation;
+- the library publishes nothing derived from a.
+
+Still open:
+- **Reaction attacks.** One s now spans a session. A server that sees decryption-dependent client behaviour can probe both scores and the key. A test shows a shift of kΔ moves exactly one score by k. Fetches after retrieval must be private (PIR or fixed-shape), and sessions are short-lived and capped.
+- **Circular security.** The keys rest on circular security, an assumption beyond ring-LWE that all FHE key switching shares.
+- **Packing on the GPU** (1.25 s on the CPU today).
+- **The lattice estimator at log Q = 46.**
 
 ## 4. Two kinds of library
 
@@ -129,7 +166,7 @@ Login stays the open piece. SRP, which Crypton used, is discrete-log based and b
 2. **Laptop mode end to end on a public corpus.** A document set of 100k, encrypted query in, top-k out, local Qwen answer, receipt pane. This is the demo.
 3. **PIR fetch.** Hide which documents were retrieved.
 4. **Private-documents libraries.** Sealed documents and encrypted embeddings; sharing by ryng `seal`.
-5. **Scale.** Response compression first (hint compression or packing keys: 52 MB per 100k documents today), then clustering plus PIR for million-plus libraries; CUDA on the gateway.
+5. **Scale.** Response packing is done (0.8 MB per 100k documents); next, move packing onto the GPU, then clustering plus PIR for million-plus libraries; CUDA on the gateway.
 6. **Cloud mode, research.** Encrypted small-model generation; encryption-friendly Qwen variants trained in tang.
 7. **Proofs, research.** The server proves it scanned what it should have.
 
