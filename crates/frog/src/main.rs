@@ -899,7 +899,9 @@ async fn probe(name: &str, profile: &frog_engine::config::Profile) -> Result<boo
     frog_engine::sidecar::ensure(profile).await?;
     let provider = frog_engine::provider::Provider::new(profile)?;
     eprintln!("probing {name}…");
-    let caps = harness::probe(&provider, &frog_engine::tools::specs()).await?;
+    let caps = harness::probe(&provider, &frog_engine::tools::specs(), |label, completed, total| {
+        eprintln!("{label} ({completed}/{total})");
+    }).await?;
     harness::save(profile, &caps);
     let tier = harness::tier(profile, Some(&caps));
     let mut auto = profile.clone();

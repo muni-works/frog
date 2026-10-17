@@ -10,8 +10,8 @@ struct ModelPicker: View {
     var body: some View {
         Button { open.toggle() } label: {
             HStack(spacing: 4) {
-                if let s = conversation.status {
-                    ModelLabel(model: workspace.identity(s.model))
+                if let spec = workspace.selectedModel {
+                    ModelLabel(model: workspace.identity(spec))
                 } else {
                     Text("Model")
                 }
@@ -21,9 +21,9 @@ struct ModelPicker: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help(conversation.status.map { workspace.identity($0.model).spoken } ?? "Choose a model")
+        .help(workspace.selectedModel.map { workspace.identity($0).spoken } ?? "Choose a model")
         .popover(isPresented: $open, arrowEdge: .top) {
-            ModelMenu(workspace: workspace, current: conversation.status?.model) { spec in
+            ModelMenu(workspace: workspace, current: workspace.selectedModel) { spec in
                 workspace.use(spec)
                 open = false
             } close: {

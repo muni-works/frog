@@ -627,6 +627,9 @@ struct Agent {
     caps: Option<Caps>,
     /// Tool-call format failures under `auto`; enough of them switches modes.
     mode_failures: u32,
+    /// A Tang sidecar loads its weights on its first completion request. Keep that visible until
+    /// the first response arrives, then regular request activity takes over.
+    model_ready: bool,
     /// Model calls in a row this turn with thinking switched off.
     quiet: u32,
     /// Running totals for the current turn.
@@ -687,8 +690,8 @@ struct Agent {
 
 impl Agent {
     fn new(o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
-        // The capability cache lives next to the session store; in-memory engines skip it.
-        let caps = (o.store.is_some() && !harness::is_hosted(&o.profile))
+        // Cached or shipped capability profiles are useful in both persisted and in-memory engines.
+        let caps = (!harness::is_hosted(&o.profile))
             .then(|| harness::cached(&o.profile))
             .flatten();
         let tier = harness::tier(&o.profile, caps.as_ref());
@@ -829,6 +832,7 @@ impl Agent {
             tier,
             caps,
             mode_failures: 0,
+            model_ready: false,
             quiet: 0,
             turn_usage: TurnUsage::default(),
             timing: TurnTiming::default(),
@@ -1116,10 +1120,11 @@ impl Agent {
                     self.ctx.judge = Some(self.profile.clone());
                 }
                 self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
-                self.caps = (self.store.is_some() && !harness::is_hosted(&self.profile))
+                self.caps = (!harness::is_hosted(&self.profile))
                     .then(|| harness::cached(&self.profile))
                     .flatten();
                 self.mode_failures = 0;
+                self.model_ready = false;
                 self.apply_harness();
                 self.resolve_window().await;
                 self.emit(Event::ModelChanged {
@@ -1355,8 +1360,6 @@ impl Agent {
         self.checkpoint(turn);
         self.turn_usage = TurnUsage::default();
 
-        self.ensure_profiled().await;
-
         let mut text = std::mem::take(&mut self.pending).join("\n");
         if !text.is_empty() {
             text.push('\n');
@@ -1453,9 +1456,15 @@ impl Agent {
             };
             let budget = self.think_budget(think);
             let started = Instant::now();
+            let activity = if !self.model_ready && self.profile.sidecar.is_some() {
+                format!("loading {}", self.profile.model)
+            } else {
+                "thinking".into()
+            };
             let (resp, streamed) = self
-                .call("thinking", &self.messages, false, true, think, budget)
+                .call(&activity, &self.messages, false, true, think, budget)
                 .await?;
+            self.model_ready = true;
             self.last_call = started.elapsed();
             self.usage = resp.usage;
             self.count_call(resp.usage, &streamed, false);
@@ -1753,56 +1762,6 @@ impl Agent {
         thinking::budget(base, think, &self.messages)
     }
 
-    /// Probe a local model's capabilities the first time it's used under `auto`.
-    async fn ensure_profiled(&mut self) {
-        if harness::is_hosted(&self.profile) {
-            return;
-        }
-        // Profiled before frog knew to ask whether thinking can be switched off.
-        if let Some(c) = &self.caps {
-            if c.thinks && c.think_off.is_none() && self.thinking_mode() != Thinking::Always {
-                let think_off = harness::probe_think_off(&self.provider).await;
-                if let Some(c) = self.caps.as_mut() {
-                    c.think_off = Some(think_off);
-                    if self.store.is_some() {
-                        harness::save(&self.profile, c);
-                    }
-                }
-            }
-            return;
-        }
-        if self.profile.tool_mode != ToolMode::Auto {
-            return;
-        }
-        self.emit(Event::Progress {
-            label: format!("profiling {} (first use only)", self.profile.model),
-        });
-        let caps = match harness::probe(&self.provider, &self.specs).await {
-            Ok(caps) => caps,
-            Err(e) => {
-                // Don't cache anything; the turn itself will surface the real error.
-                self.notice(
-                    Level::Warn,
-                    format!("couldn't profile {}: {e:#}", self.profile.model),
-                );
-                return;
-            }
-        };
-        if self.store.is_some() {
-            harness::save(&self.profile, &caps);
-        }
-        self.caps = Some(caps);
-        self.apply_harness();
-        self.notice(
-            Level::Info,
-            format!(
-                "{}: using {:?} tool calls, {:?} tier",
-                self.profile.model, self.tool_mode, self.tier
-            )
-            .to_lowercase(),
-        );
-    }
-
     /// The model botched the tool-call format (text calls under native, invalid JSON args, or
     /// JSON mode not honored). Under `auto`, two strikes moves to text mode for the session
     /// and records the finding.
@@ -1844,6 +1803,8 @@ impl Agent {
             if !crate::sidecar::is_serving(&model).await {
                 self.emit(Event::Progress {
                     label: format!("loading {model}"),
+            completed: None,
+            total: None,
                 });
             }
             if let Err(e) = crate::sidecar::ensure(&self.profile).await {
@@ -2789,6 +2750,8 @@ Don't repeat it. Change the arguments or try a different approach.",
         loop {
             self.emit(Event::Progress {
                 label: label.into(),
+            completed: None,
+            total: None,
             });
             let mut started = false;
             let mut streamed = Streamed {
@@ -2883,6 +2846,8 @@ Don't repeat it. Change the arguments or try a different approach.",
                             presenting = (name == crate::present::TOOL).then(Default::default);
                             self.emit(Event::Progress {
                                 label: format!("{name}…"),
+            completed: None,
+            total: None,
                             })
                         }
                         StreamEvent::ToolArgs { name, chunk } => {
@@ -2916,6 +2881,8 @@ Don't repeat it. Change the arguments or try a different approach.",
                             if filter.inside && !was_inside {
                                 self.emit(Event::Progress {
                                     label: "tool call…".into(),
+            completed: None,
+            total: None,
                                 });
                             }
                         }
@@ -3230,6 +3197,8 @@ Don't repeat it. Change the arguments or try a different approach.",
             .unwrap_or_default();
         self.emit(Event::Progress {
             label: format!("checking with auto mode ({model})"),
+            completed: None,
+            total: None,
         });
         let preview = tools::fs::preview(name, input, &self.ctx);
         let action = crate::auto::describe(name, input, preview.as_ref(), sandbox);
@@ -3559,6 +3528,28 @@ mod tests {
 
     fn engine_mode(script: Vec<Response>, mode: ToolMode) -> Handle {
         let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = mode;
+        let opts = Options {
+            cfg: Config::default(),
+            profile_name: "test".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    fn engine_qwen3_mode(script: Vec<Response>, mode: ToolMode) -> Handle {
+        let model = "mlx-community/Qwen3-8B-4bit".to_string();
+        let mut profile = Profile::new(ProviderKind::Openai, model.clone());
+        profile.sidecar = Some(model);
         profile.tool_mode = mode;
         let opts = Options {
             cfg: Config::default(),
@@ -4823,27 +4814,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_profiles_on_first_use_then_falls_back_when_native_calls_fail() {
-        let read_probe = Block::ToolUse {
-            id: "p".into(),
-            name: "Read".into(),
-            input: json!({ "file_path": "probe.txt" }),
-        };
+    async fn auto_starts_the_first_turn_then_falls_back_when_native_calls_fail() {
         let text_call =
             r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
         let script = vec![
-            // Capability probes (text first, as the reachability check): text ok, native ok,
-            // abstains ok, JSON not enforced.
-            reply(
-                vec![text(
-                    r#"<tool_call>{"name":"Read","arguments":{"file_path":"probe.txt"}}</tool_call>"#,
-                )],
-                Stop::End,
-            ),
-            reply(vec![read_probe], Stop::ToolUse),
-            reply(vec![text("42")], Stop::End),
-            reply(vec![text("not json")], Stop::End),
-            // The turn: native mode, but the model keeps writing calls as text.
+            // The first real request starts in native mode. This model instead writes text calls.
             reply(vec![text(text_call)], Stop::End),
             reply(vec![text(text_call)], Stop::End),
             reply(vec![text("none found")], Stop::End),
@@ -4857,12 +4832,6 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(
-            notices
-                .iter()
-                .any(|n| n.contains("using native tool calls, medium tier")),
-            "{notices:?}"
-        );
         assert!(
             notices
                 .iter()
@@ -4895,24 +4864,6 @@ mod tests {
             input: json!({ "todos": [{ "content": what, "status": "in_progress" }] }),
         };
         let script = vec![
-            // Probes: a thinking model with native tools that answers directly when asked not
-            // to think.
-            reply(vec![thought("hmm"), text("I'd read it.")], Stop::End),
-            reply(
-                vec![
-                    thought("read it"),
-                    Block::ToolUse {
-                        id: "p".into(),
-                        name: "Read".into(),
-                        input: json!({ "file_path": "probe.txt" }),
-                    },
-                ],
-                Stop::ToolUse,
-            ),
-            reply(vec![thought("add"), text("42")], Stop::End),
-            reply(vec![text("not json")], Stop::End),
-            reply(vec![text("42")], Stop::End),
-            // The turn.
             reply(vec![thought("plan"), todo("t1", "a")], Stop::ToolUse),
             reply(vec![todo("t2", "b")], Stop::ToolUse),
             reply(
@@ -4925,7 +4876,7 @@ mod tests {
             ),
             reply(vec![thought("it's missing"), text("done")], Stop::End),
         ];
-        let mut h = engine_mode(script, ToolMode::Auto);
+        let mut h = engine_qwen3_mode(script, ToolMode::Auto);
         let evs = run(&mut h, "plan it").await;
         let calls = evs
             .iter()
@@ -6005,7 +5956,7 @@ mod tests {
         let mut evs = Vec::new();
         loop {
             let env = h.events.recv().await.unwrap();
-            let read = matches!(&env.event, Event::Progress { label } if label == "Read…");
+            let read = matches!(&env.event, Event::Progress { label, .. } if label == "Read…");
             evs.push(env);
             if read {
                 break;

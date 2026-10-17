@@ -37,7 +37,10 @@ final class Conversation {
     private(set) var status: Status?
     private(set) var turns: [TurnState] = []
     private(set) var busy = true
-    private(set) var progress: String?
+    private(set) var progress: EngineProgress?
+    /// The current progress update began. The UI uses this only to describe an in-flight
+    /// request and animate its current stage; it never changes the engine's completion count.
+    private(set) var progressSince: Date?
     /// A `Present` call's blocks so far, while its arguments stream; gone once its item starts.
     private(set) var presentPreview: Present?
     private(set) var permission: PermissionRequest?
@@ -410,8 +413,9 @@ final class Conversation {
             progress = nil
         case .appResult(let id, let result, let error):
             appCalls.removeValue(forKey: id)?(result, error)
-        case .progress(let label):
-            progress = label
+        case .progress(let update):
+            if progress != update { progressSince = Date() }
+            progress = update
         case .presentPreview(let p):
             presentPreview = p
         case .notice(let level, let message):

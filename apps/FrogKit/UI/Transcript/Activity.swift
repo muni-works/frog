@@ -34,7 +34,7 @@ struct ActivityLabel: View {
         } else if conversation.busy {
             HStack(spacing: 7) {
                 icon { Image(systemName: "hourglass").foregroundStyle(.secondary) }
-                Text(conversation.progress.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? (playful ? "Hopping to it" : "Starting…"))
+                Text(conversation.progress.map { $0.label.prefix(1).uppercased() + $0.label.dropFirst() } ?? (playful ? "Hopping to it" : "Starting…"))
                     .lineLimit(1)
             }
         } else if let turn = conversation.turns.last, let end = turn.end {

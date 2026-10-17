@@ -17,6 +17,10 @@ final class Workspace {
     var opening: String?
     var selection: String?
     var preferredModel: String?
+    /// A local model selected in the picker while its files are still downloading. It is the
+    /// visible choice, but the engine keeps its current runnable model until the snapshot is
+    /// complete.
+    private(set) var pendingDownload: String?
     /// Parallel attempts in progress, shown instead of the transcript.
     var race: Race?
     private(set) var raceError: String?
@@ -82,11 +86,34 @@ final class Workspace {
         return apple ? AppleIntelligence.spec : nil
     }
 
+    /// A remembered tang choice can outlive a partial or deleted Hugging Face snapshot. Start
+    /// with another complete local suggestion so a new chat never reaches a sidecar that cannot
+    /// load its tokenizer.
+    private static func usableStartingModel(_ spec: String?) -> String? {
+        guard let spec, spec.hasPrefix("tang/") else { return spec }
+        let repo = String(spec.dropFirst("tang/".count))
+        guard !ModelDownloads.isInstalled(repo) else { return spec }
+        return SuggestedModel.all.first(where: { ModelDownloads.isInstalled($0.repo) })?.spec
+    }
+
     /// Switch this conversation to a model, and remember it for the next one.
     func use(_ spec: String) {
+        pendingDownload = nil
         preferredModel = spec
         conversation?.setModel(spec)
         UserDefaults.standard.set(spec, forKey: "lastModel")
+    }
+
+    /// The model the picker should show. A selected download takes precedence over the engine's
+    /// last runnable model so the composer can explain why sending is paused.
+    var selectedModel: String? { pendingDownload ?? conversation?.status?.model ?? preferredModel }
+
+    var pendingDownloadModel: ModelIdentity? {
+        guard let spec = pendingDownload else { return nil }
+        if let suggested = SuggestedModel.all.first(where: { $0.spec == spec }) {
+            return ModelIdentity(suggested)
+        }
+        return identity(spec)
     }
 
     /// A model being downloaded to switch to once it's ready.
@@ -96,12 +123,14 @@ final class Workspace {
     func useWhenReady(_ m: ModelIdentity) {
         guard let repo = m.repo else { return }
         let downloads = ModelDownloads.shared
+        pendingDownload = m.spec
+        preferredModel = m.spec
+        UserDefaults.standard.set(m.spec, forKey: "lastModel")
         switch downloads.states[repo] {
         case .downloading: break
         case .done: break
         default: downloads.download(repo)
         }
-        conversation?.flash("Downloading \(m.name). frog switches to it when it's ready.")
         switching?.cancel()
         switching = Task { [weak self] in
             while !Task.isCancelled {
@@ -150,7 +179,7 @@ final class Workspace {
     /// opens that session.
     init(folder: URL, fresh: Bool = false, resume: String? = nil) {
         self.folder = folder
-        preferredModel = Self.startingModel
+        preferredModel = Self.usableStartingModel(Self.startingModel)
         // Name models the way the last list did until this folder's own loads (it's slow).
         models = Self.knownModels
         // Pick up where you left off: the first window reopens this folder's last session.
@@ -298,7 +327,9 @@ final class Workspace {
         let chat = isChat ? ["--chat"] : []
         let sandbox = UserDefaults.standard.object(forKey: "sandboxShell") as? Bool ?? true
         let noSandbox = sandbox ? [] : ["--no-shell-sandbox"]
-        let c = Conversation(folder: folder, arguments: arguments + modeFlag + computerUse + chat + noSandbox, model: preferredModel)
+        // A newly opened session during a download must start on the still-runnable model.
+        let startupModel = pendingDownload == nil ? preferredModel : conversation?.status?.model
+        let c = Conversation(folder: folder, arguments: arguments + modeFlag + computerUse + chat + noSandbox, model: startupModel)
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID

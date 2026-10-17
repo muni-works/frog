@@ -101,7 +101,10 @@ struct TurnView: View {
             if running, !parts.plan.isEmpty {
                 PlanView(todos: parts.plan)
             }
-            if running, let status = liveStatus {
+            if running, let loading = modelLoading {
+                ModelLoadingStatus(model: loading.model, since: loading.since)
+                    .transition(.opacity)
+            } else if running, let status = liveStatus {
                 LiveStatus(text: status.text, since: status.since, preview: thinking)
                     .transition(.opacity)
             }
@@ -152,11 +155,27 @@ struct TurnView: View {
         }
         // Between steps: the model is working out what to do next.
         let label = conversation.progress.flatMap { p -> String? in
-            guard p != "thinking", !p.isEmpty else { return nil }
-            let s = p.prefix(1).uppercased() + p.dropFirst()
+            guard p.label != "thinking", !p.label.isEmpty else { return nil }
+            let s = p.label.prefix(1).uppercased() + p.label.dropFirst()
             return s.hasSuffix("…") ? s : s + "…"
         }
         return (label ?? "Thinking…", turn.items.compactMap(\.endedAt).max())
+    }
+
+    /// Tang accepts the first completion before its weights are resident. That request is model
+    /// loading, rather than reasoning, until the server begins to stream its first response.
+    private var modelLoading: (model: String, since: Date)? {
+        guard turn.items.isEmpty, let progress = conversation.progress,
+              progress.label.lowercased().hasPrefix("loading ") else { return nil }
+        let raw = String(progress.label.dropFirst("loading ".count))
+        return (Self.modelName(raw), conversation.progressSince ?? turn.startedAt ?? .now)
+    }
+
+    private static func modelName(_ raw: String) -> String {
+        let name = raw.split(separator: "/").last.map(String.init) ?? raw
+        return name
+            .replacingOccurrences(of: "-4bit", with: "")
+            .replacingOccurrences(of: "-", with: " ")
     }
 
     @ViewBuilder
