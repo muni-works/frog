@@ -14,7 +14,7 @@ frog -p "why does the build fail?"   # one-shot, prints to stdout
 frog -c                              # continue the last session in this dir
 frog --sessions                      # list sessions started in this dir
 frog --fork <id>@3                   # branch a session right after turn 3
-frog --sandbox                       # confine writes to this directory (bash too, on macOS)
+frog --sandbox                       # confine writes to this directory (bash too, on macOS and Linux)
 frog -p --json "..."                 # one-shot, every engine event as a JSON line
 frog --serve                         # speak the engine protocol over stdio
 frog --chat --listen 127.0.0.1:8915  # one turn per HTTP request, for Siri (docs/ios-siri.md)
@@ -419,7 +419,7 @@ cargo run -p frog-bench -- report ~/.local/share/frog/bench/<timestamp>/results.
 - **Fails closed:** a timeout, error or unreadable answer means ask.
 - **Visible:** approved calls show "Auto: <reason>" on the tool card. When it asks, the permission card says why.
 
-**Sandbox.** On macOS, shell commands run in a seatbelt sandbox by default.
+**Sandbox.** Shell commands run in a sandbox by default: seatbelt on macOS, bubblewrap (`bwrap`) on Linux. Without a working `bwrap` (not installed, or unprivileged user namespaces are off), Linux commands ask instead.
 - **What it limits:** a command can write only inside the project, temp folders and toolchain caches (`~/.cargo`, `~/.npm`, …). It can't read credentials (`~/.ssh`, `~/.aws`, `~/.gnupg`, keychains, …), so a prompt-injected command can't send them anywhere. Network access works.
 - **No prompts:** because of those limits, sandboxed commands run without asking, even in Ask mode.
 - **Leaving it:** when a command genuinely needs more (say, `git push` over ssh), the model runs it again with `unsandboxed: true`. That always asks, and the prompt says why.

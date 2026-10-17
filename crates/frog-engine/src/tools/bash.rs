@@ -31,9 +31,51 @@ over cat/sed/find/grep. Avoid interactive commands; they will hang until the tim
     }
 }
 
-/// Whether Bash can be sandboxed here (macOS seatbelt, for now).
+/// Whether Bash can be sandboxed here: macOS seatbelt, or bubblewrap on Linux.
 pub fn available() -> bool {
-    cfg!(target_os = "macos") && std::path::Path::new("/usr/bin/sandbox-exec").exists()
+    if cfg!(target_os = "macos") {
+        std::path::Path::new("/usr/bin/sandbox-exec").exists()
+    } else {
+        bwrap().is_some()
+    }
+}
+
+/// bubblewrap, if it's installed and can set up a sandbox here. Probed once: it can be
+/// installed yet unusable (unprivileged user namespaces off, an AppArmor policy, a container
+/// that forbids mounts), and then commands ask like they would unsandboxed.
+fn bwrap() -> Option<&'static std::path::Path> {
+    static BWRAP: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    BWRAP
+        .get_or_init(|| {
+            if !cfg!(target_os = "linux") {
+                return None;
+            }
+            let path = std::env::var_os("PATH")
+                .into_iter()
+                .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+                .chain(["/usr/bin".into(), "/usr/local/bin".into()])
+                .map(|d| d.join("bwrap"))
+                .find(|p| p.is_file())?;
+            let works = std::process::Command::new(&path)
+                .args([
+                    "--ro-bind",
+                    "/",
+                    "/",
+                    "--dev-bind",
+                    "/dev",
+                    "/dev",
+                    "/bin/sh",
+                    "-c",
+                    ":",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            works.then_some(path)
+        })
+        .as_deref()
 }
 
 /// Kills the whole process group if the command is cancelled or times out.
@@ -227,13 +269,30 @@ const SECRETS: &[&str] = &[
     ".vault-token",
 ];
 
-/// Wrap the shell in macOS seatbelt: writes only inside the workspace, temp dirs and toolchain
+/// Wrap the shell in the OS sandbox: writes only inside the workspace, temp dirs and toolchain
 /// caches, credentials unreadable, everything else (including network) allowed. Fails closed
-/// on other platforms until bubblewrap support lands.
+/// where there's no sandbox to use.
 fn sandboxed(root: &std::path::Path, shell: &str) -> Result<tokio::process::Command> {
-    if !cfg!(target_os = "macos") {
-        bail!("the Bash sandbox is only implemented on macOS so far");
+    if cfg!(target_os = "macos") {
+        seatbelt(root, shell)
+    } else if let Some(bwrap) = bwrap() {
+        Ok(bubblewrap(
+            bwrap,
+            root,
+            &dirs::home_dir().unwrap_or_default(),
+            shell,
+        ))
+    } else if cfg!(target_os = "linux") {
+        bail!(
+            "the Bash sandbox needs bubblewrap (`bwrap`), which isn't installed or can't run here"
+        )
+    } else {
+        bail!("the Bash sandbox is only implemented on macOS and Linux")
     }
+}
+
+/// macOS: a seatbelt profile.
+fn seatbelt(root: &std::path::Path, shell: &str) -> Result<tokio::process::Command> {
     let tmp = std::env::temp_dir()
         .canonicalize()
         .unwrap_or_else(|_| std::env::temp_dir());
@@ -274,12 +333,61 @@ fn sandboxed(root: &std::path::Path, shell: &str) -> Result<tokio::process::Comm
     Ok(cmd)
 }
 
-#[cfg(all(test, target_os = "macos"))]
+/// Linux: bubblewrap. The whole filesystem read-only, the workspace, temp dirs and existing
+/// toolchain caches bound writable over it, then credentials masked last so they stay hidden
+/// even when the workspace contains them (a project at `~`). Network, `/proc` and `/dev` are
+/// shared, like seatbelt's `allow default`. No `--die-with-parent` or `--new-session`: a
+/// command's background processes outlive it the way they do unsandboxed, and staying in our
+/// process group is what lets a timeout kill them all.
+fn bubblewrap(
+    bwrap: &std::path::Path,
+    root: &std::path::Path,
+    home: &std::path::Path,
+    shell: &str,
+) -> tokio::process::Command {
+    use std::path::{Path, PathBuf};
+    let real = |p: &Path| p.canonicalize().ok();
+    let home = real(home).unwrap_or_else(|| home.to_path_buf());
+
+    let mut cmd = tokio::process::Command::new(bwrap);
+    cmd.args(["--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev"]);
+    let mut writable: Vec<PathBuf> = vec![root.to_path_buf()];
+    writable.extend(real(&std::env::temp_dir()));
+    writable.extend(
+        ["/tmp", "/var/tmp"]
+            .iter()
+            .filter_map(|p| real(Path::new(p))),
+    );
+    writable.extend(CACHES.iter().filter_map(|c| real(&home.join(c))));
+    writable.sort();
+    writable.dedup();
+    for p in &writable {
+        cmd.arg("--bind").arg(p).arg(p);
+    }
+    for secret in SECRETS.iter().filter_map(|s| real(&home.join(s))) {
+        if secret.is_dir() {
+            cmd.arg("--tmpfs")
+                .arg(&secret)
+                .arg("--remount-ro")
+                .arg(&secret);
+        } else {
+            cmd.arg("--ro-bind").arg("/dev/null").arg(&secret);
+        }
+    }
+    cmd.arg("--").arg(shell);
+    cmd
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn sandbox_confines_shell_writes_to_the_workspace() {
+        if !available() {
+            eprintln!("no OS sandbox here; skipping");
+            return;
+        }
         let ws = std::env::temp_dir().join(format!("frog-sbx-{}", crate::session::new_id()));
         std::fs::create_dir_all(&ws).unwrap();
         let mut ctx = Ctx::new(ws.clone());
@@ -300,21 +408,53 @@ mod tests {
         let _ = std::fs::remove_file(&escape);
         assert!(!escaped, "sandbox let a write escape the workspace");
 
-        // Credentials are hidden, even for reading.
+        assert!(out.content.contains("exit code"), "{}", out.content);
+
+        // Credentials are hidden, even for reading: seatbelt denies the read, bubblewrap shows
+        // an empty directory in its place.
         let ssh = dirs::home_dir().unwrap().join(".ssh");
-        if ssh.is_dir() {
+        if let Some(entry) = std::fs::read_dir(&ssh).ok().and_then(|mut d| d.next()) {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
             let out = run(
-                &json!({ "command": format!("ls '{}'", ssh.display()) }),
+                &json!({ "command": format!("ls -A '{}'", ssh.display()) }),
                 &mut ctx,
             )
             .await
             .unwrap();
-            assert!(
-                out.content.contains("Operation not permitted"),
-                "{}",
-                out.content
-            );
+            assert!(!out.content.contains(&name), "{}", out.content);
         }
-        assert!(out.content.contains("exit code"), "{}", out.content);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn bubblewrap_hides_secrets_inside_the_workspace_and_keeps_caches_writable() {
+        if !available() {
+            eprintln!("bubblewrap can't run here; skipping");
+            return;
+        }
+        // A fake home with the project inside it. It sits in the (writable) temp dir, so this
+        // checks the masks and the cache bind, not write confinement.
+        let home = std::env::temp_dir().join(format!("frog-bwrap-{}", crate::session::new_id()));
+        std::fs::create_dir_all(home.join("proj")).unwrap();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::fs::create_dir_all(home.join(".cargo")).unwrap();
+        std::fs::write(home.join(".ssh/id_ed25519"), "secret").unwrap();
+        std::fs::write(home.join(".netrc"), "machine x password y").unwrap();
+        let home = home.canonicalize().unwrap();
+        let script = "ls -A .ssh; cat .netrc; echo masked > .ssh/new; echo built > .cargo/lock && cat .cargo/lock";
+        let out = bubblewrap(bwrap().unwrap(), &home.join("proj"), &home, "/bin/bash")
+            .current_dir(&home)
+            .arg("-c")
+            .arg(script)
+            .output()
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned()
+            + &String::from_utf8_lossy(&out.stderr);
+        assert!(!text.contains("id_ed25519"), "{text}");
+        assert!(!text.contains("password"), "{text}");
+        assert!(text.contains("built"), "{text}");
+        assert!(!home.join(".ssh/new").exists());
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
