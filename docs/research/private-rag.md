@@ -58,6 +58,21 @@ Three design choices carry the system:
 
 **Prior art to build on and beat.** This is the shape of Tiptoe (Henzinger et al., SOSP 2023: private web search over hundreds of millions of pages with lattice encryption). Recent encrypted RAG retrieval: GoldenRetriever ([2607.29019](https://arxiv.org/abs/2607.29019), non-interactive) and PRAG ([2604.26525](https://arxiv.org/abs/2604.26525), end to end). What frog adds: one IR across client and server, a Metal backend (every GPU FHE library found targets CUDA), and the receipt.
 
+### Step 1 results (2026-10-17, tang `claude/hush-retrieval`, `crates/hush`)
+
+The standard set derives from (d = 128, 4 bits, n = 2048, η = 2): t = 2¹⁴, noise bound B = 28,672, **q = 1,476,513,793** (the smallest prime ≡ 1 mod 4096 above 2t(t + B); 30.5 bits against the standard's 54), ζ = 147,080. Primal core-SVP: 2²⁰² classical, 2¹⁸⁴ quantum. Decryption is **exact**, not probabilistic: Q > 2t(t + B) makes the rounding error provably below ½, and a test drives an adversarial error to the bound exactly and still decrypts every score. 256 dimensions or 8-bit values need 32–46 bits, so two RNS primes.
+
+Measured on an M4 Max (release), 100,000 documents, every score equal to the plaintext inner product:
+
+| Step | Time |
+|---|---|
+| encrypt the query (client) | 2.6 ms |
+| score every document (server, Metal) | 125 ms wall, 32 ms device |
+| decrypt every score (client GPU) | 110 ms |
+| query / response | 16 KB / **52 MB** |
+
+The open problem is the response. Decrypting a score needs the whole a·p polynomial, so it costs ~0.5 KB per document. That is fine to your own gateway on a LAN, and wrong over the internet. The known fixes are hint compression (Tiptoe) and LWE-to-RLWE packing keys (HintlessPIR, YPIR); this is now step 5's first item.
+
 ## 4. Two kinds of library
 
 | | Whose secret | Server stores | Server computes | Cost |
@@ -110,11 +125,11 @@ Login stays the open piece. SRP, which Crypton used, is discrete-log based and b
 
 ## 9. Shipping order
 
-1. **Retrieval parameter set and graphs.** Derive, estimate and failure-bound the set (ryng's checks, reused). Scoring and decryption as mod-q graphs with secrecy labels; differential tests against a plaintext reference; Metal batch scoring.
+1. **Retrieval parameter set and graphs. Done** (section 3, step 1 results): exact decryption by construction, Metal scoring and decryption, 100k documents in ~240 ms end to end.
 2. **Laptop mode end to end on a public corpus.** A document set of 100k, encrypted query in, top-k out, local Qwen answer, receipt pane. This is the demo.
 3. **PIR fetch.** Hide which documents were retrieved.
 4. **Private-documents libraries.** Sealed documents and encrypted embeddings; sharing by ryng `seal`.
-5. **Scale.** Clustering plus PIR for million-plus libraries; CUDA on the gateway.
+5. **Scale.** Response compression first (hint compression or packing keys: 52 MB per 100k documents today), then clustering plus PIR for million-plus libraries; CUDA on the gateway.
 6. **Cloud mode, research.** Encrypted small-model generation; encryption-friendly Qwen variants trained in tang.
 7. **Proofs, research.** The server proves it scanned what it should have.
 
