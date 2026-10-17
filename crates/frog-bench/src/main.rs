@@ -206,7 +206,7 @@ async fn run_suite(
             eprintln!("profiling {m}…");
             frog_engine::sidecar::ensure(&profile).await?;
             let provider = frog_engine::provider::Provider::new(&profile)?;
-            match harness::probe(&provider, &frog_engine::tools::specs()).await {
+            match harness::probe(&provider, &frog_engine::tools::specs(), |_, _, _| {}).await {
                 Ok(caps) => harness::save(&profile, &caps),
                 Err(e) => eprintln!("  couldn't profile {m}: {e:#}"),
             }
