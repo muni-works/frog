@@ -110,6 +110,27 @@ Still open:
 - **Packing on the GPU** (1.25 s on the CPU today).
 - **The lattice estimator at log Q = 46.**
 
+### Private fetch (2026-10-17, tang `claude/hush-retrieval` b863d3f)
+
+Without a private fetch the encrypted ranking leaks through the next request. A server that watches which documents the client fetches can probe both the query and, across a session, the key. The fetch is hush itself:
+- payloads are laid out sideways (virtual document b of a 2048-document block is byte b of each);
+- the query is one-hot on the wanted slot;
+- the server scores and packs every block as for retrieval.
+
+One suite serves both modes on one key set: q₀ = 2,147,389,441, q₁ = 163,841, Q ≈ 2^48.3, t = 257 for fetch.
+
+The attack this design had to survive is selective tampering. The server corrupts one block and watches for an abort, which would reveal whether the wanted document is in that block. The fix: a fetch hands the client one document per block, and the client checks **all** of them against a published hash list. An abort then reveals only that the server tampered. A mismatch also poisons the session, so the client must start over with a fresh secret. Fetches are always exactly k, padded with uniformly drawn dummies.
+
+| at 100k docs × 2 KB | |
+|---|---|
+| fetch query / response | 16 KB / 0.80 MB |
+| client open + verify all blocks | 14 ms |
+| server, one fetch | **22.6 s** (10.4 s Metal) |
+
+Fetch decrypts exactly, but it is too slow to use. A private fetch must touch all 200 MB, and that is one key switch per 2 KB: about 6×10¹⁰ multiply-mods, about 0.1 s of GPU work in principle. The merge path is about 100× off that, so the next step is GPU kernel work, not new cryptography.
+
+Query expansion into per-document selectors (SealPIR-style) does not fit. Its noise multiplies by the document bytes, reaching about 2^58 against a Q of 2^48.
+
 ## 4. Two kinds of library
 
 | | Whose secret | Server stores | Server computes | Cost |
