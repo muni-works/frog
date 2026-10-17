@@ -1,6 +1,7 @@
 mod acp;
 mod complete;
 mod headless;
+mod listen;
 #[cfg(unix)]
 mod muon;
 mod render;
@@ -34,8 +35,12 @@ struct Cli {
     serve: bool,
     /// Serve a muon node's launcher intents: agent:frog on muon-agentd's bus and MCP server
     /// (muon docs/ecosystem.md, "launcher intent"). Runs until the bus closes.
-    #[arg(long, conflicts_with_all = ["print", "serve", "acp"])]
+    #[arg(long, conflicts_with_all = ["print", "serve", "acp", "listen"])]
     muon: bool,
+    /// Answer one turn per HTTP request on ADDR (e.g. a Tailscale IP:8915), for the iOS app and
+    /// Siri. Needs FROG_LISTEN_TOKEN (the bearer token). See docs/ios-siri.md.
+    #[arg(long, value_name = "ADDR", conflicts_with_all = ["print", "serve", "acp"])]
+    listen: Option<String>,
     /// With --serve: the client can answer MCP elicitations and host MCP Apps.
     #[arg(long, requires = "serve", hide = true)]
     rich: bool,
@@ -477,6 +482,36 @@ async fn run() -> Result<bool> {
         acp::serve(cfg.clone(), profile_name, profile, store, cli.sandbox).await?;
         return Ok(true);
     }
+    if let Some(addr) = &cli.listen {
+        let token = std::env::var("FROG_LISTEN_TOKEN").unwrap_or_default();
+        let (cfg, sandbox, chat, dir) = (cfg.clone(), cli.sandbox, cli.chat, store.clone());
+        let make = move |resume, model: Option<String>| -> Result<Options> {
+            let (profile_name, profile) = match model {
+                Some(m) => cfg.resolve(Some(&m))?,
+                None => (profile_name.clone(), profile.clone()),
+            };
+            Ok(Options {
+                cfg: cfg.clone(),
+                profile_name,
+                profile,
+                cwd: cwd.clone(),
+                mode,
+                can_ask: false,
+                resume,
+                store: Some(dir.clone()),
+                sandbox,
+                rich: false,
+                subagent: false,
+                chat,
+            })
+        };
+        let template = listen::Template {
+            store: store.clone(),
+            make: Box::new(make),
+        };
+        listen::run(addr, token, template).await?;
+        return Ok(true);
+    }
     let handle = frog_engine::spawn(Options {
         cfg: cfg.clone(),
         profile_name,
@@ -875,7 +910,9 @@ async fn probe(name: &str, profile: &frog_engine::config::Profile) -> Result<boo
     frog_engine::sidecar::ensure(profile).await?;
     let provider = frog_engine::provider::Provider::new(profile)?;
     eprintln!("probing {name}…");
-    let caps = harness::probe(&provider, &frog_engine::tools::specs()).await?;
+    let caps = harness::probe(&provider, &frog_engine::tools::specs(), |label, completed, total| {
+        eprintln!("{label} ({completed}/{total})");
+    }).await?;
     harness::save(profile, &caps);
     let tier = harness::tier(profile, Some(&caps));
     let mut auto = profile.clone();

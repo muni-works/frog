@@ -1,0 +1,5 @@
+# Choices the user picks from: buttons, not a numbered list. Passes when actions were shown and
+# TODO.md was left alone.
+prompt = "Read TODO.md and let me pick which item you should do first. Don't start any of them."
+check = "case \",$FROG_PRESENTED,\" in *,actions,*) [ \"$(grep -c '^- ' TODO.md)\" = 3 ];; *) echo \"presented: $FROG_PRESENTED\"; false;; esac"
+timeout_secs = 180

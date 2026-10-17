@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/linux"]
+# Firmware for the puck: its own target and toolchain (see crates/puck-fw/README.md).
+exclude = ["crates/puck-fw"]
 # The GTK app needs GTK 4 and libadwaita; build it with `-p frog-gtk` (Linux).
 default-members = ["crates/frog", "crates/frog-engine", "crates/frog-bench", "crates/puck"]
 

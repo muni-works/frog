@@ -184,15 +184,20 @@ enum Recents {
 }
 
 extension SuggestedModel {
-    /// The model for this Mac: 8B with 16 GB or more, else 4B.
+    /// The model for this Mac: 32B at 48 GB, 8B at 16 GB, else 4B.
     static var forThisMac: SuggestedModel {
-        let repo = ModelIdentity.memoryGB >= 16 ? "mlx-community/Qwen3-8B-4bit" : "mlx-community/Qwen3-4B-4bit"
+        let repo: String
+        switch ModelIdentity.memoryGB {
+        case 48...: repo = "mlx-community/Qwen3-32B-4bit"
+        case 16...: repo = "mlx-community/Qwen3-8B-4bit"
+        default: repo = "mlx-community/Qwen3-4B-4bit"
+        }
         return all.first { $0.repo == repo } ?? all[0]
     }
 }
 
 /// One quiet line in an empty conversation, while there's no model on this Mac yet: "Using
-/// Apple Intelligence. Get Qwen3 8B for bigger tasks · 4.6 GB". Get downloads the model that
+/// Apple Intelligence. Get Qwen3 32B for bigger tasks · 18 GB". Get downloads the model that
 /// suits this Mac and switches to it when it's ready, like picking it in the picker. Gone once
 /// there's a model on this Mac or a cloud key, or once it's closed.
 struct ModelSuggestion: View {

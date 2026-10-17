@@ -101,6 +101,19 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(try json(.answer(id: "q1", choices: ["A"], other: nil)), #"{"choices":["A"],"id":"q1","op":"answer"}"#)
         XCTAssertEqual(try json(.answer(id: "q1", choices: [], other: nil)), #"{"id":"q1","op":"answer"}"#)
         XCTAssertEqual(try json(.setClientCaps(panes: true, ask: true)), #"{"ask":true,"op":"set_client_caps","panes":true}"#)
+        XCTAssertEqual(try json(.act(label: "Skip", send: "")), #"{"label":"Skip","op":"act"}"#)
+        XCTAssertEqual(try json(.act(label: "Clean", send: "clean the caches")), #"{"label":"Clean","op":"act","send":"clean the caches"}"#)
+
+        let rich = try decode(#"{"seq":10,"session":"s","created":0,"event":"item_completed","id":"t3","item":{"type":"tool_call","name":"Present","arg":"","input":{},"outcome":"ok","output":"Shown","present":{"blocks":[{"type":"chart","kind":"line","labels":["mon","tue"],"series":[{"name":"ms","values":[4.0,8.0]}],"unit":"ms"},{"type":"stats","items":[{"label":"disk","value":"42 GB","detail":"of 500"}]},{"type":"actions","prompt":"next?","options":[{"label":"Clean","send":"clean the caches"},{"label":"Skip"}]}]}}}"#)
+        let preview = try decode(#"{"seq":11,"session":"s","created":0,"event":"present_preview","present":{"title":"Disk","blocks":[{"type":"callout","text":"b"}]}}"#)
+        guard case .presentPreview(let pp) = preview.event else { return XCTFail() }
+        XCTAssertEqual(pp.blocks, [.callout(tone: .info, text: "b")])
+        guard case .itemCompleted(_, .toolCall(let r2)) = rich.event, let p2 = r2.present else { return XCTFail() }
+        XCTAssertEqual(p2.blocks, [
+            .chart(kind: .line, labels: ["mon", "tue"], series: [.init(name: "ms", values: [4, 8])], unit: "ms"),
+            .stats([.init(label: "disk", value: "42 GB", detail: "of 500", tone: nil)]),
+            .actions(prompt: "next?", options: [.init(label: "Clean", send: "clean the caches"), .init(label: "Skip", send: nil)]),
+        ])
     }
 
     func testPaneOpsEncode() throws {

@@ -6,6 +6,7 @@ struct SettingsSheet: View {
     let remote: Remote
     @Environment(\.dismiss) private var dismiss
     @AppStorage("playfulSounds") private var sounds = true
+    @AppStorage(WatchLink.directKey) private var watchURL = ""
     private let stats = ModelStats.shared
 
     var body: some View {
@@ -41,7 +42,29 @@ struct SettingsSheet: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        HouseView()
+                    } label: {
+                        Label("The House", systemImage: "house")
+                    }
+                } footer: {
+                    Text("frog on your home server, for Siri: “Ask Frog about the house”.")
+                }
+
+                Section {
                     Toggle(isOn: $sounds) { Label("Frog sounds", systemImage: "speaker.wave.2") }
+                }
+
+                Section {
+                    TextField("wss://your-mac.tailnet.ts.net", text: $watchURL)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onSubmit { WatchLink.shared.directChanged() }
+                } header: {
+                    Text("Apple Watch")
+                } footer: {
+                    Text("Where your watch reaches your Mac when your phone isn't around: a secure WebSocket to frog's bridge, like `tailscale serve` in front of port 8913. Leave empty to go through your phone.")
                 }
 
                 Section {
@@ -60,7 +83,10 @@ struct SettingsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { dismiss() }
+                    Button("Done", systemImage: "checkmark") {
+                        WatchLink.shared.directChanged()
+                        dismiss()
+                    }
                 }
             }
         }

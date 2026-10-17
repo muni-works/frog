@@ -19,6 +19,8 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
     enum Category {
         static let permission = "PERMISSION"
         static let done = "DONE"
+        /// frog's own question: tap to answer (in the app, or on the watch).
+        static let ask = "ASK"
     }
 
     enum Action {
@@ -41,6 +43,7 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationCategory(identifier: Category.permission, actions: [allow, deny], intentIdentifiers: [],
                                    options: [.customDismissAction]),
             UNNotificationCategory(identifier: Category.done, actions: [reply], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: Category.ask, actions: [], intentIdentifiers: [], options: []),
         ])
     }
 

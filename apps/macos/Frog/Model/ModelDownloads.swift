@@ -16,6 +16,8 @@ struct SuggestedModel: Identifiable, Hashable {
                        detail: "Best balance for coding on most Macs", approxGB: 2.3),
         SuggestedModel(repo: "mlx-community/Qwen3-8B-4bit", title: "Qwen3 8B",
                        detail: "Stronger, needs 16 GB of memory", approxGB: 4.6),
+        SuggestedModel(repo: "mlx-community/Qwen3-32B-4bit", title: "Qwen3 32B",
+                       detail: "Best local quality, needs 48 GB of memory", approxGB: 18.0),
         SuggestedModel(repo: "mlx-community/Qwen3-1.7B-4bit", title: "Qwen3 1.7B",
                        detail: "Fastest, for quick questions", approxGB: 1.0),
         SuggestedModel(repo: "mlx-community/gemma-3-4b-it-4bit", title: "Gemma 3 4B",
@@ -51,14 +53,17 @@ final class ModelDownloads {
         hub.appending(path: "models--" + repo.replacingOccurrences(of: "/", with: "--"))
     }
 
-    /// Whether a complete snapshot (config + weights) is already on disk.
+    /// Whether a complete snapshot that tang can load is already on disk.
     static func isInstalled(_ repo: String) -> Bool {
         let snaps = repoDir(repo).appending(path: "snapshots")
         let fm = FileManager.default
         let dirs = (try? fm.contentsOfDirectory(at: snaps, includingPropertiesForKeys: nil)) ?? []
         return dirs.contains { d in
             let files = (try? fm.contentsOfDirectory(atPath: d.path)) ?? []
-            return files.contains("config.json") && files.contains { $0.hasSuffix(".safetensors") }
+            return files.contains("config.json")
+                && files.contains("tokenizer.json")
+                && files.contains("tokenizer_config.json")
+                && files.contains { $0.hasSuffix(".safetensors") }
         }
     }
 

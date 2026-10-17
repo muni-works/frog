@@ -445,6 +445,13 @@ struct RemoteSession: Identifiable, Hashable {
     let activity: String?
     /// What frog is asking, while it waits.
     let question: Question?
+    /// frog's own question (the `Ask` tool), while it waits on one.
+    let ask: Snapshot.Ask?
+    /// The last thing frog said.
+    let last: String?
+    /// The last turn's headline stats and next-step buttons (Present), for the wrist.
+    let stats: [String]?
+    let actions: [Snapshot.Action]?
 
     struct Question: Hashable {
         let id: String
@@ -469,11 +476,16 @@ struct RemoteSession: Identifiable, Hashable {
         archived = row["archived"] as? Bool ?? false
         live = (row["live"] as? String).flatMap(Live.init)
         activity = row["activity"] as? String
+        let wrist = Snapshot.Row(bridge: row)
+        stats = wrist?.stats
+        actions = wrist?.actions
         let decoded = (row["info"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
             .flatMap { try? JSONDecoder().decode(SessionInfo.self, from: $0) }
         let modifiedMs = Int64((row["modified"] as? NSNumber)?.doubleValue ?? 0)
         info = decoded ?? SessionInfo(id: id, modified: modifiedMs, created: modifiedMs, model: model,
                                       firstInput: nil, title: title, forkedFrom: nil, cwd: cwd)
+        ask = Snapshot.Ask(row["ask"])
+        last = row["last"] as? String
         question = (row["question"] as? [String: Any]).flatMap { q in
             (q["id"] as? String).map { Question(id: $0, name: q["name"] as? String ?? "", arg: q["arg"] as? String ?? "") }
         }

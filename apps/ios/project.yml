@@ -138,13 +138,14 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Frog
         INFOPLIST_KEY_WKCompanionAppBundleIdentifier: eco.frog.remote
-        INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp: NO
+        INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Watch/Info.plist
       properties:
         CFBundleDisplayName: Frog
         WKCompanionAppBundleIdentifier: eco.frog.remote
+        WKRunsIndependentlyOfCompanionApp: true
   # "Send to frog" in the share sheet: a screenshot, a log or a link, into an open conversation.
   FrogShare:
     type: app-extension

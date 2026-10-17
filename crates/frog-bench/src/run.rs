@@ -60,6 +60,10 @@ pub struct RunResult {
     /// Each model call: prompt tokens, how many were cached, prefill time.
     #[serde(default)]
     pub calls: Vec<Call>,
+    /// The kind of every `Present` block shown, in order. The check sees them comma-separated
+    /// as `$FROG_PRESENTED`.
+    #[serde(default)]
+    pub presented: Vec<String>,
     pub workspace: PathBuf,
     pub check_output: String,
 }
@@ -161,6 +165,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         sessions: Vec::new(),
         turns: 0,
         calls: Vec::new(),
+        presented: Vec::new(),
         workspace: r.workspace.clone(),
         check_output: String::new(),
     };
@@ -219,7 +224,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         out.end = "timeout".into();
     }
 
-    let (pass, output) = check(&r.task.check, &r.workspace).await;
+    let (pass, output) = check(&r.task.check, &r.workspace, &out.presented.join(",")).await;
     out.pass = pass;
     out.check_output = output;
     Ok(out)
@@ -293,11 +298,19 @@ fn record(env: Envelope, out: &mut RunResult, at: &mut Place) {
             out.tier = Some(lower(s.tier));
         }
         Event::ItemCompleted {
-            item: Item::ToolCall {
-                outcome, display, ..
-            },
+            item:
+                Item::ToolCall {
+                    outcome,
+                    display,
+                    present,
+                    ..
+                },
             ..
         } => {
+            if let Some(p) = present {
+                out.presented
+                    .extend(p.blocks.iter().map(|b| b.kind().to_string()));
+            }
             out.tool_calls += 1;
             if outcome != ToolOutcome::Ok {
                 out.tool_errors += 1;
@@ -337,10 +350,11 @@ fn record(env: Envelope, out: &mut RunResult, at: &mut Place) {
     }
 }
 
-async fn check(cmd: &str, dir: &Path) -> (bool, String) {
+async fn check(cmd: &str, dir: &Path, presented: &str) -> (bool, String) {
     let child = tokio::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(cmd)
+        .env("FROG_PRESENTED", presented)
         .current_dir(dir)
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true)

@@ -269,7 +269,15 @@ impl Client {
                     on(StreamEvent::ToolCall(n.into()));
                 }
                 match &tc["function"]["arguments"] {
-                    Value::String(a) => c.2.push_str(a),
+                    Value::String(a) => {
+                        c.2.push_str(a);
+                        if !c.1.is_empty() && !a.is_empty() {
+                            on(StreamEvent::ToolArgs {
+                                name: c.1.clone(),
+                                chunk: a.clone(),
+                            });
+                        }
+                    }
                     // Some servers send arguments as an object instead of a string.
                     obj @ Value::Object(_) => c.2 = obj.to_string(),
                     _ => {}

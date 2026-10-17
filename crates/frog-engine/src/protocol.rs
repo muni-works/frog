@@ -69,6 +69,13 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<Image>,
     },
+    /// The user pressed a button in a `Present` actions block. Runs a turn like [`Op::Submit`]
+    /// with `send` (or `label` when `send` is empty) as the message.
+    Act {
+        label: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        send: String,
+    },
     /// Run a shell command directly; its output is attached to the next message.
     Shell {
         command: String,
@@ -424,10 +431,21 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// The blocks of a `Present` call that have finished streaming so far, validated. Each
+    /// preview replaces the last; the tool call's own item supersedes them all.
+    PresentPreview {
+        present: Box<crate::present::Present>,
+    },
     /// Something is in flight with nothing to show yet (a model request, a tool call's
     /// arguments streaming). Clients typically show a spinner.
     Progress {
         label: String,
+        /// Completed setup steps, when this operation has a known length.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completed: Option<u16>,
+        /// Total setup steps, when this operation has a known length.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total: Option<u16>,
     },
     Notice {
         level: Level,

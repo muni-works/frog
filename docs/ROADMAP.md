@@ -253,6 +253,6 @@ See [local code review](research/local-code-review.md): `frog review` as a gate,
 - **Dev-server preview pane** with console logs, which the agent can screenshot and inspect.
 - **Global quick-ask hotkey**, plus capture a region and ask.
 - **Menu bar extra** for running and waiting agents, with approve and deny.
-- **Shortcuts, App Intents and the Services menu** ("Ask frog about the selection").
+- **Shortcuts, App Intents and the Services menu** ("Ask frog about the selection"). iOS first pass done: "Ask the house" through `frog --listen` ([ios-siri.md](ios-siri.md)).
 - **Share a session** as an HTML page or a gist.
 - **Small polish.** The lightbox zooms in from the thumbnail, focus returns to the composer after the lightbox closes, and the title lines up with the sidebar.

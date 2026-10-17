@@ -8,20 +8,27 @@ publish = false
 [[bin]]
 name = "puck-sim"
 path = "src/main.rs"
+required-features = ["host"]
 
 [features]
+default = ["host"]
+# Everything that only makes sense on a desktop: the simulator binary's CLI and clock, and PNG
+# output. The firmware builds the library with `default-features = false`.
+host = ["dep:anyhow", "dep:chrono", "dep:clap", "dep:png"]
+# Latin-only font subsets, for the device: the full faces don't fit in its RAM once loaded.
+small-fonts = []
 # A desktop window (X11/Wayland/macOS/Windows). Off by default so `cargo build --workspace` needs no GUI libraries.
-window = ["dep:minifb"]
+window = ["host", "dep:minifb"]
 # Play the sound cues through the host's audio device.
-audio = ["dep:rodio"]
+audio = ["host", "dep:rodio"]
 
 [dependencies]
-anyhow.workspace = true
-chrono.workspace = true
-clap.workspace = true
+anyhow = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
 serde_json.workspace = true
 fontdue = "0.9"
 phyz = { version = "0.4", default-features = false }
-png = "0.17"
+png = { version = "0.17", optional = true }
 minifb = { version = "0.28", optional = true }
 rodio = { version = "0.20", optional = true, default-features = false, features = ["wav"] }

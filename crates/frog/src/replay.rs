@@ -253,6 +253,8 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                 p.emit(env.event.clone());
                 p.emit(Event::Progress {
                     label: "thinking".into(),
+                    completed: None,
+                    total: None,
                 });
             }
             Event::ItemStarted {
@@ -347,6 +349,8 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                 p.emit(env.event.clone());
                 p.emit(Event::Progress {
                     label: "thinking".into(),
+                    completed: None,
+                    total: None,
                 });
             }
             Event::TurnEnded { usage, .. } => {

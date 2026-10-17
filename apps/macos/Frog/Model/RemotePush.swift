@@ -72,6 +72,7 @@ final class RemotePush {
               Date().timeIntervalSince1970 * 1000 - created < 30_000 else { return }
         switch obj["event"] as? String {
         case "permission_request": asked(obj, session: session)
+        case "question": choosing(obj, session: session)
         case "turn_ended": finished(obj, session: session)
         case "item_started", "item_completed", "turn_started": activityUpdate(obj, session: session)
         default: break
@@ -129,6 +130,25 @@ final class RemotePush {
             "mood": "waiting", "activity": question, "steps": steps[session, default: 0],
             "waiting": true, "permission": obj["id"] as? String ?? "",
         ])
+    }
+
+    /// frog's own question (the `Ask` tool): the options in the body; answered in the app, or on the watch.
+    private func choosing(_ obj: [String: Any], session: String) {
+        let (title, folder) = title(session)
+        let options = (obj["options"] as? [[String: Any]] ?? []).compactMap { $0["label"] as? String }
+        send([
+            "aps": [
+                "alert": ["title": title, "subtitle": "frog asks" + (folder.map { " in \($0)" } ?? ""),
+                          "body": String((obj["question"] as? String ?? "").prefix(300))
+                              + (options.isEmpty ? "" : "\n" + options.prefix(4).joined(separator: " · "))],
+                "category": "ASK",
+                "thread-id": session,
+                "interruption-level": "time-sensitive",
+                "sound": "default",
+            ],
+            "session": session,
+            "ask": obj["id"] as? String ?? "",
+        ], collapse: "ask-\(session)")
     }
 
     private func finished(_ obj: [String: Any], session: String) {

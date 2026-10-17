@@ -1,0 +1,29 @@
+[package]
+name = "puck-fw"
+description = "Firmware for the frog puck: Waveshare ESP32-S3 1.75\" round AMOLED"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Not part of the host workspace: this builds for xtensa-esp32s3-espidf with the `esp` toolchain.
+[workspace]
+
+[[bin]]
+name = "puck-fw"
+harness = false
+
+[profile.release]
+opt-level = 3
+debug = true
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[dependencies]
+log = "0.4"
+esp-idf-svc = "0.53"
+puck = { path = "../puck", default-features = false, features = ["small-fonts"] }
+
+[build-dependencies]
+embuild = "0.33"

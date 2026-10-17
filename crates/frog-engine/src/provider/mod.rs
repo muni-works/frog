@@ -63,6 +63,9 @@ pub enum StreamEvent {
         name: String,
         input: Value,
     },
+    /// More of a tool call's arguments (raw JSON text, in order), for previewing them while
+    /// they stream. Providers that only see whole calls never send it.
+    ToolArgs { name: String, chunk: String },
 }
 
 #[derive(Clone)]

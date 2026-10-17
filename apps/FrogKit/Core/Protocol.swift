@@ -42,6 +42,8 @@ enum Decision: String, Codable, Sendable {
 enum Op: Encodable, Sendable {
     case submit(String, images: [ToolImage] = [])
     case shell(String)
+    /// A press on a `Present` actions button; runs a turn with `send` (or the label).
+    case act(label: String, send: String)
     case interrupt
     case permission(id: String, decision: Decision)
     case setMode(Mode)
@@ -81,7 +83,7 @@ enum Op: Encodable, Sendable {
         case op, text, command, id, decision, mode, spec, focus, after, title
         case action, content, server, tool, arguments, images
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
-        case ask, choices, other
+        case ask, choices, other, label, send
     }
 
     func encode(to encoder: Encoder) throws {
@@ -91,6 +93,10 @@ enum Op: Encodable, Sendable {
             try c.encode("submit", forKey: .op)
             try c.encode(text, forKey: .text)
             if !images.isEmpty { try c.encode(images, forKey: .images) }
+        case .act(let label, let send):
+            try c.encode("act", forKey: .op)
+            try c.encode(label, forKey: .label)
+            if !send.isEmpty { try c.encode(send, forKey: .send) }
         case .shell(let command):
             try c.encode("shell", forKey: .op)
             try c.encode(command, forKey: .command)
@@ -453,6 +459,19 @@ struct ToolProgress: Sendable, Equatable {
     var message: String?
 }
 
+/// Work reported by the engine. `completed` and `total` are present when the operation has
+/// discrete stages, such as capability profiling.
+struct EngineProgress: Decodable, Sendable, Equatable {
+    var label: String
+    var completed: Int?
+    var total: Int?
+
+    var fraction: Double? {
+        guard let completed, let total, total > 0 else { return nil }
+        return min(1, max(0, Double(completed) / Double(total)))
+    }
+}
+
 struct PermissionRequest: Decodable, Sendable, Identifiable {
     var id: String
     var item: String
@@ -480,7 +499,9 @@ enum Event: Decodable, Sendable {
     case titled(String)
     case itemDelta(id: String, delta: Delta)
     case permissionRequest(PermissionRequest)
-    case progress(String)
+    case progress(EngineProgress)
+    /// A `Present` call's closed blocks while its arguments still stream.
+    case presentPreview(Present)
     case elicitation(Elicitation)
     case elicitationDone(id: String)
     case question(Question)
@@ -530,7 +551,7 @@ extension Event {
         case event
         case turn, input, reason, usage, id, kind, item, delta, decision
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
-        case progress, total, result, inner
+        case progress, total, result, inner, present
         case images
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image
     }
@@ -577,7 +598,9 @@ extension Event {
         case "permission_request":
             self = .permissionRequest(try PermissionRequest(from: decoder))
         case "progress":
-            self = .progress(try c.decode(String.self, forKey: .label))
+            self = .progress(try EngineProgress(from: decoder))
+        case "present_preview":
+            self = .presentPreview(try c.decode(Present.self, forKey: .present))
         case "elicitation":
             self = .elicitation(try Elicitation(from: decoder))
         case "question":

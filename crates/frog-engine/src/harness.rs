@@ -71,8 +71,32 @@ fn read_cache() -> BTreeMap<String, Caps> {
         .unwrap_or_default()
 }
 
+/// Capability results shipped with Frog for the bundled Tang Qwen3 models. These are
+/// deliberately exact model identifiers; unknown models start immediately and fall back when
+/// their first real tool calls show a format mismatch.
+fn bundled_caps(p: &Profile) -> Option<Caps> {
+    let model = p.sidecar.as_deref()?;
+    let params_b = match model {
+        "mlx-community/Qwen3-4B-4bit" => 4.0,
+        "mlx-community/Qwen3-8B-4bit" => 8.0,
+        "mlx-community/Qwen3-32B-4bit" => 32.0,
+        _ => return None,
+    };
+    Some(Caps {
+        native_tools: true,
+        text_tools: false,
+        json_mode: true,
+        abstains: true,
+        thinks: true,
+        think_off: Some(true),
+        params_b: Some(params_b),
+        // A shipped profile is not a measurement; a later local probe can replace it.
+        probed: 0,
+    })
+}
+
 pub fn cached(p: &Profile) -> Option<Caps> {
-    read_cache().remove(&key(p))
+    read_cache().remove(&key(p)).or_else(|| bundled_caps(p))
 }
 
 pub fn save(p: &Profile, caps: &Caps) {
@@ -202,12 +226,19 @@ async fn ask(
 /// Run the capability probes. The first (plain text, no tools) doubles as a reachability check:
 /// if it fails, the model can't be profiled and nothing should be cached. After that, an error
 /// just means the feature isn't supported (e.g. a 400 for `tools` or `format`).
-pub async fn probe(provider: &Provider, specs: &[ToolSpec]) -> anyhow::Result<Caps> {
+pub async fn probe(
+    provider: &Provider,
+    specs: &[ToolSpec],
+    mut progress: impl FnMut(&str, u16, u16),
+) -> anyhow::Result<Caps> {
+    let total = 4;
+    progress("Checking text tool calls", 0, total);
     let text_system = format!("{PROBE_SYSTEM}{}", prompt::text_tools_prompt(specs));
     let r = ask(provider, &text_system, PROBE_READ, &[], None).await?;
     let text_tools = prompt::extract_tool_calls(&r.message.text())
         .is_some_and(|(_, calls)| calls.iter().any(|(n, a)| reads_probe(n, a)));
 
+    progress("Checking native tool calls", 1, total);
     let native = ask(provider, PROBE_SYSTEM, PROBE_READ, specs, None)
         .await
         .ok();
@@ -224,10 +255,12 @@ pub async fn probe(provider: &Provider, specs: &[ToolSpec]) -> anyhow::Result<Ca
             .any(|b| matches!(b, crate::message::Block::Thinking { text, .. } if !text.trim().is_empty()))
     });
 
+    progress("Checking direct answers", 2, total);
     let abstains = ask(provider, PROBE_SYSTEM, PROBE_MATH, specs, None)
         .await
         .is_ok_and(|r| r.message.tool_uses().is_empty() && r.message.text().contains("42"));
 
+    progress("Checking JSON tool calls", 3, total);
     let json_system = format!("{PROBE_SYSTEM}{}", prompt::json_tools_prompt(specs));
     let schema = prompt::json_schema(specs);
     let json_mode = ask(provider, &json_system, PROBE_READ, &[], Some(&schema))
@@ -238,10 +271,13 @@ pub async fn probe(provider: &Provider, specs: &[ToolSpec]) -> anyhow::Result<Ca
         });
 
     let think_off = if thinks {
+        progress("Checking thinking controls", total, total + 1);
         Some(probe_think_off(provider).await)
     } else {
         None
     };
+    let complete = if thinks { total + 1 } else { total };
+    progress("Profile ready", complete, complete);
 
     Ok(Caps {
         native_tools,
@@ -303,6 +339,16 @@ mod tests {
         let mut mine = Profile::new(ProviderKind::Openai, "qwen3");
         mine.base_url = Some("http://mew.local:8000/v1".into());
         assert!(!is_cloud(&mine));
+    }
+
+    #[test]
+    fn bundled_qwen3_profiles_are_available_immediately() {
+        let mut p = Profile::new(ProviderKind::Openai, "mlx-community/Qwen3-32B-4bit");
+        p.sidecar = Some(p.model.clone());
+        let c = cached(&p).expect("bundled profile");
+        assert!(c.native_tools && c.json_mode && c.thinks);
+        assert_eq!(c.think_off, Some(true));
+        assert_eq!(c.params_b, Some(32.0));
     }
 
     fn local(model: &str) -> Profile {

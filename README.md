@@ -17,6 +17,7 @@ frog --fork <id>@3                   # branch a session right after turn 3
 frog --sandbox                       # confine writes to this directory (bash too, on macOS)
 frog -p --json "..."                 # one-shot, every engine event as a JSON line
 frog --serve                         # speak the engine protocol over stdio
+frog --chat --listen 127.0.0.1:8915  # one turn per HTTP request, for Siri (docs/ios-siri.md)
 ```
 
 ## Architecture
@@ -97,7 +98,7 @@ Named profiles live in `~/.config/frog/config.toml`. See [config.example.toml](c
 The tools behave like Claude Code's: Edit replaces an exact string that must be unique, and a file has to be Read before it can be edited, with a check that it hasn't changed since. Bash keeps its working directory between calls.
 
 **Showing and asking.** Two tools put structure in front of the user instead of prose:
-- `Present` shows typed blocks: `table`, `compare` (side by side), `steps`, `callout` and `diagram`. Each block is validated on its own, so a bad one is dropped and the model is told which to fix. The Mac app draws them natively; the terminal draws them as text. Weak models only get tables and callouts, and small windows don't get the tool.
+- `Present` shows typed blocks: `table`, `compare` (side by side), `steps`, `callout`, `diagram`, `chart` (bar or line), `stats` (headline numbers) and `actions` (buttons; a press sends `Op::Act`, which runs the next turn). Each block is validated on its own, so a bad one is dropped and the model is told which to fix. Blocks stream: each one is previewed (`Event::PresentPreview`) as soon as its arguments close. The Mac and iOS apps draw them natively, the watch shows the last turn's stats and buttons, and the terminal draws them as text. Weak models only get tables, callouts and stats, and small windows don't get the tool. The `present-*` bench tasks check that models reach for it when it helps and leave it alone when it doesn't.
 - `Ask` puts a question with 2-4 options to the user and waits (`question` event, answered with `{"op":"answer","id":…,"choices":[…],"other":…}`). The user can type their own answer or skip. It's only offered when a client says someone can answer (`set_client_caps` with `ask: true`; the TUI and the Mac app do), never in `-p` or to subagents, and an interrupt dismisses it.
 
 **Local-model affordances**

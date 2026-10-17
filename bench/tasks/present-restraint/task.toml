@@ -1,0 +1,4 @@
+# A one-word answer needs no blocks. Passes when the answer is right and nothing was presented.
+prompt = "What programming language is this project written in? Write just the language name to answer.txt."
+check = "grep -qix go answer.txt && [ -z \"$FROG_PRESENTED\" ] || { echo \"presented: $FROG_PRESENTED\"; false; }"
+timeout_secs = 180

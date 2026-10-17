@@ -37,7 +37,12 @@ final class Conversation {
     private(set) var status: Status?
     private(set) var turns: [TurnState] = []
     private(set) var busy = true
-    private(set) var progress: String?
+    private(set) var progress: EngineProgress?
+    /// The current progress update began. The UI uses this only to describe an in-flight
+    /// request and animate its current stage; it never changes the engine's completion count.
+    private(set) var progressSince: Date?
+    /// A `Present` call's blocks so far, while its arguments stream; gone once its item starts.
+    private(set) var presentPreview: Present?
     private(set) var permission: PermissionRequest?
     /// An MCP server waiting on the user.
     private(set) var elicitation: Elicitation?
@@ -168,6 +173,19 @@ final class Conversation {
         turns.append(TurnState(number: nil, input: text, images: images, sentAt: .now))
         busy = true
         link?.send(.submit(text, images: images))
+    }
+
+    /// A press on a `Present` actions button: the model gets `send` (or the label) as the
+    /// user's next message.
+    func act(_ choice: Present.Choice) {
+        let text = (choice.send ?? "").isEmpty ? choice.label : choice.send!
+        if busy || replaying {
+            queue.append(Queued(text: text, images: []))
+            return
+        }
+        turns.append(TurnState(number: nil, input: text, sentAt: .now))
+        busy = true
+        link?.send(.act(label: choice.label, send: choice.send ?? ""))
     }
 
     private static func isMemoryCommand(_ text: String) -> Bool {
@@ -322,9 +340,11 @@ final class Conversation {
                 }
             }
             progress = nil
+            presentPreview = nil
             // Replayed turns are old news; the sidebar hears once, when the history is in.
             if !replaying { onSessionChange?() }
         case .itemStarted(let id, let kind):
+            presentPreview = nil
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             upsert(id) { item in
                 item.kind = Self.kind(kind)
@@ -393,8 +413,11 @@ final class Conversation {
             progress = nil
         case .appResult(let id, let result, let error):
             appCalls.removeValue(forKey: id)?(result, error)
-        case .progress(let label):
-            progress = label
+        case .progress(let update):
+            if progress != update { progressSince = Date() }
+            progress = update
+        case .presentPreview(let p):
+            presentPreview = p
         case .notice(let level, let message):
             // Warnings and command answers belong in the transcript; other info is transient.
             if awaitingCommand {
