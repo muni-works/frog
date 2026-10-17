@@ -59,6 +59,11 @@ pub struct Profile {
     /// sidecar, started on demand. Implies an OpenAI-compatible provider on its port.
     #[serde(default)]
     pub sidecar: Option<String>,
+    /// A small model with the same tokenizer that drafts tokens for the sidecar to verify
+    /// (e.g. `mlx-community/Qwen3-0.6B-4bit` for Qwen3-32B). Same output, faster where wide
+    /// verify forwards are cheap (CUDA); on Metal today it's usually slower.
+    #[serde(default)]
+    pub draft_model: Option<String>,
     /// Whether the model takes images. Probed when unset (ollama reports it; Anthropic and
     /// OpenAI's own models do).
     #[serde(default)]
@@ -84,6 +89,7 @@ impl Profile {
             tool_mode: ToolMode::Auto,
             extra: None,
             sidecar: None,
+            draft_model: None,
             vision: None,
             thinking: None,
             thinking_budget: None,

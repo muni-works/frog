@@ -157,6 +157,9 @@ pub async fn ensure(p: &Profile) -> Result<()> {
         // A KV cache per conversation, as many as fit, so switching back to one doesn't
         // re-prefill it. An environment variable, which older builds ignore.
         cmd.env("TANG_KV_SLOTS", "auto");
+        if let Some(d) = &p.draft_model {
+            cmd.env("TANG_DRAFT_MODEL", d);
+        }
     }
     cmd.args(["--port", &k.port.to_string()])
         .stdin(Stdio::null())
