@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Frog
+GenericName=Coding Agent
+Comment=Talk to frog, a coding agent for local models
+Exec=frog-app %F
+Icon=eco.frog.Frog
+Terminal=false
+Categories=Development;GTK;
+Keywords=agent;ai;code;assistant;tang;llm;
+StartupNotify=true
+DBusActivatable=false
+Actions=new-conversation;
+
+[Desktop Action new-conversation]
+Name=New Conversation
+Exec=frog-app --new

@@ -2,6 +2,8 @@ mod acp;
 mod complete;
 mod headless;
 mod listen;
+#[cfg(unix)]
+mod muon;
 mod render;
 mod replay;
 mod tui;
@@ -31,6 +33,10 @@ struct Cli {
     /// Speak the engine protocol over stdio (Op JSON lines in, Event JSON lines out).
     #[arg(long, conflicts_with = "print")]
     serve: bool,
+    /// Serve a muon node's launcher intents: agent:frog on muon-agentd's bus and MCP server
+    /// (muon docs/ecosystem.md, "launcher intent"). Runs until the bus closes.
+    #[arg(long, conflicts_with_all = ["print", "serve", "acp", "listen"])]
+    muon: bool,
     /// Answer one turn per HTTP request on ADDR (e.g. a Tailscale IP:8915), for the iOS app and
     /// Siri. Needs FROG_LISTEN_TOKEN (the bearer token). See docs/ios-siri.md.
     #[arg(long, value_name = "ADDR", conflicts_with_all = ["print", "serve", "acp"])]
@@ -255,6 +261,10 @@ async fn run() -> Result<bool> {
     if cli.models {
         return list_models(&cfg, cli.json).await;
     }
+    #[cfg(unix)]
+    if cli.muon {
+        return muon::run(cfg, cli.model.clone()).await;
+    }
     if let Some(done) = manage_providers(&cli).await? {
         return Ok(done);
     }
@@ -299,6 +309,17 @@ async fn run() -> Result<bool> {
     if let Some(done) = pond(&cli, &cfg).await? {
         return Ok(done);
     }
+    // Listing and naming sessions needs no model.
+    let cwd = std::env::current_dir()?;
+    let store = session::default_dir();
+    if let Some(r) = &cli.rename {
+        session::retitle(&store, &r[0], &r[1])?;
+        return Ok(true);
+    }
+    if cli.sessions {
+        list_sessions(&store, &cwd, cli.all, cli.json)?;
+        return Ok(true);
+    }
     let chosen = match &cli.model {
         Some(m) => Some(m.clone()),
         None if std::env::var_os("FROG_MODEL").is_some() || cfg.default_model.is_some() => None,
@@ -325,16 +346,6 @@ async fn run() -> Result<bool> {
     }
     if cli.probe {
         return probe(&profile_name, &profile).await;
-    }
-    let cwd = std::env::current_dir()?;
-    let store = session::default_dir();
-    if let Some(r) = &cli.rename {
-        session::retitle(&store, &r[0], &r[1])?;
-        return Ok(true);
-    }
-    if cli.sessions {
-        list_sessions(&store, &cwd, cli.all, cli.json)?;
-        return Ok(true);
     }
     if cli.session_tree {
         print_diagram(session_tree(&store, &cwd)?, &cwd, cli.json)?;
