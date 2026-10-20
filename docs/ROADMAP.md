@@ -93,7 +93,7 @@ The MCP-vs-CLI study found that harnesses using only bash were 5–28x cheaper (
 ## 6. Security
 
 - **Enforce at dispatch, in deterministic code, not in the prompt.** Track where each value came from, and only let values from trusted sources flow into tools with side effects ([2503.18813](https://arxiv.org/abs/2503.18813), [2608.27496](https://arxiv.org/abs/2608.27496), [2607.24625](https://arxiv.org/abs/2607.24625)).
-- **Add an OS sandbox,** using seatbelt on macOS and bubblewrap on Linux (the codex-rs approach). Matching command strings is not a security boundary ([opencode#49948](https://github.com/anomalyco/opencode/issues/49948)). macOS is done: Bash is sandboxed by default. It can write only to the project, temp folders and toolchain caches, and credentials are unreadable. Sandboxed commands run without asking, and leaving the sandbox (`unsandboxed: true`) always asks. Linux (bubblewrap) is next.
+- **Add an OS sandbox,** using seatbelt on macOS and bubblewrap on Linux (the codex-rs approach). Matching command strings is not a security boundary ([opencode#49948](https://github.com/anomalyco/opencode/issues/49948)). macOS is done: Bash is sandboxed by default. It can write only to the project, temp folders and toolchain caches, and credentials are unreadable. Sandboxed commands run without asking, and leaving the sandbox (`unsandboxed: true`) always asks. Linux uses bubblewrap the same way when `bwrap` works, and asks for every command when it doesn't.
 - **Quarantine suspicious MCP tool descriptions** ([2606.20922](https://arxiv.org/abs/2606.20922)). Done: descriptions that look like injection, or that hide Unicode, are withheld unless the server has `trust = true`.
 
 ## 7. Sub-agents for context folding, not role-play
@@ -115,14 +115,13 @@ Shipped:
 - the matrix: models × modes × repeats
 - JSONL results, a summary table, a task grid, and session logs for replay
 - per-turn usage totals in the protocol
-- the `--sandbox` workspace confinement it needs (macOS seatbelt for Bash; Write/Edit path checks)
+- the `--sandbox` workspace confinement it needs (seatbelt or bubblewrap for Bash; Write/Edit path checks)
 - multi-turn tasks (`[[then]]` turns: same, resumed or new conversation) and a prompt cache report: per call, prompt, cached and prefilled tokens and time to first token; per task, the hit rate, tokens prefilled per call, and cold calls (the request only appended to the last, yet was mostly prefilled). `frog-bench run --tasks bench/cache` (shipped 2026-10-04; first run on tang + Qwen3-4B: follow-up calls prefill 66–600 tokens in 0.2–1.6 s, a new conversation in the same project finds 99% cached, and a resume after an edit was cold: the repo map is rebuilt on resume)
 
 Still to do:
 - harder, multi-file tasks, plus tasks where the right move is to ask or do nothing
 - report idle turns (a model call with no tool call and no progress) as a cost ([2607.22585](https://arxiv.org/abs/2607.22585))
 - best-of-N selection using structured trajectory summaries ([2604.16529](https://arxiv.org/abs/2604.16529), [2601.22129](https://arxiv.org/abs/2601.22129))
-- a Linux sandbox using bubblewrap
 
 ## 9. Our own inference: `tang-llm` sidecar, first pass done
 

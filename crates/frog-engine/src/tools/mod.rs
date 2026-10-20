@@ -27,7 +27,7 @@ pub struct Ctx {
     /// Files the model has seen, with the mtime at read time. Guards Edit/Write.
     pub read_files: HashMap<PathBuf, Option<SystemTime>>,
     pub todos: Vec<todo::Todo>,
-    /// When set, writes (Write/Edit, and Bash on macOS via sandbox-exec) are confined to this
+    /// When set, writes (Write/Edit, and Bash via seatbelt or bubblewrap) are confined to this
     /// directory and the system temp dirs. Canonical path.
     pub sandbox: Option<PathBuf>,
     /// Run Bash sandboxed by default (writes confined to this project, temp and toolchain
