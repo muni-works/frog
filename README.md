@@ -441,3 +441,11 @@ Loaded from `~/.config/frog/FROG.md`, `~/.claude/CLAUDE.md`, and any `AGENTS.md`
 ## Memory
 
 `/remember` saves a note as a markdown file under `~/.local/share/frog/memory/` (`global/`, or `projects/<path>/` for one project, shared by its worktrees), readable only by you and easy to edit by hand. Obvious secrets (API keys, tokens, private keys, `password=` values) are redacted before anything is written. Each session starts with a short index of your notes in the system prompt, framed as possibly out-of-date data rather than instructions and sized to the model: about 400 tokens for small models, 1k for mid-size and 2.5k for large ones. Notes that mention files that have since disappeared are marked possibly stale.
+
+## License
+
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+Contributions are signed off under the [DCO](CONTRIBUTING.md).
+
+frog is free and meant to be used, forked and built on, including commercially. (That's an
+intent, not a license term.)

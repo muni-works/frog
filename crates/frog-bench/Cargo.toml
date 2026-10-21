@@ -3,6 +3,7 @@ name = "frog-bench"
 description = "Benchmark frog harness configurations against local and hosted models"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 frog-engine.workspace = true

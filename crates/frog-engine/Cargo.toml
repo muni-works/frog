@@ -3,6 +3,7 @@ name = "frog-engine"
 description = "Headless agent engine for frog. No terminal code lives here."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 rmcp = { version = "3.4", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
