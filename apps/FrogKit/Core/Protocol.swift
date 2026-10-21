@@ -45,6 +45,9 @@ enum Op: Encodable, Sendable {
     /// A press on a `Present` actions button; runs a turn with `send` (or the label).
     case act(label: String, send: String)
     case interrupt
+    /// Pick up a turn the app's restart interrupted: the engine runs a turn on the repaired
+    /// history with `note` (its own default when nil) as the message.
+    case `continue`(note: String? = nil)
     case permission(id: String, decision: Decision)
     case setMode(Mode)
     case setModel(String)
@@ -71,7 +74,11 @@ enum Op: Encodable, Sendable {
     /// The user clicked an element in inspect mode and mentioned it in the composer.
     case paneMention(id: String, mention: String, context: String? = nil)
     /// What this client can do, sent once after the engine starts.
-    case setClientCaps(panes: Bool, ask: Bool = false)
+    case setClientCaps(panes: Bool, ask: Bool = false, sessions: Bool = false)
+    /// The answer to a `sessionRequest`: JSON (or text) for the model, or an error.
+    case sessionReply(id: String, result: JSONValue?, error: String?)
+    /// A message from another session (`from` is its id, or "system"), queued like a submit.
+    case deliver(from: String, fromName: String, message: String)
     /// Answer a `question`: the picked labels, or the user's own words. Neither dismisses it.
     case answer(id: String, choices: [String], other: String?)
     /// Have the model server prefill the conversation now (plus `draft`, the message being
@@ -83,7 +90,7 @@ enum Op: Encodable, Sendable {
         case op, text, command, id, decision, mode, spec, focus, after, title
         case action, content, server, tool, arguments, images
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
-        case ask, choices, other, label, send
+        case ask, choices, other, label, send, note, sessions, from, fromName = "from_name"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -102,6 +109,9 @@ enum Op: Encodable, Sendable {
             try c.encode(command, forKey: .command)
         case .interrupt:
             try c.encode("interrupt", forKey: .op)
+        case .continue(let note):
+            try c.encode("continue", forKey: .op)
+            try c.encodeIfPresent(note, forKey: .note)
         case .permission(let id, let decision):
             try c.encode("permission", forKey: .op)
             try c.encode(id, forKey: .id)
@@ -174,10 +184,21 @@ enum Op: Encodable, Sendable {
             try c.encode(id, forKey: .id)
             try c.encode(mention, forKey: .mention)
             try c.encodeIfPresent(context, forKey: .context)
-        case .setClientCaps(let panes, let ask):
+        case .setClientCaps(let panes, let ask, let sessions):
             try c.encode("set_client_caps", forKey: .op)
             try c.encode(panes, forKey: .panes)
             if ask { try c.encode(ask, forKey: .ask) }
+            if sessions { try c.encode(sessions, forKey: .sessions) }
+        case .sessionReply(let id, let result, let error):
+            try c.encode("session_reply", forKey: .op)
+            try c.encode(id, forKey: .id)
+            try c.encodeIfPresent(result, forKey: .result)
+            try c.encodeIfPresent(error, forKey: .error)
+        case .deliver(let from, let fromName, let message):
+            try c.encode("deliver", forKey: .op)
+            try c.encode(from, forKey: .from)
+            try c.encode(fromName, forKey: .fromName)
+            try c.encode(message, forKey: .message)
         case .answer(let id, let choices, let other):
             try c.encode("answer", forKey: .op)
             try c.encode(id, forKey: .id)
@@ -438,6 +459,16 @@ struct Elicitation: Decodable, Sendable, Identifiable {
     var url: String?
 }
 
+/// A session tool call (`ListSessions`, `SendMessage`, `StartSession`) for the app to carry
+/// out; answered with `Op.sessionReply`.
+struct SessionRequest: Sendable, Equatable {
+    var id: String
+    /// The tool call waiting on it.
+    var item: String
+    var tool: String
+    var input: JSONValue
+}
+
 /// The model asking the user to choose (the `Ask` tool). Answered with `Op.answer`.
 struct Question: Decodable, Sendable, Identifiable {
     struct Option: Decodable, Sendable, Hashable {
@@ -522,6 +553,7 @@ enum Event: Decodable, Sendable {
     case paneScreen(PaneScreen)
     case paneClosed(id: String, exit: Int?)
     case paneRequest(PaneRequest)
+    case sessionRequest(SessionRequest)
     case paneNotice(id: String, level: String, message: String)
     /// A screenshot of the preview the engine kept for a turn (`panes/turn-N.png` in the session
     /// folder), for before/after. Recognized by shape, since its event name isn't fixed yet.
@@ -553,7 +585,7 @@ extension Event {
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
         case images
-        case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image
+        case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
     }
 
     init(from decoder: Decoder) throws {
@@ -658,6 +690,12 @@ extension Event {
                 id: try c.decode(String.self, forKey: .id),
                 action: try c.decode(String.self, forKey: .action),
                 args: try c.decodeIfPresent(JSONValue.self, forKey: .args) ?? .object([:])))
+        case "session_request":
+            self = .sessionRequest(SessionRequest(
+                id: try c.decode(String.self, forKey: .id),
+                item: try c.decodeIfPresent(String.self, forKey: .item) ?? "",
+                tool: try c.decode(String.self, forKey: .tool),
+                input: try c.decodeIfPresent(JSONValue.self, forKey: .input) ?? .object([:])))
         case "pane_notice":
             self = .paneNotice(
                 id: try c.decodeIfPresent(String.self, forKey: .id) ?? "",
@@ -848,6 +886,76 @@ struct ProviderInfo: Codable, Sendable, Hashable, Identifiable {
     var key: String?
     var keyUrl: String
     var connected: Bool
+    /// Where it sorts: This Mac, your servers, frog cloud, other clouds. Older engines omit it.
+    var rank: Int? = nil
+    /// Always listed and never removable (frog cloud).
+    var pinned: Bool? = nil
+
+    /// `id` with old names folded in (`tang` → `local`, `frog-api` → `cloud`, …).
+    var canonicalID: String { ProviderID.canonical(id) }
+    var isFrogCloud: Bool { canonicalID == ProviderID.cloud }
+    /// "This Mac", "frog cloud", or the provider's own name.
+    var displayName: String { ProviderID.displayName(id) ?? name }
+
+    /// The shared order when the engine doesn't say: This Mac, your servers, frog cloud, other clouds.
+    var sortRank: Int {
+        if let rank { return rank }
+        if canonicalID == ProviderID.local || (local && !custom) { return 0 }
+        if custom { return 1 }
+        if isFrogCloud { return 2 }
+        return 3
+    }
+
+    /// Providers in the shared order (stable within a rank).
+    static func sorted(_ list: [ProviderInfo]) -> [ProviderInfo] {
+        list.enumerated().sorted { a, b in
+            (a.element.sortRank, a.offset) < (b.element.sortRank, b.offset)
+        }.map(\.element)
+    }
+}
+
+/// Provider ids say where a model runs. Old ids may still be in saved state, so compare
+/// through `canonical`.
+enum ProviderID {
+    /// frog's engine on this Mac ("This Mac", powered by tang).
+    static let local = "local"
+    /// frog's hosted service ("frog cloud").
+    static let cloud = "cloud"
+    /// The model frog cloud always lists, even signed out.
+    static let cloudModel = "cloud/qwen3-coder-next"
+    static let localName = "This Mac"
+    static let cloudName = "frog cloud"
+
+    static func canonical(_ id: String) -> String {
+        switch id {
+        case "tang": local
+        case "frog-api", "frog", "tang-cloud", "zest": cloud
+        default: id
+        }
+    }
+
+    static func same(_ a: String, _ b: String) -> Bool { canonical(a) == canonical(b) }
+
+    /// The fixed names of frog's own providers; nil for anyone else's.
+    static func displayName(_ id: String) -> String? {
+        switch canonical(id) {
+        case local: localName
+        case cloud: cloudName
+        default: nil
+        }
+    }
+
+    /// A spec with its provider part folded: "tang/x" → "local/x".
+    static func canonicalSpec(_ spec: String) -> String {
+        let parts = spec.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return spec }
+        return canonical(parts[0]) + "/" + parts[1]
+    }
+
+    /// The provider part of a spec, folded: "tang/x" → "local".
+    static func of(spec: String) -> String {
+        canonical(String(spec.split(separator: "/", maxSplits: 1).first ?? ""))
+    }
 }
 
 extension JSONDecoder {

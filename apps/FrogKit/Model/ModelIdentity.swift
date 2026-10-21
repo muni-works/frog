@@ -15,14 +15,18 @@ struct ModelIdentity: Hashable, Sendable {
         /// A cloud provider, by its name.
         case cloud(String)
 
-        /// "On this Mac", "On mew (RTX 3090)", "Cloud · Anthropic".
+        /// "This Mac", "On mew (RTX 3090)", "frog cloud", "Cloud · Anthropic".
         var label: String {
             switch self {
-            case .mac, .apple: "On this Mac"
+            case .mac, .apple: ProviderID.localName
             case .server(let name): "On \(name)"
-            case .cloud(let name): "Cloud · \(name)"
+            case .cloud(let name): name == ProviderID.cloudName ? name : "Cloud · \(name)"
             }
         }
+
+        /// frog cloud: frog's own hosted models.
+        static let frogCloud = Place.cloud(ProviderID.cloudName)
+        var isFrogCloud: Bool { self == .frogCloud }
 
         var symbol: String {
             switch self {
@@ -71,9 +75,9 @@ struct ModelIdentity: Hashable, Sendable {
     /// Order among models on this Mac: Apple's, then frog's own engine (tang, built in), then
     /// the servers you'd install (Ollama, LM Studio), then anything else.
     var runtimeRank: Int {
-        switch spec.split(separator: "/").first {
+        switch ProviderID.of(spec: spec) {
         case "apple": 0
-        case "tang": 1
+        case ProviderID.local: 1
         case "ollama": 2
         case "lmstudio": 3
         default: 4
@@ -118,7 +122,8 @@ extension ModelIdentity {
         let provider = String(entry.spec.split(separator: "/", maxSplits: 1).first ?? "")
         let place: Place = switch entry.source {
         case "apple": .apple
-        case "tang", "ollama": .mac
+        case "tang", ProviderID.local, "ollama": .mac
+        case _ where ProviderID.canonical(provider) == ProviderID.cloud: .frogCloud
         case "server": .server(ModelContext.name(of: provider))
         case "remote": .cloud(ModelContext.name(of: provider))
         // config.toml profiles can point anywhere: trust the provider's own flag, and call
@@ -145,8 +150,8 @@ extension ModelIdentity {
         )
         costIn = entry.info?.costIn
         costOut = entry.info?.costOut
-        if entry.source == "tang" {
-            repo = String(entry.spec.dropFirst("tang/".count))
+        if entry.source == "tang" || entry.source == ProviderID.local {
+            repo = entry.spec.split(separator: "/", maxSplits: 1).last.map(String.init)
             downloadGB = repo.flatMap(ModelContext.suggestedGB) ?? entry.caps?.paramsB.map { $0 * 0.56 }
         }
         state = Self.state(place: place, provider: providerID, repo: repo, gb: downloadGB, installed: true)
@@ -195,7 +200,8 @@ extension ModelIdentity {
         let model = parts.last ?? spec
         let place: Place = switch provider {
         case "apple": .apple
-        case "tang", "ollama", "lmstudio": .mac
+        case "tang", ProviderID.local, "ollama", "lmstudio": .mac
+        case _ where ProviderID.canonical(provider) == ProviderID.cloud: .frogCloud
         default: ModelContext.provider(provider).map { p in
             p.custom ? .server(p.name) : p.local ? .mac : .cloud(p.name)
         } ?? .cloud(provider.isEmpty ? "unknown" : ModelContext.name(of: provider))

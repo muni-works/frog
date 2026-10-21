@@ -104,6 +104,11 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
         .iter()
         .map(|(name, p)| entry(name.clone(), "config", p))
         .collect();
+    if crate::provider::codex::available().await
+        && let Ok((spec, p)) = cfg.resolve(Some("codex/default"))
+    {
+        out.push(entry(spec, "codex", &p));
+    }
     for tag in ollama_tags(&local_ollama()).await {
         let spec = format!("ollama/{tag}");
         if out
@@ -150,7 +155,7 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
     }
     let sidecars = local_checkpoints()
         .into_iter()
-        .map(|repo| format!("tang/{repo}"))
+        .map(|repo| crate::providers::normalize(&format!("local/{repo}")))
         .filter(|_| crate::sidecar::available("tang"))
         .chain(
             crate::sidecar::available(crate::sidecar::APPLE).then(|| "apple/on-device".to_string()),
@@ -202,9 +207,7 @@ fn local_checkpoints() -> Vec<String> {
 /// Face download can have the first two, but tang cannot start without the tokenizer.
 fn runnable_snapshot(dir: &Path) -> bool {
     let has_weights = std::fs::read_dir(dir).is_ok_and(|mut d| {
-        d.any(|f| {
-            f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "safetensors"))
-        })
+        d.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "safetensors")))
     });
     let cfg: Option<serde_json::Value> = std::fs::read(dir.join("config.json"))
         .ok()
@@ -217,13 +220,16 @@ fn runnable_snapshot(dir: &Path) -> bool {
 
 /// The model a bare `frog` starts on when nothing names one (no `-m`, `FROG_MODEL`,
 /// `default_model` or last pick): the first that would answer right now, and why it was
-/// chosen. Order: frog's own tang engine, a running ollama or LM Studio (whatever you pulled is
-/// likely bigger than anything frog would pick), Apple's on-device model, then a cloud model you
-/// turned on, then Anthropic with a key in the environment. None when nothing here can answer.
+/// chosen. Order: this Mac first (frog's own engine, a running ollama or LM Studio, whose
+/// pulled models are likely bigger than anything frog would pick, then Apple's on-device
+/// model), then frog cloud when connected, then a cloud model you turned on, then Anthropic
+/// with a key in the environment. None when nothing here can answer.
 pub async fn pick_default() -> Option<(String, String)> {
-    const TANG: &str = "tang/mlx-community/Qwen3-4B-4bit";
     if crate::sidecar::available("tang") {
-        return Some((TANG.into(), "frog's own engine".into()));
+        return Some((
+            crate::config::LOCAL_DEFAULT.into(),
+            "frog's own engine".into(),
+        ));
     }
     let base = local_ollama();
     let (ollama, lmstudio) = tokio::join!(
@@ -239,17 +245,36 @@ pub async fn pick_default() -> Option<(String, String)> {
     if crate::sidecar::available(crate::sidecar::APPLE) {
         return Some(("apple/on-device".into(), "Apple Intelligence".into()));
     }
-    // Cloud models you turned on (`--enable-model`), whose keys frog already has.
-    if let Some(spec) = crate::providers::State::load().enabled.into_iter().next() {
+    pick_remote(
+        crate::providers::key_source(crate::providers::CLOUD).is_some(),
+        crate::providers::State::load().enabled.into_iter().next(),
+        std::env::var_os("ANTHROPIC_API_KEY").is_some(),
+    )
+}
+
+/// After this Mac: a connected frog cloud, then a cloud model you turned on
+/// (`--enable-model`), then Anthropic with a key in the environment.
+fn pick_remote(
+    cloud: bool,
+    enabled: Option<String>,
+    anthropic_env: bool,
+) -> Option<(String, String)> {
+    if cloud {
+        let spec = crate::catalog::cloud_models()
+            .into_iter()
+            .next()
+            .map_or_else(|| "cloud/qwen3-coder-next".to_string(), |m| m.spec);
+        return Some((spec, "frog cloud is connected".into()));
+    }
+    if let Some(spec) = enabled {
         return Some((spec, "a cloud model you turned on".into()));
     }
-    if std::env::var_os("ANTHROPIC_API_KEY").is_some() {
-        return Some((
+    anthropic_env.then(|| {
+        (
             "anthropic/claude-sonnet-5".into(),
             "ANTHROPIC_API_KEY is set".into(),
-        ));
-    }
-    None
+        )
+    })
 }
 
 /// A coding model if one is installed, else the first chat model.
@@ -263,7 +288,16 @@ fn best_local(names: &[String]) -> Option<&String> {
 /// The model last picked with `/model`, which a bare `frog` starts on.
 pub fn last_used() -> Option<String> {
     let s = std::fs::read_to_string(crate::config::data_dir().join("last-model")).ok()?;
-    Some(s.trim().to_string()).filter(|s| !s.is_empty())
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // One-time migration: a pick saved under an old provider id gets today's name.
+    let new = crate::providers::normalize(s);
+    if new != s {
+        remember_last_used(&new);
+    }
+    Some(new)
 }
 
 pub fn remember_last_used(spec: &str) {
@@ -282,15 +316,31 @@ mod pick_tests {
             best_local(&n(&["llama3", "qwen3-coder:30b"])).map(String::as_str),
             Some("qwen3-coder:30b")
         );
-        assert_eq!(best_local(&n(&["llama3"])).map(String::as_str), Some("llama3"));
+        assert_eq!(
+            best_local(&n(&["llama3"])).map(String::as_str),
+            Some("llama3")
+        );
         assert_eq!(best_local(&[]), None);
+    }
+
+    #[test]
+    fn default_prefers_cloud_over_enabled_anthropic() {
+        let enabled = Some("anthropic/claude-sonnet-5".to_string());
+        let (spec, _) = pick_remote(true, enabled.clone(), true).unwrap();
+        assert!(spec.starts_with("cloud/"), "{spec}");
+        let (spec, _) = pick_remote(false, enabled, true).unwrap();
+        assert_eq!(spec, "anthropic/claude-sonnet-5");
+        assert_eq!(pick_remote(false, None, false), None);
     }
 
     #[test]
     fn checkpoint_requires_tokenizer_artifacts() {
         let dir = std::env::temp_dir().join(format!(
             "frog-models-{}",
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("config.json"), r#"{"model_type":"qwen3"}"#).unwrap();

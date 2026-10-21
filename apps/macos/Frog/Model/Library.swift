@@ -16,6 +16,8 @@ final class Library {
     private(set) var pinned: Set<String>
     private(set) var archived: Set<String>
     private(set) var live: [String: Live] = [:]
+    /// Sessions started by another session (`StartSession`): child id → parent id.
+    private(set) var parents: [String: String]
     /// The session shown in the key window: finishing there doesn't count as unread.
     @ObservationIgnored var focused: String?
     @ObservationIgnored private var windows: [ObjectIdentifier: WeakWindow] = [:]
@@ -25,6 +27,7 @@ final class Library {
     private init() {
         pinned = Set(UserDefaults.standard.stringArray(forKey: "pinnedSessions") ?? [])
         archived = Set(UserDefaults.standard.stringArray(forKey: "archivedSessions") ?? [])
+        parents = UserDefaults.standard.dictionary(forKey: "sessionParents") as? [String: String] ?? [:]
         refresh()
     }
 
@@ -38,7 +41,8 @@ final class Library {
             if let all = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--all", "--json"], cwd: home) {
                 // A conversation whose folder is gone can't be reopened.
                 // Race attempts live in their own worktrees and are shown in the race, not here;
-                // agents' scratch worktrees aren't projects.
+                // agents' scratch worktrees aren't projects. Worktrees a session started for
+                // another (`<repo>/.frog/worktrees/`) are shown, under their parent.
                 sessions = all.filter { s in
                     guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/"),
                           !cwd.contains("/.claude/worktrees/") else { return false }
@@ -83,6 +87,18 @@ final class Library {
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
     }
 
+    // MARK: Sessions started by sessions
+
+    func setParent(of child: String, to parent: String) {
+        parents[child] = parent
+        UserDefaults.standard.set(parents, forKey: "sessionParents")
+    }
+
+    /// Part of a group of sessions: started by one, or started one.
+    func isAgentSession(_ id: String) -> Bool {
+        parents[id] != nil || parents.values.contains(id)
+    }
+
     // MARK: Renaming
 
     /// Rename through the open conversation if there is one (its engine holds the log), else
@@ -109,6 +125,7 @@ final class Library {
     /// An open conversation's state; called as its events arrive.
     func report(_ id: String, conversation: Conversation, running: Bool, waiting: Bool) {
         conversations[id] = WeakConversation(value: conversation)
+        SessionBroker.shared.observe(id, running: running, waiting: waiting)
         let now: Live? = waiting ? .waiting : running ? .running : (live[id] == .unread ? .unread : nil)
         if live[id] != now {
             live[id] = now

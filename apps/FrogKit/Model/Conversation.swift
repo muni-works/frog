@@ -79,6 +79,14 @@ final class Conversation {
     /// Messages sent while a turn was running; they go out in order as the engine frees up.
     private(set) var queue: [Queued] = []
 
+    /// The user pressed stop on the running turn (cleared when the next one starts), so a
+    /// restart can tell a turn they stopped from one a crash or quit cut off.
+    private(set) var userStopped = false
+    /// Reopened after the app restarted, with the interrupted turn picked back up.
+    var resumedAfterRestart = false
+    /// `continueInterrupted` called before the engine could take it: it goes first.
+    @ObservationIgnored private var continuePending = false
+
     /// A message sent while a turn was running.
     struct Queued {
         var text: String
@@ -89,6 +97,11 @@ final class Conversation {
     @ObservationIgnored private let replayOnStart: Bool
     /// What this platform does when things happen (see `ConversationEffects`).
     @ObservationIgnored static var effects: ConversationEffects?
+    /// Carries out the model's session tools (the Mac's `SessionBroker`); answer with
+    /// `replySession`. Without one, requests get an error.
+    @ObservationIgnored static var sessionRequests: ((Conversation, SessionRequest) -> Void)?
+    /// The user sent something in this conversation (session-message rate limits reset).
+    @ObservationIgnored static var userActivity: ((Conversation) -> Void)?
     /// Counts of live happenings, for haptics and the frog's face.
     private(set) var stepsDone = 0
     private(set) var turnsDone = 0
@@ -151,6 +164,7 @@ final class Conversation {
     func submit(_ text: String, images: [ToolImage] = []) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty else { return }
+        Self.userActivity?(self)
         if busy || replaying {
             queue.append(Queued(text: text, images: images))
             return
@@ -199,7 +213,28 @@ final class Conversation {
     }
 
     func interrupt() {
+        userStopped = true
         link?.send(.interrupt)
+    }
+
+    /// Have the engine carry on with the turn a restart interrupted, ahead of anything queued.
+    func continueInterrupted() {
+        resumedAfterRestart = true
+        if busy || replaying {
+            continuePending = true
+            return
+        }
+        busy = true
+        link?.send(.continue())
+    }
+
+    /// Send a pending `continueInterrupted`; true if it went (the queue waits for its turn).
+    private func flushContinue() -> Bool {
+        guard continuePending else { return false }
+        continuePending = false
+        busy = true
+        link?.send(.continue())
+        return true
     }
 
     func answer(_ decision: Decision) {
@@ -263,6 +298,19 @@ final class Conversation {
         link?.stop()
     }
 
+    /// Answer a `sessionRequest`.
+    func replySession(_ id: String, result: JSONValue? = nil, error: String? = nil) {
+        link?.send(.sessionReply(id: id, result: result, error: error))
+    }
+
+    /// A message from another session: the engine queues it and runs it as a turn.
+    func deliver(from: String, name: String, message: String) {
+        link?.send(.deliver(from: from, fromName: name, message: message))
+    }
+
+    /// Has a running engine (not stopped, not failed).
+    var isLive: Bool { link != nil && failure == nil && !stopping }
+
     /// Send the engine an op directly (a title from the Mac's on-device model, say).
     func send(_ op: Op) {
         link?.send(op)
@@ -324,6 +372,7 @@ final class Conversation {
                 turns.append(TurnState(number: n, input: input, images: images, startedAt: at))
             }
             panes.currentTurn = n
+            if !replaying { userStopped = false }
             // A replayed turn ran long ago.
             if !replaying { busy = true }
         case .turnEnded(let n, let reason, let usage):
@@ -440,7 +489,8 @@ final class Conversation {
             }
             onSessionChange?()
             // Sent while the history loaded: it goes now (the engine takes it once started).
-            if !busy, !queue.isEmpty {
+            if !busy, flushContinue() {
+            } else if !busy, !queue.isEmpty {
                 let next = queue.removeFirst()
                 submit(next.text, images: next.images)
             }
@@ -458,7 +508,8 @@ final class Conversation {
             elicitation = nil
             question = nil
             // While the history loads, what's queued waits for it (see `.synced`).
-            if !replaying, !queue.isEmpty {
+            if !replaying, flushContinue() {
+            } else if !replaying, !queue.isEmpty {
                 let next = queue.removeFirst()
                 submit(next.text, images: next.images)
             }
@@ -473,6 +524,12 @@ final class Conversation {
             note(message, warning: level != "info")
         case .paneOpened, .paneScreen, .paneClosed, .paneRequest, .paneCheckpoint:
             panes.apply(env.event)
+        case .sessionRequest(let r):
+            if let handler = Self.sessionRequests {
+                handler(self, r)
+            } else {
+                replySession(r.id, error: "This app can't reach other sessions.")
+            }
         case .modelChanged, .modeChanged, .unknown:
             break
         }

@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod codex;
 pub mod ollama;
 pub mod openai;
 #[cfg(test)]
@@ -65,7 +66,10 @@ pub enum StreamEvent {
     },
     /// More of a tool call's arguments (raw JSON text, in order), for previewing them while
     /// they stream. Providers that only see whole calls never send it.
-    ToolArgs { name: String, chunk: String },
+    ToolArgs {
+        name: String,
+        chunk: String,
+    },
 }
 
 #[derive(Clone)]
@@ -113,6 +117,7 @@ pub enum Provider {
     OpenAi(openai::Client),
     Anthropic(anthropic::Client),
     Ollama(ollama::Client),
+    Codex(codex::Client),
     #[cfg(test)]
     Scripted(scripted::Client),
 }
@@ -125,6 +130,10 @@ impl Provider {
         let key = p.api_key();
         let extra = p.extra.clone();
         Ok(match p.provider {
+            ProviderKind::Codex => Self::Codex(codex::Client::new(
+                std::env::current_dir()?,
+                p.model.clone(),
+            )),
             ProviderKind::Openai => Self::OpenAi(openai::Client {
                 http,
                 base: p
@@ -134,6 +143,7 @@ impl Provider {
                 model: p.model.clone(),
                 key,
                 extra,
+                anthropic: anthropic::Settings::from_profile(p, true),
             }),
             ProviderKind::Anthropic => Self::Anthropic(anthropic::Client {
                 http,
@@ -144,6 +154,7 @@ impl Provider {
                 model: p.model.clone(),
                 key: key.ok_or_else(|| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?,
                 extra,
+                settings: anthropic::Settings::from_profile(p, false),
             }),
             ProviderKind::Ollama => Self::Ollama(ollama::Client {
                 http,
@@ -165,6 +176,20 @@ impl Provider {
         })
     }
 
+    pub fn with_cwd(mut self, cwd: &std::path::Path) -> Self {
+        if let Self::Codex(c) = &mut self {
+            c.cwd = cwd.to_path_buf();
+        }
+        self
+    }
+
+    pub fn take_codex_items(&self) -> Vec<(String, String, serde_json::Value)> {
+        match self {
+            Self::Codex(c) => c.take_items(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Whether the model takes images: ollama says so, Anthropic's always do, and OpenAI's own
     /// API models do. Unknown (`None`) for other OpenAI-compatible servers.
     pub async fn supports_vision(&self) -> Option<bool> {
@@ -175,6 +200,7 @@ impl Provider {
                 .flatten(),
             Self::Anthropic(_) => Some(true),
             Self::OpenAi(c) if c.is_openai() => Some(true),
+            Self::Codex(_) => Some(false),
             Self::OpenAi(c) => tokio::time::timeout(Duration::from_secs(3), c.capabilities())
                 .await
                 .ok()
@@ -216,7 +242,7 @@ impl Provider {
                 let has = |name: &str| caps.iter().any(|c| c == name);
                 Extensions {
                     thinking_budget: has("thinking_budget"),
-                    cache_key: has("prompt_cache_key"),
+                    cache_key: c.is_frog_api() || has("prompt_cache_key"),
                     prefill: has("prefill"),
                 }
             }
@@ -263,6 +289,7 @@ impl Provider {
             Self::OpenAi(c) => c.complete(req, on).await,
             Self::Anthropic(c) => c.complete(req, on).await,
             Self::Ollama(c) => c.complete(req, on).await,
+            Self::Codex(c) => c.complete(req, on).await,
             #[cfg(test)]
             Self::Scripted(c) => c.complete(req, on).await,
         }

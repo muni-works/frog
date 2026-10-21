@@ -83,7 +83,10 @@ pub fn is_cloud(p: &Profile) -> bool {
     }
     match &p.base_url {
         // The hosted APIs; Ollama's default is this Mac.
-        None => matches!(p.provider, ProviderKind::Anthropic | ProviderKind::Openai),
+        None => matches!(
+            p.provider,
+            ProviderKind::Anthropic | ProviderKind::Openai | ProviderKind::Codex
+        ),
         Some(url) => !reqwest::Url::parse(url)
             .ok()
             .and_then(|u| u.host_str().map(str::to_owned))
@@ -92,18 +95,31 @@ pub fn is_cloud(p: &Profile) -> bool {
 }
 
 fn is_private_host(host: &str) -> bool {
-    let h = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
-    if h == "localhost" || h.ends_with(".local") || h.ends_with(".localhost") || !h.contains('.') && h.parse::<IpAddr>().is_err() {
-        // Bare names ("mew", "gpu-box") resolve on your own network.
+    let h = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    if h == "localhost"
+        || h.ends_with(".local")
+        || h.ends_with(".localhost")
+        || !h.contains('.') && h.parse::<IpAddr>().is_err()
+    {
+        // Bare names ("gpu", "nas") resolve on your own network.
         return true;
     }
     match h.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local() || {
-            // Tailscale's CGNAT range: your own devices, reached over your tailnet.
-            let [a, b, ..] = ip.octets();
-            a == 100 && (64..128).contains(&b)
-        },
-        Ok(IpAddr::V6(ip)) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00 || (ip.segments()[0] & 0xffc0) == 0xfe80,
+        Ok(IpAddr::V4(ip)) => {
+            ip.is_loopback() || ip.is_private() || ip.is_link_local() || {
+                // Tailscale's CGNAT range: your own devices, reached over your tailnet.
+                let [a, b, ..] = ip.octets();
+                a == 100 && (64..128).contains(&b)
+            }
+        }
+        Ok(IpAddr::V6(ip)) => {
+            ip.is_loopback()
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
+        }
         Err(_) => h.ends_with(".ts.net") || h.ends_with(".lan") || h.ends_with(".home.arpa"),
     }
 }
@@ -124,7 +140,7 @@ mod tests {
 
     fn profile(provider: ProviderKind, base_url: Option<&str>) -> Profile {
         let mut p: Profile = serde_json::from_value(serde_json::json!({
-            "provider": match provider { ProviderKind::Openai => "openai", ProviderKind::Anthropic => "anthropic", ProviderKind::Ollama => "ollama" },
+            "provider": match provider { ProviderKind::Openai => "openai", ProviderKind::Anthropic => "anthropic", ProviderKind::Ollama => "ollama", ProviderKind::Codex => "codex" },
             "model": "m",
         }))
         .unwrap();
@@ -136,20 +152,26 @@ mod tests {
     fn where_models_run() {
         assert!(is_cloud(&profile(ProviderKind::Anthropic, None)));
         assert!(is_cloud(&profile(ProviderKind::Openai, None)));
-        assert!(is_cloud(&profile(ProviderKind::Openai, Some("https://openrouter.ai/api/v1"))));
+        assert!(is_cloud(&profile(
+            ProviderKind::Openai,
+            Some("https://openrouter.ai/api/v1")
+        )));
         assert!(!is_cloud(&profile(ProviderKind::Ollama, None)));
         for local in [
             "http://localhost:11434",
             "http://127.0.0.1:8080/v1",
-            "http://mew:8000/v1",
-            "http://gpu-box.local:8000/v1",
+            "http://gpu:8000/v1",
+            "http://gpu.local:8000/v1",
             "http://192.168.1.20:8000/v1",
             "http://10.0.0.5/v1",
             "http://100.101.102.103:8000/v1",
-            "http://mew.tail1234.ts.net:8000/v1",
+            "http://gpu.tail1234.ts.net:8000/v1",
             "http://[::1]:8000/v1",
         ] {
-            assert!(!is_cloud(&profile(ProviderKind::Openai, Some(local))), "{local}");
+            assert!(
+                !is_cloud(&profile(ProviderKind::Openai, Some(local))),
+                "{local}"
+            );
         }
         let mut sidecar = profile(ProviderKind::Openai, Some("http://127.0.0.1:9000/v1"));
         sidecar.sidecar = Some("mlx-community/Qwen3-4B-4bit".into());
@@ -160,7 +182,7 @@ mod tests {
     fn nearest_folder_decides() {
         let tmp = tempdir();
         let file = tmp.join("projects.json");
-        let project = tmp.join("kiln");
+        let project = tmp.join("app");
         let sub = project.join("apps/macos");
         std::fs::create_dir_all(&sub).unwrap();
         assert_eq!(cloud_in(&load(&file), &sub), Cloud::Ask);
@@ -175,7 +197,8 @@ mod tests {
     }
 
     fn tempdir() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("frog-policy-{}-{}", std::process::id(), line!()));
+        let d =
+            std::env::temp_dir().join(format!("frog-policy-{}-{}", std::process::id(), line!()));
         std::fs::create_dir_all(&d).unwrap();
         d
     }

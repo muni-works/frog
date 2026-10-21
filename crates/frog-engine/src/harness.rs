@@ -124,8 +124,10 @@ pub fn is_cloud(p: &Profile) -> bool {
 
 /// Hosted frontier APIs don't need probing.
 pub fn is_hosted(p: &Profile) -> bool {
-    p.provider == ProviderKind::Anthropic
-        || (p.provider == ProviderKind::Openai && p.base_url.is_none())
+    // A sidecar model runs locally on a port frog picks, so it has no `base_url` of its own.
+    p.sidecar.is_none()
+        && (p.provider == ProviderKind::Anthropic
+            || (p.provider == ProviderKind::Openai && p.base_url.is_none()))
 }
 
 pub fn tier(p: &Profile, caps: Option<&Caps>) -> Tier {
@@ -337,7 +339,7 @@ mod tests {
         assert!(!cloud("lmstudio/qwen3-coder-30b"));
         assert!(!cloud("tang/mlx-community/Qwen3-4B-4bit"));
         let mut mine = Profile::new(ProviderKind::Openai, "qwen3");
-        mine.base_url = Some("http://mew.local:8000/v1".into());
+        mine.base_url = Some("http://gpu.local:8000/v1".into());
         assert!(!is_cloud(&mine));
     }
 

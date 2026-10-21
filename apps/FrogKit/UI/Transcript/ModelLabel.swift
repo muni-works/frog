@@ -172,6 +172,7 @@ extension ModelIdentity {
         case .downloading(let f):
             downloadGB.map { "\(Self.gb($0 * f)) of \(Self.gb($0))" } ?? "Downloading, \(Int(f * 100))%"
         case .downloadFailed: "Download failed"
+        case .needsKey(ProviderID.cloudName): "Sign in or add a key to use it"
         case .needsKey(let p): "Add \(p.first.map { "AEIOU".contains($0) } == true ? "an" : "a") \(p) key to use it"
         case .wontFit(let needs, let has): "Needs \(needs) GB, this Mac has \(has)"
         case .notAllowed(let project): "\(project) keeps code on your devices"

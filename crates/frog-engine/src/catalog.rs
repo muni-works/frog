@@ -7,7 +7,6 @@ use crate::config::{ProviderKind, data_dir};
 use crate::providers::{self, ProviderInfo};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -74,10 +73,42 @@ fn write_cache(provider: &str, models: &[Model]) {
 /// What's known about one model, from the cache alone (no network): for `resolve`.
 pub fn cached(spec: &str) -> Option<Model> {
     let (provider, _) = spec.split_once('/')?;
-    read_cache(provider)?
-        .models
-        .into_iter()
-        .find(|m| m.spec == spec)
+    let found = read_cache(provider).and_then(|c| c.models.into_iter().find(|m| m.spec == spec));
+    found.or_else(|| {
+        (provider == providers::CLOUD)
+            .then(|| {
+                STATIC_CLOUD
+                    .iter()
+                    .map(static_model)
+                    .find(|m| m.spec == spec)
+            })
+            .flatten()
+    })
+}
+
+/// frog cloud's models, built in: what the picker shows before you connect, so nothing calls
+/// frog cloud while you're logged out. (id, name, context)
+const STATIC_CLOUD: &[(&str, &str, u64)] = &[("qwen3-coder-next", "Qwen3 Coder Next", 65_536)];
+
+fn static_model(&(id, name, context): &(&str, &str, u64)) -> Model {
+    Model {
+        spec: format!("{}/{id}", providers::CLOUD),
+        provider: providers::CLOUD.into(),
+        id: id.into(),
+        name: name.into(),
+        context: Some(context),
+        inputs: vec!["text".into()],
+        tools: true,
+        ..Default::default()
+    }
+}
+
+/// frog cloud's models, without the network: the last fetched list, else the built-in one.
+pub fn cloud_models() -> Vec<Model> {
+    read_cache(providers::CLOUD)
+        .map(|c| c.models)
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| STATIC_CLOUD.iter().map(static_model).collect())
 }
 
 /// Gateways whose model lists are public: browsable before you connect them, and fetched
@@ -90,7 +121,14 @@ fn public(provider: &str) -> bool {
 /// fetched when stale (or when `refresh`). A provider that can't be reached keeps its last list.
 pub async fn all(refresh: bool) -> Vec<Model> {
     let state = providers::State::load();
-    let remote: Vec<ProviderInfo> = providers::list(&state)
+    let all = providers::list(&state);
+    // Logged out, frog cloud is its built-in list: never fetched without a key.
+    let cloud_static = all
+        .iter()
+        .any(|p| p.id == providers::CLOUD && !p.connected)
+        .then(|| STATIC_CLOUD.iter().map(static_model).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let remote: Vec<ProviderInfo> = all
         .into_iter()
         .filter(|p| !p.local && (p.connected || public(&p.id)))
         .collect();
@@ -110,15 +148,26 @@ pub async fn all(refresh: bool) -> Vec<Model> {
                     write_cache(&p.id, &models);
                     models
                 }
-                _ => cached.map(|c| c.models).unwrap_or_default(),
+                _ => cached
+                    .map(|c| c.models)
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or_else(|| {
+                        if p.id == providers::CLOUD {
+                            STATIC_CLOUD.iter().map(static_model).collect()
+                        } else {
+                            Vec::new()
+                        }
+                    }),
             }
         }
     });
-    futures_util::future::join_all(jobs)
+    let mut out: Vec<Model> = futures_util::future::join_all(jobs)
         .await
         .into_iter()
         .flatten()
-        .collect()
+        .collect();
+    out.extend(cloud_static);
+    out
 }
 
 type Dev = std::sync::Arc<tokio::sync::OnceCell<Option<Value>>>;
@@ -186,6 +235,18 @@ async fn fetch(p: &ProviderInfo, dev: &Dev) -> Option<Vec<Model>> {
             })
             .collect(),
     };
+    // frog cloud's own models: the built-in list knows them.
+    if p.id == providers::CLOUD {
+        for m in models.iter_mut() {
+            if let Some(s) = STATIC_CLOUD.iter().map(static_model).find(|s| s.id == m.id) {
+                m.context = m.context.or(s.context);
+                m.tools = true;
+                if m.name == m.id {
+                    m.name = s.name;
+                }
+            }
+        }
+    }
     // Fill the gaps from models.dev (context, inputs, reasoning, tools, price).
     if models.iter().any(|m| m.context.is_none())
         && let Some(dev) = models_dev(dev).await
@@ -312,12 +373,17 @@ fn enrich(m: &mut Model, d: &Value) {
     }
 }
 
-/// Group by provider for display (stable order).
-pub fn by_provider(models: &[Model]) -> BTreeMap<&str, Vec<&Model>> {
-    let mut out: BTreeMap<&str, Vec<&Model>> = BTreeMap::new();
+/// Group by provider for display, in the shared rank (This Mac, your servers, frog cloud,
+/// other clouds), then by id.
+pub fn by_provider(models: &[Model]) -> Vec<(&str, Vec<&Model>)> {
+    let mut out: Vec<(&str, Vec<&Model>)> = Vec::new();
     for m in models {
-        out.entry(m.provider.as_str()).or_default().push(m);
+        match out.iter_mut().find(|(p, _)| *p == m.provider) {
+            Some((_, v)) => v.push(m),
+            None => out.push((m.provider.as_str(), vec![m])),
+        }
     }
+    out.sort_by(|a, b| (providers::rank(a.0), a.0).cmp(&(providers::rank(b.0), b.0)));
     out
 }
 
@@ -358,6 +424,32 @@ mod tests {
     }
 
     #[test]
+    fn by_provider_follows_the_rank() {
+        let m = |p: &str| Model {
+            spec: format!("{p}/x"),
+            provider: p.into(),
+            id: "x".into(),
+            ..Default::default()
+        };
+        let models = vec![
+            m("anthropic"),
+            m("openrouter"),
+            m("cloud"),
+            m("gpu"),
+            m("ollama"),
+        ];
+        let order: Vec<&str> = by_provider(&models).iter().map(|(p, _)| *p).collect();
+        assert_eq!(order, ["ollama", "gpu", "cloud", "anthropic", "openrouter"]);
+    }
+
+    #[test]
+    fn cloud_has_a_built_in_list() {
+        let m = cached("cloud/qwen3-coder-next").unwrap();
+        assert_eq!(m.context, Some(65_536));
+        assert!(cloud_models().iter().any(|m| m.id == "qwen3-coder-next"));
+    }
+
+    #[test]
     fn models_dev_fills_gaps_by_vendor() {
         let dev = json!({"anthropic": {"models": {"claude-sonnet-5": {
             "name": "Claude Sonnet 5", "reasoning": true, "tool_call": true,
@@ -370,7 +462,7 @@ mod tests {
             ..Default::default()
         };
         let id = m.id.clone();
-        enrich(&mut m, lookup(&dev, "gpu-box", &id).unwrap());
+        enrich(&mut m, lookup(&dev, "gpu", &id).unwrap());
         assert_eq!(m.context, Some(200_000));
         assert_eq!(m.name, "Claude Sonnet 5");
         assert!(m.vision());

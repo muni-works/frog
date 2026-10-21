@@ -2,6 +2,7 @@
 
 pub mod ask;
 pub mod auto;
+pub mod background;
 pub mod catalog;
 pub mod checkpoint;
 pub mod codemap;
@@ -32,6 +33,7 @@ pub mod recall;
 pub mod repomap;
 pub mod rules;
 pub mod session;
+pub mod setup;
 pub mod sidecar;
 pub mod skills;
 pub mod subagent;

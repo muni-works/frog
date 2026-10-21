@@ -26,11 +26,11 @@ frog has no onboarding screens. No welcome window, no tour, no account. The prod
 - What it would add (Claude Code's own MCP servers, in `~/.claude.json`) has one button. frog records the choice (`~/.config/frog/imports.json`) and reads those servers from then on, alongside `config.toml`; it doesn't copy them, so edits in Claude Code carry over.
 - The line is closed with ×, or goes away once there's nothing left to add.
 
-**Recent projects,** as up to three chips under the question in a new chat: "kiln", "ipse", "vcad". One click starts the conversation in that folder. They come from where you've actually been working: folders of your recent frog conversations first, then frog's recent folders, then git repositories under `~/Developer` (and `~/Projects`, `~/code`, `~/src`, `~/dev`) by latest commit.
+**Recent projects,** as up to three chips under the question in a new chat: "app", "api", "web". One click starts the conversation in that folder. They come from where you've actually been working: folders of your recent frog conversations first, then frog's recent folders, then git repositories under `~/Developer` (and `~/Projects`, `~/code`, `~/src`, `~/dev`) by latest commit.
 
 **30s: the project greeting.** A new conversation in a project opens with what frog read, from its repo map and a quick look at the project's state:
 
-> kiln · a Rust engine and a SwiftUI app · 41k lines · 2 failing tests in frog-engine
+> frog · a Rust engine and a SwiftUI app · 41k lines · 2 failing tests in frog-engine
 
 and three starting points you can click, made from what it found (failing tests, TODOs near recent changes, "explain how it fits together").
 
@@ -54,9 +54,9 @@ Built as one line above the composer (`BiggerModelLine`). It shows when the mode
 - **Features show up when they're relevant,** once each, next to the thing: ⌘\ the first time two conversations run at once; the changes card the first time a turn edits several files; "Make this a skill?" the first time you send a prompt close to an earlier one.
 - **Trust is earned.** frog keeps each project's record ("40 edits approved as they were"), and offers the next permission mode when it's earned, reversible from the same place.
 - **It gets faster the more you use it.** Warm projects (saved context, prefill while typing: roadmap bet 1) get a small mark in the sidebar.
-- **Your devices join in.** A GPU box or another Mac on the network is found (Bonjour, bet 3): "mew is on your network with a 3090. Use it?". Approvals come to your iPhone as notification actions; conversations continue on another Mac through Handoff.
-- **frog everywhere.** App Intents for Spotlight ("frog: fix the build in kiln"), a menu bar frog with running agents, a Dock badge when one needs you.
-- **Memory you can see.** A weekly "what frog learned about kiln", editable.
+- **Your devices join in.** A GPU box or another Mac on the network is found (Bonjour, bet 3): "gpu is on your network with a 3090. Use it?". Approvals come to your iPhone as notification actions; conversations continue on another Mac through Handoff.
+- **frog everywhere.** App Intents for Spotlight ("frog: fix the build in frog"), a menu bar frog with running agents, a Dock badge when one needs you.
+- **Memory you can see.** A weekly "what frog learned about frog", editable.
 - **Delight, with restraint.** The ribbit when a long task finishes, the frog looking toward the pane that's working, the seasons. All under `playfulFrog`.
 
 ## Build order
@@ -66,3 +66,11 @@ Built as one line above the composer (`BiggerModelLine`). It shows when the mode
 3. **A bigger model, when it's needed.**
 4. **The project greeting.**
 5. Permissions in context; then the "after that" list, roughly in its order.
+
+## Install
+
+```sh
+curl -fsSL https://frog.toys/install.sh | sh
+```
+
+Prebuilt binaries cover macOS arm64 and Linux x86_64/arm64. The script installs to `~/.local/bin` (override with `FROG_INSTALL_DIR`), pins a release with `FROG_VERSION=v0.1.0`, verifies the sha256, and never uses sudo. From source: `cargo install --path crates/frog`.

@@ -3,6 +3,7 @@ name = "puck-fw"
 description = "Firmware for the frog puck: Waveshare ESP32-S3 1.75\" round AMOLED"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 publish = false
 
 # Not part of the host workspace: this builds for xtensa-esp32s3-espidf with the `esp` toolchain.

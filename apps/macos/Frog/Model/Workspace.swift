@@ -74,7 +74,8 @@ final class Workspace {
     static var startingModel: String? { startingModel() }
 
     static func startingModel(_ d: UserDefaults = .standard, apple: Bool = AppleIntelligence.available) -> String? {
-        if let s = d.string(forKey: "defaultModel"), !s.isEmpty { return s }
+        if d.string(forKey: "newMessageModelPolicy") == "fixed",
+           let s = d.string(forKey: "defaultModel"), !s.isEmpty { return s }
         return lastUsed(d, apple: apple)
     }
 
@@ -82,7 +83,8 @@ final class Workspace {
     static var lastUsed: String? { lastUsed() }
 
     static func lastUsed(_ d: UserDefaults = .standard, apple: Bool = AppleIntelligence.available) -> String? {
-        if let s = d.string(forKey: "lastModel"), !s.isEmpty { return s }
+        // Saved before the rename, it may say "tang/…" or "frog-api/…".
+        if let s = d.string(forKey: "lastModel"), !s.isEmpty { return ProviderID.canonicalSpec(s) }
         return apple ? AppleIntelligence.spec : nil
     }
 
@@ -90,8 +92,8 @@ final class Workspace {
     /// with another complete local suggestion so a new chat never reaches a sidecar that cannot
     /// load its tokenizer.
     private static func usableStartingModel(_ spec: String?) -> String? {
-        guard let spec, spec.hasPrefix("tang/") else { return spec }
-        let repo = String(spec.dropFirst("tang/".count))
+        guard let spec, ProviderID.of(spec: spec) == ProviderID.local else { return spec }
+        let repo = String(spec.split(separator: "/", maxSplits: 1).last ?? "")
         guard !ModelDownloads.isInstalled(repo) else { return spec }
         return SuggestedModel.all.first(where: { ModelDownloads.isInstalled($0.repo) })?.spec
     }
@@ -106,7 +108,12 @@ final class Workspace {
 
     /// The model the picker should show. A selected download takes precedence over the engine's
     /// last runnable model so the composer can explain why sending is paused.
-    var selectedModel: String? { pendingDownload ?? conversation?.status?.model ?? preferredModel }
+    var selectedModel: String? {
+        if let pendingDownload { return pendingDownload }
+        if UserDefaults.standard.string(forKey: "newMessageModelPolicy") != "fixed",
+           let model = conversation?.turns.reversed().compactMap({ $0.usage?.model }).first { return model }
+        return conversation?.status?.model ?? preferredModel
+    }
 
     var pendingDownloadModel: ModelIdentity? {
         guard let spec = pendingDownload else { return nil }
@@ -177,7 +184,9 @@ final class Workspace {
 
     /// `fresh` starts a new conversation instead of reopening the folder's last one; `resume`
     /// opens that session.
-    init(folder: URL, fresh: Bool = false, resume: String? = nil) {
+    /// `waitLock`: the session's engine from before a relaunch may still be exiting; wait for it
+    /// rather than fail.
+    init(folder: URL, fresh: Bool = false, resume: String? = nil, waitLock: Bool = false) {
         self.folder = folder
         preferredModel = Self.usableStartingModel(Self.startingModel)
         // Name models the way the last list did until this folder's own loads (it's slow).
@@ -185,11 +194,14 @@ final class Workspace {
         // Pick up where you left off: the first window reopens this folder's last session.
         // Windows and tabs opened after that start a fresh conversation.
         let chat = Frog.isChat(folder)
-        let last = resume ?? (Self.restored || fresh || chat ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder)))
+        // Restoring what was open (see `SessionRegistry`) decides what this window shows.
+        let restoring = SessionRegistry.shared.hasPending
+        let last = resume ?? (Self.restored || fresh || chat || restoring ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder)))
         Self.restored = true
         let replay = Replay.arguments
         isReplay = replay != nil
-        start(arguments: replay ?? last.map { ["-r", $0] } ?? [])
+        let wait = waitLock ? ["--wait-lock", "5"] : []
+        start(arguments: replay ?? last.map { ["-r", $0] + wait } ?? [])
         // A remembered session that won't open (deleted, or from another engine version) starts
         // a fresh conversation instead of leaving a dead one.
         if replay == nil, resume == nil, last != nil, let c = conversation {
@@ -310,11 +322,11 @@ final class Workspace {
     func stop() {
         race?.discard()
         incoming?.stop()
-        conversation?.stop()
+        if let c = conversation, !SessionBroker.shared.keep(c) { c.stop() }
     }
 
-    @discardableResult
-    private func start(arguments: [String]) -> Conversation {
+    /// The engine flags every new conversation gets from Settings.
+    static func engineFlags(chat isChat: Bool) -> [String] {
         // The permission mode new sessions start in (Settings > Permissions).
         let mode = UserDefaults.standard.string(forKey: "defaultMode").flatMap(Mode.init(rawValue:))
         let modeFlag: [String] = switch mode {
@@ -327,9 +339,17 @@ final class Workspace {
         let chat = isChat ? ["--chat"] : []
         let sandbox = UserDefaults.standard.object(forKey: "sandboxShell") as? Bool ?? true
         let noSandbox = sandbox ? [] : ["--no-shell-sandbox"]
+        return modeFlag + computerUse + chat + noSandbox
+    }
+
+    @discardableResult
+    private func start(arguments: [String]) -> Conversation {
         // A newly opened session during a download must start on the still-runnable model.
         let startupModel = pendingDownload == nil ? preferredModel : conversation?.status?.model
-        let c = Conversation(folder: folder, arguments: arguments + modeFlag + computerUse + chat + noSandbox, model: startupModel)
+        // A session already running in the background (another session messaged it) is
+        // picked up as is; a second engine can't open its log.
+        let adopted = arguments.first == "-r" && arguments.count > 1 ? SessionBroker.shared.adopt(arguments[1]) : nil
+        let c = adopted ?? Conversation(folder: folder, arguments: arguments + Self.engineFlags(chat: isChat), model: startupModel)
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID
@@ -359,7 +379,8 @@ final class Workspace {
         guard incoming === c else { return }
         incoming = nil
         opening = nil
-        conversation?.stop()
+        // A busy agent session keeps working off screen.
+        if let old = conversation, !SessionBroker.shared.keep(old) { old.stop() }
         cloudForThisConversation = false
         Motion.cut { conversation = c }
     }

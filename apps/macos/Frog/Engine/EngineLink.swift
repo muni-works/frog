@@ -31,8 +31,8 @@ extension Conversation {
         do {
             try engine.start()
             // The Mac shows the engine's panes (a shared terminal, a live preview) and puts
-            // the model's questions to the user.
-            engine.send(.setClientCaps(panes: true, ask: true))
+            // the model's questions to the user, and lets sessions reach each other.
+            engine.send(.setClientCaps(panes: true, ask: true, sessions: true))
         } catch {
             self.init(folder: folder, link: nil, replay: replay, session: session,
                       failure: "Couldn't start frog: \(error.localizedDescription)")

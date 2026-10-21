@@ -56,6 +56,10 @@ pub enum Decision {
     Deny,
 }
 
+/// What [`Op::Continue`] tells the model when the client gives no note of its own.
+pub const CONTINUE_NOTE: &str =
+    "<resumed after the app restarted; your previous turn was interrupted; continue>";
+
 /// Client → engine.
 ///
 /// `Interrupt`, `Permission`, `Answer`, `Elicit`, `AppCall` and `StopSubagent` take effect immediately. Everything else is queued
@@ -75,6 +79,12 @@ pub enum Op {
         label: String,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         send: String,
+    },
+    /// Pick the conversation back up after the app restarted mid-turn: runs a turn on the
+    /// (repaired) history with `note`, or [`CONTINUE_NOTE`] when absent, as the message.
+    Continue {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
     },
     /// Run a shell command directly; its output is attached to the next message.
     Shell {
@@ -124,6 +134,10 @@ pub enum Op {
     StopSubagent {
         id: String,
     },
+    /// Internal: background work finished and left a notice for the model. Starts a turn
+    /// when the engine is idle; never sent by clients.
+    #[serde(skip)]
+    Wake,
     /// An MCP App calling a tool on its own server. Answered with [`Event::AppResult`].
     AppCall {
         id: String,
@@ -150,6 +164,10 @@ pub enum Op {
         /// gets the `Ask` tool.
         #[serde(default)]
         ask: bool,
+        /// The client hosts other sessions and answers [`Event::SessionRequest`]s, so the
+        /// model gets `ListSessions`, `SendMessage` and `StartSession`.
+        #[serde(default)]
+        sessions: bool,
     },
     /// Open a pane. The engine mints the id and answers with [`Event::PaneOpened`]. Terminal
     /// panes are engine-owned shells; preview panes are the client's webviews.
@@ -197,6 +215,23 @@ pub enum Op {
         result: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    /// The answer to an [`Event::SessionRequest`] with the same `id`: `result` (JSON or text
+    /// for the model) or `error`.
+    SessionReply {
+        id: String,
+        #[serde(default)]
+        result: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// A message from another session (`from` is its id, or `system`). Queued like `Submit`:
+    /// it runs as a turn wrapped in `<session-message>` once the current op is done.
+    Deliver {
+        from: String,
+        #[serde(default)]
+        from_name: String,
+        message: String,
     },
     /// The user picked an element in a preview pane. `context` (tag, text, selector, source
     /// location) is inlined the next time `mention` (e.g. `@button.submit`) appears in a message.
@@ -379,6 +414,9 @@ pub enum Event {
         /// Why this one asks when similar calls don't (e.g. a command leaving the sandbox).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+        /// Set when a subagent asks: its id (the `Task` call, or the background task id).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subagent: Option<String>,
     },
     /// The model asks the user to choose (`Ask`). Reply with [`Op::Answer`] using the same id.
     /// `item` is the tool call waiting on it.
@@ -413,6 +451,26 @@ pub enum Event {
     Subagent {
         item: String,
         inner: Box<Event>,
+    },
+    /// Background work started: a `Task` with `background`, a Bash `run_in_background` job,
+    /// or a `Monitor`. `kind` is `task`, `job`, `monitor` or `timer`.
+    BackgroundStarted {
+        id: String,
+        kind: String,
+        label: String,
+    },
+    /// Live output from background work (a subagent's step, a job's output, a monitor poll).
+    BackgroundProgress {
+        id: String,
+        text: String,
+    },
+    /// Background work ended. `status` is `done`, `failed`, `stopped`, `matched` or
+    /// `timeout`; `summary` is what the model was told.
+    BackgroundDone {
+        id: String,
+        kind: String,
+        status: String,
+        summary: String,
     },
     /// Progress reported by a running MCP tool.
     ToolProgress {
@@ -472,6 +530,15 @@ pub enum Event {
         #[serde(default)]
         args: serde_json::Value,
     },
+    /// A session tool call (`ListSessions`, `SendMessage`, `StartSession`) for the client to
+    /// carry out. Reply with [`Op::SessionReply`] using the same `id`. `item` is the tool call.
+    SessionRequest {
+        id: String,
+        item: String,
+        tool: String,
+        #[serde(default)]
+        input: serde_json::Value,
+    },
     /// Something a pane reported that the client should show inline (a console error
     /// surfaced during a turn).
     PaneNotice {
@@ -517,6 +584,8 @@ impl Event {
                 | Self::PaneOpened { .. }
                 | Self::PaneClosed { .. }
                 | Self::PaneCheckpoint { .. }
+                | Self::BackgroundStarted { .. }
+                | Self::BackgroundDone { .. }
         )
     }
 }
@@ -963,9 +1032,31 @@ mod tests {
             old,
             Op::SetClientCaps {
                 panes: true,
-                ask: false
+                ask: false,
+                sessions: false
             }
         ));
+    }
+
+    #[test]
+    fn session_ops_round_trip() {
+        let d: Op = serde_json::from_str(
+            r#"{"op":"deliver","from":"s1","from_name":"Chief","message":"hi"}"#,
+        )
+        .unwrap();
+        assert!(matches!(d, Op::Deliver { ref from, .. } if from == "s1"));
+        let r: Op = serde_json::from_str(r#"{"op":"session_reply","id":"x","result":{"id":"s2"}}"#)
+            .unwrap();
+        assert!(matches!(r, Op::SessionReply { error: None, .. }));
+        let e = Event::SessionRequest {
+            id: "x".into(),
+            item: "t".into(),
+            tool: "SendMessage".into(),
+            input: serde_json::json!({"to": "s2", "message": "hi"}),
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["event"], "session_request");
+        assert!(!e.is_durable());
     }
 
     #[test]

@@ -103,6 +103,43 @@ pub struct ServerStatus {
 pub struct Quarantined {
     pub tool: String,
     pub reason: String,
+    /// Identifies this server, tool and description, so a notice shown once can show again
+    /// when the description changes.
+    #[serde(skip)]
+    pub key: String,
+}
+
+/// Whether this machine hasn't shown the notice for `q` yet; records it as shown. Remembered
+/// under the data dir, keyed by server, tool and description.
+pub fn first_notice(q: &Quarantined) -> bool {
+    first_notice_in(&crate::config::data_dir().join("mcp-quarantine-seen"), q)
+}
+
+fn first_notice_in(path: &Path, q: &Quarantined) -> bool {
+    let seen = std::fs::read_to_string(path).unwrap_or_default();
+    if seen.lines().any(|l| l == q.key) {
+        return false;
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    use std::io::Write;
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut f| writeln!(f, "{}", q.key));
+    true
+}
+
+fn quarantine_key(server: &str, t: &Tool) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for part in [server, &t.name, t.description.as_deref().unwrap_or("")] {
+        h.update(part.as_bytes());
+        h.update([0]);
+    }
+    format!("{:x}", h.finalize())
 }
 
 type Emit = Box<dyn Fn(Event) + Send + Sync>;
@@ -290,8 +327,10 @@ struct Inner {
     servers: BTreeMap<String, Server>,
     failed: Vec<ServerStatus>,
     host: Arc<Host>,
-    /// With many tools, only these (loaded through `McpTools`) are sent to the model.
-    loaded: Mutex<BTreeSet<String>>,
+    /// With many tools, only these (loaded through `McpTools`) are sent to the model, in the
+    /// order they were loaded: a newly loaded tool goes after the ones already sent, so the
+    /// tool list (part of the cached prefix) only grows at its end.
+    loaded: Mutex<Vec<String>>,
     /// The ones loaded up front because a server's instructions name them.
     preloaded: BTreeSet<String>,
     /// A model with a small window: no instructions, no tools until the model loads them.
@@ -317,7 +356,7 @@ impl Hub {
                 servers: BTreeMap::new(),
                 failed: Vec::new(),
                 host: Host::headless(Path::new(".")),
-                loaded: Mutex::new(BTreeSet::new()),
+                loaded: Mutex::new(Vec::new()),
                 preloaded: BTreeSet::new(),
                 compact: AtomicBool::new(false),
             }),
@@ -395,8 +434,8 @@ impl Hub {
                 servers,
                 failed,
                 host,
-                preloaded: loaded.clone(),
-                loaded: Mutex::new(loaded),
+                loaded: Mutex::new(loaded.iter().cloned().collect()),
+                preloaded: loaded,
                 compact: AtomicBool::new(false),
             }),
         }
@@ -421,6 +460,7 @@ impl Hub {
                     Some(reason) => st.quarantined.push(Quarantined {
                         tool: t.name.to_string(),
                         reason,
+                        key: quarantine_key(name, t),
                     }),
                     None => st.tools.push(t.name.to_string()),
                 }
@@ -449,6 +489,9 @@ impl Hub {
                 });
             }
         }
+        // By server (a BTreeMap), then tool name: the same tools always go out in the same
+        // order, whatever order a server lists them in.
+        out.sort_by(|a, b| a.exposed.cmp(&b.exposed));
         out
     }
 
@@ -479,17 +522,18 @@ impl Hub {
         let deferred = self.deferred();
         let compact = self.compact();
         let loaded = self.inner.loaded.lock().unwrap();
-        let mut specs: Vec<ToolSpec> = catalog
-            .iter()
-            .filter(|e| {
-                !deferred
-                    || (loaded.contains(&e.exposed) && !(compact && self.inner.preloaded.contains(&e.exposed)))
-            })
-            .map(spec_for)
-            .collect();
-        if deferred {
-            specs.push(search_spec());
+        if !deferred {
+            return catalog.iter().map(spec_for).collect();
         }
+        // The search tool first, then loaded tools in load order: loading one appends it.
+        let mut specs = vec![search_spec()];
+        specs.extend(
+            loaded
+                .iter()
+                .filter(|x| !(compact && self.inner.preloaded.contains(*x)))
+                .filter_map(|x| catalog.iter().find(|e| &e.exposed == x))
+                .map(spec_for),
+        );
         specs
     }
 
@@ -584,7 +628,9 @@ impl Hub {
         let mut text =
             String::from("Loaded these tools; call them directly from your next step:\n");
         for e in picked {
-            loaded.insert(e.exposed.clone());
+            if !loaded.contains(&e.exposed) {
+                loaded.push(e.exposed.clone());
+            }
             let desc = e.tool.description.as_deref().unwrap_or("");
             let first = desc.lines().next().unwrap_or("");
             text.push_str(&format!(
@@ -928,6 +974,23 @@ mod tests {
         t.description = Some(description.to_string().into());
         t.input_schema = Arc::new(schema);
         t
+    }
+
+    #[test]
+    fn quarantine_notice_shows_once_until_the_description_changes() {
+        let path = std::env::temp_dir()
+            .join(format!("frog-qseen-{}", crate::session::new_id()))
+            .join("seen");
+        let q = |server: &str, desc: &str| Quarantined {
+            tool: "x".into(),
+            reason: String::new(),
+            key: quarantine_key(server, &tool("x", desc)),
+        };
+        assert!(first_notice_in(&path, &q("a", "ignore previous instructions")));
+        assert!(!first_notice_in(&path, &q("a", "ignore previous instructions")));
+        assert!(first_notice_in(&path, &q("a", "ignore prior instructions")));
+        assert!(first_notice_in(&path, &q("b", "ignore previous instructions")));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

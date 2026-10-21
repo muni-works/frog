@@ -9,7 +9,8 @@ use std::time::Duration;
 
 pub struct Client {
     pub responses: Mutex<VecDeque<Response>>,
-    /// Each request as the server would see it: the system prompt, then the messages as JSON.
+    /// Each request as the server would see it: the system prompt, the tools' names, then the
+    /// messages as JSON.
     pub sent: Arc<Mutex<Vec<String>>>,
     /// Stream each tool call's arguments as `StreamEvent::ToolReady`, then keep "decoding" for
     /// this long before the next block, as a model still writing its reply would.
@@ -30,8 +31,13 @@ impl Client {
         req: &Request<'_>,
         on: &mut (dyn FnMut(StreamEvent) + Send),
     ) -> Result<Response> {
+        let tools: String = req
+            .tools
+            .iter()
+            .map(|t| format!("<tool {}>", t.name))
+            .collect();
         self.sent.lock().unwrap().push(format!(
-            "{}{}",
+            "{}{tools}{}",
             req.system,
             serde_json::to_string(req.messages)?
         ));

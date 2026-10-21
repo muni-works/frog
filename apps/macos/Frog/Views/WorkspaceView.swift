@@ -388,8 +388,9 @@ struct WorkspaceView: View {
         .modifier(LightboxHost())
         .environment(\.projectFolder, workspace.folder)
         // The focused pane's folder as the window's document: proxy icon in the title bar
-        // (⌘-click for its path, drag it anywhere).
-        .navigationDocument(workspace.folder)
+        // (⌘-click for its path, drag it anywhere). Not for Chats: their folder is frog's own
+        // scratch space, not a document of yours.
+        .modifier(FolderDocument(folder: workspace.isChat ? nil : workspace.folder))
         .navigationTitle(windowTitle)
         .navigationSubtitle(place)
         .toolbarTitleMenu { if let c = workspace.conversation { titleMenu(c) } }
@@ -767,5 +768,13 @@ struct WindowReader: NSViewRepresentable {
 
     func updateNSView(_ v: NSView, context: Context) {
         DispatchQueue.main.async { found(v.window) }
+    }
+}
+
+/// The window's represented document, when there is one.
+private struct FolderDocument: ViewModifier {
+    let folder: URL?
+    func body(content: Content) -> some View {
+        if let folder { content.navigationDocument(folder) } else { content }
     }
 }

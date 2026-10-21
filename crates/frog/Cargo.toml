@@ -3,6 +3,7 @@ name = "frog"
 description = "A local-first coding agent for your terminal"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 agent-client-protocol-schema = { version = "1.9", default-features = false }

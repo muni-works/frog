@@ -81,6 +81,9 @@ struct PaneView: View {
         .environment(\.switchFolder) { url in panes.switchFolder(url, in: pane) }
         .environment(\.startConversation) { url, prompt in panes.start(prompt, in: url, pane: pane) }
         .environment(\.openSession) { s in panes.open(s, in: pane, window: window) }
+        .environment(\.openSessionID) { id in
+            if let s = Library.shared.sessions.first(where: { $0.id == id }) { panes.open(s, in: pane, window: window) }
+        }
         // The agent moved the conversation to another folder: follow it there once the turn ends.
         .onChange(of: workspace.conversation.flatMap { $0.busy ? nil : $0.movedTo }) { _, url in
             if let url { panes.move(pane, to: url) }
@@ -144,6 +147,8 @@ struct PaneView: View {
             .id(ObjectIdentifier(conversation))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
+                    ResumedBanner(conversation: conversation)
+                        .id(ObjectIdentifier(conversation))
                     BiggerModelLine(workspace: workspace, conversation: conversation)
                         .id(ObjectIdentifier(conversation))
                     PingLine(conversation: conversation)

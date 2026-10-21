@@ -10,6 +10,7 @@ pub enum ProviderKind {
     Openai,
     Anthropic,
     Ollama,
+    Codex,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -40,6 +41,20 @@ pub enum Thinking {
     Always,
     /// Ask the model not to think on any call.
     Never,
+}
+
+/// How an Anthropic model thinks (`thinking` on the Messages API). Unset picks per model:
+/// adaptive for `claude-opus-*` that support it, nothing otherwise.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AnthropicThinking {
+    /// `{type: "adaptive"}`: the model decides when and how much to think (Opus 4.6+).
+    Adaptive,
+    /// `{type: "enabled", budget_tokens}`: a fixed budget. Older models only; newer ones
+    /// reject it, so they get adaptive instead.
+    Enabled,
+    /// Send no `thinking` parameter.
+    Off,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -73,6 +88,23 @@ pub struct Profile {
     /// Overrides the global `thinking_budget` for this model.
     #[serde(default)]
     pub thinking_budget: Option<u32>,
+    /// Anthropic `thinking` mode (see [`AnthropicThinking`]).
+    #[serde(default)]
+    pub anthropic_thinking: Option<AnthropicThinking>,
+    /// `budget_tokens` for `anthropic_thinking = "enabled"` (default 16000, at least 1024).
+    #[serde(default)]
+    pub anthropic_budget: Option<u32>,
+    /// `thinking.display`: "summarized" (default, so thinking streams) or "omitted".
+    #[serde(default)]
+    pub thinking_display: Option<String>,
+    /// Anthropic `output_config.effort`: low, medium, high, xhigh or max. Defaults to "high"
+    /// on `claude-opus-*` (the API's own default for Opus 5.5 is medium).
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// Prompt-cache lifetime: "5m" or "1h". Unset: the system prompt and tools get 1h on
+    /// Anthropic's API (5m through a gateway), the conversation 5m.
+    #[serde(default)]
+    pub cache_ttl: Option<String>,
 }
 
 impl Profile {
@@ -92,13 +124,24 @@ impl Profile {
             vision: None,
             thinking: None,
             thinking_budget: None,
+            anthropic_thinking: None,
+            anthropic_budget: None,
+            thinking_display: None,
+            effort: None,
+            cache_ttl: None,
         }
     }
 
     pub fn context_window(&self) -> u64 {
-        self.context_window.unwrap_or(match self.provider {
-            ProviderKind::Anthropic => 200_000,
-            _ => 32_768,
+        self.context_window.unwrap_or_else(|| {
+            let known = (self.provider != ProviderKind::Ollama && self.sidecar.is_none())
+                .then(|| crate::provider::anthropic::known_limits(&self.model))
+                .flatten();
+            match (known, self.provider) {
+                (Some((ctx, _)), _) => ctx,
+                (None, ProviderKind::Anthropic) => 200_000,
+                _ => 32_768,
+            }
         })
     }
 
@@ -116,6 +159,14 @@ impl Profile {
             _ => None,
         }
     }
+}
+
+fn default_subagent_steps() -> u32 {
+    100
+}
+
+fn default_background_tasks() -> usize {
+    4
 }
 
 fn default_true() -> bool {
@@ -185,6 +236,10 @@ pub struct Config {
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]
     pub sandbox_shell: bool,
+    /// Opt-in holes in that sandbox (`[sandbox]`), for tools like `gh` that need a credential.
+    /// Empty by default: nothing widens unless configured.
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
     /// Start read-only tool calls (Read, Grep, Glob) as soon as their arguments arrive, while
     /// the model is still writing the rest of its reply. Results, history and events are the
     /// same as without it; only the waiting overlaps.
@@ -198,6 +253,21 @@ pub struct Config {
     /// on-device model when available, else the default model if it runs on your devices.
     #[serde(default)]
     pub brief_model: Option<String>,
+    /// The model `Task` subagents use (a profile or provider/model) unless a call names one.
+    /// Default: the session's model. One that can't be resolved or isn't allowed here falls
+    /// back to the session's model.
+    #[serde(default)]
+    pub subagent_model: Option<String>,
+    /// Steps a subagent may take before it has to report.
+    #[serde(default = "default_subagent_steps")]
+    pub subagent_max_steps: u32,
+    /// Background subagents (`Task` with `background: true`) that may run at once.
+    #[serde(default = "default_background_tasks")]
+    pub background_tasks: usize,
+    /// Set on a write-mode subagent's own config by its parent: it gets the edit and shell
+    /// tools. Not a config.toml key.
+    #[serde(skip)]
+    pub subagent_write: bool,
     /// The WebSearch backend: "searxng", "brave", "exa" or "tavily". Unset: a configured
     /// `searxng_url`, else a search key in the environment, else no WebSearch.
     #[serde(default)]
@@ -210,6 +280,21 @@ pub struct Config {
     pub web_allow_private: bool,
 }
 
+/// `[sandbox]`: what the Bash sandbox may read beyond its defaults. Reads only; writes never
+/// widen. The environment isn't filtered (commands inherit frog's), so there's no `pass_env`.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SandboxConfig {
+    /// Paths (`~/` allowed) a sandboxed command may read even though they're credentials,
+    /// e.g. `~/.config/gh`.
+    #[serde(default)]
+    pub allow_read: Vec<String>,
+    /// macOS: let commands read the login Keychain (`~/Library/Keychains`), so `gh` and
+    /// credential helpers that keep their token there work. Every sandboxed command can then
+    /// read any Keychain item that doesn't prompt.
+    #[serde(default)]
+    pub allow_keychain: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         toml::from_str("").expect("empty config parses")
@@ -220,29 +305,14 @@ pub fn config_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".config/frog")
 }
 
-/// frog was called kiln. Move its config and data to the new places, leaving the old paths as
-/// symlinks so absolute paths recorded in old sessions (the chat folder, worktrees) still work.
-/// Does nothing once moved, or if both exist.
-pub fn migrate_from_kiln() {
-    let Some(home) = dirs::home_dir() else { return };
-    for (old, new) in [(".config/kiln", ".config/frog"), (".local/share/kiln", ".local/share/frog")] {
-        let (old, new) = (home.join(old), home.join(new));
-        let real_dir = std::fs::symlink_metadata(&old).is_ok_and(|m| m.is_dir());
-        if !real_dir || new.exists() {
-            continue;
-        }
-        if std::fs::rename(&old, &new).is_ok() {
-            #[cfg(unix)]
-            let _ = std::os::unix::fs::symlink(&new, &old);
-        }
-    }
-}
-
 pub fn data_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_default()
         .join(".local/share/frog")
 }
+
+/// frog's own engine on this machine: needs nothing else installed.
+pub const LOCAL_DEFAULT: &str = "local/qwen3-4b";
 
 impl Config {
     pub fn load() -> Result<Self> {
@@ -254,13 +324,15 @@ impl Config {
             Self::default()
         };
         cfg.claude_mcp = crate::imports::claude_mcp_on();
+        // Old provider ids in `default_model` get today's names (in memory; the file is yours).
+        cfg.default_model = cfg.default_model.map(|m| crate::providers::normalize(&m));
         Ok(cfg)
     }
 
     /// Explicit configuration: a missing file is an error, and user MCP imports are not loaded.
     pub fn load_from(path: &std::path::Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
     }
 
@@ -271,12 +343,17 @@ impl Config {
             .or_else(|| std::env::var("FROG_MODEL").ok())
             .or_else(|| self.default_model.clone())
             // frog's own engine first: it needs nothing else installed.
-            .unwrap_or_else(|| "tang/mlx-community/Qwen3-4B-4bit".into());
+            .unwrap_or_else(|| LOCAL_DEFAULT.into());
         if let Some(p) = self.models.get(&spec) {
             return Ok((spec, p.clone()));
         }
+        // Old provider ids (`tang/`, `frog-api/`, ...) and bare model names get today's spec.
+        let spec = match bare(&spec) {
+            Some(full) => full,
+            None => crate::providers::normalize(&spec),
+        };
         let (prov, model) = spec.split_once('/').ok_or_else(|| {
-            anyhow!("unknown model `{spec}`: use a profile from config.toml or provider/model (ollama/, tang/, apple/, openai/, lmstudio/, llamacpp/, anthropic/)")
+            anyhow!("unknown model `{spec}`: use a profile from config.toml or provider/model (local/, cloud/, codex/, ollama/, apple/, openai/, lmstudio/, llamacpp/, anthropic/)")
         })?;
         let mut p = match prov {
             "ollama" => Profile::new(ProviderKind::Ollama, model),
@@ -284,9 +361,10 @@ impl Config {
             "anthropic" | "claude" => Profile::new(ProviderKind::Anthropic, model),
             "lmstudio" => Profile::new(ProviderKind::Openai, model),
             "llamacpp" | "mlx" | "vllm" => Profile::new(ProviderKind::Openai, model),
-            "tang" => {
-                let mut p = Profile::new(ProviderKind::Openai, model);
-                p.sidecar = Some(model.to_string());
+            "local" => {
+                let repo = crate::providers::local_repo(model);
+                let mut p = Profile::new(ProviderKind::Openai, repo);
+                p.sidecar = Some(repo.to_string());
                 p
             }
             // Apple's on-device model has no native tool calling; guided JSON is exact.
@@ -298,7 +376,8 @@ impl Config {
                 p.context_window = Some(8_192);
                 p
             }
-            "openrouter" | "vercel" => Profile::new(ProviderKind::Openai, model),
+            "openrouter" | "vercel" | "cloud" => Profile::new(ProviderKind::Openai, model),
+            "codex" => Profile::new(ProviderKind::Codex, model),
             _ => match crate::providers::State::load().custom.remove(prov) {
                 // A server you added: another machine's ollama, or any OpenAI-compatible one.
                 Some(c) => {
@@ -316,7 +395,8 @@ impl Config {
             "mlx" => Some("http://localhost:8080/v1".into()),
             "vllm" => Some("http://localhost:8000/v1".into()),
             "openai" => std::env::var("OPENAI_BASE_URL").ok(),
-            "tang" | "apple" => p.sidecar.as_deref().map(crate::sidecar::base_url),
+            "cloud" => Some(crate::providers::cloud_base_url()),
+            "local" | "apple" => p.sidecar.as_deref().map(crate::sidecar::base_url),
             "openrouter" | "vercel" => {
                 crate::providers::preset(prov).map(|x| x.base_url.to_string())
             }
@@ -324,10 +404,11 @@ impl Config {
         };
         // Keys set in frog (the Keychain) or the provider's own variable.
         // OpenAI's key goes only to OpenAI itself, never to an OPENAI_BASE_URL elsewhere.
+        // frog cloud's saved key is pinned the same way, inside `providers::key`.
         let elsewhere = prov == "openai" && p.base_url.is_some();
         if matches!(
             prov,
-            "openrouter" | "vercel" | "anthropic" | "claude" | "openai"
+            "openrouter" | "vercel" | "cloud" | "anthropic" | "claude" | "openai"
         ) && !elsewhere
         {
             let id = if prov == "claude" { "anthropic" } else { prov };
@@ -337,6 +418,27 @@ impl Config {
     }
 }
 
+/// A bare model name (`qwen3-coder-next`, `qwen3-4b`) as a full spec, when exactly one
+/// provider frog knows offers it. No network: bundled local names and frog cloud's list.
+fn bare(spec: &str) -> Option<String> {
+    if spec.contains('/') {
+        return None;
+    }
+    let mut hits: Vec<String> = crate::providers::LOCAL_MODELS
+        .iter()
+        .filter(|(short, _)| *short == spec)
+        .map(|(short, _)| format!("local/{short}"))
+        .chain(
+            crate::catalog::cloud_models()
+                .into_iter()
+                .filter(|m| m.id == spec)
+                .map(|m| m.spec),
+        )
+        .collect();
+    hits.dedup();
+    (hits.len() == 1).then(|| hits.remove(0))
+}
+
 /// What the catalog knows about a model (context size, images), unless the profile says.
 fn with_catalog(mut p: Profile, spec: &str) -> Profile {
     if let Some(m) = crate::catalog::cached(spec) {
@@ -344,4 +446,42 @@ fn with_catalog(mut p: Profile, spec: &str) -> Profile {
         p.vision = p.vision.or(Some(m.vision()));
     }
     p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_new_ids_aliases_and_bare_names() {
+        let cfg = Config::default();
+        let (spec, p) = cfg.resolve(Some("local/qwen3-4b")).unwrap();
+        assert_eq!(spec, "local/qwen3-4b");
+        assert_eq!(p.sidecar.as_deref(), Some("mlx-community/Qwen3-4B-4bit"));
+        let (spec, _) = cfg
+            .resolve(Some("tang/mlx-community/Qwen3-32B-4bit"))
+            .unwrap();
+        assert_eq!(spec, "local/qwen3-32b");
+        let (spec, p) = cfg
+            .resolve(Some("local/mlx-community/Qwen3-32B-4bit"))
+            .unwrap();
+        assert_eq!(spec, "local/qwen3-32b");
+        assert_eq!(p.model, "mlx-community/Qwen3-32B-4bit");
+        for old in ["frog-api", "frog", "tang-cloud", "zest", "cloud"] {
+            let (spec, p) = cfg
+                .resolve(Some(&format!("{old}/qwen3-coder-next")))
+                .unwrap();
+            assert_eq!(spec, "cloud/qwen3-coder-next");
+            assert!(p.base_url.is_some());
+        }
+        let (spec, _) = cfg.resolve(Some("qwen3-coder-next")).unwrap();
+        assert_eq!(spec, "cloud/qwen3-coder-next");
+        let (spec, _) = cfg.resolve(Some("qwen3-4b")).unwrap();
+        assert_eq!(spec, "local/qwen3-4b");
+        let (spec, p) = cfg.resolve(Some("codex/default")).unwrap();
+        assert_eq!(spec, "codex/default");
+        assert_eq!(p.provider, ProviderKind::Codex);
+        let e = cfg.resolve(Some("nope")).unwrap_err().to_string();
+        assert!(e.contains("local/, cloud/, codex/"), "{e}");
+    }
 }

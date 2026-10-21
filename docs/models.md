@@ -34,7 +34,7 @@ Use these words, and only these, in every string about models.
 | Concept | Say | Don't say |
 |---|---|---|
 | Runs locally | **On this Mac** | local, tang, ollama, MLX, sidecar |
-| Runs on your own server | **On mew** (the server's name) | server, remote, LAN, custom provider |
+| Runs on your own server | **On gpu** (the server's name) | server, remote, LAN, custom provider |
 | This Mac and your servers together | **Your devices** ("Keep It on Your Devices") | local, self-hosted, on-prem |
 | Runs remotely | **Cloud · Anthropic** (the provider's name) | API, remote, hosted, provider id |
 | Apple's on-device model | **Apple Intelligence** | apple, foundation model |
@@ -94,7 +94,7 @@ A model is in exactly one state. Each state has one badge, one line, one action,
 | Needs a key | `key` | "Add an Anthropic key or use Frog Pro" | Add key… |
 | Won't fit | dimmed row | "Needs 32 GB, this Mac has 24" | none |
 | Unreachable | `cloud.slash` / `bolt.horizontal.circle` | "Anthropic isn't responding" / "Ollama isn't running" | Use a model on this Mac |
-| Not allowed here | `lock` | "kiln keeps code on this Mac" | Allow for this project… |
+| Not allowed here | `lock` | "frog keeps code on this Mac" | Allow for this project… |
 
 Actions happen in place: Get downloads right there in the row, and Add key opens a sheet over the picker, not Settings. One control, `ModelStateAction`, does them wherever a row appears (the picker, Settings, first run).
 
@@ -104,7 +104,7 @@ Built: every state in the table, plus Over cap. Unreachable comes from the app's
 
 The picker and Settings > Models show the same list, built by `ModelSections` and drawn by `ModelListRow` (`ModelList.swift`):
 
-- **Sections say where models run,** in one order everywhere: On this Mac, then each of your servers ("On mew (RTX 3090)"), then each cloud provider ("Cloud · Anthropic"). A model you could download is simply a model On this Mac in the Not downloaded state; there's no separate section. Within a section: by runtime on this Mac (Apple's model, then frog's own tang engine, then Ollama, then LM Studio), then ready, then downloading, then ones that need something, then ones that won't run well here. With nothing configured, frog's own default is tang's Qwen3 4B.
+- **Sections say where models run,** in one order everywhere: On this Mac, then each of your servers ("On gpu (RTX 3090)"), then each cloud provider ("Cloud · Anthropic"). A model you could download is simply a model On this Mac in the Not downloaded state; there's no separate section. Within a section: by runtime on this Mac (Apple's model, then frog's own tang engine, then Ollama, then LM Studio), then ready, then downloading, then ones that need something, then ones that won't run well here. With nothing configured, frog's own default is tang's Qwen3 4B.
 - **One row:** the name and ability icons over one line of detail (measured speed, estimated cost per turn, size, or the state line), then a checkmark for the current model, then the list's accessory. The section names the place, so the row doesn't. Hovering shows the details (abilities, context, price, spec).
 - **The current model is always listed,** even when frog didn't report it (an Ollama model with Ollama not running).
 
@@ -122,18 +122,18 @@ In the order people think about models:
 4. **Servers and Apps:** your servers, and Ollama or LM Studio while they're running, each with a live status ("Running · 3 models", "Not responding") from a quick check of its model list. Add Server….
 5. **Advanced:** engine details.
 
-The same check feeds the Unreachable state: a model whose app or server doesn't answer reads "Ollama isn't running" or "mew isn't responding" in the picker and here, dimmed.
+The same check feeds the Unreachable state: a model whose app or server doesn't answer reads "Ollama isn't running" or "gpu isn't responding" in the picker and here, dimmed.
 
 ## Where code goes
 
 - **The mark.** Every `ModelLabel` shows its place icon, including the turn footer, so any past turn shows where it ran.
 - **Per-project permission.** The first time a project's code would go to a cloud model, frog asks once, in a sheet over the composer:
-  > **Use cloud models in kiln?** Files you mention and tool output are sent to the provider.
+  > **Use cloud models in frog?** Files you mention and tool output are sent to the provider.
   > [Keep it on this Mac] [Just this conversation] [Always allow]
 - **Keep it on this Mac** puts the Cloud lane in the Not allowed here state and makes Auto local-only. The choice is shown in the lane caption and can be changed in the project's title menu. Plain chats (no folder) ask the same question once, for all chats.
 - **Where it lives.** frog keeps the answer in `~/.config/frog/projects.json` (the nearest folder with an answer decides) and enforces it at session start, on model switches, and for the auto-mode classifier, which falls back to the session's model. `frog --cloud-policy [allow|deny|ask]` reads or sets it. "Cloud" means the endpoint leaves your devices: hosted APIs, or any server that isn't localhost, a bare or `.local` name, a private or Tailscale address.
 - **Just this conversation** allows cloud until the conversation changes. In a folder that said no, it first resets the answer to Ask, since frog enforces a no.
-- **Built:** the sheet, the Not allowed here state with Allow…, the lane caption ("kiln allows cloud models", "You'll be asked before kiln's code goes to the cloud"), and a Cloud Models picker in the title menu (Ask First / Allow / Keep Code on Your Devices).
+- **Built:** the sheet, the Not allowed here state with Allow…, the lane caption ("frog allows cloud models", "You'll be asked before frog's code goes to the cloud"), and a Cloud Models picker in the title menu (Ask First / Allow / Keep Code on Your Devices).
 - **Switching lanes mid-conversation** says so once, in the transcript: "From here on, turns go to Claude Sonnet 5 (cloud)." No alert.
 
 ## Cost and speed
