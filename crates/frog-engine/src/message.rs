@@ -78,11 +78,12 @@ impl Message {
     }
 }
 
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct Usage {
     pub input: u64,
     pub output: u64,
     pub cache_read: u64,
+    pub model: Option<String>,
 }
 
 impl Usage {

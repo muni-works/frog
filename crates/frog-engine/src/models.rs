@@ -108,6 +108,12 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
         && let Ok((spec, p)) = cfg.resolve(Some("codex/default"))
     {
         out.push(entry(spec, "codex", &p));
+        for (model, context) in crate::provider::codex::models() {
+            if let Ok((spec, mut p)) = cfg.resolve(Some(&format!("codex/{model}"))) {
+                p.context_window = Some(*context);
+                out.push(entry(spec, "codex", &p));
+            }
+        }
     }
     for tag in ollama_tags(&local_ollama()).await {
         let spec = format!("ollama/{tag}");

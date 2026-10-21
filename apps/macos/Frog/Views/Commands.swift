@@ -30,6 +30,7 @@ extension FocusedValues {
 struct FrogCommands: Commands {
     @FocusedValue(\.frogWindow) private var window
     @Environment(\.openWindow) private var openWindow
+    @AppStorage("compactSidebar") private var compactSidebar = false
 
     private var conversation: Conversation? { window?.workspace.conversation }
 
@@ -100,6 +101,9 @@ struct FrogCommands: Commands {
         }
 
         CommandGroup(before: .toolbar) {
+            Toggle("Compact Sidebar", isOn: $compactSidebar)
+            .disabled(window == nil)
+            Divider()
             Button((window?.sessionsShown ?? false) ? "Hide Sessions" : "Show Sessions") { window?.toggleSessions() }
                 .keyboardShortcut("s", modifiers: [.command, .control])
                 .disabled(window == nil)

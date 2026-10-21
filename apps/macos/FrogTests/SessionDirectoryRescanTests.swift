@@ -2,15 +2,15 @@ import XCTest
 @testable import Frog
 
 final class SessionDirectoryRescanTests: XCTestCase {
-    func testDetectsNewChangedAndRemovedSessionLogs() {
+    func testDetectsNewChangedAndRemovedFlatSessionFiles() {
         let first = Date(timeIntervalSince1970: 100)
         let later = Date(timeIntervalSince1970: 101)
 
         let changed = SessionDirectoryRescan.changedSessions(
-            previous: ["same": first, "updated": first, "removed": first],
-            current: ["same": first, "updated": later, "added": first])
+            previous: ["20261021-182005-8519": first, "updated": first, "removed": first],
+            current: ["20261021-182005-8519": first, "updated": later, "20261021-182006-1234": first])
 
-        XCTAssertEqual(changed, ["updated", "added", "removed"])
+        XCTAssertEqual(changed, ["updated", "20261021-182006-1234", "removed"])
     }
 
     func testNoChangesProducesEmptySet() {

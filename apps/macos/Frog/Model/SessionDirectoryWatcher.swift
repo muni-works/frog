@@ -40,12 +40,11 @@ final class SessionDirectoryWatcher: @unchecked Sendable { // state confined to 
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: FrogPaths.sessions, includingPropertiesForKeys: [.isDirectoryKey]) else { return }
         var current: [String: Date] = [:]
-        for directory in urls {
-            guard (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
-            let id = directory.lastPathComponent
-            let log = directory.appending(path: "events.jsonl")
-            guard FileManager.default.fileExists(atPath: log.path),
-                  let modified = try? log.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else { continue }
+        for log in urls {
+            guard log.pathExtension == "jsonl",
+                  (try? log.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true else { continue }
+            let id = log.deletingPathExtension().lastPathComponent
+            guard let modified = try? log.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else { continue }
             current[id] = modified
             if files[id] == nil { watch(log, id: id) }
         }
@@ -93,9 +92,8 @@ final class SessionDirectoryWatcher: @unchecked Sendable { // state confined to 
     }
 }
 
-/// Tracks events.jsonl presence and modification time, independently from the watcher sources.
-/// The directory watcher catches most changes immediately; periodic scans cover child-directory
-/// creation and log appends that do not emit events on the sessions directory itself.
+/// Tracks flat session JSONL files and their modification times independently from watcher sources.
+/// Periodic scans catch file creation and appends that do not emit directory events.
 enum SessionDirectoryRescan {
     static func changedSessions(previous: [String: Date], current: [String: Date]) -> Set<String> {
         Set(current.compactMap { id, modified in previous[id] == modified ? nil : id })
