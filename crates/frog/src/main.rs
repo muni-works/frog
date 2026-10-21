@@ -696,7 +696,15 @@ async fn list_models(cfg: &Config, json: bool) -> Result<bool> {
         } else {
             " (not profiled)"
         };
-        println!("{:<32} {:<8} {:?} tier{profiled}", m.spec, mode, m.tier);
+        let label = if m.provider == frog_engine::config::ProviderKind::Codex {
+            "Codex (ChatGPT plan)"
+        } else {
+            ""
+        };
+        println!(
+            "{:<32} {:<8} {:?} tier{profiled} {label}",
+            m.spec, mode, m.tier
+        );
     }
     Ok(true)
 }

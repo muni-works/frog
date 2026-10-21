@@ -10,6 +10,7 @@ pub enum ProviderKind {
     Openai,
     Anthropic,
     Ollama,
+    Codex,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -352,7 +353,7 @@ impl Config {
             None => crate::providers::normalize(&spec),
         };
         let (prov, model) = spec.split_once('/').ok_or_else(|| {
-            anyhow!("unknown model `{spec}`: use a profile from config.toml or provider/model (local/, cloud/, ollama/, apple/, openai/, lmstudio/, llamacpp/, anthropic/)")
+            anyhow!("unknown model `{spec}`: use a profile from config.toml or provider/model (local/, cloud/, codex/, ollama/, apple/, openai/, lmstudio/, llamacpp/, anthropic/)")
         })?;
         let mut p = match prov {
             "ollama" => Profile::new(ProviderKind::Ollama, model),
@@ -376,6 +377,7 @@ impl Config {
                 p
             }
             "openrouter" | "vercel" | "cloud" => Profile::new(ProviderKind::Openai, model),
+            "codex" => Profile::new(ProviderKind::Codex, model),
             _ => match crate::providers::State::load().custom.remove(prov) {
                 // A server you added: another machine's ollama, or any OpenAI-compatible one.
                 Some(c) => {
@@ -476,7 +478,10 @@ mod tests {
         assert_eq!(spec, "cloud/qwen3-coder-next");
         let (spec, _) = cfg.resolve(Some("qwen3-4b")).unwrap();
         assert_eq!(spec, "local/qwen3-4b");
+        let (spec, p) = cfg.resolve(Some("codex/default")).unwrap();
+        assert_eq!(spec, "codex/default");
+        assert_eq!(p.provider, ProviderKind::Codex);
         let e = cfg.resolve(Some("nope")).unwrap_err().to_string();
-        assert!(e.contains("local/, cloud/"), "{e}");
+        assert!(e.contains("local/, cloud/, codex/"), "{e}");
     }
 }

@@ -104,6 +104,11 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
         .iter()
         .map(|(name, p)| entry(name.clone(), "config", p))
         .collect();
+    if crate::provider::codex::available().await
+        && let Ok((spec, p)) = cfg.resolve(Some("codex/default"))
+    {
+        out.push(entry(spec, "codex", &p));
+    }
     for tag in ollama_tags(&local_ollama()).await {
         let spec = format!("ollama/{tag}");
         if out

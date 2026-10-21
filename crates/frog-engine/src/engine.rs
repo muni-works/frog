@@ -274,7 +274,7 @@ impl Journal {
 /// (or when every `ops` sender is dropped), closing the event stream.
 pub fn spawn(opts: Options) -> Result<Handle> {
     crate::policy::check(&opts.cwd, &opts.profile_name, &opts.profile)?;
-    let provider = Provider::new(&opts.profile)?;
+    let provider = Provider::new(&opts.profile)?.with_cwd(&opts.cwd);
     start(opts, provider)
 }
 
@@ -427,6 +427,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     });
 
     tokio::spawn(async move {
+        if agent.profile.provider == ProviderKind::Codex
+            && let Err(e) = crate::provider::codex::check_available().await
+        {
+            agent.notice(Level::Warn, format!("{e:#}"));
+            agent.emit_status();
+        }
         agent.connect_mcp();
         agent.resolve_window().await;
         agent.emit_status();
@@ -1542,6 +1548,33 @@ impl Agent {
             self.last_call = started.elapsed();
             self.usage = resp.usage;
             self.count_call(resp.usage, &streamed, false);
+            for (id, name, input) in self.provider.take_codex_items() {
+                let arg = input.to_string();
+                self.emit(Event::ItemStarted {
+                    id: id.clone(),
+                    kind: ItemKind::ToolCall {
+                        name: name.clone(),
+                        arg: arg.clone(),
+                    },
+                });
+                let output = input["output"].as_str().unwrap_or("").to_owned();
+                self.emit(Event::ItemCompleted {
+                    id,
+                    item: Item::ToolCall {
+                        name,
+                        arg,
+                        input,
+                        outcome: ToolOutcome::Ok,
+                        output,
+                        display: None,
+                        diff: None,
+                        diagram: None,
+                        present: None,
+                        images: Vec::new(),
+                        app: None,
+                    },
+                });
+            }
             self.est
                 .calibrate(sent, resp.usage.input + resp.usage.cache_read);
             let (msg, recovered) = normalize(resp.message);
@@ -2240,6 +2273,11 @@ impl Agent {
     fn sync_specs(&mut self) {
         self.mcp.set_compact(self.small_window());
         let mut specs = tools::specs();
+        if self.profile.provider == ProviderKind::Codex {
+            specs.clear();
+            self.specs = specs;
+            return;
+        }
         if self.ctx.web.search.is_some() {
             specs.push(tools::websearch::spec());
         }
@@ -2868,9 +2906,16 @@ Don't repeat it. Change the arguments or try a different approach.",
             .cfg
             .resolve(Some(spec))
             .map_err(|e| ConfigError(format!("{e:#}")))?;
+        if profile.provider == ProviderKind::Codex {
+            crate::provider::codex::check_available()
+                .await
+                .map_err(|e| ConfigError(format!("{e:#}")))?;
+        }
         crate::policy::check(&self.root, &name, &profile)
             .map_err(|e| ConfigError(format!("{e:#}")))?;
-        self.provider = Provider::new(&profile).map_err(|e| ConfigError(format!("{e:#}")))?;
+        self.provider = Provider::new(&profile)
+            .map_err(|e| ConfigError(format!("{e:#}")))?
+            .with_cwd(&self.root);
         self.profile_name = name;
         self.profile = profile;
         if self.cfg.compare_model.is_none() {
@@ -2930,7 +2975,7 @@ Don't repeat it. Change the arguments or try a different approach.",
         // A JSON-mode reply is one object whose action comes last, so it's done by the time
         // its call is: nothing to gain.
         let early_tools = self.cfg.early_tools && offer_tools && !quiet && !json_mode;
-        let specs = if offer_tools {
+        let specs = if offer_tools && self.profile.provider != ProviderKind::Codex {
             &self.specs[..]
         } else {
             &[][..]
@@ -3357,7 +3402,12 @@ Don't repeat it. Change the arguments or try a different approach.",
     }
 
     /// `ListSessions`, `SendMessage`, `StartSession`: the client carries them out.
-    async fn session_tool(&mut self, item: &str, name: &str, input: &Value) -> Result<tools::Output> {
+    async fn session_tool(
+        &mut self,
+        item: &str,
+        name: &str,
+        input: &Value,
+    ) -> Result<tools::Output> {
         use crate::tools::sessions;
         sessions::validate(name, input)?;
         let (id, rx) = self.shared.sessions.open();
@@ -3367,7 +3417,9 @@ Don't repeat it. Change the arguments or try a different approach.",
             tool: name.into(),
             input: input.clone(),
         });
-        let reply = rx.await.unwrap_or_else(|_| Err("the app didn't answer".into()));
+        let reply = rx
+            .await
+            .unwrap_or_else(|_| Err("the app didn't answer".into()));
         Ok(tools::Output {
             content: sessions::result(reply)?,
             ..Default::default()
@@ -5652,7 +5704,10 @@ for line in sys.stdin:
                     order.push("tool".into());
                 }
                 Event::TurnStarted { turn, input, .. } => {
-                    order.push(format!("start {turn} {}", input.starts_with("<session-message")));
+                    order.push(format!(
+                        "start {turn} {}",
+                        input.starts_with("<session-message")
+                    ));
                 }
                 Event::TurnEnded { turn, reason, .. } => {
                     assert!(matches!(reason, EndReason::Complete), "{reason:?}");
@@ -5666,7 +5721,14 @@ for line in sys.stdin:
         }
         assert_eq!(
             order,
-            ["start 1 false", "request", "tool", "end 1", "start 2 true", "end 2"]
+            [
+                "start 1 false",
+                "request",
+                "tool",
+                "end 1",
+                "start 2 true",
+                "end 2"
+            ]
         );
     }
 
