@@ -236,3 +236,10 @@ text and badges, never in ids.
 - Launch copy, README, docs and the app strings change once, before Oct 30 (nothing is public yet,
   so this is the cheapest moment it will ever be).
 - Env: `FROG_API_KEY` stays (it's the key to frog's service; plan is a badge). `FROG_BASE_URL` stays.
+
+### Decision (Cam, 2026-10-21): A
+`local/` (this Mac, powered by tang) and `cloud/` (frog cloud, plan badge Pro/API/beta). Ids
+`local` and `cloud` replace `tang` and `frog-api`; all old ids are permanent input aliases.
+Keychain account `cloud` (migrated from `frog-api`). Order: This Mac → your servers → frog cloud
+→ other clouds. `FROG_API_KEY` wins over a saved key. Logged-out picker shows frog cloud models
+from a built-in list.
