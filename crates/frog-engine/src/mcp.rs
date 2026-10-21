@@ -290,8 +290,10 @@ struct Inner {
     servers: BTreeMap<String, Server>,
     failed: Vec<ServerStatus>,
     host: Arc<Host>,
-    /// With many tools, only these (loaded through `McpTools`) are sent to the model.
-    loaded: Mutex<BTreeSet<String>>,
+    /// With many tools, only these (loaded through `McpTools`) are sent to the model, in the
+    /// order they were loaded: a newly loaded tool goes after the ones already sent, so the
+    /// tool list (part of the cached prefix) only grows at its end.
+    loaded: Mutex<Vec<String>>,
     /// The ones loaded up front because a server's instructions name them.
     preloaded: BTreeSet<String>,
     /// A model with a small window: no instructions, no tools until the model loads them.
@@ -317,7 +319,7 @@ impl Hub {
                 servers: BTreeMap::new(),
                 failed: Vec::new(),
                 host: Host::headless(Path::new(".")),
-                loaded: Mutex::new(BTreeSet::new()),
+                loaded: Mutex::new(Vec::new()),
                 preloaded: BTreeSet::new(),
                 compact: AtomicBool::new(false),
             }),
@@ -395,8 +397,8 @@ impl Hub {
                 servers,
                 failed,
                 host,
-                preloaded: loaded.clone(),
-                loaded: Mutex::new(loaded),
+                loaded: Mutex::new(loaded.iter().cloned().collect()),
+                preloaded: loaded,
                 compact: AtomicBool::new(false),
             }),
         }
@@ -449,6 +451,9 @@ impl Hub {
                 });
             }
         }
+        // By server (a BTreeMap), then tool name: the same tools always go out in the same
+        // order, whatever order a server lists them in.
+        out.sort_by(|a, b| a.exposed.cmp(&b.exposed));
         out
     }
 
@@ -479,17 +484,18 @@ impl Hub {
         let deferred = self.deferred();
         let compact = self.compact();
         let loaded = self.inner.loaded.lock().unwrap();
-        let mut specs: Vec<ToolSpec> = catalog
-            .iter()
-            .filter(|e| {
-                !deferred
-                    || (loaded.contains(&e.exposed) && !(compact && self.inner.preloaded.contains(&e.exposed)))
-            })
-            .map(spec_for)
-            .collect();
-        if deferred {
-            specs.push(search_spec());
+        if !deferred {
+            return catalog.iter().map(spec_for).collect();
         }
+        // The search tool first, then loaded tools in load order: loading one appends it.
+        let mut specs = vec![search_spec()];
+        specs.extend(
+            loaded
+                .iter()
+                .filter(|x| !(compact && self.inner.preloaded.contains(*x)))
+                .filter_map(|x| catalog.iter().find(|e| &e.exposed == x))
+                .map(spec_for),
+        );
         specs
     }
 
@@ -584,7 +590,9 @@ impl Hub {
         let mut text =
             String::from("Loaded these tools; call them directly from your next step:\n");
         for e in picked {
-            loaded.insert(e.exposed.clone());
+            if !loaded.contains(&e.exposed) {
+                loaded.push(e.exposed.clone());
+            }
             let desc = e.tool.description.as_deref().unwrap_or("");
             let first = desc.lines().next().unwrap_or("");
             text.push_str(&format!(

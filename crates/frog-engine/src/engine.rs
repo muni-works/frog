@@ -90,6 +90,9 @@ const LOOP_REFUSE: u32 = 3;
 const LOOP_STOP: u32 = 5;
 /// Model calls per turn before stopping to check in with the user.
 const MAX_STEPS: u32 = 60;
+/// How long after MCP servers start connecting the first turn holds its first call for them:
+/// long enough for most to come up, so their tools are in the prompt from the start.
+const MCP_GRACE: Duration = Duration::from_millis(2_500);
 
 /// How a batch of tool calls ended.
 #[derive(PartialEq)]
@@ -651,6 +654,8 @@ struct Agent {
     mcp: crate::mcp::Hub,
     /// Servers still connecting in the background; installed into `mcp` when they're done.
     mcp_pending: Option<tokio::sync::oneshot::Receiver<crate::mcp::Hub>>,
+    /// Until when a turn waits on `mcp_pending` before its first call (see [`MCP_GRACE`]).
+    mcp_deadline: Option<Instant>,
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
     skills_loaded: HashSet<String>,
@@ -845,6 +850,7 @@ impl Agent {
             specs: tools::specs(),
             mcp: crate::mcp::Hub::empty(),
             mcp_pending: None,
+            mcp_deadline: None,
             skills,
             skills_loaded: HashSet::new(),
             memory,
@@ -1404,9 +1410,14 @@ impl Agent {
             if steps > limit {
                 break EndReason::StepLimit;
             }
-            self.poll_mcp();
-            if self.mcp.refresh().await {
-                self.apply_harness();
+            // MCP tools (and their servers' instructions) change the prompt's prefix, so they're
+            // only taken on between turns, never mid-turn where the next call would re-prefill
+            // everything the server has cached.
+            if steps == 1 {
+                self.await_mcp().await;
+                if self.mcp.refresh().await {
+                    self.apply_harness();
+                }
             }
             self.sync_specs();
             // What the preview pane saw go wrong since the last call.
@@ -2033,6 +2044,31 @@ impl Agent {
             }
         });
         self.mcp_pending = Some(rx);
+        self.mcp_deadline = Some(Instant::now() + MCP_GRACE);
+    }
+
+    /// Before a turn's first call: install the MCP servers if they're up, waiting for them
+    /// until [`MCP_GRACE`] after they started connecting. Tools that arrive after the first
+    /// call would change the prompt on the second, and the server would prefill it all again.
+    async fn await_mcp(&mut self) {
+        let Some(rx) = &mut self.mcp_pending else {
+            return;
+        };
+        let left = self.mcp_deadline.map_or(Duration::ZERO, |d| {
+            d.saturating_duration_since(Instant::now())
+        });
+        if left.is_zero() {
+            self.poll_mcp();
+            return;
+        }
+        match tokio::time::timeout(left, rx).await {
+            Ok(Ok(hub)) => {
+                self.mcp_pending = None;
+                self.install_mcp(hub);
+            }
+            Ok(Err(_)) => self.mcp_pending = None,
+            Err(_) => {}
+        }
     }
 
     /// Install the background MCP connection if it has finished.
@@ -2153,10 +2189,14 @@ impl Agent {
             if self.can_ask && self.shared.client_ask.load(Ordering::Relaxed) {
                 specs.push(crate::ask::spec());
             }
-            specs.extend(self.mcp.specs());
         }
         if self.has_recall() {
             specs.push(crate::recall::spec());
+        }
+        // MCP tools last: servers that connect late (or tools loaded on demand) then only
+        // append to the list, and the prefix before them stays cached.
+        if !self.subagent {
+            specs.extend(self.mcp.specs());
         }
         // A small model chatting just talks: offered any tool, it calls one on every turn
         // (Apple's on-device model drew diagrams of "hello"). With none, it can only answer.
@@ -2783,6 +2823,13 @@ Don't repeat it. Change the arguments or try a different approach.",
         };
         let (extends, reusable) = {
             let flat = flatten(&system, tools, messages);
+            // `FROG_DUMP_PREFIX=dir`: every request as the cache sees it, to diff when one
+            // stops extending the last.
+            if let Some(dir) = std::env::var_os("FROG_DUMP_PREFIX") {
+                let dir = PathBuf::from(dir);
+                let _ = std::fs::create_dir_all(&dir)
+                    .and_then(|_| std::fs::write(dir.join(format!("{call:04}.txt")), &flat));
+            }
             let mut sent = self.sent.lock().unwrap();
             let r = reuse(&sent, &flat);
             *sent = flat;
@@ -3278,10 +3325,22 @@ Don't repeat it. Change the arguments or try a different approach.",
         }
         // A summary needs no reasoning.
         let think = self.think_switch(false);
-        let (resp, streamed) = self
-            .call("compacting", &msgs, true, false, think, None)
+        // Native tools ride outside the text, so offering the same ones keeps the request an
+        // extension of the last call and the server's cache of it holds: without them it
+        // diverges right after the system prompt and the whole history is prefilled again.
+        let keep_prefix = matches!(self.tool_mode, ToolMode::Native | ToolMode::Auto);
+        let (mut resp, streamed) = self
+            .call("compacting", &msgs, true, keep_prefix, think, None)
             .await?;
         self.count_call(resp.usage, &streamed, true);
+        // It called a tool instead of summarizing: ask again with none to call.
+        if keep_prefix && resp.message.text().trim().is_empty() {
+            let (r, streamed) = self
+                .call("compacting", &msgs, true, false, think, None)
+                .await?;
+            self.count_call(r.usage, &streamed, true);
+            resp = r;
+        }
         let summary = resp.message.text();
         if summary.trim().is_empty() {
             anyhow::bail!("compaction produced an empty summary; keeping the full history");
@@ -4798,6 +4857,174 @@ mod tests {
         assert!(requests[4].contains("Keep the original target"));
         drop(requests);
         shutdown(h).await;
+    }
+
+    /// Compacting mid-turn sends the tools the turn's calls did, so the summary request only
+    /// appends to what the server has cached instead of diverging after the system prompt.
+    #[tokio::test]
+    async fn compaction_keeps_the_cached_prefix() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("small.txt"), "small result").unwrap();
+        let script = vec![
+            reply(
+                vec![
+                    text(&"Long implementation analysis. ".repeat(600)),
+                    Block::ToolUse {
+                        id: "r1".into(),
+                        name: "Read".into(),
+                        input: json!({"file_path":"small.txt"}),
+                    },
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("First summary.")], Stop::End),
+            reply(vec![text("Finished.")], Stop::End),
+        ];
+        let (mut h, _) = engine_sent(script, None, None, Some(8192), dir);
+        let calls = calls(&run(&mut h, &"Do the long thing. ".repeat(300)).await);
+        shutdown(h).await;
+        let flags: Vec<_> = calls.iter().map(|c| c.compact).collect();
+        assert_eq!(flags, [false, true, false]);
+        let reusable = calls[1].reusable.unwrap();
+        // All of the last call is reused, only the reply and the instruction are new (without
+        // the tools, only the system prompt would be).
+        assert!(
+            reusable > 0.4,
+            "the summary request re-prefills: {reusable}"
+        );
+    }
+
+    /// A Python stand-in for an MCP server over stdio that answers `initialize` after `delay`
+    /// seconds, with instructions naming its one tool, `ping`.
+    fn slow_mcp_server(dir: &Path, delay: f64) {
+        mcp_server(dir, delay, &["ping"]);
+    }
+
+    /// The same, listing `tools` (each described as "Ping.") in the order given.
+    fn mcp_server(dir: &Path, delay: f64, tools: &[&str]) {
+        let tools = json!(
+            tools
+                .iter()
+                .map(|t| json!({"name": t, "description": "Ping.",
+                    "inputSchema": {"type": "object", "properties": {}}}))
+                .collect::<Vec<_>>()
+        );
+        let script = format!(
+            r#"import json, sys, time
+for line in sys.stdin:
+    m = json.loads(line)
+    if "id" not in m:
+        continue
+    if m["method"] == "initialize":
+        time.sleep({delay})
+        r = {{"protocolVersion": m["params"]["protocolVersion"], "capabilities": {{"tools": {{}}}},
+             "serverInfo": {{"name": "slow", "version": "1"}},
+             "instructions": "SLOW_MCP_READY: call `ping` to check in."}}
+    elif m["method"] == "tools/list":
+        r = {{"tools": json.loads('{tools}')}}
+    else:
+        r = {{}}
+    print(json.dumps({{"jsonrpc": "2.0", "id": m["id"], "result": r}}), flush=True)
+"#
+        );
+        std::fs::write(dir.join("slow_mcp.py"), script).unwrap();
+        let cfg = json!({"mcpServers": {"slow": {
+            "command": "python3",
+            "args": [dir.join("slow_mcp.py").display().to_string()],
+        }}});
+        std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+    }
+
+    /// A server that's still connecting when the first turn starts is waited for (briefly),
+    /// so its tools are in the first call's prompt and the turn's later calls extend it.
+    #[tokio::test]
+    async fn the_first_call_waits_briefly_for_mcp_servers() {
+        let dir = tmp_store();
+        std::fs::write(dir.join("small.txt"), "small result").unwrap();
+        slow_mcp_server(&dir, 0.5);
+        let read = Block::ToolUse {
+            id: "r1".into(),
+            name: "Read".into(),
+            input: json!({"file_path":"small.txt"}),
+        };
+        let script = vec![
+            reply(vec![read.clone()], Stop::ToolUse),
+            reply(vec![read], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, None, None, None, dir);
+        let calls = calls(&run(&mut h, "read it twice").await);
+        shutdown(h).await;
+        let sent = sent.lock().unwrap().clone();
+        assert!(
+            sent[0].contains("SLOW_MCP_READY"),
+            "MCP wasn't up for call 1"
+        );
+        let flags: Vec<_> = calls.iter().map(|c| c.extends).collect();
+        assert_eq!(flags, [None, Some(true), Some(true)]);
+    }
+
+    /// The same MCP tools always go out in the same order, after the built-in ones, however a
+    /// server happens to list them.
+    #[tokio::test]
+    async fn mcp_tools_are_sent_in_a_stable_order_after_the_built_ins() {
+        let mut lists = Vec::new();
+        for order in [["zeta", "alpha", "mid"], ["mid", "zeta", "alpha"]] {
+            let dir = tmp_store();
+            mcp_server(&dir, 0.0, &order);
+            let script = vec![reply(vec![text("ok")], Stop::End)];
+            let (mut h, sent) = engine_sent(script, None, None, None, dir);
+            run(&mut h, "hi").await;
+            shutdown(h).await;
+            let sent = sent.lock().unwrap()[0].clone();
+            let tools: Vec<String> = sent
+                .match_indices("<tool ")
+                .map(|(i, _)| sent[i + 6..].split('>').next().unwrap().to_string())
+                .collect();
+            lists.push(tools);
+        }
+        assert_eq!(lists[0], lists[1]);
+        let mcp: Vec<_> = lists[0]
+            .iter()
+            .skip_while(|t| !t.starts_with("mcp__"))
+            .collect();
+        assert_eq!(
+            mcp,
+            ["mcp__slow__alpha", "mcp__slow__mid", "mcp__slow__zeta"]
+        );
+    }
+
+    /// One that comes up after the grace period joins between turns, not mid-turn.
+    #[tokio::test]
+    async fn late_mcp_tools_wait_for_the_next_turn() {
+        let dir = tmp_store();
+        slow_mcp_server(&dir, 3.5);
+        let bash = Block::ToolUse {
+            id: "b1".into(),
+            name: "Bash".into(),
+            input: json!({"command": "sleep 2"}),
+        };
+        let script = vec![
+            reply(vec![bash], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, None, None, None, dir);
+        let first = calls(&run(&mut h, "wait a bit").await);
+        h.ops
+            .send(Op::Submit {
+                text: "again".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        until_idle(&mut h).await;
+        shutdown(h).await;
+        let sent = sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 3);
+        assert!(!sent[1].contains("SLOW_MCP_READY"), "MCP joined mid-turn");
+        assert!(sent[2].contains("SLOW_MCP_READY"), "MCP never joined");
+        let flags: Vec<_> = first.iter().map(|c| c.extends).collect();
+        assert_eq!(flags, [None, Some(true)]);
     }
 
     #[tokio::test]
