@@ -134,6 +134,7 @@ impl Provider {
                 model: p.model.clone(),
                 key,
                 extra,
+                anthropic: anthropic::Settings::from_profile(p, true),
             }),
             ProviderKind::Anthropic => Self::Anthropic(anthropic::Client {
                 http,
@@ -144,6 +145,7 @@ impl Provider {
                 model: p.model.clone(),
                 key: key.ok_or_else(|| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?,
                 extra,
+                settings: anthropic::Settings::from_profile(p, false),
             }),
             ProviderKind::Ollama => Self::Ollama(ollama::Client {
                 http,

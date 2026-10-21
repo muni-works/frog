@@ -42,6 +42,20 @@ pub enum Thinking {
     Never,
 }
 
+/// How an Anthropic model thinks (`thinking` on the Messages API). Unset picks per model:
+/// adaptive for `claude-opus-*` that support it, nothing otherwise.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AnthropicThinking {
+    /// `{type: "adaptive"}`: the model decides when and how much to think (Opus 4.6+).
+    Adaptive,
+    /// `{type: "enabled", budget_tokens}`: a fixed budget. Older models only; newer ones
+    /// reject it, so they get adaptive instead.
+    Enabled,
+    /// Send no `thinking` parameter.
+    Off,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Profile {
     pub provider: ProviderKind,
@@ -73,6 +87,23 @@ pub struct Profile {
     /// Overrides the global `thinking_budget` for this model.
     #[serde(default)]
     pub thinking_budget: Option<u32>,
+    /// Anthropic `thinking` mode (see [`AnthropicThinking`]).
+    #[serde(default)]
+    pub anthropic_thinking: Option<AnthropicThinking>,
+    /// `budget_tokens` for `anthropic_thinking = "enabled"` (default 16000, at least 1024).
+    #[serde(default)]
+    pub anthropic_budget: Option<u32>,
+    /// `thinking.display`: "summarized" (default, so thinking streams) or "omitted".
+    #[serde(default)]
+    pub thinking_display: Option<String>,
+    /// Anthropic `output_config.effort`: low, medium, high, xhigh or max. Defaults to "high"
+    /// on `claude-opus-*` (the API's own default for Opus 5.5 is medium).
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// Prompt-cache lifetime: "5m" or "1h". Unset: the system prompt and tools get 1h on
+    /// Anthropic's API (5m through a gateway), the conversation 5m.
+    #[serde(default)]
+    pub cache_ttl: Option<String>,
 }
 
 impl Profile {
@@ -92,13 +123,24 @@ impl Profile {
             vision: None,
             thinking: None,
             thinking_budget: None,
+            anthropic_thinking: None,
+            anthropic_budget: None,
+            thinking_display: None,
+            effort: None,
+            cache_ttl: None,
         }
     }
 
     pub fn context_window(&self) -> u64 {
-        self.context_window.unwrap_or(match self.provider {
-            ProviderKind::Anthropic => 200_000,
-            _ => 32_768,
+        self.context_window.unwrap_or_else(|| {
+            let known = (self.provider != ProviderKind::Ollama && self.sidecar.is_none())
+                .then(|| crate::provider::anthropic::known_limits(&self.model))
+                .flatten();
+            match (known, self.provider) {
+                (Some((ctx, _)), _) => ctx,
+                (None, ProviderKind::Anthropic) => 200_000,
+                _ => 32_768,
+            }
         })
     }
 
