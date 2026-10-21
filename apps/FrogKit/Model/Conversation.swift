@@ -76,6 +76,8 @@ final class Conversation {
     /// A short-lived status line (info notices), shown above the composer.
     private(set) var toast: String?
     @ObservationIgnored private var toastTask: Task<Void, Never>?
+    /// Cloud fallback is important enough to stay visible above the composer for the turn.
+    private(set) var fallbackNotice: String?
     /// Messages sent while a turn was running; they go out in order as the engine frees up.
     private(set) var queue: [Queued] = []
 
@@ -472,6 +474,8 @@ final class Conversation {
             if awaitingCommand {
                 awaitingCommand = false
                 note(message, warning: level == "warn")
+            } else if message.hasPrefix("frog api unavailable (") && message.contains(" — continuing on ") {
+                fallbackNotice = message
             } else if level == "warn" { note(message, warning: true) } else { show(message) }
         case .error(let e):
             note(e.description, warning: true)
@@ -589,6 +593,10 @@ final class Conversation {
             guard !Task.isCancelled else { return }
             self?.toast = nil
         }
+    }
+
+    func dismissFallbackNotice() {
+        fallbackNotice = nil
     }
 
     /// Show a one-off notice in the transcript (e.g. after a rewind).

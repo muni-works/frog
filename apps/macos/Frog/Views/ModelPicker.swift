@@ -24,6 +24,8 @@ struct ModelPicker: View {
         .help(workspace.selectedModel.map { workspace.identity($0).spoken } ?? "Choose a model")
         .popover(isPresented: $open, arrowEdge: .top) {
             ModelMenu(workspace: workspace, current: workspace.selectedModel) { spec in
+                // Update the conversation model before dismissing the popover. This also
+                // establishes preferredModel, which wins over the "last" policy.
                 workspace.use(spec)
                 open = false
             } close: {
@@ -61,6 +63,11 @@ struct ModelMenu: View {
     /// What frog can use here, plus the current model even if frog didn't list it.
     private var usable: [ModelIdentity] {
         var list = workspace.models.map { workspace.allowing(ModelIdentity($0)) }
+        if !list.contains(where: { $0.spec == "codex/default" }) {
+            var codex = ModelIdentity.of("codex/default", in: [])
+            codex = ModelIdentity(spec: codex.spec, name: "Codex (ChatGPT)", variant: nil, place: .cloud("codex"), abilities: [], paramsB: nil, context: nil, price: nil, state: .unreachable("Sign in with codex login"))
+            list.append(codex)
+        }
         if let current, !list.contains(where: { $0.spec == current }) {
             list.insert(workspace.identity(current), at: 0)
         }
@@ -211,6 +218,11 @@ struct ModelMenu: View {
         return ModelListRow(model: m, current: m.spec == current) {
             if case .downloading = m.state { ModelStateAction(model: m) }
         }
+            .overlay(alignment: .bottomLeading) {
+                if m.spec == "codex/default" {
+                    Text("uses your ChatGPT plan").font(.caption).foregroundStyle(.secondary).padding(.leading, 36).offset(y: 14)
+                }
+            }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(Color.primary.opacity(lit ? 0.08 : 0), in: .rect(cornerRadius: 7, style: .continuous))

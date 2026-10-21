@@ -174,50 +174,77 @@ fn scc(adj: &[Vec<usize>]) -> Vec<usize> {
 // MARK: - Scanning
 
 pub(crate) fn source_files(root: &Path, focus: Option<&Path>) -> Vec<String> {
+    source_files_bounded(root, focus, usize::MAX, None).0
+}
+
+pub(crate) fn source_files_bounded(
+    root: &Path,
+    focus: Option<&Path>,
+    max_files: usize,
+    deadline: Option<std::time::Instant>,
+) -> (Vec<String>, bool) {
     let start = focus
         .map(|f| root.join(f))
         .unwrap_or_else(|| root.to_path_buf());
-    let mut out: Vec<String> = ignore::WalkBuilder::new(&start)
-        .hidden(true)
-        .build()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
-        .filter(|e| {
-            e.path()
+    let mut out = Vec::new();
+    let mut capped = false;
+    for entry in ignore::WalkBuilder::new(&start).hidden(true).build() {
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            capped = true;
+            break;
+        }
+        let Ok(e) = entry else { continue };
+        if !e.file_type().is_some_and(|t| t.is_file())
+            || !e
+                .path()
                 .extension()
                 .and_then(|x| x.to_str())
                 .is_some_and(|x| EXTS.contains(&x))
-        })
-        .filter(|e| e.metadata().is_ok_and(|m| m.len() <= MAX_FILE_BYTES))
-        .filter_map(|e| {
-            e.path()
-                .strip_prefix(root)
-                .ok()
-                .map(|p| p.to_string_lossy().into_owned())
-        })
-        .filter(|p| {
-            !p.split('/').any(|seg| {
-                matches!(
-                    seg,
-                    "node_modules" | "target" | "build" | "dist" | "vendor" | ".build"
-                )
-            })
-        })
-        .collect();
+            || !e.metadata().is_ok_and(|m| m.len() <= MAX_FILE_BYTES)
+        {
+            continue;
+        }
+        let Some(path) = e
+            .path()
+            .strip_prefix(root)
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+        else {
+            continue;
+        };
+        if path.split('/').any(|seg| {
+            matches!(
+                seg,
+                "node_modules" | "target" | "build" | "dist" | "vendor" | ".build"
+            )
+        }) {
+            continue;
+        }
+        out.push(path);
+        if out.len() >= max_files {
+            capped = true;
+            break;
+        }
+    }
     out.sort();
-    out
+    (out, capped)
 }
 
 pub fn scan(root: &Path, focus: Option<&Path>) -> Graph {
-    let files = source_files(root, focus);
+    scan_files_bounded(root, source_files(root, focus), None).0
+}
+
+pub(crate) fn scan_files_bounded(root: &Path, files: Vec<String>, deadline: Option<std::time::Instant>) -> (Graph, bool) {
     let set: HashSet<&str> = files.iter().map(String::as_str).collect();
     let mut g = Graph {
         files: files.clone(),
         ..Default::default()
     };
+    let mut capped = false;
     let texts: HashMap<&str, String> = files
         .iter()
         .filter_map(|f| {
+            if deadline.is_some_and(|d| std::time::Instant::now() >= d) { capped = true; return None; }
             std::fs::read_to_string(root.join(f))
                 .ok()
                 .map(|t| (f.as_str(), t))
@@ -255,7 +282,7 @@ pub fn scan(root: &Path, focus: Option<&Path>) -> Graph {
             }
         }
     }
-    g
+    (g, capped)
 }
 
 /// Rust: a module tree per crate (from `mod` declarations), resolving `crate::a::b`,

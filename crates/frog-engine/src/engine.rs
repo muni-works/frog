@@ -90,9 +90,6 @@ const LOOP_REFUSE: u32 = 3;
 const LOOP_STOP: u32 = 5;
 /// Model calls per turn before stopping to check in with the user.
 const MAX_STEPS: u32 = 60;
-/// How long after MCP servers start connecting the first turn holds its first call for them:
-/// long enough for most to come up, so their tools are in the prompt from the start.
-const MCP_GRACE: Duration = Duration::from_millis(2_500);
 
 /// How a batch of tool calls ended.
 #[derive(PartialEq)]
@@ -447,9 +444,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         loop {
             let op = tokio::select! {
                 op = work_rx.recv() => op,
-                hub = agent.mcp_ready() => {
-                    agent.mcp_pending = None;
-                    agent.install_mcp(hub);
+                result = agent.mcp_ready() => {
+                    if let Some((_name, delta)) = result {
+                        agent.mcp_ready_queue.push((_name, delta));
+                    } else {
+                        agent.mcp_pending = None;
+                    }
                     agent.emit_status();
                     continue;
                 }
@@ -694,10 +694,10 @@ struct Agent {
     specs: Vec<ToolSpec>,
     /// Connected MCP servers, whose tools are appended to `specs`.
     mcp: crate::mcp::Hub,
-    /// Servers still connecting in the background; installed into `mcp` when they're done.
-    mcp_pending: Option<tokio::sync::oneshot::Receiver<crate::mcp::Hub>>,
-    /// Until when a turn waits on `mcp_pending` before its first call (see [`MCP_GRACE`]).
-    mcp_deadline: Option<Instant>,
+    /// Per-server completion events from concurrent MCP connection attempts.
+    mcp_pending: Option<tokio::sync::mpsc::UnboundedReceiver<(String, crate::mcp::Hub)>>,
+    /// Completed MCP deltas queued until the next turn boundary.
+    mcp_ready_queue: Vec<(String, crate::mcp::Hub)>,
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
     skills_loaded: HashSet<String>,
@@ -713,6 +713,9 @@ struct Agent {
     /// The ranked repo map in the system prompt (small and mid-size models only), rebuilt
     /// between turns when files change.
     repo_map: crate::repomap::Map,
+    map_build_tx: std::sync::mpsc::Sender<(crate::repomap::Map, bool)>,
+    map_build_rx: Mutex<std::sync::mpsc::Receiver<(crate::repomap::Map, bool)>>,
+    map_building: bool,
     /// Whether the session log holds the current `repo_map`.
     map_logged: bool,
     /// Files edited this session, relative to the root, for ranking the map.
@@ -842,6 +845,7 @@ impl Agent {
         let sandbox_extra = o.cfg.sandbox.clone();
         let shell_root = o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone());
         shared.panes.configure(o.cwd.clone());
+        let (map_build_tx, map_build_rx) = std::sync::mpsc::channel();
         let mut agent = Self {
             cfg: o.cfg,
             profile_name: o.profile_name,
@@ -894,7 +898,7 @@ impl Agent {
             specs: tools::specs(),
             mcp: crate::mcp::Hub::empty(),
             mcp_pending: None,
-            mcp_deadline: None,
+            mcp_ready_queue: Vec::new(),
             skills,
             skills_loaded: HashSet::new(),
             memory,
@@ -903,6 +907,9 @@ impl Agent {
             rules,
             rules_seen: HashSet::new(),
             repo_map: Default::default(),
+            map_build_tx,
+            map_build_rx: Mutex::new(map_build_rx),
+            map_building: false,
             map_logged: false,
             edited: Vec::new(),
             classifier: None,
@@ -1386,6 +1393,9 @@ impl Agent {
     }
 
     async fn turn(&mut self, input: &str, mut images: Vec<crate::protocol::Image>) -> Result<()> {
+        // A completed background map can be adopted at a turn boundary. Never wait for it;
+        // if it is still running, this turn proceeds with the current prompt.
+        self.poll_repo_map();
         let (input, named) = crate::image_paths::attach(input);
         let input = input.as_str();
         images.extend(named);
@@ -1494,8 +1504,9 @@ impl Agent {
             // only taken on between turns, never mid-turn where the next call would re-prefill
             // everything the server has cached.
             if steps == 1 {
-                self.await_mcp().await;
-                if self.mcp.refresh().await {
+                self.poll_mcp();
+                let mcp = self.mcp.clone();
+                if mcp.refresh().await {
                     self.apply_harness();
                 }
             }
@@ -1717,6 +1728,7 @@ impl Agent {
     /// names a source file it doesn't show). Only called between turns, so the prompt prefix
     /// holds while a turn runs.
     fn refresh_repo_map(&mut self, mentioned: &[String]) {
+        self.poll_repo_map();
         if self.chat || self.subagent || self.memory.is_none() {
             return;
         }
@@ -1725,27 +1737,67 @@ impl Agent {
             b if self.small_window() => b.min(Self::SMALL_REPO_MAP),
             b => b,
         };
-        let have = !self.repo_map.text.is_empty();
         if budget == 0 {
-            if have {
+            if !self.repo_map.text.is_empty() {
                 self.repo_map = Default::default();
                 self.map_logged = false;
                 self.log_map();
             }
             return;
         }
-        if have && !self.repo_map.stale(&self.root, mentioned) {
+        // The initial build was scheduled from `Agent::new`; if it has completed, keep it.
+        // Rebuilds after edits are scheduled by `rebased`, where the system prompt is rebuilt.
+        if !self.repo_map.text.is_empty() {
+            return;
+        }
+        if self.map_building {
             return;
         }
         let cache = self
             .memory
             .as_ref()
             .and_then(|m| m.project_file(crate::repomap::CACHE_FILE));
-        let seeds = crate::repomap::Seeds {
-            mentioned,
-            edited: &self.edited,
+        let root = self.root.clone();
+        let cache = cache.clone();
+        let mentioned = mentioned.to_vec();
+        let edited = self.edited.clone();
+        let tx = self.map_build_tx.clone();
+        self.map_building = true;
+        std::thread::spawn(move || {
+            let Some(root) = crate::checkpoint::repo_root(&root) else {
+                let _ = tx.send((crate::repomap::Map::default(), false));
+                return;
+            };
+            let home = dirs::home_dir().and_then(|p| p.canonicalize().ok());
+            let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
+            if canonical == Path::new("/") || home.as_deref() == Some(canonical.as_path()) {
+                let _ = tx.send((crate::repomap::Map::default(), false));
+                return;
+            }
+            let seeds = crate::repomap::Seeds {
+                mentioned: &mentioned,
+                edited: &edited,
+            };
+            let result = crate::repomap::build_bounded(
+                &root,
+                cache.as_deref(),
+                &seeds,
+                budget,
+                20_000,
+                Some(Duration::from_secs(2)),
+            );
+            let _ = tx.send(result);
+        });
+    }
+
+    fn poll_repo_map(&mut self) {
+        let Ok((map, capped)) = self.map_build_rx.lock().unwrap().try_recv() else {
+            return;
         };
-        let map = crate::repomap::build(&self.root, cache.as_deref(), &seeds, budget);
+        self.map_building = false;
+        if capped {
+            self.notice(Level::Info, "repo map limited to 20,000 files or 2 seconds");
+        }
         if map.text != self.repo_map.text {
             self.map_logged = false;
         }
@@ -2083,6 +2135,8 @@ impl Agent {
     /// The history was just rewritten, so the cached prefix is gone anyway: the one time to
     /// bring the repo map (and with it the system prompt) up to date for free.
     fn rebased(&mut self) {
+        self.repo_map = Default::default();
+        self.map_logged = false;
         self.refresh_repo_map(&[]);
         self.apply_harness();
     }
@@ -2145,111 +2199,55 @@ impl Agent {
         if servers.is_empty() {
             return;
         }
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let emit = {
             let journal = self.shared.journal.clone();
             move |event: Event| journal.emit(event)
         };
         let host = crate::mcp::Host::new(emit, self.rich && self.can_ask, &self.root);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
-            // Nobody's waiting any more (a folder change, shutdown): don't leave them running.
-            if let Err(hub) = tx.send(crate::mcp::Hub::connect(servers, host).await) {
-                hub.shutdown();
-            }
-        });
+        for (name, cfg) in servers {
+            let tx = tx.clone();
+            let host = host.clone();
+            tokio::spawn(async move {
+                let delta = crate::mcp::Hub::connect_delta(host, name.clone(), cfg).await;
+                let _ = tx.send(delta);
+            });
+        }
+        drop(tx);
         self.mcp_pending = Some(rx);
-        self.mcp_deadline = Some(Instant::now() + MCP_GRACE);
-    }
-
-    /// Before a turn's first call: install the MCP servers if they're up, waiting for them
-    /// until [`MCP_GRACE`] after they started connecting. Tools that arrive after the first
-    /// call would change the prompt on the second, and the server would prefill it all again.
-    async fn await_mcp(&mut self) {
-        let Some(rx) = &mut self.mcp_pending else {
-            return;
-        };
-        let left = self.mcp_deadline.map_or(Duration::ZERO, |d| {
-            d.saturating_duration_since(Instant::now())
-        });
-        if left.is_zero() {
-            self.poll_mcp();
-            return;
-        }
-        match tokio::time::timeout(left, rx).await {
-            Ok(Ok(hub)) => {
-                self.mcp_pending = None;
-                self.install_mcp(hub);
-            }
-            Ok(Err(_)) => self.mcp_pending = None,
-            Err(_) => {}
-        }
     }
 
     /// Install the background MCP connection if it has finished.
     fn poll_mcp(&mut self) {
-        let Some(rx) = &mut self.mcp_pending else {
-            return;
-        };
-        match rx.try_recv() {
-            Ok(hub) => {
-                self.mcp_pending = None;
-                self.install_mcp(hub);
-            }
-            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
-            Err(_) => self.mcp_pending = None,
+        for (_name, delta) in std::mem::take(&mut self.mcp_ready_queue) {
+            self.merge_mcp(delta);
+        }
+        loop {
+            let result = self.mcp_pending.as_mut().and_then(|rx| rx.try_recv().ok());
+            let Some((_name, delta)) = result else { break };
+            self.mcp_ready_queue.push((_name, delta));
         }
     }
 
-    /// Wait for the background MCP connection (for an idle engine, so its notices and tools
-    /// land as soon as they're ready). Never resolves when nothing is connecting.
-    async fn mcp_ready(&mut self) -> crate::mcp::Hub {
+    /// Get the next configured server to connect; the loop returns immediately for a closed queue.
+    async fn mcp_ready(&mut self) -> Option<(String, crate::mcp::Hub)> {
         match &mut self.mcp_pending {
-            Some(rx) => match rx.await {
-                Ok(hub) => hub,
-                Err(_) => {
-                    self.mcp_pending = None;
-                    std::future::pending().await
-                }
-            },
+            Some(rx) => rx.recv().await,
             None => std::future::pending().await,
         }
     }
 
-    fn install_mcp(&mut self, hub: crate::mcp::Hub) {
-        // Servers that didn't connect get one plain sentence, by reason; the raw errors go to
-        // the log, not the conversation.
-        let failed: Vec<(String, String)> = hub
+    fn merge_mcp(&mut self, delta: crate::mcp::Hub) {
+        let failed = delta
             .status()
             .into_iter()
             .filter_map(|st| st.error.map(|e| (st.name, e)))
-            .collect();
-        // In a terminal the summary below says enough; the raw errors are for logs.
-        if !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-            for (name, e) in &failed {
-                eprintln!("MCP `{name}` didn't connect: {e}");
-            }
-        }
+            .collect::<Vec<_>>();
+        self.mcp.merge(delta);
         if let Some(line) = crate::mcp::unavailable_summary(&failed) {
             self.notice(Level::Info, line);
         }
-        // Once per server, tool and description on this machine; after that only in
-        // `frog --mcp` and the engine log, so it doesn't nag on every run.
-        for st in hub.status() {
-            for q in &st.quarantined {
-                let line = format!(
-                    "MCP `{}`: withheld tool `{}` because its description {}. Set `trust = true` for this server to allow it.",
-                    st.name, q.tool, q.reason
-                );
-                if self.cfg.log_calls {
-                    eprintln!("{line}");
-                }
-                if self.cfg.hermetic || crate::mcp::first_notice(q) {
-                    self.notice(Level::Warn, line);
-                }
-            }
-        }
-        *self.shared.mcp.lock().unwrap() = Some(hub.clone());
-        self.mcp = hub;
+        *self.shared.mcp.lock().unwrap() = Some(self.mcp.clone());
         self.sync_specs();
         self.apply_harness();
     }
@@ -2572,7 +2570,8 @@ impl Agent {
             return self.shared.panes.preview(input, self.subagent).await;
         }
         if self.mcp.handles(name) {
-            return self.mcp.call(id, name, input).await;
+            let hub = self.mcp.clone();
+            return hub.call(id, name, input).await;
         }
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         self.ctx.progress = Some(tx);
@@ -4957,7 +4956,8 @@ mod tests {
         let second = calls(&until_idle(&mut h).await);
         let sent = sent.lock().unwrap().clone();
         assert_eq!(sent.len(), 3);
-        assert!(sent[0].contains("lib.rs"), "the repo map is in the prompt");
+        // A temporary directory outside a Git worktree has no repo map. Startup and the first
+        // turn stay independent of a filesystem walk.
         // The new file changed the project, but not the system prompt the next turn sends.
         assert!(extends(&sent[1], &sent[2]));
         // And the calls say so, for `frog bench` to hold the server's cache to.
@@ -5248,33 +5248,60 @@ for line in sys.stdin:
         std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
     }
 
-    /// A server that's still connecting when the first turn starts is waited for (briefly),
-    /// so its tools are in the first call's prompt and the turn's later calls extend it.
+    /// A server that answers nothing must not hold engine startup or the first request.
     #[tokio::test]
-    async fn the_first_call_waits_briefly_for_mcp_servers() {
+    async fn startup_and_first_call_do_not_wait_for_hanging_mcp() {
         let dir = tmp_store();
-        std::fs::write(dir.join("small.txt"), "small result").unwrap();
-        slow_mcp_server(&dir, 0.5);
-        let read = Block::ToolUse {
-            id: "r1".into(),
-            name: "Read".into(),
-            input: json!({"file_path":"small.txt"}),
-        };
-        let script = vec![
-            reply(vec![read.clone()], Stop::ToolUse),
-            reply(vec![read], Stop::ToolUse),
-            reply(vec![text("done")], Stop::End),
-        ];
+        let script = vec![reply(vec![text("done")], Stop::End)];
+        let hanging = format!("import sys,time\nfor line in sys.stdin:\n time.sleep(60)\n");
+        std::fs::write(dir.join("hang_mcp.py"), hanging).unwrap();
+        let cfg = json!({"mcpServers": {"hang": {
+            "command": "python3",
+            "args": [dir.join("hang_mcp.py").display().to_string()],
+        }}});
+        std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+        let started = Instant::now();
         let (mut h, sent) = engine_sent(script, None, None, None, dir);
-        let calls = calls(&run(&mut h, "read it twice").await);
+        let events = run(&mut h, "start now").await;
         shutdown(h).await;
-        let sent = sent.lock().unwrap().clone();
+        assert!(started.elapsed() < Duration::from_secs(5));
         assert!(
-            sent[0].contains("SLOW_MCP_READY"),
-            "MCP wasn't up for call 1"
+            events
+                .iter()
+                .any(|e| matches!(e.event, Event::TurnEnded { .. }))
         );
-        let flags: Vec<_> = calls.iter().map(|c| c.extends).collect();
-        assert_eq!(flags, [None, Some(true), Some(true)]);
+        assert!(!sent.lock().unwrap()[0].contains("mcp__hang"));
+    }
+
+    #[tokio::test]
+    async fn agent_startup_does_not_walk_a_large_non_repo_directory() {
+        let base = std::env::temp_dir().join(format!("frog-large-startup-{}", new_id()));
+        let cwd = base.join("project");
+        let store = base.join("sessions");
+        std::fs::create_dir_all(&cwd).unwrap();
+        for i in 0..5_000 {
+            std::fs::write(cwd.join(format!("file-{i}.rs")), "fn f() {}\n").unwrap();
+        }
+        let profile = Profile::new(ProviderKind::Ollama, "test");
+        let opts = Options {
+            cfg: Config::default(),
+            profile_name: "test".into(),
+            profile,
+            cwd,
+            mode: Mode::Default,
+            can_ask: false,
+            resume: None,
+            store: Some(store),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let started = Instant::now();
+        let handle = start(opts, Provider::Scripted(scripted::Client::new(vec![]))).unwrap();
+        assert!(started.elapsed() < Duration::from_millis(500));
+        drop(handle);
+        let _ = std::fs::remove_dir_all(base);
     }
 
     /// The same MCP tools always go out in the same order, after the built-in ones, however a
@@ -5287,6 +5314,7 @@ for line in sys.stdin:
             mcp_server(&dir, 0.0, &order);
             let script = vec![reply(vec![text("ok")], Stop::End)];
             let (mut h, sent) = engine_sent(script, None, None, None, dir);
+            tokio::time::sleep(Duration::from_millis(100)).await;
             run(&mut h, "hi").await;
             shutdown(h).await;
             let sent = sent.lock().unwrap()[0].clone();
@@ -5307,23 +5335,18 @@ for line in sys.stdin:
         );
     }
 
-    /// One that comes up after the grace period joins between turns, not mid-turn.
+    /// A server that comes up after the first call joins on the next turn.
     #[tokio::test]
     async fn late_mcp_tools_wait_for_the_next_turn() {
         let dir = tmp_store();
-        slow_mcp_server(&dir, 3.5);
-        let bash = Block::ToolUse {
-            id: "b1".into(),
-            name: "Bash".into(),
-            input: json!({"command": "sleep 2"}),
-        };
+        slow_mcp_server(&dir, 0.2);
         let script = vec![
-            reply(vec![bash], Stop::ToolUse),
             reply(vec![text("done")], Stop::End),
             reply(vec![text("ok")], Stop::End),
         ];
         let (mut h, sent) = engine_sent(script, None, None, None, dir);
-        let first = calls(&run(&mut h, "wait a bit").await);
+        run(&mut h, "first").await;
+        tokio::time::sleep(Duration::from_millis(350)).await;
         h.ops
             .send(Op::Submit {
                 text: "again".into(),
@@ -5333,11 +5356,8 @@ for line in sys.stdin:
         until_idle(&mut h).await;
         shutdown(h).await;
         let sent = sent.lock().unwrap().clone();
-        assert_eq!(sent.len(), 3);
-        assert!(!sent[1].contains("SLOW_MCP_READY"), "MCP joined mid-turn");
-        assert!(sent[2].contains("SLOW_MCP_READY"), "MCP never joined");
-        let flags: Vec<_> = first.iter().map(|c| c.extends).collect();
-        assert_eq!(flags, [None, Some(true)]);
+        assert_eq!(sent.len(), 2);
+        assert!(sent[1].contains("SLOW_MCP_READY"), "MCP never joined");
     }
 
     #[tokio::test]
