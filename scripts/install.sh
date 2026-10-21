@@ -4,7 +4,7 @@
 set -eu
 
 # Public GitHub repo. Change once the name is final.
-FROG_REPO="${FROG_REPO:-municipal-robotics/frog}"
+FROG_REPO="${FROG_REPO:-muni-works/frog}"
 
 err() { printf 'frog-install: error: %s\n' "$*" >&2; exit 1; }
 info() { printf 'frog-install: %s\n' "$*"; }
