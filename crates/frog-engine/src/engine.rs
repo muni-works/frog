@@ -833,6 +833,7 @@ impl Agent {
             None => o.profile.clone(),
         });
         let resumed = o.resume.is_some();
+        let sandbox_extra = o.cfg.sandbox.clone();
         let shell_root = o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone());
         shared.panes.configure(o.cwd.clone());
         let mut agent = Self {
@@ -847,6 +848,7 @@ impl Agent {
                 ctx.image = image;
                 ctx.screenshot_endpoint = screenshot_endpoint;
                 ctx.judge = judge;
+                ctx.sandbox_extra = sandbox_extra;
                 if o.sandbox {
                     ctx.sandbox = Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
                 }
@@ -2197,15 +2199,20 @@ impl Agent {
         if let Some(line) = crate::mcp::unavailable_summary(&failed) {
             self.notice(Level::Info, line);
         }
+        // Once per server, tool and description on this machine; after that only in
+        // `frog --mcp` and the engine log, so it doesn't nag on every run.
         for st in hub.status() {
             for q in &st.quarantined {
-                self.notice(
-                    Level::Warn,
-                    format!(
-                        "MCP `{}`: withheld tool `{}` because its description {}. Set `trust = true` for this server to allow it.",
-                        st.name, q.tool, q.reason
-                    ),
+                let line = format!(
+                    "MCP `{}`: withheld tool `{}` because its description {}. Set `trust = true` for this server to allow it.",
+                    st.name, q.tool, q.reason
                 );
+                if self.cfg.log_calls {
+                    eprintln!("{line}");
+                }
+                if self.cfg.hermetic || crate::mcp::first_notice(q) {
+                    self.notice(Level::Warn, line);
+                }
             }
         }
         *self.shared.mcp.lock().unwrap() = Some(hub.clone());
@@ -2592,6 +2599,7 @@ impl Agent {
             todos: Vec::new(),
             sandbox: self.ctx.sandbox.clone(),
             shell_sandbox: self.ctx.shell_sandbox.clone(),
+            sandbox_extra: self.ctx.sandbox_extra.clone(),
             progress: None,
             preview: None,
             web: self.ctx.web.clone(),

@@ -1,4 +1,5 @@
 use super::{Ctx, Output, int_arg, str_arg, strip_ansi, truncate_middle};
+use crate::config::SandboxConfig;
 use crate::provider::ToolSpec;
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
@@ -212,7 +213,7 @@ pub fn shell(
         .or_else(|| (!unsandboxed).then(|| ctx.shell_sandbox.clone()).flatten());
     let mut command = match &jail {
         None => tokio::process::Command::new(shell),
-        Some(root) => sandboxed(root, &shell)?,
+        Some(root) => sandboxed(root, &shell, &ctx.sandbox_extra)?,
     };
     command
         .arg("-c")
@@ -281,18 +282,45 @@ const SECRETS: &[&str] = &[
     ".vault-token",
 ];
 
+/// Paths the user let sandboxed commands read (config `[sandbox]`), canonical where they
+/// exist. Reads only: none of them becomes writable.
+fn readable(extra: &SandboxConfig, home: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut paths: Vec<std::path::PathBuf> = extra
+        .allow_read
+        .iter()
+        .map(|p| match p.strip_prefix("~/") {
+            Some(rest) => home.join(rest),
+            None if p == "~" => home.to_path_buf(),
+            None => p.into(),
+        })
+        .filter(|p| p.is_absolute())
+        .collect();
+    if extra.allow_keychain && cfg!(target_os = "macos") {
+        paths.push(home.join("Library/Keychains"));
+    }
+    paths
+        .into_iter()
+        .map(|p| p.canonicalize().unwrap_or(p))
+        .collect()
+}
+
 /// Wrap the shell in the OS sandbox: writes only inside the workspace, temp dirs and toolchain
-/// caches, credentials unreadable, everything else (including network) allowed. Fails closed
-/// where there's no sandbox to use.
-fn sandboxed(root: &std::path::Path, shell: &str) -> Result<tokio::process::Command> {
+/// caches, credentials unreadable (except what `extra` allows), everything else (including
+/// network) allowed. Fails closed where there's no sandbox to use.
+fn sandboxed(
+    root: &std::path::Path,
+    shell: &str,
+    extra: &SandboxConfig,
+) -> Result<tokio::process::Command> {
     if cfg!(target_os = "macos") {
-        seatbelt(root, shell)
+        seatbelt(root, shell, extra)
     } else if let Some(bwrap) = bwrap() {
         Ok(bubblewrap(
             bwrap,
             root,
             &dirs::home_dir().unwrap_or_default(),
             shell,
+            extra,
         ))
     } else if cfg!(target_os = "linux") {
         bail!(
@@ -304,7 +332,11 @@ fn sandboxed(root: &std::path::Path, shell: &str) -> Result<tokio::process::Comm
 }
 
 /// macOS: a seatbelt profile.
-fn seatbelt(root: &std::path::Path, shell: &str) -> Result<tokio::process::Command> {
+fn seatbelt(
+    root: &std::path::Path,
+    shell: &str,
+    extra: &SandboxConfig,
+) -> Result<tokio::process::Command> {
     let tmp = std::env::temp_dir()
         .canonicalize()
         .unwrap_or_else(|_| std::env::temp_dir());
@@ -324,6 +356,11 @@ fn seatbelt(root: &std::path::Path, shell: &str) -> Result<tokio::process::Comma
         .iter()
         .map(|c| format!("\n  (subpath \"{}\")", quote(&home.join(c))))
         .collect();
+    // Later rules win: these re-allow reading (never writing) what the user opted into.
+    let reads: String = readable(extra, &home)
+        .iter()
+        .map(|p| format!("\n(allow file-read* (subpath \"{}\"))", quote(p)))
+        .collect();
     let profile = format!(
         r#"(version 1)
 (allow default)
@@ -336,7 +373,7 @@ fn seatbelt(root: &std::path::Path, shell: &str) -> Result<tokio::process::Comma
   (literal "/dev/null")
   (literal "/dev/tty")
   (regex #"^/dev/fd/"){caches})
-(deny file-read* file-write*{secrets})"#,
+(deny file-read* file-write*{secrets}){reads}"#,
         quote(root),
         quote(&tmp)
     );
@@ -356,6 +393,7 @@ fn bubblewrap(
     root: &std::path::Path,
     home: &std::path::Path,
     shell: &str,
+    extra: &SandboxConfig,
 ) -> tokio::process::Command {
     use std::path::{Path, PathBuf};
     let real = |p: &Path| p.canonicalize().ok();
@@ -376,8 +414,13 @@ fn bubblewrap(
     for p in &writable {
         cmd.arg("--bind").arg(p).arg(p);
     }
+    // Credentials the user let commands read stay visible, read-only even inside a writable
+    // bind (a project at `~`).
+    let readable = readable(extra, &home);
     for secret in SECRETS.iter().filter_map(|s| real(&home.join(s))) {
-        if secret.is_dir() {
+        if readable.iter().any(|r| secret.starts_with(r)) {
+            cmd.arg("--ro-bind").arg(&secret).arg(&secret);
+        } else if secret.is_dir() {
             cmd.arg("--tmpfs")
                 .arg(&secret)
                 .arg("--remount-ro")
@@ -454,13 +497,19 @@ mod tests {
         std::fs::write(home.join(".netrc"), "machine x password y").unwrap();
         let home = home.canonicalize().unwrap();
         let script = "ls -A .ssh; cat .netrc; echo masked > .ssh/new; echo built > .cargo/lock && cat .cargo/lock";
-        let out = bubblewrap(bwrap().unwrap(), &home.join("proj"), &home, "/bin/bash")
-            .current_dir(&home)
-            .arg("-c")
-            .arg(script)
-            .output()
-            .await
-            .unwrap();
+        let out = bubblewrap(
+            bwrap().unwrap(),
+            &home.join("proj"),
+            &home,
+            "/bin/bash",
+            &Default::default(),
+        )
+        .current_dir(&home)
+        .arg("-c")
+        .arg(script)
+        .output()
+        .await
+        .unwrap();
         let text = String::from_utf8_lossy(&out.stdout).into_owned()
             + &String::from_utf8_lossy(&out.stderr);
         assert!(!text.contains("id_ed25519"), "{text}");
@@ -468,5 +517,78 @@ mod tests {
         assert!(text.contains("built"), "{text}");
         assert!(!home.join(".ssh/new").exists());
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// `[sandbox] allow_read` opens a credential directory for reading only; without it the
+    /// directory stays hidden.
+    #[tokio::test]
+    async fn allow_read_opens_a_credential_dir_for_reading_only() {
+        if !available() {
+            eprintln!("no OS sandbox here; skipping");
+            return;
+        }
+        let gh = dirs::home_dir().unwrap().join(".config/gh");
+        let Some(file) = std::fs::read_dir(&gh)
+            .ok()
+            .and_then(|d| d.flatten().find(|e| e.path().is_file()))
+        else {
+            eprintln!("no ~/.config/gh here; skipping");
+            return;
+        };
+        let file = file.path();
+        let ws = std::env::temp_dir().join(format!("frog-sbx-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.shell_sandbox = Some(ws.canonicalize().unwrap());
+        let read =
+            json!({ "command": format!("cat '{}' >/dev/null && echo READ_OK", file.display()) });
+
+        // Defaults: hidden.
+        let out = run(&read, &mut ctx).await.unwrap();
+        assert!(!out.content.contains("READ_OK"), "{}", out.content);
+
+        // Opted in: readable, still not writable.
+        ctx.sandbox_extra.allow_read = vec!["~/.config/gh".into()];
+        let out = run(&read, &mut ctx).await.unwrap();
+        assert!(out.content.contains("READ_OK"), "{}", out.content);
+        let probe = gh.join(".frog-sandbox-write-test");
+        let write = json!({ "command": format!("touch '{}'", probe.display()) });
+        let _ = run(&write, &mut ctx).await.unwrap();
+        let wrote = probe.exists();
+        let _ = std::fs::remove_file(&probe);
+        assert!(!wrote, "allow_read made a credential dir writable");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// The real thing, on a machine logged in to gh: `gh auth status` fails in the default
+    /// sandbox, and passes with `allow_read = ["~/.config/gh"]` plus either `allow_keychain`
+    /// (macOS, where gh keeps its token in the Keychain) or `GH_TOKEN`. Run with `--ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn gh_auth_status_works_with_the_opt_in_config() {
+        let ws = std::env::temp_dir().join(format!("frog-sbx-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.shell_sandbox = Some(ws.canonicalize().unwrap());
+        let gh = json!({ "command": "env -u GH_TOKEN -u GITHUB_TOKEN gh auth status" });
+        let out = run(&gh, &mut ctx).await.unwrap();
+        assert!(!out.content.contains("Logged in"), "{}", out.content);
+        ctx.sandbox_extra.allow_read = vec!["~/.config/gh".into()];
+        ctx.sandbox_extra.allow_keychain = cfg!(target_os = "macos");
+        let out = run(&gh, &mut ctx).await.unwrap();
+        assert!(out.content.contains("Logged in"), "{}", out.content);
+
+        // The recommended setup: the token in the environment, the config dir readable, no
+        // Keychain.
+        ctx.sandbox_extra.allow_keychain = false;
+        let token = std::process::Command::new("gh")
+            .args(["auth", "token"])
+            .output()
+            .unwrap();
+        let token = String::from_utf8(token.stdout).unwrap();
+        let gh = json!({ "command": format!("GH_TOKEN='{}' gh auth status", token.trim()) });
+        let out = run(&gh, &mut ctx).await.unwrap();
+        assert!(out.content.contains("Logged in"), "{}", out.content);
+        let _ = std::fs::remove_dir_all(&ws);
     }
 }

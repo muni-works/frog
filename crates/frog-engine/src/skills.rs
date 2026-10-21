@@ -91,14 +91,31 @@ pub fn discover_in(cwd: &Path, user: bool) -> BTreeMap<String, Skill> {
             });
         }
     }
-    out.entry("visual-loop".into()).or_insert(Skill {
-        name: "visual-loop".into(),
-        description: "Rebuild a page, component, icon or sprite from a visual reference with Screenshot and Compare; bounded iteration and durable assets.".into(),
-        path: PathBuf::from("frog-builtin:visual-loop"),
-        project: false,
-    });
+    for (name, description, _) in BUILTIN {
+        out.entry(name.to_string()).or_insert(Skill {
+            name: name.to_string(),
+            description: description.to_string(),
+            path: PathBuf::from(format!("frog-builtin:{name}")),
+            project: false,
+        });
+    }
     out
 }
+
+/// Skills frog ships: name, description, instructions. A user or project skill of the same
+/// name replaces one.
+const BUILTIN: &[(&str, &str, &str)] = &[
+    (
+        "visual-loop",
+        "Rebuild a page, component, icon or sprite from a visual reference with Screenshot and Compare; bounded iteration and durable assets.",
+        include_str!("skills/visual-loop.md"),
+    ),
+    (
+        "gh",
+        "GitHub CLI: PRs, issues, CI checks; valid `--json` fields.",
+        include_str!("skills/gh.md"),
+    ),
+];
 
 /// The frontmatter's top-level string fields and the body. Lenient, like other clients: plain,
 /// quoted and folded (`>`/`|`) values, and unquoted values that contain colons.
@@ -241,9 +258,13 @@ pub fn run(
 
 /// A skill's instructions, wrapped so they're recognizable later, with its files listed (not read).
 pub fn load(skill: &Skill) -> Result<String> {
-    if skill.path == Path::new("frog-builtin:visual-loop") {
-        let text = include_str!("skills/visual-loop.md");
-        return Ok(format!("<skill_content name=\"visual-loop\">\n{text}\n</skill_content>"));
+    if let Some((name, _, text)) = BUILTIN
+        .iter()
+        .find(|(name, _, _)| skill.path == Path::new(&format!("frog-builtin:{name}")))
+    {
+        return Ok(format!(
+            "<skill_content name=\"{name}\">\n{text}\n</skill_content>"
+        ));
     }
     let text = std::fs::read_to_string(&skill.path)?;
     let body = split(&text).map(|(_, b)| b).unwrap_or(&text).trim();
