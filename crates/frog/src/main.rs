@@ -148,7 +148,7 @@ struct Cli {
     /// search keys go here too: brave, exa, tavily.
     #[arg(long, value_name = "PROVIDER")]
     set_key: Option<String>,
-    /// Add a server as a provider: --add-provider <ID> <URL> (e.g. gpu-box http://box:11434).
+    /// Add a server as a provider: --add-provider <ID> <URL> (e.g. gpu http://box:11434).
     #[arg(long, num_args = 2, value_names = ["ID", "URL"])]
     add_provider: Option<Vec<String>>,
     /// With --add-provider: "ollama" or "openai" (any OpenAI-compatible server; the default).
@@ -232,7 +232,7 @@ async fn main() {
 }
 
 async fn run() -> Result<bool> {
-    frog_engine::config::migrate_from_kiln();
+    frog_engine::config::migrate_legacy_dirs();
     let cli = Cli::parse();
     if cli.attempts.is_some() || cli.apply_attempt.is_some() || !cli.discard_attempt.is_empty() {
         return attempts(&cli);

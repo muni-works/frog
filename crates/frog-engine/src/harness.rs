@@ -337,7 +337,7 @@ mod tests {
         assert!(!cloud("lmstudio/qwen3-coder-30b"));
         assert!(!cloud("tang/mlx-community/Qwen3-4B-4bit"));
         let mut mine = Profile::new(ProviderKind::Openai, "qwen3");
-        mine.base_url = Some("http://mew.local:8000/v1".into());
+        mine.base_url = Some("http://gpu.local:8000/v1".into());
         assert!(!is_cloud(&mine));
     }
 
