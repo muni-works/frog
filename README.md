@@ -44,7 +44,7 @@ More in [docs/quickstart.md](docs/quickstart.md).
 
 ## Run on frog api
 
-Local models are private and free, but slow on small machines. frog api hosts Qwen3-Coder-Next, powered by tang, for when you want speed. It is part of frog pro.
+Local models are private and free, but slow on small machines. frog api hosts Qwen3-Coder-Next, powered by tang, for when you want speed. It is in free, invite-only beta.
 
 ```sh
 export FROG_API_KEY=...              # during the beta, get one at https://api.frog.toys/beta
