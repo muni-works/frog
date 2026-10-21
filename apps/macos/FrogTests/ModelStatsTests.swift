@@ -62,7 +62,7 @@ final class ModelStatsTests: XCTestCase {
         XCTAssertEqual(Workspace.startingModel(d, apple: true), "apple/on-device")
         XCTAssertNil(Workspace.startingModel(d, apple: false))
         d.set("tang/mlx-community/Qwen3-8B-4bit", forKey: "lastModel")
-        XCTAssertEqual(Workspace.startingModel(d, apple: true), "tang/mlx-community/Qwen3-8B-4bit")
+        XCTAssertEqual(Workspace.startingModel(d, apple: true), "local/mlx-community/Qwen3-8B-4bit") // saved before the rename
         // A model fixed in Settings wins over the last pick.
         d.set("mew/mlx-community/Qwen3-8B-4bit", forKey: "defaultModel")
         XCTAssertEqual(Workspace.startingModel(d, apple: true), "mew/mlx-community/Qwen3-8B-4bit")

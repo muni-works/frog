@@ -848,6 +848,76 @@ struct ProviderInfo: Codable, Sendable, Hashable, Identifiable {
     var key: String?
     var keyUrl: String
     var connected: Bool
+    /// Where it sorts: This Mac, your servers, frog cloud, other clouds. Older engines omit it.
+    var rank: Int? = nil
+    /// Always listed and never removable (frog cloud).
+    var pinned: Bool? = nil
+
+    /// `id` with old names folded in (`tang` → `local`, `frog-api` → `cloud`, …).
+    var canonicalID: String { ProviderID.canonical(id) }
+    var isFrogCloud: Bool { canonicalID == ProviderID.cloud }
+    /// "This Mac", "frog cloud", or the provider's own name.
+    var displayName: String { ProviderID.displayName(id) ?? name }
+
+    /// The shared order when the engine doesn't say: This Mac, your servers, frog cloud, other clouds.
+    var sortRank: Int {
+        if let rank { return rank }
+        if canonicalID == ProviderID.local || (local && !custom) { return 0 }
+        if custom { return 1 }
+        if isFrogCloud { return 2 }
+        return 3
+    }
+
+    /// Providers in the shared order (stable within a rank).
+    static func sorted(_ list: [ProviderInfo]) -> [ProviderInfo] {
+        list.enumerated().sorted { a, b in
+            (a.element.sortRank, a.offset) < (b.element.sortRank, b.offset)
+        }.map(\.element)
+    }
+}
+
+/// Provider ids say where a model runs. Old ids may still be in saved state, so compare
+/// through `canonical`.
+enum ProviderID {
+    /// frog's engine on this Mac ("This Mac", powered by tang).
+    static let local = "local"
+    /// frog's hosted service ("frog cloud").
+    static let cloud = "cloud"
+    /// The model frog cloud always lists, even signed out.
+    static let cloudModel = "cloud/qwen3-coder-next"
+    static let localName = "This Mac"
+    static let cloudName = "frog cloud"
+
+    static func canonical(_ id: String) -> String {
+        switch id {
+        case "tang": local
+        case "frog-api", "frog", "tang-cloud", "zest": cloud
+        default: id
+        }
+    }
+
+    static func same(_ a: String, _ b: String) -> Bool { canonical(a) == canonical(b) }
+
+    /// The fixed names of frog's own providers; nil for anyone else's.
+    static func displayName(_ id: String) -> String? {
+        switch canonical(id) {
+        case local: localName
+        case cloud: cloudName
+        default: nil
+        }
+    }
+
+    /// A spec with its provider part folded: "tang/x" → "local/x".
+    static func canonicalSpec(_ spec: String) -> String {
+        let parts = spec.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return spec }
+        return canonical(parts[0]) + "/" + parts[1]
+    }
+
+    /// The provider part of a spec, folded: "tang/x" → "local".
+    static func of(spec: String) -> String {
+        canonical(String(spec.split(separator: "/", maxSplits: 1).first ?? ""))
+    }
 }
 
 extension JSONDecoder {

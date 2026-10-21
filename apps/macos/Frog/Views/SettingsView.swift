@@ -132,8 +132,11 @@ struct ModelSettings: View {
         ModelSections.make(usable: usable, suggested: SuggestedModel.all.map(ModelIdentity.init))
     }
 
-    private var cloudProviders: [ProviderInfo] { store.providers.filter { !$0.local && $0.connected } }
-    private var unconnected: [ProviderInfo] { store.providers.filter { !$0.local && !$0.connected } }
+    /// Other clouds, in the shared order. frog cloud has its own fixed card, so it's never
+    /// added or removed here.
+    private var cloudProviders: [ProviderInfo] { ProviderInfo.sorted(store.providers.filter { !$0.local && !$0.isFrogCloud && $0.connected }) }
+    private var unconnected: [ProviderInfo] { ProviderInfo.sorted(store.providers.filter { !$0.local && !$0.isFrogCloud && !$0.connected }) }
+    private var frogCloud: ProviderInfo? { store.providers.first(where: \.isFrogCloud) }
 
     /// Your servers always; Ollama and LM Studio while they're running.
     private var servers: [ProviderInfo] {
@@ -153,11 +156,16 @@ struct ModelSettings: View {
                         ModelListRow(model: m, current: m.spec == Workspace.startingModel) { manage(m) }
                     }
                 } header: {
-                    Text(section.title)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(section.title)
+                        if section.title == ProviderID.localName {
+                            Text("powered by tang").font(.caption2).foregroundStyle(.tertiary) // advanced: the one place the engine is named
+                        }
+                    }
                 }
             }
-            cloud
             serversAndApps
+            cloud
             if let error = store.error {
                 Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
             }
@@ -165,7 +173,7 @@ struct ModelSettings: View {
         }
         .formStyle(.grouped)
         .frame(minHeight: 560)
-        .environment(\.addProviderKey) { id in keyFor = store.providers.first { $0.id == id } }
+        .environment(\.addProviderKey) { id in keyFor = store.providers.first { ProviderID.same($0.id, id) } }
         .sheet(item: $keyFor) { p in KeySheet(provider: p) }
         .sheet(isPresented: $addingServer) {
             ServerSheet { Task { await reload() } }
@@ -244,8 +252,9 @@ struct ModelSettings: View {
     @ViewBuilder
     private var cloud: some View {
         Section {
+            FrogCloudCard(provider: frogCloud) { keyFor = $0 }
             if cloudProviders.isEmpty {
-                Text("The strongest models, from Anthropic, OpenAI and others. Code you send goes to the provider, and each project asks first.")
+                Text("Other clouds: the strongest models, from Anthropic, OpenAI and others. Code you send goes to the provider, and each project asks first.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -280,7 +289,7 @@ struct ModelSettings: View {
                 }
                 .fixedSize()
             }
-            if !cloudProviders.isEmpty || stats.spentThisMonth > 0 {
+            if !cloudProviders.isEmpty || frogCloud?.connected == true || stats.spentThisMonth > 0 {
                 LabeledContent("Spent this week", value: ModelStats.spent(stats.spentThisWeek))
                 LabeledContent("Spent this month", value: ModelStats.spent(stats.spentThisMonth))
                 Picker("Monthly cap", selection: $cap) {
@@ -291,7 +300,7 @@ struct ModelSettings: View {
         } header: {
             Text("Cloud")
         } footer: {
-            if !cloudProviders.isEmpty {
+            if !cloudProviders.isEmpty || frogCloud?.connected == true {
                 Text(cap > 0
                      ? "Keys are kept in your Keychain. At the cap, cloud models pause until next month."
                      : "Keys are kept in your Keychain. Spending is estimated from each provider's prices.")
@@ -351,6 +360,9 @@ struct ModelSettings: View {
     private var advanced: some View {
         Section {
             DisclosureGroup("Engine details") {
+                Text("Models on This Mac run on tang, frog's engine.") // advanced
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 ForEach(models) { m in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(m.spec).font(.callout.monospaced()) // advanced
@@ -459,6 +471,77 @@ private struct CatalogRow: View {
     }
 }
 
+/// frog cloud's fixed card in Settings → Models: always there, never removable. Shows the plan
+/// and where the key comes from; signed out, offers adding or getting a key.
+struct FrogCloudCard: View {
+    /// frog cloud as the engine lists it (nil with an engine that doesn't list it yet).
+    let provider: ProviderInfo?
+    let addKey: (ProviderInfo) -> Void
+    @State private var store = ProviderStore.shared
+
+    static let getKeyURL = URL(string: "https://api.frog.toys/beta")!
+
+    /// Where the key comes from, or nil when there's none. FROG_API_KEY wins over a saved key.
+    static func keyLine(_ source: String?) -> String? {
+        switch source {
+        case "env": "API key · FROG_API_KEY (from your environment; a saved key is ignored here)"
+        case "keychain": "API key · Keychain"
+        default: nil
+        }
+    }
+
+    /// The plan badge. A placeholder until the account endpoint says (Pro, API).
+    static let plan = "beta"
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "cloud.fill").foregroundStyle(.green.opacity(0.85)).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(ProviderID.cloudName)
+                    Text(Self.plan)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.green.opacity(0.18), in: .capsule)
+                        .foregroundStyle(.green)
+                }
+                Text(Self.keyLine(provider?.key) ?? "Fast hosted models from frog. Sign in or add a key to use them.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            if provider?.key == nil {
+                #if FROG_SIGN_IN
+                Button("Sign In") {}
+                    .controlSize(.small)
+                    .disabled(true) // device flow lands post-launch (docs/plans/2026-10-21-frog-account-design.md)
+                #endif
+                Link("Get a Key", destination: Self.getKeyURL)
+                    .controlSize(.small)
+                if let provider {
+                    Button("Add a Key") { addKey(provider) }
+                        .controlSize(.small)
+                }
+            } else if let provider {
+                Menu {
+                    Button("Change Key…") { addKey(provider) }
+                    // Only a saved key can be removed here; an environment key is the shell's.
+                    if provider.key == "keychain" {
+                        Button("Remove Key", role: .destructive) { Task { await store.setKey("", for: provider.id) } }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+            }
+        }
+    }
+}
+
 /// Paste a provider's API key; it goes to the Keychain through frog, never to disk.
 struct KeySheet: View {
     let provider: ProviderInfo
@@ -469,14 +552,14 @@ struct KeySheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Connect \(provider.name)").font(.headline)
+            Text("Connect \(provider.displayName)").font(.headline)
             SecureField("API key", text: $key)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(save)
             if let url = URL(string: provider.keyUrl), !provider.keyUrl.isEmpty {
-                Link("Get a key from \(provider.name)", destination: url).font(.callout)
+                Link("Get a key from \(provider.displayName)", destination: url).font(.callout)
             }
-            Text("Stored in your Keychain. frog sends it only to \(provider.name).")
+            Text("Stored in your Keychain. frog sends it only to \(provider.displayName).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let e = store.error { Text(e).font(.caption).foregroundStyle(.red) }
