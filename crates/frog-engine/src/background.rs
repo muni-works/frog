@@ -367,6 +367,7 @@ fn shell_ctx(ctx: &Ctx) -> Ctx {
     let mut c = Ctx::new(ctx.cwd.clone());
     c.sandbox = ctx.sandbox.clone();
     c.shell_sandbox = ctx.shell_sandbox.clone();
+    c.sandbox_extra = ctx.sandbox_extra.clone();
     c
 }
 

@@ -235,6 +235,10 @@ pub struct Config {
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]
     pub sandbox_shell: bool,
+    /// Opt-in holes in that sandbox (`[sandbox]`), for tools like `gh` that need a credential.
+    /// Empty by default: nothing widens unless configured.
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
     /// Start read-only tool calls (Read, Grep, Glob) as soon as their arguments arrive, while
     /// the model is still writing the rest of its reply. Results, history and events are the
     /// same as without it; only the waiting overlaps.
@@ -273,6 +277,21 @@ pub struct Config {
     /// Let WebFetch reach localhost and private networks (off: public addresses only).
     #[serde(default)]
     pub web_allow_private: bool,
+}
+
+/// `[sandbox]`: what the Bash sandbox may read beyond its defaults. Reads only; writes never
+/// widen. The environment isn't filtered (commands inherit frog's), so there's no `pass_env`.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SandboxConfig {
+    /// Paths (`~/` allowed) a sandboxed command may read even though they're credentials,
+    /// e.g. `~/.config/gh`.
+    #[serde(default)]
+    pub allow_read: Vec<String>,
+    /// macOS: let commands read the login Keychain (`~/Library/Keychains`), so `gh` and
+    /// credential helpers that keep their token there work. Every sandboxed command can then
+    /// read any Keychain item that doesn't prompt.
+    #[serde(default)]
+    pub allow_keychain: bool,
 }
 
 impl Default for Config {

@@ -143,6 +143,20 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
 - **No prompts:** because of those limits, sandboxed commands run without asking, even in Ask mode.
 - **Leaving it:** when a command genuinely needs more (say, `git push` over ssh), the model runs it again with `unsandboxed: true`. That always asks, and the prompt says why.
 - **Turning it off:** set `sandbox_shell = false` in `config.toml` or pass `--no-shell-sandbox`. Every command then asks.
+- **Environment:** the sandbox limits files, not variables. Commands inherit frog's environment, so a token you export before launching frog (`GH_TOKEN`, `GITHUB_TOKEN`, …) is visible to them.
+- **Opening it a little:** a `[sandbox]` section in `config.toml` lets commands read specific credentials. Nothing is opened by default, and it never adds write access:
+  ```toml
+  [sandbox]
+  allow_read = ["~/.config/gh"]  # paths commands may read even though they're credentials
+  allow_keychain = false         # macOS: let commands read the login Keychain
+  ```
+  The trade-off: anything you open is readable by every sandboxed command, including one a prompt injection wrote, and the network is open. `allow_keychain` is the broad one: it exposes every Keychain item that doesn't prompt, not just gh's.
+- **gh, minimal setup:** hand gh its token through the environment and let it read its config directory (gh refuses to start if it can't read `config.yml`):
+  ```toml
+  [sandbox]
+  allow_read = ["~/.config/gh"]
+  ```
+  and launch frog with `export GH_TOKEN=$(gh auth token)` (in your shell profile or just before `frog`). gh uses `GH_TOKEN` over its stored login, so `gh auth status`, `gh pr list` and friends work sandboxed and only that one token is exposed. Prefer this to `allow_keychain = true`, which also works (on macOS gh keeps its token in the Keychain) but opens the whole Keychain. On Linux gh often keeps the token in `hosts.yml`, so `allow_read` alone is enough there.
 
 ## REPL
 

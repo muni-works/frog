@@ -34,6 +34,8 @@ pub struct Ctx {
     /// Run Bash sandboxed by default (writes confined to this project, temp and toolchain
     /// caches; credentials unreadable), unless a call asks for `unsandboxed`. Canonical path.
     pub shell_sandbox: Option<PathBuf>,
+    /// Extra reads the shell sandbox allows (config `[sandbox]`).
+    pub sandbox_extra: crate::config::SandboxConfig,
     /// Live output from the running tool, if someone is listening.
     pub progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
     /// Bounded approximate image deltas for transcript display, never model context.
@@ -53,6 +55,7 @@ impl Ctx {
             todos: Vec::new(),
             sandbox: None,
             shell_sandbox: None,
+            sandbox_extra: Default::default(),
             progress: None,
             preview: None,
             web: Default::default(),
@@ -234,7 +237,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "Diagram" => s("title"),
         "Image" => s("prompt"),
         "Screenshot" => s("url"),
-        "Compare" => format!("{} → {}",s("target"),s("actual")),
+        "Compare" => format!("{} → {}", s("target"), s("actual")),
         "CodeMap" => s("path"),
         "WebFetch" => s("url"),
         "WebSearch" => s("query"),

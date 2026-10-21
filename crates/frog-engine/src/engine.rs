@@ -833,6 +833,7 @@ impl Agent {
             None => o.profile.clone(),
         });
         let resumed = o.resume.is_some();
+        let sandbox_extra = o.cfg.sandbox.clone();
         let shell_root = o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone());
         shared.panes.configure(o.cwd.clone());
         let mut agent = Self {
@@ -847,6 +848,7 @@ impl Agent {
                 ctx.image = image;
                 ctx.screenshot_endpoint = screenshot_endpoint;
                 ctx.judge = judge;
+                ctx.sandbox_extra = sandbox_extra;
                 if o.sandbox {
                     ctx.sandbox = Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
                 }
@@ -2592,6 +2594,7 @@ impl Agent {
             todos: Vec::new(),
             sandbox: self.ctx.sandbox.clone(),
             shell_sandbox: self.ctx.shell_sandbox.clone(),
+            sandbox_extra: self.ctx.sandbox_extra.clone(),
             progress: None,
             preview: None,
             web: self.ctx.web.clone(),
