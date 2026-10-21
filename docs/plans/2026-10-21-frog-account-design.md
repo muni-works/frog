@@ -25,7 +25,7 @@ accounts, usage dashboards beyond what `/v1/me` returns.
 |---|---|
 | provider id | `frog` (today's `frog-api` becomes an alias, as do `tang-cloud`, `zest`) |
 | model spec | `frog/qwen3-coder-next` |
-| display name | "frog" in lists; the plan shows as "Pro" or "API" next to it |
+| display name | one "frog" entry; the plan is a badge: "frog · Pro", "frog · API", "frog · beta" (Cam, 2026-10-21) |
 | key env | `FROG_API_KEY` (aliases kept) |
 | base env | `FROG_BASE_URL`, default `https://api.frog.toys/v1` |
 
