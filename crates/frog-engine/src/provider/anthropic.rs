@@ -369,7 +369,15 @@ impl Client {
                     if let Some(r) = v["delta"]["stop_reason"].as_str() {
                         stop = Some(Stop::from_reason(r));
                     }
-                    usage.output = v["usage"]["output_tokens"].as_u64().unwrap_or(usage.output)
+                    let u = &v["usage"];
+                    usage.output = u["output_tokens"].as_u64().unwrap_or(usage.output);
+                    // Some gateways (Vercel) report input and cache counts only here.
+                    if let Some(i) = u["input_tokens"].as_u64().filter(|&i| i > 0) {
+                        usage.input = i + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                    }
+                    if let Some(c) = u["cache_read_input_tokens"].as_u64().filter(|&c| c > 0) {
+                        usage.cache_read = c;
+                    }
                 }
                 "error" => bail!("anthropic error: {}", v["error"]),
                 _ => {}
