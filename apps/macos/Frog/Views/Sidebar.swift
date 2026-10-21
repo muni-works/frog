@@ -81,11 +81,11 @@ struct SessionList: View {
 
     private var projects: [(folder: URL, items: [SessionInfo])] {
         let unpinned = active.filter { !$0.isChat && !library.pinned.contains($0.id) && $0.folder != nil }
-        let byPath = Dictionary(grouping: unpinned) { $0.folder!.standardizedFileURL.path }
+        let byPath = Dictionary(grouping: unpinned) { home($0).standardizedFileURL.path }
         return byPath.values
             .map { items in
                 let sorted = items.sorted(by: before)
-                return (sorted[0].folder!, sorted)
+                return (home(sorted[0]), sorted)
             }
             // Folders follow their first conversation, or their own name when sorting by name.
             .sorted { a, b in
@@ -93,6 +93,37 @@ struct SessionList: View {
                     ? a.folder.lastPathComponent.localizedStandardCompare(b.folder.lastPathComponent) == .orderedAscending
                     : before(a.items[0], b.items[0])
             }
+    }
+
+    /// The folder a session is filed under: its own, or (for one started by another session,
+    /// say in a worktree) its topmost parent's.
+    private func home(_ s: SessionInfo) -> URL {
+        var current = s
+        var seen: Set<String> = [s.id]
+        while let p = library.parents[current.id], !seen.contains(p),
+              let parent = library.sessions.first(where: { $0.id == p }), parent.folder != nil, !parent.isChat {
+            seen.insert(p)
+            current = parent
+        }
+        return current.folder ?? s.folder!
+    }
+
+    /// Rows in tree order: each session followed by the ones it started, indented.
+    private func nested(_ items: [SessionInfo]) -> [(session: SessionInfo, depth: Int)] {
+        let ids = Set(items.map(\.id))
+        var children: [String: [SessionInfo]] = [:]
+        var roots: [SessionInfo] = []
+        for s in items {
+            if let p = library.parents[s.id], ids.contains(p) { children[p, default: []].append(s) } else { roots.append(s) }
+        }
+        var out: [(SessionInfo, Int)] = []
+        func walk(_ s: SessionInfo, _ depth: Int) {
+            guard !out.contains(where: { $0.0.id == s.id }) else { return }
+            out.append((s, depth))
+            for c in (children[s.id] ?? []).sorted(by: before) { walk(c, min(depth + 1, 4)) }
+        }
+        roots.forEach { walk($0, 0) }
+        return out
     }
 
     private var chats: [SessionInfo] {
@@ -221,7 +252,10 @@ struct SessionList: View {
             let shown = all ? items : items.enumerated().filter { i, s in
                 i < Self.groupLimit || library.live[s.id] != nil || s.id == current
             }.map(\.element)
-            ForEach(shown) { row($0, showPlace: false) }
+            ForEach(nested(shown), id: \.session.id) { s, depth in
+                row(s, showPlace: false)
+                    .padding(.leading, CGFloat(depth) * 14)
+            }
             if items.count > shown.count || (all && items.count > Self.groupLimit) {
                 Button(all ? "Show less" : "Show \(items.count - shown.count) more") {
                     withAnimation(.snappy(duration: 0.25)) {

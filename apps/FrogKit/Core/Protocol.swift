@@ -71,7 +71,11 @@ enum Op: Encodable, Sendable {
     /// The user clicked an element in inspect mode and mentioned it in the composer.
     case paneMention(id: String, mention: String, context: String? = nil)
     /// What this client can do, sent once after the engine starts.
-    case setClientCaps(panes: Bool, ask: Bool = false)
+    case setClientCaps(panes: Bool, ask: Bool = false, sessions: Bool = false)
+    /// The answer to a `sessionRequest`: JSON (or text) for the model, or an error.
+    case sessionReply(id: String, result: JSONValue?, error: String?)
+    /// A message from another session (`from` is its id, or "system"), queued like a submit.
+    case deliver(from: String, fromName: String, message: String)
     /// Answer a `question`: the picked labels, or the user's own words. Neither dismisses it.
     case answer(id: String, choices: [String], other: String?)
     /// Have the model server prefill the conversation now (plus `draft`, the message being
@@ -83,7 +87,7 @@ enum Op: Encodable, Sendable {
         case op, text, command, id, decision, mode, spec, focus, after, title
         case action, content, server, tool, arguments, images
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
-        case ask, choices, other, label, send
+        case ask, choices, other, label, send, sessions, from, fromName = "from_name"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -174,10 +178,21 @@ enum Op: Encodable, Sendable {
             try c.encode(id, forKey: .id)
             try c.encode(mention, forKey: .mention)
             try c.encodeIfPresent(context, forKey: .context)
-        case .setClientCaps(let panes, let ask):
+        case .setClientCaps(let panes, let ask, let sessions):
             try c.encode("set_client_caps", forKey: .op)
             try c.encode(panes, forKey: .panes)
             if ask { try c.encode(ask, forKey: .ask) }
+            if sessions { try c.encode(sessions, forKey: .sessions) }
+        case .sessionReply(let id, let result, let error):
+            try c.encode("session_reply", forKey: .op)
+            try c.encode(id, forKey: .id)
+            try c.encodeIfPresent(result, forKey: .result)
+            try c.encodeIfPresent(error, forKey: .error)
+        case .deliver(let from, let fromName, let message):
+            try c.encode("deliver", forKey: .op)
+            try c.encode(from, forKey: .from)
+            try c.encode(fromName, forKey: .fromName)
+            try c.encode(message, forKey: .message)
         case .answer(let id, let choices, let other):
             try c.encode("answer", forKey: .op)
             try c.encode(id, forKey: .id)
@@ -438,6 +453,16 @@ struct Elicitation: Decodable, Sendable, Identifiable {
     var url: String?
 }
 
+/// A session tool call (`ListSessions`, `SendMessage`, `StartSession`) for the app to carry
+/// out; answered with `Op.sessionReply`.
+struct SessionRequest: Sendable, Equatable {
+    var id: String
+    /// The tool call waiting on it.
+    var item: String
+    var tool: String
+    var input: JSONValue
+}
+
 /// The model asking the user to choose (the `Ask` tool). Answered with `Op.answer`.
 struct Question: Decodable, Sendable, Identifiable {
     struct Option: Decodable, Sendable, Hashable {
@@ -522,6 +547,7 @@ enum Event: Decodable, Sendable {
     case paneScreen(PaneScreen)
     case paneClosed(id: String, exit: Int?)
     case paneRequest(PaneRequest)
+    case sessionRequest(SessionRequest)
     case paneNotice(id: String, level: String, message: String)
     /// A screenshot of the preview the engine kept for a turn (`panes/turn-N.png` in the session
     /// folder), for before/after. Recognized by shape, since its event name isn't fixed yet.
@@ -553,7 +579,7 @@ extension Event {
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
         case images
-        case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image
+        case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
     }
 
     init(from decoder: Decoder) throws {
@@ -658,6 +684,12 @@ extension Event {
                 id: try c.decode(String.self, forKey: .id),
                 action: try c.decode(String.self, forKey: .action),
                 args: try c.decodeIfPresent(JSONValue.self, forKey: .args) ?? .object([:])))
+        case "session_request":
+            self = .sessionRequest(SessionRequest(
+                id: try c.decode(String.self, forKey: .id),
+                item: try c.decodeIfPresent(String.self, forKey: .item) ?? "",
+                tool: try c.decode(String.self, forKey: .tool),
+                input: try c.decodeIfPresent(JSONValue.self, forKey: .input) ?? .object([:])))
         case "pane_notice":
             self = .paneNotice(
                 id: try c.decodeIfPresent(String.self, forKey: .id) ?? "",

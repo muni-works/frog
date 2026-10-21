@@ -89,6 +89,11 @@ final class Conversation {
     @ObservationIgnored private let replayOnStart: Bool
     /// What this platform does when things happen (see `ConversationEffects`).
     @ObservationIgnored static var effects: ConversationEffects?
+    /// Carries out the model's session tools (the Mac's `SessionBroker`); answer with
+    /// `replySession`. Without one, requests get an error.
+    @ObservationIgnored static var sessionRequests: ((Conversation, SessionRequest) -> Void)?
+    /// The user sent something in this conversation (session-message rate limits reset).
+    @ObservationIgnored static var userActivity: ((Conversation) -> Void)?
     /// Counts of live happenings, for haptics and the frog's face.
     private(set) var stepsDone = 0
     private(set) var turnsDone = 0
@@ -151,6 +156,7 @@ final class Conversation {
     func submit(_ text: String, images: [ToolImage] = []) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty else { return }
+        Self.userActivity?(self)
         if busy || replaying {
             queue.append(Queued(text: text, images: images))
             return
@@ -262,6 +268,19 @@ final class Conversation {
         stopping = true
         link?.stop()
     }
+
+    /// Answer a `sessionRequest`.
+    func replySession(_ id: String, result: JSONValue? = nil, error: String? = nil) {
+        link?.send(.sessionReply(id: id, result: result, error: error))
+    }
+
+    /// A message from another session: the engine queues it and runs it as a turn.
+    func deliver(from: String, name: String, message: String) {
+        link?.send(.deliver(from: from, fromName: name, message: message))
+    }
+
+    /// Has a running engine (not stopped, not failed).
+    var isLive: Bool { link != nil && failure == nil && !stopping }
 
     /// Send the engine an op directly (a title from the Mac's on-device model, say).
     func send(_ op: Op) {
@@ -473,6 +492,12 @@ final class Conversation {
             note(message, warning: level != "info")
         case .paneOpened, .paneScreen, .paneClosed, .paneRequest, .paneCheckpoint:
             panes.apply(env.event)
+        case .sessionRequest(let r):
+            if let handler = Self.sessionRequests {
+                handler(self, r)
+            } else {
+                replySession(r.id, error: "This app can't reach other sessions.")
+            }
         case .modelChanged, .modeChanged, .unknown:
             break
         }

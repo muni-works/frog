@@ -22,6 +22,7 @@ struct FrogApp: App {
         UserDefaults.standard.set(true, forKey: "AppleReduceDesktopTinting")
         Notifier.shared.setup()
         Conversation.effects = MacEffects.shared
+        SessionBroker.shared.install()
         ModelContext.useMac()
         DiagramLayout.mermaid = { source, cwd in
             await Diagram.fromMermaid(source, cwd: cwd ?? FileManager.default.homeDirectoryForCurrentUser)
