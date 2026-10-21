@@ -59,7 +59,8 @@ pub fn base_url(model: &str) -> String {
     format!("http://127.0.0.1:{}/v1", kind(model).port)
 }
 
-/// `$FROG_*_BIN`, else next to this executable (the app bundles them), else `$PATH`.
+/// `$FROG_*_BIN`, else next to this executable (the app bundles them), else where `frog setup`
+/// installs them (`~/.local/share/frog/bin`), else `$PATH`.
 fn binary(k: &Kind) -> PathBuf {
     if let Some(p) = std::env::var_os(k.env) {
         return p.into();
@@ -69,6 +70,10 @@ fn binary(k: &Kind) -> PathBuf {
         && dir.join(k.bin).exists()
     {
         return dir.join(k.bin);
+    }
+    let installed = crate::setup::bin_dir().join(k.bin);
+    if installed.exists() {
+        return installed;
     }
     k.bin.into()
 }
@@ -173,9 +178,20 @@ pub async fn ensure(p: &Profile) -> Result<()> {
             Ok(())
         });
     }
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("starting {} (set {}?)", bin.display(), k.env))?;
+    if model != APPLE && !crate::setup::model_present(model) {
+        bail!("{model} isn't downloaded; run `frog setup` (or `frog setup {model}`)");
+    }
+    let mut child = cmd.spawn().with_context(|| {
+        if model == APPLE {
+            format!("starting {} (set {}?)", bin.display(), k.env)
+        } else {
+            format!(
+                "starting {} (run `frog setup` to install it, or set {})",
+                bin.display(),
+                k.env
+            )
+        }
+    })?;
     std::fs::write(pid_file(k), child.id().to_string())?;
 
     let start = Instant::now();
