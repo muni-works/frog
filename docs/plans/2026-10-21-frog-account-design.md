@@ -38,14 +38,18 @@ Signing in and pasting a key produce the same thing: a bearer token (`frog_…`)
 Keychain (account `frog`), or `FROG_API_KEY` in the environment. Sign-in is a device flow that
 mints a subscription-scoped key:
 
-1. `frog login` (or "Sign in" in the app) calls `POST {base}/auth/device` → `{user_code, verification_url, device_code, interval}`.
-2. frog opens `https://frog.toys/activate?code=…` in the browser and polls `POST {base}/auth/token`.
-3. On success it gets `{key, plan: "pro"}` and stores the key.
+1. `frog login` (or "Sign in" in the app) calls `POST {base}/auth/device` → `{user_code, verification_url, verification_url_complete, device_code, interval, expires_in}` (RFC 8628 shape; codes live 10 min).
+2. frog shows the user code, opens `verification_url_complete` (`https://api.frog.toys/activate?code=…`, served by the edge) and polls `POST {base}/auth/token`, honoring `authorization_pending`, `slow_down` (back off +5 s), `expired_token` and `access_denied`.
+3. On success it gets `{key, plan}` and stores the key.
+
+Identity behind /activate (zest, 2026-10-21): for the beta, the browser user redeems an invite code
+and the device gets a beta key (~Oct 24). Pro sign-in needs real identity (email link or GitHub)
+plus Stripe: Cam's choice, target ~Nov 9.
 
 `frog logout` deletes it. The engine never cares which way the key came: every request is the same
 OpenAI-compatible call. This keeps the engine, fallback and caching code unchanged.
 
-`GET {base}/me` → `{plan: "pro"|"api"|"beta", email, credit, limits}` feeds the account row.
+`GET {base}/me` → `{plan: "beta"|"api"|"pro", tier, email (null until sign-in), credit_usd, limits: {streams, rpm}}`, 401 on a bad key (ecto/zest#20, live with the next edge deploy). It feeds the plan badge and account row.
 Cached for 10 minutes; failure means "unknown", never "logged out".
 
 ## Surfaces
@@ -89,7 +93,7 @@ stays.
 
 ## Dependencies (zest)
 
-`POST /auth/device`, `POST /auth/token`, `GET /me`, `https://frog.toys/activate`. Until they exist,
+`POST /auth/device`, `POST /auth/token`, `GET /me` (exists, #20), `https://api.frog.toys/activate`. Until they exist,
 frog ships the key path and the pinned provider, with "Sign in" hidden behind a feature check on
 `/me` (404 → key only).
 
@@ -103,6 +107,9 @@ frog ships the key path and the pinned provider, with "Sign in" hidden behind a 
 1–3 can ship for Oct 30 with the key path; 4 when zest's auth lands.
 
 ## Open questions
+
+Resolved: one "frog" entry with a plan badge (Cam). Same models and limits for Pro and API at
+launch (zest agrees). zest is fine with `frog/` + `frog-api/` alias.
 
 1. Spec rename: `frog/qwen3-coder-next` (cleaner, but launch copy says `frog-api/`) or keep
    `frog-api/`? Recommend `frog/` with `frog-api/` as a permanent alias, and update the copy.
