@@ -1105,32 +1105,7 @@ impl Agent {
                 self.mode = mode;
                 self.emit(Event::ModeChanged { mode });
             }
-            Op::SetModel { spec } => {
-                let (name, profile) = self
-                    .cfg
-                    .resolve(Some(&spec))
-                    .map_err(|e| ConfigError(format!("{e:#}")))?;
-                crate::policy::check(&self.root, &name, &profile)
-                    .map_err(|e| ConfigError(format!("{e:#}")))?;
-                self.provider =
-                    Provider::new(&profile).map_err(|e| ConfigError(format!("{e:#}")))?;
-                self.profile_name = name;
-                self.profile = profile;
-                if self.cfg.compare_model.is_none() {
-                    self.ctx.judge = Some(self.profile.clone());
-                }
-                self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
-                self.caps = (!harness::is_hosted(&self.profile))
-                    .then(|| harness::cached(&self.profile))
-                    .flatten();
-                self.mode_failures = 0;
-                self.model_ready = false;
-                self.apply_harness();
-                self.resolve_window().await;
-                self.emit(Event::ModelChanged {
-                    model: self.profile_name.clone(),
-                });
-            }
+            Op::SetModel { spec } => self.set_model(&spec).await?,
             Op::Compact { focus } => self.compact(focus.as_deref()).await?,
             Op::Subscribe { after } => {
                 let replay = match &self.store {
@@ -1461,9 +1436,23 @@ impl Agent {
             } else {
                 "thinking".into()
             };
-            let (resp, streamed) = self
+            let (resp, streamed) = match self
                 .call(&activity, &self.messages, false, true, think, budget)
-                .await?;
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    let Some(local) = self.frog_api_fallback(&e) else {
+                        return Err(e);
+                    };
+                    self.notice(
+                        Level::Warn,
+                        format!("frog api unavailable ({e:#}) — continuing on {local}"),
+                    );
+                    self.set_model(&local).await?;
+                    continue;
+                }
+            };
             self.model_ready = true;
             self.last_call = started.elapsed();
             self.usage = resp.usage;
@@ -1803,8 +1792,8 @@ impl Agent {
             if !crate::sidecar::is_serving(&model).await {
                 self.emit(Event::Progress {
                     label: format!("loading {model}"),
-            completed: None,
-            total: None,
+                    completed: None,
+                    total: None,
                 });
             }
             if let Err(e) = crate::sidecar::ensure(&self.profile).await {
@@ -2692,6 +2681,59 @@ Don't repeat it. Change the arguments or try a different approach.",
     /// One model request. Streams item events (unless `quiet`) and retries transient errors
     /// that happen before anything streamed. Without `offer_tools` the model can only answer:
     /// in `json` mode a summary request that offers tools gets a tool call back, not a summary.
+    async fn set_model(&mut self, spec: &str) -> Result<()> {
+        let (name, profile) = self
+            .cfg
+            .resolve(Some(spec))
+            .map_err(|e| ConfigError(format!("{e:#}")))?;
+        crate::policy::check(&self.root, &name, &profile)
+            .map_err(|e| ConfigError(format!("{e:#}")))?;
+        self.provider = Provider::new(&profile).map_err(|e| ConfigError(format!("{e:#}")))?;
+        self.profile_name = name;
+        self.profile = profile;
+        if self.cfg.compare_model.is_none() {
+            self.ctx.judge = Some(self.profile.clone());
+        }
+        self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
+        self.caps = (!harness::is_hosted(&self.profile))
+            .then(|| harness::cached(&self.profile))
+            .flatten();
+        self.mode_failures = 0;
+        self.model_ready = false;
+        self.apply_harness();
+        self.resolve_window().await;
+        self.emit(Event::ModelChanged {
+            model: self.profile_name.clone(),
+        });
+        Ok(())
+    }
+
+    /// frog api is unreachable (offline) or out of capacity, credit or hours (503, 402, 502):
+    /// carry on with a local model instead of failing the turn. `FROG_FALLBACK_MODEL` picks
+    /// which.
+    fn frog_api_fallback(&self, e: &anyhow::Error) -> Option<String> {
+        let prov = self.profile_name.split_once('/')?.0;
+        if !matches!(prov, "frog-api" | "frog" | "tang-cloud" | "zest") {
+            return None;
+        }
+        let offline = e
+            .chain()
+            .filter_map(|c| c.downcast_ref::<reqwest::Error>())
+            .any(|r| r.is_connect());
+        let unavailable = e
+            .downcast_ref::<HttpError>()
+            .is_some_and(|h| matches!(h.status, 402 | 502 | 503));
+        if !offline && !unavailable {
+            return None;
+        }
+        Some(
+            std::env::var("FROG_FALLBACK_MODEL")
+                .ok()
+                .filter(|m| !m.is_empty())
+                .unwrap_or_else(|| crate::config::LOCAL_DEFAULT.into()),
+        )
+    }
+
     async fn call(
         &self,
         label: &str,
@@ -2750,8 +2792,8 @@ Don't repeat it. Change the arguments or try a different approach.",
         loop {
             self.emit(Event::Progress {
                 label: label.into(),
-            completed: None,
-            total: None,
+                completed: None,
+                total: None,
             });
             let mut started = false;
             let mut streamed = Streamed {
@@ -2846,15 +2888,14 @@ Don't repeat it. Change the arguments or try a different approach.",
                             presenting = (name == crate::present::TOOL).then(Default::default);
                             self.emit(Event::Progress {
                                 label: format!("{name}…"),
-            completed: None,
-            total: None,
+                                completed: None,
+                                total: None,
                             })
                         }
                         StreamEvent::ToolArgs { name, chunk } => {
                             if name == crate::present::TOOL
-                                && let Some(p) = presenting
-                                    .as_mut()
-                                    .and_then(|s| s.push(&chunk, &cwd, weak))
+                                && let Some(p) =
+                                    presenting.as_mut().and_then(|s| s.push(&chunk, &cwd, weak))
                             {
                                 self.emit(Event::PresentPreview {
                                     present: Box::new(p),
@@ -2881,8 +2922,8 @@ Don't repeat it. Change the arguments or try a different approach.",
                             if filter.inside && !was_inside {
                                 self.emit(Event::Progress {
                                     label: "tool call…".into(),
-            completed: None,
-            total: None,
+                                    completed: None,
+                                    total: None,
                                 });
                             }
                         }
@@ -2930,7 +2971,12 @@ Don't repeat it. Change the arguments or try a different approach.",
                     });
                 }
                 Ok(resp) => return Ok((resp, streamed)),
-                Err(e) if !started && attempt < 3 && retryable(&e) => {
+                Err(e)
+                    if !started
+                        && attempt < 3
+                        && retryable(&e)
+                        && self.frog_api_fallback(&e).is_none() =>
+                {
                     attempt += 1;
                     self.notice(Level::Warn, format!("{e:#} — retrying ({attempt}/3)"));
                     tokio::time::sleep(Duration::from_secs(1 << attempt)).await;

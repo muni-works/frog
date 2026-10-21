@@ -225,7 +225,10 @@ pub fn config_dir() -> PathBuf {
 /// Does nothing once moved, or if both exist.
 pub fn migrate_from_kiln() {
     let Some(home) = dirs::home_dir() else { return };
-    for (old, new) in [(".config/kiln", ".config/frog"), (".local/share/kiln", ".local/share/frog")] {
+    for (old, new) in [
+        (".config/kiln", ".config/frog"),
+        (".local/share/kiln", ".local/share/frog"),
+    ] {
         let (old, new) = (home.join(old), home.join(new));
         let real_dir = std::fs::symlink_metadata(&old).is_ok_and(|m| m.is_dir());
         if !real_dir || new.exists() {
@@ -244,6 +247,9 @@ pub fn data_dir() -> PathBuf {
         .join(".local/share/frog")
 }
 
+/// frog's own engine on this machine: needs nothing else installed.
+pub const LOCAL_DEFAULT: &str = "tang/mlx-community/Qwen3-4B-4bit";
+
 impl Config {
     pub fn load() -> Result<Self> {
         let path = config_dir().join("config.toml");
@@ -259,8 +265,8 @@ impl Config {
 
     /// Explicit configuration: a missing file is an error, and user MCP imports are not loaded.
     pub fn load_from(path: &std::path::Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
     }
 
@@ -271,7 +277,7 @@ impl Config {
             .or_else(|| std::env::var("FROG_MODEL").ok())
             .or_else(|| self.default_model.clone())
             // frog's own engine first: it needs nothing else installed.
-            .unwrap_or_else(|| "tang/mlx-community/Qwen3-4B-4bit".into());
+            .unwrap_or_else(|| LOCAL_DEFAULT.into());
         if let Some(p) = self.models.get(&spec) {
             return Ok((spec, p.clone()));
         }
