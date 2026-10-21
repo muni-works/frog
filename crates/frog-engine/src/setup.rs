@@ -110,6 +110,23 @@ async fn install_tang() -> Result<()> {
 async fn fetch_prebuilt(dir: &Path) -> Result<()> {
     let resp = reqwest::get(TANG_RELEASE).await?.error_for_status()?;
     let bytes = resp.bytes().await?;
+    // The release ships `<asset>.sha256` ("<hex>  <name>"); refuse anything that doesn't match.
+    let sums = reqwest::get(format!("{TANG_RELEASE}.sha256"))
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let want = sums.split_whitespace().next().unwrap_or("").to_lowercase();
+    let got: String = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    if want != got {
+        bail!("tang-llm download failed its checksum (expected {want}, got {got})");
+    }
     let tmp = dir.join("tang-llm.tar.gz");
     std::fs::write(&tmp, &bytes)?;
     let ok = Command::new("tar")
