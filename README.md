@@ -53,6 +53,33 @@ frog -m frog-api/qwen3-coder-next
 
 If frog api is offline or out of credit or capacity, frog says so and carries on with a local model: `FROG_FALLBACK_MODEL` if set, otherwise the default `tang/` model. `FROG_BASE_URL` points it at a different endpoint.
 
+### Other agents
+
+frog api is OpenAI-compatible, so other agents can use it too. Base URL
+`https://api.frog.toys/v1`, model `qwen3-coder-next`, key `FROG_API_KEY` (get one at
+[api.frog.toys/beta](https://api.frog.toys/beta)). Beta limits are low, and you'll get a 503 when
+it's at capacity.
+
+**opencode** (`opencode.json`)
+```json
+{"provider":{"frog":{"npm":"@ai-sdk/openai-compatible","name":"frog api","options":{"baseURL":"https://api.frog.toys/v1","apiKey":"{env:FROG_API_KEY}"},"models":{"qwen3-coder-next":{"name":"Qwen3-Coder-Next (frog)"}}}},"model":"frog/qwen3-coder-next"}
+```
+
+**Cline, Roo Code, Kilo Code**: Settings → API Provider: **OpenAI Compatible** → Base URL
+`https://api.frog.toys/v1` → API Key: your `frog_` key → Model ID `qwen3-coder-next`. Turn on
+native tool calling. Context window 32768.
+
+**Continue** (`config.yaml`)
+```yaml
+models:
+  - name: Qwen3-Coder-Next (frog)
+    provider: openai
+    model: qwen3-coder-next
+    apiBase: https://api.frog.toys/v1
+    apiKey: ${{ secrets.FROG_API_KEY }}
+    roles: [chat, edit, apply]
+```
+
 ## Features
 
 - **Sessions you can branch.** Every session is an append-only log that survives crashes.
