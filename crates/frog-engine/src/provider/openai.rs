@@ -11,9 +11,30 @@ pub struct Client {
     pub model: String,
     pub key: Option<String>,
     pub extra: Option<Value>,
+    /// Used when the request is sent as an Anthropic Messages call (see [`Self::gateway_claude`]).
+    pub anthropic: super::anthropic::Settings,
 }
 
 impl Client {
+    /// `vercel/anthropic/*` on Vercel's AI Gateway: the gateway also serves the Anthropic
+    /// Messages API (same host, `/v1/messages`, `x-api-key`), which keeps `cache_control`,
+    /// thinking and effort and returns real cache usage, none of which survive the
+    /// chat-completions translation.
+    fn gateway_claude(&self) -> Option<super::anthropic::Client> {
+        let base = self.base.trim_end_matches('/');
+        if !base.contains("ai-gateway.vercel.sh") || !self.model.starts_with("anthropic/") {
+            return None;
+        }
+        Some(super::anthropic::Client {
+            http: self.http.clone(),
+            base: base.strip_suffix("/v1").unwrap_or(base).to_string(),
+            model: self.model.clone(),
+            key: self.key.clone()?,
+            extra: self.extra.clone(),
+            settings: self.anthropic.clone(),
+        })
+    }
+
     /// The context window the server is running with, if it says. Tries llama.cpp (`/props`),
     /// LM Studio (`/api/v0/models/{id}`), then vLLM (`/v1/models` `max_model_len`).
     pub async fn probe_context(&self) -> Option<u64> {
@@ -202,6 +223,9 @@ impl Client {
         req: &Request<'_>,
         on: &mut (dyn FnMut(StreamEvent) + Send),
     ) -> Result<Response> {
+        if let Some(c) = self.gateway_claude() {
+            return c.complete(req, on).await;
+        }
         let url = format!("{}/chat/completions", self.base.trim_end_matches('/'));
         let mut rb = self.http.post(url).json(&self.body(req));
         if let Some(k) = &self.key {
@@ -333,6 +357,7 @@ mod tests {
             model: "m".into(),
             key: None,
             extra: None,
+            anthropic: Default::default(),
         };
         let msgs = vec![Message {
             role: Role::User,
@@ -377,6 +402,7 @@ mod tests {
             model: "m".into(),
             key: None,
             extra: None,
+            anthropic: Default::default(),
         };
         let msgs = vec![Message::user("hi")];
         let req = |think_budget| Request {
@@ -409,6 +435,7 @@ mod tests {
             model: "m".into(),
             key: None,
             extra: None,
+            anthropic: Default::default(),
         };
         let msgs = vec![Message::user("hi")];
         let req = |cache_key| Request {
@@ -433,6 +460,7 @@ mod tests {
             model: "m".into(),
             key: None,
             extra,
+            anthropic: Default::default(),
         };
         let msgs = vec![Message::user("hi")];
         let req = |think| Request {
@@ -466,6 +494,60 @@ mod tests {
         assert_eq!(
             pinned.body(&req(Some(false)))["chat_template_kwargs"]["enable_thinking"],
             true
+        );
+    }
+}
+
+#[cfg(test)]
+mod gateway_tests {
+    use super::*;
+
+    fn client(base: &str, model: &str, key: Option<&str>) -> Client {
+        Client {
+            http: reqwest::Client::new(),
+            base: base.into(),
+            model: model.into(),
+            key: key.map(Into::into),
+            extra: None,
+            anthropic: Default::default(),
+        }
+    }
+
+    #[test]
+    fn vercel_anthropic_models_use_the_messages_api() {
+        let c = client(
+            "https://ai-gateway.vercel.sh/v1",
+            "anthropic/claude-opus-5.5",
+            Some("gw-key"),
+        )
+        .gateway_claude()
+        .unwrap();
+        assert_eq!(c.base, "https://ai-gateway.vercel.sh");
+        assert_eq!(c.model, "anthropic/claude-opus-5.5");
+        assert_eq!(c.key, "gw-key");
+    }
+
+    #[test]
+    fn other_models_and_hosts_stay_on_chat_completions() {
+        let v = "https://ai-gateway.vercel.sh/v1";
+        assert!(
+            client(v, "openai/gpt-5", Some("k"))
+                .gateway_claude()
+                .is_none()
+        );
+        assert!(
+            client(v, "anthropic/claude-opus-5.5", None)
+                .gateway_claude()
+                .is_none()
+        );
+        assert!(
+            client(
+                "https://openrouter.ai/api/v1",
+                "anthropic/claude-opus-5.5",
+                Some("k")
+            )
+            .gateway_claude()
+            .is_none()
         );
     }
 }
