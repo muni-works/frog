@@ -2,6 +2,9 @@ import SwiftUI
 
 @main
 struct FrogApp: App {
+    /// Asks before quitting mid-turn, and records the quit for the next launch's restore.
+    @NSApplicationDelegateAdaptor(QuitGuard.self) private var quitGuard
+
     init() {
         if MorningNotice.headless {
             // Woken by the brief's watcher to post the morning notice: no window, no Dock icon,
@@ -104,6 +107,7 @@ struct RootView: View {
                 p.onPrimaryFolder = { folder = $0 }
                 panes = p
                 Recents.add(url)
+                SessionRegistry.shared.track(p) { openWindow(value: $0) }
             }
         }
         .onDisappear { panes?.stopAll() }

@@ -371,6 +371,14 @@ final class Panes {
         pane.ui.focusComposer()
     }
 
+    /// A pane for `workspace` at the end of the window, beside the last one (restoring).
+    func add(_ workspace: Workspace) {
+        guard canSplit, let last = items.last else { return }
+        let pane = Pane(workspace: workspace)
+        items.append(pane)
+        setLayout(layout.inserting(pane.id, beside: last.id, on: .right))
+    }
+
     /// Move a pane beside another, or swap the two.
     func move(_ pane: Pane, to target: Pane, _ drop: PaneDrop) {
         guard pane !== target else { return }

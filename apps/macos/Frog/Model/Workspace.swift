@@ -177,7 +177,9 @@ final class Workspace {
 
     /// `fresh` starts a new conversation instead of reopening the folder's last one; `resume`
     /// opens that session.
-    init(folder: URL, fresh: Bool = false, resume: String? = nil) {
+    /// `waitLock`: the session's engine from before a relaunch may still be exiting; wait for it
+    /// rather than fail.
+    init(folder: URL, fresh: Bool = false, resume: String? = nil, waitLock: Bool = false) {
         self.folder = folder
         preferredModel = Self.usableStartingModel(Self.startingModel)
         // Name models the way the last list did until this folder's own loads (it's slow).
@@ -185,11 +187,14 @@ final class Workspace {
         // Pick up where you left off: the first window reopens this folder's last session.
         // Windows and tabs opened after that start a fresh conversation.
         let chat = Frog.isChat(folder)
-        let last = resume ?? (Self.restored || fresh || chat ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder)))
+        // Restoring what was open (see `SessionRegistry`) decides what this window shows.
+        let restoring = SessionRegistry.shared.hasPending
+        let last = resume ?? (Self.restored || fresh || chat || restoring ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder)))
         Self.restored = true
         let replay = Replay.arguments
         isReplay = replay != nil
-        start(arguments: replay ?? last.map { ["-r", $0] } ?? [])
+        let wait = waitLock ? ["--wait-lock", "5"] : []
+        start(arguments: replay ?? last.map { ["-r", $0] + wait } ?? [])
         // A remembered session that won't open (deleted, or from another engine version) starts
         // a fresh conversation instead of leaving a dead one.
         if replay == nil, resume == nil, last != nil, let c = conversation {
