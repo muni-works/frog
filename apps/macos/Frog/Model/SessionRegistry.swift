@@ -155,7 +155,8 @@ final class SessionRegistry {
         var out: [OpenSession] = []
         for (w, entry) in windows.compactMap(\.value).enumerated() {
             for (p, pane) in entry.items.enumerated() {
-                guard let c = pane.workspace.conversation, let id = c.sessionID else { continue }
+                // A chat nobody has typed in yet has no session on disk to come back to.
+                guard let c = pane.workspace.conversation, let id = c.sessionID, !c.turns.isEmpty else { continue }
                 let running = c.turns.last.map { !$0.finished } ?? false
                 out.append(OpenSession(
                     id: id,
@@ -174,10 +175,16 @@ final class SessionRegistry {
 
     // MARK: Restoring
 
+    /// Whether the engine has a log for this session (`-r` fails without one).
+    static func logExists(_ id: String) -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return FileManager.default.fileExists(atPath: home.appending(path: ".local/share/frog/sessions/\(id).jsonl").path)
+    }
+
     private func restore(_ group: [OpenSession], into panes: Panes) {
         for (i, s) in group.enumerated() {
             let folder = URL(fileURLWithPath: s.cwd)
-            guard FileManager.default.fileExists(atPath: folder.path) else { continue }
+            guard FileManager.default.fileExists(atPath: folder.path), Self.logExists(s.id) else { continue }
             let workspace: Workspace
             if i == 0 {
                 workspace = Workspace(folder: folder, resume: s.id, waitLock: true)
