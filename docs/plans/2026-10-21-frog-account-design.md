@@ -1,6 +1,6 @@
 # frog account: Frog Pro and Frog API, built in
 
-Status: draft for review · 2026-10-21 · owner: frog manager
+Status: v2, revised after code review + zest review · 2026-10-21 · owner: frog manager
 
 ## Goal
 
@@ -116,3 +116,70 @@ launch (zest agrees). zest is fine with `frog/` + `frog-api/` alias.
 2. Should logged-out app users see frog models in the picker (with Sign in), or only in Settings?
    Recommend the picker: that's the "deeply integrated" part.
 3. Pro vs API: same models and limits, different billing only? Recommend yes for launch.
+
+## v2: changes from code review (2026-10-21)
+
+**Identity.** Keep `frog-api` as the internal id, Keychain account and canonical spec. Show
+"frog" as the display name; `frog/` stays an input alias. Flipping the id would need a Keychain
+migration and rewriting stored specs (models.json, config.toml, sessions) for no user gain.
+(Supersedes "Naming" above unless Cam overrules.)
+
+**Order, everywhere.** One shared rank in the engine: this Mac's models, then frog, then your
+servers, then other clouds. Applied in:
+- `providers::list` (today PRESETS order: frog-api is first, even before ollama)
+- `catalog::by_provider` (BTreeMap → alphabetical; becomes an ordered Vec)
+- `models::pick_default`: after local checks, a connected frog beats `enabled` entries and
+  `ANTHROPIC_API_KEY`
+- FrogKit `ModelSections` (Mac and iOS)
+- Settings: frog becomes a fixed card; it's removed from "Add a Provider…" and "Remove Key"
+- Picker "Add Key…" menu: frog first
+
+**Which key wins.** One resolver returns `(source, key)` for both the UI and requests (today
+`key_source` says env-first while `key()` uses the Keychain first). Precedence: `FROG_API_KEY`
+wins, and the card and `frog account` say "using FROG_API_KEY; your sign-in is ignored here".
+
+**Host pinning.** The Keychain frog key goes only to `https://api.frog.toys`. With
+`FROG_BASE_URL` overridden, only an env key is sent (mirrors OpenAI's rule).
+
+**Non-removable, enforced in the engine.** `--remove-provider frog-api` refuses. `add_custom`
+reserves `frog`, `frog-api`, `tang-cloud`, `zest`.
+
+**Logged out = zero network.** A static frog model list (`qwen3-coder-next`, context from config)
+backs the picker when there's no key; frog's `/models` is never fetched logged out. `/me` is only
+called when a key exists, lazily from the card, at most every 10 min, 3 s timeout; never at
+launch, never from `--providers`. Sign-in is hidden behind a build flag until zest's `/activate`
+ships (no unauthenticated feature probe). A test runs `--providers`/`--catalog` logged out
+against a fail-on-hit server. Known existing exception, kept: the OpenRouter/Vercel public
+catalogs are fetched keyless on catalog refresh.
+
+**Device flow (post-launch).** Open only `https://api.frog.toys/activate` (host checked, https).
+Show the user code in the app/CLI, and the page asks the user to confirm it matches. Never log
+`device_code` or the key. Signing in replaces a pasted key after confirmation (one Keychain slot).
+`frog logout` revokes Pro-minted keys server-side, best effort.
+
+**Card copy by source.** "Pro · signed in" / "API key · Keychain" / "API key · FROG_API_KEY".
+Sign out only for a Keychain key. 401 copy depends on the source.
+
+**Kept as is.** The per-project "code goes to the cloud" consent still applies to frog. The spend
+estimate and monthly cap apply to API and beta; Pro shows "included" (when Pro exists).
+
+**Oct 30 scope.**
+- Ship: engine rank everywhere, key resolver, static model list, non-removable, host pinning,
+  `frog account` (local info only), app card with paste-key, FrogKit order, menus.
+- After: device flow and Sign in (beta invite ~Oct 24 if zest's /activate lands, Pro ~Nov 9),
+  `/me` plan badge (needs zest#20 deployed), slow-turn line, Pro cap exemption.
+
+## Implementation plan
+
+| # | piece | files | tests |
+|---|---|---|---|
+| 1 | shared rank + `list`/`by_provider`/`pick_default` | providers.rs, catalog.rs, models.rs | order with a fake custom server; default prefers frog over enabled anthropic |
+| 2 | key resolver + host pinning | providers.rs, config.rs | env+keychain precedence; keychain key withheld under FROG_BASE_URL |
+| 3 | non-removable + reserved aliases | providers.rs, main.rs | refuse remove; add_custom rejects aliases |
+| 4 | static logged-out model list + zero-network test | catalog.rs | fail-on-hit mock for --providers/--catalog |
+| 5 | `frog account` (local) | main.rs | golden output |
+| 6 | app: FrogKit sections rank, frog card, menus | ModelList.swift, SettingsView.swift, ModelPicker.swift | XCTest `ModelSections.make`; card snapshot |
+| 7 | (post-launch) `/me` badge, device flow, Sign in | account.rs, app | scripted server: pending/slow_down/expired/denied |
+
+1–5 are engine/CLI (one worktree, sequential). 6 can run in parallel once 1's rank is exposed via
+`--providers --json`.
