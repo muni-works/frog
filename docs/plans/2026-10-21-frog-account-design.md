@@ -244,8 +244,9 @@ Keychain account `cloud` (migrated from `frog-api`). Order: This Mac → your se
 → other clouds. `FROG_API_KEY` wins over a saved key. Logged-out picker shows frog cloud models
 from a built-in list.
 
-## Server data plan (Cam, 2026-10-21; owned by zest's edge)
-D1 is the source of truth (users, sessions, keys, plans, audit; Better Auth's D1 adapter). Durable
-Objects hold live per-key credit, rate limits and usage counters, written through to D1. KV is a
-cache only. Schema stays portable (Drizzle/Kysely, standard SQL) for a later Postgres move.
+## Server data plan (Cam, 2026-10-21, revised; owned by zest's edge)
+Postgres on Neon, reached from Workers through Cloudflare Hyperdrive, is the source of truth:
+users, sessions, API keys, plans, Stripe state, usage history (Better Auth Postgres adapter,
+Drizzle migrations, a Neon branch per PR). Durable Objects front live credit balances and rate
+limits and write to Postgres in batches, keeping the hot path off the database. KV is a cache.
 frog is unaffected: it only sees `frog_` keys, `/me`, and the device-flow endpoints.
