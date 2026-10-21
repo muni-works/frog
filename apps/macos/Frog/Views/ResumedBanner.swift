@@ -1,0 +1,39 @@
+import SwiftUI
+
+/// "Resumed after restart": shown on a conversation whose interrupted turn frog picked back up
+/// at launch, with a way to stop it and to opt this conversation out of doing that again.
+struct ResumedBanner: View {
+    let conversation: Conversation
+    @State private var autoContinue = true
+
+    var body: some View {
+        if conversation.resumedAfterRestart, let id = conversation.sessionID {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.clockwise.circle")
+                Text("Resumed after restart")
+                Spacer(minLength: 8)
+                Toggle("Resume automatically", isOn: $autoContinue)
+                    .toggleStyle(.checkbox)
+                    .help("Pick this conversation's running turn back up after frog restarts")
+                    .onChange(of: autoContinue) { _, on in SessionRegistry.shared.setAutoContinue(id, on) }
+                if conversation.busy {
+                    Button("Stop") { conversation.interrupt() }
+                        .buttonStyle(.link)
+                }
+                Button {
+                    conversation.resumedAfterRestart = false
+                } label: {
+                    Image(systemName: "xmark").font(.caption2.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help("Dismiss")
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .onAppear { autoContinue = SessionRegistry.shared.autoContinues(id) }
+        }
+    }
+}

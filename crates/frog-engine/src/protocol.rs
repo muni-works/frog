@@ -56,6 +56,10 @@ pub enum Decision {
     Deny,
 }
 
+/// What [`Op::Continue`] tells the model when the client gives no note of its own.
+pub const CONTINUE_NOTE: &str =
+    "<resumed after the app restarted; your previous turn was interrupted; continue>";
+
 /// Client → engine.
 ///
 /// `Interrupt`, `Permission`, `Answer`, `Elicit`, `AppCall` and `StopSubagent` take effect immediately. Everything else is queued
@@ -75,6 +79,12 @@ pub enum Op {
         label: String,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         send: String,
+    },
+    /// Pick the conversation back up after the app restarted mid-turn: runs a turn on the
+    /// (repaired) history with `note`, or [`CONTINUE_NOTE`] when absent, as the message.
+    Continue {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
     },
     /// Run a shell command directly; its output is attached to the next message.
     Shell {

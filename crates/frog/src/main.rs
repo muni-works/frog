@@ -53,6 +53,10 @@ struct Cli {
     /// Resume a session by id.
     #[arg(short, long, conflicts_with = "cont")]
     resume: Option<String>,
+    /// With `--resume`: if another frog process holds the session, wait up to this many
+    /// seconds for it to exit, then fail rather than start a new session.
+    #[arg(long, value_name = "SECS", requires = "resume")]
+    wait_lock: Option<u64>,
     /// Fork a session into a new one and continue there: `<id>`, or `<id>@<turn>` to cut right after that turn.
     #[arg(long, conflicts_with_all = ["cont", "resume"])]
     fork: Option<String>,
@@ -482,8 +486,19 @@ async fn run() -> Result<bool> {
     };
     // A client (another window, say) that asks for a session already open elsewhere gets a
     // fresh one rather than an engine that exits.
+    let resume = match (resume, cli.wait_lock) {
+        // Resuming after a relaunch: the old engine may still be on its way out. Wait for it,
+        // and never quietly fork the conversation into a new session.
+        (Some(id), Some(secs)) => {
+            if !session::Log::wait_free(&store, &id, std::time::Duration::from_secs(secs)) {
+                anyhow::bail!("session {id} is still open in another frog process after {secs}s");
+            }
+            Some(id)
+        }
+        (r, _) => r,
+    };
     let resume = match resume {
-        Some(id) if cli.serve && session::Log::in_use(&store, &id) => {
+        Some(id) if cli.wait_lock.is_none() && cli.serve && session::Log::in_use(&store, &id) => {
             eprintln!("session {id} is open in another frog process; starting a new one");
             None
         }

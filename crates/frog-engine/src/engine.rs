@@ -1136,6 +1136,10 @@ impl Agent {
                 let text = if send.trim().is_empty() { label } else { send };
                 self.turn(&text, Vec::new()).await?
             }
+            Op::Continue { note } => {
+                let note = note.unwrap_or_else(|| crate::protocol::CONTINUE_NOTE.to_string());
+                self.turn(&note, Vec::new()).await?
+            }
             Op::Shell { command } => self.shell(&command).await,
             Op::Wake => {
                 let notices = self.shared.bg.take_notices();
@@ -1439,6 +1443,9 @@ impl Agent {
                     .collect(),
             );
         }
+        // The user's message is on disk before any model call: a crash or quit mid-turn
+        // loses the reply, never the request. One fsync per accepted message.
+        self.sync_log();
 
         let mut compacted = None;
         let mut repeats: HashMap<String, u32> = HashMap::new();
@@ -4409,6 +4416,73 @@ mod tests {
                 .iter()
                 .any(|b| matches!(b, Block::ToolResult { id, is_error: true, .. } if id == "t1"))
         );
+    }
+
+    /// After a restart, `Continue` runs a new turn on the repaired history, telling the model
+    /// its last turn was interrupted.
+    #[tokio::test]
+    async fn continue_after_a_crash_runs_a_new_turn_with_the_note() {
+        let dir = tmp_store();
+        let id = session::new_id();
+        let mut log = Log::create(
+            &dir,
+            Header {
+                version: session::VERSION,
+                id: id.clone(),
+                cwd: "/x".into(),
+                model: "m".into(),
+                created: 0,
+                forked_from: None,
+            },
+        )
+        .unwrap();
+        log.append(&Record::Push {
+            message: Message::user("go"),
+        })
+        .unwrap();
+        log.append(&Record::Push {
+            message: Message {
+                role: Role::Assistant,
+                content: vec![Block::ToolUse {
+                    id: "t1".into(),
+                    name: "Bash".into(),
+                    input: json!({ "command": "ls" }),
+                }],
+            },
+        })
+        .unwrap();
+        drop(log);
+        drop(log_turn_started(&dir, &id));
+
+        let (mut h, sent) = engine_sent(
+            vec![reply(vec![text("done")], Stop::End)],
+            Some(dir.clone()),
+            Some(id.clone()),
+            None,
+            std::env::temp_dir(),
+        );
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops.send(Op::Continue { note: None }).unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnStarted { turn: 2, input, .. } if input == crate::protocol::CONTINUE_NOTE
+        )));
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnEnded {
+                turn: 2,
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+        let req = sent.lock().unwrap().last().cloned().unwrap();
+        assert!(req.contains("resumed after the app restarted"));
+        assert!(
+            req.contains("t1"),
+            "the repaired tool call is still in the history"
+        );
+        shutdown(h).await;
     }
 
     #[tokio::test]
