@@ -316,9 +316,9 @@ impl Config {
             "mlx" => Some("http://localhost:8080/v1".into()),
             "vllm" => Some("http://localhost:8000/v1".into()),
             "openai" => std::env::var("OPENAI_BASE_URL").ok(),
-            "tang-cloud" => std::env::var("TANG_BASE_URL")
-                .ok()
-                .filter(|u| !u.is_empty())
+            "tang-cloud" => ["TANG_CLOUD_BASE_URL", "TANG_BASE_URL"]
+                .iter()
+                .find_map(|v| std::env::var(v).ok().filter(|u| !u.is_empty()))
                 .or_else(|| crate::providers::preset(prov).map(|x| x.base_url.to_string())),
             "tang" | "apple" => p.sidecar.as_deref().map(crate::sidecar::base_url),
             "openrouter" | "vercel" => {
