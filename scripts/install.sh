@@ -97,6 +97,12 @@ main() {
   [ -w "$dir" ] || err "$dir isn't writable; set FROG_INSTALL_DIR to a directory you own"
   { cp "$tmp/$name/frog" "$dir/frog.tmp" && chmod 755 "$dir/frog.tmp" && mv "$dir/frog.tmp" "$dir/frog"; } \
     || err "failed to install to $dir"
+  # Unsigned builds: curl sets no quarantine flag, but clear it anyway, and ad-hoc sign if
+  # needed (Apple silicon won't run unsigned code). Signed builds pass codesign -v untouched.
+  if [ "$(uname -s)" = Darwin ]; then
+    xattr -d com.apple.quarantine "$dir/frog" 2>/dev/null || true
+    codesign -v "$dir/frog" 2>/dev/null || codesign -s - -f "$dir/frog" 2>/dev/null || true
+  fi
   info "installed frog $version to $dir/frog"
 
   case ":$PATH:" in

@@ -123,9 +123,33 @@ async fn fetch_prebuilt(dir: &Path) -> Result<()> {
     if !ok || !dir.join("tang-llm").is_file() {
         bail!("the release archive didn't contain tang-llm");
     }
-    // Downloaded with reqwest, so no quarantine attribute; Gatekeeper only needs a signature.
+    unquarantine(&dir.join("tang-llm"));
     println!("tang-llm: installed to {}", dir.display());
     Ok(())
+}
+
+/// Let an unsigned build run. A reqwest download carries no quarantine attribute, but clear it
+/// anyway, and give the binary an ad-hoc signature if it has none (Apple silicon won't run
+/// unsigned code). Signed, notarized builds pass `codesign -v` and are left alone.
+fn unquarantine(bin: &Path) {
+    let _ = Command::new("xattr")
+        .args(["-d", "com.apple.quarantine"])
+        .arg(bin)
+        .stderr(std::process::Stdio::null())
+        .status();
+    let signed = Command::new("codesign")
+        .arg("-v")
+        .arg(bin)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if !signed {
+        let _ = Command::new("codesign")
+            .args(["-s", "-", "-f"])
+            .arg(bin)
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
 }
 
 /// Download `repo`'s files into the hub cache layout tang-llm reads:
