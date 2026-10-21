@@ -19,7 +19,7 @@ cd your-repo
 frog
 ```
 
-With no model set, frog uses `tang/mlx-community/Qwen3-4B-4bit` on its own Metal engine. Set `FROG_MODEL` or `default_model` in `~/.config/frog/config.toml` to change the default.
+With no model set, frog uses `local/qwen3-4b` (mlx-community/Qwen3-4B-4bit) on its own Metal engine. Set `FROG_MODEL` or `default_model` in `~/.config/frog/config.toml` to change the default.
 
 Ask for a task in plain words:
 
@@ -38,7 +38,7 @@ frog -m ollama/qwen3-coder:30b
 frog -m lmstudio/qwen3-coder-30b
 frog -m apple/on-device
 frog -m anthropic/claude-sonnet-5
-frog -m frog-api/qwen3-coder-next    # hosted; needs FROG_API_KEY
+frog -m cloud/qwen3-coder-next       # frog cloud, hosted; needs FROG_API_KEY
 ```
 
 Inside a session, `/model` switches. `frog --providers` lists providers and whether each is connected. The [reference](reference.md#providers) has the full table.

@@ -25,7 +25,7 @@ The engine crate has no terminal dependencies, so the compiler enforces this bou
 
 | spec | backend |
 |---|---|
-| `tang/<hf-repo-or-dir>` | the bundled `tang-llm` sidecar (Metal): frog starts it on `localhost:8911` and reuses it across sessions |
+| `local/<model>` | This Mac: the bundled `tang-llm` sidecar (Metal). `local/qwen3-4b` and `local/qwen3-32b` are short for `mlx-community/Qwen3-4B-4bit` and `-32B-4bit`; any HF repo or directory works. frog starts it on `localhost:8911` and reuses it across sessions |
 | `apple/on-device` | the `frog-apple` sidecar: Apple's on-device Foundation Model on `localhost:8912`, driven in `json` tool mode (guided generation) |
 | `ollama/<model>` | ollama native `/api/chat` (sets `num_ctx` from `context_window`) |
 | `lmstudio/<model>` | OpenAI-compatible, `localhost:1234/v1` |
@@ -33,9 +33,11 @@ The engine crate has no terminal dependencies, so the compiler enforces this bou
 | `vllm/<model>` | OpenAI-compatible, `localhost:8000/v1` |
 | `openai/<model>` | OpenAI, or `OPENAI_BASE_URL` / `--base-url` |
 | `anthropic/<model>` | Messages API with prompt caching |
-| `frog-api/<model>` | frog api, hosted (`FROG_API_KEY`; `FROG_BASE_URL` overrides `https://api.frog.toys/v1`) |
+| `cloud/<model>` | frog cloud, hosted (`FROG_API_KEY` or a saved key; `FROG_BASE_URL` overrides `https://api.frog.toys/v1`, and then only `FROG_API_KEY` is sent) |
 
-`tang/` runs safetensors checkpoints (Qwen3 family today) from the Hugging Face cache or a directory, on [tang](https://github.com/ecto/tang)'s Metal backend. It uses the checkpoint's own chat template, reuses the KV cache for the prefix a turn shares with the previous one, and logs to `~/.local/share/frog/tang-llm.log`. `tang/` accepts bf16 checkpoints and `mlx-community` 4-bit ones. The binary is found through `FROG_TANG_BIN`, then next to `frog`, then on `PATH`.
+Old provider ids still work as input: `tang/` means `local/`; `frog-api/`, `frog/`, `tang-cloud/` and `zest/` mean `cloud/`. A bare model id resolves when only one provider has it (`frog -m qwen3-coder-next`). Providers are listed This Mac first, then your servers, then frog cloud, then other clouds (`--providers --json` carries `rank` and `pinned`). `frog account [--json]` shows frog cloud's key source and base URL without touching the network.
+
+`local/` runs safetensors checkpoints (Qwen3 family today) from the Hugging Face cache or a directory, on [tang](https://github.com/ecto/tang)'s Metal backend. It uses the checkpoint's own chat template, reuses the KV cache for the prefix a turn shares with the previous one, and logs to `~/.local/share/frog/tang-llm.log`. `local/` accepts bf16 checkpoints and `mlx-community` 4-bit ones. The binary is found through `FROG_TANG_BIN`, then next to `frog`, then on `PATH`.
 
 `apple/` needs Apple Intelligence enabled. Build the sidecar with `swift build -c release --package-path sidecars/frog-apple`; it's found through `FROG_APPLE_BIN`, next to `frog`, or on `PATH`. The model has an 8k context and no native tool calling, so frog sends tool calls as a JSON schema that runs as guided generation.
 
