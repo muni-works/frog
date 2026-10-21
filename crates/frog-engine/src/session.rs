@@ -140,6 +140,22 @@ impl Log {
         unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) != 0 }
     }
 
+    /// Wait up to `timeout` for whoever holds this session to let it go. flock is released
+    /// when its holder dies, so a lock still held at the deadline belongs to a live process
+    /// (an engine from before a fast relaunch that hasn't exited yet, say). True when free.
+    pub fn wait_free(dir: &Path, id: &str, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if !Self::in_use(dir, id) {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
     pub fn open(dir: &Path, id: &str) -> Result<Self> {
         let file = OpenOptions::new()
             .append(true)
@@ -607,6 +623,23 @@ mod tests {
         let dir = tmp();
         let _log = Log::create(&dir, header("a")).unwrap();
         assert!(Log::open(&dir, "a").is_err());
+    }
+
+    #[test]
+    fn wait_free_waits_for_the_holder_to_let_go() {
+        let dir = tmp();
+        let log = Log::create(&dir, header("w")).unwrap();
+        let short = std::time::Duration::from_millis(100);
+        assert!(!Log::wait_free(&dir, "w", short), "a held lock is not free");
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(log);
+        });
+        let t = std::time::Instant::now();
+        assert!(Log::wait_free(&dir, "w", std::time::Duration::from_secs(5)));
+        assert!(t.elapsed() >= std::time::Duration::from_millis(150));
+        release.join().unwrap();
+        assert!(Log::open(&dir, "w").is_ok());
     }
 
     #[test]

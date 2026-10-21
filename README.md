@@ -6,7 +6,7 @@ A free, open-source terminal coding agent for local models. [frog.toys](https://
 curl -fsSL https://frog.toys/install.sh | sh
 ```
 
-frog runs on your machine by default. Its own inference engine, `tang/`, runs models on Apple Metal with nothing else to install. It also works with ollama, LM Studio, Apple's on-device model, Anthropic and OpenAI.
+frog runs on your machine by default. Its own inference engine (`local/`, powered by tang) runs models on Apple Metal with nothing else to install. It also works with ollama, LM Studio, Apple's on-device model, Anthropic and OpenAI.
 
 ## Quickstart
 
@@ -15,7 +15,7 @@ cd your-repo
 frog
 ```
 
-The default model is `tang/mlx-community/Qwen3-4B-4bit` on frog's own engine. Ask for something:
+The default model is `local/qwen3-4b` (Qwen3 4B, 4-bit) on frog's own engine. Ask for something:
 
 ```
 > why does `cargo test` fail? fix it.
@@ -28,7 +28,7 @@ Switch models with `-m` (or `/model` inside a session):
 ```sh
 frog -m ollama/qwen3-coder:30b       # any provider/model
 frog -m lmstudio/qwen3-coder-30b
-frog -m tang/mlx-community/Qwen3-4B-4bit   # frog's own inference sidecar, no ollama needed
+frog -m local/qwen3-4b                # frog's own engine on this Mac, no ollama needed
 frog -m apple/on-device              # Apple's on-device Foundation Model (macOS 26)
 frog -m anthropic/claude-sonnet-5
 ```
@@ -42,27 +42,27 @@ frog -p --json "..."                 # every engine event as a JSON line
 
 More in [docs/quickstart.md](docs/quickstart.md).
 
-## Run on frog api
+## Run on frog cloud
 
-Local models are private and free, but slow on small machines. frog api hosts Qwen3-Coder-Next, powered by tang, for when you want speed. It is in free, invite-only beta.
+Local models are private and free, but slow on small machines. frog cloud hosts Qwen3-Coder-Next, powered by tang, for when you want speed. It is in free, invite-only beta.
 
 ```sh
 export FROG_API_KEY=...              # during the beta, get one at https://api.frog.toys/beta
-frog -m frog-api/qwen3-coder-next
+frog -m cloud/qwen3-coder-next
 ```
 
-If frog api is offline or out of credit or capacity, frog says so and carries on with a local model: `FROG_FALLBACK_MODEL` if set, otherwise the default `tang/` model. `FROG_BASE_URL` points it at a different endpoint.
+If frog cloud is offline or out of credit or capacity, frog says so and carries on with a local model: `FROG_FALLBACK_MODEL` if set, otherwise the default `local/qwen3-4b`. `FROG_BASE_URL` points it at a different endpoint (a key saved in the app or Keychain only goes to `https://api.frog.toys`; elsewhere, only `FROG_API_KEY` is sent). `frog account` shows which key is in use. Old names (`frog-api/`, `tang/`) still work.
 
 ### Other agents
 
-frog api is OpenAI-compatible, so other agents can use it too. Base URL
+frog cloud's endpoint, frog api, is OpenAI-compatible, so other agents can use it too. Base URL
 `https://api.frog.toys/v1`, model `qwen3-coder-next`, key `FROG_API_KEY` (get one at
 [api.frog.toys/beta](https://api.frog.toys/beta)). Beta limits are low, and you'll get a 503 when
 it's at capacity.
 
 **opencode** (`opencode.json`)
 ```json
-{"provider":{"frog":{"npm":"@ai-sdk/openai-compatible","name":"frog api","options":{"baseURL":"https://api.frog.toys/v1","apiKey":"{env:FROG_API_KEY}"},"models":{"qwen3-coder-next":{"name":"Qwen3-Coder-Next (frog)"}}}},"model":"frog/qwen3-coder-next"}
+{"provider":{"frog":{"npm":"@ai-sdk/openai-compatible","name":"frog cloud","options":{"baseURL":"https://api.frog.toys/v1","apiKey":"{env:FROG_API_KEY}"},"models":{"qwen3-coder-next":{"name":"Qwen3-Coder-Next (frog cloud)"}}}},"model":"frog/qwen3-coder-next"}
 ```
 
 **Cline, Roo Code, Kilo Code**: Settings → API Provider: **OpenAI Compatible** → Base URL
@@ -72,7 +72,7 @@ native tool calling. Context window 32768.
 **Continue** (`config.yaml`)
 ```yaml
 models:
-  - name: Qwen3-Coder-Next (frog)
+  - name: Qwen3-Coder-Next (frog cloud)
     provider: openai
     model: qwen3-coder-next
     apiBase: https://api.frog.toys/v1

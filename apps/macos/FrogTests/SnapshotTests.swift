@@ -270,6 +270,23 @@ extension SnapshotTests {
             size: CGSize(width: 640, height: 1500), to: "settings-models", settle: 5)
     }
 
+    /// frog cloud's card signed out, with a Keychain key and with FROG_API_KEY: `frog-cloud-card.png`.
+    func testRenderFrogCloudCard() throws {
+        func p(_ key: String?) -> ProviderInfo {
+            ProviderInfo(id: "cloud", name: "frog cloud", kind: "openai", baseUrl: "https://api.frog.toys/v1",
+                         local: false, custom: false, key: key, keyUrl: "https://api.frog.toys/beta",
+                         connected: key != nil, rank: 2, pinned: true)
+        }
+        let cards = Form {
+            Section("Signed out") { FrogCloudCard(provider: p(nil)) { _ in } }
+            Section("Keychain") { FrogCloudCard(provider: p("keychain")) { _ in } }
+            Section("Environment") { FrogCloudCard(provider: p("env")) { _ in } }
+        }
+        .formStyle(.grouped)
+        .background(Color(nsColor: .windowBackgroundColor))
+        try render(cards, size: CGSize(width: 640, height: 360), to: "frog-cloud-card")
+    }
+
     /// A new chat's empty page on this Mac: recent projects, what frog found. `new-chat.png`.
     func testRenderNewChat() throws {
         let c = Conversation(preview: Frog.chatFolder)

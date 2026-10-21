@@ -9,7 +9,7 @@ struct SuggestedModel: Identifiable, Hashable {
     let approxGB: Double
 
     var id: String { repo }
-    var spec: String { "tang/\(repo)" }
+    var spec: String { "\(ProviderID.local)/\(repo)" }
 
     static let all: [SuggestedModel] = [
         SuggestedModel(repo: "mlx-community/Qwen3-4B-4bit", title: "Qwen3 4B",

@@ -180,6 +180,8 @@ pub fn specs() -> Vec<ToolSpec> {
 pub fn kind(name: &str) -> Kind {
     match name {
         "Bash" | "Image" | "Screenshot" | "Compare" => Kind::Exec,
+        // Its command asks like Bash; a bare timer is let through (`Agent::permit`).
+        crate::background::MONITOR => Kind::Exec,
         // Their read actions are exempted per call (`panes::is_read`).
         crate::panes::TERMINAL | crate::panes::PREVIEW => Kind::Exec,
         "Write" | "Edit" => Kind::Edit,
@@ -242,6 +244,15 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
             .collect::<Vec<_>>()
             .join(": "),
         "Task" => s("description"),
+        "Monitor" => {
+            let c = s("command");
+            if c.is_empty() {
+                format!("{}s", input["after_s"])
+            } else {
+                c
+            }
+        }
+        "TaskOutput" | "TaskStop" | "JobOutput" | "JobStop" => s("id"),
         crate::folder::TOOL => s("path"),
         "Recall" => {
             let q = s("query");

@@ -147,6 +147,8 @@ struct PaneView: View {
             .id(ObjectIdentifier(conversation))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
+                    ResumedBanner(conversation: conversation)
+                        .id(ObjectIdentifier(conversation))
                     BiggerModelLine(workspace: workspace, conversation: conversation)
                         .id(ObjectIdentifier(conversation))
                     PingLine(conversation: conversation)

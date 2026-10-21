@@ -38,7 +38,7 @@ struct Cli {
     /// With --serve: the client can answer MCP elicitations and host MCP Apps.
     #[arg(long, requires = "serve", hide = true)]
     rich: bool,
-    /// Profile name from config.toml, or provider/model (e.g. ollama/qwen3, lmstudio/qwen3-coder, anthropic/claude-sonnet-5)
+    /// Profile name from config.toml, or provider/model (e.g. local/qwen3-4b, cloud/qwen3-coder-next, ollama/qwen3, anthropic/claude-sonnet-5)
     #[arg(short, long)]
     model: Option<String>,
     /// Load an alternate config file (useful for isolated setups and testing).
@@ -53,6 +53,10 @@ struct Cli {
     /// Resume a session by id.
     #[arg(short, long, conflicts_with = "cont")]
     resume: Option<String>,
+    /// With `--resume`: if another frog process holds the session, wait up to this many
+    /// seconds for it to exit, then fail rather than start a new session.
+    #[arg(long, value_name = "SECS", requires = "resume")]
+    wait_lock: Option<u64>,
     /// Fork a session into a new one and continue there: `<id>`, or `<id>@<turn>` to cut right after that turn.
     #[arg(long, conflicts_with_all = ["cont", "resume"])]
     fork: Option<String>,
@@ -235,7 +239,21 @@ async fn run() -> Result<bool> {
     // `frog setup [MODEL]`: install tang-llm and download the default model's weights.
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("setup") {
-        frog_engine::setup::run(args.get(2).map(String::as_str)).await?;
+        let model = args.get(2).map(|m| {
+            let m = m.strip_prefix("local/").unwrap_or(m);
+            frog_engine::providers::local_repo(m)
+        });
+        frog_engine::setup::run(model).await?;
+        return Ok(true);
+    }
+    // `frog account [--json]`: frog cloud's key and where it goes. Local only, no network.
+    if args.get(1).map(String::as_str) == Some("account") {
+        let a = frog_engine::providers::Account::read();
+        if args.iter().skip(2).any(|x| x == "--json") {
+            println!("{}", serde_json::to_string(&a)?);
+        } else {
+            print!("{}", a.render());
+        }
         return Ok(true);
     }
     let cli = Cli::parse();
@@ -320,6 +338,15 @@ async fn run() -> Result<bool> {
     };
     let (profile_name, mut profile) = cfg.resolve(chosen.as_deref())?;
     if let Some(b) = cli.base_url {
+        // A saved frog cloud or OpenAI key goes only to its own service: a --base-url
+        // elsewhere gets an env key or none.
+        let prov = profile_name.split_once('/').map(|(p, _)| p);
+        if let Some(prov @ ("cloud" | "openai")) = prov {
+            let own = prov == "cloud" && frog_engine::providers::on_cloud_origin(&b);
+            if !own && frog_engine::providers::key_source(prov) != Some("env") {
+                profile.api_key = None;
+            }
+        }
         profile.base_url = Some(b);
     }
     if cli.text_tools {
@@ -459,8 +486,19 @@ async fn run() -> Result<bool> {
     };
     // A client (another window, say) that asks for a session already open elsewhere gets a
     // fresh one rather than an engine that exits.
+    let resume = match (resume, cli.wait_lock) {
+        // Resuming after a relaunch: the old engine may still be on its way out. Wait for it,
+        // and never quietly fork the conversation into a new session.
+        (Some(id), Some(secs)) => {
+            if !session::Log::wait_free(&store, &id, std::time::Duration::from_secs(secs)) {
+                anyhow::bail!("session {id} is still open in another frog process after {secs}s");
+            }
+            Some(id)
+        }
+        (r, _) => r,
+    };
     let resume = match resume {
-        Some(id) if cli.serve && session::Log::in_use(&store, &id) => {
+        Some(id) if cli.wait_lock.is_none() && cli.serve && session::Log::in_use(&store, &id) => {
             eprintln!("session {id} is open in another frog process; starting a new one");
             None
         }
@@ -563,6 +601,7 @@ async fn manage_providers(cli: &Cli) -> Result<Option<bool>> {
         return Ok(Some(true));
     }
     if let Some(id) = &cli.remove_provider {
+        providers::removable(id)?;
         let mut state = State::load();
         state.custom.remove(id);
         state.enabled.retain(|s| !s.starts_with(&format!("{id}/")));
@@ -585,7 +624,11 @@ async fn manage_providers(cli: &Cli) -> Result<Option<bool>> {
             println!("{}", serde_json::to_string(&list)?);
         } else {
             for p in list {
-                let status = if p.connected { "connected" } else { "no key" };
+                let status = match (p.connected, p.local) {
+                    (true, _) => "connected",
+                    (false, true) => "not installed",
+                    (false, false) => "no key",
+                };
                 println!("{:<12} {:<20} {:<10} {}", p.id, p.name, status, p.base_url);
             }
         }

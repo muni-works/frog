@@ -70,13 +70,14 @@ struct ModelMenu: View {
     private var sections: [(title: String, models: [ModelIdentity])] {
         let words = query.lowercased().split(separator: " ")
         let match = { (m: ModelIdentity) in words.allSatisfy { (m.name + " " + m.spec).lowercased().contains($0) } }
-        return ModelSections.make(usable: usable.filter(match), suggested: SuggestedModel.all.map(ModelIdentity.init).filter(match))
+        return ModelSections.make(usable: usable.filter(match), suggested: SuggestedModel.all.map(ModelIdentity.init).filter(match), alwaysFrogCloud: query.isEmpty)
     }
 
     private var flat: [ModelIdentity] { sections.flatMap(\.models) }
 
-    /// No cloud model set up yet: the list offers adding a key instead.
-    private var noCloud: Bool { query.isEmpty && !usable.contains { $0.place.isCloud } }
+    /// No cloud model set up yet: the list offers adding a key instead. frog cloud always has
+    /// its own section, so this counts only a cloud that's ready.
+    private var noCloud: Bool { query.isEmpty && !usable.contains { $0.place.isCloud && $0.state.isReady } }
 
     private var showsSearch: Bool { !query.isEmpty || usable.count > 10 }
 
@@ -101,7 +102,7 @@ struct ModelMenu: View {
     }
 
     private func addKey(_ provider: String) {
-        keyFor = store.providers.first { $0.id == provider }
+        keyFor = store.providers.first { ProviderID.same($0.id, provider) }
     }
 
     var body: some View {
@@ -230,8 +231,9 @@ struct ModelMenu: View {
             }
             Spacer(minLength: 4)
             Menu("Add Key…") {
-                ForEach(store.providers.filter { !$0.local && !$0.custom }) { p in
-                    Button(p.name) { keyFor = p }
+                // frog cloud first, then the other clouds in the shared order.
+                ForEach(ProviderInfo.sorted(store.providers.filter { !$0.local && !$0.custom })) { p in
+                    Button(p.displayName) { keyFor = p }
                 }
             }
             .controlSize(.small)

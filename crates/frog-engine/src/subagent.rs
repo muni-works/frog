@@ -3,32 +3,76 @@
 //! its final report, so a search through fifty files costs the parent a few hundred tokens
 //! (context folding, arXiv 2510.11967). The child's events stream to clients as
 //! `Event::Subagent` for a live view, and a client can stop it without stopping the parent.
+//!
+//! With `mode: write` the child also gets Bash, Write and Edit, in the parent's mode and
+//! sandbox; its permission prompts reach the user through the parent (labelled with its id,
+//! see `background::forward`). `model` (or config `subagent_model`) picks its model, checked
+//! like `/model`, falling back to the parent's. `background: true` runs it as a background
+//! task (see `background`).
 
+use crate::config::{Config, Profile};
 use crate::engine::{Handle, Options};
 use crate::protocol::{Delta, Event, Item, ItemKind, Op};
 use crate::provider::ToolSpec;
 use crate::tools::Output;
 use anyhow::{Result, bail};
 use serde_json::Value;
+use std::path::Path;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub const TOOL: &str = "Task";
 
-/// Steps a subagent may take before it has to report.
-pub const MAX_STEPS: u32 = 30;
-
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: TOOL.into(),
-        description: "Delegate a self-contained, read-only investigation to a subagent with its own context: finding where something is implemented, tracing how a feature works across many files, surveying a codebase. It can Read, Grep, Glob and CodeMap but can't edit files or run commands. It can't see this conversation, so put everything it needs in `prompt`. Only its final report comes back, which keeps your own context small. Prefer it over doing many searches yourself.".into(),
+        description: "Delegate a self-contained task to a subagent with its own context. By default (`mode: read`) it investigates: finding where something is implemented, tracing how a feature works across many files, surveying a codebase. It can Read, Grep, Glob and CodeMap but can't edit files or run commands. With `mode: write` it can also edit files and run commands, each asking the user like yours do. It can't see this conversation, so put everything it needs in `prompt`. Only its final report comes back, which keeps your own context small. Prefer it over doing many searches yourself. With `background: true` it runs while you keep working: you get its id now and a <task-done> message with its report when it finishes.".into(),
         schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "description": {"type": "string", "description": "A short label (3-6 words) for the task"},
-                "prompt": {"type": "string", "description": "The full task: what to find out and what to report"}
+                "prompt": {"type": "string", "description": "The full task: what to find out or do, and what to report"},
+                "mode": {"type": "string", "enum": ["read", "write"], "description": "read (default): read-only tools. write: also edit files and run commands, with the same permission prompts as yours"},
+                "model": {"type": "string", "description": "Model for the subagent (a profile name or provider/model). Default: the configured subagent model, else yours"},
+                "background": {"type": "boolean", "description": "Run in the background and return a task id at once"}
             },
             "required": ["description", "prompt"]
         }),
+    }
+}
+
+/// Appended to a write-mode subagent's system prompt.
+pub const WRITE_PROMPT: &str = "\n\n# You are a subagent\nAnother agent delegated one task to you. You can read and edit files and run commands; the user approves them as usual. Do the task, verify it, and stop. When you're done, reply with a concise report: what you changed (files as path:line), how you checked it, and anything left undone. Your report is the only thing the other agent will see.";
+
+/// The model a subagent runs: `requested` (the call's `model`), else `cfg.subagent_model`,
+/// else the parent's. One that can't be resolved, isn't allowed in `root` (the same check as
+/// switching models), or has no usable provider falls back to the parent's, with the reason.
+pub fn profile(
+    cfg: &Config,
+    root: &Path,
+    requested: Option<&str>,
+    parent: (&str, &Profile),
+) -> (String, Profile, Option<String>) {
+    let fallback = || (parent.0.to_string(), parent.1.clone());
+    let Some(spec) = requested
+        .filter(|s| !s.trim().is_empty())
+        .or(cfg.subagent_model.as_deref())
+    else {
+        let (n, p) = fallback();
+        return (n, p, None);
+    };
+    let chosen = cfg.resolve(Some(spec)).and_then(|(name, profile)| {
+        crate::policy::check(root, &name, &profile)?;
+        crate::provider::Provider::new(&profile)?;
+        Ok((name, profile))
+    });
+    match chosen {
+        Ok((n, p)) => (n, p, None),
+        Err(e) => {
+            let (n, p) = fallback();
+            let why = format!("subagent model `{spec}` unavailable ({e:#}); using {n}");
+            (n, p, Some(why))
+        }
     }
 }
 
@@ -51,13 +95,13 @@ pub async fn run(
     opts: Options,
     input: &Value,
     stop: CancellationToken,
-    forward: impl Fn(Event),
+    forward: impl Fn(Event, &mpsc::UnboundedSender<Op>),
 ) -> Result<Output> {
     let prompt = input["prompt"].as_str().unwrap_or("").trim().to_string();
     if prompt.is_empty() {
         bail!("`prompt` is required: describe the task in full");
     }
-    let mut child = Child(crate::engine::spawn(opts)?);
+    let mut child = Child(crate::engine::spawn_child(opts)?);
     child.0.ops.send(Op::Submit {
         text: prompt,
         images: Vec::new(),
@@ -123,7 +167,7 @@ pub async fn run(
             Event::Error { error } => bail!("subagent: {error:?}"),
             Event::Idle if started => break,
             Event::Idle | Event::Synced { .. } => {}
-            event => forward(event),
+            event => forward(event, &child.0.ops),
         }
     }
     Ok(Output {
@@ -135,4 +179,39 @@ pub async fn run(
 
 fn plural(n: u32) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ProviderKind;
+
+    #[test]
+    fn subagent_model_resolves_and_falls_back_to_the_parents() {
+        let parent = Profile::new(ProviderKind::Ollama, "parent");
+        let root = std::env::temp_dir();
+        let mut cfg = Config::default();
+        let pick = |cfg: &Config, req: Option<&str>| profile(cfg, &root, req, ("parent", &parent));
+
+        // Nothing configured or asked for: the parent's.
+        let (name, _, why) = pick(&cfg, None);
+        assert_eq!((name.as_str(), why), ("parent", None));
+
+        // The configured subagent model, unless the call names one.
+        cfg.subagent_model = Some("ollama/small".into());
+        let (name, p, why) = pick(&cfg, None);
+        assert_eq!(
+            (name.as_str(), p.model.as_str(), why),
+            ("ollama/small", "small", None)
+        );
+        let (name, _, _) = pick(&cfg, Some("ollama/big"));
+        assert_eq!(name, "ollama/big");
+
+        // One that doesn't resolve falls back, saying why.
+        let (name, p, why) = pick(&cfg, Some("no-such-model"));
+        assert_eq!((name.as_str(), p.model.as_str()), ("parent", "parent"));
+        assert!(why.unwrap().contains("no-such-model"));
+        cfg.subagent_model = Some("nope".into());
+        assert_eq!(pick(&cfg, None).0, "parent");
+    }
 }

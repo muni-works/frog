@@ -79,6 +79,14 @@ final class Conversation {
     /// Messages sent while a turn was running; they go out in order as the engine frees up.
     private(set) var queue: [Queued] = []
 
+    /// The user pressed stop on the running turn (cleared when the next one starts), so a
+    /// restart can tell a turn they stopped from one a crash or quit cut off.
+    private(set) var userStopped = false
+    /// Reopened after the app restarted, with the interrupted turn picked back up.
+    var resumedAfterRestart = false
+    /// `continueInterrupted` called before the engine could take it: it goes first.
+    @ObservationIgnored private var continuePending = false
+
     /// A message sent while a turn was running.
     struct Queued {
         var text: String
@@ -205,7 +213,28 @@ final class Conversation {
     }
 
     func interrupt() {
+        userStopped = true
         link?.send(.interrupt)
+    }
+
+    /// Have the engine carry on with the turn a restart interrupted, ahead of anything queued.
+    func continueInterrupted() {
+        resumedAfterRestart = true
+        if busy || replaying {
+            continuePending = true
+            return
+        }
+        busy = true
+        link?.send(.continue())
+    }
+
+    /// Send a pending `continueInterrupted`; true if it went (the queue waits for its turn).
+    private func flushContinue() -> Bool {
+        guard continuePending else { return false }
+        continuePending = false
+        busy = true
+        link?.send(.continue())
+        return true
     }
 
     func answer(_ decision: Decision) {
@@ -343,6 +372,7 @@ final class Conversation {
                 turns.append(TurnState(number: n, input: input, images: images, startedAt: at))
             }
             panes.currentTurn = n
+            if !replaying { userStopped = false }
             // A replayed turn ran long ago.
             if !replaying { busy = true }
         case .turnEnded(let n, let reason, let usage):
@@ -459,7 +489,8 @@ final class Conversation {
             }
             onSessionChange?()
             // Sent while the history loaded: it goes now (the engine takes it once started).
-            if !busy, !queue.isEmpty {
+            if !busy, flushContinue() {
+            } else if !busy, !queue.isEmpty {
                 let next = queue.removeFirst()
                 submit(next.text, images: next.images)
             }
@@ -477,7 +508,8 @@ final class Conversation {
             elicitation = nil
             question = nil
             // While the history loads, what's queued waits for it (see `.synced`).
-            if !replaying, !queue.isEmpty {
+            if !replaying, flushContinue() {
+            } else if !replaying, !queue.isEmpty {
                 let next = queue.removeFirst()
                 submit(next.text, images: next.images)
             }
