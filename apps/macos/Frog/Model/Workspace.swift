@@ -82,7 +82,8 @@ final class Workspace {
     static var lastUsed: String? { lastUsed() }
 
     static func lastUsed(_ d: UserDefaults = .standard, apple: Bool = AppleIntelligence.available) -> String? {
-        if let s = d.string(forKey: "lastModel"), !s.isEmpty { return s }
+        // Saved before the rename, it may say "tang/…" or "frog-api/…".
+        if let s = d.string(forKey: "lastModel"), !s.isEmpty { return ProviderID.canonicalSpec(s) }
         return apple ? AppleIntelligence.spec : nil
     }
 
@@ -90,8 +91,8 @@ final class Workspace {
     /// with another complete local suggestion so a new chat never reaches a sidecar that cannot
     /// load its tokenizer.
     private static func usableStartingModel(_ spec: String?) -> String? {
-        guard let spec, spec.hasPrefix("tang/") else { return spec }
-        let repo = String(spec.dropFirst("tang/".count))
+        guard let spec, ProviderID.of(spec: spec) == ProviderID.local else { return spec }
+        let repo = String(spec.split(separator: "/", maxSplits: 1).last ?? "")
         guard !ModelDownloads.isInstalled(repo) else { return spec }
         return SuggestedModel.all.first(where: { ModelDownloads.isInstalled($0.repo) })?.spec
     }

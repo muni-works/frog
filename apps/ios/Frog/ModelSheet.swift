@@ -23,7 +23,7 @@ struct ModelSheet: View {
         }
         let words = query.lowercased().split(separator: " ")
         let match = { (m: ModelIdentity) in words.allSatisfy { (m.name + " " + m.spec).lowercased().contains($0) } }
-        return ModelSections.make(usable: usable.filter(match), suggested: [])
+        return ModelSections.make(usable: usable.filter(match), suggested: [], alwaysFrogCloud: query.isEmpty)
     }
 
     var body: some View {
