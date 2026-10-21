@@ -74,7 +74,8 @@ final class Workspace {
     static var startingModel: String? { startingModel() }
 
     static func startingModel(_ d: UserDefaults = .standard, apple: Bool = AppleIntelligence.available) -> String? {
-        if let s = d.string(forKey: "defaultModel"), !s.isEmpty { return s }
+        if d.string(forKey: "newMessageModelPolicy") == "fixed",
+           let s = d.string(forKey: "defaultModel"), !s.isEmpty { return s }
         return lastUsed(d, apple: apple)
     }
 
@@ -107,7 +108,12 @@ final class Workspace {
 
     /// The model the picker should show. A selected download takes precedence over the engine's
     /// last runnable model so the composer can explain why sending is paused.
-    var selectedModel: String? { pendingDownload ?? conversation?.status?.model ?? preferredModel }
+    var selectedModel: String? {
+        if let pendingDownload { return pendingDownload }
+        if UserDefaults.standard.string(forKey: "newMessageModelPolicy") != "fixed",
+           let model = conversation?.turns.reversed().compactMap({ $0.usage?.model }).first { return model }
+        return conversation?.status?.model ?? preferredModel
+    }
 
     var pendingDownloadModel: ModelIdentity? {
         guard let spec = pendingDownload else { return nil }

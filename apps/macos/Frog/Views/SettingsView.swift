@@ -125,6 +125,7 @@ struct ModelSettings: View {
     @State private var choosingFrom: ProviderInfo?
     @AppStorage(ModelStats.capKey) private var cap: Double = 0
     @AppStorage("defaultModel") private var defaultModel = ""
+    @AppStorage("newMessageModelPolicy") private var modelPolicy = "last"
 
     private var usable: [ModelIdentity] { models.map(ModelIdentity.init) }
 
@@ -200,12 +201,17 @@ struct ModelSettings: View {
 
     private var defaults: some View {
         Section {
+            Picker("New messages use:", selection: $modelPolicy) {
+                Text("Last model in this chat").tag("last")
+                Text("A fixed default model").tag("fixed")
+            }
             Picker("New conversations use", selection: $defaultModel) {
                 Text(Workspace.lastUsed.map { "Last Used (\(ModelIdentity.of($0, in: models).name))" } ?? "Last Used").tag("")
                 ForEach(usable.filter(\.state.isReady), id: \.spec) { m in
                     ModelLabel(model: m, size: .menu).tag(m.spec)
                 }
             }
+            .disabled(modelPolicy != "fixed")
         } header: {
             HStack {
                 Text("Default")
@@ -213,7 +219,7 @@ struct ModelSettings: View {
                 if loading { ProgressView().controlSize(.small) }
             }
         } footer: {
-            Text("Out of the box, Apple Intelligence. After that, whichever model you picked last, unless you choose one here.")
+            Text(modelPolicy == "fixed" ? "New chats and messages use the selected default model." : "Messages continue on the last model used in this chat. New chats use the last model you picked anywhere.")
                 .foregroundStyle(.secondary)
         }
     }
