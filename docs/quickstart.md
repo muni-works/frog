@@ -61,8 +61,9 @@ frog --fork <id>@3                   # branch a session after turn 3
 
 ## If macOS blocks frog or tang-llm
 
-Early builds aren't signed by Apple yet. The installer and `frog setup` handle that for you, but
-if macOS still says a binary "can't be opened" or kills it on launch, run:
+Early builds aren't signed by Apple yet. The installer and `frog setup` download with curl, which
+macOS doesn't quarantine, so this only comes up if you downloaded a binary in a browser. If macOS
+says it "can't be opened", use Open Anyway in System Settings → Privacy & Security, or run:
 
 ```sh
 xattr -d com.apple.quarantine ~/.local/bin/frog ~/.local/share/frog/bin/tang-llm 2>/dev/null; codesign -s - -f ~/.local/bin/frog ~/.local/share/frog/bin/tang-llm
