@@ -61,7 +61,9 @@ struct TurnView: View {
         let parts = TurnParts(turn)
         let flow = TurnFlow(turn.items, showThinking: verbosity.showsThinking)
         VStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 8 : 14) {
-            if !turn.input.isEmpty {
+            if let delivered = SessionMessage.parse(turn.input) {
+                SessionMessageCard(message: delivered)
+            } else if !turn.input.isEmpty {
                 VStack(alignment: .trailing, spacing: 2) {
                     UserPrompt(text: turn.input, images: turn.images, tint: promptTint)
                         // Sent like an iMessage: up from the composer, a little small, then a

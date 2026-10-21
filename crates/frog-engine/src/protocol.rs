@@ -164,6 +164,10 @@ pub enum Op {
         /// gets the `Ask` tool.
         #[serde(default)]
         ask: bool,
+        /// The client hosts other sessions and answers [`Event::SessionRequest`]s, so the
+        /// model gets `ListSessions`, `SendMessage` and `StartSession`.
+        #[serde(default)]
+        sessions: bool,
     },
     /// Open a pane. The engine mints the id and answers with [`Event::PaneOpened`]. Terminal
     /// panes are engine-owned shells; preview panes are the client's webviews.
@@ -211,6 +215,23 @@ pub enum Op {
         result: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    /// The answer to an [`Event::SessionRequest`] with the same `id`: `result` (JSON or text
+    /// for the model) or `error`.
+    SessionReply {
+        id: String,
+        #[serde(default)]
+        result: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// A message from another session (`from` is its id, or `system`). Queued like `Submit`:
+    /// it runs as a turn wrapped in `<session-message>` once the current op is done.
+    Deliver {
+        from: String,
+        #[serde(default)]
+        from_name: String,
+        message: String,
     },
     /// The user picked an element in a preview pane. `context` (tag, text, selector, source
     /// location) is inlined the next time `mention` (e.g. `@button.submit`) appears in a message.
@@ -508,6 +529,15 @@ pub enum Event {
         action: PaneAction,
         #[serde(default)]
         args: serde_json::Value,
+    },
+    /// A session tool call (`ListSessions`, `SendMessage`, `StartSession`) for the client to
+    /// carry out. Reply with [`Op::SessionReply`] using the same `id`. `item` is the tool call.
+    SessionRequest {
+        id: String,
+        item: String,
+        tool: String,
+        #[serde(default)]
+        input: serde_json::Value,
     },
     /// Something a pane reported that the client should show inline (a console error
     /// surfaced during a turn).
@@ -1002,9 +1032,31 @@ mod tests {
             old,
             Op::SetClientCaps {
                 panes: true,
-                ask: false
+                ask: false,
+                sessions: false
             }
         ));
+    }
+
+    #[test]
+    fn session_ops_round_trip() {
+        let d: Op = serde_json::from_str(
+            r#"{"op":"deliver","from":"s1","from_name":"Chief","message":"hi"}"#,
+        )
+        .unwrap();
+        assert!(matches!(d, Op::Deliver { ref from, .. } if from == "s1"));
+        let r: Op = serde_json::from_str(r#"{"op":"session_reply","id":"x","result":{"id":"s2"}}"#)
+            .unwrap();
+        assert!(matches!(r, Op::SessionReply { error: None, .. }));
+        let e = Event::SessionRequest {
+            id: "x".into(),
+            item: "t".into(),
+            tool: "SendMessage".into(),
+            input: serde_json::json!({"to": "s2", "message": "hi"}),
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["event"], "session_request");
+        assert!(!e.is_durable());
     }
 
     #[test]

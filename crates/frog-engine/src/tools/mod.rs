@@ -6,6 +6,7 @@ pub mod fs;
 pub mod image;
 pub mod rank;
 pub mod search;
+pub mod sessions;
 pub mod screenshot;
 pub mod visual;
 pub mod todo;

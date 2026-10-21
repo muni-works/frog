@@ -316,11 +316,11 @@ final class Workspace {
     func stop() {
         race?.discard()
         incoming?.stop()
-        conversation?.stop()
+        if let c = conversation, !SessionBroker.shared.keep(c) { c.stop() }
     }
 
-    @discardableResult
-    private func start(arguments: [String]) -> Conversation {
+    /// The engine flags every new conversation gets from Settings.
+    static func engineFlags(chat isChat: Bool) -> [String] {
         // The permission mode new sessions start in (Settings > Permissions).
         let mode = UserDefaults.standard.string(forKey: "defaultMode").flatMap(Mode.init(rawValue:))
         let modeFlag: [String] = switch mode {
@@ -333,9 +333,17 @@ final class Workspace {
         let chat = isChat ? ["--chat"] : []
         let sandbox = UserDefaults.standard.object(forKey: "sandboxShell") as? Bool ?? true
         let noSandbox = sandbox ? [] : ["--no-shell-sandbox"]
+        return modeFlag + computerUse + chat + noSandbox
+    }
+
+    @discardableResult
+    private func start(arguments: [String]) -> Conversation {
         // A newly opened session during a download must start on the still-runnable model.
         let startupModel = pendingDownload == nil ? preferredModel : conversation?.status?.model
-        let c = Conversation(folder: folder, arguments: arguments + modeFlag + computerUse + chat + noSandbox, model: startupModel)
+        // A session already running in the background (another session messaged it) is
+        // picked up as is; a second engine can't open its log.
+        let adopted = arguments.first == "-r" && arguments.count > 1 ? SessionBroker.shared.adopt(arguments[1]) : nil
+        let c = adopted ?? Conversation(folder: folder, arguments: arguments + Self.engineFlags(chat: isChat), model: startupModel)
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID
@@ -365,7 +373,8 @@ final class Workspace {
         guard incoming === c else { return }
         incoming = nil
         opening = nil
-        conversation?.stop()
+        // A busy agent session keeps working off screen.
+        if let old = conversation, !SessionBroker.shared.keep(old) { old.stop() }
         cloudForThisConversation = false
         Motion.cut { conversation = c }
     }

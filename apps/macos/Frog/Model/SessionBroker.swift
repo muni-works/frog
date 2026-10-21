@@ -1,0 +1,384 @@
+import Foundation
+
+/// Sessions talking to sessions: carries out the model's `ListSessions`, `SendMessage` and
+/// `StartSession` (an engine's `session_request`), delivers messages to the target's engine
+/// (starting it with `-r` if it's closed; the engine queues them behind any running turn), sends
+/// idle notices, and keeps a runaway pair of agents from messaging each other forever.
+///
+/// The parts that touch the app (which sessions exist, reaching an engine, starting one) are
+/// closures, so routing and limits are testable without engines.
+@MainActor
+final class SessionBroker {
+    static let shared = SessionBroker()
+
+    /// A session as `ListSessions` shows it.
+    struct Entry: Equatable {
+        var id: String
+        var name: String
+        /// "running", "waiting" (on the user) or "idle".
+        var state: String
+        var cwd: String?
+        var model: String?
+        var modified: Int64 = 0
+    }
+
+    /// What `StartSession` asked for.
+    struct StartRequest: Equatable {
+        var title: String
+        var prompt: String
+        var cwd: String?
+        var model: String?
+        var worktree: Bool
+    }
+
+    struct Started: Equatable {
+        var id: String
+        var name: String
+        var cwd: String
+        var branch: String?
+    }
+
+    /// Messages a session may send (or sessions it may start) without the user doing anything.
+    static let rateLimit = 30
+    static let rateWindow: TimeInterval = 10 * 60
+
+    var directory: () -> [Entry] = { [] }
+    /// Deliver an op to session `id`, starting its engine if needed. False if it can't be reached.
+    var reach: (_ id: String, _ from: String, _ fromName: String, _ message: String) -> Bool = { _, _, _, _ in false }
+    var starter: (_ request: StartRequest, _ parent: Conversation?) async throws -> Started = { _, _ in
+        throw BrokerError("starting sessions isn't available")
+    }
+    /// A sender hit the rate limit (the app shows a notice in its transcript).
+    var onLimit: (_ id: String) -> Void = { _ in }
+    var now: () -> Date = Date.init
+    /// The input of the turn session `id` is running, if known: an idle watch arms only once
+    /// the target runs the sender's message, not the turn it was already busy with.
+    var currentInput: (_ id: String) -> String? = { _ in nil }
+
+    /// Sends since the user last did something, per sending session.
+    private var sent: [String: [Date]] = [:]
+    /// Senders waiting to hear that a target went idle. `armed` once the target has been seen
+    /// running, so the idle it's in when the message lands doesn't count.
+    private struct Watch { var sender: String; var armed: Bool }
+    private var watches: [String: [Watch]] = [:]
+    /// Engines the broker started or kept running with no pane showing them.
+    private var background: [String: Conversation] = [:]
+    /// Background engines seen running: stopped when they go idle.
+    private var armedBackground: Set<String> = []
+
+    struct BrokerError: LocalizedError, Equatable {
+        var message: String
+        init(_ message: String) { self.message = message }
+        var errorDescription: String? { message }
+    }
+
+    // MARK: Requests
+
+    /// An engine's `session_request`: answer it on `c`.
+    func handle(_ r: SessionRequest, from c: Conversation) {
+        let sender = c.sessionID ?? ""
+        let input = r.input
+        switch r.tool {
+        case "ListSessions":
+            c.replySession(r.id, result: Self.json(list(excluding: sender)))
+        case "SendMessage":
+            let result = send(
+                from: sender, name: name(of: c),
+                to: input["to"]?.string ?? "", message: input["message"]?.string ?? "",
+                notifyWhenIdle: input["notify_when_idle"]?.bool ?? false)
+            switch result {
+            case .success(let e):
+                c.replySession(r.id, result: .string("Sent to \(e.name) (\(e.id)); it's \(e.state). Its reply, if any, arrives as a <session-message>."))
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
+        case "StartSession":
+            if let e = charge(sender) { return c.replySession(r.id, error: e.message) }
+            let req = StartRequest(
+                title: input["title"]?.string ?? "", prompt: input["prompt"]?.string ?? "",
+                cwd: input["cwd"]?.string, model: input["model"]?.string,
+                worktree: input["worktree"]?.bool ?? false)
+            Task { [weak c] in
+                do {
+                    let s = try await starter(req, c)
+                    var out: [String: JSONValue] = ["id": .string(s.id), "name": .string(s.name), "cwd": .string(s.cwd)]
+                    if let b = s.branch { out["branch"] = .string(b) }
+                    c?.replySession(r.id, result: .object(out))
+                } catch {
+                    c?.replySession(r.id, error: error.localizedDescription)
+                }
+            }
+        default:
+            c.replySession(r.id, error: "unknown session tool \(r.tool)")
+        }
+    }
+
+    func list(excluding id: String? = nil) -> [Entry] {
+        directory().filter { $0.id != id }.sorted { $0.modified > $1.modified }
+    }
+
+    /// Find a session by id (or a unique id prefix), else by name (case-insensitive).
+    func resolve(_ to: String) -> Result<Entry, BrokerError> {
+        let key = to.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return .failure(BrokerError("`to` is empty")) }
+        let all = directory()
+        if let e = all.first(where: { $0.id == key }) { return .success(e) }
+        let named = all.filter { $0.name.caseInsensitiveCompare(key) == .orderedSame }
+        if named.count == 1 { return .success(named[0]) }
+        if named.count > 1 {
+            return .failure(BrokerError("\(named.count) sessions are named \"\(key)\": use an id (\(named.map(\.id).joined(separator: ", ")))"))
+        }
+        let prefixed = key.count >= 6 ? all.filter { $0.id.hasPrefix(key) } : []
+        if prefixed.count == 1 { return .success(prefixed[0]) }
+        return .failure(BrokerError("No session \"\(key)\". ListSessions shows what's there."))
+    }
+
+    func send(from sender: String, name: String, to: String, message: String, notifyWhenIdle: Bool) -> Result<Entry, BrokerError> {
+        let message = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return .failure(BrokerError("`message` is empty")) }
+        let target: Entry
+        switch resolve(to) {
+        case .success(let e): target = e
+        case .failure(let e): return .failure(e)
+        }
+        guard target.id != sender else { return .failure(BrokerError("That's this session.")) }
+        if let e = charge(sender) { return .failure(e) }
+        guard reach(target.id, sender, name, message) else {
+            return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
+        }
+        if notifyWhenIdle {
+            watches[target.id, default: []].append(Watch(sender: sender, armed: false))
+        }
+        return .success(target)
+    }
+
+    /// Count one send against `sender`'s limit; an error once it's spent.
+    private func charge(_ sender: String) -> BrokerError? {
+        let cutoff = now().addingTimeInterval(-Self.rateWindow)
+        var times = (sent[sender] ?? []).filter { $0 > cutoff }
+        guard times.count < Self.rateLimit else {
+            sent[sender] = times
+            onLimit(sender)
+            return BrokerError("Rate limit: \(Self.rateLimit) messages in \(Int(Self.rateWindow / 60)) minutes without the user. Stop and wait for the user.")
+        }
+        times.append(now())
+        sent[sender] = times
+        return nil
+    }
+
+    /// The user did something in session `id`: its sends start over.
+    func userActivity(_ id: String) {
+        sent[id] = nil
+    }
+
+    // MARK: Live state
+
+    /// A session's live state changed (from `Library.report`).
+    func observe(_ id: String, running: Bool, waiting: Bool) {
+        if running {
+            if var list = watches[id] {
+                let input = currentInput(id)
+                for i in list.indices where input == nil || input!.hasPrefix("<session-message from=\"\(list[i].sender)\"") {
+                    list[i].armed = true
+                }
+                watches[id] = list
+            }
+            if background[id] != nil { armedBackground.insert(id) }
+            return
+        }
+        guard !waiting else { return }
+        if let list = watches[id] {
+            let ready = list.filter(\.armed)
+            watches[id] = list.filter { !$0.armed }
+            if watches[id]?.isEmpty == true { watches[id] = nil }
+            let name = directory().first { $0.id == id }?.name ?? id
+            for w in ready {
+                _ = reach(w.sender, "system", "system", "Session \"\(name)\" (\(id)) is idle.")
+            }
+        }
+        // A background engine that did its work lets go; a new message starts it again.
+        if armedBackground.remove(id) != nil, let c = background.removeValue(forKey: id) {
+            c.stop()
+        }
+    }
+
+    // MARK: Engines
+
+    /// A running conversation for session `id`: on screen, in the background, or started now.
+    func conversation(for id: String) -> Conversation? {
+        if let c = Library.shared.conversation(id), c.isLive { return c }
+        if let c = background[id], c.isLive { return c }
+        guard let info = Library.shared.sessions.first(where: { $0.id == id }), let folder = info.folder else { return nil }
+        let c = Conversation(folder: folder, arguments: ["-r", id] + Workspace.engineFlags(chat: info.isChat), model: nil)
+        background[id] = c
+        return c
+    }
+
+    /// A pane opening session `id` takes over its background engine instead of starting another.
+    func adopt(_ id: String) -> Conversation? {
+        armedBackground.remove(id)
+        guard let c = background.removeValue(forKey: id), c.isLive else { return nil }
+        return c
+    }
+
+    /// A pane is letting go of `c`: keep it running in the background if it's busy and part of
+    /// a group of sessions, rather than stopping it mid-task. True if kept.
+    func keep(_ c: Conversation) -> Bool {
+        guard c.busy, c.isLive, let id = c.sessionID, Library.shared.isAgentSession(id) else { return false }
+        background[id] = c
+        armedBackground.insert(id)
+        return true
+    }
+
+    func track(_ c: Conversation, as id: String) {
+        background[id] = c
+    }
+
+    private func name(of c: Conversation) -> String {
+        if let t = c.title { return t }
+        guard let id = c.sessionID else { return "" }
+        return Library.shared.sessions.first { $0.id == id }?.displayTitle ?? ""
+    }
+
+    static func json(_ entries: [Entry]) -> JSONValue {
+        .array(entries.map { e in
+            var o: [String: JSONValue] = ["id": .string(e.id), "name": .string(e.name), "state": .string(e.state)]
+            if let c = e.cwd { o["cwd"] = .string(c) }
+            if let m = e.model { o["model"] = .string(m) }
+            return .object(o)
+        })
+    }
+
+    // MARK: Worktrees
+
+    /// A git worktree for a new session: `<repo>/.frog/worktrees/<name>` on a new branch
+    /// `frog/<name>` from HEAD (a numbered name if taken). Returns its folder and branch.
+    nonisolated static func makeWorktree(from folder: URL, name: String) throws -> (URL, String) {
+        let top = try git(["rev-parse", "--show-toplevel"], in: folder).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !top.isEmpty else { throw BrokerError("\(folder.path) isn't in a git repository") }
+        let repo = URL(fileURLWithPath: top)
+        let base = slug(name)
+        let branches = Set(try git(["branch", "--format=%(refname:short)"], in: repo).split(separator: "\n").map(String.init))
+        var n = 1
+        var pick = base
+        let root = repo.appending(path: ".frog/worktrees")
+        while FileManager.default.fileExists(atPath: root.appending(path: pick).path) || branches.contains("frog/\(pick)") {
+            n += 1
+            pick = "\(base)-\(n)"
+        }
+        let dir = root.appending(path: pick)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        _ = try git(["worktree", "add", "--quiet", "-b", "frog/\(pick)", dir.path], in: repo)
+        // Keep the worktrees out of the main checkout's `git status`.
+        if let common = try? git(["rev-parse", "--git-common-dir"], in: repo).trimmingCharacters(in: .whitespacesAndNewlines) {
+            let gitDir = common.hasPrefix("/") ? URL(fileURLWithPath: common) : repo.appending(path: common)
+            let exclude = gitDir.appending(path: "info/exclude")
+            let current = (try? String(contentsOf: exclude, encoding: .utf8)) ?? ""
+            if !current.contains("/.frog/worktrees/") {
+                try? FileManager.default.createDirectory(at: exclude.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? (current + (current.isEmpty || current.hasSuffix("\n") ? "" : "\n") + "/.frog/worktrees/\n")
+                    .write(to: exclude, atomically: true, encoding: .utf8)
+            }
+        }
+        return (dir, "frog/\(pick)")
+    }
+
+    nonisolated static func slug(_ s: String) -> String {
+        let lowered = s.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }
+        let joined = String(lowered).split(separator: "-").joined(separator: "-")
+        let short = String(joined.prefix(40))
+        return short.isEmpty ? "session" : short
+    }
+
+    @discardableResult
+    nonisolated static func git(_ args: [String], in dir: URL) throws -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        p.arguments = ["-C", dir.path] + args
+        let out = Pipe(), err = Pipe()
+        p.standardOutput = out
+        p.standardError = err
+        try p.run()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else {
+            throw BrokerError("git \(args.first ?? ""): \(String(decoding: errData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+extension SessionBroker {
+    /// Wire the broker to the app: the library's sessions, engines, and new conversations.
+    func install() {
+        directory = {
+            let lib = Library.shared
+            return lib.sessions.filter { !lib.archived.contains($0.id) }.map { s in
+                let c = lib.conversation(s.id)
+                let state = switch lib.live[s.id] {
+                case .running?: "running"
+                case .waiting?: "waiting"
+                default: "idle"
+                }
+                return Entry(
+                    id: s.id, name: c?.title ?? s.displayTitle, state: state, cwd: s.cwd,
+                    model: c?.status?.model ?? s.model, modified: s.modified)
+            }
+        }
+        reach = { [unowned self] id, from, name, message in
+            guard let c = conversation(for: id) else { return false }
+            c.deliver(from: from, name: name, message: message)
+            return true
+        }
+        onLimit = { id in
+            Library.shared.conversation(id)?.note(
+                "Paused messaging other sessions: \(SessionBroker.rateLimit) messages in 10 minutes without you. Send a message here to let it carry on.",
+                warning: true)
+        }
+        currentInput = { id in Library.shared.conversation(id)?.turns.last?.input }
+        starter = { [unowned self] req, parent in try await start(req, parent: parent) }
+        Conversation.sessionRequests = { [unowned self] c, r in handle(r, from: c) }
+        Conversation.userActivity = { [unowned self] c in if let id = c.sessionID { userActivity(id) } }
+    }
+
+    /// `StartSession`: a new conversation (in a worktree if asked), titled, with its first
+    /// prompt, filed under its parent in the sidebar.
+    private func start(_ req: StartRequest, parent: Conversation?) async throws -> Started {
+        let title = req.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !req.prompt.isEmpty else { throw BrokerError("`title` and `prompt` are required") }
+        var folder = parent?.folder ?? FileManager.default.homeDirectoryForCurrentUser
+        if let cwd = req.cwd, !cwd.isEmpty {
+            let path = (cwd as NSString).expandingTildeInPath
+            folder = path.hasPrefix("/") ? URL(fileURLWithPath: path) : folder.appending(path: path)
+        }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue else {
+            throw BrokerError("No folder at \(folder.path)")
+        }
+        var branch: String?
+        if req.worktree {
+            let from = folder
+            let (dir, b) = try await Task.detached { try Self.makeWorktree(from: from, name: title) }.value
+            folder = dir
+            branch = b
+        }
+        let model = req.model ?? parent?.status?.model
+        let c = Conversation(folder: folder, arguments: Workspace.engineFlags(chat: false), model: model)
+        guard c.failure == nil else { throw BrokerError(c.failure ?? "couldn't start") }
+        c.rename(title)
+        c.submit(req.prompt)
+        let deadline = ContinuousClock.now + .seconds(20)
+        while c.sessionID == nil, c.failure == nil, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        guard let id = c.sessionID else {
+            c.stop()
+            throw BrokerError(c.failure ?? "the new session didn't start in time")
+        }
+        track(c, as: id)
+        if let p = parent?.sessionID { Library.shared.setParent(of: id, to: p) }
+        Library.shared.refresh()
+        return Started(id: id, name: title, cwd: folder.path, branch: branch)
+    }
+}
