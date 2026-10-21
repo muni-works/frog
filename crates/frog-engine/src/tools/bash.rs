@@ -14,7 +14,8 @@ over cat/sed/find/grep. Avoid interactive commands; they will hang until the tim
     );
     let mut props = json!({
         "command": { "type": "string", "description": "The command to run" },
-        "timeout": { "type": "integer", "description": "Timeout in milliseconds (default 120000, max 600000)" }
+        "timeout": { "type": "integer", "description": "Timeout in milliseconds (default 120000, max 600000)" },
+        "run_in_background": { "type": "boolean", "description": "Start the command as a background job and return its id at once, for servers, watchers and long builds. Its output goes to a file; you're told when it exits (exit code and the tail of its output). Read it with JobOutput, stop it with JobStop." }
     });
     if available() {
         description.push_str(" Commands run in a sandbox: they can write only inside the project, temp folders and toolchain caches, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
@@ -102,29 +103,9 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "{{\n{cmd}\n}} 2>&1\n__frog_ec=$?\npwd -P > '{}'\nexit $__frog_ec",
         cwd_file.display()
     );
-    let shell = std::env::var("SHELL")
-        .ok()
-        .filter(|s| s.ends_with("zsh") || s.ends_with("bash"))
-        .unwrap_or("/bin/bash".into());
-
-    // `--sandbox` (strict, for the bench) always applies; the everyday sandbox yields to an
-    // explicit (and user-approved) `unsandboxed` call.
-    let unsandboxed = input["unsandboxed"].as_bool() == Some(true);
-    let jail = ctx
-        .sandbox
-        .clone()
-        .or_else(|| (!unsandboxed).then(|| ctx.shell_sandbox.clone()).flatten());
-    let mut command = match &jail {
-        None => tokio::process::Command::new(shell),
-        Some(root) => sandboxed(root, &shell)?,
-    };
+    let (mut command, jail) = shell(input, ctx)?;
     let mut child = command
-        .arg("-c")
         .arg(&script)
-        .current_dir(&ctx.cwd)
-        .env("PAGER", "cat")
-        .env("GIT_PAGER", "cat")
-        .env("FROG", "1")
         // Colors for the human watching; they're stripped before the model sees the output.
         .env("FORCE_COLOR", "1")
         .env("CLICOLOR_FORCE", "1")
@@ -209,6 +190,37 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         present: None,
         ..Default::default()
     })
+}
+
+/// The user's shell, sandboxed exactly as a foreground call would be, in `ctx.cwd`, ready for
+/// the script argument (`-c` is already added). Also returns the sandbox root, if any.
+/// Background jobs and `Monitor` use it so they run under the same rules as Bash.
+pub fn shell(
+    input: &Value,
+    ctx: &Ctx,
+) -> Result<(tokio::process::Command, Option<std::path::PathBuf>)> {
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| s.ends_with("zsh") || s.ends_with("bash"))
+        .unwrap_or("/bin/bash".into());
+    // `--sandbox` (strict, for the bench) always applies; the everyday sandbox yields to an
+    // explicit (and user-approved) `unsandboxed` call.
+    let unsandboxed = input["unsandboxed"].as_bool() == Some(true);
+    let jail = ctx
+        .sandbox
+        .clone()
+        .or_else(|| (!unsandboxed).then(|| ctx.shell_sandbox.clone()).flatten());
+    let mut command = match &jail {
+        None => tokio::process::Command::new(shell),
+        Some(root) => sandboxed(root, &shell)?,
+    };
+    command
+        .arg("-c")
+        .current_dir(&ctx.cwd)
+        .env("PAGER", "cat")
+        .env("GIT_PAGER", "cat")
+        .env("FROG", "1");
+    Ok((command, jail))
 }
 
 /// Output that looks like the sandbox got in the way.

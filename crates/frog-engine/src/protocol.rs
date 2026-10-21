@@ -124,6 +124,10 @@ pub enum Op {
     StopSubagent {
         id: String,
     },
+    /// Internal: background work finished and left a notice for the model. Starts a turn
+    /// when the engine is idle; never sent by clients.
+    #[serde(skip)]
+    Wake,
     /// An MCP App calling a tool on its own server. Answered with [`Event::AppResult`].
     AppCall {
         id: String,
@@ -379,6 +383,9 @@ pub enum Event {
         /// Why this one asks when similar calls don't (e.g. a command leaving the sandbox).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+        /// Set when a subagent asks: its id (the `Task` call, or the background task id).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subagent: Option<String>,
     },
     /// The model asks the user to choose (`Ask`). Reply with [`Op::Answer`] using the same id.
     /// `item` is the tool call waiting on it.
@@ -413,6 +420,26 @@ pub enum Event {
     Subagent {
         item: String,
         inner: Box<Event>,
+    },
+    /// Background work started: a `Task` with `background`, a Bash `run_in_background` job,
+    /// or a `Monitor`. `kind` is `task`, `job`, `monitor` or `timer`.
+    BackgroundStarted {
+        id: String,
+        kind: String,
+        label: String,
+    },
+    /// Live output from background work (a subagent's step, a job's output, a monitor poll).
+    BackgroundProgress {
+        id: String,
+        text: String,
+    },
+    /// Background work ended. `status` is `done`, `failed`, `stopped`, `matched` or
+    /// `timeout`; `summary` is what the model was told.
+    BackgroundDone {
+        id: String,
+        kind: String,
+        status: String,
+        summary: String,
     },
     /// Progress reported by a running MCP tool.
     ToolProgress {
@@ -517,6 +544,8 @@ impl Event {
                 | Self::PaneOpened { .. }
                 | Self::PaneClosed { .. }
                 | Self::PaneCheckpoint { .. }
+                | Self::BackgroundStarted { .. }
+                | Self::BackgroundDone { .. }
         )
     }
 }

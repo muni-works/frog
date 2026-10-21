@@ -2,6 +2,7 @@
 
 pub mod ask;
 pub mod auto;
+pub mod background;
 pub mod catalog;
 pub mod checkpoint;
 pub mod codemap;
