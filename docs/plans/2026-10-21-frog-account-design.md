@@ -183,3 +183,56 @@ estimate and monthly cap apply to API and beta; Pro shows "included" (when Pro e
 
 1–5 are engine/CLI (one worktree, sequential). 6 can run in parallel once 1's rank is exposed via
 `--providers --json`.
+
+## Naming (Cam: "all really confusing — be serious")
+
+Decided so far: order is This Mac → your servers → frog → other clouds. Env key wins.
+Logged-out picker shows frog models.
+
+### What a user runs into today
+
+| they see | means | problem |
+|---|---|---|
+| frog | the agent | also wants to be the hosted service's name |
+| `tang/…` | frog's engine on this Mac | an engine name leaks into model names; "tang" is also the IR/brand behind the hosted speed |
+| `frog-api/…` | the hosted models | billing word ("api") in an id; Pro users aren't "API" users |
+| `frog/`, `tang-cloud/`, `zest/` | aliases for the same | three dead names in the wild |
+| Frog Pro / Frog API | subscription / per-token | billing plans, but read like two products |
+| `FROG_API_KEY`, `frog_` keys | the credential | fine |
+
+The root mistake: provider ids named after products and billing, not after **where the model
+runs**, which is the only thing a user is choosing.
+
+### Principle
+
+A model spec is `<where>/<model>`. "Where" is plain words. Brands and billing live in display
+text and badges, never in ids.
+
+### Options
+
+**A. `local/` and `cloud/` (recommended)**
+- `frog -m local/qwen3-4b` (was `tang/mlx-community/Qwen3-4B-4bit`), `frog -m cloud/qwen3-coder-next`.
+- UI: "This Mac" (small "powered by tang"), your servers by name, "frog cloud · Pro|API|beta".
+- Other vendors keep their names (`anthropic/`, `openai/`, `ollama/`), so "cloud" alone always means frog's.
+- Bare model names resolve when unique: `frog -m qwen3-coder-next` → cloud.
+- Launch copy: "one flag to go fast: `frog -m cloud/qwen3-coder-next`".
+
+**B. `frog/` for hosted, `local/` for this Mac**
+- `frog -m frog/qwen3-coder-next`. Reads "frog's model", but `frog -m frog/` stutters, and the
+  agent and service blur.
+
+**C. Keep ids, fix only display**
+- `tang/` and `frog-api/` stay; UI says "This Mac" and "frog cloud". Cheapest, but the CLI and
+  docs keep the confusing names forever, and the CLI is the open-source product.
+
+### Cost of A (and B)
+- Every old id stays a permanent alias: `tang/`, `frog-api/`, `frog/`, `tang-cloud/`, `zest/`.
+  Inputs keep working; frog writes only new names.
+- One-time migration on first run: Keychain account `frog-api` → `cloud`; stored specs in
+  models.json, config.toml and last-used rewritten (sessions keep their history, only the
+  "current model" field is normalized).
+- `local/` model names: short aliases for the bundled set (`qwen3-4b`, `qwen3-32b`), full
+  `local/mlx-community/…` still accepted.
+- Launch copy, README, docs and the app strings change once, before Oct 30 (nothing is public yet,
+  so this is the cheapest moment it will ever be).
+- Env: `FROG_API_KEY` stays (it's the key to frog's service; plan is a badge). `FROG_BASE_URL` stays.
