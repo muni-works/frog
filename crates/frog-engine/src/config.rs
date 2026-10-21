@@ -298,7 +298,7 @@ impl Config {
                 p.context_window = Some(8_192);
                 p
             }
-            "openrouter" | "vercel" | "zest" => Profile::new(ProviderKind::Openai, model),
+            "openrouter" | "vercel" | "tang-cloud" => Profile::new(ProviderKind::Openai, model),
             _ => match crate::providers::State::load().custom.remove(prov) {
                 // A server you added: another machine's ollama, or any OpenAI-compatible one.
                 Some(c) => {
@@ -316,7 +316,7 @@ impl Config {
             "mlx" => Some("http://localhost:8080/v1".into()),
             "vllm" => Some("http://localhost:8000/v1".into()),
             "openai" => std::env::var("OPENAI_BASE_URL").ok(),
-            "zest" => std::env::var("ZEST_BASE_URL")
+            "tang-cloud" => std::env::var("TANG_BASE_URL")
                 .ok()
                 .filter(|u| !u.is_empty())
                 .or_else(|| crate::providers::preset(prov).map(|x| x.base_url.to_string())),
@@ -331,7 +331,7 @@ impl Config {
         let elsewhere = prov == "openai" && p.base_url.is_some();
         if matches!(
             prov,
-            "openrouter" | "vercel" | "zest" | "anthropic" | "claude" | "openai"
+            "openrouter" | "vercel" | "tang-cloud" | "anthropic" | "claude" | "openai"
         ) && !elsewhere
         {
             let id = if prov == "claude" { "anthropic" } else { prov };

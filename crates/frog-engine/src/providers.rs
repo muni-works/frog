@@ -28,13 +28,14 @@ pub struct Preset {
 }
 
 pub const PRESETS: &[Preset] = &[
-    // muni's fast inference, OpenAI-compatible. The domain is temporary: ZEST_BASE_URL overrides.
+    // tang cloud, muni's fast inference (OpenAI-compatible). `tang/` is the local sidecar.
+    // The domain is temporary until tang.muni.works resolves; TANG_BASE_URL overrides it.
     Preset {
-        id: "zest",
-        name: "zest",
+        id: "tang-cloud",
+        name: "tang cloud",
         kind: ProviderKind::Openai,
         base_url: "https://zest-edge.municipal-robotics.workers.dev/v1",
-        key_env: &["ZEST_API_KEY"],
+        key_env: &["TANG_API_KEY", "ZEST_API_KEY"],
         key_url: "https://zest-edge.municipal-robotics.workers.dev/beta",
         local: false,
     },
