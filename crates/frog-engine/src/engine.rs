@@ -142,6 +142,8 @@ struct Shared {
     questions: Mutex<HashMap<String, oneshot::Sender<crate::protocol::Answer>>>,
     /// A client shows questions to someone who can answer (`SetClientCaps { ask }`).
     client_ask: AtomicBool,
+    /// Session tools the client answers (`SetClientCaps { sessions }`).
+    sessions: crate::tools::sessions::Hub,
     /// Connected MCP servers, for elicitation answers and app tool calls mid-turn.
     mcp: Mutex<Option<crate::mcp::Hub>>,
     /// Running subagents by `Task` tool call id, so a client can stop one.
@@ -288,6 +290,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         pending: Default::default(),
         questions: Default::default(),
         client_ask: Default::default(),
+        sessions: Default::default(),
         mcp: Default::default(),
         subagents: Default::default(),
         ready: Default::default(),
@@ -353,6 +356,9 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     if let Some(tx) = router.questions.lock().unwrap().remove(&id) {
                         let _ = tx.send(answer);
                     }
+                }
+                Op::SessionReply { id, result, error } => {
+                    router.sessions.resolve(&id, result, error)
                 }
                 Op::Elicit {
                     id,
@@ -1165,9 +1171,22 @@ impl Agent {
                     self.emit(Event::Titled { title });
                 }
             }
-            Op::SetClientCaps { panes, ask } => {
+            Op::Deliver {
+                from,
+                from_name,
+                message,
+            } => {
+                let text = crate::tools::sessions::wrap(&from, &from_name, &message);
+                self.turn(&text, Vec::new()).await?
+            }
+            Op::SetClientCaps {
+                panes,
+                ask,
+                sessions,
+            } => {
                 self.shared.panes.set_client(panes);
                 self.shared.client_ask.store(ask, Ordering::Relaxed);
+                self.shared.sessions.set_enabled(sessions);
                 self.sync_specs();
                 self.apply_harness();
             }
@@ -1175,6 +1194,7 @@ impl Agent {
             Op::Interrupt
             | Op::Permission { .. }
             | Op::Answer { .. }
+            | Op::SessionReply { .. }
             | Op::Elicit { .. }
             | Op::AppCall { .. }
             | Op::StopSubagent { .. }
@@ -1556,6 +1576,9 @@ impl Agent {
         let rules =
             crate::rules::prompt_section(&self.rules, crate::rules::prompt_budget(self.tier));
         self.system = format!("{base}{rules}{}", harness::guidance(self.tier));
+        if !self.subagent && self.shared.sessions.enabled() {
+            self.system.push_str(crate::tools::sessions::PROMPT);
+        }
         if !self.chat && !self.subagent {
             self.system
                 .push_str(prompt::panes_prompt(self.shared.panes.client()));
@@ -2189,6 +2212,9 @@ impl Agent {
             if self.can_ask && self.shared.client_ask.load(Ordering::Relaxed) {
                 specs.push(crate::ask::spec());
             }
+            if self.shared.sessions.enabled() {
+                specs.extend(crate::tools::sessions::specs());
+            }
         }
         if self.has_recall() {
             specs.push(crate::recall::spec());
@@ -2379,6 +2405,9 @@ impl Agent {
         }
         if name == crate::ask::TOOL {
             return self.ask_user(id, input).await;
+        }
+        if crate::tools::sessions::is_tool(name) && !self.subagent {
+            return self.session_tool(id, name, input).await;
         }
         if name == crate::present::TOOL {
             return crate::present::run(input, &self.ctx.cwd, self.tier == Tier::Weak);
@@ -3198,6 +3227,24 @@ Don't repeat it. Change the arguments or try a different approach.",
             self.session_allow.insert(key);
         }
         decision
+    }
+
+    /// `ListSessions`, `SendMessage`, `StartSession`: the client carries them out.
+    async fn session_tool(&mut self, item: &str, name: &str, input: &Value) -> Result<tools::Output> {
+        use crate::tools::sessions;
+        sessions::validate(name, input)?;
+        let (id, rx) = self.shared.sessions.open();
+        self.emit(Event::SessionRequest {
+            id,
+            item: item.into(),
+            tool: name.into(),
+            input: input.clone(),
+        });
+        let reply = rx.await.unwrap_or_else(|_| Err("the app didn't answer".into()));
+        Ok(tools::Output {
+            content: sessions::result(reply)?,
+            ..Default::default()
+        })
     }
 
     /// `Ask`: show the question and wait for the answer.
@@ -5239,6 +5286,7 @@ for line in sys.stdin:
             .send(Op::SetClientCaps {
                 panes: false,
                 ask: true,
+                sessions: false,
             })
             .unwrap();
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
@@ -5260,6 +5308,7 @@ for line in sys.stdin:
             .send(Op::SetClientCaps {
                 panes: false,
                 ask: true,
+                sessions: false,
             })
             .unwrap();
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
@@ -5303,6 +5352,164 @@ for line in sys.stdin:
                 .await
                 .starts_with("There's no `Ask` tool")
         );
+    }
+
+    fn list_sessions_call() -> Block {
+        Block::ToolUse {
+            id: "ls".into(),
+            name: "ListSessions".into(),
+            input: json!({}),
+        }
+    }
+
+    fn caps(h: &Handle, sessions: bool) {
+        h.ops
+            .send(Op::SetClientCaps {
+                panes: false,
+                ask: false,
+                sessions,
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn deliver_while_idle_starts_a_wrapped_turn() {
+        let mut h = engine(vec![reply(vec![text("noted")], Stop::End)], true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Deliver {
+                from: "s1".into(),
+                from_name: "Chief".into(),
+                message: "status?".into(),
+            })
+            .unwrap();
+        loop {
+            if let Event::TurnStarted { input, .. } = h.events.recv().await.unwrap().event {
+                assert!(input.starts_with("<session-message from=\"s1\" name=\"Chief\">"));
+                assert!(input.contains("status?"));
+                break;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn deliver_while_busy_waits_for_the_turn_boundary() {
+        let script = vec![
+            reply(vec![list_sessions_call()], Stop::ToolUse),
+            reply(vec![text("listed")], Stop::End),
+            reply(vec![text("got it")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "who's around?".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut order = Vec::new();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::SessionRequest { id, tool, .. } => {
+                    assert_eq!(tool, "ListSessions");
+                    // Mid-turn: queued, not an interrupt.
+                    h.ops
+                        .send(Op::Deliver {
+                            from: "s2".into(),
+                            from_name: "Manager".into(),
+                            message: "done".into(),
+                        })
+                        .unwrap();
+                    h.ops
+                        .send(Op::SessionReply {
+                            id,
+                            result: Some(json!([{ "id": "s2", "name": "Manager" }])),
+                            error: None,
+                        })
+                        .unwrap();
+                    order.push("request".to_string());
+                }
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "ListSessions" => {
+                    assert!(output.contains("Manager"));
+                    order.push("tool".into());
+                }
+                Event::TurnStarted { turn, input, .. } => {
+                    order.push(format!("start {turn} {}", input.starts_with("<session-message")));
+                }
+                Event::TurnEnded { turn, reason, .. } => {
+                    assert!(matches!(reason, EndReason::Complete), "{reason:?}");
+                    order.push(format!("end {turn}"));
+                    if turn == 2 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            order,
+            ["start 1 false", "request", "tool", "end 1", "start 2 true", "end 2"]
+        );
+    }
+
+    #[tokio::test]
+    async fn session_tools_need_a_client_that_hosts_sessions() {
+        let script = vec![
+            reply(vec![list_sessions_call()], Stop::ToolUse),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "list".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::SessionRequest { .. } => panic!("not offered without the capability"),
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "ListSessions" => {
+                    assert!(output.starts_with("There's no `ListSessions` tool"));
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn sessions_capability_offers_the_tools_and_frames_messages() {
+        let (mut h, sent) = engine_sent(
+            vec![reply(vec![text("ok")], Stop::End)],
+            None,
+            None,
+            None,
+            std::env::temp_dir(),
+        );
+        caps(&h, true);
+        h.ops
+            .send(Op::Submit {
+                text: "hi".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        while !matches!(
+            h.events.recv().await.unwrap().event,
+            Event::TurnEnded { .. }
+        ) {}
+        let req = sent.lock().unwrap().last().cloned().unwrap();
+        for tool in ["ListSessions", "SendMessage", "StartSession"] {
+            assert!(req.contains(tool), "{tool} not offered");
+        }
+        assert!(req.contains("no user authority"));
     }
 
     #[tokio::test]
@@ -5592,6 +5799,7 @@ for line in sys.stdin:
             .send(Op::SetClientCaps {
                 panes: true,
                 ask: false,
+                sessions: false,
             })
             .unwrap();
         until_idle(&mut h).await;
@@ -5723,6 +5931,7 @@ for line in sys.stdin:
             .send(Op::SetClientCaps {
                 panes: true,
                 ask: false,
+                sessions: false,
             })
             .unwrap();
         until_idle(&mut h).await;
@@ -5771,6 +5980,7 @@ for line in sys.stdin:
             .send(Op::SetClientCaps {
                 panes: true,
                 ask: false,
+                sessions: false,
             })
             .unwrap();
         until_idle(&mut h).await;

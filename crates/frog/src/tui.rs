@@ -623,6 +623,7 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
     let _ = tui.h.ops.send(Op::SetClientCaps {
         panes: false,
         ask: true,
+        sessions: false,
     });
     if !tui.drain_startup(false).await {
         return Ok(());
