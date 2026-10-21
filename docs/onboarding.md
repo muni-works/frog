@@ -66,3 +66,11 @@ Built as one line above the composer (`BiggerModelLine`). It shows when the mode
 3. **A bigger model, when it's needed.**
 4. **The project greeting.**
 5. Permissions in context; then the "after that" list, roughly in its order.
+
+## Install
+
+```sh
+curl -fsSL https://frog.toys/install.sh | sh
+```
+
+Prebuilt binaries cover macOS arm64 and Linux x86_64/arm64. The script installs to `~/.local/bin` (override with `FROG_INSTALL_DIR`), pins a release with `FROG_VERSION=v0.1.0`, verifies the sha256, and never uses sudo. From source: `cargo install --path crates/frog`.

@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # puck is a workspace member; build only frog + engine.
+      - run: cargo build -p frog -p frog-engine
+      # No -D warnings yet: frog-engine has outstanding clippy warnings.
+      - run: cargo clippy -p frog -p frog-engine
+      - run: cargo test -p frog-engine -p frog
