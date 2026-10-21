@@ -29,12 +29,12 @@ pub struct Preset {
 
 pub const PRESETS: &[Preset] = &[
     // frog pro / frog api: hosted Qwen3-Coder-Next, powered by tang (OpenAI-compatible).
-    // `tang/` is the local sidecar. `tang-cloud/` and `zest/` are old names for this one.
+    // `tang/` is the local sidecar. `frog/`, `tang-cloud/` and `zest/` are old names for this one.
     // The domain is temporary; FROG_BASE_URL (or the old TANG_CLOUD_BASE_URL, TANG_BASE_URL)
     // overrides it.
     Preset {
-        id: "frog",
-        name: "frog pro",
+        id: "frog-api",
+        name: "frog api",
         kind: ProviderKind::Openai,
         base_url: "https://zest-edge.municipal-robotics.workers.dev/v1",
         key_env: &["FROG_API_KEY", "TANG_CLOUD_API_KEY", "TANG_API_KEY", "ZEST_API_KEY"],
