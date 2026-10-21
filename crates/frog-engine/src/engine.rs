@@ -1453,7 +1453,7 @@ impl Agent {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    let Some(local) = self.frog_api_fallback(&e) else {
+                    let Some(local) = self.cloud_fallback(&e) else {
                         return Err(e);
                     };
                     self.notice(
@@ -2748,12 +2748,12 @@ Don't repeat it. Change the arguments or try a different approach.",
         Ok(())
     }
 
-    /// frog api is unreachable (offline) or out of capacity, credit or hours (503, 402, 502):
+    /// frog cloud is unreachable (offline) or out of capacity, credit or hours (503, 402, 502):
     /// carry on with a local model instead of failing the turn. `FROG_FALLBACK_MODEL` picks
     /// which.
-    fn frog_api_fallback(&self, e: &anyhow::Error) -> Option<String> {
+    fn cloud_fallback(&self, e: &anyhow::Error) -> Option<String> {
         let prov = self.profile_name.split_once('/')?.0;
-        if !matches!(prov, "frog-api" | "frog" | "tang-cloud" | "zest") {
+        if crate::providers::canonical(prov) != crate::providers::CLOUD {
             return None;
         }
         let offline = e
@@ -2770,6 +2770,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             std::env::var("FROG_FALLBACK_MODEL")
                 .ok()
                 .filter(|m| !m.is_empty())
+                .map(|m| crate::providers::normalize(&m))
                 .unwrap_or_else(|| crate::config::LOCAL_DEFAULT.into()),
         )
     }
@@ -3022,7 +3023,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                     if !started
                         && attempt < 3
                         && retryable(&e)
-                        && self.frog_api_fallback(&e).is_none() =>
+                        && self.cloud_fallback(&e).is_none() =>
                 {
                     attempt += 1;
                     self.notice(Level::Warn, format!("{e:#} — retrying ({attempt}/3)"));

@@ -227,7 +227,7 @@ pub fn data_dir() -> PathBuf {
 }
 
 /// frog's own engine on this machine: needs nothing else installed.
-pub const LOCAL_DEFAULT: &str = "tang/mlx-community/Qwen3-4B-4bit";
+pub const LOCAL_DEFAULT: &str = "local/qwen3-4b";
 
 impl Config {
     pub fn load() -> Result<Self> {
@@ -239,6 +239,8 @@ impl Config {
             Self::default()
         };
         cfg.claude_mcp = crate::imports::claude_mcp_on();
+        // Old provider ids in `default_model` get today's names (in memory; the file is yours).
+        cfg.default_model = cfg.default_model.map(|m| crate::providers::normalize(&m));
         Ok(cfg)
     }
 
@@ -260,23 +262,24 @@ impl Config {
         if let Some(p) = self.models.get(&spec) {
             return Ok((spec, p.clone()));
         }
-        let (prov, model) = spec.split_once('/').ok_or_else(|| {
-            anyhow!("unknown model `{spec}`: use a profile from config.toml or provider/model (frog-api/, ollama/, tang/, apple/, openai/, lmstudio/, llamacpp/, anthropic/)")
-        })?;
-        // Old names for frog's hosted models.
-        let prov = match prov {
-            "frog" | "tang-cloud" | "zest" => "frog-api",
-            other => other,
+        // Old provider ids (`tang/`, `frog-api/`, ...) and bare model names get today's spec.
+        let spec = match bare(&spec) {
+            Some(full) => full,
+            None => crate::providers::normalize(&spec),
         };
+        let (prov, model) = spec.split_once('/').ok_or_else(|| {
+            anyhow!("unknown model `{spec}`: use a profile from config.toml or provider/model (local/, cloud/, ollama/, apple/, openai/, lmstudio/, llamacpp/, anthropic/)")
+        })?;
         let mut p = match prov {
             "ollama" => Profile::new(ProviderKind::Ollama, model),
             "openai" => Profile::new(ProviderKind::Openai, model),
             "anthropic" | "claude" => Profile::new(ProviderKind::Anthropic, model),
             "lmstudio" => Profile::new(ProviderKind::Openai, model),
             "llamacpp" | "mlx" | "vllm" => Profile::new(ProviderKind::Openai, model),
-            "tang" => {
-                let mut p = Profile::new(ProviderKind::Openai, model);
-                p.sidecar = Some(model.to_string());
+            "local" => {
+                let repo = crate::providers::local_repo(model);
+                let mut p = Profile::new(ProviderKind::Openai, repo);
+                p.sidecar = Some(repo.to_string());
                 p
             }
             // Apple's on-device model has no native tool calling; guided JSON is exact.
@@ -288,7 +291,7 @@ impl Config {
                 p.context_window = Some(8_192);
                 p
             }
-            "openrouter" | "vercel" | "frog-api" => Profile::new(ProviderKind::Openai, model),
+            "openrouter" | "vercel" | "cloud" => Profile::new(ProviderKind::Openai, model),
             _ => match crate::providers::State::load().custom.remove(prov) {
                 // A server you added: another machine's ollama, or any OpenAI-compatible one.
                 Some(c) => {
@@ -306,11 +309,8 @@ impl Config {
             "mlx" => Some("http://localhost:8080/v1".into()),
             "vllm" => Some("http://localhost:8000/v1".into()),
             "openai" => std::env::var("OPENAI_BASE_URL").ok(),
-            "frog-api" => ["FROG_BASE_URL", "TANG_CLOUD_BASE_URL", "TANG_BASE_URL"]
-                .iter()
-                .find_map(|v| std::env::var(v).ok().filter(|u| !u.is_empty()))
-                .or_else(|| crate::providers::preset(prov).map(|x| x.base_url.to_string())),
-            "tang" | "apple" => p.sidecar.as_deref().map(crate::sidecar::base_url),
+            "cloud" => Some(crate::providers::cloud_base_url()),
+            "local" | "apple" => p.sidecar.as_deref().map(crate::sidecar::base_url),
             "openrouter" | "vercel" => {
                 crate::providers::preset(prov).map(|x| x.base_url.to_string())
             }
@@ -318,10 +318,11 @@ impl Config {
         };
         // Keys set in frog (the Keychain) or the provider's own variable.
         // OpenAI's key goes only to OpenAI itself, never to an OPENAI_BASE_URL elsewhere.
+        // frog cloud's saved key is pinned the same way, inside `providers::key`.
         let elsewhere = prov == "openai" && p.base_url.is_some();
         if matches!(
             prov,
-            "openrouter" | "vercel" | "frog-api" | "anthropic" | "claude" | "openai"
+            "openrouter" | "vercel" | "cloud" | "anthropic" | "claude" | "openai"
         ) && !elsewhere
         {
             let id = if prov == "claude" { "anthropic" } else { prov };
@@ -331,6 +332,27 @@ impl Config {
     }
 }
 
+/// A bare model name (`qwen3-coder-next`, `qwen3-4b`) as a full spec, when exactly one
+/// provider frog knows offers it. No network: bundled local names and frog cloud's list.
+fn bare(spec: &str) -> Option<String> {
+    if spec.contains('/') {
+        return None;
+    }
+    let mut hits: Vec<String> = crate::providers::LOCAL_MODELS
+        .iter()
+        .filter(|(short, _)| *short == spec)
+        .map(|(short, _)| format!("local/{short}"))
+        .chain(
+            crate::catalog::cloud_models()
+                .into_iter()
+                .filter(|m| m.id == spec)
+                .map(|m| m.spec),
+        )
+        .collect();
+    hits.dedup();
+    (hits.len() == 1).then(|| hits.remove(0))
+}
+
 /// What the catalog knows about a model (context size, images), unless the profile says.
 fn with_catalog(mut p: Profile, spec: &str) -> Profile {
     if let Some(m) = crate::catalog::cached(spec) {
@@ -338,4 +360,39 @@ fn with_catalog(mut p: Profile, spec: &str) -> Profile {
         p.vision = p.vision.or(Some(m.vision()));
     }
     p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_new_ids_aliases_and_bare_names() {
+        let cfg = Config::default();
+        let (spec, p) = cfg.resolve(Some("local/qwen3-4b")).unwrap();
+        assert_eq!(spec, "local/qwen3-4b");
+        assert_eq!(p.sidecar.as_deref(), Some("mlx-community/Qwen3-4B-4bit"));
+        let (spec, _) = cfg
+            .resolve(Some("tang/mlx-community/Qwen3-32B-4bit"))
+            .unwrap();
+        assert_eq!(spec, "local/qwen3-32b");
+        let (spec, p) = cfg
+            .resolve(Some("local/mlx-community/Qwen3-32B-4bit"))
+            .unwrap();
+        assert_eq!(spec, "local/qwen3-32b");
+        assert_eq!(p.model, "mlx-community/Qwen3-32B-4bit");
+        for old in ["frog-api", "frog", "tang-cloud", "zest", "cloud"] {
+            let (spec, p) = cfg
+                .resolve(Some(&format!("{old}/qwen3-coder-next")))
+                .unwrap();
+            assert_eq!(spec, "cloud/qwen3-coder-next");
+            assert!(p.base_url.is_some());
+        }
+        let (spec, _) = cfg.resolve(Some("qwen3-coder-next")).unwrap();
+        assert_eq!(spec, "cloud/qwen3-coder-next");
+        let (spec, _) = cfg.resolve(Some("qwen3-4b")).unwrap();
+        assert_eq!(spec, "local/qwen3-4b");
+        let e = cfg.resolve(Some("nope")).unwrap_err().to_string();
+        assert!(e.contains("local/, cloud/"), "{e}");
+    }
 }
