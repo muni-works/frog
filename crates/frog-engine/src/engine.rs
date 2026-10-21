@@ -2199,15 +2199,20 @@ impl Agent {
         if let Some(line) = crate::mcp::unavailable_summary(&failed) {
             self.notice(Level::Info, line);
         }
+        // Once per server, tool and description on this machine; after that only in
+        // `frog --mcp` and the engine log, so it doesn't nag on every run.
         for st in hub.status() {
             for q in &st.quarantined {
-                self.notice(
-                    Level::Warn,
-                    format!(
-                        "MCP `{}`: withheld tool `{}` because its description {}. Set `trust = true` for this server to allow it.",
-                        st.name, q.tool, q.reason
-                    ),
+                let line = format!(
+                    "MCP `{}`: withheld tool `{}` because its description {}. Set `trust = true` for this server to allow it.",
+                    st.name, q.tool, q.reason
                 );
+                if self.cfg.log_calls {
+                    eprintln!("{line}");
+                }
+                if self.cfg.hermetic || crate::mcp::first_notice(q) {
+                    self.notice(Level::Warn, line);
+                }
             }
         }
         *self.shared.mcp.lock().unwrap() = Some(hub.clone());

@@ -14,6 +14,7 @@ When frog connects to an MCP server, it checks each tool's description and input
   ```
 
   (That one came up in testing: the server's `update-ssh-keys` tool description asked the model to send out credentials.)
+  The warning shows once per server and tool on each machine (remembered in `~/.local/share/frog/mcp-quarantine-seen`), and again if the tool's description changes. After that it only appears in `frog --mcp` and the engine log (`--serve`).
 - `frog --mcp` lists each server's tools and, separately, anything quarantined, with the reason.
 
 The server's other tools work as usual. Tools a server adds mid-session are filtered the same way.
