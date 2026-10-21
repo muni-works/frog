@@ -619,6 +619,23 @@ mod tests {
     }
 
     #[test]
+    fn events_after_reads_appended_cli_events_incrementally() {
+        let dir = tmp();
+        let mut log = Log::create(&dir, header("a")).unwrap();
+        log.append(&ev(1, Event::TurnStarted { turn: 1, input: "hi".into(), images: Vec::new() })).unwrap();
+        log.sync().unwrap();
+        let first = events_after(&dir, "a", 0).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(events_after(&dir, "a", first[0].seq).unwrap().len(), 0);
+        log.append(&ev(2, Event::TurnEnded { turn: 1, reason: crate::protocol::EndReason::Complete, usage: crate::protocol::TurnUsage::default() })).unwrap();
+        log.sync().unwrap();
+        let appended = events_after(&dir, "a", first[0].seq).unwrap();
+        assert_eq!(appended.len(), 1);
+        assert_eq!(appended[0].seq, 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn second_writer_is_refused() {
         let dir = tmp();
         let _log = Log::create(&dir, header("a")).unwrap();

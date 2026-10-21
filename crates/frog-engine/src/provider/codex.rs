@@ -46,7 +46,7 @@ impl Client {
             .join("\n\n");
         let user = format!("{}\n\n--- Conversation so far ---\n{}", req.system, history);
         let mut child = Command::new("codex")
-            .args(["exec", "--json", "--cd"])
+            .args(["exec", "--json", "--skip-git-repo-check", "--cd"])
             .arg(&self.cwd)
             .arg(user)
             .current_dir(&self.cwd)

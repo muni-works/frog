@@ -28,6 +28,7 @@ final class Library {
         pinned = Set(UserDefaults.standard.stringArray(forKey: "pinnedSessions") ?? [])
         archived = Set(UserDefaults.standard.stringArray(forKey: "archivedSessions") ?? [])
         parents = UserDefaults.standard.dictionary(forKey: "sessionParents") as? [String: String] ?? [:]
+        _ = SessionDirectoryWatcher.shared
         refresh()
     }
 

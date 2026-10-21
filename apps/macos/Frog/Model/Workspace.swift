@@ -17,6 +17,9 @@ final class Workspace {
     var opening: String?
     var selection: String?
     var preferredModel: String?
+    /// A choice made in this workspace's picker. Unlike the startup default, this must win
+    /// over the "last model used" policy for the active conversation.
+    private var explicitModelChoice: String?
     /// A local model selected in the picker while its files are still downloading. It is the
     /// visible choice, but the engine keeps its current runnable model until the snapshot is
     /// complete.
@@ -102,6 +105,7 @@ final class Workspace {
     func use(_ spec: String) {
         pendingDownload = nil
         preferredModel = spec
+        explicitModelChoice = spec
         conversation?.setModel(spec)
         UserDefaults.standard.set(spec, forKey: "lastModel")
     }
@@ -110,6 +114,11 @@ final class Workspace {
     /// last runnable model so the composer can explain why sending is paused.
     var selectedModel: String? {
         if let pendingDownload { return pendingDownload }
+        // An explicit picker choice is an override for this workspace, regardless of the
+        // new-conversation "last model" policy or the model used by the previous turn.
+        if let explicitModelChoice { return explicitModelChoice }
+        if let preferredModel,
+           conversation?.turns.isEmpty != false { return preferredModel }
         if UserDefaults.standard.string(forKey: "newMessageModelPolicy") != "fixed",
            let model = conversation?.turns.reversed().compactMap({ $0.usage?.model }).first { return model }
         return conversation?.status?.model ?? preferredModel
@@ -132,6 +141,7 @@ final class Workspace {
         let downloads = ModelDownloads.shared
         pendingDownload = m.spec
         preferredModel = m.spec
+        explicitModelChoice = m.spec
         UserDefaults.standard.set(m.spec, forKey: "lastModel")
         switch downloads.states[repo] {
         case .downloading: break
@@ -382,6 +392,7 @@ final class Workspace {
         // A busy agent session keeps working off screen.
         if let old = conversation, !SessionBroker.shared.keep(old) { old.stop() }
         cloudForThisConversation = false
+        explicitModelChoice = nil
         Motion.cut { conversation = c }
     }
 }

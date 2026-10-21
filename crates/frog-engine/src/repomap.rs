@@ -80,10 +80,23 @@ pub struct Seeds<'a> {
 /// Build the map for `root` within `budget` characters (empty when the budget is 0), using
 /// and updating `cache` if given.
 pub fn build(root: &Path, cache: Option<&Path>, seeds: &Seeds, budget: usize) -> Map {
+    build_bounded(root, cache, seeds, budget, usize::MAX, None).0
+}
+
+pub fn build_bounded(
+    root: &Path,
+    cache: Option<&Path>,
+    seeds: &Seeds,
+    budget: usize,
+    max_files: usize,
+    max_time: Option<std::time::Duration>,
+) -> (Map, bool) {
     if budget == 0 {
-        return Map::default();
+        return (Map::default(), false);
     }
-    let files = listing(root);
+    let deadline = max_time.map(|d| std::time::Instant::now() + d);
+    let (paths, mut capped) = crate::codemap::source_files_bounded(root, None, max_files, deadline);
+    let files = listing_paths(root, paths);
     let stamp = stamp(&files);
     let mut entries = cache
         .and_then(|p| std::fs::read(p).ok())
@@ -100,6 +113,7 @@ pub fn build(root: &Path, cache: Option<&Path>, seeds: &Seeds, budget: usize) ->
         })
         .collect();
     for (p, mtime, len) in &changed {
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) { capped = true; break; }
         let symbols = std::fs::read_to_string(root.join(p))
             .map(|t| symbols(p, &t))
             .unwrap_or_default();
@@ -114,7 +128,8 @@ pub fn build(root: &Path, cache: Option<&Path>, seeds: &Seeds, budget: usize) ->
         );
     }
     if !changed.is_empty() || entries.values().all(|e| e.fan_in == 0) {
-        let g = crate::codemap::scan(root, None);
+        let (g, scan_capped) = crate::codemap::scan_files_bounded(root, files.iter().map(|(p, _, _)| p.clone()).collect(), deadline);
+        capped |= scan_capped;
         let mut fan_in: HashMap<&str, u32> = HashMap::new();
         for (_, to) in g.edges.keys() {
             *fan_in.entry(to.as_str()).or_default() += 1;
@@ -135,10 +150,17 @@ pub fn build(root: &Path, cache: Option<&Path>, seeds: &Seeds, budget: usize) ->
             }
         }
     }
-    let churn = churn(root);
+    let churn = if max_time.is_none() { churn(root) } else { HashMap::new() };
     let ranked = rank(&entries, &churn, seeds);
     let (text, shown) = render(&ranked, &entries, budget);
-    Map { text, shown, stamp }
+    (Map { text, shown, stamp }, capped)
+}
+
+fn listing_paths(root: &Path, paths: Vec<String>) -> Vec<(String, u64, u64)> {
+    paths.into_iter().map(|p| {
+        let meta = std::fs::metadata(root.join(&p)).ok();
+        (p, meta.as_ref().map_or(0, |m| m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs())), meta.map_or(0, |m| m.len()))
+    }).collect()
 }
 
 /// Every source file with its mtime (seconds) and length.

@@ -140,7 +140,7 @@ extension ModelIdentity {
         let cleaned = Self.cleanName(entry.model)
         self.init(
             spec: entry.spec,
-            name: entry.source == "apple" ? "Apple Intelligence" : (entry.info?.name ?? cleaned.name),
+            name: entry.spec == "codex/default" ? "Codex (ChatGPT)" : (entry.source == "apple" ? "Apple Intelligence" : (entry.info?.name ?? cleaned.name)),
             variant: cleaned.variant,
             place: place,
             abilities: abilities,

@@ -99,6 +99,34 @@ struct ComposerView: View {
                     .lineLimit(1)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+            if let fallback = conversation.fallbackNotice {
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Frog cloud is unavailable")
+                            .font(.callout.weight(.semibold))
+                        Text(fallback)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    Spacer(minLength: 0)
+                    Button { conversation.dismissFallbackNotice() } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Dismiss")
+                }
+                .padding(10)
+                .background(.orange.opacity(0.09), in: .rect(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(.orange.opacity(0.22), lineWidth: 1)
+                }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             if let model = workspace.pendingDownloadModel {
                 ModelDownloadStatus(model: model, downloads: downloads) {
                     workspace.useWhenReady(model)
