@@ -45,6 +45,9 @@ enum Op: Encodable, Sendable {
     /// A press on a `Present` actions button; runs a turn with `send` (or the label).
     case act(label: String, send: String)
     case interrupt
+    /// Pick up a turn the app's restart interrupted: the engine runs a turn on the repaired
+    /// history with `note` (its own default when nil) as the message.
+    case `continue`(note: String? = nil)
     case permission(id: String, decision: Decision)
     case setMode(Mode)
     case setModel(String)
@@ -83,7 +86,7 @@ enum Op: Encodable, Sendable {
         case op, text, command, id, decision, mode, spec, focus, after, title
         case action, content, server, tool, arguments, images
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
-        case ask, choices, other, label, send
+        case ask, choices, other, label, send, note
     }
 
     func encode(to encoder: Encoder) throws {
@@ -102,6 +105,9 @@ enum Op: Encodable, Sendable {
             try c.encode(command, forKey: .command)
         case .interrupt:
             try c.encode("interrupt", forKey: .op)
+        case .continue(let note):
+            try c.encode("continue", forKey: .op)
+            try c.encodeIfPresent(note, forKey: .note)
         case .permission(let id, let decision):
             try c.encode("permission", forKey: .op)
             try c.encode(id, forKey: .id)
