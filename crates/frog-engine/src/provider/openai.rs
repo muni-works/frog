@@ -57,6 +57,14 @@ impl Client {
         self.base.contains("api.openai.com")
     }
 
+    /// frog api, at its own address or wherever FROG_BASE_URL points. It honors
+    /// `prompt_cache_key`, which matters: a cold ~10k-token prompt is most of a first turn.
+    pub fn is_frog_api(&self) -> bool {
+        let base = self.base.trim_end_matches('/');
+        base.contains("api.frog.toys")
+            || std::env::var("FROG_BASE_URL").is_ok_and(|u| u.trim_end_matches('/') == base)
+    }
+
     /// Capabilities the server lists for this model in `/v1/models` (tang-llm and ollama's /v1
     /// say `vision`), if any.
     pub async fn capabilities(&self) -> Option<Vec<String>> {

@@ -216,7 +216,7 @@ impl Provider {
                 let has = |name: &str| caps.iter().any(|c| c == name);
                 Extensions {
                     thinking_budget: has("thinking_budget"),
-                    cache_key: has("prompt_cache_key"),
+                    cache_key: c.is_frog_api() || has("prompt_cache_key"),
                     prefill: has("prefill"),
                 }
             }
