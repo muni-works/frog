@@ -38,7 +38,7 @@ struct Cli {
     /// With --serve: the client can answer MCP elicitations and host MCP Apps.
     #[arg(long, requires = "serve", hide = true)]
     rich: bool,
-    /// Profile name from config.toml, or provider/model (e.g. ollama/qwen3, lmstudio/qwen3-coder, anthropic/claude-sonnet-5)
+    /// Profile name from config.toml, or provider/model (e.g. local/qwen3-4b, cloud/qwen3-coder-next, ollama/qwen3, anthropic/claude-sonnet-5)
     #[arg(short, long)]
     model: Option<String>,
     /// Load an alternate config file (useful for isolated setups and testing).
@@ -235,7 +235,21 @@ async fn run() -> Result<bool> {
     // `frog setup [MODEL]`: install tang-llm and download the default model's weights.
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("setup") {
-        frog_engine::setup::run(args.get(2).map(String::as_str)).await?;
+        let model = args.get(2).map(|m| {
+            let m = m.strip_prefix("local/").unwrap_or(m);
+            frog_engine::providers::local_repo(m)
+        });
+        frog_engine::setup::run(model).await?;
+        return Ok(true);
+    }
+    // `frog account [--json]`: frog cloud's key and where it goes. Local only, no network.
+    if args.get(1).map(String::as_str) == Some("account") {
+        let a = frog_engine::providers::Account::read();
+        if args.iter().skip(2).any(|x| x == "--json") {
+            println!("{}", serde_json::to_string(&a)?);
+        } else {
+            print!("{}", a.render());
+        }
         return Ok(true);
     }
     let cli = Cli::parse();
@@ -320,6 +334,15 @@ async fn run() -> Result<bool> {
     };
     let (profile_name, mut profile) = cfg.resolve(chosen.as_deref())?;
     if let Some(b) = cli.base_url {
+        // A saved frog cloud or OpenAI key goes only to its own service: a --base-url
+        // elsewhere gets an env key or none.
+        let prov = profile_name.split_once('/').map(|(p, _)| p);
+        if let Some(prov @ ("cloud" | "openai")) = prov {
+            let own = prov == "cloud" && frog_engine::providers::on_cloud_origin(&b);
+            if !own && frog_engine::providers::key_source(prov) != Some("env") {
+                profile.api_key = None;
+            }
+        }
         profile.base_url = Some(b);
     }
     if cli.text_tools {
@@ -563,6 +586,7 @@ async fn manage_providers(cli: &Cli) -> Result<Option<bool>> {
         return Ok(Some(true));
     }
     if let Some(id) = &cli.remove_provider {
+        providers::removable(id)?;
         let mut state = State::load();
         state.custom.remove(id);
         state.enabled.retain(|s| !s.starts_with(&format!("{id}/")));
@@ -585,7 +609,11 @@ async fn manage_providers(cli: &Cli) -> Result<Option<bool>> {
             println!("{}", serde_json::to_string(&list)?);
         } else {
             for p in list {
-                let status = if p.connected { "connected" } else { "no key" };
+                let status = match (p.connected, p.local) {
+                    (true, _) => "connected",
+                    (false, true) => "not installed",
+                    (false, false) => "no key",
+                };
                 println!("{:<12} {:<20} {:<10} {}", p.id, p.name, status, p.base_url);
             }
         }
