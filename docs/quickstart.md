@@ -58,3 +58,12 @@ frog -c                              # continue the last session here
 frog --sessions                      # list this directory's sessions
 frog --fork <id>@3                   # branch a session after turn 3
 ```
+
+## If macOS blocks frog or tang-llm
+
+Early builds aren't signed by Apple yet. The installer and `frog setup` handle that for you, but
+if macOS still says a binary "can't be opened" or kills it on launch, run:
+
+```sh
+xattr -d com.apple.quarantine ~/.local/bin/frog ~/.local/share/frog/bin/tang-llm 2>/dev/null; codesign -s - -f ~/.local/bin/frog ~/.local/share/frog/bin/tang-llm
+```
