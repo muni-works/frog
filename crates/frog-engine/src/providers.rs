@@ -36,9 +36,9 @@ pub const PRESETS: &[Preset] = &[
         id: "frog-api",
         name: "frog api",
         kind: ProviderKind::Openai,
-        base_url: "https://api.frog.muni.works/v1",
+        base_url: "https://api.frog.toys/v1",
         key_env: &["FROG_API_KEY", "TANG_CLOUD_API_KEY", "TANG_API_KEY", "ZEST_API_KEY"],
-        key_url: "https://api.frog.muni.works/beta",
+        key_url: "https://api.frog.toys/beta",
         local: false,
     },
     Preset {
