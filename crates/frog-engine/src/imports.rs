@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn claude_servers_are_user_wide_then_the_projects() {
         let dir = std::env::temp_dir().join(format!("frog-imports-{}", std::process::id()));
-        let project = dir.join("kiln");
+        let project = dir.join("app");
         std::fs::create_dir_all(project.join("apps")).unwrap();
         let project = project.canonicalize().unwrap();
         let file = dir.join("claude.json");

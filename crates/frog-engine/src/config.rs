@@ -220,10 +220,10 @@ pub fn config_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".config/frog")
 }
 
-/// frog was called kiln. Move its config and data to the new places, leaving the old paths as
+/// frog used an earlier name. Move its config and data to the new places, leaving the old paths as
 /// symlinks so absolute paths recorded in old sessions (the chat folder, worktrees) still work.
 /// Does nothing once moved, or if both exist.
-pub fn migrate_from_kiln() {
+pub fn migrate_legacy_dirs() {
     let Some(home) = dirs::home_dir() else { return };
     for (old, new) in [
         (".config/kiln", ".config/frog"),

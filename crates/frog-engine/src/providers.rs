@@ -230,7 +230,7 @@ pub fn add_custom(state: &mut State, id: &str, custom: Custom) -> Result<()> {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     if !ok {
-        bail!("a provider id is lowercase letters, digits and dashes (like `gpu-box`)");
+        bail!("a provider id is lowercase letters, digits and dashes (like `gpu`)");
     }
     if preset(id).is_some()
         || matches!(
@@ -279,7 +279,7 @@ mod keychain {
                 .filter(|s| !s.is_empty())
         };
         let out = find(SERVICE).or_else(|| {
-            // Saved under kiln's name: copy it to frog's.
+            // Saved under the pre-rename name: copy it to frog's.
             let key = find(LEGACY)?;
             let _ = set(id, &key);
             Some(key)
@@ -348,13 +348,13 @@ mod tests {
         let box3090 = Custom {
             name: "3090".into(),
             kind: ProviderKind::Ollama,
-            base_url: "http://gpu-box:11434".into(),
+            base_url: "http://gpu:11434".into(),
         };
-        assert!(add_custom(&mut s, "gpu-box", box3090.clone()).is_ok());
+        assert!(add_custom(&mut s, "gpu", box3090.clone()).is_ok());
         assert!(add_custom(&mut s, "openrouter", box3090.clone()).is_err());
         assert!(add_custom(&mut s, "Bad Id", box3090.clone()).is_err());
         let bad_url = Custom {
-            base_url: "gpu-box:11434".into(),
+            base_url: "gpu:11434".into(),
             ..box3090
         };
         assert!(add_custom(&mut s, "other", bad_url).is_err());

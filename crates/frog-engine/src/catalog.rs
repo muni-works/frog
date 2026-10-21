@@ -370,7 +370,7 @@ mod tests {
             ..Default::default()
         };
         let id = m.id.clone();
-        enrich(&mut m, lookup(&dev, "gpu-box", &id).unwrap());
+        enrich(&mut m, lookup(&dev, "gpu", &id).unwrap());
         assert_eq!(m.context, Some(200_000));
         assert_eq!(m.name, "Claude Sonnet 5");
         assert!(m.vision());
