@@ -232,7 +232,6 @@ async fn main() {
 }
 
 async fn run() -> Result<bool> {
-    frog_engine::config::migrate_legacy_dirs();
     // `frog setup [MODEL]`: install tang-llm and download the default model's weights.
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("setup") {

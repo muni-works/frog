@@ -70,7 +70,6 @@ enum Cmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    frog_engine::config::migrate_legacy_dirs();
     match Cli::parse().cmd {
         Cmd::Run {
             models,

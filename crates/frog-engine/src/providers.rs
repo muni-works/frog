@@ -256,8 +256,6 @@ mod keychain {
     use std::sync::Mutex;
 
     const SERVICE: &str = "frog";
-    /// Keys saved before the rename; read once and copied over.
-    const LEGACY: &str = "kiln";
     static CACHE: Mutex<BTreeMap<String, Option<String>>> = Mutex::new(BTreeMap::new());
 
     pub fn get(id: &str) -> Option<String> {
@@ -278,12 +276,7 @@ mod keychain {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
         };
-        let out = find(SERVICE).or_else(|| {
-            // Saved under the pre-rename name: copy it to frog's.
-            let key = find(LEGACY)?;
-            let _ = set(id, &key);
-            Some(key)
-        });
+        let out = find(SERVICE);
         CACHE.lock().unwrap().insert(id.to_string(), out.clone());
         out
     }
