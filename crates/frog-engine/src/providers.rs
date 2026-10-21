@@ -28,6 +28,16 @@ pub struct Preset {
 }
 
 pub const PRESETS: &[Preset] = &[
+    // muni's fast inference, OpenAI-compatible. The domain is temporary: ZEST_BASE_URL overrides.
+    Preset {
+        id: "zest",
+        name: "zest",
+        kind: ProviderKind::Openai,
+        base_url: "https://zest-edge.municipal-robotics.workers.dev/v1",
+        key_env: &["ZEST_API_KEY"],
+        key_url: "https://zest-edge.municipal-robotics.workers.dev/beta",
+        local: false,
+    },
     Preset {
         id: "openrouter",
         name: "OpenRouter",
