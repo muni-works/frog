@@ -302,6 +302,7 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                         always,
                         preview: diffs.get(id.as_str()).map(|d| (*d).clone()),
                         reason: None,
+                        subagent: None,
                     });
                     p.answer().await?;
                 }

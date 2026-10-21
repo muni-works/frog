@@ -118,6 +118,14 @@ impl Profile {
     }
 }
 
+fn default_subagent_steps() -> u32 {
+    100
+}
+
+fn default_background_tasks() -> usize {
+    4
+}
+
 fn default_true() -> bool {
     true
 }
@@ -198,6 +206,21 @@ pub struct Config {
     /// on-device model when available, else the default model if it runs on your devices.
     #[serde(default)]
     pub brief_model: Option<String>,
+    /// The model `Task` subagents use (a profile or provider/model) unless a call names one.
+    /// Default: the session's model. One that can't be resolved or isn't allowed here falls
+    /// back to the session's model.
+    #[serde(default)]
+    pub subagent_model: Option<String>,
+    /// Steps a subagent may take before it has to report.
+    #[serde(default = "default_subagent_steps")]
+    pub subagent_max_steps: u32,
+    /// Background subagents (`Task` with `background: true`) that may run at once.
+    #[serde(default = "default_background_tasks")]
+    pub background_tasks: usize,
+    /// Set on a write-mode subagent's own config by its parent: it gets the edit and shell
+    /// tools. Not a config.toml key.
+    #[serde(skip)]
+    pub subagent_write: bool,
     /// The WebSearch backend: "searxng", "brave", "exa" or "tavily". Unset: a configured
     /// `searxng_url`, else a search key in the environment, else no WebSearch.
     #[serde(default)]

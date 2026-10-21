@@ -154,6 +154,8 @@ struct Shared {
     panes: Arc<crate::panes::Panes>,
     /// The agent is handling an op (a turn, mostly); the router drops `Warm` meanwhile.
     working: AtomicBool,
+    /// Background tasks, jobs and monitors (see `background`).
+    bg: Arc<crate::background::Registry>,
 }
 
 /// Event numbering and the session log. Shared, so events raised outside the agent loop (MCP
@@ -274,6 +276,18 @@ pub fn spawn(opts: Options) -> Result<Handle> {
     start(opts, provider)
 }
 
+/// Start a subagent's engine. Tests script it via `tests::child_script`.
+pub(crate) fn spawn_child(opts: Options) -> Result<Handle> {
+    #[cfg(test)]
+    if let Some(script) = tests::child_script(&opts.cwd) {
+        return start(
+            opts,
+            Provider::Scripted(crate::provider::scripted::Client::new(script)),
+        );
+    }
+    spawn(opts)
+}
+
 fn start(opts: Options, provider: Provider) -> Result<Handle> {
     let (op_tx, mut op_rx) = mpsc::unbounded_channel::<Op>();
     let (ev_tx, ev_rx) = mpsc::unbounded_channel();
@@ -292,9 +306,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         subagents: Default::default(),
         ready: Default::default(),
         working: Default::default(),
+        bg: {
+            let j = journal.clone();
+            crate::background::Registry::new(move |e| j.emit(e))
+        },
         journal,
         panes,
     });
+    shared.bg.set_wake(&work_tx);
     let mut agent = Agent::new(opts, provider, shared.clone())?;
     // What's running, before anything slow (MCP servers, a local model loading, probing the
     // provider), so a client can name the model as soon as a conversation opens.
@@ -332,7 +351,10 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     let upto = journal.seq.load(Ordering::Relaxed);
                     journal.emit(Event::Synced { upto });
                 }
-                Op::Interrupt => router.cancel.lock().unwrap().cancel(),
+                Op::Interrupt => {
+                    router.cancel.lock().unwrap().cancel();
+                    router.bg.stop_all();
+                }
                 // Mid-turn the server is busy with the turn itself, which leaves it warm.
                 Op::Warm { .. } if router.working.load(Ordering::Relaxed) => {}
                 // Stopping mid-turn ends the turn first (cancelled, and logged as such), rather
@@ -340,6 +362,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 // before killing it, and a turn cut off there would stay open in the log.
                 Op::Shutdown => {
                     router.cancel.lock().unwrap().cancel();
+                    router.bg.stop_all();
                     if work_tx.send(Op::Shutdown).is_err() {
                         break;
                     }
@@ -347,6 +370,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Op::Permission { id, decision } => {
                     if let Some(tx) = router.pending.lock().unwrap().remove(&id) {
                         let _ = tx.send(decision);
+                    } else {
+                        router.bg.answer(&id, decision);
                     }
                 }
                 Op::Answer { id, answer } => {
@@ -427,6 +452,10 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 agent.warm(draft.as_deref());
                 continue;
             }
+            // A wake whose notices an earlier turn already took.
+            if matches!(op, Op::Wake) && !shared.bg.has_notices() {
+                continue;
+            }
             shared.working.store(true, Ordering::Relaxed);
             agent.meter_busy(true);
             let token = CancellationToken::new();
@@ -472,6 +501,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             agent.emit(Event::Idle);
             agent.meter_busy(false);
         }
+        shared.bg.stop_all();
         agent.mcp.shutdown();
         shared.mcp.lock().unwrap().take();
         shared.panes.shutdown();
@@ -1107,6 +1137,12 @@ impl Agent {
                 self.turn(&text, Vec::new()).await?
             }
             Op::Shell { command } => self.shell(&command).await,
+            Op::Wake => {
+                let notices = self.shared.bg.take_notices();
+                if !notices.is_empty() {
+                    self.turn(&notices.join("\n\n"), Vec::new()).await?
+                }
+            }
             Op::SetMode { mode } => {
                 self.mode = mode;
                 self.emit(Event::ModeChanged { mode });
@@ -1128,6 +1164,8 @@ impl Agent {
                 });
             }
             Op::Clear => {
+                self.shared.bg.stop_all();
+                self.shared.bg.take_notices();
                 self.sync_log();
                 self.write_summary();
                 self.messages.clear();
@@ -1342,6 +1380,13 @@ impl Agent {
         self.turn_usage = TurnUsage::default();
 
         let mut text = std::mem::take(&mut self.pending).join("\n");
+        // Background work that finished while this turn was queued.
+        for notice in self.shared.bg.take_notices() {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&notice);
+        }
         if !text.is_empty() {
             text.push('\n');
         }
@@ -1403,7 +1448,7 @@ impl Agent {
         let reason = loop {
             steps += 1;
             let limit = if self.subagent {
-                crate::subagent::MAX_STEPS
+                self.cfg.subagent_max_steps.max(1)
             } else {
                 MAX_STEPS
             };
@@ -1564,7 +1609,11 @@ impl Agent {
             self.system.push_str(&self.mcp.prompt());
         }
         if self.subagent {
-            self.system.push_str(crate::subagent::PROMPT);
+            self.system.push_str(if self.cfg.subagent_write {
+                crate::subagent::WRITE_PROMPT
+            } else {
+                crate::subagent::PROMPT
+            });
         }
         // No Skill tool in a small window (see `sync_specs`), so no catalog either.
         if !self.small_window() {
@@ -2171,13 +2220,19 @@ impl Agent {
             }
         }
         if self.subagent {
+            // A write-mode subagent also edits and runs commands (asking as the parent would).
+            let write = self.cfg.subagent_write;
             specs.retain(|s| {
                 tools::kind(&s.name) == Kind::Read
                     || matches!(&*s.name, crate::panes::TERMINAL | crate::panes::PREVIEW)
+                    || (write && matches!(&*s.name, "Bash" | "Write" | "Edit"))
             });
         } else {
             if !self.small_window() {
                 specs.push(crate::subagent::spec());
+            }
+            if !self.chat {
+                specs.extend(crate::background::specs());
             }
             if !self.skills.is_empty() {
                 specs.push(crate::skills::spec());
@@ -2324,41 +2379,66 @@ impl Agent {
         )))
     }
 
-    /// `Task`: run a read-only subagent and return its report. Its steps stream as live output.
+    /// `Task`: run a subagent and return its report (its steps stream as live output), or,
+    /// with `background`, start it and return its id. A write-mode subagent works in this
+    /// session's mode and sandbox, and its permission prompts come to the user through ours.
     async fn run_task(&mut self, id: &str, input: &Value) -> Result<tools::Output> {
         if self.subagent {
             anyhow::bail!("subagents can't start subagents");
         }
+        let write = match input["mode"].as_str().unwrap_or("read") {
+            "read" | "" => false,
+            "write" => true,
+            m => anyhow::bail!("unknown mode `{m}`: use read or write"),
+        };
+        let (profile_name, profile, fallback) = crate::subagent::profile(
+            &self.cfg,
+            &self.root,
+            input["model"].as_str(),
+            (&self.profile_name, &self.profile),
+        );
+        if let Some(why) = fallback {
+            self.notice(Level::Warn, why);
+        }
+        let mut cfg = self.cfg.clone();
+        cfg.subagent_write = write;
         let opts = Options {
-            cfg: self.cfg.clone(),
-            profile_name: self.profile_name.clone(),
-            profile: self.profile.clone(),
+            cfg,
+            profile_name,
+            profile,
             cwd: self.root.clone(),
-            mode: Mode::Default,
-            can_ask: false,
+            // Never more than the parent may do: its mode, and only it can ask the user.
+            mode: if write { self.mode } else { Mode::Default },
+            can_ask: write && self.can_ask,
             resume: None,
             store: None,
-            sandbox: true,
+            sandbox: !write || self.ctx.sandbox.is_some(),
             rich: false,
             subagent: true,
             chat: false,
         };
+        if tools::bool_arg(input, "background") {
+            let max = self.cfg.background_tasks.max(1);
+            return crate::background::start_task(&self.shared.bg, opts, input, max);
+        }
         let stop = CancellationToken::new();
         self.shared
             .subagents
             .lock()
             .unwrap()
             .insert(id.to_string(), stop.clone());
-        let (journal, item) = (self.shared.journal.clone(), id.to_string());
-        let out = crate::subagent::run(opts, input, stop, move |inner| {
-            journal.emit(Event::Subagent {
-                item: item.clone(),
-                inner: Box::new(inner),
-            });
-        })
-        .await;
+        let forward = crate::background::forward(self.shared.bg.clone(), id.to_string(), false);
+        let out = crate::subagent::run(opts, input, stop, forward).await;
         self.shared.subagents.lock().unwrap().remove(id);
         out
+    }
+
+    /// Where background jobs write their output: next to the session log.
+    fn jobs_dir(&self) -> PathBuf {
+        match &self.store {
+            Some(dir) => dir.join(format!("{}.jobs", self.session_id)),
+            None => std::env::temp_dir().join(format!("frog-jobs-{}", self.session_id)),
+        }
     }
 
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
@@ -2376,6 +2456,24 @@ impl Agent {
         }
         if name == crate::subagent::TOOL {
             return self.run_task(id, input).await;
+        }
+        if crate::background::handles(name)
+            || (name == "Bash" && tools::bool_arg(input, "run_in_background"))
+        {
+            if self.subagent {
+                anyhow::bail!(
+                    "background work isn't available to subagents; run it in the foreground"
+                );
+            }
+            if name == "Bash" {
+                return crate::background::start_job(
+                    &self.shared.bg,
+                    input,
+                    &self.ctx,
+                    &self.jobs_dir(),
+                );
+            }
+            return crate::background::run(&self.shared.bg, name, input, &self.ctx);
         }
         if name == crate::ask::TOOL {
             return self.ask_user(id, input).await;
@@ -3052,6 +3150,18 @@ Don't repeat it. Change the arguments or try a different approach.",
     }
 
     async fn permit(&mut self, item: &str, name: &str, arg: &str, input: &Value) -> Decision {
+        // A monitor's command is a shell command like any other; a bare timer runs nothing.
+        let name = match name {
+            crate::background::MONITOR
+                if input["command"]
+                    .as_str()
+                    .is_some_and(|c| !c.trim().is_empty()) =>
+            {
+                "Bash"
+            }
+            crate::background::MONITOR => return Decision::Allow,
+            n => n,
+        };
         let kind = if crate::panes::is_read(name, input) {
             Kind::Read
         } else {
@@ -3189,6 +3299,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             always,
             preview,
             reason,
+            subagent: None,
         });
         let asked = Instant::now();
         let decision = rx.await.unwrap_or(Decision::Deny);
@@ -3250,6 +3361,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                 "Frog will be able to read and edit files in this folder and run commands there."
                     .into(),
             ),
+            subagent: None,
         });
         let asked = Instant::now();
         let decision = match rx.await.unwrap_or(Decision::Deny) {
@@ -3598,6 +3710,25 @@ mod tests {
     use crate::protocol::Answer;
     use crate::provider::scripted;
     use serde_json::json;
+
+    /// Scripts for subagents started in a given cwd (each test uses its own directory).
+    static CHILD_SCRIPTS: std::sync::LazyLock<Mutex<HashMap<PathBuf, Vec<Vec<Response>>>>> =
+        std::sync::LazyLock::new(Default::default);
+
+    pub(super) fn child_script(cwd: &Path) -> Option<Vec<Response>> {
+        let mut all = CHILD_SCRIPTS.lock().unwrap();
+        let list = all.get_mut(cwd)?;
+        (!list.is_empty()).then(|| list.remove(0))
+    }
+
+    fn script_child(cwd: &Path, script: Vec<Response>) {
+        CHILD_SCRIPTS
+            .lock()
+            .unwrap()
+            .entry(cwd.to_path_buf())
+            .or_default()
+            .push(script);
+    }
 
     fn reply(content: Vec<Block>, stop: Stop) -> Response {
         Response {
@@ -6260,6 +6391,273 @@ for line in sys.stdin:
                 .iter()
                 .any(|(_, b)| matches!(b, Block::ToolResult { .. }))
         );
+    }
+
+    fn call(id: &str, name: &str, input: Value) -> Block {
+        Block::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }
+    }
+
+    /// Collect events until `done` matches one, allowing every permission request on the way.
+    async fn drive(h: &mut Handle, done: impl Fn(&Event) -> bool) -> Vec<Envelope> {
+        let mut out = Vec::new();
+        loop {
+            let env = tokio::time::timeout(Duration::from_secs(30), h.events.recv())
+                .await
+                .expect("timed out waiting for events")
+                .expect("event stream closed");
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                    })
+                    .unwrap();
+            }
+            let stop = done(&env.event);
+            out.push(env);
+            if stop {
+                return out;
+            }
+        }
+    }
+
+    fn submit(h: &Handle, text: &str) {
+        h.ops
+            .send(Op::Submit {
+                text: text.into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+    }
+
+    fn woke_with(evs: &[Envelope]) -> Option<String> {
+        evs.iter().find_map(|e| match &e.event {
+            Event::TurnStarted { input, .. } if input.contains("-done id=") => Some(input.clone()),
+            _ => None,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_finished_background_task_wakes_an_idle_parent() {
+        let dir = tmp_store();
+        script_child(
+            &dir,
+            vec![reply(
+                vec![text("the parser lives in src/parse.rs:12")],
+                Stop::End,
+            )],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "find parser", "prompt": "where is the parser?", "background": true}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("started it")], Stop::End),
+            reply(vec![text("thanks, found it")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "find the parser in the background");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let result = evs.iter().find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::ToolCall { output, .. },
+                ..
+            } => Some(output.clone()),
+            _ => None,
+        });
+        assert!(result.unwrap().contains("task-1"));
+        // With nothing else queued, the report starts a turn of its own.
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let input = woke_with(&evs).expect("a turn started by the notice");
+        assert!(input.starts_with("<task-done id=task-1>"), "{input}");
+        assert!(input.contains("src/parse.rs:12"), "{input}");
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::BackgroundDone { id, status, .. } if id == "task-1" && status == "done"
+        )));
+        shutdown(h).await;
+    }
+
+    #[tokio::test]
+    async fn write_mode_subagent_calls_ask_through_the_parent() {
+        let dir = tmp_store();
+        let write = call(
+            "w",
+            "Write",
+            json!({"file_path": "new.txt", "content": "hi\n"}),
+        );
+        script_child(
+            &dir,
+            vec![
+                reply(vec![write], Stop::ToolUse),
+                reply(vec![text("wrote new.txt")], Stop::End),
+            ],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "write file", "prompt": "create new.txt", "mode": "write"}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        // Default mode: edits ask.
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "have a subagent write it");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let asked = evs.iter().find_map(|e| match &e.event {
+            Event::PermissionRequest {
+                name,
+                subagent,
+                item,
+                ..
+            } => Some((name.clone(), subagent.clone(), item.clone())),
+            _ => None,
+        });
+        assert_eq!(
+            asked,
+            Some(("Write".into(), Some("t".into()), "t".into())),
+            "the subagent's edit asked the user, labelled with its id"
+        );
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionResolved { .. }))
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("new.txt")).unwrap(),
+            "hi\n"
+        );
+        shutdown(h).await;
+    }
+
+    #[tokio::test]
+    async fn a_denied_subagent_call_does_not_run() {
+        let dir = tmp_store();
+        let write = call(
+            "w",
+            "Write",
+            json!({"file_path": "nope.txt", "content": "x"}),
+        );
+        script_child(
+            &dir,
+            vec![
+                reply(vec![write], Stop::ToolUse),
+                reply(vec![text("couldn't write")], Stop::End),
+            ],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "w", "prompt": "write", "mode": "write"}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "go");
+        loop {
+            if let Event::PermissionRequest { id, .. } = h.events.recv().await.unwrap().event {
+                h.ops
+                    .send(Op::Permission {
+                        id,
+                        decision: Decision::Deny,
+                    })
+                    .unwrap();
+                break;
+            }
+        }
+        drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        assert!(!dir.join("nope.txt").exists());
+        shutdown(h).await;
+    }
+
+    #[tokio::test]
+    async fn a_finished_bash_job_reports_its_exit_and_output() {
+        let dir = tmp_store();
+        let job = call(
+            "b",
+            "Bash",
+            json!({"command": "echo building; echo built ok", "run_in_background": true}),
+        );
+        let script = vec![
+            reply(vec![job], Stop::ToolUse),
+            reply(vec![text("it's running")], Stop::End),
+            reply(vec![text("the build passed")], Stop::End),
+        ];
+        let store = tmp_store();
+        let mut h = engine_with(script, true, Some(store.clone()), None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "build in the background");
+        drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let input = woke_with(&evs).expect("woken by the job");
+        assert!(input.starts_with("<job-done id=job-1 exit=0>"), "{input}");
+        assert!(input.contains("building\nbuilt ok"), "{input}");
+        let sid = evs[0].session.clone();
+        // Its output file sits next to the session log; start and finish are logged.
+        assert!(store.join(format!("{sid}.jobs/job-1.log")).exists());
+        shutdown(h).await;
+        let logged = session::events_after(&store, &sid, 0).unwrap();
+        assert!(
+            logged
+                .iter()
+                .any(|e| matches!(e.event, Event::BackgroundStarted { .. }))
+        );
+        assert!(
+            logged
+                .iter()
+                .any(|e| matches!(e.event, Event::BackgroundDone { .. }))
+        );
+    }
+
+    #[tokio::test]
+    async fn background_work_stops_when_the_session_ends() {
+        let dir = tmp_store();
+        let marker = dir.join("survived");
+        let cmd = format!("sleep 2; touch {}", marker.display());
+        let script = vec![
+            reply(
+                vec![
+                    call(
+                        "b",
+                        "Bash",
+                        json!({"command": cmd, "run_in_background": true}),
+                    ),
+                    call("m", "Monitor", json!({"after_s": 1})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("started")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "start things");
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        h.ops.send(Op::Shutdown).unwrap();
+        let mut stopped = 0;
+        while let Some(env) = h.events.recv().await {
+            if matches!(&env.event, Event::BackgroundDone { status, .. } if status == "stopped") {
+                stopped += 1;
+            }
+            assert!(
+                !matches!(env.event, Event::TurnStarted { .. }),
+                "no wakeup after the end"
+            );
+        }
+        assert_eq!(stopped, 2);
+        tokio::time::sleep(Duration::from_millis(2_500)).await;
+        assert!(!marker.exists(), "the job was killed");
     }
 
     #[test]
