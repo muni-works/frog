@@ -140,12 +140,12 @@ extension ModelIdentity {
         let cleaned = Self.cleanName(entry.model)
         self.init(
             spec: entry.spec,
-            name: entry.spec == "codex/default" ? "Codex (ChatGPT)" : (entry.source == "apple" ? "Apple Intelligence" : (entry.info?.name ?? cleaned.name)),
+            name: entry.spec == "codex/default" ? "Codex (ChatGPT)" : (entry.spec.hasPrefix("codex/") ? entry.model : (entry.source == "apple" ? "Apple Intelligence" : (entry.info?.name ?? cleaned.name))),
             variant: cleaned.variant,
             place: place,
             abilities: abilities,
             paramsB: entry.caps?.paramsB,
-            context: entry.info?.context,
+            context: entry.info?.context ?? (entry.provider == "codex" ? 272_000 : nil),
             price: entry.info?.price
         )
         costIn = entry.info?.costIn

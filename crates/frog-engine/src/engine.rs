@@ -1028,6 +1028,7 @@ impl Agent {
         self.turn_usage.input_tokens += u.input + u.cache_read;
         self.turn_usage.output_tokens += u.output;
         self.turn_usage.model_calls += 1;
+        if let Some(model) = &u.model { self.turn_usage.model = Some(model.clone()); }
         let (ttft, decode, think) = (ms(streamed.ttft), ms(streamed.decode), ms(streamed.think));
         let t = &mut self.timing;
         if compact {
@@ -1557,8 +1558,8 @@ impl Agent {
             };
             self.model_ready = true;
             self.last_call = started.elapsed();
-            self.usage = resp.usage;
-            self.count_call(resp.usage, &streamed, false);
+            self.usage = resp.usage.clone();
+            self.count_call(resp.usage.clone(), &streamed, false);
             for (id, name, input) in self.provider.take_codex_items() {
                 let arg = input.to_string();
                 self.emit(Event::ItemStarted {
@@ -3558,13 +3559,13 @@ Don't repeat it. Change the arguments or try a different approach.",
         let (mut resp, streamed) = self
             .call("compacting", &msgs, true, keep_prefix, think, None)
             .await?;
-        self.count_call(resp.usage, &streamed, true);
+        self.count_call(resp.usage.clone(), &streamed, true);
         // It called a tool instead of summarizing: ask again with none to call.
         if keep_prefix && resp.message.text().trim().is_empty() {
             let (r, streamed) = self
                 .call("compacting", &msgs, true, false, think, None)
                 .await?;
-            self.count_call(r.usage, &streamed, true);
+            self.count_call(r.usage.clone(), &streamed, true);
             resp = r;
         }
         let summary = resp.message.text();
@@ -3854,6 +3855,7 @@ mod tests {
                 input: 100,
                 output: 10,
                 cache_read: 0,
+                model: None,
             },
             stop,
         }

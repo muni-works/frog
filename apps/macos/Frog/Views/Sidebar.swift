@@ -22,6 +22,7 @@ struct SessionList: View {
     @AppStorage("foldedGroups") private var foldedRaw = ""
     @AppStorage("sidebarGrouping") private var grouping = Grouping.project
     @AppStorage("sidebarSort") private var sort = Sort.activity
+    @AppStorage("compactSidebar") private var compactSidebar = false
 
     /// How rows are grouped: by project folder (pins, folders, chats), by day, or not at all.
     enum Grouping: String, CaseIterable {
@@ -142,6 +143,8 @@ struct SessionList: View {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if filtering {
                         flat
+                    } else if compactSidebar {
+                        compactTabs
                     } else {
                         switch grouping {
                         case .project: tabs
@@ -174,6 +177,73 @@ struct SessionList: View {
     }
 
     // MARK: Tabs
+
+    @ViewBuilder
+    private var compactTabs: some View {
+        compactPins
+        ForEach(projects, id: \.folder) { folder, items in
+            let key = folder.standardizedFileURL.path
+            let isFolded = folded.contains(key)
+            HStack(spacing: 5) {
+                Text(folder.lastPathComponent)
+                    .lineLimit(1)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 2)
+                Button { switchFolder?(folder) } label: {
+                    Image(systemName: "plus").font(.caption2.weight(.semibold))
+                        .frame(width: 20, height: 20).contentShape(.rect)
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary).help("New conversation here")
+                Button { withAnimation(.snappy(duration: 0.2)) { toggleFold(key) } } label: {
+                    Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                        .rotationEffect(.degrees(isFolded ? 0 : 90))
+                        .frame(width: 14, height: 20).contentShape(.rect)
+                }
+                .buttonStyle(.plain).foregroundStyle(.tertiary).help(isFolded ? "Expand project" : "Collapse project")
+            }
+            .padding(.leading, 6).padding(.top, 8)
+            if !isFolded {
+                ForEach(compactDated(items), id: \.0) { title, dayItems in
+                    compactHeader(title)
+                    ForEach(nested(dayItems), id: \.session.id) { entry in
+                        compactRow(entry.session, depth: entry.depth)
+                    }
+                }
+            }
+        }
+        if !chats.isEmpty {
+            compactHeader("Chats")
+            ForEach(chats) { compactRow($0, depth: 0) }
+        }
+        if projects.isEmpty && chats.isEmpty && pins.isEmpty { empty("No conversations yet") }
+    }
+
+    private var compactPins: some View {
+        Group {
+            if !pins.isEmpty {
+                compactHeader("Pinned")
+                ForEach(pins) { compactRow($0, depth: 0) }
+            }
+        }
+    }
+
+    private func compactDated(_ items: [SessionInfo]) -> [(String, [SessionInfo])] {
+        SessionDays.group(items, day: day).map { ($0.0, $0.1.sorted(by: before)) }
+    }
+
+    private func compactHeader(_ title: String) -> some View {
+        Text(title).font(.caption).foregroundStyle(.secondary)
+            .padding(.leading, 6).padding(.top, 5).padding(.bottom, 1)
+    }
+
+    private func compactRow(_ session: SessionInfo, depth: Int) -> some View {
+        CompactSessionRow(
+            session: session, selected: session.id == current,
+            live: library.live[session.id], depth: depth,
+            pr: session.folder.flatMap { CompactPRCache.shared.value(for: $0) }
+        ) { open(session) } menu: { rowMenu(session) }
+    }
 
     @ViewBuilder
     private var tabs: some View {
@@ -318,6 +388,8 @@ struct SessionList: View {
     /// How the list is grouped, sorted and filtered, like Finder's View menu.
     private var viewOptions: some View {
         Menu {
+            Toggle("Compact", isOn: $compactSidebar)
+            Divider()
             Picker("Show", selection: $showArchived) {
                 Text("Active").tag(false)
                 Text("Archived").tag(true)
@@ -462,6 +534,111 @@ struct SessionList: View {
         } else {
             Button("Archive") { library.setArchived(s.id, true) }
         }
+    }
+}
+
+/// Compact, title-only sidebar row and its cached GitHub pull request indicator.
+private struct CompactSessionRow<Menu: View>: View {
+    let session: SessionInfo
+    let selected: Bool
+    let live: Library.Live?
+    let depth: Int
+    let pr: CompactPRCache.Info?
+    let open: () -> Void
+    @ViewBuilder let menu: () -> Menu
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if depth > 0 {
+                RoundedRectangle(cornerRadius: 1).fill(.quaternary)
+                    .frame(width: 1, height: 18).padding(.leading, CGFloat(depth - 1) * 13 + 6).padding(.trailing, 8)
+            } else {
+                Color.clear.frame(width: 6)
+            }
+            Button(action: open) {
+                Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.primary.opacity(selected ? 1 : 0.82))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            if let pr {
+                Image(systemName: pr.merged ? "arrow.triangle.merge" : "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(pr.merged ? Color.green : Color.purple)
+                Text("\(pr.changedFiles)").font(.system(size: 11, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.secondary).frame(minWidth: 16, alignment: .trailing)
+            }
+            Circle().fill(statusColor).frame(width: 6, height: 6).padding(.leading, 7).padding(.trailing, 3)
+            SwiftUI.Menu { menu() } label: {
+                Image(systemName: "ellipsis").font(.system(size: 10)).frame(width: 14, height: 20)
+            }
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).foregroundStyle(.secondary)
+        }
+        .frame(height: 28)
+        .padding(.trailing, 3)
+        .background(selected ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
+        .contentShape(.rect)
+        .contextMenu { menu() }
+        .paneDraggable(.session(session), title: session.displayTitle)
+        .help(session.displayTitle)
+        .task(id: session.folder?.path) { if let folder = session.folder { await CompactPRCache.shared.refresh(folder) } }
+    }
+
+    private var statusColor: Color {
+        switch live {
+        case .running: .blue
+        case .waiting, .unread: .orange
+        case nil: .clear
+        }
+    }
+}
+
+@MainActor
+private final class CompactPRCache {
+    static let shared = CompactPRCache()
+    struct Info { let merged: Bool; let changedFiles: Int }
+    private struct Entry { let info: Info?; let refreshed: Date }
+    private var entries: [String: Entry] = [:]
+    private var branches: [String: String] = [:]
+    private var refreshing: Set<String> = []
+
+    func value(for folder: URL) -> Info? { entries[folder.standardizedFileURL.path]?.info }
+
+    func refresh(_ folder: URL) async {
+        let path = folder.standardizedFileURL.path
+        let branch = await Task.detached(priority: .utility) { () -> String? in
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            p.arguments = ["-C", path, "branch", "--show-current"]
+            let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
+            guard (try? p.run()) != nil else { return nil }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+            guard p.terminationStatus == 0 else { return nil }
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.value
+        guard let branch, !branch.isEmpty else { return }
+        let key = "\(path)::\(branch)"
+        if branches[path] == key, let entry = entries[key], Date().timeIntervalSince(entry.refreshed) < 60 { return }
+        guard refreshing.insert(key).inserted else { return }
+        branches[path] = key
+        defer { refreshing.remove(key) }
+        let result = await Task.detached(priority: .utility) { () -> Info? in
+            let gh = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"].first { FileManager.default.isExecutableFile(atPath: $0) }
+            guard let gh else { return nil }
+            let process = Process(); process.executableURL = URL(fileURLWithPath: gh)
+            process.currentDirectoryURL = folder
+            process.arguments = ["pr", "view", branch, "--json", "state,number,changedFiles"]
+            let pipe = Pipe(); process.standardOutput = pipe; process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return nil }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            guard process.terminationStatus == 0,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let state = json["state"] as? String,
+                  let count = json["changedFiles"] as? Int else { return nil }
+            return Info(merged: state == "MERGED", changedFiles: count)
+        }.value
+        entries[key] = Entry(info: result, refreshed: .now)
     }
 }
 

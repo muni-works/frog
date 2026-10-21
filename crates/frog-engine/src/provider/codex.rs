@@ -12,13 +12,15 @@ use tokio::process::Command;
 
 pub struct Client {
     pub cwd: PathBuf,
+    model: String,
     items: Arc<Mutex<Vec<(String, String, Value)>>>,
 }
 
 impl Client {
-    pub fn new(cwd: PathBuf, _model: String) -> Self {
+    pub fn new(cwd: PathBuf, model: String) -> Self {
         Self {
             cwd,
+            model,
             items: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -46,7 +48,9 @@ impl Client {
             .join("\n\n");
         let user = format!("{}\n\n--- Conversation so far ---\n{}", req.system, history);
         let mut child = Command::new("codex")
-            .args(["exec", "--json", "--skip-git-repo-check", "--cd"])
+            .args(["exec", "--json", "--skip-git-repo-check", "-m"])
+            .arg(if self.model == "default" { "gpt-6-luna" } else { &self.model })
+            .arg("--cd")
             .arg(&self.cwd)
             .arg(user)
             .current_dir(&self.cwd)
@@ -63,11 +67,13 @@ impl Client {
         let mut items = std::collections::HashMap::<String, usize>::new();
         let mut usage = Usage::default();
         let mut completed = false;
+        let mut actual_model: Option<String> = None;
         let mut recorded = Vec::new();
         while let Some(line) = lines.next_line().await? {
             let Ok(v) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
+            if let Some(model) = event_model(&v) { actual_model = Some(model.to_owned()); }
             if let Some(item) = v.get("item") {
                 let typ = item["type"].as_str().unwrap_or("");
                 let id = item["id"].as_str().unwrap_or("").to_owned();
@@ -140,6 +146,7 @@ impl Client {
                     usage.input = v["usage"]["input_tokens"].as_u64().unwrap_or(0);
                     usage.cache_read = v["usage"]["cached_input_tokens"].as_u64().unwrap_or(0);
                     usage.output = v["usage"]["output_tokens"].as_u64().unwrap_or(0);
+                    usage.model = actual_model.clone().map(|m| format!("codex/{m}"));
                     completed = true;
                 }
                 "turn.failed" | "error" => bail!(
@@ -180,6 +187,31 @@ impl Client {
         // CLI. Do not synthesize Codex auth or invoke its backend APIs from Frog.
         self.exec_json(req, on).await
     }
+}
+
+fn event_model(v: &Value) -> Option<&str> {
+    ["model", "turn.model", "session.model", "turn_metadata.model"]
+        .iter().find_map(|path| {
+            let mut value = v;
+            for part in path.split('.') { value = value.get(part)?; }
+            value.as_str()
+        })
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+    #[test]
+    fn reads_model_metadata_and_maps_specs() {
+        assert_eq!(event_model(&json!({"type":"turn.started","model":"gpt-6-luna"})), Some("gpt-6-luna"));
+        assert_eq!(event_model(&json!({"session":{"model":"gpt-5.6-terra"}})), Some("gpt-5.6-terra"));
+        assert!(models().iter().any(|(m, _)| *m == "gpt-6-luna"));
+        assert!(!models().iter().any(|(m, _)| *m == "gpt-6-astra"));
+    }
+}
+
+pub fn models() -> &'static [(&'static str, u64)] {
+    &[("gpt-6-luna", 272_000), ("gpt-5.6-terra", 272_000), ("gpt-5.6-luna", 272_000)]
 }
 
 pub async fn check_available() -> Result<()> {
