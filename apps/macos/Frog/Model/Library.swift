@@ -41,12 +41,11 @@ final class Library {
             let home = FileManager.default.homeDirectoryForCurrentUser
             if let all = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--all", "--json"], cwd: home) {
                 // A conversation whose folder is gone can't be reopened.
-                // Race attempts live in their own worktrees and are shown in the race, not here;
-                // agents' scratch worktrees aren't projects. Worktrees a session started for
-                // another (`<repo>/.frog/worktrees/`) are shown, under their parent.
+                // Race attempts live in their own worktrees and are shown in the race, not here.
+                // Worker worktrees (`<repo>/.frog/worktrees/`, `<repo>/.claude/worktrees/`) are
+                // shown under their repo (see `Sidebar.home`).
                 sessions = all.filter { s in
-                    guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/"),
-                          !cwd.contains("/.claude/worktrees/") else { return false }
+                    guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/") else { return false }
                     return FileManager.default.fileExists(atPath: cwd)
                 }
                 archiveQuietChats()

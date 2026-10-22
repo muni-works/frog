@@ -106,7 +106,23 @@ struct SessionList: View {
             seen.insert(p)
             current = parent
         }
-        return current.folder ?? s.folder!
+        return Self.repoRoot(current.folder ?? s.folder!)
+    }
+
+    /// A worker worktree (`<repo>/.frog/worktrees/<name>` or `<repo>/.claude/worktrees/<name>`)
+    /// files under its repo.
+    static func repoRoot(_ folder: URL) -> URL {
+        let path = folder.standardizedFileURL.path
+        for marker in ["/.frog/worktrees/", "/.claude/worktrees/"] {
+            if let r = path.range(of: marker) { return URL(fileURLWithPath: String(path[..<r.lowerBound])) }
+        }
+        return folder
+    }
+
+    /// The worktree name, when a session runs in one under its repo.
+    static func worktreeName(_ folder: URL?) -> String? {
+        guard let folder, Self.repoRoot(folder) != folder else { return nil }
+        return folder.lastPathComponent
     }
 
     /// Rows in tree order: each session followed by the ones it started, indented.
@@ -556,10 +572,16 @@ private struct CompactSessionRow<Menu: View>: View {
                 Color.clear.frame(width: 6)
             }
             Button(action: open) {
-                Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.primary.opacity(selected ? 1 : 0.82))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 5) {
+                    Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.primary.opacity(selected ? 1 : 0.82))
+                    if let wt = SessionList.worktreeName(session.folder) {
+                        Text(wt).lineLimit(1).truncationMode(.middle)
+                            .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -570,7 +592,14 @@ private struct CompactSessionRow<Menu: View>: View {
                 Text("\(pr.changedFiles)").font(.system(size: 11, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary).frame(minWidth: 16, alignment: .trailing)
             }
-            Circle().fill(statusColor).frame(width: 6, height: 6).padding(.leading, 7).padding(.trailing, 3)
+            TimelineView(.periodic(from: .now, by: 5)) { ctx in
+                if live == nil, ctx.date.timeIntervalSince(session.modifiedDate) < 30 {
+                    ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 12, height: 12)
+                        .padding(.leading, 4).help("working")
+                } else {
+                    Circle().fill(statusColor).frame(width: 6, height: 6).padding(.leading, 7).padding(.trailing, 3)
+                }
+            }
             SwiftUI.Menu { menu() } label: {
                 Image(systemName: "ellipsis").font(.system(size: 10)).frame(width: 14, height: 20)
             }
