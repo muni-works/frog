@@ -71,3 +71,26 @@ final class SessionTitleTests: XCTestCase {
         XCTAssertEqual(info.end, .failed)
     }
 }
+
+/// A row's branch suffix: dropped when it only slugs the title, kept when it adds anything.
+final class RowSuffixTests: XCTestCase {
+    func testSluggedTitleHidesTheSuffix() {
+        // Cam's screenshot: "sandbox pro…" next to "sandbo…l-docs" — both truncated.
+        XCTAssertNil(RowSuffix.visible("sandbox-pro-docs", title: "sandbox pro"))
+        XCTAssertNil(RowSuffix.visible("Sidebar_Status", title: "sidebar status"))
+    }
+
+    func testSuffixThatAddsSomethingStays() {
+        XCTAssertEqual(RowSuffix.visible("feat/sidebar", title: "Add tests"), "feat/sidebar")
+        XCTAssertEqual(RowSuffix.visible("frog-apple", title: "Thinking trace"), "frog-apple")
+    }
+
+    func testUnslugFoldsCaseAndSeparators() {
+        XCTAssertEqual(RowSuffix.unslug("Sidebar-Status_v2 "), "sidebar status v2")
+    }
+
+    func testEmptyPiecesNeverShow() {
+        XCTAssertNil(RowSuffix.visible(nil, title: "Anything"))
+        XCTAssertNil(RowSuffix.visible("---", title: "Anything"))
+    }
+}
