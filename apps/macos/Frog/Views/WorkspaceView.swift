@@ -615,11 +615,18 @@ struct ConversationDropZone: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .dropDestination(for: URL.self) { urls, _ in
-                guard !urls.isEmpty else { return false }
-                conversation.dropped = urls
+            // Item providers, not `dropDestination(for: URL.self)`: the screenshot thumbnail
+            // drags a file promise and image data, not a file URL (see `DropFiles`).
+            .onDrop(of: DropFiles.types, isTargeted: $targeted) { providers in
+                guard !providers.isEmpty else { return false }
+                // The drag pasteboard only holds this drag's promises until the drop ends.
+                let promises = DropFiles.pendingPromises()
+                Task { @MainActor in
+                    let urls = await DropFiles.urls(from: providers, promises: promises, into: DropFiles.folder())
+                    if !urls.isEmpty { conversation.dropped = urls }
+                }
                 return true
-            } isTargeted: { targeted = $0 }
+            }
             .overlayPreferenceValue(FrogAnchorKey.self) { frog in
                 if targeted {
                     DropOverlay(playful: playful, frog: frog)

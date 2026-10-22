@@ -1197,6 +1197,8 @@ impl Agent {
 
     fn count_call(&mut self, u: Usage, streamed: &Streamed, compact: bool) {
         self.turn_usage.input_tokens += u.input + u.cache_read;
+        self.turn_usage.cached_tokens += u.cache_read;
+        self.turn_usage.cache_write_tokens += u.cache_write;
         self.turn_usage.output_tokens += u.output;
         self.turn_usage.model_calls += 1;
         if let Some(model) = &u.model {
@@ -4237,6 +4239,7 @@ mod tests {
                 input: 100,
                 output: 10,
                 cache_read: 0,
+                cache_write: 0,
                 model: None,
             },
             stop,

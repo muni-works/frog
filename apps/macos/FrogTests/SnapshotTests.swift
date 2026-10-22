@@ -59,7 +59,7 @@ final class SnapshotTests: XCTestCase {
             try render(EnergyCard(energy: energy, usage: usage).fixedSize().frame(maxHeight: .infinity, alignment: .top)
                         .background(Color(nsColor: .windowBackgroundColor)),
                        size: CGSize(width: 290, height: 520), to: "energy-card-\(name)", appearance: look)
-            try render(PriceCard(cost: 0.214, usage: usage, listed: (15, 75)).fixedSize().frame(maxHeight: .infinity, alignment: .top)
+            try render(PriceCard(cost: 0.214, usage: usage, listed: .init(spec: usage.model ?? "", input: 15, output: 75)).fixedSize().frame(maxHeight: .infinity, alignment: .top)
                         .background(Color(nsColor: .windowBackgroundColor)),
                        size: CGSize(width: 290, height: 460), to: "price-card-\(name)", appearance: look)
         }

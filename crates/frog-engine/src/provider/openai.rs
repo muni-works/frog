@@ -255,15 +255,7 @@ impl Client {
                 });
             }
             if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
-                let cached = u["prompt_tokens_details"]["cached_tokens"]
-                    .as_u64()
-                    .unwrap_or(0);
-                usage.input = u["prompt_tokens"]
-                    .as_u64()
-                    .unwrap_or(0)
-                    .saturating_sub(cached);
-                usage.cache_read = cached;
-                usage.output = u["completion_tokens"].as_u64().unwrap_or(0);
+                usage = read_usage(u);
             }
             if let Some(r) = v["choices"][0]["finish_reason"].as_str() {
                 stop = Some(Stop::from_reason(r));
@@ -346,10 +338,44 @@ impl Client {
     }
 }
 
+/// A chat-completions `usage` object. `prompt_tokens` includes the cached part; gateways that
+/// pass Anthropic's cache writes through say so in `cache_creation_input_tokens`.
+fn read_usage(u: &Value) -> Usage {
+    let details = &u["prompt_tokens_details"];
+    let cached = details["cached_tokens"].as_u64().unwrap_or(0);
+    let written = details["cache_write_tokens"]
+        .as_u64()
+        .or(u["cache_creation_input_tokens"].as_u64())
+        .unwrap_or(0);
+    let input = u["prompt_tokens"]
+        .as_u64()
+        .unwrap_or(0)
+        .saturating_sub(cached);
+    Usage {
+        input,
+        cache_read: cached,
+        cache_write: written.min(input),
+        output: u["completion_tokens"].as_u64().unwrap_or(0),
+        model: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::message::Message;
+
+    #[test]
+    fn cached_prompt_tokens_are_split_out() {
+        let u = read_usage(&json!({
+            "prompt_tokens": 152_219,
+            "completion_tokens": 6_500,
+            "prompt_tokens_details": { "cached_tokens": 151_667 },
+        }));
+        assert_eq!((u.input, u.cache_read, u.cache_write, u.output), (552, 151_667, 0, 6_500));
+        let u = read_usage(&json!({ "prompt_tokens": 10, "completion_tokens": 2 }));
+        assert_eq!((u.input, u.cache_read, u.output), (10, 0, 2));
+    }
 
     #[test]
     fn images_follow_tool_results_as_a_user_message() {

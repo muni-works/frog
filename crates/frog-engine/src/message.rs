@@ -80,9 +80,13 @@ impl Message {
 
 #[derive(Default, Clone, Debug)]
 pub struct Usage {
+    /// Prompt tokens not read from the cache (prefilled), including `cache_write`.
     pub input: u64,
     pub output: u64,
+    /// Prompt tokens read from the provider's cache (billed at its cached rate).
     pub cache_read: u64,
+    /// The part of `input` written to the cache (Anthropic bills these above the input rate).
+    pub cache_write: u64,
     pub model: Option<String>,
 }
 

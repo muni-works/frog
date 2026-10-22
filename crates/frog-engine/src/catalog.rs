@@ -29,6 +29,11 @@ pub struct Model {
     /// Dollars per million tokens.
     pub cost_in: Option<f64>,
     pub cost_out: Option<f64>,
+    /// Dollars per million cached input tokens read, and written to the cache, when listed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_cache_read: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_cache_write: Option<f64>,
 }
 
 impl Model {
@@ -338,6 +343,8 @@ fn openrouter(provider: &str, m: &Value) -> Option<Model> {
         tools: params.contains(&"tools"),
         cost_in: per_million(&m["pricing"]["prompt"]),
         cost_out: per_million(&m["pricing"]["completion"]),
+        cost_cache_read: per_million(&m["pricing"]["input_cache_read"]),
+        cost_cache_write: per_million(&m["pricing"]["input_cache_write"]),
     })
 }
 
@@ -379,6 +386,8 @@ fn vercel(provider: &str, m: &Value) -> Option<Model> {
         tools: tags.contains(&"tool-use"),
         cost_in: per_million(&m["pricing"]["input"]),
         cost_out: per_million(&m["pricing"]["output"]),
+        cost_cache_read: per_million(&m["pricing"]["input_cache_read"]),
+        cost_cache_write: per_million(&m["pricing"]["input_cache_write"]),
     })
 }
 
@@ -405,6 +414,8 @@ fn enrich(m: &mut Model, d: &Value) {
     m.tools |= d["tool_call"].as_bool().unwrap_or(false);
     m.cost_in = m.cost_in.or(d["cost"]["input"].as_f64());
     m.cost_out = m.cost_out.or(d["cost"]["output"].as_f64());
+    m.cost_cache_read = m.cost_cache_read.or(d["cost"]["cache_read"].as_f64());
+    m.cost_cache_write = m.cost_cache_write.or(d["cost"]["cache_write"].as_f64());
     if m.name == m.id
         && let Some(n) = d["name"].as_str()
     {
@@ -459,7 +470,17 @@ mod tests {
         let m = vercel("vercel", &v).unwrap();
         assert_eq!(m.spec, "vercel/openai/gpt-5");
         assert!(m.vision() && m.tools && m.reasoning);
+        assert!(m.cost_cache_read.is_none());
         assert!(vercel("vercel", &json!({"id": "e", "type": "embedding"})).is_none());
+
+        let v = json!({
+            "id": "anthropic/claude-opus-5.5", "type": "language",
+            "pricing": {"input": "0.000004", "output": "0.00002",
+                        "input_cache_read": "0.0000004", "input_cache_write": "0.000005"}
+        });
+        let m = vercel("vercel", &v).unwrap();
+        assert!((m.cost_cache_read.unwrap() - 0.4).abs() < 1e-9);
+        assert!((m.cost_cache_write.unwrap() - 5.0).abs() < 1e-9);
     }
 
     #[test]

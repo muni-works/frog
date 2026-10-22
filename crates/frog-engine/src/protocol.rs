@@ -836,6 +836,12 @@ pub struct TurnUsage {
     /// Totals across every model call in the turn (including compaction).
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// The part of `input_tokens` read from the provider's cache, and the part written to it:
+    /// priced at their own rates. Absent in older logs.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cached_tokens: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cache_write_tokens: u64,
     pub model_calls: u32,
     /// Generation speed of the last call.
     pub tokens_per_sec: Option<f64>,
