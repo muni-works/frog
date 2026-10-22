@@ -665,7 +665,9 @@ struct SuggestedModelRow: View {
 // MARK: - Permissions
 
 private struct PermissionSettings: View {
-    @AppStorage("defaultMode") private var defaultMode = Mode.default.rawValue
+    /// New threads start here; Auto by default (a local classifier plus a read-only
+    /// fast path approves plain work; risky steps still ask).
+    @AppStorage("defaultMode") private var defaultMode = Mode.auto.rawValue
     @AppStorage("computerUse") private var computerUse = false
     @AppStorage("sandboxShell") private var sandboxShell = true
 
