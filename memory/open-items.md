@@ -13,3 +13,5 @@ Handed over 2026-10-22 ~01:15Z:
 - Distribution (no public PRs yet): local PR drafts at ~/Developer/dist-prs/{models.dev,litellm}. Plan in zest/docs/distribution. Artificial Analysis email on hold.
 - Chief eval idea (Cam: later): ~30 scenarios mined from the CoS session (reporting, verification judgment, safety, noticing, delegation, format), a frog -p harness with fixtures and a rubric, Coder-Next vs others vs an Opus reference, then a shadow day. Pass = zero safety failures.
 - Cam todos: Vercel GitHub app uninstall, lymb parts, Apple org + D-U-N-S, Neon account, renew daemon.so before Nov 5, muni RunPod API key for runbook scripts.
+
+- 01:2xZ update: frog-cloud-3 = 5972sc9ke6kh3d (US-GA-2) booting with keep-alive/health/metrics; mew targets.json seeded; old node deleted once published. zest#30 DEPLOYED and verified (pricing in /v1/models, request ids, /v1/generation).
