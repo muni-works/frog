@@ -10,7 +10,8 @@
 //! warmed in the background, so no turn pays to prefill it. Inside a turn it waits until
 //! [`COMPACT_AT`].
 
-use crate::message::{Block, Message};
+use crate::message::{Block, Message, Role};
+use serde_json::Value;
 use std::collections::HashMap;
 
 /// Start pruning when the estimated prompt passes this fraction of the window…
@@ -203,13 +204,6 @@ pub fn apply(msgs: &mut [Message], id: &str, replacement: &str) {
 /// The user's own words, which a summary must not paraphrase away (arXiv 2606.22528,
 /// 2608.22752). Keeps the first request plus as many recent ones as fit in `cap` bytes.
 pub fn pinned_inputs(inputs: &[String], cap: usize) -> Vec<String> {
-    let clip = |s: &str, limit: usize| -> String {
-        if s.len() > limit && limit >= 3 {
-            format!("{}…", &s[..s.floor_char_boundary(limit - 3)])
-        } else {
-            s[..s.floor_char_boundary(s.len().min(limit))].to_string()
-        }
-    };
     if cap == 0 {
         return Vec::new();
     }
@@ -236,6 +230,342 @@ pub fn pinned_inputs(inputs: &[String], cap: usize) -> Vec<String> {
         out.push(format!("[{skipped} earlier messages omitted]"));
     }
     out.extend(recent);
+    out
+}
+
+/// Cap what a record field's text is clipped to, counting the labels.
+const RECORD_FIELD_CAP: usize = 2_400;
+/// A record list never grows past this many items.
+const RECORD_LIST_CAP: usize = 64;
+/// However big the window, the rendered record never exceeds this.
+const RECORD_RENDER_CAP: usize = 16_000;
+
+/// The engine's compacted message starts with this (see `Engine::compact`).
+pub const COMPACTION_LABEL: &str = "(The earlier part of this session was compacted";
+
+const L_INPUTS: &str = "User requests (verbatim, constraints still apply):";
+const L_FILES: &str = "Files read (* = edited):";
+const L_TODOS: &str = "Task list (latest):";
+const L_COMMANDS: &str = "Commands run (oldest first):";
+const L_CALLS: &str = "Tool calls:";
+const L_PINNED: &str = "Kept verbatim (errors, the last request):";
+
+/// What compaction keeps verbatim outside the model's prose summary. Structured fields, so
+/// repeated compactions recover the same bounded record instead of degrading into a summary
+/// of a summary. Each field is clipped on the way in ([`RECORD_FIELD_CAP`]) so re-rendering
+/// is stable.
+#[derive(Default)]
+pub struct Record {
+    /// The user's requests, verbatim (already capped by [`pinned_inputs`]).
+    pub inputs: Vec<String>,
+    /// Files read or written this session, an edit marker on the latest state of each:
+    /// `path` when it was last read, `path*` when last written. Distinct, first-seen order.
+    pub files: Vec<String>,
+    /// The latest task list from TodoWrite, each as `☐ content` / `◐` / `☒`.
+    pub todos: Vec<String>,
+    /// Commands that ran (the head of each, marked `!`), oldest first.
+    pub commands: Vec<String>,
+    /// Other tool calls with their key arguments, for the calls whose result exceeded
+    /// [`MIN_PRUNE_CHARS`]: `name(pattern: … | query: …)`. Distinct, first-seen order.
+    pub calls: Vec<String>,
+    /// Verbatim text the summary must not paraphrase away: outstanding errors,
+    /// and the last request.
+    pub pinned: Vec<String>,
+}
+
+/// An open TodoWrite list, one string per item, so a summary records it without
+/// re-deriving markdown.
+fn todo_list(todos: &[crate::tools::todo::Todo]) -> Vec<String> {
+    todos
+        .iter()
+        .map(|t| {
+            let mark = match t.status.as_str() {
+                "completed" => "☒",
+                "in_progress" => "◐",
+                _ => "☐",
+            };
+            format!("{mark} {}", t.content)
+        })
+        .collect()
+}
+
+/// The arguments worth recording for a tool call: a few scalar keys.
+fn call_args(input: &serde_json::Value) -> Vec<String> {
+    const KEYS: [&str; 8] = [
+        "pattern", "path", "query", "url", "command", "file_path", "todo_path", "prompt",
+    ];
+    let mut out = Vec::new();
+    for k in KEYS {
+        if let Some(s) = input[k].as_str()
+            && !s.is_empty()
+        {
+            out.push(format!("{k}: {s}"));
+            if out.len() >= 3 {
+                return out;
+            }
+        }
+    }
+    out
+}
+
+/// Distinct in first-seen order, capped.
+fn push_capped(list: &mut Vec<String>, item: String) {
+    if list.len() < RECORD_LIST_CAP && !list.contains(&item) {
+        list.push(item);
+    }
+}
+
+/// Clip `s` to `limit` bytes on a char boundary, with an ellipsis.
+fn clip(s: &str, limit: usize) -> String {
+    if s.len() > limit && limit >= 3 {
+        format!("{}…", &s[..s.floor_char_boundary(limit - 3)])
+    } else {
+        s[..s.floor_char_boundary(s.len().min(limit))].to_string()
+    }
+}
+
+/// Build the record carried across compactions. Any record an earlier compaction rendered
+/// into the history is parsed back and folded in, so a repeated compaction keeps the union
+/// of files, calls and commands, the latest todos, the outstanding errors, and the user's
+/// requests — everything the prose summary might have paraphrased away.
+pub fn pinned_record(
+    inputs: &[String],
+    todos: &[crate::tools::todo::Todo],
+    messages: &[Message],
+) -> Record {
+    let mut rec = parse_record(messages);
+    // Live state replaces what was folded in.
+    rec.inputs = pinned_inputs(inputs, 8_000);
+    rec.todos = todo_list(todos);
+    // Errors carried from before, then this stretch's, oldest first.
+    rec.pinned.retain(|p| p.starts_with("[error]"));
+    for p in pinned_text(messages) {
+        push_capped(&mut rec.pinned, p);
+    }
+    // The calls and results in this stretch.
+    let mut uses: HashMap<&str, (&str, &Value)> = HashMap::new();
+    let mut results: HashMap<&str, &str> = HashMap::new();
+    for m in messages {
+        for b in &m.content {
+            match b {
+                Block::ToolUse { id, name, input } => {
+                    uses.insert(id.as_str(), (name.as_str(), input));
+                }
+                Block::ToolResult { id, content, .. } => {
+                    results.insert(id.as_str(), content.as_str());
+                }
+                _ => {}
+            }
+        }
+    }
+    for m in messages {
+        for b in &m.content {
+            let Block::ToolResult { id, name, .. } = b else {
+                continue;
+            };
+            let Some(result) = results.get(id.as_str()) else {
+                continue;
+            };
+            let Some((cname, input)) = uses.get(id.as_str()) else {
+                continue;
+            };
+            let (cname, input) = (*cname, *input);
+            match name.as_str() {
+                "TodoWrite" => {}
+                "Read" | "Write" | "Edit" => {
+                    if let Some(path) = input["file_path"].as_str() {
+                        // The marker tracks the latest state of the file.
+                        let (keep, drop) = if name == "Read" {
+                            (path.to_string(), format!("{path}*"))
+                        } else {
+                            (format!("{path}*"), path.to_string())
+                        };
+                        rec.files.retain(|f| f != &drop);
+                        push_capped(&mut rec.files, keep);
+                    }
+                }
+                "Bash" | crate::panes::TERMINAL => {
+                    if let Some(cmd) = input["command"].as_str() {
+                        let head: Vec<&str> = cmd.lines().take(2).collect();
+                        let head = head.join(" ").trim().to_string();
+                        if !head.is_empty() {
+                            push_capped(&mut rec.commands, format!("! {head}"));
+                        }
+                    }
+                }
+                _ => {
+                    if result.len() >= MIN_PRUNE_CHARS {
+                        let args = call_args(input);
+                        if !args.is_empty() {
+                            push_capped(&mut rec.calls, format!("{cname}({})", args.join(" | ")));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    rec
+}
+
+/// Verbatim text that must survive: the first two lines of each error result, plus the
+/// last user text before compaction.
+fn pinned_text(messages: &[Message]) -> Vec<String> {
+    let mut out = Vec::new();
+    for m in messages.iter().rev() {
+        for b in &m.content {
+            if let Block::ToolResult { content, is_error, .. } = b
+                && *is_error
+            {
+                let head: Vec<&str> = content.lines().take(2).collect();
+                let head = head.join(" ").trim().to_string();
+                if !head.is_empty() {
+                    push_capped(&mut out, format!("[error] {head}"));
+                }
+            }
+        }
+    }
+    out.reverse();
+    if let Some(last) = messages
+        .iter()
+        .rev()
+        .find_map(|m| {
+            (m.role == Role::User && !m.content.is_empty())
+                .then(|| m.text())
+                // The earlier compacted message is a bookend, not a request.
+                .filter(|t| !t.trim().is_empty() && !t.starts_with(COMPACTION_LABEL))
+        })
+    {
+        let last = last.lines().take(4).collect::<Vec<_>>().join(" ");
+        let last = last.trim().to_string();
+        if !last.is_empty() {
+            push_capped(&mut out, clip(&last, RECORD_FIELD_CAP));
+        }
+    }
+    out
+}
+
+/// Recover a record an earlier compaction rendered into the history. The inverse of
+/// [`render_record`]: a label opens a list, `  - ` starts an item, any other non-blank line
+/// continues the previous item.
+fn parse_record(messages: &[Message]) -> Record {
+    enum Sec {
+        Inputs,
+        Files,
+        Todos,
+        Commands,
+        Calls,
+        Pinned,
+    }
+    let label = |l: &str| match l.trim() {
+        L_INPUTS => Some(Sec::Inputs),
+        L_FILES => Some(Sec::Files),
+        L_TODOS => Some(Sec::Todos),
+        L_COMMANDS => Some(Sec::Commands),
+        L_CALLS => Some(Sec::Calls),
+        L_PINNED => Some(Sec::Pinned),
+        _ => None,
+    };
+    let mut rec = Record::default();
+    // (where to push, the item being built)
+    let mut cur: Option<(Sec, Vec<String>)> = None;
+    let flush = |cur: &mut Option<(Sec, Vec<String>)>, rec: &mut Record| {
+        if let Some((sec, items)) = cur.take() {
+            let list = match sec {
+                Sec::Inputs => &mut rec.inputs,
+                Sec::Files => &mut rec.files,
+                Sec::Todos => &mut rec.todos,
+                Sec::Commands => &mut rec.commands,
+                Sec::Calls => &mut rec.calls,
+                Sec::Pinned => &mut rec.pinned,
+            };
+            for i in items {
+                push_capped(list, i);
+            }
+        }
+    };
+    for m in messages {
+        for b in &m.content {
+            let Block::Text { text } = b else { continue };
+            for line in text.lines() {
+                if let Some(sec) = label(line) {
+                    flush(&mut cur, &mut rec);
+                    cur = Some((sec, Vec::new()));
+                } else if let Some(item) = line.strip_prefix("  - ") {
+                    if let Some((_, items)) = cur.as_mut() {
+                        items.push(item.to_string());
+                    }
+                } else if !line.trim().is_empty()
+                    && let Some((_, items)) = cur.as_mut()
+                    && let Some(last) = items.last_mut()
+                {
+                    last.push('\n');
+                    last.push_str(line.trim_start());
+                }
+            }
+        }
+    }
+    flush(&mut cur, &mut rec);
+    rec
+}
+
+/// Render the record as the text the model reads after compaction, within `budget` bytes:
+/// least important lists (commands, calls, files) shed their oldest items first, and the
+/// user's requests are kept to the last. The result parses back with [`parse_record`].
+pub fn render_record(r: &Record, budget: usize) -> String {
+    let budget = budget.clamp(1_000, RECORD_RENDER_CAP);
+    let item = |i: &String| clip(i, RECORD_FIELD_CAP);
+    // (label, items, trim rank): lower rank sheds items first.
+    let mut secs: Vec<(&str, Vec<String>, u8)> = vec![
+        (L_INPUTS, r.inputs.iter().map(item).collect(), 5),
+        (L_FILES, r.files.iter().map(item).collect(), 2),
+        (L_TODOS, r.todos.iter().map(item).collect(), 4),
+        (L_COMMANDS, r.commands.iter().map(item).collect(), 0),
+        (L_CALLS, r.calls.iter().map(item).collect(), 1),
+        (L_PINNED, r.pinned.iter().map(item).collect(), 3),
+    ];
+    let cost = |secs: &[(&str, Vec<String>, u8)]| {
+        secs.iter()
+            .map(|(label, items, _)| {
+                label.len()
+                    + items.iter().map(|i| 6 + i.len()).sum::<usize>()
+                    + if items.is_empty() { 0 } else { 1 }
+            })
+            .sum::<usize>()
+    };
+    while cost(&secs) > budget {
+        let next = secs
+            .iter_mut()
+            .filter(|(_, items, _)| !items.is_empty())
+            .min_by_key(|(_, _, rank)| *rank);
+        match next {
+            // Oldest first; inputs only shed their head when nothing else is left.
+            Some((_, items, _)) => {
+                items.remove(0);
+            }
+            None => break,
+        }
+    }
+    let mut out = String::new();
+    let mut left = budget;
+    for (label, items, _) in &secs {
+        if left < label.len() + 1 || items.is_empty() {
+            continue;
+        }
+        out.push_str(label);
+        out.push('\n');
+        left = left.saturating_sub(label.len() + 1);
+        for i in items {
+            let room = left.saturating_sub(6);
+            if room == 0 {
+                break;
+            }
+            let i = clip(i, room.min(RECORD_FIELD_CAP));
+            out.push_str("  - ");
+            out.push_str(&i);
+            out.push('\n');
+            left = left.saturating_sub(6 + i.len());
+        }
+    }
     out
 }
 
@@ -518,6 +848,88 @@ mod tests {
         assert!(pinned[0].ends_with('…'));
         assert!(pinned_inputs(&["hello".into()], 0).is_empty());
         assert_eq!(pinned_inputs(&["hello".into()], 2), ["he"]);
+    }
+
+    #[test]
+    fn record_recovered_across_repeated_compactions() {
+        let inputs = vec!["fix the widget".to_string(), "continue".to_string()];
+        let todos = vec![crate::tools::todo::Todo {
+            content: "fix the widget".into(),
+            status: "in_progress".into(),
+        }];
+        let mut messages = vec![
+            Message::user("fix the widget"),
+            Message {
+                role: Role::Assistant,
+                content: vec![Block::ToolUse {
+                    id: "r1".into(),
+                    name: "Read".into(),
+                    input: json!({"file_path": "src/widget.rs"}),
+                }],
+            },
+            Message {
+                role: Role::User,
+                content: vec![Block::ToolResult {
+                    id: "r1".into(),
+                    name: "Read".into(),
+                    content: "x".repeat(MIN_PRUNE_CHARS + 1),
+                    is_error: false,
+                }],
+            },
+            Message {
+                role: Role::Assistant,
+                content: vec![Block::ToolUse {
+                    id: "e1".into(),
+                    name: "Edit".into(),
+                    input: json!({"file_path": "src/widget.rs"}),
+                }],
+            },
+            Message {
+                role: Role::User,
+                content: vec![Block::ToolResult {
+                    id: "e1".into(),
+                    name: "Edit".into(),
+                    content: "ok".into(),
+                    is_error: false,
+                }],
+            },
+            Message {
+                role: Role::Assistant,
+                content: vec![Block::ToolUse {
+                    id: "g1".into(),
+                    name: "Grep".into(),
+                    input: json!({"pattern": "widget", "path": "src"}),
+                }],
+            },
+            Message {
+                role: Role::User,
+                content: vec![Block::ToolResult {
+                    id: "g1".into(),
+                    name: "Grep".into(),
+                    content: "y".repeat(MIN_PRUNE_CHARS + 1),
+                    is_error: false,
+                }],
+            },
+            Message::user("continue"),
+        ];
+        let r = pinned_record(&inputs, &todos, &messages);
+        assert!(r.inputs[0].contains("fix the widget"));
+        assert_eq!(r.files, ["src/widget.rs*"]); // Read folded into the Edit marker
+        assert_eq!(r.todos, ["◐ fix the widget"]);
+        assert_eq!(r.calls, ["Grep(pattern: widget | path: src)"]);
+        assert!(r.pinned.iter().any(|p| p.contains("continue")));
+
+        // Round trip: the rendered text is the only thing a later compaction sees.
+        let rendered = render_record(&r, 16_000);
+        let folded = vec![Message::user(format!(
+            "{}. Work continues from this alone.)\n\nSummary:\nOld.\n\n{rendered}",
+            COMPACTION_LABEL
+        ))];
+        let r2 = pinned_record(&inputs, &todos, &folded);
+        assert_eq!(r2.files, r.files, "files lost across compaction");
+        assert_eq!(r2.calls, r.calls, "calls lost across compaction");
+        assert_eq!(r2.todos, r.todos);
+        assert!(r2.inputs.iter().any(|i| i.contains("fix the widget")));
     }
 
     #[test]
