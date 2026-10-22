@@ -39,3 +39,5 @@ frog model family (Cam, 2026-10-22): tiers **dart · glass · bull** (small / me
 Decisions (Cam, 2026-10-22): Beat 1 signup = Better Auth + Neon + Stripe built THIS WEEK (not invite-only). Bull = GLM-5.3-Flash port (MLA first, then KDA; 2 H200s; 4-6 weeks; audit in tang branch tang/frontier-port-audit).
 
 Worker/chief model (Cam, 2026-10-22): GLM-5.3 via Vercel AI Gateway (vercel/zai/glm-5.3; eval 7.1 vs Opus 7.3, Coder-Next 2.6 with 3 safety fails) for chief + workers until bull (our GLM port) lands. Coder-Next only for cheap/simple tasks.
+
+Operating rule (Cam, 2026-10-22): use frog for EVERYTHING going forward. The Claude chief-of-staff session only steps in when something is impossible without it. Default workers: GLM-5.3 via gateway, spawned through bin/spawn-worker.sh or StartSession in Frog.app.
