@@ -946,6 +946,10 @@ impl Agent {
         // with that process) so a resumed client doesn't expect them.
         let mut stale_panes: Vec<String> = Vec::new();
         let mut resumed_map = None;
+        // The mode the session last ran in (its last `mode_changed`): a resumed engine keeps
+        // it, rather than silently reverting to whatever the flags say — the picker and the
+        // engine must agree on the effective mode.
+        let mut resumed_mode = None;
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
@@ -969,6 +973,7 @@ impl Agent {
                             stale_panes.push(id.clone());
                         }
                         Event::PaneClosed { id, .. } => stale_panes.retain(|p| p != id),
+                        Event::ModeChanged { mode } => resumed_mode = Some(*mode),
                         _ => {}
                     }
                 }
@@ -1058,7 +1063,7 @@ impl Agent {
                 }
                 ctx
             },
-            mode: o.mode,
+            mode: resumed_mode.unwrap_or(o.mode),
             can_ask: o.can_ask,
             rich: o.rich,
             subagent: o.subagent,
@@ -5776,6 +5781,36 @@ mod tests {
             extends(before.last().unwrap(), &after[0]),
             "the resumed request rewrites the prefix"
         );
+    }
+
+    /// A resumed engine keeps the mode the session last ran in (its last `mode_changed`),
+    /// rather than reverting to the flag default — the picker and the engine must agree.
+    #[tokio::test]
+    async fn a_resumed_engine_keeps_the_sessions_last_mode() {
+        let dir = tmp_store();
+        let script = vec![reply(vec![text("ok")], Stop::End)];
+        let (mut h, _) = engine_sent(script, Some(dir.clone()), None, None, dir.clone());
+        let sid = run(&mut h, "hi").await[0].session.clone();
+        // The user switches to Yolo mid-session: the op runs at a turn boundary, never
+        // cancelling the running turn.
+        h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+        while !matches!(h.events.recv().await.unwrap().event, Event::ModeChanged { .. }) {}
+        run(&mut h, "and again").await;
+        shutdown(h).await;
+
+        // A new engine resumes with the default flag (Default): the session's stored Yolo wins.
+        let script = vec![reply(vec![text("ok")], Stop::End)];
+        let (mut h, _) = engine_sent(script, Some(dir.clone()), Some(sid), None, dir.clone());
+        let mut status = None;
+        while status.is_none() {
+            match h.events.recv().await.unwrap().event {
+                Event::Status(s) => status = Some(s.mode),
+                Event::Idle => break,
+                _ => {}
+            }
+        }
+        assert_eq!(status, Some(Mode::Yolo), "the engine resumed in the session's mode");
+        shutdown(h).await;
     }
 
     /// Every block the session log holds, in order.
