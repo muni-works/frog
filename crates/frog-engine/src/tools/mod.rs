@@ -16,7 +16,7 @@ pub mod websearch;
 use crate::provider::ToolSpec;
 use anyhow::{Result, anyhow, bail};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
@@ -24,6 +24,11 @@ pub struct Ctx {
     pub screenshot_endpoint: Option<String>,
     pub judge: Option<crate::config::Profile>,
     pub image: image::Settings,
+    /// The session's working directory (its checkout, a worktree when it works in one). File
+    /// tools resolve relative paths against this, and writes are confined to it.
+    pub root: PathBuf,
+    /// Where the shell runs. Bash's `cd` moves this; it never moves `root`, so file tools
+    /// keep resolving against the session's own checkout however far the shell roams.
     pub cwd: PathBuf,
     /// Files the model has seen, with the mtime at read time. Guards Edit/Write.
     pub read_files: HashMap<PathBuf, Option<SystemTime>>,
@@ -36,6 +41,9 @@ pub struct Ctx {
     pub shell_sandbox: Option<PathBuf>,
     /// Extra reads the shell sandbox allows (config `[sandbox]`).
     pub sandbox_extra: crate::config::SandboxConfig,
+    /// Writes outside the session's checkout that the user approved, by resolved path. The
+    /// engine adds one when it asks and the user allows; the tools never go elsewhere silently.
+    pub permitted: HashSet<PathBuf>,
     /// Live output from the running tool, if someone is listening.
     pub progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
     /// Bounded approximate image deltas for transcript display, never model context.
@@ -47,6 +55,7 @@ pub struct Ctx {
 impl Ctx {
     pub fn new(cwd: PathBuf) -> Self {
         Self {
+            root: cwd.clone(),
             cwd,
             image: Default::default(),
             screenshot_endpoint: None,
@@ -56,6 +65,7 @@ impl Ctx {
             sandbox: None,
             shell_sandbox: None,
             sandbox_extra: Default::default(),
+            permitted: HashSet::new(),
             progress: None,
             preview: None,
             web: Default::default(),
@@ -67,22 +77,38 @@ impl Ctx {
             Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
             None => PathBuf::from(p),
         };
-        if p.is_absolute() { p } else { self.cwd.join(p) }
+        if p.is_absolute() {
+            p
+        } else {
+            self.root.join(p)
+        }
     }
 
-    /// Refuse writes outside the sandbox. Resolves `..` and symlinks through the nearest
+    /// The canonical session root, however it's spelled (missing trailing pieces allowed).
+    fn real_root(&self) -> PathBuf {
+        let mut real = PathBuf::new();
+        for part in self.root.components() {
+            match part {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    real.pop();
+                }
+                other => real.push(other.as_os_str()),
+            }
+            if let Ok(resolved) = real.canonicalize() {
+                real = resolved;
+            }
+        }
+        real
+    }
+
+    /// Resolve `p` the way [`resolve`] does, then through `..` and symlinks to the nearest
     /// existing ancestor, so a not-yet-created file is judged by where it would land.
-    pub fn check_writable(&self, p: &Path) -> Result<()> {
-        let Some(root) = &self.sandbox else {
-            return Ok(());
-        };
-        // Walk the path component by component, resolving symlinks as they appear and
-        // applying `..` to what has been resolved so far. A `..` after a component that does
-        // not exist yet (`new/../x`) must still pop it, or the path escapes the check.
+    fn real_path(&self, p: &Path) -> PathBuf {
         let abs = if p.is_absolute() {
             p.to_path_buf()
         } else {
-            self.cwd.join(p)
+            self.root.join(p)
         };
         let mut real = PathBuf::new();
         for part in abs.components() {
@@ -100,23 +126,81 @@ impl Ctx {
                 other => real.push(other.as_os_str()),
             }
         }
+        real
+    }
+
+    /// Whether `p` (resolved like [`resolve`]) is inside the session's checkout. Absolute
+    /// paths count only inside it: another checkout of the same repo (the main checkout when
+    /// the session works in a worktree) is outside the project.
+    pub fn inside(&self, p: &Path) -> bool {
+        let real = self.real_path(p);
+        let root = self.real_root();
+        real.starts_with(&root)
+    }
+
+    /// Whether a write to `p` is outside the project: not in the session's checkout, and not
+    /// scratch space. Temp dirs are scratch, unless the path is inside some other git checkout
+    /// that happens to live there.
+    pub fn outside(&self, p: &Path) -> bool {
+        if self.inside(p) {
+            return false;
+        }
+        let real = self.real_path(p);
+        // The strict sandbox root, when set, is the session root.
+        if self.sandbox.as_deref().is_some_and(|r| real.starts_with(r)) {
+            return false;
+        }
         let tmp = std::env::temp_dir()
             .canonicalize()
             .unwrap_or_else(|_| std::env::temp_dir());
-        if real.starts_with(root) || real.starts_with(&tmp) {
-            Ok(())
-        } else {
-            bail!(
-                "{} is outside the workspace ({}); writes are sandboxed",
-                p.display(),
-                root.display()
-            )
-        }
+        let scratch = real.starts_with(&tmp) || real.starts_with("/private/tmp");
+        !scratch || self.in_other_checkout(&real)
     }
 
-    /// Path shown to the model/user: relative to cwd when possible.
+    /// Whether `real` (canonical) is inside a git work tree other than the session's.
+    fn in_other_checkout(&self, real: &Path) -> bool {
+        let mut dir = real.to_path_buf();
+        while !dir.is_dir() {
+            if !dir.pop() {
+                return false;
+            }
+        }
+        let Ok(out) = std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(&dir)
+            .output()
+        else {
+            return false;
+        };
+        if !out.status.success() {
+            return false;
+        }
+        let top = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        let top = top.canonicalize().unwrap_or(top);
+        top != self.real_root()
+    }
+
+    /// Refuse writes outside the session's checkout (and temp dirs). With no sandbox
+    /// configured this still holds: a file tool never writes into another checkout (the main
+    /// repo when the session is in a worktree) — that needs the user's approval, which the
+    /// engine asks for and records in `permitted`.
+    pub fn check_writable(&self, p: &Path) -> Result<()> {
+        if !self.outside(p) || self.permitted.contains(p) {
+            return Ok(());
+        }
+        bail!(
+            "{} is outside this session's folder ({}); writing elsewhere needs your approval",
+            p.display(),
+            self.root.display()
+        )
+    }
+
+    /// Path shown to the model/user: relative to the session root when possible.
     pub fn display(&self, p: &Path) -> String {
-        p.strip_prefix(&self.cwd).unwrap_or(p).display().to_string()
+        p.strip_prefix(&self.root)
+            .unwrap_or(p)
+            .display()
+            .to_string()
     }
 
     pub fn mark_read(&mut self, p: &Path) {
@@ -344,9 +428,10 @@ mod tests {
         let ws = std::env::temp_dir().join(format!("frog-ws-{}", crate::session::new_id()));
         std::fs::create_dir_all(&ws).unwrap();
         let mut ctx = Ctx::new(ws.clone());
+        // No sandbox, and still: writes stay inside the session's folder (or temp).
         assert!(
-            ctx.check_writable(Path::new("/etc/passwd")).is_ok(),
-            "no sandbox, no check"
+            ctx.check_writable(Path::new("/etc/passwd")).is_err(),
+            "a file tool never writes outside the session's folder"
         );
 
         ctx.sandbox = Some(ws.canonicalize().unwrap());
@@ -357,5 +442,81 @@ mod tests {
             .resolve("sub/../../../../../../..")
             .join(home.strip_prefix("/").unwrap());
         assert!(ctx.check_writable(&sneaky).is_err());
+    }
+
+    /// A git repo and a worktree of it, for path-root tests: (main checkout, worktree).
+    fn repo_with_worktree(tag: &str) -> (PathBuf, PathBuf) {
+        let base =
+            std::env::temp_dir().join(format!("frog-ctx-{}-{}", tag, crate::session::new_id()));
+        let main = base.join("main");
+        let wt = base.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .current_dir(&main)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?} failed");
+        };
+        git(&["init", "-q"]);
+        std::fs::write(main.join("seed.txt"), "seed\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-qm", "init"]);
+        git(&["worktree", "add", "-q", wt.to_str().unwrap()]);
+        (main, wt)
+    }
+
+    /// Relative paths resolve against the session's checkout, not wherever the shell has `cd`d.
+    /// A session rooted in a worktree writes there even after `ctx.cwd` moves to the main
+    /// checkout, and an absolute path into the main checkout counts as outside the project.
+    #[test]
+    fn file_tools_resolve_against_the_session_root_not_the_shell_cwd() {
+        let (main, wt) = repo_with_worktree("resolve");
+        let mut ctx = Ctx::new(wt.clone());
+        // The shell `cd`d to the main checkout (what Bash does to `ctx.cwd` after a call).
+        ctx.cwd = main.clone();
+
+        assert_eq!(ctx.resolve("file.rs"), wt.join("file.rs"));
+        assert_eq!(ctx.display(&wt.join("file.rs")), "file.rs");
+        // The same file in the main checkout is a different, outside path.
+        assert!(!ctx.inside(&main.join("file.rs")));
+        assert!(ctx.inside(&wt.join("file.rs")));
+        assert!(ctx.check_writable(&main.join("file.rs")).is_err());
+        // Until the user approves that exact path.
+        ctx.permitted.insert(main.join("approved.rs"));
+        assert!(ctx.check_writable(&main.join("approved.rs")).is_ok());
+        // Dot-dot is judged from the session root, so it takes real paths into account.
+        let up = wt.join("../wt/escape.rs");
+        assert!(ctx.inside(&up), "{up:?} should resolve inside the worktree");
+        assert!(ctx.check_writable(&up).is_ok());
+        let _ = std::fs::remove_dir_all(main.parent().unwrap());
+    }
+
+    /// A plain (non-worktree) session keeps behaving as before: relative writes inside,
+    /// home and friends outside.
+    #[test]
+    fn check_writable_holds_without_a_sandbox() {
+        let ws = std::env::temp_dir().join(format!("frog-plain-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let ctx = Ctx::new(ws.clone());
+        assert!(ctx.check_writable(&ctx.resolve("deep/new/file.rs")).is_ok());
+        assert!(
+            ctx.check_writable(&std::env::temp_dir().join("frog-tmp-out.txt"))
+                .is_ok(),
+            "temp stays writable"
+        );
+        let home = dirs::home_dir().unwrap().join("frog-home-out.txt");
+        assert!(ctx.check_writable(&home).is_err());
+        let _ = std::fs::remove_dir_all(ws);
     }
 }

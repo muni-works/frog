@@ -1152,7 +1152,7 @@ impl Agent {
         self.emit(Event::Status(Status {
             model: self.profile_name.clone(),
             mode: self.mode,
-            cwd: self.ctx.cwd.clone(),
+            cwd: self.ctx.root.clone(),
             messages: self.messages.len(),
             context_tokens: self.context_tokens(),
             context_window: self.window,
@@ -2713,7 +2713,7 @@ impl Agent {
             return self.session_tool(id, name, input).await;
         }
         if name == crate::present::TOOL {
-            return crate::present::run(input, &self.ctx.cwd, self.tier == Tier::Weak);
+            return crate::present::run(input, &self.ctx.root, self.tier == Tier::Weak);
         }
         if name == crate::folder::TOOL && !self.subagent {
             return self.use_folder(input).await;
@@ -2786,12 +2786,14 @@ impl Agent {
             && !self.mcp.handles(name)
             && input.get("_invalid_json").is_none();
         ok.then(|| Ctx {
+            root: self.ctx.root.clone(),
             cwd: self.ctx.cwd.clone(),
             read_files: HashMap::new(),
             todos: Vec::new(),
             sandbox: self.ctx.sandbox.clone(),
             shell_sandbox: self.ctx.shell_sandbox.clone(),
             sandbox_extra: self.ctx.sandbox_extra.clone(),
+            permitted: self.ctx.permitted.clone(),
             progress: None,
             preview: None,
             web: self.ctx.web.clone(),
@@ -3310,7 +3312,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             let (mut first, mut answer) = (None::<Instant>, None::<Instant>);
             let mut filter = TagFilter::default();
             let mut presenting = None::<crate::present::Stream>;
-            let (cwd, weak) = (self.ctx.cwd.clone(), self.tier == Tier::Weak);
+            let (cwd, weak) = (self.ctx.root.clone(), self.tier == Tier::Weak);
             let text = |streamed: &mut Streamed, text: String| {
                 let id = streamed.message.get_or_insert_with(|| {
                     let id = new_id();
@@ -3534,6 +3536,40 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             _ if leaves_sandbox => format!("bash-unsandboxed:{prefix}"),
             _ => format!("bash:{prefix}"),
         };
+        // A Write/Edit into another checkout (the main repo when this session is in a worktree)
+        // is outside the project whatever the mode: it asks, and is denied headless.
+        let target = matches!(name, "Write" | "Edit")
+            .then(|| input["file_path"].as_str().map(|p| self.ctx.resolve(p)))
+            .flatten();
+        let outside = target.as_ref().is_some_and(|p| self.ctx.outside(p));
+        if let Some(path) = target.filter(|_| outside) {
+            if !self.can_ask {
+                return Decision::Deny;
+            }
+            let id = new_id();
+            let (tx, rx) = oneshot::channel();
+            self.shared.pending.lock().unwrap().insert(id.clone(), tx);
+            let preview = tools::fs::preview(name, input, &self.ctx);
+            self.emit(Event::PermissionRequest {
+                id: id.clone(),
+                item: item.into(),
+                name: name.into(),
+                arg: arg.into(),
+                always: String::new(),
+                preview,
+                reason: Some(format!(
+                    "Writes outside this session's folder ({}).",
+                    path.display()
+                )),
+                subagent: None,
+            });
+            let decision = rx.await.unwrap_or(Decision::Deny);
+            self.emit(Event::PermissionResolved { id, decision });
+            if decision != Decision::Deny {
+                self.ctx.permitted.insert(path);
+            }
+            return decision;
+        }
         let auto = match kind {
             Kind::Edit => {
                 self.mode == Mode::AcceptEdits
@@ -6370,6 +6406,245 @@ for line in sys.stdin:
                 .unwrap()
                 .contains("a + b")
         );
+    }
+
+    /// A git repo with a worktree, for the path-root tests: returns (main checkout, worktree).
+    fn repo_with_worktree(tag: &str) -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("frog-wt-{}-{}", tag, new_id()));
+        let main = base.join("main");
+        let wt = base.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .current_dir(&main)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?} failed");
+        };
+        git(&["init", "-q"]);
+        std::fs::write(main.join("seed.txt"), "seed\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-qm", "init"]);
+        git(&["worktree", "add", "-q", wt.to_str().unwrap()]);
+        (main, wt)
+    }
+
+    /// A session whose folder is a git worktree keeps resolving file tools against it: Bash
+    /// starts in the same root, its `cd` still works, and a relative Write lands in the
+    /// worktree even after the shell moved to the main checkout.
+    #[tokio::test]
+    async fn file_tools_stay_rooted_in_the_session_worktree() {
+        let (main, wt) = repo_with_worktree("root");
+        let pwd = Block::ToolUse {
+            id: "p".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "pwd" }),
+        };
+        let cd = Block::ToolUse {
+            id: "c".into(),
+            name: "Bash".into(),
+            input: json!({ "command": format!("cd {} && pwd", main.display()) }),
+        };
+        let write = Block::ToolUse {
+            id: "w".into(),
+            name: "Write".into(),
+            input: json!({ "file_path": "work.txt", "content": "from the worktree\n" }),
+        };
+        let script = vec![
+            reply(vec![pwd], Stop::ToolUse),
+            reply(vec![cd], Stop::ToolUse),
+            reply(vec![write], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        // AcceptEdits (engine_sent): the write auto-approves wherever it lands, so where it
+        // lands is entirely up to the resolution. Bash may ask where there's no OS sandbox
+        // (the cd call isn't on the safe list): allow it, this test is about paths.
+        let (mut h, _sent) = engine_sent(script, None, None, None, wt.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "make a file".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, name, .. } = &env.event {
+                assert_eq!(name, "Bash", "only the cd command may ask here");
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                    })
+                    .unwrap();
+            }
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle {
+                break;
+            }
+        }
+        let outputs = |evs: &[Envelope]| {
+            evs.iter()
+                .filter_map(|e| match &e.event {
+                    Event::ItemCompleted {
+                        item: Item::ToolCall { name, output, .. },
+                        ..
+                    } if name == "Bash" => Some(output.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let outs = outputs(&evs);
+        assert_eq!(outs.len(), 2, "both Bash calls ran: {outs:?}");
+        // Bash starts in the session root, and cd moves the shell alone.
+        assert!(
+            outs[0].contains(wt.to_str().unwrap()),
+            "Bash's first cwd should be the worktree: {}",
+            outs[0]
+        );
+        assert!(
+            outs[1].contains(main.to_str().unwrap()),
+            "cd should still work: {}",
+            outs[1]
+        );
+        // The relative write landed in the worktree, not the main checkout.
+        assert_eq!(
+            std::fs::read_to_string(wt.join("work.txt")).ok(),
+            Some("from the worktree\n".into()),
+            "the write missed the worktree"
+        );
+        assert!(
+            !main.join("work.txt").exists(),
+            "the write escaped to the main checkout"
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(main.parent().unwrap());
+    }
+
+    /// An absolute Write into the main checkout is outside the project for a worktree session:
+    /// it asks (and is denied when nobody can answer), and never lands there silently.
+    #[tokio::test]
+    async fn an_absolute_write_into_the_main_checkout_asks_and_stays_out() {
+        let (main, wt) = repo_with_worktree("abs");
+        let outside = main.join("escaped.txt");
+        let write = Block::ToolUse {
+            id: "w".into(),
+            name: "Write".into(),
+            input: json!({ "file_path": outside.display().to_string(), "content": "escape\n" }),
+        };
+        let script = vec![
+            reply(vec![write], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        // Headless (can_ask false): denied outright, nothing written.
+        let mut h = engine_with(script, false, None, None, None, wt.clone());
+        let evs = run(&mut h, "write it").await;
+        assert!(
+            evs.iter().any(|e| matches!(
+                &e.event,
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, outcome: ToolOutcome::Denied, .. },
+                    ..
+                } if name == "Write"
+            )),
+            "the outside write should have been denied: {:?}",
+            names(&evs)
+        );
+        assert!(!outside.exists(), "the write escaped to the main checkout");
+        shutdown(h).await;
+
+        // Interactive: it asks for every decision but the user's; denied, nothing lands.
+        let write2 = Block::ToolUse {
+            id: "w2".into(),
+            name: "Write".into(),
+            input: json!({ "file_path": outside.display().to_string(), "content": "approved\n" }),
+        };
+        let script = vec![
+            reply(vec![write2.clone()], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, wt.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "write it".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut asked = false;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest {
+                id, name, always, ..
+            } = &env.event
+            {
+                asked = true;
+                assert_eq!(name, "Write");
+                assert!(
+                    always.is_empty(),
+                    "an outside write can't be always-allowed"
+                );
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Deny,
+                    })
+                    .unwrap();
+            }
+            if matches!(env.event, Event::Idle) {
+                break;
+            }
+        }
+        assert!(asked, "the outside write didn't ask");
+        assert!(!outside.exists(), "a denied outside write went ahead");
+        shutdown(h).await;
+
+        // Allowed once: it lands where the user said, and only there.
+        let script = vec![
+            reply(vec![write2], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, wt.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "write it".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                    })
+                    .unwrap();
+            }
+            if matches!(env.event, Event::Idle) {
+                break;
+            }
+        }
+        assert_eq!(
+            std::fs::read_to_string(&outside).ok(),
+            Some("approved\n".into()),
+            "the approved write didn't land"
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(main.parent().unwrap());
     }
 
     #[tokio::test]

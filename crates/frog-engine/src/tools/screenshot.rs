@@ -42,7 +42,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             None => ctx.resolve(raw),
         };
         let file = file.canonicalize().context("capture file does not exist")?;
-        if !file.starts_with(ctx.cwd.canonicalize()?) {
+        if !file.starts_with(ctx.root.canonicalize()?) {
             bail!("local captures must be inside the workspace");
         }
         reqwest::Url::from_file_path(file)

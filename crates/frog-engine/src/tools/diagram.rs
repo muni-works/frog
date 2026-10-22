@@ -68,7 +68,7 @@ are the messages in time order (style \"dashed\" for replies)."
 pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     let mut d: Diagram = serde_json::from_value(input.clone())
         .context("diagram arguments don't match the schema")?;
-    let warnings = d.finish(&ctx.cwd);
+    let warnings = d.finish(&ctx.root);
     if d.nodes.is_empty() {
         bail!("the diagram has no nodes");
     }
@@ -121,7 +121,7 @@ pub fn run_map(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .filter(|p| !p.is_empty() && *p != ".")
         .map(std::path::PathBuf::from);
     if let Some(f) = &focus
-        && !ctx.cwd.join(f).is_dir()
+        && !ctx.root.join(f).is_dir()
     {
         bail!("`{}` isn't a directory in the project", f.display());
     }
@@ -131,13 +131,13 @@ pub fn run_map(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             .map(|n| n.clamp(5, 60) as usize)
             .unwrap_or(30),
     };
-    let (mut d, summary) = crate::codemap::map_with_summary(&ctx.cwd, &opts);
+    let (mut d, summary) = crate::codemap::map_with_summary(&ctx.root, &opts);
     if d.nodes.is_empty() {
         return Ok(Output::text(
             "No source files with dependencies between them were found.",
         ));
     }
-    d.finish(&ctx.cwd);
+    d.finish(&ctx.root);
     let summary = super::truncate_middle(&summary, 8000);
     Ok(Output {
         content: format!("The map is shown to the user.\n{summary}"),

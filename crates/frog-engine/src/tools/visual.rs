@@ -56,7 +56,7 @@ pub fn attachment(image: &DynamicImage) -> Result<Image> {
 /// Visual assets remain under the project even in sessions with broader write permissions.
 pub fn workspace_path(ctx: &Ctx, path: &Path) -> Result<()> {
     ctx.check_writable(path)?;
-    let root = ctx.cwd.canonicalize()?;
+    let root = ctx.root.canonicalize()?;
     let mut ancestor = path.to_path_buf();
     let mut tail = Vec::new();
     while !ancestor.exists() {

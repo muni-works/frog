@@ -317,7 +317,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             bail!("invalid loop_id");
         }
         let path = ctx
-            .cwd
+            .root
             .join(".frog/visual-loops")
             .join(format!("{id}.json"));
         visual::workspace_path(ctx, &path)?;
@@ -360,7 +360,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .judge
         .as_ref()
         .context("Compare needs a vision judge; configure compare_model")?;
-    crate::policy::check(&ctx.cwd, &profile.model, profile)?;
+    crate::policy::check(&ctx.root, &profile.model, profile)?;
     crate::sidecar::ensure(profile).await?;
     let provider = Provider::new(profile)?;
     if !profile

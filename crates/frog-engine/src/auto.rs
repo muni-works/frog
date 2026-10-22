@@ -54,7 +54,14 @@ pub fn hard_rule(name: &str, input: &Value, root: &Path) -> Option<&'static str>
         "Write" | "Edit" => {
             let path = input["file_path"].as_str().unwrap_or("");
             let p = Path::new(path);
-            let inside = p.is_relative() || p.starts_with(root);
+            // Relative paths resolve against the session's own checkout; an absolute path is
+            // inside only within it (another checkout of the same repo is another project).
+            let p = if p.is_relative() {
+                root.join(p)
+            } else {
+                p.to_path_buf()
+            };
+            let inside = p.starts_with(root);
             (!inside).then_some("writes outside the project")
         }
         _ => None,
