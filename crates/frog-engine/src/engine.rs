@@ -655,6 +655,15 @@ fn retryable(e: &anyhow::Error) -> bool {
         .any(|r| r.is_timeout() || (r.is_request() && !r.is_connect()))
 }
 
+/// frog's local model server answers (it listens on 127.0.0.1:8911 when running).
+fn local_server_up() -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], 8911)),
+        Duration::from_millis(200),
+    )
+    .is_ok()
+}
+
 pub(crate) fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -3095,6 +3104,15 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
     /// frog cloud is unreachable (offline) or out of capacity, credit or hours (503, 402, 502):
     /// carry on with a local model instead of failing the turn. `FROG_FALLBACK_MODEL` picks
     /// which.
+    /// How many times to retry a failed call: frog cloud gets longer (busy, or a tunnel blip).
+    fn retry_budget(&self, _e: &anyhow::Error) -> u32 {
+        let cloud = self
+            .profile_name
+            .split_once('/')
+            .is_some_and(|(p, _)| crate::providers::canonical(p) == crate::providers::CLOUD);
+        if cloud { 6 } else { 3 }
+    }
+
     fn cloud_fallback(&self, e: &anyhow::Error) -> Option<String> {
         let prov = self.profile_name.split_once('/')?.0;
         if crate::providers::canonical(prov) != crate::providers::CLOUD {
@@ -3117,6 +3135,8 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 .map(|m| crate::providers::normalize(&m))
                 .unwrap_or_else(|| crate::config::LOCAL_DEFAULT.into()),
         )
+        // Only to a local model that's actually there: a fallback to nothing just fails later.
+        .filter(|m| !m.starts_with("local/") || local_server_up())
     }
 
     async fn call(
@@ -3363,15 +3383,21 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     });
                 }
                 Ok(resp) => return Ok((resp, streamed)),
+                // A busy or briefly unreachable frog cloud is retried for about a minute before
+                // anything falls back: one 503 or dropped connection shouldn't end a long task.
                 Err(e)
                     if !started
-                        && attempt < 3
-                        && retryable(&e)
-                        && self.cloud_fallback(&e).is_none() =>
+                        && attempt < self.retry_budget(&e)
+                        && (retryable(&e) || self.cloud_fallback(&e).is_some()) =>
                 {
                     attempt += 1;
-                    self.notice(Level::Warn, format!("{e:#} — retrying ({attempt}/3)"));
-                    tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                    let wait = Duration::from_secs((1u64 << attempt.min(5)).min(20));
+                    let budget = self.retry_budget(&e);
+                    self.notice(
+                        Level::Warn,
+                        format!("{e:#} — retrying in {}s ({attempt}/{budget})", wait.as_secs()),
+                    );
+                    tokio::time::sleep(wait).await;
                 }
                 Err(e) => return Err(e),
             }
