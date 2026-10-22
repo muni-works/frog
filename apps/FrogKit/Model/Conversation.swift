@@ -12,6 +12,14 @@ protocol ConversationLink: AnyObject {
     func stop()
     /// Why it ended on its own, for the transcript.
     var endDescription: String { get }
+    /// Whether the engine is still there to send events. A conversation that thinks it's
+    /// busy reconciles from the session log when this goes false, so "Working…" never
+    /// outlives the engine it was watching.
+    var isAlive: Bool { get }
+}
+
+extension ConversationLink {
+    var isAlive: Bool { true }
 }
 
 /// What a platform does when things happen in a conversation: sounds, the Mac's sidebar and
@@ -84,6 +92,16 @@ final class Conversation {
     /// The user pressed stop on the running turn (cleared when the next one starts), so a
     /// restart can tell a turn they stopped from one a crash or quit cut off.
     private(set) var userStopped = false
+    /// The last event's seq, so a reconciliation can ask the log for only what's new.
+    @ObservationIgnored private(set) var lastSeq: UInt64 = 0
+    /// When the last event arrived; a busy conversation whose engine has gone quiet for this
+    /// long reconciles from the session log (see `watchdog`).
+    @ObservationIgnored private var lastEventAt = Date.now
+    /// Reads a session log's durable events after a seq (the Mac reads `~/.local/share/frog/`
+    /// itself; tests feed a fixture). Nil means there's nothing to reconcile from.
+    @ObservationIgnored static var logReader: ((String, UInt64) async -> [Envelope])?
+    /// Reconciles busy state from the log when the engine is gone.
+    @ObservationIgnored private var watchdog: Task<Void, Never>?
     /// Reopened after the app restarted, with the interrupted turn picked back up.
     var resumedAfterRestart = false
     /// `continueInterrupted` called before the engine could take it: it goes first.
@@ -313,6 +331,10 @@ final class Conversation {
     /// Has a running engine (not stopped, not failed).
     var isLive: Bool { link != nil && failure == nil && !stopping }
 
+    /// The engine behind the link is still there. What "Working…" requires: never show it
+    /// for a turn whose engine has already exited.
+    var engineAlive: Bool { isLive && (link?.isAlive ?? false) }
+
     /// Send the engine an op directly (a title from the Mac's on-device model, say).
     func send(_ op: Op) {
         link?.send(op)
@@ -355,8 +377,11 @@ final class Conversation {
             }
             busy = false
             progress = nil
+            stopWatchdog()
             return
         }
+        lastSeq = max(lastSeq, env.seq)
+        lastEventAt = .now
         if sessionID != env.session {
             sessionID = env.session
             panes.sessionDir = URL.homeDirectory
@@ -545,6 +570,54 @@ final class Conversation {
         _ = id
         let running = turns.last.map { !$0.finished } ?? false
         Conversation.effects?.live(self, running: running && busy, waiting: permission != nil || elicitation != nil || question != nil)
+        // A busy conversation watches its engine: one that's gone (or goes quiet so long it
+        // must have died mid-turn) reconciles from the session log, so its window never
+        // shows "Working…" for a turn that already ended.
+        if busy { startWatchdog() } else { stopWatchdog() }
+    }
+
+    /// Starts the reconciliation watch, if it isn't running.
+    private func startWatchdog() {
+        guard watchdog == nil else { return }
+        watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(10))
+                guard let self, !Task.isCancelled else { return }
+                guard self.busy, !self.replaying else { return self.stopWatchdog() }
+                // Quiet for two minutes with a live engine is a long think (compaction, a slow
+                // model): trust it. A dead one, or quiet for half an hour, is on its own.
+                let quiet = Date.now.timeIntervalSince(self.lastEventAt)
+                if self.link?.isAlive == true && quiet < 120 { continue }
+                await self.reconcile()
+                return
+            }
+        }
+    }
+
+    private func stopWatchdog() {
+        watchdog?.cancel()
+        watchdog = nil
+    }
+
+    /// Re-derive this conversation's state from the session log: the durable events after the
+    /// last one seen, applied as if the engine had sent them (a `turn_ended` clears busy, an
+    /// `idle` settles everything). Does nothing when the log can't be read.
+    func reconcile() async {
+        guard let id = sessionID, let read = Self.logReader else { return }
+        let after = lastSeq
+        let events = await read(id, after)
+        guard !events.isEmpty else {
+            // Nothing new was logged. With the engine gone that means the turn it was on
+            // never finished: it's over either way.
+            if link?.isAlive != true { busy = false; progress = nil }
+            return
+        }
+        Motion.cut { events.forEach { self.ingest($0) } }
+        if let last = events.last, case .turnEnded = last.event {
+            busy = false
+            progress = nil
+        }
+        reportLive()
     }
 
     /// One line for a notification: the start of the answer, or how the turn ended.
