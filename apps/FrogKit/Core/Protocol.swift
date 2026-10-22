@@ -545,6 +545,9 @@ enum Event: Decodable, Sendable {
     case appResult(id: String, result: JSONValue?, error: String?)
     /// Auto mode's classifier let tool call `item` run without asking.
     case autoApproved(item: String, reason: String)
+    /// How one permission check was decided (rule, classifier, fallback, ask),
+    /// for measuring the ask rate; not shown in the transcript.
+    case permissionDecision(item: String, layer: String, outcome: String, reason: String, ms: UInt64)
     /// An event from the subagent running as tool call `item`.
     indirect case subagent(item: String, inner: Event)
     case notice(level: String, message: String)
@@ -655,6 +658,13 @@ extension Event {
                     message: try c.decodeIfPresent(String.self, forKey: .message)))
         case "auto_approved":
             self = .autoApproved(item: try c.decode(String.self, forKey: .item), reason: try c.decode(String.self, forKey: .reason))
+        case "permission_decision":
+            self = .permissionDecision(
+                item: try c.decode(String.self, forKey: .item),
+                layer: try c.decode(String.self, forKey: .layer),
+                outcome: try c.decode(String.self, forKey: .outcome),
+                reason: try c.decode(String.self, forKey: .reason),
+                ms: try c.decodeIfPresent(UInt64.self, forKey: .ms) ?? 0)
         case "subagent":
             self = .subagent(item: try c.decode(String.self, forKey: .item), inner: try c.decode(Event.self, forKey: .inner))
         case "app_result":

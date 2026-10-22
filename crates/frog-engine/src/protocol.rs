@@ -357,6 +357,23 @@ pub enum Event {
         item: String,
         reason: String,
     },
+    /// How one permission check was decided, for measuring the ask rate:
+    /// which layer answered (rule, classifier, fallback, user) and how long it took.
+    PermissionDecision {
+        /// The tool call's item id.
+        item: String,
+        /// `rule` (built-in read-only or hard rule), `classifier` (the model's
+        /// verdict), `sandbox`, `session` (an earlier allow-always), `fallback`
+        /// (the classifier was down; a read-only fast path answered), or `ask`.
+        layer: String,
+        /// `allow` or `ask`.
+        outcome: String,
+        /// How the decision was reached, one line.
+        reason: String,
+        /// Milliseconds the deciding layer took.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        ms: u64,
+    },
     Compacted {
         tokens_before: u64,
         tokens_after: u64,
@@ -582,6 +599,7 @@ impl Event {
                 | Self::PermissionResolved { .. }
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
+            | Self::PermissionDecision { .. }
                 | Self::Compacted { .. }
                 | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }

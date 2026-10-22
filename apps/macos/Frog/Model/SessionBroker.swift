@@ -28,6 +28,8 @@ final class SessionBroker {
         var prompt: String
         var cwd: String?
         var model: String?
+        /// "default", "accept-edits", "auto" or "yolo" (only when asked for explicitly).
+        var mode: String?
         var worktree: Bool
     }
 
@@ -102,6 +104,7 @@ final class SessionBroker {
             let req = StartRequest(
                 title: input["title"]?.string ?? "", prompt: input["prompt"]?.string ?? "",
                 cwd: input["cwd"]?.string, model: input["model"]?.string,
+                mode: input["mode"]?.string,
                 worktree: input["worktree"]?.bool ?? false)
             Task { [weak c] in
                 do {
@@ -389,7 +392,7 @@ extension SessionBroker {
             branch = b
         }
         let model = req.model ?? parent?.status?.model
-        let c = Conversation(folder: folder, arguments: Workspace.engineFlags(chat: false), model: model)
+        let c = Conversation(folder: folder, arguments: Self.engineFlags(req: req, parent: parent), model: model)
         guard c.failure == nil else { throw BrokerError(c.failure ?? "couldn't start") }
         c.rename(title)
         c.submit(req.prompt)
@@ -405,5 +408,31 @@ extension SessionBroker {
         if let p = parent?.sessionID { Library.shared.setParent(of: id, to: p) }
         Library.shared.refresh()
         return Started(id: id, name: title, cwd: folder.path, branch: branch)
+    }
+
+    /// The permission mode a started session runs in: its parent's by default,
+    /// never above it, and yolo only when asked for explicitly.
+    static func childMode(asked: String?, parent: Mode?) -> Mode {
+        // Modes by how much they allow; a child's mode can't outrank its parent's.
+        func rank(_ m: Mode) -> Int { switch m { case .default: 0; case .acceptEdits: 1; case .auto: 2; case .yolo: 3 } }
+        let parentMode = parent ?? .default
+        if let asked = asked.flatMap(Mode.init(rawValue:)) {
+            return rank(asked) <= rank(parentMode) ? asked : parentMode
+        }
+        // Inherit, except yolo is never passed on silently.
+        return parentMode == .yolo ? .auto : parentMode
+    }
+
+    /// The engine flags for a session started by another session: its permission
+    /// mode (see `childMode`) plus the app-wide flags.
+    static func engineFlags(req: StartRequest, parent: Conversation?) -> [String] {
+        let mode = childMode(asked: req.mode, parent: parent?.status?.mode)
+        let flag: [String] = switch mode {
+        case .yolo: ["--yolo"]
+        case .auto: ["--auto"]
+        case .acceptEdits: ["--accept-edits"]
+        case .default: []
+        }
+        return flag + Workspace.engineFlags(chat: false).filter { $0 != "--yolo" && $0 != "--auto" && $0 != "--accept-edits" }
     }
 }

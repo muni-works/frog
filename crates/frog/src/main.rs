@@ -212,6 +212,10 @@ struct Cli {
     /// Auto mode: a local classifier approves steps that plainly serve your request.
     #[arg(long, conflicts_with_all = ["yolo", "accept_edits"])]
     auto: bool,
+    /// Permission mode: default (ask), accept-edits, auto or yolo.
+    #[arg(long, value_name = "MODE", value_parser = ["default", "accept-edits", "auto", "yolo"],
+          conflicts_with_all = ["yolo", "accept_edits", "auto"])]
+    mode: Option<String>,
     /// Describe tools in the prompt instead of using native tool calling.
     #[arg(long, conflicts_with = "tool_mode")]
     text_tools: bool,
@@ -509,10 +513,10 @@ async fn run() -> Result<bool> {
         headless::serve(frog_engine::follow(store.clone(), id.clone())).await?;
         return Ok(true);
     }
-    let mode = match (cli.yolo, cli.accept_edits, cli.auto) {
-        (true, _, _) => Mode::Yolo,
-        (_, true, _) => Mode::AcceptEdits,
-        (_, _, true) => Mode::Auto,
+    let mode = match (cli.mode.as_deref(), (cli.yolo, cli.accept_edits, cli.auto)) {
+        (Some("yolo"), _) | (None, (true, _, _)) => Mode::Yolo,
+        (Some("accept-edits"), _) | (None, (_, true, _)) => Mode::AcceptEdits,
+        (Some("auto"), _) | (None, (_, _, true)) => Mode::Auto,
         _ => Mode::Default,
     };
     if cli.acp {

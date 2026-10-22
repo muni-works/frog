@@ -20,6 +20,10 @@ use std::time::Duration;
 pub enum Verdict {
     Allow(String),
     Ask(String),
+    /// The classifier itself couldn't run (wouldn't start, errored, timed out,
+    /// answered unreadably). Not a judgement about the call: the caller may
+    /// fall back to its own deterministic rules.
+    Failed(String),
 }
 
 /// Why a call always asks in auto mode, if it does.
@@ -91,27 +95,30 @@ pub struct Classifier {
 }
 
 impl Classifier {
-    /// `auto_classifier` from config, else Apple's on-device model when it's here, else the
-    /// session's own model.
-    /// A classifier that would send the project's code to the cloud when the project keeps it
-    /// on your devices falls back to the session's model (which the project allows).
-    pub fn new(
-        cfg: &Config,
-        session: (&str, &Profile),
-        dir: &std::path::Path,
-    ) -> anyhow::Result<Self> {
-        let (name, profile) = match &cfg.auto_classifier {
-            Some(spec) => cfg.resolve(Some(spec))?,
-            None if crate::sidecar::available(crate::sidecar::APPLE) => {
-                cfg.resolve(Some("apple/on-device"))?
-            }
-            None => (session.0.to_string(), session.1.clone()),
+    /// Which model judges: `auto_classifier` from config when set, else
+    /// `cloud/qwen3-8b` (small and fast), else Apple's on-device model when it's
+    /// here. Each candidate the project's policy rejects (cloud for a
+    /// local-only project, say) is skipped for the next, and none of them being
+    /// usable is an error the caller turns into asking.
+    pub fn new(cfg: &Config, dir: &std::path::Path) -> anyhow::Result<Self> {
+        let mut candidates: Vec<String> = match &cfg.auto_classifier {
+            Some(spec) => vec![spec.clone()],
+            None => vec!["cloud/qwen3-8b".into()],
         };
-        let (name, profile) = if crate::policy::check(dir, &name, &profile).is_err() {
-            (session.0.to_string(), session.1.clone())
-        } else {
-            (name, profile)
-        };
+        if cfg.auto_classifier.is_none() && crate::sidecar::available(crate::sidecar::APPLE) {
+            candidates.push("apple/on-device".into());
+        }
+        let (name, profile) = candidates
+            .iter()
+            .find_map(|spec| {
+                let (name, profile) = cfg.resolve(Some(spec)).ok()?;
+                crate::policy::check(dir, &name, &profile)
+                    .is_ok()
+                    .then_some((name, profile))
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("no classifier model is configured and usable here")
+            })?;
         let mode = profile.thinking.unwrap_or(cfg.thinking);
         let think = match crate::harness::cached(&profile) {
             Some(c) if !c.thinks => None,
@@ -130,7 +137,7 @@ impl Classifier {
     pub async fn judge(&mut self, intent: &[String], action: &str) -> Verdict {
         if !self.started {
             if let Err(e) = crate::sidecar::ensure(&self.profile).await {
-                return Verdict::Ask(format!("the classifier couldn't start ({e:#})"));
+                return Verdict::Failed(format!("the classifier couldn't start ({e:#})"));
             }
             self.started = true;
         }
@@ -160,15 +167,17 @@ impl Classifier {
             cache_key: None,
         };
         let mut ignore = |_| {};
+        // A fast small model with a grammar: seconds, not minutes. Slower than
+        // this and asking the user is the better use of everyone's time.
         let answer = tokio::time::timeout(
-            Duration::from_secs(60),
+            Duration::from_secs(3),
             self.provider.complete(&req, &mut ignore),
         )
         .await;
         let text = match answer {
             Ok(Ok(r)) => r.message.text(),
-            Ok(Err(e)) => return Verdict::Ask(format!("the classifier failed ({e:#})")),
-            Err(_) => return Verdict::Ask("the classifier timed out".into()),
+            Ok(Err(e)) => return Verdict::Failed(format!("the classifier failed ({e:#})")),
+            Err(_) => return Verdict::Failed("the classifier timed out".into()),
         };
         parse(&text)
     }
@@ -182,7 +191,7 @@ fn parse(text: &str) -> Verdict {
         .trim_start_matches("```")
         .trim_end_matches("```");
     let Ok(v) = serde_json::from_str::<Value>(body.trim()) else {
-        return Verdict::Ask("the classifier's answer was unreadable".into());
+        return Verdict::Failed("the classifier's answer was unreadable".into());
     };
     let reason = v["reason"].as_str().unwrap_or("").trim().to_string();
     let reason = if reason.is_empty() {
@@ -334,6 +343,7 @@ mod tests {
             Verdict::Ask(_)
         ));
         assert!(matches!(parse(r#"{"decision":"maybe"}"#), Verdict::Ask(_)));
-        assert!(matches!(parse("sure, allow it"), Verdict::Ask(_)));
+        // A model answer we can't read is a classifier failure, not a judgement.
+        assert!(matches!(parse("sure, allow it"), Verdict::Failed(_)));
     }
 }

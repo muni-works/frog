@@ -56,9 +56,11 @@ turns; don't wait in a loop."
             name: START.into(),
             description: "Start a new long-running session (shown in the sidebar under this \
 one) with a first prompt. Optionally in another folder (cwd), with another model, or in its own \
-git worktree on a new branch (worktree: true) so its edits don't collide with yours. When it goes \
-idle you get a message from \"system\" with its last reply (its report), unless report: false. \
-Returns its id and name for SendMessage."
+git worktree on a new branch (worktree: true) so its edits don't collide with yours. mode starts \
+it in a permission mode (default, accept-edits, auto, yolo); it defaults to your own mode but is \
+never above it, and yolo only when you say so explicitly. When it goes idle you get a message \
+from \"system\" with its last reply (its report), unless report: false. Returns its id and name \
+for SendMessage."
                 .into(),
             schema: json!({
                 "type": "object",
@@ -67,6 +69,7 @@ Returns its id and name for SendMessage."
                     "prompt": { "type": "string" },
                     "cwd": { "type": "string" },
                     "model": { "type": "string" },
+                    "mode": { "type": "string", "enum": ["default", "accept-edits", "auto", "yolo"], "description": "permission mode for the new session (default: yours, capped; yolo never inherited implicitly)" },
                     "worktree": { "type": "boolean" },
                     "report": { "type": "boolean", "description": "send its last reply back here when it goes idle (default true)" }
                 },
