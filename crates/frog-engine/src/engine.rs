@@ -188,9 +188,16 @@ enum Batch {
 }
 
 const COMPACT_PROMPT: &str = "Your context window is nearly full. Write a detailed summary of this conversation \
-so work can continue from it alone. Include: the user's requests and intent, key decisions, files read or changed \
-(with paths), important code details, errors hit and how they were fixed, what's done, what's in progress, and the \
-next step. Do not call any tools. Output only the summary.";
+so work can continue from it alone. A terse summary loses the thread of a long working session, so be thorough — \
+cover the whole session, not just the last few turns. Structure it under these headings, in order: \
+1. Task: the user's goal and constraints. \
+2. Done: work completed, with file paths. \
+3. Decisions: choices made and why, including rejected alternatives. \
+4. Code details: types, functions, constants, signatures and test names likely to matter for the next step. \
+5. Errors: failures hit and how they were fixed. \
+6. In progress: the current step, half-done edits, uncommitted work. \
+7. Next steps: the immediate next actions, in order. \
+Keep names, paths and error text verbatim. Do not call any tools. Output only the summary.";
 
 pub struct Options {
     pub cfg: Config,
@@ -3730,13 +3737,15 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             anyhow::bail!("compaction produced an empty summary; keeping the full history");
         }
         let before = self.usage.context();
-        let pinned = context::pinned_inputs(&self.inputs, 8_000)
-            .iter()
-            .map(|s| format!("<user-message>\n{s}\n</user-message>"))
-            .collect::<Vec<_>>()
-            .join("\n");
         // Loaded skills' instructions are summarized away; let them load again.
         self.skills_loaded.clear();
+        // The structured record, recovered verbatim across repeated compactions: user
+        // inputs, files, the latest todos, commands and significant tool calls.
+        let record = context::pinned_record(&self.inputs, &self.ctx.todos, &self.messages);
+        // A record that filled the window would leave nothing for the summary it follows,
+        // so it scales to the window, capped: small models get the essentials.
+        let budget = (self.est.chars(self.window) / 8).clamp(1_000, 16_000);
+        let record = context::render_record(&record, budget);
         let visual = context::pinned_visual_context(
             &self.messages,
             if self.vision {
@@ -3745,9 +3754,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 0
             },
         );
+        let compacted_label = format!("{}. Work continues from this alone.)", context::COMPACTION_LABEL);
         let mut compacted = Message::user(format!(
-            "(The earlier part of this session was compacted.)\n\nSummary:\n{summary}\n\n\
-The user's messages so far, verbatim. Any instructions or constraints in them still apply:\n{pinned}"
+            "{compacted_label}\n\nSummary:\n{summary}\n\n{record}"
         ));
         compacted.content.extend(visual);
         self.reset(vec![compacted]);
