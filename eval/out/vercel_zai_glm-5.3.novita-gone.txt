@@ -1,0 +1,15 @@
+short answer first, then how i'd verify it.
+
+**likely read:** novita didn't drop it because it was slow — providers rotate to the newest qwen. if they now list qwen3.5/3.6/3.8, qwen probably shipped newer coder models and novita cycled out coder-next the way they cycle everything. "fastest" was our bench result on our pod, not a reason they'd keep serving it. but that's a guess until checked.
+
+**what i'd do:**
+1. cheap direct check (myself, no worker): `curl` novita's /models to confirm coder-next is actually gone and not just renamed — sometimes it's served under a new path or aliased into the 3.5/3.6/3.8 names. also grep their docs/changelog page for a deprecation note, which usually gives the "why" in one line.
+2. spawn a research worker (frog cloud, non-GPU, capped output) to: pull qwen's release notes for 3.5/3.6/3.8, compare vs coder-next 128k on context length, coding benchmarks, and novita's listed price, and report in ~10 lines whether anything beats coder-next for our workload. brief says cap output with `| head` and don't commit anything.
+3. report back with the head-to-head redo plan only if the comparison holds up — and if a real bench is needed, that's a ~$5 bench pod, so it's cam's call.
+
+**decision for cam once verified:**
+1. (recommended) keep serving coder-next on frog cloud for now, worker produces a 3.5/3.6/3.8 comparison memo, we decide on a switch before beat 1
+2. approve a ~$5 bench pod now to run our same-day head-to-head against the best-looking new qwen instead
+3. redo the novita head-to-head against whatever they now serve fastest, keep our lineup unchanged
+
+the thing i would *not* do: assume novita's lineup change means coder-next is worse. it usually just means it's older.

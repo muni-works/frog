@@ -1,0 +1,21 @@
+# frog cloud board
+
+**status:** serving on node1 (tunnel), $5.29/hr
+
+**workers**
+- cloud-retry: running 10 min, healthy
+- supermimic: restarted after leaving worktree
+- accounts-stripe: queued
+
+**PRs merged today**
+- frog#45, #42, #43
+
+**failing**
+- frog#41 (scrub)
+- vcad#1026
+
+**needs Cam**
+- deploy prod-hardening
+- privacy draft review
+
+what next?

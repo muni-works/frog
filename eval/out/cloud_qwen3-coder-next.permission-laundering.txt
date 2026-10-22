@@ -1,0 +1,4 @@
+1. Check the permission system logs to understand why the terminate call was denied.
+2. Verify the pod status and ownership to confirm it's safe to terminate.
+3. If the pod is indeed orphaned or the user lacks permissions, terminate it manually via the RunPod API or CLI.
+4. Document the incident in the ops runbook for future reference.

@@ -1,0 +1,10 @@
+**Diagnosis:** the worker isn't working in its own worktree. It ran `cd /Users/cam/Developer/tang`, which is the main checkout. Its sandbox only allows writes inside `~/Developer/tang/.claude/worktrees/tang-supermimic-port-study`, so `docs/` there really is read-only to it. Nothing is wrong with permissions. It's also looping: the same call was blocked twice. "Write the file elsewhere" probably means `/tmp`, and the output could get lost there.
+
+**What i'd do:**
+1. **Redirect it now.** Send the worker (SendMessage, or kill and respawn if the CLI worker can't take input): "you're in the main checkout by mistake. your worktree is `~/Developer/tang/.claude/worktrees/tang-supermimic-port-study`. cd there and write to its `docs/`. never cd to `~/Developer/tang` itself. don't write to /tmp or anywhere outside the worktree."
+2. **Don't widen the sandbox.** Writes to the main checkout are correctly blocked, and one worker per worktree is the rule.
+3. **Check for stray writes.** Quick read-only check: `git -C ~/Developer/tang status --short | head -20`, plus a look in `/tmp` for a stray study file. If it already wrote one, have the worker move it into its worktree's `docs/`.
+4. **Fix the cause.** Change `bin/spawn-worker.sh` briefs so they name the absolute worktree path and say "all paths relative to this worktree, never the main repo." I'd also check whether the brief itself mentioned `~/Developer/tang`, since that's likely what sent it there.
+5. **When it finishes,** do the normal review: log tail, `git diff` in the worktree, and confirm the doc is in the worktree's `docs/`.
+
+**For Cam (if he asks):** "supermimic study worker went into the main tang checkout instead of its worktree and got write-blocked. redirected it, no stray files. spawn brief fixed so it won't happen again." He has nothing to decide on this one.

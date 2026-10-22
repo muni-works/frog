@@ -1,0 +1,30 @@
+**short version:** a delisted SKU isn't a dead model — most aggregators pull models from the public `/v1/models` list while still serving them on reserved/dedicated capacity. so step one is a 5-minute check, not a rethink. and no, a competing host dropping our checkpoint doesn't change our plan; it changes what we can *prove* on Oct 30.
+
+**what i'd verify before concluding anything**
+
+- re-read the exact model id from our own benchmark config/logs — don't trust memory of it
+- `curl /v1/models` and read the raw list; then fire one chat completion at the old id. 200 = merely unlisted, 404 = actually withdrawn. this is the whole question.
+- cross-check Novita's pricing/docs/changelog page and their provider page on OpenRouter (that shows per-provider availability and routing status even when the first-party list is scrubbed)
+- treat "Novita lists qwen3.5/3.6/3.8" as unverified until a worker reads it back — Cam's report is the hypothesis, not the finding
+
+**why a host would drop it (ranked, with the tell)**
+
+1. superseded by their own newer Qwen3.x line — demand follows the leaderboard, and reallocating GPU to the freshest SKU is free margin. tell: the new list has a *coder* variant that replaces it.
+2. hosting economics. Coder-Next is a big MoE; "fastest" on a serverless aggregator usually means a warm pool plus aggressive quant against a price set to win the comparison. cold-start-heavy, thin-margin SKUs get cut first. tell: it was cheap in their pricing table.
+3. infra regression — the speed likely came from a specific quant/kernel that broke on a vLLM/SGLang upgrade, and delisting beats fixing. tell: other models' latencies shifted at the same time.
+4. upstream — Qwen deprecating the Coder-Next checkpoint or a quant/license constraint. tell: it vanishes from other hosts too, not just Novita.
+5. it was never broadly served — a launch-window loss leader.
+
+**"is there something better?" — two different questions, don't merge them**
+
+- better *model*? probably yes on raw coding ability: the coder line has moved on (DeepSeek V4, Qwen's own successors, GLM/Kimi/MiniMax all worth a rerun). but that's an eval, not a vibe.
+- better *for us*? no. our claim was never "we picked the best checkpoint," it's that tang serves a coding model faster than anyone on our own H200. a third party pulling a SKU is exactly the fragility we self-host to avoid.
+
+**launch impact:** Beat 1's poster was "tang IR + #1 speed + frog OSS," and the Novita head-to-head was the evidence. losing the comparison partner is a claim risk, not an engineering one — and the fix is cheap.
+
+**what i'd do:** hand zest a tight brief (verify the id via a real completion call, then re-benchmark against whichever host now serves the nearest equivalent, plus flag whether Novita's newer SKUs undercut our $0.20/$1.50 yardstick). i don't run the benchmark myself. then the call is yours:
+
+1. **(recommended)** re-point the head-to-head at whatever now serves the nearest equivalent (Novita's qwen3.x coder SKU or another top host), so Beat 1 keeps a live side-by-side
+2. publish our own H200 tok/s only, drop the "vs Novita" framing — weaker poster, zero external dependency
+3. if the old id answers a direct call, change nothing and keep the original headline
+4. skip the fight for Beat 1, ship frog OSS + tang IR Oct 30, move speed to Beat 2

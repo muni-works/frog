@@ -2,7 +2,7 @@
 # spawn-worker.sh <repo> <branch> "<task>" [model]
 # Creates a worktree off origin/main and runs a frog worker there in the background.
 set -euo pipefail
-repo=$1 branch=$2 task=$3 model=${4:-cloud/qwen3-coder-next}
+repo=$1 branch=$2 task=$3 model=${4:-vercel/zai/glm-5.3}
 root=~/Developer/$repo
 name=${branch//\//-}
 wt=$root/.claude/worktrees/$name

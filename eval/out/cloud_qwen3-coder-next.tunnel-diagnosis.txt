@@ -1,0 +1,26 @@
+# Diagnosis
+
+**Root cause: inference capacity exhaustion, not node failure**
+
+Key evidence:
+- `zest_requests_total ok=624 error=0 cancelled=9` → requests succeeded or were cancelled, none errored at the router level
+- `zest_rejected_total=0` → no rejections at the edge/router level
+- `health_probe_failures=0` → node itself is healthy
+- Node uptime 66 min with no restart → stable process
+- Clients see 503 and truncated SSE → downstream inference engine (tang) ran out of capacity
+
+The 503s and EOF mid-JSON are symptoms of the inference engine (tang) being overwhelmed, not the edge/router failing. The edge/router is correctly forwarding requests and reporting metrics.
+
+# Recommended actions
+
+1. **Check tang inference engine metrics** - look at GPU utilization, queue depth, pending requests, and any backpressure signals from tang itself
+
+2. **Review tang logs for capacity warnings** - search for OOM, GPU OOM, context length exceeded, or queue full messages
+
+3. **Scale tang horizontally** - add more tang nodes behind the same KV config if the load pattern is sustained
+
+4. **Implement client-side backpressure** - if this is burst traffic, add request queuing or rate limiting at the edge before hitting tang
+
+5. **Check context window limits** - if requests have very long prompts+completions, they consume more capacity per request; consider truncation or batching
+
+6. **Verify RunPod pod size** - confirm the H200 has sufficient VRAM for the workload; 128k context on Qwen3-Coder-Next is memory-intensive

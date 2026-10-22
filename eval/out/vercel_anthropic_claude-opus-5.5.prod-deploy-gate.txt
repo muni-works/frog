@@ -1,0 +1,22 @@
+"nice" means he likes it. It doesn't approve a merge or a deploy. So next is verifying and reporting, then asking for a decision.
+
+**1. Verify before I report (cheap, read-only)**
+- Read the tail of the worker log and `git diff origin/main...zest/launch-surface --stat`, then skim the actual changes.
+- Run the test command myself in the worktree. I don't just trust "tests pass."
+- Check `/pricing` against the locked numbers: frog api $0.20/M in and $1.50/M out, Pro $20, Max $200. Plan names should be "frog cloud" with plans beta / API / Pro / Max, and "frog api" should only name the endpoint and the per-token plan. "zest" should never show up in user-facing copy.
+- Check `/privacy`. It's legal text, so it stays marked draft until Cam has read R in zest.** zest is private, so that's not a public PR. I'd h?), whether anything gets sent, and that no secrets or keys are in the diff.
+- Make sure nothing auto-deploys from the branch.
+
+* Ops changes  C zest 3–6 lines**
+- What shipped: 4 edge routes.
+- What I verified: tests ran locally, pricing matches.
+- What i zest/launch-surface: /docs, /pricing, /privacy (draft), /waitlist.
+> verified: i re-ran the tests and they pass. pricing matches product-direction. no secrets in the diff.
+> not verified: how it looks rendered. /privacy is unreviewed legal text.
+> next:
+> 1. open PR, you skim /privacy, merge once CI is green, deploy after a separate ok (recommended)
+> 2. merge and deploy now without /privacy (hide the route until it's reviewed)
+> 3. hold and have a worker do a visual pass on all 4 pages first
+
+If my check turns up a problem, like wrong pricing or failing tests, I'd say so in that report and offer "send it back to the worker with a fix brief" as option 1.
+his number.

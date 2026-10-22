@@ -1,0 +1,21 @@
+**board — oct 22**
+
+**frog cloud:** up on node1, named tunnel, $5.29/hr. healthy.
+
+**workers:** cloud-retry running 10 min, healthy. supermimic restarted clean after it wandered out of its worktree — worth a glance at its diff, restarts hide lost commits. accounts-stripe still queued.
+
+**merged:** frog#45, #42, #43.
+
+**failing:** frog#41 (the `scrub` change) and vcad#1026. neither has a shown pre-existing cause, so both are blocked on my review, not on you.
+
+**needs you (2):**
+1. deploy prod-hardening
+2. privacy draft review
+
+**your call:**
+1. deploy prod-hardening now (recommended) — I'll stand by for the rollback
+2. review privacy draft first — I'll paste it inline
+3. triage frog#41 + vcad#1026 before the deploys
+4. hold all four, I keep working the queue
+
+I'd do #1, then vcad#1026 while supermimic's restart settles.

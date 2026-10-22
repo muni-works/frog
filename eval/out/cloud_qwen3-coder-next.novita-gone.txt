@@ -1,0 +1,9 @@
+I'd investigate why Novita dropped Qwen3-Coder-Next by:
+
+1. Check Novita's current /models endpoint to see what Qwen variants they do serve (qwen3.5/3.6/3.8)
+2. Search Novita's docs/changelog for any announcements about model deprecations or updates
+3. Look for community discussions (Reddit, Discord, Hugging Face) where Novita might have explained the change
+4. Compare Qwen3-Coder-Next vs the newer qwen3.x models on metrics that matter for coding (HumanEval, MBPP, code quality benchmarks)
+5. Check if Qwen3-Coder-Next was a fine-tune that's been superseded by official Qwen3.5/3.6/3.8 releases
+
+The likely answer: Novita dropped the experimental Qwen3-Coder-Next in favor of the official Qwen3.5/3.6/3.8 series, which are probably better overall models. The "fastest" claim may have been temporary or benchmark-specific.

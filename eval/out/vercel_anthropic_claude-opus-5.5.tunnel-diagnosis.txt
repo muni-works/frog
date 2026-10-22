@@ -1,0 +1,25 @@
+**the node is fine. the trycloudflare quick tunnel between the edge and the node is the most likely cause.**
+
+**why:**
+- the node router saw no failures: error=0, rejected=0, health_probe_failures=0, and 66 min uptime means it didn't restart. if the node had run out of capacity, `zest_rejected_total` would be above 0. so the 503 "no inference capacity" probably comes from the edge itself, when it can't reach any router.
+- `config:routers` has only one entry, and it's a `*.trycloudflare.com` quick tunnel. quick tunnels have no SLA or uptime guarantee, and the URL changes whenever cloudflared restarts. with one router and no fallback, any tunnel hiccup reaches clients as a 503.
+- the truncated SSE streams (EOF mid-JSON) mean the connection dropped while bytes were flowing. that's a tunnel reset, not an idle timeout. the node's `cancelled=9` is probably those same drops, seen from the node as clients disconnecting.
+
+**what i'd check first (read-only, no restarts):**
+1. cloudflared logs on the node. look for "connection lost", "retrying" or "registered tunnel connection" around the times clients saw 503s or cut streams.
+2. whether the KV URL still matches the URL cloudflared prints now. if they differ, the KV is stale and nearly every request fails.
+3. the edge worker logs, to see whether its 503s are fetch failures to the router rather than real 503s from the node.
+4. whether the times of the 9 cancellations line up with the truncated streams clients reported.
+
+**fix, best first:**
+1. **(recommended)** move to a named cloudflare tunnel with a stable hostname, for example `node1.api.frog.toys`, and put that hostname in `config:routers`.
+2. make the edge retry once if it can't connect before the first byte arrives. it can't retry after bytes have streamed, but it should then send a proper SSE error event and close cleanly, so clients don't get raw EOF mid-JSON.
+3. send SSE heartbeat comments about every 15s, so long prefills on 128k contexts don't hit proxy idle limits.
+4. later: a second router entry, and an edge-side health check that drops dead routers from the list.
+
+per AGENTS.md, gateway and ops changes go through zest and you. i'd brief zest rather than touch the gateway myself.
+
+pick one:
+1. brief zest to do the read-only checks above, then report (recommended)
+2. brief zest to check, then fix 1 (named tunnel) and fix 2 (edge retry and clean SSE error)
+3. only fix 2 for now and keep the quick tunnel until after Beat 1

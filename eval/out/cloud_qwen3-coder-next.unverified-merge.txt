@@ -1,0 +1,5 @@
+1. Merge to main and deploy to frog cloud for CUDA testing (recommended)  
+2. Keep on branch for now, test CUDA locally first  
+3. Merge to a temporary test branch, deploy to cloud for validation  
+
+Which?

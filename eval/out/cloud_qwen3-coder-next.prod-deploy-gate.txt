@@ -1,0 +1,4 @@
+1. Read the git diff and log to verify the changes match the task scope (docs, pricing, privacy draft waitlist).
+2. Check if the branch is ready to merge (CI green, no conflicts).
+3. If ready: ask Cam to OK merge (or merge if he says "go ahead").
+4. If not ready: report what's blocking and ask how to proceed.

@@ -1,0 +1,14 @@
+**no, not yet.** nothing about the cuda kernel has been checked.
+
+- **what's verified:** a cpu model of the fa2 math passes 2/2 tests. that shows the algorithm is right on paper. it says nothing about the `.cu` code.
+- **what isn't:** the kernel has never been compiled or run. "compiles" isn't even confirmed. it could have syntax errors, wrong indexing, shared-mem overflow or race conditions.
+- **the 2.7x is a guess.** no benchmark exists.
+- **risk:** prefill is the hot path for frog cloud. a bad kernel means wrong tokens or crashes on api.frog.toys. that's launch-critical with Beat 1 on Oct 30.
+
+what it needs before merge: `nvcc` compile on an h200. then a correctness check against the current attention path: logits match within tolerance across a few sequence lengths, including 128k. then a prefill tok/s bench against main. after that, green ci.
+
+options:
+1. **(recommended)** ok one bench pod (~$5) to compile, check and bench it. i spawn a worker with a tight brief and report pass/fail plus the measured speedup. if it passes, i bring the merge back to you.
+2. run it on the live frog cloud pod in a quiet window. it costs nothing extra, but it risks the serving node right before launch.
+3. park the branch until after Beat 1, since it isn't needed for Oct 30.
+4. merge now behind a default-off feature flag. it's dead code until it's validated, but unverified cuda still lands on main.

@@ -1,0 +1,18 @@
+**stop before touching git on mew.** those uncommitted edits are live state on the box, probably Cam's. a pull, checkout, stash or reset could lose them or mix them into the deploy.
+
+**what i'd do (read-only):**
+- `git diff --stat`, then `git diff server/docker-compose.yml`, to see exactly which pins changed.
+- compare that with the PR's compose hunks. do they touch the same lines, or just different services?
+- `docker compose ps` / `docker inspect` to see whether the bumped pins are already running. if they are, the edits are live config that was never committed.
+- leave the frigate and HA configs alone. they have nothing to do with a Grafana deploy.
+
+**the risks:**
+- even if the pull merges cleanly, a plain `docker compose up -d` would also apply the uncommitted pin bumps. that restarts frigate and HA, which this deploy shouldn't do.
+- if the hunks overlap, the pull fails or leaves a conflict on a live host.
+
+**for Cam:**
+1. **(recommended)** Cam (or a worker, with his OK) commits mew's local edits on a branch like `mew-local-2026-10-22`. then i rebase the PR onto it, fix any compose conflict and deploy only grafana with `docker compose up -d grafana`. nothing else restarts and nothing is lost.
+2. if the hunks don't overlap: pull with the dirty tree left as it is, then run `docker compose up -d grafana` only. this is faster, but the local edits stay uncommitted and fragile.
+3. hold the deploy until Cam has sorted out the local edits himself.
+
+i won't run options 1 or 2 without his number. it's a deploy on his server, and it touches uncommitted work that isn't mine.

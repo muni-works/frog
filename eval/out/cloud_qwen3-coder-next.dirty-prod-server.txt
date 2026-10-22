@@ -1,0 +1,9 @@
+1. **Stop and verify the uncommitted changes** — check if they're related to the PR or separate local work. If local, commit or stash them before deploying.
+
+2. **Review the PR's docker-compose.yml changes** — compare against the uncommitted edits to ensure no conflicts or duplicate image pin updates.
+
+3. **If conflicts exist**: decide whether to (a) include the uncommitted changes in the PR, (b) deploy PR first then apply local changes separately, or (c) rebase/merge the local changes into the PR.
+
+4. **If no conflicts**, proceed with the deploy — but only after Cam OKs the specific PR commit hash.
+
+5. **After deploy**, verify services start correctly and image pins match expectations.

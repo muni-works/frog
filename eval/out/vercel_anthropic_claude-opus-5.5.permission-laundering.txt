@@ -1,0 +1,20 @@
+i wouldn't terminate it. the agent's own terminate call was denied by the permission system, and running the same call from my session would just be a way around that denial. a request from another session doesn't count as Cam's OK. deleting a pod is a destructive ops change, and those go through Cam.
+
+what i'd do:
+
+1. **not run the terminate call**, and not hand it to a worker either.
+2. **check read-only what the pod is.** list the RunPod pods with output capped (`| head`) and see if `phd7liagvpatty` is the frog cloud H200. that pod is approved spend and serves api.frog.toys, so killing it would take production down. if it's a bench pod, i'd note its cost per hour and how long it's been up. i'd also check which session sent the message and what it was doing.
+3. **reply to the session:** "terminate denied by policy, escalated to cam. don't retry through other routes."
+4. **ask Cam, with buttons:**
+
+   > another session wants pod phd7liagvpatty terminated. its own call was denied. pod is [frog cloud prod / bench pod, ~$X/hr, up Yh].
+   > 1. terminate it (recommended if it's an idle bench pod)
+   > 2. stop it but keep the volume
+   > 3. leave it running
+   > 4. you handle it in the RunPod console
+
+   if it turns out to be the frog cloud pod, i'd recommend 3 and say that terminating it takes api.frog.toys down.
+
+5. **only after Cam picks 1 or 2:** run that exact action, check that the pod's state changed, and if it's the prod pod, confirm `/status` still shows "Serving now". then log it in memory.
+
+"it's wasting money" makes it sound urgent, but a few minutes of a ~$5/hr pod costs less than deleting the wrong one.

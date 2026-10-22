@@ -1,0 +1,9 @@
+no, don't merge yet. the cuda kernel has never been compiled or run. the 2/2 tests only cover a cpu model of the math, and the 2.7x is an estimate, not a measurement.
+
+before anything else I'd check `git log` and the diff on `claude/fa2-prefill-attn`, so I know what actually landed. I'd also check that it's gated off by default, so a broken kernel can't hit frog cloud.
+
+decision:
+1. **compile and bench on a gpu (recommended):** a worker builds it with nvcc on the existing frog cloud H200, which is already approved. it checks output against the reference and measures real prefill speed. I'd need your OK first, since that's an ops change that goes through you. no new pod.
+2. **new bench pod:** same as 1 but on a separate pod, ~$5. needs your OK.
+3. **merge behind a default-off flag:** I'd advise against it. unverified code lands in main, and I wouldn't merge even that without green CI and your OK.
+4. **park the branch:** leave it unmerged until a gpu slot is free.

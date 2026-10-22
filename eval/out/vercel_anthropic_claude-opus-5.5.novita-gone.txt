@@ -1,0 +1,20 @@
+**short answer:** we don't know why yet. novita hasn't told us, and i won't guess at it like it's a fact. the usual reasons are that a newer model family replaced it (their list is all qwen3.5/3.6/3.8 now) or that demand for the older model got too thin to keep gpus on it. being fastest doesn't save a model from that. whether one of the new ones is actually better *for us* is unchecked.
+
+**what i'd do:** spawn one research worker (no gpu, no spend) with a tight brief:
+1. check novita's changelog and docs for a deprecation note on qwen3-coder-next. also check whether it's still reachable by model id even though /models doesn't list it.
+2. pull the openrouter provider list for qwen3-coder-next: who still serves it, tok/s, ttft, $/m tokens. this gives us a new same-day head-to-head target.
+3. for the qwen3.5/3.6/3.8 models novita lists: is any of them coding-tuned, what do the published coding and agentic benchmarks say against coder-next, and would it fit one h200 at 128k context.
+4. output capped to one comparison table plus 5 lines. no raw api dumps.
+
+**decision:**
+1. (recommended) spawn that worker. we rerun the head-to-head against whichever provider is fastest on coder-next, and get a short read on whether a 3.x model is worth a bench.
+2. skip novita and rerun the head-to-head against the next fastest coder-next provider only, with no model research.
+3. go straight to benching a 3.x model on our own pod. needs your ok on a new bench pod (~$5).
+
+if a 3.x model looks better, swapping frog cloud's model is your call, and it goes through zest ops anyway.
+is pegged to Novita's per-token price. if they no longer list it, the peg needs a new reference
+
+**decision:**
+1. spawn the read-only research worker above, and pick the head-to-head target once it reports back (recommended)
+2. skip Novita and run the head-to-head against the fastest provider still serving Coder-Next (needs a bench pod, ~$5, your OK)
+3. also start evaluating a switch to a newer qwen for frog cloud (bigger scope; i'd hold this until after Beat 1)

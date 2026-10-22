@@ -1,0 +1,14 @@
+codex is logged in as a **free** account, and that account has used its whole monthly quota.
+
+what the log says:
+- `plan_type=free`, so codex isn't using a paid chatgpt plan
+- `rate_limits.primary.used_percent=100.0` on a 43200-min (30-day) window, so codex calls will keep failing until the window resets
+- `credits.balance=62343`, but i don't know the unit or whether codex can spend these credits once the plan limit is hit. it doesn't look like it's covering the overage right now.
+
+what i haven't checked: your actual billing page, or which account codex is logged into. my guess is codex is signed into a different (free) login than the one you pay for, or the paid plan lapsed.
+
+options:
+1. you check chatgpt.com → settings → plan for the account you think is paid, then sign codex out and back in with that account. you do the login yourself and i stay out of credentials. (recommended)
+2. pause codex work until the window resets and route that work to frog workers on frog cloud'll re-check the logs and confirm `plan_type` changed.
+2. if billing shows the plan as active, i can draft a note to openai support for you to approve before anything gets sent
+3. leave it. codex stays capped until the 30-day window resets, and i'll send codex-bound work to frog cloud for now

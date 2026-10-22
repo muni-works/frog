@@ -1,0 +1,9 @@
+1. **Check actual plan status** - Verify the account's current plan via `frog -p` or API to confirm it's truly free tier  
+2. **Explain the discrepancy** - Free tier has strict rate limits (43200 min window = 30 days), credits are usage-based top-ups  
+3. **Options**:  
+   (1) Upgrade to paid plan via frog.toys pricing page  
+   (2) Add more credits to current free account  
+   (3) Wait for rate limit window to reset (30 days)  
+   (4) Investigate if this is a misconfiguration (check billing history)  
+
+(recommended: 1 - upgrade to paid plan for consistent access)

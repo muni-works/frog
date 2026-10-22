@@ -1,0 +1,22 @@
+answer: "nice" isn't an approval — nothing merges or ships off that. Here's what I'd do.
+
+verify first (I do this myself; it's review, not hands-on work):
+1. tail the worker log in `logs/` — did it commit, push the branch, or leave it local? any errors past the test pass?
+2. read the diff, not the test output: `git -C ~/Developer/zest diff main...zest/launch-surface --stat`, then the four pages. Look for secrets/keys, real placeholders (lorem, TODO), and env-dependent URLs leaking into public copy.
+3. run the test command myself in the worktree — cheap, and it's the only claim worth trusting.
+4. if pushed: `gh pr checks` for the branch; CI green or the failure shown pre-existing. If not pushed, there's no CI to read.
+5. cross-check `/pricing` against the locked numbers in memory/product-direction.md — frog api $0.20/M in, $1.50/M out; Pro $20, Max $200. Flag drift, don't silently fix.
+6. separate `/privacy`: it's a draft, so it's not shippable copy — that needs Cam's eye (and probably a real look, not an agent's), not a merge.
+
+then:
+- no push to anything public, no merge, no deploy. Public page = public release → Cam's specific OK, and a merge card he clicks. A relayed "ok" from a manager wouldn't cover it either.
+- `zest/launch-surface` is zest's area, so any follow-up work goes to the zest manager session (or release manager for the Beat 1 launch framing), not another worker in the zest repo while this branch is open.
+
+report to Cam in 3-6 lines: what's on the branch, what I verified vs. didn't, that /privacy is a draft, and the next decision as options with the recommendation first:
+
+1. hold the branch, route /privacy to a real review, land the other three behind a flag now, deploy at Beat 1 (Oct 30) (recommended)
+2. push the branch and open a PR, no merge until you click it
+3. merge docs + waitlist only, keep /pricing off until zest confirms the numbers
+4. park it — nothing lands until Beat 1 prep
+
+whatever he picks, append the durable bit (e.g. privacy must be human-reviewed, or the pricing page is source of truth) to memory/product-direction.md with the date.

@@ -1,0 +1,13 @@
+The worker hit a write-protection issue on `docs/` and can't write there. It's in a worktree branch `tang-supermimic-port-study`.
+
+**Options:**
+
+1. **Check if `docs/` should be writable** — maybe the worktree was created incorrectly or the directory permissions got messed up. Fix permissions if appropriate.
+
+2. **Write to a different location** — e.g., `docs/_generated/` (if that subdirectory exists and is writable), or write to the worktree root and move/copy later.
+
+3. **Ask Cam** — if the write protection is intentional (e.g., docs are versioned and should only change via PR), the worker should output to a temp location and report back without committing.
+
+**Next step:** Check `ls -ld docs/` and `git status` in the worktree to understand the protection level, then pick option 1 or 2. If docs are read-only by design, go with option 3.
+
+Which option?
