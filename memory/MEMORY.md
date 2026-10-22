@@ -8,3 +8,5 @@
 - [licensing](licensing.md) — MIT OR Apache-2.0 open code, zest/tang-pro closed, CERN-OHL-W hw, DCO; loon/kosm/muni fix after launch
 - [No project dates](no-project-dates.md) — only launches get dates; plans are ordered steps, not dated milestones
 - [Codex agents](codex-agents.md) — Claude budget exhausted: dispatch work via `codex exec` (ChatGPT plan, default model), managers paused
+
+- Forked 2026-10-22 from the Claude chief-of-staff memory. This copy is canonical for the frog chief; it evolves independently.
