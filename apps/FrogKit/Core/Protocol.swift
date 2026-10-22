@@ -614,6 +614,7 @@ extension Event {
         case turn, input, reason, usage, id, kind, item, delta, decision, ids
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
+        case layer, outcome, ms
         case images
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
     }
@@ -683,12 +684,12 @@ extension Event {
         case "auto_approved":
             self = .autoApproved(item: try c.decode(String.self, forKey: .item), reason: try c.decode(String.self, forKey: .reason))
         case "permission_decision":
-            self = .permissionDecision(
-                item: try c.decode(String.self, forKey: .item),
-                layer: try c.decode(String.self, forKey: .layer),
-                outcome: try c.decode(String.self, forKey: .outcome),
-                reason: try c.decode(String.self, forKey: .reason),
-                ms: try c.decodeIfPresent(UInt64.self, forKey: .ms) ?? 0)
+            let item = try c.decode(String.self, forKey: .item)
+            let layer = try c.decode(String.self, forKey: .layer)
+            let outcome = try c.decode(String.self, forKey: .outcome)
+            let reason = try c.decode(String.self, forKey: .reason)
+            let ms: UInt64 = try c.decodeIfPresent(UInt64.self, forKey: .ms) ?? 0
+            self = .permissionDecision(item: item, layer: layer, outcome: outcome, reason: reason, ms: ms)
         case "subagent":
             self = .subagent(item: try c.decode(String.self, forKey: .item), inner: try c.decode(Event.self, forKey: .inner))
         case "app_result":
