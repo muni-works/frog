@@ -484,8 +484,6 @@ async fn run() -> Result<bool> {
     } else {
         cli.resume.clone()
     };
-    // A client (another window, say) that asks for a session already open elsewhere gets a
-    // fresh one rather than an engine that exits.
     let resume = match (resume, cli.wait_lock) {
         // Resuming after a relaunch: the old engine may still be on its way out. Wait for it,
         // and never quietly fork the conversation into a new session.
@@ -497,13 +495,16 @@ async fn run() -> Result<bool> {
         }
         (r, _) => r,
     };
-    let resume = match resume {
-        Some(id) if cli.wait_lock.is_none() && cli.serve && session::Log::in_use(&store, &id) => {
-            eprintln!("session {id} is open in another frog process; starting a new one");
-            None
-        }
-        r => r,
-    };
+    // A client (the app, say) that opens a session another frog process is running follows it
+    // live instead of getting a blank new one.
+    if let Some(id) = resume
+        .as_ref()
+        .filter(|id| cli.wait_lock.is_none() && cli.serve && session::Log::in_use(&store, id))
+    {
+        eprintln!("session {id} is open in another frog process; following it");
+        headless::serve(frog_engine::follow(store.clone(), id.clone())).await?;
+        return Ok(true);
+    }
     let mode = match (cli.yolo, cli.accept_edits, cli.auto) {
         (true, _, _) => Mode::Yolo,
         (_, true, _) => Mode::AcceptEdits,

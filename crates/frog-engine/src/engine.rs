@@ -655,7 +655,7 @@ fn retryable(e: &anyhow::Error) -> bool {
         .any(|r| r.is_timeout() || (r.is_request() && !r.is_connect()))
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 

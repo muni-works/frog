@@ -13,6 +13,7 @@ pub mod early;
 pub mod energy;
 pub mod engine;
 pub mod folder;
+pub mod follow;
 pub mod harness;
 pub mod image_paths;
 pub mod imports;
@@ -43,6 +44,7 @@ pub mod thinking;
 pub mod tools;
 
 pub use engine::{Handle, Options, spawn};
+pub use follow::follow;
 pub use protocol::{
     Decision, Delta, EndReason, EngineError, Envelope, Event, Item, ItemKind, Level, Mode, Op,
     Status, ToolOutcome,
