@@ -178,6 +178,8 @@ returns the same slice. Use offset={} (with a limit) to read the next part, or G
 }
 /// Model calls per turn before stopping to check in with the user.
 const MAX_STEPS: u32 = 60;
+/// How many times a turn carries on after a reply runs out of output room.
+const MAX_CONTINUES: u32 = 3;
 
 /// How a batch of tool calls ended.
 #[derive(PartialEq)]
@@ -1616,6 +1618,8 @@ impl Agent {
         let mut compacted = None;
         let mut guard = LoopGuard::default();
         let mut steps = 0;
+        // Times this turn was continued after a reply hit the output limit.
+        let mut continued = 0;
         // A reply asking for files it could Read is nudged once, before any tool has run.
         let (mut nudged, mut used_tools) = (false, false);
         let reason = loop {
@@ -1764,6 +1768,14 @@ impl Agent {
                 continue;
             }
             if uses.is_empty() {
+                // Ran out of output room mid-reply (long thinking, usually): carry on rather
+                // than end the turn, a few times, so long work doesn't stop on a token cap.
+                if resp.stop == Stop::Length && continued < MAX_CONTINUES {
+                    continued += 1;
+                    self.notice(Level::Info, "reply hit the output limit; continuing");
+                    self.push_user("Continue exactly where you left off.".into());
+                    continue;
+                }
                 break if resp.stop == Stop::Length {
                     EndReason::MaxTokens
                 } else {
@@ -4341,8 +4353,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_reply_cut_off_by_the_output_limit_is_continued() {
+        let mut h = engine(
+            vec![
+                reply(vec![text("part one")], Stop::Length),
+                reply(vec![text("part two")], Stop::End),
+            ],
+            true,
+        );
+        let evs = run(&mut h, "hi").await;
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test]
     async fn max_tokens_is_distinguished() {
-        let mut h = engine(vec![reply(vec![text("cut off")], Stop::Length)], true);
+        // Continued MAX_CONTINUES times, then still cut off: the turn ends as MaxTokens.
+        let mut h = engine(
+            (0..=MAX_CONTINUES)
+                .map(|_| reply(vec![text("cut off")], Stop::Length))
+                .collect(),
+            true,
+        );
         let evs = run(&mut h, "hi").await;
         assert!(evs.iter().any(|e| matches!(
             e.event,
