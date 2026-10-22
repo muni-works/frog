@@ -140,7 +140,8 @@ final class Conversation {
     private(set) var justFinished = false
     @ObservationIgnored private var finishedTask: Task<Void, Never>?
     @ObservationIgnored private var sawFirstIdle = false
-    @ObservationIgnored private var stopping = false
+    /// The engine is being let go of (`stop()` was called).
+    @ObservationIgnored private(set) var stopping = false
     /// A memory command (`/remember` …) is waiting for its answer, which arrives as a notice.
     @ObservationIgnored private var awaitingCommand = false
     /// A notice to show once the transcript has loaded.
@@ -359,6 +360,15 @@ final class Conversation {
     func stop() {
         stopping = true
         link?.stop()
+    }
+
+    /// The engine exited on its own (a test simulating a dead engine calls this directly;
+    /// a live link gets it from the link ending).
+    func engineExited(_ why: String) {
+        guard failure == nil else { return }
+        failure = why
+        busy = false
+        progress = nil
     }
 
     /// Answer a `sessionRequest`.

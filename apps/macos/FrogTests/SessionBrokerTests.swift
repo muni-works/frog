@@ -50,6 +50,56 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(delivered.map(\.message), ["revive"])
     }
 
+    /// A child mid-turn (its engine live, the turn open) is never stopped by the broker's
+    /// idle bookkeeping: the cancel-at-birth bug was this path stopping a just-started
+    /// session on a transient running:false report.
+    @MainActor
+    func testObserveDoesNotStopABusyBackgroundChild() throws {
+        let b = broker([chief, eng])
+        let child = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-child"))
+        // The child's first turn: started, not yet ended.
+        let start = try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"turn_started","turn":1,"input":"do the work"}"#.utf8))
+        child.ingest(start)
+        b.track(child, as: eng.id)
+        // The broker sees it run (armed), then a transient running:false report mid-turn:
+        // the child stays, engine untouched.
+        b.observe(eng.id, running: true, waiting: false)
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertFalse(child.stopping, "a busy child must not be stopped mid-turn")
+        // The turn ends, the engine goes idle (as a real engine always does after a turn):
+        // now it can let go.
+        let end = try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":2,"session":"eng-0002","created":2,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#.utf8))
+        let idle = try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":3,"session":"eng-0002","created":3,"event":"idle"}"#.utf8))
+        child.ingest(end)
+        child.ingest(idle)
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertTrue(child.stopping, "an idle child lets go")
+    }
+
+    /// An engine that died mid-turn (not live, no `turn_ended`) is detected on its next
+    /// report and its turn restarted, not reported idle-and-done.
+    @MainActor
+    func testADeadEngineMidTurnIsRestartedNotReportedIdle() throws {
+        let b = broker([chief, eng])
+        let child = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-dead"))
+        let start = try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"turn_started","turn":1,"input":"the brief"}"#.utf8))
+        child.ingest(start)
+        b.track(child, as: eng.id)
+        // A watch is armed (the parent asked to hear when it goes idle).
+        _ = b.send(from: chief.id, name: chief.name, to: eng.id, message: "brief", notifyWhenIdle: true)
+        delivered.removeAll()
+        b.observe(eng.id, running: true, waiting: false)
+        // The engine dies mid-turn: no turn_ended, its process gone. The next report
+        // (running:false) must restart the turn instead of telling the parent it's idle.
+        child.engineExited("The frog engine exited.")
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertTrue(delivered.isEmpty, "no idle notice: the turn is picked back up, not finished")
+    }
+
     func testRoutesByNameIgnoringCase() throws {
         let b = broker([chief, eng, ops])
         XCTAssertEqual(try b.send(from: chief.id, name: "", to: "eng manager", message: "x", notifyWhenIdle: false).get().id, eng.id)

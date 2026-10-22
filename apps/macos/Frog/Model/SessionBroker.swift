@@ -204,6 +204,15 @@ final class SessionBroker {
             return
         }
         guard !waiting else { return }
+        // An engine that died mid-turn (its process gone, no `turn_ended`, a stale `.live`):
+        // its conversation isn't live and its last turn is still open. Restart the engine and
+        // have it pick the turn back up, rather than leaving the session stuck open forever.
+        // The restarted turn runs and settles first; idle notices wait for that.
+        if let c = background[id], c.failure != nil, c.turns.last.map({ !$0.finished }) == true {
+            background[id] = nil
+            _ = conversation(for: id)
+            return
+        }
         if let list = watches[id] {
             let ready = list.filter(\.armed)
             watches[id] = list.filter { !$0.armed }
@@ -215,8 +224,17 @@ final class SessionBroker {
             }
         }
         // A background engine that did its work lets go; a new message starts it again.
+        // Never while a turn is open (a just-started child's first turn is), or while its
+        // engine is still working — that was the cancel-at-birth bug.
         if armedBackground.remove(id) != nil, let c = background.removeValue(forKey: id) {
-            c.stop()
+            let turnOpen = c.turns.last.map { !$0.finished } ?? false
+            if turnOpen || c.busy {
+                // Still working: keep it, and re-arm so the next real idle lets it go.
+                background[id] = c
+                armedBackground.insert(id)
+            } else {
+                c.stop()
+            }
         }
     }
 
@@ -225,12 +243,18 @@ final class SessionBroker {
     /// A running conversation for session `id`: on screen, in the background, or started now.
     /// Restarting a closed one resumes its log: no mode flag (the engine keeps the mode the
     /// session last used) and no `-m` (it keeps the model it last ran on), never the sender's.
+    /// A turn the dead engine left unfinished (it died mid-turn: no `turn_ended`, a stale
+    /// `.live`) is picked back up rather than left open forever.
     func conversation(for id: String) -> Conversation? {
         if let c = Library.shared.conversation(id), c.isLive { return c }
         if let c = background[id], c.isLive { return c }
         guard let info = Library.shared.sessions.first(where: { $0.id == id }), let folder = info.folder else { return nil }
+        // An engine that died mid-turn left it open: the fresh engine continues it, ahead of
+        // anything new (the user may have stopped the old one; the report says which).
+        let unfinished = background[id].map { c in c.turns.last.map { !$0.finished } ?? false } ?? false
         let c = Conversation(folder: folder, arguments: ["-r", id] + Workspace.engineFlags(chat: info.isChat, mode: false), model: nil)
         background[id] = c
+        if unfinished { c.continueInterrupted() }
         return c
     }
 
