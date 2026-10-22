@@ -282,8 +282,9 @@ struct SessionList: View {
             case .row(let s, let depth, let counts, let collapsed):
                 compactBranchRow(s, depth: depth, counts: counts, collapsed: collapsed, fold: byId[s.id])
             case .done(let parent, let depth, let count, let failed, let open):
+                // Lined up with its siblings' titles (rail, then the fold slot).
                 doneRow(parent: parent, count: count, failed: failed, open: open)
-                    .padding(.leading, CGFloat(max(depth - 1, 0)) * 10 + 21)
+                    .padding(.leading, CGFloat(max(depth - 1, 0)) * 8 + 12)
             }
         }
     }
@@ -701,6 +702,11 @@ private struct CompactSessionRow<Menu: View>: View {
     @ViewBuilder let menu: () -> Menu
     @State private var meta: SessionMetaCache.Meta?
     @State private var hovering = false
+    /// Hovered a moment: the title wraps to show all of itself and the meta steps aside.
+    @State private var expandTitle = false
+
+    /// Nested under the session that started it: the row gives its width to the title.
+    private var nested: Bool { depth > 0 }
 
     /// The worktree branch name, when it isn't just the slugged title.
     private var suffix: String? {
@@ -727,13 +733,22 @@ private struct CompactSessionRow<Menu: View>: View {
         TimelineView(.periodic(from: .now, by: 5)) { ctx in
             content(working: live == nil && ctx.date.timeIntervalSince(session.modifiedDate) < 30)
         }
-        .frame(height: 28)
+        .padding(.vertical, expandTitle ? 4 : 0)
+        .frame(minHeight: 28)
         .padding(.trailing, 3)
         .background(selected ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
         .contentShape(.rect)
         .contextMenu { menu() }
         .paneDraggable(.session(session), title: session.displayTitle)
         .help(helpText)
+        .onHover { hovering = $0 }
+        // A pass of the pointer doesn't reflow the list; resting on a row does.
+        .task(id: hovering) {
+            guard hovering else { expandTitle = false; return }
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, hovering else { return }
+            withAnimation(.snappy(duration: 0.15)) { expandTitle = true }
+        }
         .task(id: session.folder?.path) {
             if let folder = session.folder { await CompactPRCache.shared.refresh(folder) }
             meta = SessionMetaCache.shared.value(for: session.folder)
@@ -745,10 +760,11 @@ private struct CompactSessionRow<Menu: View>: View {
         // A working row keeps its title at full opacity, like the selected row.
         let running = working || live == .running
         return HStack(spacing: 0) {
-            if depth > 0 {
-                // Nested rows keep their width for the title: 10 pt per level, one rail.
+            if nested {
+                // Nested rows keep their width for the title: 8 pt per level, one rail.
                 RoundedRectangle(cornerRadius: 1).fill(.quaternary)
-                    .frame(width: 1, height: 18).padding(.leading, CGFloat(depth - 1) * 10 + 6).padding(.trailing, 8)
+                    .frame(width: 1, height: 18)
+                    .padding(.leading, CGFloat(depth - 1) * Self.indent + 4).padding(.trailing, 5)
             } else {
                 Color.clear.frame(width: 6)
             }
@@ -761,13 +777,13 @@ private struct CompactSessionRow<Menu: View>: View {
                 .buttonStyle(.plain).foregroundStyle(.tertiary)
                     .help("\(folded) older on this branch")
             } else {
-                Color.clear.frame(width: 6)
+                Color.clear.frame(width: nested ? 2 : 6)
             }
             // The title takes the width it has; a branch suffix only when it says something
             // the title doesn't (a slugged title never repeats itself). The child badge is its
             // own button, so the open target is a tap on the rest rather than a wrapping button.
             HStack(spacing: 5) {
-                Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
+                Text(session.displayTitle).lineLimit(expandTitle ? 3 : 1).truncationMode(.tail)
                     .font(.system(size: 13))
                     .foregroundStyle(Color.primary.opacity(selected || running ? 1 : 0.82))
                 if let suffix, showSuffix {
@@ -781,37 +797,51 @@ private struct CompactSessionRow<Menu: View>: View {
             .contentShape(.rect)
             .onTapGesture(perform: open)
             .accessibilityAddTraits(.isButton)
-            .onHover { hovering = $0 }
-            if let pr {
+            // Resting on the row, the meta steps aside for the title; nested rows leave the
+            // age and commit count to the tooltip.
+            if let pr, !expandTitle {
                 Image(systemName: pr.merged ? "arrow.triangle.merge" : "point.3.connected.trianglepath.dotted")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(pr.merged ? Color.green : Color.purple)
                 Text("\(pr.changedFiles)").font(.system(size: 11, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary).frame(minWidth: 16, alignment: .trailing)
             }
-            if let ahead = meta?.ahead, ahead > 0 {
+            if let ahead = meta?.ahead, ahead > 0, !expandTitle, !nested {
                 Text("\(ahead)↑").font(.system(size: 11, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary).padding(.leading, 5).help("\(ahead) commit\(ahead == 1 ? "" : "s") ahead of main")
             }
-            TimelineView(.periodic(from: .now, by: freshComplete ? 5 : 30)) { ctx in
-                Text(SessionAgeShort.age(session.modifiedDate, now: ctx.date))
-                    .font(.system(size: 11, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
+            if !expandTitle, !nested {
+                TimelineView(.periodic(from: .now, by: freshComplete ? 5 : 30)) { ctx in
+                    Text(SessionAgeShort.age(session.modifiedDate, now: ctx.date))
+                        .font(.system(size: 11, design: .rounded).monospacedDigit())
+                        .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
+                }
             }
             glyphView.padding(.leading, 5)
-            SwiftUI.Menu { menu() } label: {
-                Image(systemName: "ellipsis").font(.system(size: 10)).frame(width: 14, height: 20)
+            // Nested rows show the menu button only under the pointer (the context menu is
+            // always there).
+            if !nested || hovering {
+                SwiftUI.Menu { menu() } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 10)).frame(width: 14, height: 20)
+                }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).foregroundStyle(.secondary)
             }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).foregroundStyle(.secondary)
         }
     }
 
+    /// Indent per nesting level (computed: a generic type can't store statics).
+    static var indent: CGFloat { 8 }
+
     /// The title, with the worktree name (when there is one) underneath in the tooltip.
     private var helpText: String {
-        if let wt = SessionList.worktreeName(session.folder) {
-            return session.displayTitle + "\n" + wt
+        var lines = [session.displayTitle]
+        if let wt = SessionList.worktreeName(session.folder) { lines.append(wt) }
+        if nested {
+            // The row leaves its age to the tooltip: "active 5m ago", "active now".
+            let age = SessionAgeShort.age(session.modifiedDate, now: .now)
+            lines.append(age == "now" || age.contains(" ") ? "active \(age)" : "active \(age) ago")
         }
-        return session.displayTitle
+        return lines.joined(separator: "\n")
     }
 
     /// The children's count; collapsed, how they stand ("· 4 running · 1 waiting"). Clicking
