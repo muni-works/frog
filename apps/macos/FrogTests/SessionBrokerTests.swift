@@ -371,6 +371,36 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertNil(SessionMessage.parse("just a prompt"))
     }
 
+    func testAPendingApprovalEscalatesToTheParentWithItsCard() throws {
+        let b = broker([chief, eng])
+        let parent = chief.id
+        b.parentOf = { $0 == "eng-0002" ? parent : nil }
+        let line = #"{"seq":1,"session":"eng-0002","created":0,"event":"permission_request","id":"perm-1","item":"t1","name":"Bash","arg":"rm -rf /private/tmp/x","always":"","card":{"agent_reason":"cleaning up my build","trigger":"leaves the sandbox","touches":[{"path":"/private/tmp/x","exists":true,"dir":true,"bytes":2048,"created_here":true}],"risk":"deletes 1 path (2.0 KB) that this session created","recommendation":"allow: cleaning up its own output","prefix":"/private/tmp/x","timeout_secs":600}}"#
+        let env = try JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8))
+        guard case .permissionRequest(let req) = env.event else { return XCTFail() }
+        XCTAssertEqual(req.card?.touches?.first?.createdHere, true)
+        XCTAssertTrue(b.escalate(req, from: eng.id, name: eng.name))
+        XCTAssertEqual(delivered.count, 1)
+        let m = try XCTUnwrap(delivered.first)
+        XCTAssertEqual(m.to, chief.id)
+        XCTAssertEqual(m.from, "system")
+        for part in ["card: perm-1", "command: rm -rf /private/tmp/x", "agent says: cleaning up my build", "made by this session", "recommendation: allow", "10 min"] {
+            XCTAssertTrue(m.message.contains(part), "missing \(part): \(m.message)")
+        }
+        // A session nobody started has no one to escalate to.
+        XCTAssertFalse(b.escalate(req, from: chief.id, name: chief.name))
+        XCTAssertEqual(delivered.count, 1)
+    }
+
+    func testDenyWithANoteEncodes() throws {
+        let data = try JSONEncoder().encode(Op.permission(id: "p", decision: .deny, note: "use /private/tmp"))
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        XCTAssertEqual(obj?["note"] as? String, "use /private/tmp")
+        let prefix = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Op.permission(id: "p", decision: .allowPrefix))) as? [String: Any]
+        XCTAssertEqual(prefix?["decision"] as? String, "allow_prefix")
+        XCTAssertNil(prefix?["note"])
+    }
+
     func testChildModeInheritsCappedAndNeverSilentYolo() {
         // Inherits the parent's mode.
         XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: .auto), .auto)

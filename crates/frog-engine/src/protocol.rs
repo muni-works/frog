@@ -51,9 +51,52 @@ impl Mode {
 #[serde(rename_all = "snake_case")]
 pub enum Decision {
     Allow,
-    /// Allow this and similar calls for the rest of the session.
+    /// Allow this and similar calls for the rest of the session. For shell
+    /// commands it means the same as `AllowPrefix`: no blanket allow of a program.
     AllowAlways,
+    /// Allow this program on paths under the card's `prefix` for the rest of the
+    /// session (falls back to allowing once when the card has no prefix).
+    AllowPrefix,
     Deny,
+}
+
+/// What a permission prompt shows so the user can decide quickly: why the agent
+/// wants it, what triggered the prompt, what it touches, and frog's advice.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct ApprovalCard {
+    /// What the agent said it was doing, from its message before the call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_reason: Option<String>,
+    /// The rule or verdict that made it ask.
+    pub trigger: String,
+    /// Paths the command names, with sizes and whether this session created them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub touches: Vec<Touch>,
+    /// One line on what could go wrong.
+    pub risk: String,
+    /// `allow` or `deny`, and why.
+    pub recommendation: String,
+    /// The path prefix `AllowPrefix` would cover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    /// Seconds until frog stops waiting and takes the safe path (deny).
+    pub timeout_secs: u64,
+}
+
+/// One path a command touches.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Touch {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exists: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dir: bool,
+    /// Total bytes (a directory's, counted up to a cap).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// This session made it (wrote the file or created the directory).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub created_here: bool,
 }
 
 /// What [`Op::Continue`] tells the model when the client gives no note of its own.
@@ -98,6 +141,9 @@ pub enum Op {
     Permission {
         id: String,
         decision: Decision,
+        /// With a deny: the user's words, sent back to the agent so it can adjust.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
     },
     /// Answer an [`Event::Question`]. No choices and no `other` dismisses it.
     Answer {
@@ -449,6 +495,10 @@ pub enum Event {
         /// Set when a subagent asks: its id (the `Task` call, or the background task id).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subagent: Option<String>,
+        /// For shell commands: the agent's reason, the trigger, what it touches and
+        /// frog's advice. A client that can forward it may escalate to a parent session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        card: Option<ApprovalCard>,
     },
     /// The model asks the user to choose (`Ask`). Reply with [`Op::Answer`] using the same id.
     /// `item` is the tool call waiting on it.

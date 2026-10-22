@@ -249,13 +249,14 @@ impl Registry {
     }
 
     /// Route a permission answer to the subagent that asked. False if none did.
-    pub fn answer(&self, id: &str, decision: Decision) -> bool {
+    pub fn answer(&self, id: &str, decision: Decision, note: Option<String>) -> bool {
         let Some(tx) = self.relay.lock().unwrap().remove(id) else {
             return false;
         };
         let _ = tx.send(Op::Permission {
             id: id.to_string(),
             decision,
+            note,
         });
         true
     }
@@ -284,6 +285,7 @@ pub fn forward(
             preview,
             reason,
             subagent: _,
+            card,
         } => {
             reg.relay.lock().unwrap().insert(id.clone(), ops.clone());
             reg.emit(Event::PermissionRequest {
@@ -295,6 +297,7 @@ pub fn forward(
                 preview,
                 reason,
                 subagent: Some(item.clone()),
+                card,
             });
         }
         Event::PermissionResolved { id, decision } => {

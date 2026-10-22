@@ -85,3 +85,25 @@ today's truly-read-only compounds now auto-run in every mode, sandboxed or not),
 and what remains is work the classifier and the user should genuinely see. The
 layer-3 `permission_decision` events in session logs make the ongoing ask rate
 measurable from now on.
+
+## Failing well: when a prompt does ask
+
+A shell command that still asks carries an **approval card** (`PermissionRequest.card`):
+the agent's own words before the call, the rule or verdict that triggered the prompt,
+every path it names (size, exists, and whether *this session* created it, tracked from
+the paths each Bash/Write call brought into being), a one-line risk and a
+recommendation. Deleting only what the session made is recommended; deleting anyone
+else's isn't.
+
+Choices: **Allow once**, **Allow `<program>` under `<prefix>` this session** (the
+common directory of the touched paths, never `/`, `/private/tmp` or `$HOME` itself;
+the blanket "always allow `rm` outside the sandbox" is gone for shell commands), and
+**Deny with a note**: the note goes back to the agent as the tool result and the turn
+continues instead of stopping.
+
+A pending prompt in a session started by another is escalated to the parent as a
+structured system message (session, card id, command, reason, touches, risk,
+recommendation). Nobody answering within `approval_timeout_secs` (default 600) denies
+it with a note saying frog took the safe path, and the agent carries on. The child
+still waits on that one call until then; running other steps concurrently while an
+approval is pending needs a change to the engine loop and is left for later.
