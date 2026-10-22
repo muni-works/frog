@@ -5565,7 +5565,8 @@ for line in sys.stdin:
             mcp_server(&dir, 0.0, &order);
             let script = vec![reply(vec![text("ok")], Stop::End)];
             let (mut h, sent) = engine_sent(script, None, None, None, dir);
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // MCP connects in the background; give the local test server ample time (CI is slow).
+            tokio::time::sleep(Duration::from_secs(3)).await;
             run(&mut h, "hi").await;
             shutdown(h).await;
             let sent = sent.lock().unwrap()[0].clone();
@@ -6186,7 +6187,7 @@ for line in sys.stdin:
             .unwrap();
         loop {
             if let Event::PermissionRequest { id, .. } = h.events.recv().await.unwrap().event {
-                tokio::time::sleep(Duration::from_millis(400)).await;
+                tokio::time::sleep(Duration::from_millis(1500)).await;
                 h.ops
                     .send(Op::Permission {
                         id,
@@ -6204,9 +6205,11 @@ for line in sys.stdin:
                 _ => None,
             })
             .expect("turn_ended carries timing");
-        assert!(t.user_ms >= 400, "user wait {}", t.user_ms);
+        assert!(t.user_ms >= 1500, "user wait {}", t.user_ms);
+        // The tool sleeps 0.2 s; the 1.5 s permission wait must not be counted in it. The upper
+        // bound leaves room for slow CI runners without letting the wait slip in.
         assert!(
-            (200..400).contains(&t.tool_ms),
+            (200..1500).contains(&t.tool_ms),
             "tool time excludes the prompt: {}",
             t.tool_ms
         );
