@@ -117,6 +117,16 @@ final class SessionNestingTests: XCTestCase {
         XCTAssertNil(SessionNesting.Counts().summary)
     }
 
+    func testBlocksKeepEachTreeWhole() {
+        let parents = ["w": "mgr", "d": "mgr"]
+        let out = rows(["mgr": .done, "w": .running, "d": .done, "solo": .done], parents: parents,
+                       order: ["mgr", "w", "d", "solo"])
+        let blocks = SessionNesting.blocks(out)
+        XCTAssertEqual(blocks.map(\.root.id), ["mgr", "solo"])
+        XCTAssertEqual(ids(blocks[0].entries), ["mgr", ">w", ">+1 done"])
+        XCTAssertEqual(ids(blocks[1].entries), ["solo"])
+    }
+
     func testStateFollowsTheGlyph() {
         XCTAssertEqual(State(.waiting), .waiting)
         XCTAssertEqual(State(.running), .running)

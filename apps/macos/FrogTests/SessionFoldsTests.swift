@@ -57,6 +57,36 @@ final class SessionFoldsTests: XCTestCase {
         XCTAssertTrue(folds.allSatisfy { !$0.folded })
     }
 
+    private func titled(_ id: String, _ title: String, modified: Int64, cwd: String) -> SessionInfo {
+        SessionInfo(id: id, modified: modified, created: modified, model: "m",
+                    firstInput: nil, title: title, end: nil, forkedFrom: nil, cwd: cwd)
+    }
+
+    func testARedoneTaskFoldsUnderItsParent() {
+        // The manager restarted "chief queue gate fix" in another repo's worktree.
+        let first = titled("first", "chief queue gate fix", modified: 100, cwd: worktree("chief-queue-gate-fix"))
+        let redo = titled("redo", "Chief  queue gate fix", modified: 200, cwd: "/Users/cam/Developer/chief/.frog/worktrees/chief-queue-gate-fix")
+        let other = titled("other", "frog tool bugs", modified: 150, cwd: worktree("bugs"))
+        let parents = ["first": "mgr", "redo": "mgr", "other": "mgr"]
+        let folds = SessionFolds.group([first, redo, other], parent: { parents[$0] })
+        XCTAssertEqual(folds.map(\.session.id), ["redo", "other"])
+        XCTAssertEqual(folds[0].older.map(\.id), ["first"])
+    }
+
+    func testSameTitleUnderDifferentParentsStaysApart() {
+        let a = titled("a", "fix tests", modified: 100, cwd: "/tmp/a")
+        let b = titled("b", "fix tests", modified: 200, cwd: "/tmp/b")
+        let parents = ["a": "m1", "b": "m2"]
+        XCTAssertEqual(SessionFolds.group([a, b], parent: { parents[$0] }).count, 2)
+        XCTAssertEqual(SessionFolds.group([a, b]).count, 2, "no parents, no title folding")
+    }
+
+    func testUntitledSessionsNeverFoldByTitle() {
+        let a = SessionInfo(id: "a", modified: 1, created: 1, model: "m", firstInput: "hi", title: nil, end: nil, forkedFrom: nil, cwd: "/tmp/a")
+        let b = SessionInfo(id: "b", modified: 2, created: 2, model: "m", firstInput: "hi", title: nil, end: nil, forkedFrom: nil, cwd: "/tmp/b")
+        XCTAssertEqual(SessionFolds.group([a, b], parent: { _ in "m" }).count, 2)
+    }
+
     func testWorktreePathDetection() {
         XCTAssertEqual(SessionFolds.worktreePath(URL(fileURLWithPath: worktree("feat"))), worktree("feat"))
         XCTAssertNil(SessionFolds.worktreePath(URL(fileURLWithPath: repo)))

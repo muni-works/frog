@@ -240,12 +240,7 @@ struct SessionList: View {
                 .buttonStyle(.plain).foregroundStyle(.tertiary).help(isFolded ? "Expand project" : "Collapse project")
             }
             .padding(.leading, 6).padding(.top, 8)
-            if !isFolded {
-                ForEach(compactDated(items), id: \.0) { title, dayItems in
-                    compactHeader(title)
-                    compactDayRows(dayItems)
-                }
-            }
+            if !isFolded { compactProjectRows(items) }
         }
         if !chats.isEmpty {
             compactHeader("Chats")
@@ -263,10 +258,6 @@ struct SessionList: View {
         }
     }
 
-    private func compactDated(_ items: [SessionInfo]) -> [(String, [SessionInfo])] {
-        SessionDays.group(items, day: day).map { ($0.0, $0.1.sorted(by: before)) }
-    }
-
     private func compactHeader(_ title: String) -> some View {
         Text(title).font(.caption).foregroundStyle(.secondary)
             .padding(.leading, 6).padding(.top, 5).padding(.bottom, 1)
@@ -274,10 +265,29 @@ struct SessionList: View {
 
     /// A day's rows, branches folded: one row for each fold's newest session, older sessions
     /// behind the row's disclosure, and other nesting (started-by) applied on top.
-    private func compactDayRows(_ dayItems: [SessionInfo]) -> some View {
-        let folds = SessionFolds.group(dayItems)
+    /// A project's rows: branches and redone tasks folded and the started-by tree built over
+    /// the whole project, then each top-level row (with everything under it) filed under the
+    /// day of its newest activity. Folding per day split a branch resumed the next day, or a
+    /// manager from its workers, into separate rows.
+    @ViewBuilder
+    private func compactProjectRows(_ items: [SessionInfo]) -> some View {
+        let folds = SessionFolds.group(items, parent: { library.parents[$0] })
         let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
-        return ForEach(tree(folds)) { entry in
+        let blocks = SessionNesting.blocks(tree(folds))
+        let newest = Dictionary(uniqueKeysWithValues: blocks.map { b in
+            (b.root.id, b.entries.compactMap { e -> Date? in
+                if case .row(let s, _, _, _) = e { return s.modifiedDate } else { return nil }
+            }.max() ?? b.root.modifiedDate)
+        })
+        let entries = Dictionary(uniqueKeysWithValues: blocks.map { ($0.root.id, $0.entries) })
+        ForEach(SessionDays.group(blocks.map(\.root), day: { sort == .created ? day($0) : newest[$0.id] ?? day($0) }), id: \.0) { title, roots in
+            compactHeader(title)
+            compactEntries(roots.flatMap { entries[$0.id] ?? [] }, byId: byId)
+        }
+    }
+
+    private func compactEntries(_ list: [SessionNesting.Entry], byId: [String: SessionFolds.Fold]) -> some View {
+        ForEach(list) { entry in
             switch entry {
             case .row(let s, let depth, let counts, let collapsed):
                 compactBranchRow(s, depth: depth, counts: counts, collapsed: collapsed, fold: byId[s.id])
@@ -420,7 +430,7 @@ struct SessionList: View {
             let shown = all ? items : items.enumerated().filter { i, s in
                 i < Self.groupLimit || library.live[s.id] != nil || s.id == current
             }.map(\.element)
-            let folds = SessionFolds.group(shown)
+            let folds = SessionFolds.group(shown, parent: { library.parents[$0] })
             let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
             ForEach(tree(folds)) { entry in
                 switch entry {

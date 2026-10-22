@@ -64,6 +64,25 @@ enum SessionNesting {
         }
     }
 
+    /// A top-level row and everything listed under it, in order.
+    struct Block: Equatable {
+        var root: SessionInfo
+        var entries: [Entry]
+    }
+
+    /// `rows` split at its top-level rows, so each tree can be filed (under a day, say) whole.
+    static func blocks(_ entries: [Entry]) -> [Block] {
+        var out: [Block] = []
+        for e in entries {
+            if case .row(let s, 0, _, _) = e {
+                out.append(Block(root: s, entries: [e]))
+            } else if !out.isEmpty {
+                out[out.count - 1].entries.append(e)
+            }
+        }
+        return out
+    }
+
     /// Deepest indent; deeper descendants line up with it.
     static let maxDepth = 4
 

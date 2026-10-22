@@ -16,13 +16,17 @@ enum SessionFolds {
     /// newest and hiding the older ones behind its disclosure. A session is a resume of the
     /// branch when it works in the same worktree folder (`<repo>/.frog/worktrees/<name>` or
     /// `<repo>/.claude/worktrees/<name>`); forks declared in the header (`forkedFrom`) count
-    /// too, whatever their folder. Everything else passes through unchanged, order kept.
-    static func group(_ sessions: [SessionInfo]) -> [Fold] {
+    /// too, whatever their folder. So does a redo: a session started by the same parent under
+    /// the same title (a manager restarting a task, perhaps in another repo's worktree), given
+    /// `parent`. Everything else passes through unchanged; folds come newest first.
+    static func group(_ sessions: [SessionInfo], parent startedBy: (String) -> String? = { _ in nil }) -> [Fold] {
         var byWorktree: [String: [Int]] = [:]
         var byForkSource: [String: [Int]] = [:]
+        var byTask: [String: [Int]] = [:]
         for (i, s) in sessions.enumerated() {
             if let path = worktreePath(s.folder) { byWorktree[path, default: []].append(i) }
             if let fork = s.forkedFrom { byForkSource[fork.session, default: []].append(i) }
+            if let p = startedBy(s.id), let key = taskKey(s) { byTask[p + "\n" + key, default: []].append(i) }
         }
 
         // Union-find over indices: same worktree, or forked (transitively) from the same root.
@@ -39,6 +43,10 @@ enum SessionFolds {
 
         // Sessions in the same worktree folder are one branch.
         for (_, indices) in byWorktree where indices.count > 1 {
+            for i in indices.dropFirst() { union(indices[0], i) }
+        }
+        // Siblings with one title are one task, redone.
+        for (_, indices) in byTask where indices.count > 1 {
             for i in indices.dropFirst() { union(indices[0], i) }
         }
         // A fork joins its source's group when both are in this list.
@@ -58,6 +66,14 @@ enum SessionFolds {
             folds.append(Fold(session: sorted[0], older: Array(sorted.dropFirst())))
         }
         return folds.sorted { $0.session.modified > $1.session.modified }
+    }
+
+    /// A titled session's task, for spotting redos: its title, case and spacing folded. Nil
+    /// without a real title (a prompt's first line is too loose to match on).
+    static func taskKey(_ s: SessionInfo) -> String? {
+        guard let t = s.title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty,
+              t.caseInsensitiveCompare("Untitled") != .orderedSame else { return nil }
+        return t.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     /// The worktree folder path a session runs in, when it runs in one.
