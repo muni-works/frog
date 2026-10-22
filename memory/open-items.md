@@ -15,3 +15,5 @@ Handed over 2026-10-22 ~01:15Z:
 - Cam todos: Vercel GitHub app uninstall, lymb parts, Apple org + D-U-N-S, Neon account, renew daemon.so before Nov 5, muni RunPod API key for runbook scripts.
 
 - 01:2xZ update: frog-cloud-3 = 5972sc9ke6kh3d (US-GA-2) booting with keep-alive/health/metrics; mew targets.json seeded; old node deleted once published. zest#30 DEPLOYED and verified (pricing in /v1/models, request ids, /v1/generation).
+
+- 01:3xZ: frog-cloud-3 live, the only node. Models: qwen3-coder-next 128k (245 tok/s), qwen3-8b 16k (117-194 tok/s), qwen3-vl-8b 16k (vision verified). Keep-alive, health and metrics live. Watch: KV for 8x128k is allocated on demand next to the 2 small models, so check for OOM under full load. Long agent runs are unblocked: start pond step 1.
