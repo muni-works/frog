@@ -1,11 +1,48 @@
 //! A provider that replays canned responses, for engine tests.
 
-use super::{Request, Response, StreamEvent};
+use super::{HttpError, Request, Response, StreamError, StreamEvent};
 use crate::message::Block;
 use anyhow::{Result, anyhow};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// One scripted model call that goes wrong. `partial` blocks stream first (as a reply that
+/// began and then broke off) unless it's empty, then the call fails.
+#[derive(Clone)]
+pub enum Fail {
+    /// An error event inside a healthy (2xx) stream, as gateways send when their upstream
+    /// stumbles.
+    Stream { partial: Vec<Block>, message: String },
+    /// A non-2xx answer, before anything streams.
+    Http { status: u16, body: String },
+}
+
+impl Fail {
+    /// A stream that dies with nothing streamed yet.
+    pub fn before(message: &str) -> Self {
+        Self::Stream {
+            partial: Vec::new(),
+            message: message.into(),
+        }
+    }
+
+    /// A stream that fails after `text` has streamed.
+    pub fn partial(text: &str, message: &str) -> Self {
+        Self::Stream {
+            partial: vec![Block::Text { text: text.into() }],
+            message: message.into(),
+        }
+    }
+
+    /// A 4xx/5xx answer, as a request that never got anywhere.
+    pub fn http(status: u16, body: &str) -> Self {
+        Self::Http {
+            status,
+            body: body.into(),
+        }
+    }
+}
 
 pub struct Client {
     pub responses: Mutex<VecDeque<Response>>,
@@ -15,6 +52,8 @@ pub struct Client {
     /// Stream each tool call's arguments as `StreamEvent::ToolReady`, then keep "decoding" for
     /// this long before the next block, as a model still writing its reply would.
     pub tool_args: Option<Duration>,
+    /// Calls that fail (see [`Fail`]), consumed before `responses`.
+    pub fails: Mutex<VecDeque<Fail>>,
 }
 
 impl Client {
@@ -23,6 +62,7 @@ impl Client {
             responses: Mutex::new(responses.into()),
             sent: Default::default(),
             tool_args: None,
+            fails: Default::default(),
         }
     }
 
@@ -41,6 +81,21 @@ impl Client {
             req.system,
             serde_json::to_string(req.messages)?
         ));
+        if let Some(fail) = self.fails.lock().unwrap().pop_front() {
+            match fail {
+                Fail::Stream { partial, message } => {
+                    for b in &partial {
+                        if let Block::Text { text } = b {
+                            on(StreamEvent::Text(text.clone()));
+                        }
+                    }
+                    return Err(StreamError { message }.into());
+                }
+                Fail::Http { status, body } => {
+                    return Err(HttpError { status, body }.into());
+                }
+            }
+        }
         let r = self
             .responses
             .lock()

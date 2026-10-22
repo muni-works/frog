@@ -1,6 +1,6 @@
 //! Anthropic Messages API with streaming and prompt caching.
 
-use super::{Request, Response, Stop, StreamEvent, deep_merge, parse_args, sse};
+use super::{Request, Response, Stop, StreamError, StreamEvent, deep_merge, parse_args, sse};
 use crate::config::{AnthropicThinking, Profile, Thinking};
 use crate::message::{Block, Message, Role, Usage};
 use anyhow::{Result, bail};
@@ -379,7 +379,9 @@ impl Client {
                         usage.cache_read = c;
                     }
                 }
-                "error" => bail!("anthropic error: {}", v["error"]),
+                "error" => bail!(StreamError {
+                    message: v["error"].to_string()
+                }),
                 _ => {}
             }
             Ok(())

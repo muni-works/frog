@@ -84,6 +84,8 @@ struct SubagentRun {
                 case .toolCall(let r): state.kind = .tool(name: r.name, arg: r.arg); state.result = r
                 }
             }
+        case .itemsDiscarded(let ids):
+            items.removeAll { ids.contains($0.id) }
         case .turnEnded:
             for index in items.indices { items[index].imagePreview = nil }
         case .status(let s):

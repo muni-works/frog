@@ -11,7 +11,7 @@ use crate::protocol::{
     Mode, Op, Status, ToolOutcome, ToolTiming, TurnTiming, TurnUsage,
 };
 use crate::provider::{
-    HttpError, Provider, Request, Response, Stop, StreamEvent, ToolSpec, new_id,
+    HttpError, Provider, Request, Response, Stop, StreamError, StreamEvent, ToolSpec, new_id,
 };
 use crate::session::{self, Header, Log, Record};
 use crate::text_filter::TagFilter;
@@ -670,6 +670,12 @@ fn classify(e: &anyhow::Error) -> EngineError {
     if e.is::<IncompleteStream>() {
         return EngineError::IncompleteStream;
     }
+    if let Some(s) = e.downcast_ref::<StreamError>() {
+        return EngineError::Provider {
+            status: 502,
+            message: s.message.clone(),
+        };
+    }
     if let Some(c) = e.downcast_ref::<ConfigError>() {
         return EngineError::Config {
             message: c.0.clone(),
@@ -692,6 +698,15 @@ fn classify(e: &anyhow::Error) -> EngineError {
 fn retryable(e: &anyhow::Error) -> bool {
     if let Some(h) = e.downcast_ref::<HttpError>() {
         return matches!(h.status, 429 | 502 | 503 | 504 | 529) || h.body.contains("overloaded");
+    }
+    // An in-stream error event (the stream ended before the terminal chunk, the upstream was
+    // overloaded or timed out) is the same class of trouble as a 5xx: worth another try.
+    if e.downcast_ref::<StreamError>().is_some() {
+        return true;
+    }
+    // Same for a stream that just ended without saying it was done.
+    if e.is::<IncompleteStream>() {
+        return true;
     }
     e.chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
@@ -3424,8 +3439,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             streamed.ttft = first - sent;
             streamed.decode = done - first;
             streamed.think = answer.unwrap_or(done) - first;
+            // A stream that ended without the server saying it was done is the same mid-stream
+            // failure as a gateway error event; retried the same way, partials and all.
+            let r = match r {
+                Ok(resp) if resp.stop == Stop::Incomplete => Err(IncompleteStream.into()),
+                other => other,
+            };
             match r {
-                Ok(resp) if resp.stop == Stop::Incomplete => return Err(IncompleteStream.into()),
                 // Unparseable JSON-mode output is kept as a plain answer and counted as a failure.
                 Ok(resp) if json_mode => {
                     return Ok(match from_json_mode(resp.clone()) {
@@ -3440,14 +3460,24 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     });
                 }
                 Ok(resp) => return Ok((resp, streamed)),
-                // A busy or briefly unreachable frog cloud is retried for about a minute before
-                // anything falls back: one 503 or dropped connection shouldn't end a long task.
+                // A busy or briefly unreachable provider is retried before anything falls
+                // back: one 503, dropped connection or mid-stream gateway error shouldn't end
+                // a long task. When the broken attempt had already streamed a partial reply,
+                // its items are discarded and the step runs again from scratch.
                 Err(e)
-                    if !started
-                        && attempt < self.retry_budget(&e)
+                    if attempt < self.retry_budget(&e)
                         && (retryable(&e) || self.cloud_fallback(&e).is_some()) =>
                 {
                     attempt += 1;
+                    let ids: Vec<String> = streamed
+                        .message
+                        .iter()
+                        .chain(streamed.reasoning.iter())
+                        .cloned()
+                        .collect();
+                    if !ids.is_empty() {
+                        self.emit(Event::ItemsDiscarded { ids });
+                    }
                     let wait = Duration::from_secs((1u64 << attempt.min(5)).min(20));
                     let budget = self.retry_budget(&e);
                     self.notice(
@@ -3456,7 +3486,20 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     );
                     tokio::time::sleep(wait).await;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    // The last attempt (or one that isn't retryable) may leave a streamed
+                    // partial dangling: drop it, as the retry arm does.
+                    let ids: Vec<String> = streamed
+                        .message
+                        .iter()
+                        .chain(streamed.reasoning.iter())
+                        .cloned()
+                        .collect();
+                    if !ids.is_empty() {
+                        self.emit(Event::ItemsDiscarded { ids });
+                    }
+                    return Err(e);
+                }
             }
         }
     }
@@ -4111,6 +4154,33 @@ mod tests {
         engine_at(script, can_ask, None, None)
     }
 
+    /// An engine whose scripted provider fails the next calls mid-stream (see
+    /// [`scripted::Fail`]) before replaying `script`.
+    fn engine_fail(fails: Vec<scripted::Fail>, script: Vec<Response>) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let client = scripted::Client::new(script);
+        *client.fails.lock().unwrap() = fails.into();
+        start(opts, Provider::Scripted(client)).unwrap()
+    }
+
     fn engine_at(
         script: Vec<Response>,
         can_ask: bool,
@@ -4356,15 +4426,175 @@ mod tests {
         )));
     }
 
-    #[tokio::test]
-    async fn incomplete_stream_ends_turn_with_typed_error() {
-        let mut h = engine(vec![reply(vec![text("partial")], Stop::Incomplete)], true);
+    #[tokio::test(start_paused = true)]
+    async fn incomplete_stream_is_retried_before_failing() {
+        // A stream that ended before the terminal chunk is retried with backoff; when every
+        // attempt dies the same way, the typed error ends the turn.
+        let script = (0..4)
+            .map(|_| reply(vec![text("partial")], Stop::Incomplete))
+            .collect();
+        let mut h = engine(script, true);
         let evs = run(&mut h, "hi").await;
+        assert_eq!(
+            evs.iter()
+                .filter(|e| matches!(
+                    e.event,
+                    Event::Notice { message: ref m, .. } if m.contains("retrying")
+                ))
+                .count(),
+            3
+        );
         assert!(evs.iter().any(|e| matches!(
             &e.event,
             Event::TurnEnded {
                 reason: EndReason::Error {
                     error: EngineError::IncompleteStream
+                },
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_gateway_error_before_any_output_is_retried() {
+        // The Vercel/zai failure shape: an in-stream error event with nothing streamed yet.
+        let mut h = engine_fail(
+            vec![scripted::Fail::before(
+                "{\"message\":\"Upstream stream ended before terminal chunk\",\"origin\":\"gateway\"}",
+            )],
+            vec![reply(vec![text("all good")], Stop::End)],
+        );
+        let evs = run(&mut h, "hi").await;
+        // A retry happened: a warn notice, and the turn completed with the good reply.
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::Notice { level: Level::Warn, message: ref m } if m.contains("retrying")
+        )));
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+        let messages: Vec<&Event> = evs
+            .iter()
+            .map(|e| &e.event)
+            .filter(|e| matches!(e, Event::ItemCompleted { item: Item::Message { .. }, .. }))
+            .collect();
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_gateway_error_mid_stream_discards_the_partial_and_retries() {
+        // The reply had started streaming when the gateway gave up: the partial is dropped
+        // (ItemsDiscarded) and the step re-runs from scratch.
+        let mut h = engine_fail(
+            vec![scripted::Fail::partial(
+                "partial ans",
+                "{\"message\":\"Upstream stream ended before terminal chunk\",\"origin\":\"gateway\",\"upstream_finish_received\":false}",
+            )],
+            vec![reply(vec![text("full answer")], Stop::End)],
+        );
+        let evs = run(&mut h, "hi").await;
+        // The streamed partial opened an item, and the retry discarded exactly it.
+        let discarded = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::ItemsDiscarded { ids } => Some(ids.clone()),
+                _ => None,
+            })
+            .expect("items_discarded");
+        assert_eq!(discarded.len(), 1);
+        // Its delta streamed before the discard; no completion ever arrived for it.
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::ItemDelta { id, .. } if discarded.contains(id)
+        )));
+        assert!(!evs.iter().any(|e| matches!(
+            &e.event,
+            Event::ItemCompleted { id, .. } if discarded.contains(id)
+        )));
+        // The turn completed with the re-run's full answer, not the partial.
+        let answer = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::ItemCompleted {
+                    item: Item::Message { text },
+                    ..
+                } => Some(text.clone()),
+                _ => None,
+            })
+            .expect("a completed message");
+        assert_eq!(answer, "full answer");
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_auth_error_is_never_retried() {
+        // 401 from the provider: fail the turn at once — no retry notice, no discard, and
+        // the unused scripted reply stays unconsumed.
+        let mut h = engine_fail(
+            vec![scripted::Fail::http(401, "{\"error\":\"invalid api key\"}")],
+            vec![reply(vec![text("never reached")], Stop::End)],
+        );
+        let evs = run(&mut h, "hi").await;
+        assert!(!evs.iter().any(|e| matches!(
+            e.event,
+            Event::Notice { message: ref m, .. } if m.contains("retrying")
+        )));
+        assert!(!evs.iter().any(|e| matches!(e.event, Event::ItemsDiscarded { .. })));
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnEnded {
+                reason: EndReason::Error {
+                    error: EngineError::Provider { status: 401, .. }
+                },
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_mid_stream_error_retries_only_up_to_budget() {
+        // The gateway keeps failing: 3 retries with backoff, then the turn ends with the
+        // typed error.
+        let fails = (0..=3)
+            .map(|_| {
+                scripted::Fail::partial(
+                    "partial",
+                    "{\"message\":\"Upstream stream ended before terminal chunk\",\"origin\":\"gateway\"}",
+                )
+            })
+            .collect();
+        let mut h = engine_fail(fails, vec![]);
+        let evs = run(&mut h, "hi").await;
+        let retries = evs
+            .iter()
+            .filter(|e| matches!(
+                e.event,
+                Event::Notice { message: ref m, .. } if m.contains("retrying")
+            ))
+            .count();
+        assert_eq!(retries, 3);
+        // Each failed attempt discarded its partial.
+        assert_eq!(
+            evs.iter()
+                .filter(|e| matches!(e.event, Event::ItemsDiscarded { .. }))
+                .count(),
+            4
+        );
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnEnded {
+                reason: EndReason::Error {
+                    error: EngineError::Provider { status: 502, .. }
                 },
                 ..
             }
@@ -7062,7 +7292,7 @@ for line in sys.stdin:
         assert!(r2.contains("fn z()"), "{r2}");
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_broken_stream_discards_what_started_early() {
         let dir = tmp_store();
         std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
@@ -7071,12 +7301,15 @@ for line in sys.stdin:
             name: "Edit".into(),
             input: json!({ "file_path": "a.rs", "old_string": "fn a()", "new_string": "fn z()" }),
         };
-        let script = vec![
-            // The read streams, then the stream ends without the server saying it's done.
-            reply(vec![read_call("r1", "a.rs")], Stop::Incomplete),
-            reply(vec![edit], Stop::ToolUse),
-            reply(vec![text("done")], Stop::End),
-        ];
+        let script = (0..4)
+            .map(|_| {
+                // The read streams, then the stream ends without the server saying it's done;
+                // every retry breaks the same way.
+                reply(vec![read_call("r1", "a.rs")], Stop::Incomplete)
+            })
+            .chain(std::iter::once(reply(vec![edit], Stop::ToolUse)))
+            .chain(std::iter::once(reply(vec![text("done")], Stop::End)))
+            .collect();
         let (mut h, _) = engine_early(
             script,
             true,

@@ -1,6 +1,6 @@
 //! OpenAI-compatible chat completions: llama.cpp, LM Studio, vLLM, MLX, ollama's /v1, OpenAI itself.
 
-use super::{Request, Response, Stop, StreamEvent, assistant_message, deep_merge, parse_args, sse};
+use super::{Request, Response, Stop, StreamError, StreamEvent, assistant_message, deep_merge, parse_args, sse};
 use crate::message::{Block, Role, Usage};
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
@@ -250,7 +250,9 @@ impl Client {
             }
             let v: Value = serde_json::from_str(data)?;
             if let Some(err) = v.get("error") {
-                bail!("server error: {err}");
+                bail!(StreamError {
+                    message: err.to_string()
+                });
             }
             if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
                 let cached = u["prompt_tokens_details"]["cached_tokens"]
