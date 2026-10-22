@@ -121,7 +121,7 @@ pub async fn grep(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .unwrap_or("files_with_matches")
         .to_string();
     let limit = int_arg(input, "head_limit").unwrap_or(100) as usize;
-    let cwd = ctx.cwd.clone();
+    let cwd = ctx.root.clone();
 
     let (out, n) = tokio::task::spawn_blocking(move || {
         let files: Box<dyn Iterator<Item = PathBuf>> = if root.is_file() {

@@ -213,7 +213,9 @@ pub fn shell(
         .or_else(|| (!unsandboxed).then(|| ctx.shell_sandbox.clone()).flatten());
     let mut command = match &jail {
         None => tokio::process::Command::new(shell),
-        Some(root) => sandboxed(root, &shell, &ctx.sandbox_extra, &git_dirs(&ctx.cwd))?,
+        // Git's write dirs follow the session's checkout, not the shell's current directory:
+        // a `cd` into another checkout doesn't open its refs and objects for writing.
+        Some(root) => sandboxed(root, &shell, &ctx.sandbox_extra, &git_dirs(&ctx.root))?,
     };
     if jail.is_some()
         && cfg!(target_os = "macos")
@@ -330,8 +332,9 @@ pub const DEV_HOSTS: &[&str] = &[
     "download.swift.org",
 ];
 
-/// When `cwd` is in a git worktree, the dirs git writes to (`index.lock`, refs, objects): the
-/// per-worktree git dir and the common dir. Nothing else of the main checkout opens up.
+/// When the session's folder is a git worktree, the dirs git writes to (`index.lock`, refs,
+/// objects): the per-worktree git dir and the common dir. Nothing else of the main checkout
+/// opens up.
 pub fn git_dirs(cwd: &std::path::Path) -> Vec<std::path::PathBuf> {
     let Ok(out) = std::process::Command::new("git")
         .args(["rev-parse", "--git-dir", "--git-common-dir"])
