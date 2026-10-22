@@ -3,10 +3,11 @@
 #
 #   apps/macos/scripts/release.sh 0.2.0            # build, notarize, publish to GitHub
 #   apps/macos/scripts/release.sh 0.2.0 --local    # stop before GitHub: dist/ only
+#   apps/macos/scripts/release.sh 0.2.0 --unsigned # unsigned build, no notarization
 #
 # One-time setup on the release Mac:
 #   1. A "Developer ID Application" certificate in the login Keychain (developer.apple.com).
-#   2. Notary credentials:  xcrun notarytool store-credentials frog --apple-id … --team-id …
+#   2. Notary credentials:  xcrun notarytool store-credentials frog --apple-id ... --team-id ...
 #   3. The Sparkle private key ("Private key for signing Sparkle updates" in the login
 #      Keychain). Its public half is project.yml's SPARKLE_PUBLIC_KEY. To move it to another
 #      Mac: generate_keys -x key.txt here, generate_keys -f key.txt there (Sparkle's bin/).
@@ -16,8 +17,8 @@
 # redirects /download and /appcast.xml to the latest release's copies (site/vercel.json).
 set -euo pipefail
 
-VERSION=${1:?usage: release.sh <version> [--local]}
-LOCAL=${2:-}
+VERSION=${1:?usage: release.sh <version> [--local|--unsigned]}
+MODE=${2:-}
 SIGN_ID=${FROG_SIGN_ID:-Developer ID Application}
 NOTARY_PROFILE=${FROG_NOTARY_PROFILE:-frog}
 REPO=${FROG_RELEASE_REPO:-ecto/frog}
@@ -37,10 +38,12 @@ fail() { print -P "%F{red}error:%f $*" >&2; exit 1 }
 # Preflight: everything that can fail late, checked before a 10 minute build.
 [[ $VERSION =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || fail "version must look like 1.2.3"
 [[ -z $(git status --porcelain) ]] || fail "working tree isn't clean"
-security find-identity -v -p codesigning | grep -q "$SIGN_ID" || fail "no \"$SIGN_ID\" certificate in the Keychain"
-xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
-    || fail "no notary credentials; run: xcrun notarytool store-credentials $NOTARY_PROFILE"
-if [[ $LOCAL != --local ]]; then
+if [[ $MODE != --unsigned ]]; then
+    security find-identity -v -p codesigning | grep -q "$SIGN_ID" || fail "no \"$SIGN_ID\" certificate in the Keychain"
+    xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
+        || fail "no notary credentials; run: xcrun notarytool store-credentials $NOTARY_PROFILE"
+fi
+if [[ $MODE != --local ]] && [[ $MODE != --unsigned ]]; then
     gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && fail "$TAG already exists on $REPO"
 fi
 
@@ -59,6 +62,38 @@ ditto "$DERIVED/Build/Products/Release/Frog.app" "$APP"
 [[ -n $(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP/Contents/Info.plist" 2>/dev/null) ]] \
     || fail "SPARKLE_PUBLIC_KEY is empty in project.yml; updates couldn't be verified"
 [[ -x $APP/Contents/Resources/tang-llm ]] || fail "tang-llm is missing from the bundle"
+
+if [[ $MODE == --unsigned ]]; then
+    step "Unsigned build: skipping signing and notarization"
+    ditto -c -k --keepParent "$APP" "$DIST/Frog.zip"
+    sha256sum "$DIST/Frog.zip" > "$DIST/Frog.zip.sha256"
+    cat > "$DIST/appcast.xml" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Frog</title>
+    <item>
+      <title>$VERSION</title>
+      <pubDate>$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>
+      <sparkle:version>$BUILD_NUMBER</sparkle:version>
+      <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/$REPO/releases/tag/$TAG</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/$REPO/releases/download/$TAG/Frog.zip" type="application/zip" />
+    </item>
+  </channel>
+</rss>
+EOF
+    if [[ $MODE == --local ]]; then
+        step "Done: $DIST"
+        exit 0
+    fi
+    step "Publishing $TAG to $REPO (unsigned prerelease)"
+    gh release create "$TAG" "$DIST/Frog.zip" "$DIST/Frog.zip.sha256" "$DIST/appcast.xml" --repo "$REPO" \
+        --target "$(git rev-parse HEAD)" --title "Frog $VERSION (unsigned)" --prerelease --generate-notes
+    step "Done: https://github.com/$REPO/releases/tag/$TAG"
+    exit 0
+fi
 
 # Inside out: every Mach-O gets the hardened runtime and a secure timestamp, or notarization
 # refuses the whole app. Xcode signs none of the engine binaries (they're resources to it).
@@ -100,7 +135,7 @@ spctl --assess --type open --context context:primary-signature "$DMG"
 
 step "Writing the appcast"
 SIGN_UPDATE="$DERIVED/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update"
-ED=$("$SIGN_UPDATE" "$DMG")   # sparkle:edSignature="…" length="…"
+ED=$("$SIGN_UPDATE" "$DMG")
 cat > "$DIST/appcast.xml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
@@ -119,7 +154,7 @@ cat > "$DIST/appcast.xml" <<EOF
 </rss>
 EOF
 
-if [[ $LOCAL == --local ]]; then
+if [[ $MODE == --local ]]; then
     step "Done: $DIST"
     exit 0
 fi
