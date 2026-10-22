@@ -336,6 +336,12 @@ pub enum Event {
         id: String,
         item: Item,
     },
+    /// A retryable model call failed after its reply had started streaming; the client should
+    /// drop these partial items (and their deltas) — the step is re-run from scratch. Durable,
+    /// so a replaying client also sees the partials come and go.
+    ItemsDiscarded {
+        ids: Vec<String>,
+    },
     PermissionResolved {
         id: String,
         decision: Decision,
@@ -572,6 +578,7 @@ impl Event {
                 | Self::TurnEnded { .. }
                 | Self::ItemStarted { .. }
                 | Self::ItemCompleted { .. }
+                | Self::ItemsDiscarded { .. }
                 | Self::PermissionResolved { .. }
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }

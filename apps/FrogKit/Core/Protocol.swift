@@ -520,6 +520,9 @@ enum Event: Decodable, Sendable {
     case turnEnded(turn: UInt64, reason: EndReason, usage: TurnUsage)
     case itemStarted(id: String, kind: ItemKind)
     case itemCompleted(id: String, item: Item)
+    /// A retried model call's partial items (message/reasoning that streamed before the
+    /// stream failed); drop them from the turn.
+    case itemsDiscarded(ids: [String])
     case permissionResolved(id: String, decision: Decision)
     case compacted(tokensBefore: UInt64, tokensAfter: UInt64)
     case contextPruned(results: Int, tokensBefore: UInt64, tokensAfter: UInt64)
@@ -581,7 +584,7 @@ struct Envelope: Decodable, Sendable {
 extension Event {
     private enum Key: String, CodingKey {
         case event
-        case turn, input, reason, usage, id, kind, item, delta, decision
+        case turn, input, reason, usage, id, kind, item, delta, decision, ids
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
         case images
@@ -608,6 +611,8 @@ extension Event {
             self = .itemCompleted(id: try c.decode(String.self, forKey: .id), item: try c.decode(Item.self, forKey: .item))
         case "item_delta":
             self = .itemDelta(id: try c.decode(String.self, forKey: .id), delta: try c.decode(Delta.self, forKey: .delta))
+        case "items_discarded":
+            self = .itemsDiscarded(ids: try c.decode([String].self, forKey: .ids))
         case "permission_resolved":
             self = .permissionResolved(id: try c.decode(String.self, forKey: .id), decision: try c.decode(Decision.self, forKey: .decision))
         case "compacted":

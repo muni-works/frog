@@ -1,7 +1,7 @@
 //! Ollama's native /api/chat. Used over /v1 because it lets us set num_ctx
 //! (ollama's default context is tiny and silently truncates prompts).
 
-use super::{Request, Response, Stop, StreamEvent, assistant_message, deep_merge, sse};
+use super::{Request, Response, Stop, StreamError, StreamEvent, assistant_message, deep_merge, sse};
 use crate::message::{Block, Role, Usage};
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
@@ -159,7 +159,9 @@ impl Client {
             }
             let v: Value = serde_json::from_str(line)?;
             if let Some(err) = v["error"].as_str() {
-                bail!("ollama: {err}");
+                bail!(StreamError {
+                    message: err.to_string()
+                });
             }
             let m = &v["message"];
             if let Some(s) = m["thinking"].as_str().filter(|s| !s.is_empty()) {

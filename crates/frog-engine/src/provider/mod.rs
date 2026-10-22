@@ -113,6 +113,23 @@ impl std::fmt::Display for HttpError {
 
 impl std::error::Error for HttpError {}
 
+/// An error event inside an otherwise-accepted (2xx) response stream: OpenAI-compatible
+/// gateways and Anthropic send these mid-stream when their upstream stumbles — the stream
+/// ends before the terminal chunk, the upstream is overloaded or timed out. The call may
+/// already have streamed partial text, so the engine drops what it showed and retries.
+#[derive(Debug)]
+pub struct StreamError {
+    pub message: String,
+}
+
+impl std::fmt::Display for StreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "server error mid-stream: {}", self.message)
+    }
+}
+
+impl std::error::Error for StreamError {}
+
 pub enum Provider {
     OpenAi(openai::Client),
     Anthropic(anthropic::Client),

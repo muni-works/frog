@@ -431,6 +431,13 @@ final class Conversation {
                 }
             }
             if case .toolCall = item, isNews(env) { stepsDone += 1 }
+        case .itemsDiscarded(let ids):
+            // A retried model call streamed a partial reply before the stream failed; drop it
+            // so the re-run starts clean.
+            if let i = turns.lastIndex(where: { !$0.finished }) {
+                turns[i].items.removeAll { ids.contains($0.id) }
+            }
+            presentPreview = nil
         case .permissionRequest(let req):
             permission = req
             if isNews(env) {
