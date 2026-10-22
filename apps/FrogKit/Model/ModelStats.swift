@@ -66,8 +66,14 @@ final class ModelStats {
     func learnPrices(_ models: [ModelEntry]) {
         var changed = false
         for m in models {
-            guard let i = m.info?.costIn, let o = m.info?.costOut, store.prices[m.spec] != [i, o] else { continue }
-            store.prices[m.spec] = [i, o]
+            guard let info = m.info, let i = info.costIn, let o = info.costOut else { continue }
+            // [in, out] or [in, out, cache read, cache write]; -1 is "not listed".
+            var p = [i, o]
+            if info.costCacheRead != nil || info.costCacheWrite != nil {
+                p += [info.costCacheRead ?? -1, info.costCacheWrite ?? -1]
+            }
+            guard store.prices[m.spec] != p else { continue }
+            store.prices[m.spec] = p
             changed = true
         }
         if changed { save() }
@@ -167,22 +173,95 @@ final class ModelStats {
         save()
     }
 
+    /// Reprice this month's spend from session logs, once: turns recorded before cache reads
+    /// were priced at their own rate were counted at the full input rate.
+    func repriceSpend(from dir: URL = FrogPaths.sessions, now: Date = .now) async {
+        let flag = "spendRepricedForCache"
+        guard !defaults.bool(forKey: flag) else { return }
+        defaults.set(true, forKey: flag)
+        let cal = Calendar(identifier: .iso8601)
+        guard let month = cal.dateInterval(of: .month, for: now) else { return }
+        let found: [(TurnUsage, Date)] = await Task.detached {
+            struct Record: Decodable { let env: Envelope? }
+            let fm = FileManager.default
+            let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            var out: [(TurnUsage, Date)] = []
+            for f in files where f.pathExtension == "jsonl" {
+                let modified = (try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                guard modified >= month.start, let text = try? String(contentsOf: f, encoding: .utf8) else { continue }
+                for line in text.split(separator: "\n") where line.contains("\"turn_ended\"") {
+                    guard let env = (try? JSONDecoder.frog.decode(Record.self, from: Data(line.utf8)))?.env,
+                          case .turnEnded(_, _, let usage) = env.event else { continue }
+                    let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
+                    if month.contains(at) { out.append((usage, at)) }
+                }
+            }
+            return out
+        }.value
+        guard !found.isEmpty else { return }
+        var spend: [String: Double] = [:]
+        for (usage, at) in found {
+            if let c = cost(of: usage), c > 0 { spend[Self.day(at), default: 0] += c }
+        }
+        // Only lower a day: a day the logs don't fully cover (a deleted session) keeps the most
+        // it could have been.
+        let (from, to) = (Self.day(month.start), Self.day(month.end))
+        for (day, old) in store.spend where day >= from && day < to {
+            store.spend[day] = min(old, spend[day] ?? old)
+        }
+        save()
+    }
+
     /// How a cloud model's data center energy is estimated, and the source, once a turn said so.
     func estimate(_ spec: String) -> (basis: String, source: URL?)? {
         guard let e = store.estimates?[spec], e.count == 2 else { return nil }
         return (e[0], URL(string: e[1]))
     }
 
-    /// A model's list price, dollars per million tokens in and out.
-    func prices(_ spec: String) -> (input: Double, output: Double)? {
-        guard let p = store.prices[spec], p.count == 2 else { return nil }
-        return (p[0], p[1])
+    /// A model's list prices, dollars per million tokens.
+    struct Prices: Equatable {
+        var input: Double
+        var output: Double
+        /// Input read from the provider's cache, and input written to it.
+        var cacheRead: Double
+        var cacheWrite: Double
+
+        /// When the list leaves the cache rates out: Anthropic reads at a tenth of input and
+        /// writes at 1.25×; frog cloud reads at a tenth ($0.06 against $0.60); OpenAI-style
+        /// caches at half, with no charge for writing.
+        init(spec: String, input: Double, output: Double, cacheRead: Double? = nil, cacheWrite: Double? = nil) {
+            let anthropic = spec.contains("anthropic/") || spec.contains("claude")
+            let cloud = spec.hasPrefix("cloud/")
+            self.input = input
+            self.output = output
+            self.cacheRead = cacheRead ?? input * (anthropic || cloud ? 0.1 : 0.5)
+            self.cacheWrite = cacheWrite ?? input * (anthropic ? 1.25 : 1)
+        }
+
+        /// The cost of each part of a turn: fresh input, cache reads, cache writes, output.
+        func parts(_ u: TurnUsage) -> (fresh: Double, cached: Double, written: Double, output: Double) {
+            let m = 1_000_000.0
+            return (Double(u.fresh - u.cacheWritten) * input / m, Double(u.cached) * cacheRead / m,
+                    Double(u.cacheWritten) * cacheWrite / m, Double(u.outputTokens) * output / m)
+        }
+
+        func cost(_ u: TurnUsage) -> Double {
+            let p = parts(u)
+            return p.fresh + p.cached + p.written + p.output
+        }
     }
 
-    /// Dollars a turn cost, if its model has a price.
+    /// A model's list prices, with the cache rates filled in when the list didn't give them.
+    func prices(_ spec: String) -> Prices? {
+        guard let p = store.prices[spec], p.count >= 2 else { return nil }
+        let listed = { (i: Int) in p.count > i && p[i] >= 0 ? p[i] : nil }
+        return Prices(spec: spec, input: p[0], output: p[1], cacheRead: listed(2), cacheWrite: listed(3))
+    }
+
+    /// Dollars a turn cost, if its model has a price: cache reads and writes at their own rates.
     func cost(of usage: TurnUsage, spec: String? = nil) -> Double? {
-        guard let spec = spec ?? usage.model, let p = store.prices[spec], p.count == 2 else { return nil }
-        return (Double(usage.inputTokens) * p[0] + Double(usage.outputTokens) * p[1]) / 1_000_000
+        guard let spec = spec ?? usage.model, let p = prices(spec) else { return nil }
+        return p.cost(usage)
     }
 
     /// Median words/s on this Mac, once there's a turn to measure.

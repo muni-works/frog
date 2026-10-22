@@ -177,12 +177,13 @@ struct PriceCard: View {
     let cost: Double
     let usage: TurnUsage
     /// The model's list price; looked up from what frog has learned when not given.
-    var listed: (input: Double, output: Double)?
+    var listed: ModelStats.Prices?
     private let stats = ModelStats.shared
 
-    private var prices: (input: Double, output: Double)? { listed ?? usage.model.flatMap { stats.prices($0) } }
-    private var inCost: Double { prices.map { Double(usage.inputTokens) * $0.input / 1_000_000 } ?? 0 }
-    private var outCost: Double { prices.map { Double(usage.outputTokens) * $0.output / 1_000_000 } ?? 0 }
+    private var prices: ModelStats.Prices? { listed ?? usage.model.flatMap { stats.prices($0) } }
+    private var parts: (fresh: Double, cached: Double, written: Double, output: Double) {
+        prices?.parts(usage) ?? (0, 0, 0, 0)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -192,13 +193,24 @@ struct PriceCard: View {
                 Text(ModelStats.money(cost)).font(.headline.monospacedDigit())
             }
 
-            SplitBar(parts: [.init(value: inCost, style: .solid), .init(value: outCost, style: .soft)])
+            SplitBar(parts: [.init(value: parts.fresh + parts.written, style: .solid),
+                             .init(value: parts.cached, style: .hatched),
+                             .init(value: parts.output, style: .soft)])
 
             if let p = prices {
                 VStack(alignment: .leading, spacing: 8) {
-                    PartRow(swatch: .solid, title: "Reading", value: Self.cents(inCost),
-                            detail: "\(usage.inputTokens.tokens) tokens in at \(Self.perMillion(p.input)) per million")
-                    PartRow(swatch: .soft, title: "Writing", value: Self.cents(outCost),
+                    let fresh = usage.fresh - usage.cacheWritten
+                    PartRow(swatch: .solid, title: "Reading", value: Self.cents(parts.fresh),
+                            detail: "\(fresh.tokens) new tokens in at \(Self.perMillion(p.input)) per million")
+                    if usage.cached > 0 {
+                        PartRow(swatch: .hatched, title: "Cached", value: Self.cents(parts.cached),
+                                detail: "\(usage.cached.tokens) tokens read from the cache at \(Self.perMillion(p.cacheRead)) per million")
+                    }
+                    if usage.cacheWritten > 0 {
+                        PartRow(swatch: .solid, title: "Caching", value: Self.cents(parts.written),
+                                detail: "\(usage.cacheWritten.tokens) tokens written to the cache at \(Self.perMillion(p.cacheWrite)) per million")
+                    }
+                    PartRow(swatch: .soft, title: "Writing", value: Self.cents(parts.output),
                             detail: "\(usage.outputTokens.tokens) tokens out at \(Self.perMillion(p.output)) per million")
                 }
             }
@@ -229,7 +241,7 @@ struct PriceCard: View {
 
             Divider()
 
-            Text("Each call re-reads the whole conversation, so reading usually costs more than writing. Priced at the provider's list rates; cached-input discounts aren't taken off, so the real bill can be lower.")
+            Text("Each call re-reads the whole conversation, most of it from the provider's cache at a discount. Priced at the provider's list rates.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -306,7 +318,7 @@ private struct SwatchFill: View {
 /// A model's price list: its rates, what a million tokens is, and who lists them.
 private struct PriceList: View {
     let spec: String
-    let prices: (input: Double, output: Double)
+    let prices: ModelStats.Prices
     @Environment(\.models) private var models
 
     /// Gateways price their own models; direct APIs are priced from models.dev's catalog.
@@ -327,6 +339,7 @@ private struct PriceList: View {
             }
             HStack(spacing: 8) {
                 Rate(label: "In", value: prices.input)
+                Rate(label: "Cached", value: prices.cacheRead)
                 Rate(label: "Out", value: prices.output)
             }
             // One line that wraps as text, with the link inline.

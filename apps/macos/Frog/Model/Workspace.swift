@@ -268,6 +268,7 @@ final class Workspace {
             models = m
             Self.knownModels = m
             ModelStats.shared.learnPrices(m)
+            await ModelStats.shared.repriceSpend()
         }
         struct Answer: Decodable { var cloud: CloudPolicy }
         if let a = try? await Frog.json(Answer.self, args: ["--cloud-policy", "--json"], cwd: folder) {

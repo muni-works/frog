@@ -303,10 +303,7 @@ impl Client {
             let v: Value = serde_json::from_str(data)?;
             match v["type"].as_str().unwrap_or("") {
                 "message_start" => {
-                    let u = &v["message"]["usage"];
-                    usage.input = u["input_tokens"].as_u64().unwrap_or(0)
-                        + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                    usage.cache_read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                    read_usage(&v["message"]["usage"], &mut usage, true);
                 }
                 "content_block_start" => {
                     let b = &v["content_block"];
@@ -369,15 +366,7 @@ impl Client {
                     if let Some(r) = v["delta"]["stop_reason"].as_str() {
                         stop = Some(Stop::from_reason(r));
                     }
-                    let u = &v["usage"];
-                    usage.output = u["output_tokens"].as_u64().unwrap_or(usage.output);
-                    // Some gateways (Vercel) report input and cache counts only here.
-                    if let Some(i) = u["input_tokens"].as_u64().filter(|&i| i > 0) {
-                        usage.input = i + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                    }
-                    if let Some(c) = u["cache_read_input_tokens"].as_u64().filter(|&c| c > 0) {
-                        usage.cache_read = c;
-                    }
+                    read_usage(&v["usage"], &mut usage, false);
                 }
                 "error" => bail!(StreamError {
                     message: v["error"].to_string()
@@ -415,9 +404,49 @@ impl Client {
     }
 }
 
+/// Token counts from a `message_start` (`start`) or `message_delta` usage object. Some gateways
+/// (Vercel) report input and cache counts only in the delta, so a delta's missing or zero
+/// counts keep what the start said.
+fn read_usage(u: &Value, usage: &mut Usage, start: bool) {
+    let n = |k: &str| u[k].as_u64().filter(|&n| start || n > 0);
+    if !start {
+        usage.output = u["output_tokens"].as_u64().unwrap_or(usage.output);
+    }
+    if let Some(i) = n("input_tokens").or(start.then_some(0)) {
+        let kept = if start { 0 } else { usage.cache_write };
+        usage.cache_write = n("cache_creation_input_tokens").unwrap_or(kept);
+        usage.input = i + usage.cache_write;
+    }
+    if let Some(c) = n("cache_read_input_tokens").or(start.then_some(0)) {
+        usage.cache_read = c;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_reads_and_writes_are_counted_apart() {
+        let mut u = Usage::default();
+        read_usage(
+            &json!({ "input_tokens": 52, "cache_creation_input_tokens": 500,
+                     "cache_read_input_tokens": 151_667, "output_tokens": 1 }),
+            &mut u,
+            true,
+        );
+        read_usage(&json!({ "output_tokens": 6_500 }), &mut u, false);
+        assert_eq!((u.input, u.cache_write, u.cache_read, u.output), (552, 500, 151_667, 6_500));
+        // Vercel: counts only in the delta.
+        let mut u = Usage::default();
+        read_usage(&json!({ "input_tokens": 0 }), &mut u, true);
+        read_usage(
+            &json!({ "input_tokens": 10, "cache_read_input_tokens": 900, "output_tokens": 5 }),
+            &mut u,
+            false,
+        );
+        assert_eq!((u.input, u.cache_write, u.cache_read, u.output), (10, 0, 900, 5));
+    }
 
     fn client(model: &str, settings: Settings) -> Client {
         Client {

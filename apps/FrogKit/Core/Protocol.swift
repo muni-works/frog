@@ -280,12 +280,32 @@ struct TurnUsage: Decodable, Sendable {
     var contextTokens: UInt64?
     var inputTokens: UInt64
     var outputTokens: UInt64
+    /// The part of `inputTokens` read from the provider's cache, and the part written to it.
+    /// Absent in older logs (see `cached`).
+    var cachedTokens: UInt64?
+    var cacheWriteTokens: UInt64?
     var modelCalls: UInt32
     var tokensPerSec: Double?
     /// The model (spec) that ran the turn. Absent in older logs.
     var model: String?
     /// What the turn cost in energy, when the engine measured it (`--energy`).
     var energy: TurnEnergy?
+    /// Per-call timing; only its cache counts are read, for logs from before `cachedTokens`.
+    var timing: Timing?
+
+    struct Timing: Decodable, Sendable {
+        struct Call: Decodable, Sendable { var cachedTokens: UInt64? }
+        var calls: [Call]?
+    }
+
+    /// Input tokens read from the cache: as the engine totaled them, else summed from the calls.
+    var cached: UInt64 {
+        min(inputTokens, cachedTokens ?? timing?.calls?.reduce(0) { $0 + ($1.cachedTokens ?? 0) } ?? 0)
+    }
+    /// Input tokens written to the cache (a subset of the uncached ones).
+    var cacheWritten: UInt64 { min(cacheWriteTokens ?? 0, inputTokens - cached) }
+    /// Input tokens read fresh, at the full input rate (cache writes included).
+    var fresh: UInt64 { inputTokens - cached }
 }
 
 /// Watt-hours: the whole Mac above its idle power, and a hosted model's data center, estimated.
@@ -873,6 +893,9 @@ struct CatalogModel: Codable, Sendable, Hashable, Identifiable {
     /// Dollars per million tokens.
     var costIn: Double?
     var costOut: Double?
+    /// Dollars per million cached input tokens read, and written to the cache, when listed.
+    var costCacheRead: Double?
+    var costCacheWrite: Double?
     /// Shown in the model list (only in `--catalog` output).
     var enabled: Bool?
 

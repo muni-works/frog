@@ -47,6 +47,31 @@ final class ModelStatsTests: XCTestCase {
         XCTAssertFalse(s.overCap)
     }
 
+    func testCacheReadsArePricedAtTheCachedRate() {
+        let s = stats()
+        let spec = "vercel/anthropic/claude-opus-5.5"
+        var u = usage(152_219, 6_500, model: spec)
+        u.cachedTokens = 151_667
+        // Opus list prices, $4 in and $20 out; the gateway lists cache reads at $0.40.
+        s.learnPrices([entry(spec, costIn: 4, costOut: 20, cacheRead: 0.4)])
+        XCTAssertEqual(s.cost(of: u)!, 0.1929, accuracy: 0.0005) // not $0.74 at the full input rate
+        // Not listed: Anthropic's tenth of the input rate is the same here.
+        s.learnPrices([entry(spec, costIn: 4, costOut: 20)])
+        XCTAssertEqual(s.prices(spec)!.cacheRead, 0.4, accuracy: 1e-9)
+        XCTAssertEqual(s.cost(of: u)!, 0.1929, accuracy: 0.0005)
+        // Cache writes at 1.25× input; OpenAI-style caches at half.
+        u.cacheWriteTokens = 552
+        XCTAssertEqual(s.cost(of: u)!, 0.1929 + 552 * 4 * 0.25 / 1e6, accuracy: 0.0005)
+        XCTAssertEqual(ModelStats.Prices(spec: "openai/gpt-5", input: 1.25, output: 10).cacheRead, 0.625, accuracy: 1e-9)
+        XCTAssertEqual(ModelStats.Prices(spec: "cloud/qwen3-coder-next", input: 0.6, output: 2).cacheRead, 0.06, accuracy: 1e-9)
+    }
+
+    func testOldLogsTakeCacheCountsFromTheirCalls() throws {
+        let u = try JSONDecoder.frog.decode(TurnUsage.self, from: Data(#"{"input_tokens":300,"output_tokens":5,"model_calls":2,"timing":{"wall_ms":1,"calls":[{"prompt_tokens":100,"cached_tokens":90},{"prompt_tokens":200,"cached_tokens":180}]}}"#.utf8))
+        XCTAssertEqual(u.cached, 270)
+        XCTAssertEqual(u.fresh, 30)
+    }
+
     func testEstimatedCostUsesYourTurnSizes() {
         let s = stats()
         let m = ModelIdentity(spec: "anthropic/sonnet", name: "Sonnet", variant: nil, place: .cloud("Anthropic"),
@@ -70,10 +95,11 @@ final class ModelStatsTests: XCTestCase {
         XCTAssertEqual(Workspace.startingModel(d, apple: true), "mew/mlx-community/Qwen3-8B-4bit")
     }
 
-    private func entry(_ spec: String, costIn: Double, costOut: Double) -> ModelEntry {
+    private func entry(_ spec: String, costIn: Double, costOut: Double, cacheRead: Double? = nil) -> ModelEntry {
+        let read = cacheRead.map { #","costCacheRead":\#($0)"# } ?? ""
         let json = """
         {"spec":"\(spec)","provider":"anthropic","model":"sonnet","source":"remote","tier":"strong","toolMode":"native",
-         "info":{"spec":"\(spec)","provider":"anthropic","id":"sonnet","name":"Sonnet","inputs":["text"],"reasoning":false,"tools":true,"costIn":\(costIn),"costOut":\(costOut)}}
+         "info":{"spec":"\(spec)","provider":"anthropic","id":"sonnet","name":"Sonnet","inputs":["text"],"reasoning":false,"tools":true,"costIn":\(costIn),"costOut":\(costOut)\(read)}}
         """
         return try! JSONDecoder.frog.decode(ModelEntry.self, from: Data(json.utf8))
     }
