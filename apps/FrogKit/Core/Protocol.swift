@@ -835,6 +835,17 @@ enum JSONValue: Codable, Sendable, Hashable {
         return nil
     }
 
+    /// Numbers as integers when they are (counts, ids), else as doubles.
+    var number: Double? {
+        if case .number(let n) = self { return n }
+        return nil
+    }
+
+    var int: Int? {
+        if case .number(let n) = self { return n == n.rounded() && abs(n) < 1e15 ? Int(n) : nil }
+        return nil
+    }
+
     var bool: Bool? {
         if case .bool(let b) = self { return b }
         return nil

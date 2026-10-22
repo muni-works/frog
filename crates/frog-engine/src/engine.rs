@@ -6915,7 +6915,14 @@ for line in sys.stdin:
             Event::TurnEnded { .. }
         ) {}
         let req = sent.lock().unwrap().last().cloned().unwrap();
-        for tool in ["ListSessions", "SendMessage", "StartSession"] {
+        for tool in [
+            "ListSessions",
+            "SendMessage",
+            "StartSession",
+            "ArchiveSession",
+            "UnarchiveSession",
+            "SessionStatus",
+        ] {
             assert!(req.contains(tool), "{tool} not offered");
         }
         assert!(req.contains("no user authority"));

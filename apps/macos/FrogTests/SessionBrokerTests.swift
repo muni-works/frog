@@ -326,6 +326,69 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(archived[back.id], false)
     }
 
+    /// SessionStatus's single truth: a queued inbound message keeps a session "running"
+    /// even when its engine reports idle (bug 2d), and the count drains when it starts.
+    func testQueuedInboundKeepsAQueuedSessionRunning() throws {
+        let b = broker([chief, eng])
+        XCTAssertEqual(b.pendingInbound(eng.id), 0)
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "one", notifyWhenIdle: false).get()
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "two", notifyWhenIdle: false).get()
+        XCTAssertEqual(b.pendingInbound(eng.id), 2, "both messages queued")
+        var info = SessionBroker.StatusInfo()
+        info.engineAlive = true
+        info.queuedMessages = b.pendingInbound(eng.id)
+        XCTAssertEqual(info.state, "running", "queued means running, not idle")
+        // The target starts its turn: the inbox drains, and the state follows the turn.
+        b.observe(eng.id, running: true, waiting: false)
+        XCTAssertEqual(b.pendingInbound(eng.id), 0)
+        info.queuedMessages = 0
+        info.turnRunning = true
+        XCTAssertEqual(info.state, "running")
+        b.observe(eng.id, running: false, waiting: false)
+        info.turnRunning = false
+        XCTAssertEqual(info.state, "idle")
+        // A dead engine is "dead", whatever else.
+        info.engineAlive = false
+        XCTAssertEqual(info.state, "dead")
+    }
+
+    /// StatusInfo.json carries the structured fields SessionStatus promises.
+    func testStatusInfoJsonCarriesTheFields() throws {
+        var info = SessionBroker.StatusInfo()
+        info.engineAlive = true
+        info.turnRunning = true
+        info.turn = 3
+        info.turnSeconds = 42
+        info.lastEnd = "complete"
+        info.model = "local/qwen3-4b"
+        info.mode = "auto"
+        info.modelCalls = 7
+        info.pendingApprovals = 1
+        info.pendingSummary = "Bash cargo test"
+        info.queuedMessages = 1
+        info.cwd = "/tmp/proj"
+        info.branch = "frog/fix-the-parser"
+        info.ahead = 2
+        info.dirty = 5
+        guard case .object(let o) = info.json else { return XCTFail() }
+        XCTAssertEqual(o["state"]?.string, "running")
+        XCTAssertEqual(o["engine_alive"]?.bool, true)
+        XCTAssertEqual(o["turn"]?.number, 3)
+        XCTAssertEqual(o["turn_seconds"]?.number, 42)
+        XCTAssertEqual(o["model"]?.string, "local/qwen3-4b")
+        XCTAssertEqual(o["mode"]?.string, "auto")
+        XCTAssertEqual(o["model_calls"]?.number, 7)
+        XCTAssertEqual(o["pending_approvals"]?.number, 1)
+        XCTAssertEqual(o["pending"]?.string, "Bash cargo test")
+        XCTAssertEqual(o["queued_messages"]?.number, 1)
+        XCTAssertEqual(o["branch"]?.string, "frog/fix-the-parser")
+        XCTAssertEqual(o["ahead"]?.number, 2)
+        XCTAssertEqual(o["dirty"]?.number, 5)
+        // Waiting outranks running.
+        info.waiting = true
+        XCTAssertEqual(info.state, "waiting")
+    }
+
     func testWorktreeInATempRepo() throws {
         let repo = FileManager.default.temporaryDirectory.appending(path: "frog-broker-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)

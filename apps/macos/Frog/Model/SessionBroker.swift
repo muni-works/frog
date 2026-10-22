@@ -22,6 +22,62 @@ final class SessionBroker {
         var modified: Int64 = 0
     }
 
+    /// Everything `SessionStatus` reports about one session, in one structured answer.
+    /// The state is the single truth the sidebar and picker use too: idle only when no turn
+    /// is running AND nothing is queued (bug 2d: replayed history used to read as idle).
+    struct StatusInfo: Equatable {
+        var engineAlive = false
+        /// A turn is open right now (turn number in `turn`).
+        var turnRunning = false
+        var turn: Int?
+        var turnSeconds: Int?
+        /// Waiting on the user: a permission, a question, an elicitation.
+        var waiting = false
+        var lastEnd: String?
+        var model: String?
+        var mode: String?
+        /// Model calls across the session's turns so far.
+        var modelCalls = 0
+        var pendingApprovals = 0
+        var pendingSummary: String?
+        /// Inbound session messages sitting in the engine's inbox, waiting for the boundary.
+        var queuedMessages = 0
+        var cwd: String?
+        var branch: String?
+        var ahead: Int?
+        var dirty: Int?
+
+        /// "running", "waiting", "idle", or "dead" (no live engine). A queued message keeps
+        /// a session running, whatever the last live report said.
+        var state: String {
+            if !engineAlive { return "dead" }
+            if waiting { return "waiting" }
+            if turnRunning || queuedMessages > 0 { return "running" }
+            return "idle"
+        }
+
+        var json: JSONValue {
+            var o: [String: JSONValue] = [
+                "engine_alive": .bool(engineAlive),
+                "state": .string(state),
+                "model_calls": .number(Double(modelCalls)),
+                "pending_approvals": .number(Double(pendingApprovals)),
+                "queued_messages": .number(Double(queuedMessages)),
+            ]
+            if let t = turn { o["turn"] = .number(Double(t)) }
+            if let s = turnSeconds { o["turn_seconds"] = .number(Double(s)) }
+            if let e = lastEnd { o["last_ended"] = .string(e) }
+            if let m = model { o["model"] = .string(m) }
+            if let m = mode { o["mode"] = .string(m) }
+            if let s = pendingSummary { o["pending"] = .string(s) }
+            if let c = cwd { o["cwd"] = .string(c) }
+            if let b = branch { o["branch"] = .string(b) }
+            if let a = ahead { o["ahead"] = .number(Double(a)) }
+            if let d = dirty { o["dirty"] = .number(Double(d)) }
+            return .object(o)
+        }
+    }
+
     /// What `StartSession` asked for.
     struct StartRequest: Equatable {
         var title: String
@@ -66,6 +122,10 @@ final class SessionBroker {
     /// What session `id` said and how its last turn ended, for the report a watcher gets when
     /// it goes idle (the hand-back from a session it started or messaged).
     var lastReport: (_ id: String) -> String? = { _ in nil }
+    /// Inbound session messages waiting in a target engine's inbox, by session id. Counted
+    /// here because the engine holds them; bumped on send, cleared when the target runs
+    /// them (its turn starts) or is restarted dead.
+    private var inbound: [String: Int] = [:]
 
     /// Sends since the user last did something, per sending session.
     private var sent: [String: [Date]] = [:]
@@ -186,9 +246,64 @@ final class SessionBroker {
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
+        case "SessionStatus":
+            let key = input["id"]?.string ?? ""
+            let target: Result<Entry, BrokerError>
+            if key.isEmpty || key == sender {
+                // This session: answer from what it knows about itself.
+                c.replySession(r.id, result: selfStatus(of: c).map(\.json) ?? .null)
+                return
+            }
+            target = resolve(key)
+            switch target {
+            case .success(let e):
+                Task { [weak c] in
+                    guard var info = await Self.readStatus(e.id, broker: self) else {
+                        c?.replySession(r.id, error: "Couldn't read \(e.name) (\(e.id)).")
+                        return
+                    }
+                    info.queuedMessages = self.inbound[e.id] ?? 0
+                    c?.replySession(r.id, result: info.json)
+                }
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
         default:
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
         }
+    }
+
+    /// This session's own status (SessionStatus on itself): the conversation knows.
+    private func selfStatus(of c: Conversation) -> StatusInfo? {
+        var info = StatusInfo()
+        info.engineAlive = c.isLive
+        info.turnRunning = c.busy || c.turns.last.map { !$0.finished } == true
+        info.turn = c.turns.last?.number.map(Int.init)
+        info.turnSeconds = c.turns.last?.startedAt.map { Int(Date().timeIntervalSince($0)) }
+        info.waiting = c.permission != nil || c.elicitation != nil || c.question != nil
+        info.lastEnd = c.turns.last?.end.map { String(describing: $0) }
+        info.model = c.status?.model
+        info.mode = c.status?.mode.rawValue
+        info.modelCalls = c.turns.reduce(0) { $0 + Int($1.usage?.modelCalls ?? 0) }
+        info.pendingApprovals = c.permission != nil ? 1 : 0
+        info.pendingSummary = c.permission.map { "\($0.name) \($0.arg)" }
+        info.queuedMessages = c.queue.count
+        info.cwd = c.status?.cwd ?? c.folder.path
+        return info
+    }
+
+    /// The status of session `id`, as one structured answer — the same computation
+    /// SessionStatus uses, for the sidebar and picker.
+    func status(of id: String) async -> StatusInfo? {
+        guard var info = await Self.readStatus(id, broker: self) else { return nil }
+        info.queuedMessages = inbound[id] ?? 0
+        return info
+    }
+
+    /// Messages queued in session `id`'s engine inbox, waiting for its next turn boundary.
+    /// The sidebar's dot uses this: queued counts as running, not idle (bug 2d).
+    func pendingInbound(_ id: String) -> Int {
+        inbound[id] ?? 0
     }
 
     /// Report session `child`'s next turn back to `parent` when it goes idle (the hand-back).
@@ -234,6 +349,10 @@ final class SessionBroker {
         guard reach(target.id, sender, name, message) else {
             return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
         }
+        // The message sits in the target's inbox until its next turn boundary: a queued
+        // message keeps it "running" in the status truth (bug 2d).
+        inbound[target.id, default: 0] += 1
+        Library.shared.reportQueued(target.id)
         if notifyWhenIdle {
             watches[target.id, default: []].append(Watch(sender: sender, armed: false))
         }
@@ -264,6 +383,8 @@ final class SessionBroker {
     /// A session's live state changed (from `Library.report`).
     func observe(_ id: String, running: Bool, waiting: Bool) {
         if running {
+            // The engine is working a turn: anything we queued into its inbox has been taken.
+            inbound[id] = 0
             if var list = watches[id] {
                 let input = currentInput(id)
                 for i in list.indices where input == nil || list[i].anyTurn || input!.hasPrefix("<session-message from=\"\(list[i].sender)\"") {
@@ -351,6 +472,8 @@ final class SessionBroker {
         let unfinished = background[id].map { c in c.turns.last.map { !$0.finished } ?? false } ?? false
         let c = Conversation(folder: folder, arguments: ["-r", id] + Workspace.engineFlags(chat: info.isChat, mode: false), model: nil)
         background[id] = c
+        // A fresh engine has an empty inbox; its session's queued count starts over.
+        inbound[id] = 0
         if unfinished, continueOpen { c.continueInterrupted() }
         return c
     }
@@ -580,6 +703,83 @@ extension SessionBroker {
     /// from lists and sidebars; never deletes the log.
     func archive(_ id: String, _ on: Bool) {
         archiver(id, on)
+    }
+
+    /// The full structured status of session `id` (SessionStatus). Reads the live conversation
+    /// when there is one, else the session log's tail — the same fields either way, so a dead
+    /// engine's session still answers (state "dead", its last turn as the log left it).
+    private static func readStatus(_ id: String, broker: SessionBroker) async -> StatusInfo? {
+        var info = StatusInfo()
+        let lib = Library.shared
+        let conv = lib.conversation(id) ?? broker.background[id]
+        let entry = lib.sessions.first { $0.id == id }
+        guard entry != nil || conv != nil else { return nil }
+        info.cwd = entry?.cwd ?? conv?.folder.path
+        if let c = conv, c.isLive {
+            // Live: everything comes from the folded events.
+            info.engineAlive = true
+            info.turnRunning = c.busy || c.turns.last.map { !$0.finished } == true
+            info.turn = c.turns.last?.number.map(Int.init)
+            info.turnSeconds = c.turns.last?.startedAt.map { Int(Date().timeIntervalSince($0)) }
+            info.waiting = c.permission != nil || c.elicitation != nil || c.question != nil
+            info.lastEnd = c.turns.last?.end.map { String(describing: $0) }
+            info.model = c.status?.model ?? entry?.model
+            info.mode = c.status?.mode.rawValue
+            info.modelCalls = c.turns.reduce(0) { $0 + Int($1.usage?.modelCalls ?? 0) }
+            if let p = c.permission {
+                info.pendingApprovals = 1
+                info.pendingSummary = "\(p.name) \(p.arg)"
+            }
+        } else {
+            // Dead or closed: the log's tail answers what it can.
+            info.engineAlive = false
+            if let c = conv { info.lastEnd = c.turns.last?.end.map { String(describing: $0) } }
+            info.model = entry?.model
+            let tail = await Task.detached { Self.logTail(id) }.value
+            if let (model, mode, modelCalls, lastEnd) = tail {
+                info.model = info.model ?? model
+                info.mode = mode
+                info.modelCalls = modelCalls
+                info.lastEnd = info.lastEnd ?? lastEnd
+            }
+        }
+        // Worktrees report their branch, commits ahead of origin/main, and dirty files.
+        if let cwd = info.cwd.map({ URL(fileURLWithPath: $0) }) {
+            let (branch, ahead, dirty) = await Git.quick(cwd)
+            info.branch = branch
+            info.ahead = ahead
+            info.dirty = dirty
+        }
+        return info
+    }
+
+    /// The model, mode, model-call count and last turn end from a session's log, without
+    /// folding the whole history: the last `model_changed`/`mode_changed`, the summed
+    /// `turn_ended` usage, and the last `turn_ended` reason. Nil when the log can't be read.
+    nonisolated private static func logTail(_ id: String) -> (String?, String?, Int, String?)? {
+        let file = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        var model: String?
+        var mode: String?
+        var calls = 0
+        var lastEnd: String?
+        for line in text.split(separator: "\n") {
+            guard let v = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                  let env = v["env"] as? [String: Any] else { continue }
+            switch env["event"] as? String {
+            case "model_changed": model = env["model"] as? String
+            case "mode_changed": mode = env["mode"] as? String
+            case "turn_ended":
+                if let usage = env["usage"] as? [String: Any] {
+                    calls += (usage["model_calls"] as? Int) ?? 0
+                }
+                if let reason = env["reason"] as? [String: Any], let type = reason["type"] as? String {
+                    lastEnd = type
+                }
+            default: break
+            }
+        }
+        return (model, mode, calls, lastEnd)
     }
 
     /// `StartSession`: a new conversation (in a worktree if asked), titled, with its first
