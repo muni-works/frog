@@ -11,12 +11,15 @@ log=~/Developer/chief/logs/$(date +%Y%m%d-%H%M%S)-$repo-$name.log
 [[ -d $root/.git ]] || { echo "no repo at $root" >&2; exit 1; }
 git -C $root fetch -q origin 2>/dev/null || { u=$(git -C $root remote get-url origin | sed -E "s#git@github.com:#https://github.com/#"); git -C $root fetch -q $u "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null || echo "warn: fetch failed, using local origin/main" >&2; }
 if [[ ! -d $wt ]]; then
-  git -C $root worktree add -q -b $branch $wt origin/main 2>/dev/null \
+  git -C $root worktree add -q --no-track -b $branch $wt origin/main 2>/dev/null \
     || git -C $root worktree add -q $wt $branch
+  # upstream = origin/<branch> (never origin/main, so a bare `git push` can't hit main)
+  git -C $wt config branch.$branch.remote origin
+  git -C $wt config branch.$branch.merge refs/heads/$branch
 fi
 
 cd $wt
-rules="RULES: work ONLY inside $wt (a git worktree). Never cd into ~/Developer/$repo or any other checkout; write with relative paths here; reading elsewhere is fine. Keep command output small (| head -80, jq/grep filters). Commit on this branch when a step is done.
+rules="RULES: work ONLY inside $wt (a git worktree). Never cd into ~/Developer/$repo or any other checkout; write with ABSOLUTE paths inside $wt (relative writes can land in the wrong checkout); reading elsewhere is fine. Never push. Keep command output small (| head -80, jq/grep filters). Commit on this branch when a step is done.
 
 "
 CARGO_TARGET_DIR=~/Developer/.shared-target/$repo nohup ~/Developer/chief/bin/frog-worker -m $model --accept-edits -p "$task
