@@ -268,6 +268,18 @@ final class SessionBroker {
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
+        case "ReadSession":
+            switch resolve(input["id"]?.string ?? "") {
+            case .success(let e):
+                let n = input["last_n"]?.int ?? 20
+                let kinds = (input["kinds"]?.array ?? []).compactMap(\.string)
+                Task { [weak c] in
+                    let text = await Self.readTranscript(e.id, lastN: max(1, min(n, 200)), kinds: kinds, broker: self)
+                    c?.replySession(r.id, result: .string(text))
+                }
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
         default:
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
         }
@@ -305,6 +317,109 @@ final class SessionBroker {
     func pendingInbound(_ id: String) -> Int {
         inbound[id] ?? 0
     }
+
+    /// `ReadSession`: the last items of a session's transcript as text — assistant text, user
+    /// inputs, tool calls with args, results capped at 400 chars. Live conversations read
+    /// from their folded turns; dead ones from the log's recorded items.
+    private static func readTranscript(_ id: String, lastN n: Int, kinds: [String], broker: SessionBroker) async -> String {
+        let want = Set(kinds)
+        // Live: the conversation holds every item already folded. Everything main-actor
+        // happens in one hop; only the log-file read runs detached.
+        let live: String? = await MainActor.run(body: {
+            func keeps(_ kind: String) -> Bool { want.isEmpty || want.contains(kind) }
+            func trim(_ text: String) -> String {
+                let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                return t.count > 400 ? String(t.prefix(400)) + "…" : t
+            }
+            guard let c = broker.liveConversation(id), c.isLive else { return nil }
+            var lines: [String] = []
+            for turn in c.turns {
+                if keeps("message"), !turn.input.isEmpty { lines.append("USER: \(trim(turn.input))") }
+                for item in turn.items {
+                    switch item.kind {
+                    case .message where keeps("message"):
+                        lines.append("ASSISTANT: \(trim(item.text))")
+                    case .reasoning where keeps("reasoning"):
+                        lines.append("REASONING: \(trim(item.text))")
+                    case .notice where keeps("notice"):
+                        lines.append("NOTICE: \(trim(item.text))")
+                    case .tool(let name, _) where keeps("tool"):
+                        var line = "TOOL \(name)"
+                        if let r = item.result {
+                            let body = r.output.isEmpty ? r.display ?? "" : r.output
+                            line += " -> \(r.outcome == .ok ? "ok" : String(describing: r.outcome)): \(trim(body))"
+                        }
+                        lines.append(line)
+                    default:
+                        break
+                    }
+                }
+            }
+            return lines.isEmpty ? "" : lines.suffix(n).joined(separator: "\n")
+        })
+        if let live {
+            return live.isEmpty ? "(nothing recorded yet)" : live
+        }
+        // Dead or closed: the log's durable items.
+        if let text = await Task.detached { Self.logItems(id, lastN: n, kinds: want) }.value {
+            return text
+        }
+        return "(couldn't read session \(id))"
+    }
+
+    /// The last `n` transcript lines from a session's log file: turn inputs, messages,
+    /// reasoning and tool calls with their outputs. Nil when the log can't be read.
+    nonisolated private static func logItems(_ id: String, lastN n: Int, kinds: Set<String>) -> String? {
+        let file = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        func keeps(_ kind: String) -> Bool { kinds.isEmpty || kinds.contains(kind) }
+        func trim(_ text: String) -> String {
+            let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.count > 400 ? String(t.prefix(400)) + "…" : t
+        }
+        var lines: [String] = []
+        for line in text.split(separator: "\n") {
+            guard let v = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                  let env = v["env"] as? [String: Any] else { continue }
+            switch env["event"] as? String {
+            case "turn_started" where keeps("message"):
+                if let input = env["input"] as? String, !input.isEmpty { lines.append("USER: \(trim(input))") }
+            case "item_completed":
+                guard let item = env["item"] as? [String: Any], let type = item["type"] as? String else { continue }
+                switch type {
+                case "message" where keeps("message"):
+                    if let t = item["text"] as? String { lines.append("ASSISTANT: \(trim(t))") }
+                case "reasoning" where keeps("reasoning"):
+                    if let t = item["text"] as? String { lines.append("REASONING: \(trim(t))") }
+                case "tool_call" where keeps("tool"):
+                    let name = item["name"] as? String ?? "?"
+                    let outcome = item["outcome"] as? String ?? "ok"
+                    let output = (item["output"] as? String) ?? (item["display"] as? String) ?? ""
+                    lines.append("TOOL \(name) -> \(outcome): \(trim(output))")
+                default:
+                    break
+                }
+            default:
+                break
+            }
+        }
+        let kept = lines.suffix(n)
+        return kept.isEmpty ? "(nothing recorded yet)" : kept.joined(separator: "\n")
+    }
+
+    /// The conversation for session `id` when it's live (on screen or background).
+    private func liveConversation(_ id: String) -> Conversation? {
+        if let c = Library.shared.conversation(id), c.isLive { return c }
+        if let c = background[id], c.isLive { return c }
+        return nil
+    }
+
+    #if DEBUG
+    /// Tests reach the transcript reader without a live engine.
+    static func testTranscript(_ id: String, lastN n: Int, kinds: [String], broker: SessionBroker) async -> String {
+        await readTranscript(id, lastN: n, kinds: kinds, broker: broker)
+    }
+    #endif
 
     /// Report session `child`'s next turn back to `parent` when it goes idle (the hand-back).
     func watchStarted(_ child: String, reportTo parent: String) {

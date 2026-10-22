@@ -352,7 +352,36 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(info.state, "dead")
     }
 
-    /// StatusInfo.json carries the structured fields SessionStatus promises.
+    /// ReadSession without a live engine reads the session's log: user inputs, assistant
+    /// text and tool calls, capped at 400 chars, and kinds filters.
+    func testReadSessionReadsTheLogWhenTheEngineIsDead() async throws {
+        let id = "readtest-\(UUID().uuidString.prefix(8))"
+        let path = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        try? FileManager.default.createDirectory(at: FrogPaths.sessions, withIntermediateDirectories: true)
+        var jsonl = """
+        {"type":"event","env":{"seq":3,"session":"\(id)","created":0,"event":"turn_started","turn":1,"input":"fix the bug"}}
+        {"type":"event","env":{"seq":4,"session":"\(id)","created":0,"event":"item_completed","id":"i1","item":{"type":"message","text":"done: fixed it"}}}
+        {"type":"event","env":{"seq":5,"session":"\(id)","created":0,"event":"item_completed","id":"i2","item":{"type":"tool_call","name":"Bash","arg":"","input":{},"outcome":"ok","output":"\(String(repeating: "x", count: 500))","display":null}}}
+        """
+        try jsonl.write(to: path, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: path) }
+
+        let b = broker([])
+        b.directory = { [] }
+        let text = await SessionBroker.testTranscript(id, lastN: 20, kinds: [], broker: b)
+        XCTAssertTrue(text.contains("USER: fix the bug"), text)
+        XCTAssertTrue(text.contains("ASSISTANT: done: fixed it"), text)
+        XCTAssertTrue(text.contains("TOOL Bash -> ok:"), text)
+        // The 500-char result is capped at 400 (plus the 400th char and the ellipsis).
+        let toolLine = text.split(separator: "\n").first { $0.hasPrefix("TOOL Bash") }
+        XCTAssertNotNil(toolLine)
+        XCTAssertLessThanOrEqual(toolLine?.count ?? 999, "TOOL Bash -> ok: ".count + 400 + 1)
+
+        // kinds filter: only tools.
+        let toolsOnly = await SessionBroker.testTranscript(id, lastN: 20, kinds: ["tool"], broker: b)
+        XCTAssertTrue(toolsOnly.contains("TOOL Bash"))
+        XCTAssertFalse(toolsOnly.contains("ASSISTANT:"))
+    }
     func testStatusInfoJsonCarriesTheFields() throws {
         var info = SessionBroker.StatusInfo()
         info.engineAlive = true
