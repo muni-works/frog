@@ -67,7 +67,7 @@ it's at capacity.
 
 **Cline, Roo Code, Kilo Code**: Settings → API Provider: **OpenAI Compatible** → Base URL
 `https://api.frog.toys/v1` → API Key: your `frog_` key → Model ID `qwen3-coder-next`. Turn on
-native tool calling. Context window 32768.
+native tool calling. Context window 131072.
 
 **Continue** (`config.yaml`)
 ```yaml
@@ -116,3 +116,13 @@ Contributions are signed off under the [DCO](CONTRIBUTING.md).
 
 frog is free and meant to be used, forked and built on, including commercially. (That's an
 intent, not a license term.)
+
+## macOS unsigned builds
+
+If you download an unsigned build, you may need to remove the quarantine attribute:
+
+```sh
+xattr -dr com.apple.quarantine Frog.app
+```
+
+## License
