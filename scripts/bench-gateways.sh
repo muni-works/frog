@@ -44,7 +44,7 @@ body = {
 req = urllib.request.Request(
     base.rstrip("/") + "/chat/completions",
     data=json.dumps(body).encode(),
-    headers={"Authorization": __import__("os").environ["BENCH_KEY"],
+    headers={"Authorization": "Bearer " + __import__("os").environ["BENCH_KEY"],
              "Content-Type": "application/json",
              "Accept": "text/event-stream"},
 )
