@@ -372,6 +372,21 @@ impl Tui {
     fn input(&mut self, line: &str) -> bool {
         let line = line.trim();
         if let Some((id, _)) = self.asking.take() {
+            // `n: <note>` (or `no, <note>`): deny and tell the agent why, so it adjusts.
+            let lowered = line.to_lowercase();
+            if let Some(note) = ["n:", "no:", "n,", "no,"]
+                .iter()
+                .find_map(|p| lowered.starts_with(p).then(|| line[p.len()..].trim()))
+                .filter(|n| !n.is_empty())
+            {
+                render::say(&format!("  {}", "denied with a note".red()));
+                self.send(Op::Permission {
+                    id,
+                    decision: Decision::Deny,
+                    note: Some(note.to_string()),
+                });
+                return true;
+            }
             let (decision, said) = match line.to_lowercase().as_str() {
                 "" | "y" | "yes" => (Decision::Allow, "yes".green()),
                 "a" | "always" => (Decision::AllowAlways, "always".green()),
@@ -380,7 +395,7 @@ impl Tui {
                 _ => (Decision::Deny, "denied · sending your message".red()),
             };
             render::say(&format!("  {said}"));
-            self.send(Op::Permission { id, decision });
+            self.send(Op::Permission { id, decision, note: None });
             if matches!(
                 line.to_lowercase().as_str(),
                 "" | "y" | "yes" | "a" | "always" | "n" | "no"
@@ -435,6 +450,7 @@ impl Tui {
             self.send(Op::Permission {
                 id,
                 decision: Decision::Deny,
+                note: None,
             });
             self.send(Op::Interrupt);
             return true;

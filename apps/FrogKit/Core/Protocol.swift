@@ -36,6 +36,8 @@ enum Mode: String, Codable, Sendable, CaseIterable, Identifiable {
 enum Decision: String, Codable, Sendable {
     case allow
     case allowAlways = "allow_always"
+    /// This program on paths under the card's prefix, for the rest of the session.
+    case allowPrefix = "allow_prefix"
     case deny
 }
 
@@ -48,7 +50,8 @@ enum Op: Encodable, Sendable {
     /// Pick up a turn the app's restart interrupted: the engine runs a turn on the repaired
     /// history with `note` (its own default when nil) as the message.
     case `continue`(note: String? = nil)
-    case permission(id: String, decision: Decision)
+    /// `note`, with a deny: the user's words, sent back to the agent.
+    case permission(id: String, decision: Decision, note: String? = nil)
     case setMode(Mode)
     case setModel(String)
     case compact(focus: String?)
@@ -112,10 +115,11 @@ enum Op: Encodable, Sendable {
         case .continue(let note):
             try c.encode("continue", forKey: .op)
             try c.encodeIfPresent(note, forKey: .note)
-        case .permission(let id, let decision):
+        case .permission(let id, let decision, let note):
             try c.encode("permission", forKey: .op)
             try c.encode(id, forKey: .id)
             try c.encode(decision, forKey: .decision)
+            try c.encodeIfPresent(note, forKey: .note)
         case .setMode(let mode):
             try c.encode("set_mode", forKey: .op)
             try c.encode(mode, forKey: .mode)
@@ -513,6 +517,26 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
     var preview: FileDiff?
     /// Why this one asks when similar calls don't (a command leaving the sandbox).
     var reason: String?
+    /// For shell commands: the agent's reason, the trigger, what it touches, and advice.
+    var card: ApprovalCard?
+}
+
+/// What a shell command's permission prompt shows (engine `ApprovalCard`).
+struct ApprovalCard: Codable, Sendable, Equatable {
+    struct Touch: Codable, Sendable, Equatable {
+        var path: String
+        var exists: Bool?
+        var dir: Bool?
+        var bytes: UInt64?
+        var createdHere: Bool?
+    }
+    var agentReason: String?
+    var trigger: String
+    var touches: [Touch]?
+    var risk: String
+    var recommendation: String
+    var prefix: String?
+    var timeoutSecs: UInt64
 }
 
 enum Event: Decodable, Sendable {

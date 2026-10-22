@@ -245,10 +245,13 @@ struct ToolDetail: View {
 struct PermissionCard: View {
     let request: PermissionRequest
     let conversation: Conversation
+    @State private var noting = false
+    @State private var note = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             QuestionBody(request: request)
+            if let card = request.card { ApprovalDetails(card: card) }
             #if os(iOS)
             // For a thumb: two big answers side by side, the standing one as a line below.
             HStack(spacing: 10) {
@@ -267,21 +270,33 @@ struct PermissionCard: View {
                     .frame(maxWidth: .infinity)
             }
             #else
+            if noting {
+                HStack(spacing: 8) {
+                    TextField("Tell the agent why, or what to do instead", text: $note)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { conversation.answer(.deny, note: note) }
+                    Button("Deny") { conversation.answer(.deny, note: note) }
+                        .buttonStyle(.glass)
+                        .disabled(note.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
             HStack(spacing: 8) {
                 Button {
                     conversation.answer(.allow)
                 } label: {
-                    Text("Allow").frame(minWidth: 56)
+                    Text(request.card == nil ? "Allow" : "Allow once").frame(minWidth: 56)
                 }
                 .buttonStyle(.glassProminent)
                 .keyboardShortcut(.return, modifiers: .command)
                 .help("Allow (⌘↩)")
                 // Some requests (moving to a folder) are decided every time.
                 if !request.always.isEmpty {
-                    Button(alwaysLabel) { conversation.answer(.allowAlways) }
+                    Button(alwaysLabel) { conversation.answer(request.card == nil ? .allowAlways : .allowPrefix) }
                         .buttonStyle(.glass)
                 }
                 Spacer()
+                Button("Deny with note…") { noting = true }
+                    .buttonStyle(.borderless)
                 Button("Deny") { conversation.answer(.deny) }
                     .buttonStyle(.glass)
                     .keyboardShortcut(".", modifiers: .command)
@@ -296,5 +311,40 @@ struct PermissionCard: View {
 
     private var alwaysLabel: String {
         request.always.prefix(1).uppercased() + request.always.dropFirst()
+    }
+}
+
+/// A shell command's approval card: why the agent wants it, what made frog ask,
+/// what it touches (size, and whether this session made it), the risk and advice.
+struct ApprovalDetails: View {
+    let card: ApprovalCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let why = card.agentReason {
+                Label(why, systemImage: "text.bubble").lineLimit(3)
+            }
+            Label(card.trigger, systemImage: "exclamationmark.shield")
+            ForEach(card.touches ?? [], id: \.path) { t in
+                HStack(spacing: 6) {
+                    Image(systemName: t.dir == true ? "folder" : "doc")
+                    Text(t.path).lineLimit(1).truncationMode(.middle)
+                    if let b = t.bytes {
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(b), countStyle: .file))
+                            .foregroundStyle(.secondary)
+                    }
+                    if t.createdHere == true {
+                        Text("made by this session").foregroundStyle(.green)
+                    } else if t.exists != true {
+                        Text("doesn't exist").foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Label(card.risk, systemImage: "bolt.trianglebadge.exclamationmark")
+            Label(card.recommendation, systemImage: card.recommendation.hasPrefix("allow") ? "hand.thumbsup" : "hand.thumbsdown")
+                .fontWeight(.medium)
+        }
+        .font(.callout)
+        .foregroundStyle(.primary)
     }
 }
