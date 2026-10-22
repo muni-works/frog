@@ -106,6 +106,31 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(try b.resolve("ops-00").get().id, ops.id)
     }
 
+    /// The spurious idle notice: a target mid-turn (live engine, turn open) or with messages
+    /// queued is NOT idle, whatever a replayed report said. The notice goes out only when no
+    /// turn is running and nothing is queued.
+    func testNoIdleNoticeWhileTheTargetIsMidTurnOrQueued() {
+        let b = broker([chief, eng])
+        var busy = true
+        b.targetBusy = { _ in busy }
+        b.currentInput = { [chief] _ in "<session-message from=\"\(chief.id)\" name=\"Chief\">\ndo it\n</session-message>" }
+        _ = b.send(from: chief.id, name: "Chief", to: eng.id, message: "do it", notifyWhenIdle: true)
+        delivered.removeAll()
+        // The watch armed (the target ran the message), then a running:false report arrives
+        // while the target is still mid-turn: no notice.
+        b.observe(eng.id, running: true, waiting: false)
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertTrue(delivered.isEmpty, "mid-turn is not idle")
+        // Messages queued behind the turn: still not idle.
+        busy = true
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertTrue(delivered.isEmpty, "queued messages mean not idle")
+        // The turn really is over and nothing waits: one notice.
+        busy = false
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertEqual(delivered.count, 1)
+    }
+
     func testUnknownAmbiguousAndSelfAreErrors() {
         var twin = ops
         twin.id = "ops-9999"

@@ -54,6 +54,9 @@ final class SessionBroker {
     /// The input of the turn session `id` is running, if known: an idle watch arms only once
     /// the target runs the sender's message, not the turn it was already busy with.
     var currentInput: (_ id: String) -> String? = { _ in nil }
+    /// Whether session `id` is really mid-turn or has messages waiting (replayed history
+    /// reports otherwise, and a notice about a session that's working would be false).
+    var targetBusy: (_ id: String) -> Bool = { _ in false }
     /// What session `id` said and how its last turn ended, for the report a watcher gets when
     /// it goes idle (the hand-back from a session it started or messaged).
     var lastReport: (_ id: String) -> String? = { _ in nil }
@@ -203,7 +206,9 @@ final class SessionBroker {
             if background[id] != nil { armedBackground.insert(id) }
             return
         }
-        guard !waiting else { return }
+        // Idle only when nothing is running and nothing is queued: a live engine mid-turn
+        // (or one with messages waiting) gets no notice, whatever the last report said.
+        guard !waiting, !targetBusy(id) else { return }
         // An engine that died mid-turn (its process gone, no `turn_ended`, a stale `.live`):
         // its conversation isn't live and its last turn is still open. Restart the engine and
         // have it pick the turn back up, rather than leaving the session stuck open forever.
@@ -381,6 +386,10 @@ extension SessionBroker {
                 warning: true)
         }
         currentInput = { id in Library.shared.conversation(id)?.turns.last?.input }
+        targetBusy = { id in
+            guard let c = Library.shared.conversation(id) ?? self.background[id] else { return false }
+            return c.busy || c.turns.last.map { !$0.finished } == true || !c.queue.isEmpty
+        }
         lastReport = { id in
             guard let t = (Library.shared.conversation(id) ?? self.background[id])?.turns.last else { return nil }
             var text = t.items.filter { $0.kind == .message }.map(\.text).joined(separator: "\n\n")
