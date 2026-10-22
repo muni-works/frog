@@ -17,6 +17,15 @@ use crate::session;
 /// How often to look for new records in the log.
 const POLL: Duration = Duration::from_millis(300);
 
+/// Whether an event opens (true) or closes (false) a turn.
+fn turn_state(e: &Event) -> Option<bool> {
+    match e {
+        Event::TurnStarted { .. } => Some(true),
+        Event::TurnEnded { .. } => Some(false),
+        _ => None,
+    }
+}
+
 pub fn follow(store: PathBuf, id: String) -> Handle {
     let (op_tx, mut op_rx) = mpsc::unbounded_channel::<Op>();
     let (ev_tx, ev_rx) = mpsc::unbounded_channel::<Envelope>();
@@ -24,6 +33,9 @@ pub fn follow(store: PathBuf, id: String) -> Handle {
         let mut last = 0u64;
         let mut subscribed = false;
         let mut released = false;
+        // A turn the owner started and hasn't ended: show it as working.
+        let mut open = false;
+        let mut beat = 0u32;
         let notice = |seq: u64, level: Level, message: &str| Envelope {
             seq,
             session: id.clone(),
@@ -38,6 +50,7 @@ pub fn follow(store: PathBuf, id: String) -> Handle {
                     Some(Op::Subscribe { after }) => {
                         for env in session::events_after(&store, &id, after).unwrap_or_default() {
                             last = last.max(env.seq);
+                            open = turn_state(&env.event).unwrap_or(open);
                             if ev_tx.send(env).is_err() { return; }
                         }
                         let _ = ev_tx.send(Envelope {
@@ -63,7 +76,18 @@ pub fn follow(store: PathBuf, id: String) -> Handle {
                 _ = tick.tick(), if subscribed && !released => {
                     for env in session::events_after(&store, &id, last).unwrap_or_default() {
                         last = last.max(env.seq);
+                        open = turn_state(&env.event).unwrap_or(open);
                         if ev_tx.send(env).is_err() { return; }
+                    }
+                    // The log keeps finished steps, not streaming text: say it's working between them.
+                    beat = beat.wrapping_add(1);
+                    if open && beat % 10 == 1 {
+                        let _ = ev_tx.send(Envelope {
+                            seq: last,
+                            session: id.clone(),
+                            created: crate::engine::now_ms(),
+                            event: Event::Progress { label: "working (in a frog worker)".into(), completed: None, total: None },
+                        });
                     }
                     if !session::Log::in_use(&store, &id) {
                         released = true;
