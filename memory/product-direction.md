@@ -41,3 +41,12 @@ Decisions (Cam, 2026-10-22): Beat 1 signup = Better Auth + Neon + Stripe built T
 Worker/chief model (Cam, 2026-10-22): GLM-5.3 via Vercel AI Gateway (vercel/zai/glm-5.3; eval 7.1 vs Opus 7.3, Coder-Next 2.6 with 3 safety fails) for chief + workers until bull (our GLM port) lands. Coder-Next only for cheap/simple tasks.
 
 Operating rule (Cam, 2026-10-22): use frog for EVERYTHING going forward. The Claude chief-of-staff session only steps in when something is impossible without it. Default workers: GLM-5.3 via gateway, spawned through bin/spawn-worker.sh or StartSession in Frog.app.
+
+## 2026-10-22 model + pricing strategy (discussed, not locked)
+- People want smart and fast; measure wall time per finished task, not tok/s.
+- Thesis: tang makes every tier fast. Own dart first (cheap port, proves speed), then spec-decode infra (dart as drafter), then one big model; buy glass/bull wholesale until then.
+- Candidate bases: dart = Recursive Flint (40B/2.5B active, Apache, vendor SWE-V 74.2, unverified) or Qwen3.8-27B; glass = DeepSeek V4.1 Flash 1017 (552B, 8B in/16B out active, MIT); bull = MiMo-V2.6-Pro (1.02T/42B, MIT, top open AA index ~46). GLM-5.3 weights not released; Kimi K3 license has conditions; Qwen3.8-Max license gates coding assistants >$50M.
+- No open model reaches Opus/Fable (AA ~46 vs Opus 5.5 ~58): "opus feel" must come from harness (plan, verify, know when to ask) + best base. Cam agrees.
+- Other providers (Claude/OpenAI) stay supported in frog as-is; no BYOK tier complexity.
+- Pricing goal is profit; buyers are devs + hobbyists (frog users). Proposal under modeling: dart & glass $0.60/$0.06/$1.50, bull $2.00/$0.20/$6.00; subscription credits weighted dart 1x / glass 2x / bull 6x; auto keeps most steps on dart. Worker zest/pricing-model is modeling margins first.
+- Cloudflare Workers AI hosts GLM-5.3 ($1.40/$0.26 cached/$4.40) and DeepSeek V4.1 Flash ($0.30/$0.006 cached/$1.20); cached input makes agent loops much cheaper than Vercel. Provider + benchmark in progress (frog/cf-gateway-eval).

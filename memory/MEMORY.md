@@ -11,3 +11,6 @@
 
 - Forked 2026-10-22 from the Claude chief-of-staff memory. This copy is canonical for the frog chief; it evolves independently.
 - [open items](open-items.md) — threads handed over from Claude CoS 2026-10-22
+- [frog chief](frog-chief.md) — CoS moving into frog at ~/Developer/chief; memory forked there 2026-10-22
+- [frog first](frog-first.md) — all work through frog workers/chief; Claude only when impossible
+- [worker rules](worker-rules.md) — queue lanes, shared target, fork-resume, output budget
