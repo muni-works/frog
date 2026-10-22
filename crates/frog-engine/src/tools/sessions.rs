@@ -56,9 +56,11 @@ turns; don't wait in a loop."
             name: START.into(),
             description: "Start a new long-running session (shown in the sidebar under this \
 one) with a first prompt. Optionally in another folder (cwd), with another model, or in its own \
-git worktree on a new branch (worktree: true) so its edits don't collide with yours. When it goes \
+git worktree on a new branch (worktree: true) based on the repo's remote default branch \
+(origin/HEAD, e.g. origin/main) so its edits don't collide with yours. When it goes \
 idle you get a message from \"system\" with its last reply (its report), unless report: false. \
-Returns its id and name for SendMessage."
+Returns its id and name for SendMessage, and for a worktree the branch it's on and the base \
+ref it started from."
                 .into(),
             schema: json!({
                 "type": "object",
@@ -66,8 +68,8 @@ Returns its id and name for SendMessage."
                     "title": { "type": "string" },
                     "prompt": { "type": "string" },
                     "cwd": { "type": "string" },
-                    "model": { "type": "string" },
-                    "worktree": { "type": "boolean" },
+                    "model": { "type": "string", "description": "the model the new session runs on (e.g. local/qwen3-4b, cloud/qwen3-coder-next); default: this session's model" },
+                    "worktree": { "type": "boolean", "description": "its own git worktree on a new branch, based on the remote default branch (default false)" },
                     "report": { "type": "boolean", "description": "send its last reply back here when it goes idle (default true)" }
                 },
                 "required": ["title", "prompt"]

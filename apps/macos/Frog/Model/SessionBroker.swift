@@ -36,6 +36,8 @@ final class SessionBroker {
         var name: String
         var cwd: String
         var branch: String?
+        /// The ref the worktree started from (`origin/main`, say), for the tool result.
+        var base: String?
     }
 
     /// Messages a session may send (or sessions it may start) without the user doing anything.
@@ -114,6 +116,7 @@ final class SessionBroker {
                     if input["report"]?.bool ?? true { self.watchStarted(s.id, reportTo: sender) }
                     var out: [String: JSONValue] = ["id": .string(s.id), "name": .string(s.name), "cwd": .string(s.cwd)]
                     if let b = s.branch { out["branch"] = .string(b) }
+                    if let b = s.base { out["base"] = .string(b) }
                     c?.replySession(r.id, result: .object(out))
                 } catch {
                     c?.replySession(r.id, error: error.localizedDescription)
@@ -300,12 +303,37 @@ final class SessionBroker {
 
     // MARK: Worktrees
 
+    /// The branch a new session's worktree starts from: the repo's remote default
+    /// (`origin/HEAD`, e.g. origin/main), so a session forked from a feature-branch checkout
+    /// doesn't inherit its half-finished work. Falls back to the current branch only when
+    /// there's no remote, and says so.
+    nonisolated static func worktreeBase(in repo: URL) throws -> (ref: String, fallback: Bool) {
+        let remoteHead = try? git(["rev-parse", "--symbolic-full-name", "origin/HEAD"], in: repo)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let remoteHead, !remoteHead.isEmpty, remoteHead != "origin/HEAD" {
+            return (remoteHead, false)
+        }
+        // `origin/HEAD` unset or missing: name the remote's main-ish branch directly.
+        let remoteBranches = ((try? git(["branch", "--remote", "--format=%(refname:short)"], in: repo)) ?? "")
+            .split(separator: "\n").map(String.init)
+        for candidate in remoteBranches where candidate == "origin/main" || candidate == "origin/master" {
+            return ("refs/remotes/\(candidate)", false)
+        }
+        guard remoteBranches.isEmpty else {
+            throw BrokerError("no origin/main or origin/master to base the worktree on; branch manually and use cwd")
+        }
+        let current = try git(["branch", "--show-current"], in: repo).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (current.isEmpty ? "HEAD" : current, true)
+    }
+
     /// A git worktree for a new session: `<repo>/.frog/worktrees/<name>` on a new branch
-    /// `frog/<name>` from HEAD (a numbered name if taken). Returns its folder and branch.
-    nonisolated static func makeWorktree(from folder: URL, name: String) throws -> (URL, String) {
+    /// `frog/<name>` from the remote default branch (a numbered name if taken). Returns its
+    /// folder, branch, and the base ref it started from.
+    nonisolated static func makeWorktree(from folder: URL, name: String) throws -> (URL, String, String) {
         let top = try git(["rev-parse", "--show-toplevel"], in: folder).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !top.isEmpty else { throw BrokerError("\(folder.path) isn't in a git repository") }
         let repo = URL(fileURLWithPath: top)
+        let (baseRef, fallback) = try worktreeBase(in: repo)
         let base = slug(name)
         let branches = Set(try git(["branch", "--format=%(refname:short)"], in: repo).split(separator: "\n").map(String.init))
         var n = 1
@@ -317,7 +345,11 @@ final class SessionBroker {
         }
         let dir = root.appending(path: pick)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        _ = try git(["worktree", "add", "--quiet", "-b", "frog/\(pick)", dir.path], in: repo)
+        _ = try git(["worktree", "add", "--quiet", "-b", "frog/\(pick)", dir.path, baseRef], in: repo)
+        if fallback {
+            // No remote: the best base available is this checkout's branch. Say so in the result.
+            _ = baseRef
+        }
         // Keep the worktrees out of the main checkout's `git status`.
         if let common = try? git(["rev-parse", "--git-common-dir"], in: repo).trimmingCharacters(in: .whitespacesAndNewlines) {
             let gitDir = common.hasPrefix("/") ? URL(fileURLWithPath: common) : repo.appending(path: common)
@@ -329,7 +361,7 @@ final class SessionBroker {
                     .write(to: exclude, atomically: true, encoding: .utf8)
             }
         }
-        return (dir, "frog/\(pick)")
+        return (dir, "frog/\(pick)", baseRef)
     }
 
     nonisolated static func slug(_ s: String) -> String {
@@ -418,11 +450,13 @@ extension SessionBroker {
             throw BrokerError("No folder at \(folder.path)")
         }
         var branch: String?
+        var base: String?
         if req.worktree {
             let from = folder
-            let (dir, b) = try await Task.detached { try Self.makeWorktree(from: from, name: title) }.value
+            let (dir, b, basedOn) = try await Task.detached { try Self.makeWorktree(from: from, name: title) }.value
             folder = dir
             branch = b
+            base = basedOn
         }
         let model = req.model ?? parent?.status?.model
         let c = Conversation(folder: folder, arguments: Workspace.engineFlags(chat: false), model: model)
@@ -440,6 +474,8 @@ extension SessionBroker {
         track(c, as: id)
         if let p = parent?.sessionID { Library.shared.setParent(of: id, to: p) }
         Library.shared.refresh()
-        return Started(id: id, name: title, cwd: folder.path, branch: branch)
+        var started = Started(id: id, name: title, cwd: folder.path, branch: branch)
+        started.base = base
+        return started
     }
 }

@@ -241,21 +241,58 @@ final class SessionBrokerTests: XCTestCase {
         let repo = FileManager.default.temporaryDirectory.appending(path: "frog-broker-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: repo) }
-        try SessionBroker.git(["init", "-q"], in: repo)
+        try SessionBroker.git(["init", "-q", "-b", "main"], in: repo)
         try "hi\n".write(to: repo.appending(path: "a.txt"), atomically: true, encoding: .utf8)
         try SessionBroker.git(["add", "."], in: repo)
         try SessionBroker.git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], in: repo)
 
-        let (dir, branch) = try SessionBroker.makeWorktree(from: repo, name: "Fix the Parser!")
+        // No remote: the worktree bases on the current branch and says so.
+        let (dir, branch, base) = try SessionBroker.makeWorktree(from: repo, name: "Fix the Parser!")
         XCTAssertEqual(branch, "frog/fix-the-parser")
+        XCTAssertEqual(base, "main", "no remote: the current branch, named in the result")
         XCTAssertEqual(dir.resolvingSymlinksInPath().path, repo.appending(path: ".frog/worktrees/fix-the-parser").resolvingSymlinksInPath().path)
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appending(path: "a.txt").path))
         XCTAssertEqual(try SessionBroker.git(["branch", "--show-current"], in: dir).trimmingCharacters(in: .whitespacesAndNewlines), branch)
         // The main checkout doesn't see it as untracked.
         XCTAssertEqual(try SessionBroker.git(["status", "--porcelain"], in: repo), "")
         // The same name again gets its own.
-        let (_, second) = try SessionBroker.makeWorktree(from: repo, name: "Fix the Parser!")
+        let (_, second, _) = try SessionBroker.makeWorktree(from: repo, name: "Fix the Parser!")
         XCTAssertEqual(second, "frog/fix-the-parser-2")
+    }
+
+    /// A worktree bases on the repo's remote default branch (origin/HEAD → origin/main), not
+    /// the checkout's current branch, so a session forked from a feature branch doesn't
+    /// inherit its half-finished work.
+    func testWorktreeBasesOnTheRemoteDefaultBranch() throws {
+        let repo = FileManager.default.temporaryDirectory.appending(path: "frog-broker-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try SessionBroker.git(["init", "-q", "-b", "main"], in: repo)
+        try "main\n".write(to: repo.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+        try SessionBroker.git(["add", "."], in: repo)
+        try SessionBroker.git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "main"], in: repo)
+        // A feature branch with work the main branch doesn't have.
+        try SessionBroker.git(["checkout", "-q", "-b", "feature"], in: repo)
+        try "feature-only\n".write(to: repo.appending(path: "feature.txt"), atomically: true, encoding: .utf8)
+        try SessionBroker.git(["add", "."], in: repo)
+        try SessionBroker.git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "feature"], in: repo)
+        // A remote whose default branch is main (origin/HEAD → origin/main).
+        let origin = FileManager.default.temporaryDirectory.appending(path: "frog-broker-origin-\(UUID().uuidString)")
+        try SessionBroker.git(["clone", "-q", "--bare", repo.path, origin.path], in: repo)
+        // The bare clone's HEAD follows the cloned checkout (feature); point it at main.
+        try SessionBroker.git(["symbolic-ref", "HEAD", "refs/heads/main"], in: origin)
+        try SessionBroker.git(["remote", "add", "origin", origin.path], in: repo)
+        try SessionBroker.git(["push", "-q", "origin", "main"], in: repo)
+        try SessionBroker.git(["fetch", "-q", "origin"], in: repo)
+        try SessionBroker.git(["remote", "set-head", "origin", "-a"], in: repo)
+
+        let (dir, _, base) = try SessionBroker.makeWorktree(from: repo, name: "from a feature branch")
+        // Bases on the remote default, not the checkout's feature branch.
+        XCTAssertEqual(try SessionBroker.git(["rev-parse", "main"], in: repo), try SessionBroker.git(["rev-parse", "HEAD"], in: dir),
+                       "the worktree starts where main is, not where feature is")
+        XCTAssertNotEqual(base, "feature")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appending(path: "feature.txt").path),
+                       "the feature branch's work isn't inherited")
     }
 
     func testSessionMessageParsing() {
