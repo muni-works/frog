@@ -230,7 +230,9 @@ pub enum Op {
         error: Option<String>,
     },
     /// A message from another session (`from` is its id, or `system`). Queued like `Submit`:
-    /// it runs as a turn wrapped in `<session-message>` once the current op is done.
+    /// it runs as a turn wrapped in `<session-message>` once the current op is done. It never
+    /// interrupts a running turn; only `Interrupt` stops one. Several queued together run as
+    /// one turn: the first as its input, the rest as [`Event::TurnStarted`]'s `more`.
     Deliver {
         from: String,
         #[serde(default)]

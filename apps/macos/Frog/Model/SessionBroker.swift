@@ -93,7 +93,8 @@ final class SessionBroker {
                 notifyWhenIdle: input["notify_when_idle"]?.bool ?? false)
             switch result {
             case .success(let e):
-                c.replySession(r.id, result: .string("Sent to \(e.name) (\(e.id)); it's \(e.state). Its reply, if any, arrives as a <session-message>."))
+                let how = e.state == "running" ? "queued (target busy)" : "delivered (turn started)"
+                c.replySession(r.id, result: .string("Sent to \(e.name) (\(e.id)); \(how). It reads the message at its next turn boundary; its reply, if any, arrives as a <session-message>."))
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
@@ -222,11 +223,13 @@ final class SessionBroker {
     // MARK: Engines
 
     /// A running conversation for session `id`: on screen, in the background, or started now.
+    /// Restarting a closed one resumes its log: no mode flag (the engine keeps the mode the
+    /// session last used) and no `-m` (it keeps the model it last ran on), never the sender's.
     func conversation(for id: String) -> Conversation? {
         if let c = Library.shared.conversation(id), c.isLive { return c }
         if let c = background[id], c.isLive { return c }
         guard let info = Library.shared.sessions.first(where: { $0.id == id }), let folder = info.folder else { return nil }
-        let c = Conversation(folder: folder, arguments: ["-r", id] + Workspace.engineFlags(chat: info.isChat), model: nil)
+        let c = Conversation(folder: folder, arguments: ["-r", id] + Workspace.engineFlags(chat: info.isChat, mode: false), model: nil)
         background[id] = c
         return c
     }

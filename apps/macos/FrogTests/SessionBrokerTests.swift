@@ -35,6 +35,21 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(delivered, [Delivery(to: eng.id, from: chief.id, name: chief.name, message: "hi")])
     }
 
+    /// A dead engine (process gone, stale `.live`) shows as idle: sending restarts it with
+    /// `-r`, on the session's stored model and mode, and the message starts its next turn.
+    func testSendToADeadEngineRestartsItAndStartsATurn() throws {
+        let b = broker([chief, eng])
+        b.reach = { [unowned self] to, from, name, message in
+            // `reach` only gets called with a live-or-restarted engine: the broker's
+            // `conversation(for:)` replaces a dead one before delivering.
+            delivered.append(Delivery(to: to, from: from, name: name, message: message))
+            return true
+        }
+        let e = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "revive", notifyWhenIdle: false).get()
+        XCTAssertEqual(e.state, "idle")
+        XCTAssertEqual(delivered.map(\.message), ["revive"])
+    }
+
     func testRoutesByNameIgnoringCase() throws {
         let b = broker([chief, eng, ops])
         XCTAssertEqual(try b.send(from: chief.id, name: "", to: "eng manager", message: "x", notifyWhenIdle: false).get().id, eng.id)
@@ -77,6 +92,27 @@ final class SessionBrokerTests: XCTestCase {
         for _ in 0..<SessionBroker.rateLimit { _ = b.send(from: chief.id, name: "", to: eng.id, message: "m", notifyWhenIdle: false) }
         b.userActivity(chief.id)
         XCTAssertNoThrow(try b.send(from: chief.id, name: "", to: eng.id, message: "user said go", notifyWhenIdle: false).get())
+    }
+
+    func testSendResultSaysQueuedWhileBusyAndDeliveredWhenIdle() {
+        // SendMessage is a pure queue: a busy target takes the message without being
+        // interrupted; an idle one (or one whose engine is gone) has a turn started for it.
+        let b = broker([chief, eng])
+        var running = true
+        b.directory = { [
+            SessionBroker.Entry(id: self.chief.id, name: self.chief.name, state: "running"),
+            SessionBroker.Entry(id: self.eng.id, name: self.eng.name, state: running ? "running" : "idle"),
+        ] }
+        // Busy: the message is queued, nothing is cancelled, the target keeps running.
+        let toBusy = b.send(from: chief.id, name: chief.name, to: eng.id, message: "when you get a moment", notifyWhenIdle: false)
+        XCTAssertEqual(try toBusy.get().state, "running")
+        XCTAssertEqual(delivered.count, 1, "the message still reaches the busy target's engine")
+        // Idle: the message starts a turn.
+        running = false
+        delivered.removeAll()
+        let toIdle = b.send(from: chief.id, name: chief.name, to: eng.id, message: "fresh one", notifyWhenIdle: false)
+        XCTAssertEqual(try toIdle.get().state, "idle")
+        XCTAssertEqual(delivered.count, 1)
     }
 
     func testIdleNoticeAfterTheTargetRunsTheMessage() {
