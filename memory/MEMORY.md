@@ -1,0 +1,10 @@
+- [zest orchestrator](zest-orchestrator.md) — "zest agent" = tang gateway session; owns tang children + RunPod spend
+- [muni master plan](muni-master-plan.md) — brief of master-plan.typ: stages/gates, products, kyte economics, stack, workstream→plan map
+- [manager structure](manager-structure.md) — managers per plan area, session ids, sidebar groups, rules
+- [agent model policy](agent-model-policy.md) — started agents: Opus 5.5, never fast mode; subagents choose Opus/Sonnet
+- [product direction](product-direction.md) — one staged app, free app + zest agent, head = portable personality, colorways, head as zest node
+- [questions clickable](questions-clickable.md) — ask Cam via AskUserQuestion options, never prose questions
+- [delegate, dont do](delegate-dont-do.md) — route real work to managers/agents; I only coordinate and do light status checks
+- [licensing](licensing.md) — MIT OR Apache-2.0 open code, zest/tang-pro closed, CERN-OHL-W hw, DCO; loon/kosm/muni fix after launch
+- [No project dates](no-project-dates.md) — only launches get dates; plans are ordered steps, not dated milestones
+- [Codex agents](codex-agents.md) — Claude budget exhausted: dispatch work via `codex exec` (ChatGPT plan, default model), managers paused

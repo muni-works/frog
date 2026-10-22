@@ -1,0 +1,21 @@
+#!/bin/zsh
+# spawn-worker.sh <repo> <branch> "<task>" [model]
+# Creates a worktree off origin/main and runs a frog worker there in the background.
+set -euo pipefail
+repo=$1 branch=$2 task=$3 model=${4:-cloud/qwen3-coder-next}
+root=~/Developer/$repo
+name=${branch//\//-}
+wt=$root/.claude/worktrees/$name
+log=~/Developer/chief/logs/$(date +%Y%m%d-%H%M%S)-$repo-$name.log
+
+[[ -d $root/.git ]] || { echo "no repo at $root" >&2; exit 1; }
+git -C $root fetch -q origin
+if [[ ! -d $wt ]]; then
+  git -C $root worktree add -q -b $branch $wt origin/main 2>/dev/null \
+    || git -C $root worktree add -q $wt $branch
+fi
+
+cd $wt
+nohup /Applications/Frog.app/Contents/Resources/frog -m $model -p "$task" > $log 2>&1 &
+echo "worker pid $! · $repo:$branch · $wt"
+echo "log $log"
