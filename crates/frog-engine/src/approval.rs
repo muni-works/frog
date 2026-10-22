@@ -358,6 +358,20 @@ mod tests {
     }
 
     #[test]
+    fn relative_paths_follow_the_shell_but_the_project_is_the_root() {
+        // Fixed paths (no temp dir: Linux's is /tmp, which `card` never calls outside).
+        let (root, sub) = (Path::new("/frog-test/proj"), Path::new("/frog-test/proj/sub"));
+        // The shell has `cd`'d into sub: `../notes.txt` is the root's file, inside the project.
+        let inside = card("touch ../notes.txt", sub, root, "rule", None, &HashSet::new(), 600);
+        assert_eq!(inside.touches[0].path, "/frog-test/proj/notes.txt");
+        assert!(!inside.risk.contains("outside"), "{}", inside.risk);
+        // Climbing above the root is outside, wherever the shell is.
+        let outside = card("touch ../../elsewhere", sub, root, "rule", None, &HashSet::new(), 600);
+        assert_eq!(outside.touches[0].path, "/frog-test/elsewhere");
+        assert!(outside.risk.contains("outside the project"), "{}", outside.risk);
+    }
+
+    #[test]
     fn prefix_allows_only_the_same_program_under_the_prefix() {
         let cwd = Path::new("/work");
         let allowed = vec![("rm".to_string(), PathBuf::from("/private/tmp/frog-x"))];
