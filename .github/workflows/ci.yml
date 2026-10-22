@@ -25,3 +25,46 @@ jobs:
       # No -D warnings yet: frog-engine has outstanding clippy warnings.
       - run: cargo clippy -p frog -p frog-engine
       - run: cargo test -p frog-engine -p frog
+
+  # cargo passing doesn't mean the app builds: compile the Swift app and run its unit tests.
+  # PRs and main only (not every branch push), since macOS minutes are the expensive ones.
+  macos-app:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    # The app targets macOS 26 (SwiftPM tools 6.2), so it needs the macOS 26 image's Xcode.
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The engine build that build-engine.sh runs (cargo registry + target/).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-app
+      - name: cache SwiftPM sidecar builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            sidecars/frog-apple/.build
+            sidecars/frog-desktop/.build
+          key: sidecars-${{ runner.os }}-${{ hashFiles('sidecars/*/Package.swift', 'sidecars/*/Sources/**') }}
+          restore-keys: sidecars-${{ runner.os }}-
+      - name: install xcodegen
+        run: brew install xcodegen
+      - name: generate project
+        run: cd apps/macos && xcodegen generate --quiet
+      # build-engine.sh (pre-build phase) builds frog + the frog-apple/frog-desktop sidecars.
+      # No tang checkout here, so it skips tang-llm with a warning (no FROG_REQUIRE_TANG).
+      - name: build
+        run: |
+          cd apps/macos
+          xcodebuild build -quiet \
+            -project Frog.xcodeproj -scheme Frog -configuration Debug \
+            -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
+      - name: test
+        run: |
+          cd apps/macos
+          xcodebuild test -quiet \
+            -project Frog.xcodeproj -scheme Frog -configuration Debug \
+            -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
