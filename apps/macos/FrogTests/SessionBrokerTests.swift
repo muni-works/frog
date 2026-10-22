@@ -494,4 +494,32 @@ final class SessionBrokerTests: XCTestCase {
         guard case .sessionRequest(let r) = env.event else { return XCTFail() }
         XCTAssertEqual(r.tool, "ListSessions")
     }
+
+    /// StopSession interrupts a busy target's running turn (Op.interrupt applies
+    /// immediately, unlike SendMessage which only queues); an idle one gets "nothing to
+    /// stop", and the caller itself is refused.
+    @MainActor
+    func testStopSessionInterruptsABusyTarget() throws {
+        let b = broker([chief, eng])
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-stop"))
+        // A turn is open, so the target reads busy.
+        let start = try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"turn_started","turn":1,"input":"long task"}"#.utf8))
+        target.ingest(start)
+        b.track(target, as: eng.id)
+        let chiefConv = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-chief"))
+
+        // Busy: the interrupt is sent (a preview conversation records it as userStopped).
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "StopSession", input: .object(["id": .string(eng.id)])), from: chiefConv)
+        XCTAssertTrue(target.userStopped, "a running target is interrupted")
+
+        // Idle: a fresh conversation with no turn open is not interrupted.
+        let idleTarget = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-idle"))
+        b.track(idleTarget, as: ops.id)
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "StopSession", input: .object(["id": .string(ops.id)])), from: chiefConv)
+        XCTAssertFalse(idleTarget.userStopped, "an idle target is not interrupted")
+
+        // Stopping yourself is refused.
+        b.handle(SessionRequest(id: "r3", item: "t3", tool: "StopSession", input: .object(["id": .string(chief.id)])), from: chiefConv)
+    }
 }

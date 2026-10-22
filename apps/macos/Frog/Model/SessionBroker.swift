@@ -280,6 +280,26 @@ final class SessionBroker {
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
+        case "StopSession":
+            // The explicit stop — the only interrupt now that SendMessage only queues. Sent
+            // straight to the engine (Op.interrupt applies immediately, not at the boundary),
+            // never starting one that's gone: a dead engine has nothing running.
+            switch resolve(input["id"]?.string ?? "") {
+            case .success(let e):
+                guard e.id != sender else { return c.replySession(r.id, error: "That's this session: use your own stop.") }
+                guard let target = tracked(e.id) else {
+                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) has no live engine; nothing to stop."))
+                    return
+                }
+                guard target.busy || e.state == "running" || e.state == "waiting" else {
+                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) isn't running; nothing to stop."))
+                    return
+                }
+                target.interrupt()
+                c.replySession(r.id, result: .string("Stopping \(e.name) (\(e.id)): its turn ends cancelled and it goes idle."))
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
         default:
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
         }
@@ -420,6 +440,13 @@ final class SessionBroker {
         await readTranscript(id, lastN: n, kinds: kinds, broker: broker)
     }
     #endif
+
+    /// The conversation tracked for session `id`: on screen or in the broker's background
+    /// fleet (never started — StopSession must not wake a dead engine just to tell it to halt).
+    private func tracked(_ id: String) -> Conversation? {
+        if let c = Library.shared.conversation(id), c.isLive { return c }
+        return background[id]
+    }
 
     /// Report session `child`'s next turn back to `parent` when it goes idle (the hand-back).
     func watchStarted(_ child: String, reportTo parent: String) {
