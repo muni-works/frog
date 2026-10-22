@@ -92,7 +92,21 @@ fn providers_and_catalog_make_no_cloud_requests_logged_out() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|m| m["spec"] == "cloud/qwen3-coder-next" && m["context"] == 65536)
+            .any(|m| m["spec"] == "cloud/qwen3-coder-next" && m["context"] == 131_072)
+    );
+    assert!(
+        catalog
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["spec"] == "cloud/qwen3-8b" && m["context"] == 16_384)
+    );
+    assert!(
+        catalog
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["spec"] == "cloud/qwen3-vl-8b" && m["context"] == 16_384 && m["inputs"].as_array().is_some())
     );
     run(&["--catalog", "--refresh"]);
     let account = run(&["account"]);
