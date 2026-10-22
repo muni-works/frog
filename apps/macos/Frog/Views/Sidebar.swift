@@ -564,7 +564,25 @@ private struct CompactSessionRow<Menu: View>: View {
     @ViewBuilder let menu: () -> Menu
 
     var body: some View {
-        HStack(spacing: 0) {
+        // The tick re-checks the 30 s activity rule so the indicator and the title
+        // emphasis fade together.
+        TimelineView(.periodic(from: .now, by: 5)) { ctx in
+            content(working: live == nil && ctx.date.timeIntervalSince(session.modifiedDate) < 30)
+        }
+        .frame(height: 28)
+        .padding(.trailing, 3)
+        .background(selected ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
+        .contentShape(.rect)
+        .contextMenu { menu() }
+        .paneDraggable(.session(session), title: session.displayTitle)
+        .help(helpText)
+        .task(id: session.folder?.path) { if let folder = session.folder { await CompactPRCache.shared.refresh(folder) } }
+    }
+
+    private func content(working: Bool) -> some View {
+        // A working row keeps its title at full opacity, like the selected row.
+        let running = working || live == .running
+        return HStack(spacing: 0) {
             if depth > 0 {
                 RoundedRectangle(cornerRadius: 1).fill(.quaternary)
                     .frame(width: 1, height: 18).padding(.leading, CGFloat(depth - 1) * 13 + 6).padding(.trailing, 8)
@@ -572,16 +590,10 @@ private struct CompactSessionRow<Menu: View>: View {
                 Color.clear.frame(width: 6)
             }
             Button(action: open) {
-                HStack(spacing: 5) {
-                    Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color.primary.opacity(selected ? 1 : 0.82))
-                    if let wt = SessionList.worktreeName(session.folder) {
-                        Text(wt).lineLimit(1).truncationMode(.middle)
-                            .font(.system(size: 11)).foregroundStyle(.tertiary)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.primary.opacity(selected || running ? 1 : 0.82))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -592,27 +604,24 @@ private struct CompactSessionRow<Menu: View>: View {
                 Text("\(pr.changedFiles)").font(.system(size: 11, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary).frame(minWidth: 16, alignment: .trailing)
             }
-            TimelineView(.periodic(from: .now, by: 5)) { ctx in
-                if live == nil, ctx.date.timeIntervalSince(session.modifiedDate) < 30 {
-                    ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 12, height: 12)
-                        .padding(.leading, 4).help("working")
-                } else {
-                    Circle().fill(statusColor).frame(width: 6, height: 6).padding(.leading, 7).padding(.trailing, 3)
-                }
+            if working {
+                PulsingDot().padding(.leading, 4).help("working")
+            } else {
+                Circle().fill(statusColor).frame(width: 6, height: 6).padding(.leading, 7).padding(.trailing, 3)
             }
             SwiftUI.Menu { menu() } label: {
                 Image(systemName: "ellipsis").font(.system(size: 10)).frame(width: 14, height: 20)
             }
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).foregroundStyle(.secondary)
         }
-        .frame(height: 28)
-        .padding(.trailing, 3)
-        .background(selected ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
-        .contentShape(.rect)
-        .contextMenu { menu() }
-        .paneDraggable(.session(session), title: session.displayTitle)
-        .help(session.displayTitle)
-        .task(id: session.folder?.path) { if let folder = session.folder { await CompactPRCache.shared.refresh(folder) } }
+    }
+
+    /// The title, with the worktree name (when there is one) underneath in the tooltip.
+    private var helpText: String {
+        if let wt = SessionList.worktreeName(session.folder) {
+            return session.displayTitle + "\n" + wt
+        }
+        return session.displayTitle
     }
 
     private var statusColor: Color {
@@ -621,6 +630,24 @@ private struct CompactSessionRow<Menu: View>: View {
         case .waiting, .unread: .orange
         case nil: .clear
         }
+    }
+}
+
+/// The "working" indicator: an accent-colored dot that pulses while a session is busy.
+/// Under Reduce Motion it stays lit without animating.
+private struct PulsingDot: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(Color.accentColor)
+            .frame(width: 7, height: 7)
+            .scaleEffect(pulsing ? 1.35 : 0.75)
+            .opacity(pulsing ? 1 : 0.45)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
+            .onAppear { pulsing = true }
+            .frame(width: 12, height: 12)
     }
 }
 
