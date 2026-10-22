@@ -41,6 +41,38 @@ fn expand(word: &str, cwd: &Path) -> PathBuf {
     if p.is_absolute() { p } else { cwd.join(p) }
 }
 
+/// One spelling per path, so prefixes and provenance compare the same on every
+/// platform: `.` and `..` resolved lexically, then the deepest existing ancestor
+/// canonicalized (macOS's `/tmp` is `/private/tmp`, its temp dir sits under
+/// `/private/var`) with the not-yet-existing rest appended.
+pub fn normalize(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut clean = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                clean.pop();
+            }
+            c => clean.push(c),
+        }
+    }
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    let mut base = clean.clone();
+    loop {
+        if let Ok(real) = base.canonicalize() {
+            return rest.iter().rev().fold(real, |acc, part| acc.join(part));
+        }
+        match (base.file_name().map(|n| n.to_os_string()), base.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name);
+                base = parent.to_path_buf();
+            }
+            _ => return clean,
+        }
+    }
+}
+
 /// Paths a command names: arguments that look like paths (contain `/`, start
 /// with `~` or `.`), `VAR=path` assignments, and redirect targets. Flags,
 /// globs and URLs are skipped.
@@ -63,7 +95,7 @@ pub fn paths(cmd: &str, cwd: &Path) -> Vec<PathBuf> {
         {
             continue;
         }
-        let p = expand(candidate, cwd);
+        let p = normalize(&expand(candidate, cwd));
         if !out.contains(&p) {
             out.push(p);
         }
@@ -108,7 +140,8 @@ pub fn missing(cmd: &str, cwd: &Path) -> Vec<PathBuf> {
 }
 
 /// The longest directory every path sits under (the prefix an `AllowPrefix`
-/// covers). Never `/` or the home directory itself: too broad to be a scope.
+/// covers), from paths already `normalize`d. None when that's too broad to hand
+/// out as a scope (see `too_broad`).
 pub fn common_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
     let first = paths.first()?;
     let mut prefix: PathBuf = first.clone();
@@ -117,10 +150,29 @@ pub fn common_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
             prefix = prefix.parent()?.to_path_buf();
         }
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    // `/`, `/private`, `/private/tmp`, `/Users/cam`: too broad to hand out.
-    let shallow = prefix.components().count() < 4;
-    (!shallow && Some(&prefix) != home.as_ref()).then_some(prefix)
+    (!too_broad(&prefix)).then_some(prefix)
+}
+
+/// `/` and top-level dirs (`/usr`, `/home`), the home directory and its parent,
+/// and the shared temp roots (`/tmp`, `/private/tmp`, `/var/tmp`, the OS temp
+/// dir) or anything above them. A directory *inside* one of those is specific
+/// enough: `/tmp/frog-build` is a scope, `/tmp` isn't.
+pub fn too_broad(prefix: &Path) -> bool {
+    if prefix.components().count() <= 2 {
+        return true;
+    }
+    let mut shared: Vec<PathBuf> = ["/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    shared.push(std::env::temp_dir());
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        shared.push(home);
+    }
+    shared
+        .iter()
+        .flat_map(|s| [s.clone(), normalize(s)])
+        .any(|s| s.starts_with(prefix))
 }
 
 fn human(bytes: u64) -> String {
@@ -324,7 +376,32 @@ mod tests {
             common_prefix(&[p("/private/tmp/frog-x/a"), p("/private/tmp/frog-x/b/c")]),
             Some(p("/private/tmp/frog-x"))
         );
+        // Linux's temp dirs are shallow (`/tmp/frog-x`): still a fine scope.
+        assert_eq!(
+            common_prefix(&[p("/tmp/frog-x/a"), p("/tmp/frog-x/b")]),
+            Some(p("/tmp/frog-x"))
+        );
+        // The shared roots themselves, `/`, top-level dirs and home are not.
+        for broad in ["/tmp", "/private/tmp", "/var/tmp", "/", "/usr"] {
+            assert!(too_broad(Path::new(broad)), "{broad}");
+            assert_eq!(common_prefix(&[p(&format!("{broad}/a")), p(&format!("{broad}/b"))]), None, "{broad}");
+        }
+        assert!(too_broad(&std::env::temp_dir()));
+        if let Some(home) = std::env::var_os("HOME") {
+            assert!(too_broad(Path::new(&home)));
+        }
         assert_eq!(common_prefix(&[p("/private/tmp/a"), p("/usr/b")]), None);
         assert_eq!(common_prefix(&[]), None);
+    }
+
+    #[test]
+    fn paths_compare_the_same_however_they_are_spelled() {
+        let dir = tmp();
+        let canon = dir.canonicalize().unwrap();
+        // `.`/`..`, and (on macOS) `/tmp` vs `/private/tmp`, all land on one spelling.
+        let wobbly = format!("{}/./x/../y/new-file", dir.display());
+        assert_eq!(normalize(Path::new(&wobbly)), canon.join("y/new-file"));
+        assert_eq!(normalize(Path::new("/tmp/frog-none/z")), Path::new("/tmp").canonicalize().unwrap().join("frog-none/z"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

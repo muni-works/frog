@@ -3218,7 +3218,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                     ),
                     "Write" => input["file_path"]
                         .as_str()
-                        .map(|p| self.ctx.resolve(p))
+                        .map(|p| crate::approval::normalize(&self.ctx.resolve(p)))
                         .filter(|p| !p.exists())
                         .into_iter()
                         .collect(),
@@ -4100,8 +4100,10 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         match decision {
             Decision::AllowAlways | Decision::AllowPrefix if name == "Bash" => {
                 if let Some(p) = card_prefix {
-                    self.prefix_allow
-                        .push((crate::approval::program(cmd), PathBuf::from(p)));
+                    self.prefix_allow.push((
+                        crate::approval::program(cmd),
+                        crate::approval::normalize(Path::new(&p)),
+                    ));
                 }
                 Decision::Allow
             }
@@ -9307,24 +9309,25 @@ for line in sys.stdin:
         )));
     }
 
-    #[tokio::test]
-    async fn a_prefix_allow_covers_the_same_program_under_that_prefix_only() {
-        let dir = scratch("prefix");
-        let (a, b, c) = (dir.join("a"), dir.join("b"), dir.join("c"));
+    /// The prefix-allow scenario with commands naming `base` (spelled as given),
+    /// on an engine with no shell sandbox (Linux CI has none; these tests turn it off).
+    async fn prefix_allow_case(base: &str, real: &Path) {
+        let (a, b, c) = (format!("{base}/a"), format!("{base}/b"), format!("{base}/c"));
         let script = vec![
-            bash_call("1", &format!("rm -rf {} {}", a.display(), b.display())),
-            bash_call("2", &format!("rm -rf {}", c.display())),
-            bash_call("3", &format!("mv {} {}", a.display(), c.display())),
+            bash_call("1", &format!("rm -rf {a} {b}")),
+            bash_call("2", &format!("rm -rf {c}")),
+            bash_call("3", &format!("mv {a} {c}")),
             reply(vec![text("done")], Stop::End),
         ];
         let mut h = engine_perm(script, Mode::Default, None);
+        let expected = crate::approval::normalize(real);
         let mut asked: Vec<String> = Vec::new();
         let evs = turn_answering(&mut h, |e| {
             let Event::PermissionRequest { arg, card, always, .. } = e else { return None };
             asked.push(arg.clone());
             if asked.len() == 1 {
                 let card = card.as_ref().expect("shell prompts carry a card");
-                assert_eq!(card.prefix.as_deref(), Some(dir.to_str().unwrap()));
+                assert_eq!(card.prefix.as_deref(), expected.to_str(), "{base}");
                 assert!(always.contains("under"), "{always}");
                 Some((Decision::AllowPrefix, None))
             } else {
@@ -9335,7 +9338,23 @@ for line in sys.stdin:
         assert_eq!(asked.len(), 2, "the rm under the prefix didn't ask; the mv did: {asked:?}");
         assert!(asked[1].starts_with("mv"), "{asked:?}");
         assert!(tool_output(&evs, "2").is_some());
+    }
+
+    #[tokio::test]
+    async fn a_prefix_allow_covers_the_same_program_under_that_prefix_only() {
+        let dir = scratch("prefix");
+        prefix_allow_case(dir.to_str().unwrap(), &dir).await;
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// What Linux CI sees: a shallow temp dir (`/tmp/frog-…`, three components)
+    /// and, on macOS, a spelling that isn't canonical (`/tmp` is `/private/tmp`).
+    #[tokio::test]
+    async fn a_prefix_allow_works_for_a_shallow_uncanonical_tmp_dir() {
+        let base = format!("/tmp/frog-prefix-{}", session::new_id());
+        std::fs::create_dir_all(&base).unwrap();
+        prefix_allow_case(&base, Path::new(&base)).await;
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[tokio::test]
