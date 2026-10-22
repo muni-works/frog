@@ -11,7 +11,7 @@
 
 use crate::config::data_dir;
 use crate::message::{Block, Message};
-use crate::protocol::{Envelope, Event};
+use crate::protocol::{EndReason, Envelope, Event};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
@@ -326,6 +326,36 @@ pub fn events_after(dir: &Path, id: &str, after: u64) -> Result<Vec<Envelope>> {
         .collect())
 }
 
+/// How a session's last turn ended, for listings: is it still going, and if not, how did it
+/// stop? Derived from the last `TurnStarted`/`TurnEnded` pair; `None` means the session never
+/// finished a turn (idle, or one that only ever crashed).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndState {
+    /// The last turn is still open (or ended mid-run: torn tail, crash) — live readers should
+    /// consult the `.live` file for what's happening now.
+    Open,
+    /// The model finished its answer.
+    Complete,
+    /// It ended cleanly but wants the user: `Denied`, `MaxTokens`, `StepLimit` or `Looping`.
+    Stopped,
+    /// It ended with an error (provider, connection, internal).
+    Failed,
+}
+
+impl EndState {
+    /// `None` for `Cancelled` and sessions that never ran a turn: nothing worth a glyph.
+    fn new(reason: &EndReason) -> Option<Self> {
+        Some(match reason {
+            EndReason::Complete => Self::Complete,
+            EndReason::Error { .. } => Self::Failed,
+            EndReason::Denied | EndReason::MaxTokens | EndReason::StepLimit | EndReason::Looping => {
+                Self::Stopped
+            }
+            EndReason::Cancelled => return None,
+        })
+    }
+}
+
 /// Summary for listings.
 pub struct Info {
     pub id: String,
@@ -334,6 +364,8 @@ pub struct Info {
     pub header: Header,
     pub first_input: Option<String>,
     pub title: Option<String>,
+    /// The last turn's end, once one has finished (see `EndState`).
+    pub end: Option<EndState>,
 }
 
 /// Sessions started in `cwd` (every folder's, with `None`), most recently active first.
@@ -360,6 +392,9 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
             continue;
         }
         let (mut first_input, mut title) = (None, None);
+        // The end of the newest turn that closed, and whether a later one is still open.
+        let mut end: Option<EndState> = None;
+        let mut open = false;
         // Last conversation activity: when a turn last started or ended. Not the file's mtime,
         // since merely resuming a session appends bookkeeping records, which would reorder the
         // list every time you open one.
@@ -375,6 +410,7 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
                         },
                 }) => {
                     active = active.max(created);
+                    open = true;
                     if first_input.is_none() {
                         first_input = Some(input);
                     }
@@ -382,11 +418,15 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
                 Ok(Record::Event {
                     env:
                         Envelope {
-                            event: Event::TurnEnded { .. },
+                            event: Event::TurnEnded { reason, .. },
                             created,
                             ..
                         },
-                }) => active = active.max(created),
+                }) => {
+                    active = active.max(created);
+                    open = false;
+                    end = EndState::new(&reason);
+                }
                 Ok(Record::Event {
                     env:
                         Envelope {
@@ -405,6 +445,14 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
             header,
             first_input,
             title,
+            // A turn still open with nobody holding the log died mid-run (the engine is
+            // gone): that's a failure, not work in progress. A newer open turn wins over an
+            // older turn's end.
+            end: if open {
+                Some(if Log::in_use(dir, id) { EndState::Open } else { EndState::Failed })
+            } else {
+                end
+            },
         });
     }
     out.sort_by_key(|i| std::cmp::Reverse(i.modified));
@@ -665,6 +713,88 @@ mod tests {
         assert_eq!(appended.len(), 1);
         assert_eq!(appended[0].seq, 2);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn list_reports_the_last_turns_end() {
+        let dir = tmp();
+        let mut log = Log::create(&dir, header("a")).unwrap();
+        log.append(&Record::Push {
+            message: Message::user("hi"),
+        })
+        .unwrap();
+        // An open turn: started, never ended.
+        log.append(&ev(
+            1,
+            Event::TurnStarted {
+                turn: 1,
+                input: "hi".into(),
+                images: Vec::new(),
+            },
+        ))
+        .unwrap();
+        // Open while an engine holds the log...
+        let listed = list(&dir, None).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].end, Some(EndState::Open));
+        assert_eq!(listed[0].id, "a");
+        // ...and dead once nobody does: the engine died mid-turn.
+        drop(log);
+        assert_eq!(list(&dir, None).unwrap()[0].end, Some(EndState::Failed));
+
+        // A turn that finished completes it; a later open turn reopens it.
+        let mut log = Log::open(&dir, "a").unwrap();
+        log.append(&ev(
+            2,
+            Event::TurnEnded {
+                turn: 1,
+                reason: crate::protocol::EndReason::Complete,
+                usage: crate::protocol::TurnUsage::default(),
+            },
+        ))
+        .unwrap();
+        drop(log);
+        assert_eq!(list(&dir, None).unwrap()[0].end, Some(EndState::Complete));
+
+        for reason in [
+            crate::protocol::EndReason::Denied,
+            crate::protocol::EndReason::MaxTokens,
+            crate::protocol::EndReason::StepLimit,
+            crate::protocol::EndReason::Looping,
+        ] {
+            let mut log = Log::open(&dir, "a").unwrap();
+            log.append(&ev(
+                3,
+                Event::TurnEnded {
+                    turn: 1,
+                    reason,
+                    usage: crate::protocol::TurnUsage::default(),
+                },
+            ))
+            .unwrap();
+            drop(log);
+            assert_eq!(list(&dir, None).unwrap()[0].end, Some(EndState::Stopped));
+        }
+
+        let mut log = Log::open(&dir, "a").unwrap();
+        log.append(&ev(
+            4,
+            Event::TurnEnded {
+                turn: 1,
+                reason: crate::protocol::EndReason::Cancelled,
+                usage: crate::protocol::TurnUsage::default(),
+            },
+        ))
+        .unwrap();
+        drop(log);
+        assert_eq!(list(&dir, None).unwrap()[0].end, None);
+
+        // A session that never ran a turn has no end state.
+        let _log = Log::create(&dir, header("quiet")).unwrap();
+        assert_eq!(
+            list(&dir, None).unwrap().iter().find(|i| i.id == "quiet").unwrap().end,
+            None
+        );
     }
 
     #[test]

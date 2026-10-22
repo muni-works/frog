@@ -322,12 +322,8 @@ async fn run() -> Result<bool> {
     if let Some(done) = pond(&cli, &cfg).await? {
         return Ok(done);
     }
-    // Reopening a conversation keeps the model it was running, not whatever the default is
-    // now: the app relaunches engines with `-r <id>` and no `-m`.
-    let reopened = cli.resume.as_deref().or(cli.fork.as_deref().map(|f| f.split('@').next().unwrap_or(f)));
     let chosen = match &cli.model {
         Some(m) => Some(m.clone()),
-        None if reopened.and_then(session_model).is_some() => reopened.and_then(session_model),
         None if std::env::var_os("FROG_MODEL").is_some() || cfg.default_model.is_some() => None,
         None => match frog_engine::models::last_used() {
             Some(m) => Some(m),
@@ -954,6 +950,12 @@ fn list_sessions(
                     "model": s.header.model,
                     "first_input": s.first_input,
                     "title": s.title,
+                    "end": s.end.map(|e| serde_json::json!(match e {
+                        frog_engine::session::EndState::Open => "open",
+                        frog_engine::session::EndState::Complete => "complete",
+                        frog_engine::session::EndState::Stopped => "stopped",
+                        frog_engine::session::EndState::Failed => "failed",
+                    })),
                     "forked_from": s.header.forked_from,
                     "cwd": s.header.cwd,
                 })
@@ -1040,21 +1042,4 @@ fn attempts(cli: &Cli) -> Result<bool> {
         checkpoint::remove_attempts(&root, &cli.discard_attempt);
     }
     Ok(true)
-}
-
-/// The model a saved session last ran a turn on, from its log.
-fn session_model(id: &str) -> Option<String> {
-    let text = std::fs::read_to_string(session::default_dir().join(format!("{id}.jsonl"))).ok()?;
-    text.lines().rev().find_map(|line| {
-        let v: serde_json::Value = serde_json::from_str(line).ok()?;
-        let ev = &v["env"];
-        (ev["event"] == "turn_ended")
-            .then(|| ev["usage"]["model"].as_str().map(str::to_owned))
-            .flatten()
-    })
-    .or_else(|| {
-        // No finished turn yet: the model it was created with.
-        let head: serde_json::Value = serde_json::from_str(text.lines().next()?).ok()?;
-        head["model"].as_str().map(str::to_owned)
-    })
 }

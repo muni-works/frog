@@ -18,6 +18,12 @@ struct SessionList: View {
     @State private var newTitle = ""
     /// Groups showing all their conversations rather than the latest few.
     @State private var expanded: Set<String> = []
+    /// Folded branches whose older sessions are disclosed, by the branch's newest session id.
+    @State private var openFolds: Set<String> = []
+    /// Parents whose finished children are disclosed (their "+N done" row is open).
+    @State private var openDone: Set<String> = []
+    /// Parents showing only their children's counts ("4 running · 1 waiting"), not the rows.
+    @State private var collapsedParents: Set<String> = []
     /// Folded project groups, by folder path (newline-separated).
     @AppStorage("foldedGroups") private var foldedRaw = ""
     @AppStorage("sidebarGrouping") private var grouping = Grouping.project
@@ -125,22 +131,37 @@ struct SessionList: View {
         return folder.lastPathComponent
     }
 
-    /// Rows in tree order: each session followed by the ones it started, indented.
-    private func nested(_ items: [SessionInfo]) -> [(session: SessionInfo, depth: Int)] {
-        let ids = Set(items.map(\.id))
-        var children: [String: [SessionInfo]] = [:]
-        var roots: [SessionInfo] = []
-        for s in items {
-            if let p = library.parents[s.id], ids.contains(p) { children[p, default: []].append(s) } else { roots.append(s) }
+    /// A row's state, the same derivation its glyph uses.
+    private func rowState(_ s: SessionInfo) -> SessionNesting.State {
+        SessionNesting.State(SessionEndGlyph.derive(live: library.live[s.id], end: s.end))
+    }
+
+    /// Fold heads in tree order: each followed by the ones it started, settled children
+    /// folded under a "+N done" row. A fold's parent is any member's (a resumed worker keeps
+    /// its manager), and a parent folded away under its newest session nests under that.
+    private func tree(_ folds: [SessionFolds.Fold]) -> [SessionNesting.Entry] {
+        var alias: [String: String] = [:]
+        for f in folds { for o in f.older { alias[o.id] = f.session.id } }
+        var parentOf: [String: String] = [:]
+        for f in folds {
+            let p = ([f.session] + f.older).lazy.compactMap { self.library.parents[$0.id] }.first
+            if let p { parentOf[f.session.id] = alias[p] ?? p }
         }
-        var out: [(SessionInfo, Int)] = []
-        func walk(_ s: SessionInfo, _ depth: Int) {
-            guard !out.contains(where: { $0.0.id == s.id }) else { return }
-            out.append((s, depth))
-            for c in (children[s.id] ?? []).sorted(by: before) { walk(c, min(depth + 1, 4)) }
+        return SessionNesting.rows(
+            folds.map(\.session), parent: { parentOf[$0] }, state: rowState, before: before,
+            openDone: openDone, keep: current.map { [$0] } ?? [], collapsed: collapsedParents)
+    }
+
+    private func toggleChildren(_ parent: String) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if collapsedParents.remove(parent) == nil { collapsedParents.insert(parent) }
         }
-        roots.forEach { walk($0, 0) }
-        return out
+    }
+
+    private func toggleDone(_ parent: String) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if openDone.remove(parent) == nil { openDone.insert(parent) }
+        }
     }
 
     private var chats: [SessionInfo] {
@@ -219,14 +240,7 @@ struct SessionList: View {
                 .buttonStyle(.plain).foregroundStyle(.tertiary).help(isFolded ? "Expand project" : "Collapse project")
             }
             .padding(.leading, 6).padding(.top, 8)
-            if !isFolded {
-                ForEach(compactDated(items), id: \.0) { title, dayItems in
-                    compactHeader(title)
-                    ForEach(nested(dayItems), id: \.session.id) { entry in
-                        compactRow(entry.session, depth: entry.depth)
-                    }
-                }
-            }
+            if !isFolded { compactProjectRows(items) }
         }
         if !chats.isEmpty {
             compactHeader("Chats")
@@ -244,20 +258,98 @@ struct SessionList: View {
         }
     }
 
-    private func compactDated(_ items: [SessionInfo]) -> [(String, [SessionInfo])] {
-        SessionDays.group(items, day: day).map { ($0.0, $0.1.sorted(by: before)) }
-    }
-
     private func compactHeader(_ title: String) -> some View {
         Text(title).font(.caption).foregroundStyle(.secondary)
             .padding(.leading, 6).padding(.top, 5).padding(.bottom, 1)
     }
 
-    private func compactRow(_ session: SessionInfo, depth: Int) -> some View {
+    /// A day's rows, branches folded: one row for each fold's newest session, older sessions
+    /// behind the row's disclosure, and other nesting (started-by) applied on top.
+    /// A project's rows: branches and redone tasks folded and the started-by tree built over
+    /// the whole project, then each top-level row (with everything under it) filed under the
+    /// day of its newest activity. Folding per day split a branch resumed the next day, or a
+    /// manager from its workers, into separate rows.
+    @ViewBuilder
+    private func compactProjectRows(_ items: [SessionInfo]) -> some View {
+        let folds = SessionFolds.group(items, parent: { library.parents[$0] })
+        let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
+        let blocks = SessionNesting.blocks(tree(folds))
+        let newest = Dictionary(uniqueKeysWithValues: blocks.map { b in
+            (b.root.id, b.entries.compactMap { e -> Date? in
+                if case .row(let s, _, _, _) = e { return s.modifiedDate } else { return nil }
+            }.max() ?? b.root.modifiedDate)
+        })
+        let entries = Dictionary(uniqueKeysWithValues: blocks.map { ($0.root.id, $0.entries) })
+        ForEach(SessionDays.group(blocks.map(\.root), day: { sort == .created ? day($0) : newest[$0.id] ?? day($0) }), id: \.0) { title, roots in
+            compactHeader(title)
+            compactEntries(roots.flatMap { entries[$0.id] ?? [] }, byId: byId)
+        }
+    }
+
+    private func compactEntries(_ list: [SessionNesting.Entry], byId: [String: SessionFolds.Fold]) -> some View {
+        ForEach(list) { entry in
+            switch entry {
+            case .row(let s, let depth, let counts, let collapsed):
+                compactBranchRow(s, depth: depth, counts: counts, collapsed: collapsed, fold: byId[s.id])
+            case .done(let parent, let depth, let count, let failed, let open):
+                // Lined up with its siblings' titles (rail, then the fold slot).
+                doneRow(parent: parent, count: count, failed: failed, open: open)
+                    .padding(.leading, CGFloat(max(depth - 1, 0)) * 8 + 12)
+            }
+        }
+    }
+
+    /// A parent's finished children folded into one line: "+3 done", with how many failed.
+    private func doneRow(parent: String, count: Int, failed: Int, open: Bool) -> some View {
+        Button { toggleDone(parent) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                Text("+\(count) done")
+                if failed > 0 {
+                    Text("· \(failed) failed").foregroundStyle(.red.opacity(0.8))
+                }
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+            .frame(height: 22)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help(open ? "Hide finished sessions" : "Show \(count) finished session\(count == 1 ? "" : "s")")
+    }
+
+    /// One fold's row (its newest session) plus, when disclosed, the older ones indented.
+    @ViewBuilder
+    private func compactBranchRow(_ session: SessionInfo, depth: Int, counts: SessionNesting.Counts,
+                                  collapsed: Bool, fold: SessionFolds.Fold?) -> some View {
+        let fold = fold ?? SessionFolds.Fold(session: session, older: [])
+        let isOpen = openFolds.contains(session.id)
+        compactRow(session, depth: depth, folded: fold.older.count, foldOpen: isOpen, counts: counts,
+                   collapsed: collapsed, onFold: fold.folded ? { toggleFoldBranch(session.id) } : nil)
+        if fold.folded, isOpen {
+            ForEach(fold.older) { older in
+                compactRow(older, depth: depth + 1)
+            }
+        }
+    }
+
+    private func toggleFoldBranch(_ id: String) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if openFolds.remove(id) == nil { openFolds.insert(id) }
+        }
+    }
+
+    private func compactRow(_ session: SessionInfo, depth: Int, folded: Int = 0, foldOpen: Bool = false,
+                            counts: SessionNesting.Counts = .init(), collapsed: Bool = false,
+                            onFold: (() -> Void)? = nil) -> some View {
         CompactSessionRow(
             session: session, selected: session.id == current,
             live: library.live[session.id], depth: depth,
-            pr: session.folder.flatMap { CompactPRCache.shared.value(for: $0) }
+            pr: session.folder.flatMap { CompactPRCache.shared.value(for: $0) },
+            folded: folded, foldOpen: foldOpen, counts: counts, collapsed: collapsed, onFold: onFold,
+            onCollapse: counts.total > 0 ? { toggleChildren(session.id) } : nil
         ) { open(session) } menu: { rowMenu(session) }
     }
 
@@ -338,9 +430,22 @@ struct SessionList: View {
             let shown = all ? items : items.enumerated().filter { i, s in
                 i < Self.groupLimit || library.live[s.id] != nil || s.id == current
             }.map(\.element)
-            ForEach(nested(shown), id: \.session.id) { s, depth in
-                row(s, showPlace: false)
-                    .padding(.leading, CGFloat(depth) * 14)
+            let folds = SessionFolds.group(shown, parent: { library.parents[$0] })
+            let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
+            ForEach(tree(folds)) { entry in
+                switch entry {
+                case .row(let s, let depth, let counts, let collapsed):
+                    let summary = collapsed ? counts.summary : nil
+                    if let fold = byId[s.id], fold.folded {
+                        branchRow(s, depth: depth, fold: fold, summary: summary)
+                    } else {
+                        row(s, showPlace: false, nested: depth > 0, summary: summary)
+                            .padding(.leading, CGFloat(depth) * 10)
+                    }
+                case .done(let parent, let depth, let count, let failed, let open):
+                    doneRow(parent: parent, count: count, failed: failed, open: open)
+                        .padding(.leading, CGFloat(depth) * 10 + 10)
+                }
             }
             if items.count > shown.count || (all && items.count > Self.groupLimit) {
                 Button(all ? "Show less" : "Show \(items.count - shown.count) more") {
@@ -429,18 +534,44 @@ struct SessionList: View {
 
     // MARK: Pieces
 
-    private func row(_ s: SessionInfo, showPlace: Bool) -> some View {
+    private func row(_ s: SessionInfo, showPlace: Bool, nested: Bool = false, summary: String? = nil) -> some View {
         ConversationRow(
             session: s,
             selected: s.id == current,
             pinned: library.pinned.contains(s.id),
             live: library.live[s.id],
             pane: paneNumbers[s.id],
-            showPlace: showPlace
+            showPlace: showPlace,
+            nested: nested,
+            summary: summary
         ) {
             open(s)
         } menu: {
             rowMenu(s)
+        }
+    }
+
+    /// A folded branch's row: its newest session as the row, a chevron disclosing the older
+    /// ones (indented beneath).
+    @ViewBuilder
+    private func branchRow(_ session: SessionInfo, depth: Int, fold: SessionFolds.Fold, summary: String? = nil) -> some View {
+        let isOpen = openFolds.contains(session.id)
+        let indent = CGFloat(depth) * 10
+        HStack(spacing: 0) {
+            Button { toggleFoldBranch(session.id) } label: {
+                Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                    .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    .frame(width: 14, height: 20).contentShape(.rect)
+            }
+            .buttonStyle(.plain).foregroundStyle(.tertiary)
+            .help("\(fold.older.count) older on this branch")
+            row(session, showPlace: false, nested: depth > 0, summary: summary)
+        }
+        .padding(.leading, indent)
+        if isOpen {
+            ForEach(fold.older) { older in
+                row(older, showPlace: false, nested: true).padding(.leading, indent + 12)
+            }
         }
     }
 
@@ -544,6 +675,11 @@ struct SessionList: View {
         if s.id == current {
             Button("Session Tree…") { showTree = true }
         }
+        if library.parents.values.contains(s.id) {
+            Button(collapsedParents.contains(s.id) ? "Show Started Sessions" : "Collapse Started Sessions") {
+                toggleChildren(s.id)
+            }
+        }
         Divider()
         if library.archived.contains(s.id) {
             Button("Unarchive") { library.setArchived(s.id, false) }
@@ -553,15 +689,53 @@ struct SessionList: View {
     }
 }
 
-/// Compact, title-only sidebar row and its cached GitHub pull request indicator.
+/// Compact, title-only sidebar row, with its state glyph, trailing meta (age, commits ahead)
+/// and cached GitHub pull request indicator.
 private struct CompactSessionRow<Menu: View>: View {
     let session: SessionInfo
     let selected: Bool
     let live: Library.Live?
     let depth: Int
     let pr: CompactPRCache.Info?
+    /// How many older sessions of this branch are folded behind the row's disclosure.
+    var folded: Int = 0
+    /// Whether the row's disclosure is open (its older sessions are listed).
+    var foldOpen = false
+    /// How the sessions this one started (a manager's workers) stand.
+    var counts = SessionNesting.Counts()
+    /// Whether those children are collapsed into this row (it shows their counts).
+    var collapsed = false
+    var onFold: (() -> Void)? = nil
+    /// Collapse or show the children, when there are any.
+    var onCollapse: (() -> Void)? = nil
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
+    @State private var meta: SessionMetaCache.Meta?
+    @State private var hovering = false
+    /// Hovered a moment: the title wraps to show all of itself and the meta steps aside.
+    @State private var expandTitle = false
+
+    /// Nested under the session that started it: the row gives its width to the title.
+    private var nested: Bool { depth > 0 }
+
+    /// The worktree branch name, when it isn't just the slugged title.
+    private var suffix: String? {
+        RowSuffix.visible(SessionList.worktreeName(session.folder), title: session.displayTitle)
+    }
+
+    /// Squeezed nested rows keep the suffix out of the way: hover or selection shows it.
+    private var showSuffix: Bool { hovering || selected }
+
+    /// The row's state, combining live tracking with the listing's last-turn end. A turn
+    /// that finished ok keeps a green check for ten seconds, then settles to nothing.
+    private var glyph: SessionEndGlyph {
+        SessionEndGlyph.derive(live: live, end: session.end)
+    }
+
+    /// Whether the last turn ended recently enough to still show its green check.
+    private var freshComplete: Bool {
+        session.end == .complete && abs(Date().timeIntervalSince(session.modifiedDate)) < 10
+    }
 
     var body: some View {
         // The tick re-checks the 30 s activity rule so the indicator and the title
@@ -569,85 +743,163 @@ private struct CompactSessionRow<Menu: View>: View {
         TimelineView(.periodic(from: .now, by: 5)) { ctx in
             content(working: live == nil && ctx.date.timeIntervalSince(session.modifiedDate) < 30)
         }
-        .frame(height: 28)
+        .padding(.vertical, expandTitle ? 4 : 0)
+        .frame(minHeight: 28)
         .padding(.trailing, 3)
         .background(selected ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
         .contentShape(.rect)
         .contextMenu { menu() }
         .paneDraggable(.session(session), title: session.displayTitle)
         .help(helpText)
-        .task(id: session.folder?.path) { if let folder = session.folder { await CompactPRCache.shared.refresh(folder) } }
+        .onHover { hovering = $0 }
+        // A pass of the pointer doesn't reflow the list; resting on a row does.
+        .task(id: hovering) {
+            guard hovering else { expandTitle = false; return }
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, hovering else { return }
+            withAnimation(.snappy(duration: 0.15)) { expandTitle = true }
+        }
+        .task(id: session.folder?.path) {
+            if let folder = session.folder { await CompactPRCache.shared.refresh(folder) }
+            meta = SessionMetaCache.shared.value(for: session.folder)
+            if meta == nil { await SessionMetaCache.shared.refresh(session.folder); meta = SessionMetaCache.shared.value(for: session.folder) }
+        }
     }
 
     private func content(working: Bool) -> some View {
         // A working row keeps its title at full opacity, like the selected row.
         let running = working || live == .running
         return HStack(spacing: 0) {
-            if depth > 0 {
+            if nested {
+                // Nested rows keep their width for the title: 8 pt per level, one rail.
                 RoundedRectangle(cornerRadius: 1).fill(.quaternary)
-                    .frame(width: 1, height: 18).padding(.leading, CGFloat(depth - 1) * 13 + 6).padding(.trailing, 8)
+                    .frame(width: 1, height: 18)
+                    .padding(.leading, CGFloat(depth - 1) * Self.indent + 4).padding(.trailing, 5)
             } else {
                 Color.clear.frame(width: 6)
             }
-            Button(action: open) {
-                Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
+            if folded > 0 {
+                Button { onFold?() } label: {
+                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                        .rotationEffect(.degrees(foldOpen ? 90 : 0))
+                        .frame(width: 12, height: 20).contentShape(.rect)
+                }
+                .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    .help("\(folded) older on this branch")
+            } else {
+                Color.clear.frame(width: nested ? 2 : 6)
+            }
+            // The title takes the width it has; a branch suffix only when it says something
+            // the title doesn't (a slugged title never repeats itself). The child badge is its
+            // own button, so the open target is a tap on the rest rather than a wrapping button.
+            HStack(spacing: 5) {
+                Text(session.displayTitle).lineLimit(expandTitle ? 3 : 1).truncationMode(.tail)
                     .font(.system(size: 13))
                     .foregroundStyle(Color.primary.opacity(selected || running ? 1 : 0.82))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(.rect)
+                if let suffix, showSuffix {
+                    Text(suffix).lineLimit(1)
+                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                        .help(suffix)
+                }
+                if counts.total > 0 { childBadge }
             }
-            .buttonStyle(.plain)
-            if let pr {
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+            .onTapGesture(perform: open)
+            .accessibilityAddTraits(.isButton)
+            // Resting on the row, the meta steps aside for the title; nested rows leave the
+            // age and commit count to the tooltip.
+            if let pr, !expandTitle {
                 Image(systemName: pr.merged ? "arrow.triangle.merge" : "point.3.connected.trianglepath.dotted")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(pr.merged ? Color.green : Color.purple)
                 Text("\(pr.changedFiles)").font(.system(size: 11, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary).frame(minWidth: 16, alignment: .trailing)
             }
-            if working {
-                PulsingDot().padding(.leading, 4).help("working")
-            } else {
-                Circle().fill(statusColor).frame(width: 6, height: 6).padding(.leading, 7).padding(.trailing, 3)
+            if let ahead = meta?.ahead, ahead > 0, !expandTitle, !nested {
+                Text("\(ahead)↑").font(.system(size: 11, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.secondary).padding(.leading, 5).help("\(ahead) commit\(ahead == 1 ? "" : "s") ahead of main")
             }
-            SwiftUI.Menu { menu() } label: {
-                Image(systemName: "ellipsis").font(.system(size: 10)).frame(width: 14, height: 20)
+            if !expandTitle, !nested {
+                TimelineView(.periodic(from: .now, by: freshComplete ? 5 : 30)) { ctx in
+                    Text(SessionAgeShort.age(session.modifiedDate, now: ctx.date))
+                        .font(.system(size: 11, design: .rounded).monospacedDigit())
+                        .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
+                }
             }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).foregroundStyle(.secondary)
+            glyphView.padding(.leading, 5)
+            // Nested rows show the menu button only under the pointer (the context menu is
+            // always there).
+            if !nested || hovering {
+                SwiftUI.Menu { menu() } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 10)).frame(width: 14, height: 20)
+                }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).foregroundStyle(.secondary)
+            }
         }
     }
+
+    /// Indent per nesting level (computed: a generic type can't store statics).
+    static var indent: CGFloat { 8 }
 
     /// The title, with the worktree name (when there is one) underneath in the tooltip.
     private var helpText: String {
-        if let wt = SessionList.worktreeName(session.folder) {
-            return session.displayTitle + "\n" + wt
+        var lines = [session.displayTitle]
+        if let wt = SessionList.worktreeName(session.folder) { lines.append(wt) }
+        if nested {
+            // The row leaves its age to the tooltip: "active 5m ago", "active now".
+            let age = SessionAgeShort.age(session.modifiedDate, now: .now)
+            lines.append(age == "now" || age.contains(" ") ? "active \(age)" : "active \(age) ago")
         }
-        return session.displayTitle
+        return lines.joined(separator: "\n")
     }
 
-    private var statusColor: Color {
-        switch live {
-        case .running: .blue
-        case .waiting, .unread: .orange
-        case nil: .clear
+    /// The children's count; collapsed, how they stand ("· 4 running · 1 waiting"). Clicking
+    /// it folds the children into the row or shows them again.
+    private var childBadge: some View {
+        let n = counts.total
+        return Button { onCollapse?() } label: {
+            Group {
+                if collapsed, let summary = counts.summary {
+                    Text("· " + summary).foregroundStyle(.secondary)
+                } else {
+                    Text("\(n)").foregroundStyle(.tertiary)
+                }
+            }
+            .font(.system(size: 10, design: .rounded).monospacedDigit())
+            .lineLimit(1).fixedSize()
+            .padding(.leading, 2)
+            .contentShape(.rect)
         }
+        .buttonStyle(.plain)
+        .help(collapsed ? "Show the \(n) session\(n == 1 ? "" : "s") this one started"
+                        : "Collapse the \(n) session\(n == 1 ? "" : "s") this one started")
     }
-}
 
-/// The "working" indicator: an accent-colored dot that pulses while a session is busy.
-/// Under Reduce Motion it stays lit without animating.
-private struct PulsingDot: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulsing = false
 
-    var body: some View {
-        Circle()
-            .fill(Color.accentColor)
-            .frame(width: 7, height: 7)
-            .scaleEffect(pulsing ? 1.35 : 0.75)
-            .opacity(pulsing ? 1 : 0.45)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
-            .onAppear { pulsing = true }
-            .frame(width: 12, height: 12)
+    /// The state glyph: a spinner while running, an amber dot waiting on you, red for a turn
+    /// that ended in error, tinted for unseen, nothing for idle.
+    @ViewBuilder
+    private var glyphView: some View {
+        switch glyph {
+        case .running:
+            ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 12, height: 12).help("working")
+        case .waiting:
+            Circle().fill(.orange).frame(width: 6, height: 6).help("waiting on you")
+        case .failed:
+            Circle().fill(.red).frame(width: 6, height: 6).help("ended with an error")
+        case .unread:
+            Circle().fill(Color.accentColor).frame(width: 6, height: 6).help("finished while you were away")
+        case .idle:
+            // A finished worker keeps a quiet check so it never reads as live work; a
+            // top-level row only flashes it.
+            if freshComplete || (depth > 0 && session.end == .complete) {
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 11))
+                    .foregroundStyle(.green.opacity(freshComplete ? 1 : 0.6)).help("done")
+            } else {
+                EmptyView()
+            }
+        }
     }
 }
 
@@ -781,6 +1033,10 @@ struct ConversationRow<Menu: View>: View {
     /// The pane showing it, when the window is split.
     var pane: Int? = nil
     var showPlace = true
+    /// Nested under the session that started it: a finished one keeps its check.
+    var nested = false
+    /// Its collapsed children's counts ("4 running · 1 waiting"), shown after the title.
+    var summary: String? = nil
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
     @State private var hovering = false
@@ -790,8 +1046,12 @@ struct ConversationRow<Menu: View>: View {
         // the conversation.
         HStack(alignment: .center, spacing: 8) {
             Button(action: open) {
-                HStack(spacing: 0) {
+                HStack(spacing: 6) {
                     label
+                    if let summary {
+                        Text(summary).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).fixedSize().help(summary)
+                    }
                     Spacer(minLength: 0)
                 }
                 .contentShape(.rect)
@@ -810,7 +1070,7 @@ struct ConversationRow<Menu: View>: View {
     }
 
     private var label: some View {
-        ConversationRowLabel(session: session, live: live, pane: pane, showPlace: showPlace)
+        ConversationRowLabel(session: session, live: live, end: session.end, pane: pane, showPlace: showPlace)
     }
 
     /// Status and the hover menu share one slot sized to the larger of the two, so the row
@@ -836,15 +1096,27 @@ struct ConversationRow<Menu: View>: View {
 
     @ViewBuilder
     private var status: some View {
-        if live != nil {
-            LiveGlyph(live: live)
-        } else if !showPlace {
-            Text(SessionAge.short(session.modifiedDate))
+        switch SessionEndGlyph.derive(live: live, end: session.end) {
+        case .running: LiveGlyph(live: .running)
+        case .waiting: LiveGlyph(live: .waiting)
+        case .unread: LiveGlyph(live: .unread)
+        case .failed:
+            Image(systemName: "exclamationmark.circle.fill")
                 .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.tertiary)
-        } else if pinned {
-            Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary)
+                .foregroundStyle(.red)
+                .help("ended with an error")
+        case .idle:
+            if pinned {
+                Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary)
+            } else if nested && session.end == .complete {
+                Image(systemName: "checkmark.circle.fill").font(.caption)
+                    .foregroundStyle(.green.opacity(0.6)).help("done")
+            } else if !showPlace {
+                Text(SessionAge.short(session.modifiedDate))
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 

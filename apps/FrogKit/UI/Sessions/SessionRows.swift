@@ -72,6 +72,7 @@ enum FolderTint {
 struct ConversationRowLabel: View {
     let session: SessionInfo
     let live: SessionLive?
+    var end: SessionInfo.End? = nil
     /// The pane showing it, when the Mac's window is split.
     var pane: Int? = nil
     var showPlace = true
@@ -108,6 +109,11 @@ struct ConversationRowLabel: View {
                         .lineLimit(1)
                     Text("·")
                     Text(SessionAge.short(session.modifiedDate))
+                    if end == .failed {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

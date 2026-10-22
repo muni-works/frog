@@ -861,24 +861,57 @@ struct SessionInfo: Codable, Sendable, Identifiable, Hashable {
         var seq: UInt64
     }
 
+    /// How the last turn ended ("open", "complete", "stopped", "failed"), when the engine
+    /// knows (see `frog --sessions --json`).
+    enum End: String, Codable, Sendable, Hashable {
+        case open, complete, stopped, failed
+    }
+
     var id: String
     var modified: Int64
     var created: Int64
     var model: String
     var firstInput: String?
     var title: String?
+    var end: End?
     var forkedFrom: ForkPoint?
     /// The folder it works in (the chat folder for plain chats).
     var cwd: String?
 
     var displayTitle: String {
         let t = (title ?? firstInput ?? "Untitled").trimmingCharacters(in: .whitespacesAndNewlines)
-        return t.split(separator: "\n").first.map(String.init) ?? "Untitled"
+        return Self.titleLine(t) ?? "Untitled"
     }
     var folder: URL? { cwd.map { URL(fileURLWithPath: $0) } }
     var isChat: Bool { folder.map(FrogPaths.isChat) ?? false }
 
     var modifiedDate: Date { Date(timeIntervalSince1970: Double(modified) / 1000) }
+
+    /// The line to title a session from: the first paragraph that isn't boilerplate a prompt
+    /// carries for its agent (worktree rules, resume notes — they run to the next blank line).
+    /// When every paragraph opens with boilerplate, the task may share its paragraph (a
+    /// one-line note with the task right under it), so the first plain line titles it.
+    static func titleLine(_ text: String) -> String? {
+        func boilerplate(_ line: String) -> Bool {
+            line.hasPrefix("RULES:") || line.hasPrefix("You were stopped")
+        }
+        func lines(_ paragraph: String) -> [String] {
+            paragraph.split(separator: "\n", omittingEmptySubsequences: true)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
+        let paragraphs = text.components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for paragraph in paragraphs where !boilerplate(lines(paragraph).first ?? "") {
+            if let first = lines(paragraph).first { return first }
+        }
+        for paragraph in paragraphs {
+            if let line = lines(paragraph).first(where: { !boilerplate($0) }) { return line }
+        }
+        return nil
+    }
 }
 
 struct Rewound: Decodable, Sendable {
