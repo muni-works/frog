@@ -381,7 +381,16 @@ impl Config {
                 p
             }
             "openrouter" | "vercel" | "cloud" => Profile::new(ProviderKind::Openai, model),
-            "codex" => { let mut p = Profile::new(ProviderKind::Codex, model); if let Some((_, context)) = crate::provider::codex::models().iter().find(|(m, _)| *m == model) { p.context_window = Some(*context); } p },
+            "codex" => {
+                let mut p = Profile::new(ProviderKind::Codex, model);
+                if let Some((_, context)) = crate::provider::codex::models()
+                    .iter()
+                    .find(|(m, _)| *m == model)
+                {
+                    p.context_window = Some(*context);
+                }
+                p
+            }
             _ => match crate::providers::State::load().custom.remove(prov) {
                 // A server you added: another machine's ollama, or any OpenAI-compatible one.
                 Some(c) => {

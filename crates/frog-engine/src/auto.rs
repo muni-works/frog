@@ -95,7 +95,11 @@ impl Classifier {
     /// session's own model.
     /// A classifier that would send the project's code to the cloud when the project keeps it
     /// on your devices falls back to the session's model (which the project allows).
-    pub fn new(cfg: &Config, session: (&str, &Profile), dir: &std::path::Path) -> anyhow::Result<Self> {
+    pub fn new(
+        cfg: &Config,
+        session: (&str, &Profile),
+        dir: &std::path::Path,
+    ) -> anyhow::Result<Self> {
         let (name, profile) = match &cfg.auto_classifier {
             Some(spec) => cfg.resolve(Some(spec))?,
             None if crate::sidecar::available(crate::sidecar::APPLE) => {

@@ -78,7 +78,14 @@ mod tests {
     use super::*;
 
     fn ev(title: &str, start: DateTime<Utc>, mins: i64) -> Event {
-        Event { title: title.into(), start, end: start + Duration::minutes(mins), all_day: false, calendar: None, location: None }
+        Event {
+            title: title.into(),
+            start,
+            end: start + Duration::minutes(mins),
+            all_day: false,
+            calendar: None,
+            location: None,
+        }
     }
 
     #[test]

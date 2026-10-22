@@ -5,11 +5,11 @@ pub mod docs;
 pub mod fs;
 pub mod image;
 pub mod rank;
+pub mod screenshot;
 pub mod search;
 pub mod sessions;
-pub mod screenshot;
-pub mod visual;
 pub mod todo;
+pub mod visual;
 pub mod web;
 pub mod websearch;
 
@@ -17,7 +17,7 @@ use crate::provider::ToolSpec;
 use anyhow::{Result, anyhow, bail};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 pub struct Ctx {
@@ -76,23 +76,28 @@ impl Ctx {
         let Some(root) = &self.sandbox else {
             return Ok(());
         };
-        let mut existing = p.to_path_buf();
-        let mut rest = Vec::new();
-        while !existing.exists() {
-            let Some(name) = existing.file_name() else {
-                break;
-            };
-            rest.push(name.to_os_string());
-            if !existing.pop() {
-                break;
-            }
-        }
-        let mut real = existing.canonicalize().unwrap_or(existing);
-        for part in rest.iter().rev() {
-            if part == ".." {
-                real.pop();
-            } else if part != "." {
-                real.push(part);
+        // Walk the path component by component, resolving symlinks as they appear and
+        // applying `..` to what has been resolved so far. A `..` after a component that does
+        // not exist yet (`new/../x`) must still pop it, or the path escapes the check.
+        let abs = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.cwd.join(p)
+        };
+        let mut real = PathBuf::new();
+        for part in abs.components() {
+            match part {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    real.pop();
+                }
+                Component::Normal(name) => {
+                    real.push(name);
+                    if let Ok(resolved) = real.canonicalize() {
+                        real = resolved;
+                    }
+                }
+                other => real.push(other.as_os_str()),
             }
         }
         let tmp = std::env::temp_dir()
