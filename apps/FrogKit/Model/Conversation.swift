@@ -546,6 +546,9 @@ final class Conversation {
             upsert(id) { $0.progress = p }
         case .autoApproved(let item, let reason):
             upsert(item) { $0.autoReason = reason }
+        case .permissionDecision:
+            // Bookkeeping for the ask rate; nothing to show.
+            break
         case .subagent(let item, let inner):
             upsert(item) { state in
                 if state.subagent == nil { state.subagent = SubagentRun() }
