@@ -4,7 +4,6 @@
 q=$1
 while IFS='|' read -r repo branch task; do
   [[ -z $repo || $repo == \#* ]] && continue
-  until curl -s -m 8 https://api.frog.toys/status | grep -q "Serving now"; do sleep 30; done
   out=$(~/Developer/chief/bin/spawn-worker.sh "$repo" "$branch" "$task")
   echo "$(date -u +%H:%MZ) $out"
   pid=$(echo "$out" | sed -nE 's/worker pid ([0-9]+).*/\1/p')
