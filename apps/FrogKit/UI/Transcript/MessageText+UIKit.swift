@@ -43,9 +43,10 @@ struct MessageText: View {
 private struct BlocksView: View {
     let blocks: [MarkdownBlock]
     let ink: Ink?
+    @Environment(\.turnSpace) private var space
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: space.block) {
             ForEach(Array(placed.enumerated()), id: \.offset) { _, p in
                 block(p.block, from: p.start)
             }
@@ -77,7 +78,7 @@ private struct BlocksView: View {
     private func block(_ b: MarkdownBlock, from start: Int) -> some View {
         switch b {
         case .paragraph(let s):
-            Text(inked(Markdown.inline(s), from: start)).lineSpacing(3)
+            Text(inked(Markdown.inline(s), from: start)).lineSpacing(space.lineHeight)
         case .heading(let level, let s):
             Text(inked(Markdown.inline(s), from: start))
                 .font(level == 1 ? .title3.weight(.semibold) : level == 2 ? .headline : .subheadline.weight(.semibold))
@@ -87,13 +88,13 @@ private struct BlocksView: View {
         case .bullet(let indent, let marker, let s):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(marker).foregroundStyle(.secondary).monospacedDigit()
-                Text(inked(Markdown.inline(s), from: start)).lineSpacing(3)
+                Text(inked(Markdown.inline(s), from: start)).lineSpacing(space.lineHeight)
             }
             .padding(.leading, CGFloat(indent) * 16)
         case .quote(let s):
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 1.5).fill(.quaternary).frame(width: 3)
-                Text(inked(Markdown.inline(s), from: start)).foregroundStyle(.secondary).lineSpacing(3)
+                Text(inked(Markdown.inline(s), from: start)).foregroundStyle(.secondary).lineSpacing(space.lineHeight)
             }
             .fixedSize(horizontal: false, vertical: true)
         case .rule:

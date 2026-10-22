@@ -24,7 +24,7 @@ struct TurnView: View {
     @State private var landed: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(Verbosity.key) private var defaultVerbosity = Verbosity.standard.rawValue
-    @AppStorage("density") private var density = Density.comfortable.rawValue
+    @Environment(\.turnSpace) private var space
 
     @Environment(\.models) private var models
 
@@ -60,7 +60,7 @@ struct TurnView: View {
     var body: some View {
         let parts = TurnParts(turn)
         let flow = TurnFlow(turn.items, showThinking: verbosity.showsThinking)
-        VStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 8 : 14) {
+        VStack(alignment: .leading, spacing: space.inTurn) {
             if let delivered = SessionMessage.parse(turn.input) {
                 SessionMessageCard(message: delivered)
             } else if !turn.input.isEmpty {
@@ -117,6 +117,9 @@ struct TurnView: View {
                 // An unpinned footer keeps its place and fades in on hover, so it neither
                 // covers the answer nor shifts what's below.
                 EndView(reason: end, usage: turn.usage, answer: answer, hovering: hovering)
+                    // Set off from the answer above it (see `TurnSpace`): the turn's last
+                    // line reads as a caption, not as one more paragraph.
+                    .padding(.top, isFooter(end) ? space.beforeFooter : 0)
                     .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
                     .allowsHitTesting(pinsFooter || hovering)
             }
