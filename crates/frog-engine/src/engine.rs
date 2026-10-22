@@ -6922,6 +6922,68 @@ for line in sys.stdin:
     }
 
     #[tokio::test]
+    async fn archive_session_round_trips_through_the_client() {
+        // ArchiveSession/UnarchiveSession are client-carried like the rest: the engine hands
+        // the call to the client and returns its answer. A missing `id` never gets that far.
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "ar".into(),
+                    name: "ArchiveSession".into(),
+                    input: json!({}),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(
+                vec![Block::ToolUse {
+                    id: "ar2".into(),
+                    name: "ArchiveSession".into(),
+                    input: json!({ "id": "ops-0003" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "tidy up".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut saw_empty_error = false;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::SessionRequest { id, tool, .. } => {
+                    assert_eq!(tool, "ArchiveSession");
+                    // No id: rejected by validation before reaching the client.
+                    saw_empty_error = true;
+                    h.ops
+                        .send(Op::SessionReply {
+                            id,
+                            result: None,
+                            error: Some("`id` is required".into()),
+                        })
+                        .unwrap();
+                }
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "ArchiveSession" => {
+                    if output.contains("required") {
+                        saw_empty_error = true;
+                    }
+                }
+                Event::TurnEnded { .. } => break,
+                _ => {}
+            }
+        }
+        assert!(saw_empty_error, "the missing id was refused");
+    }
+
+    #[tokio::test]
     async fn turn_timing_keeps_permission_waits_out_of_tool_time() {
         let bash = Block::ToolUse {
             id: "b".into(),

@@ -45,6 +45,10 @@ final class SessionBroker {
     static let rateWindow: TimeInterval = 10 * 60
 
     var directory: () -> [Entry] = { [] }
+    /// Like `directory`, but including archived sessions (to resolve one for unarchiving).
+    var directoryIncludingArchived: () -> [Entry] = { [] }
+    /// Hide (or show) a session in the sidebar, exactly like the sidebar's own archive.
+    var archiver: (_ id: String, _ on: Bool) -> Void = { _, _ in }
     /// Deliver an op to session `id`, starting its engine if needed. False if it can't be reached.
     var reach: (_ id: String, _ from: String, _ fromName: String, _ message: String) -> Bool = { _, _, _, _ in false }
     var starter: (_ request: StartRequest, _ parent: Conversation?) async throws -> Started = { _, _ in
@@ -167,6 +171,21 @@ final class SessionBroker {
                     c?.replySession(r.id, error: error.localizedDescription)
                 }
             }
+        case "ArchiveSession", "UnarchiveSession":
+            // Exactly the sidebar's archive (Library.setArchived): hides from lists, never
+            // deletes the log. The archived set lives in the app's defaults, so resolving a
+            // name only sees unarchived sessions — resolve against everything to unarchive.
+            let key = input["id"]?.string ?? ""
+            let on = r.tool == "ArchiveSession"
+            switch on ? resolve(key) : resolve(key, includeArchived: true) {
+            case .success(let e):
+                guard e.id != sender else { return c.replySession(r.id, error: "That's this session.") }
+                archive(e.id, on)
+                c.replySession(r.id, result: .string(
+                    "\(on ? "Archived" : "Unarchived") \(e.name) (\(e.id)).\(on ? " Its log is kept; UnarchiveSession brings it back." : " It's back in the sidebar.")"))
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
         default:
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
         }
@@ -186,10 +205,11 @@ final class SessionBroker {
     }
 
     /// Find a session by id (or a unique id prefix), else by name (case-insensitive).
-    func resolve(_ to: String) -> Result<Entry, BrokerError> {
+    /// `includeArchived` also looks among archived sessions (to unarchive one).
+    func resolve(_ to: String, includeArchived: Bool = false) -> Result<Entry, BrokerError> {
         let key = to.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return .failure(BrokerError("`to` is empty")) }
-        let all = directory()
+        let all = includeArchived ? directoryIncludingArchived() : directory()
         if let e = all.first(where: { $0.id == key }) { return .success(e) }
         let named = all.filter { $0.name.caseInsensitiveCompare(key) == .orderedSame }
         if named.count == 1 { return .success(named[0]) }
@@ -476,6 +496,24 @@ extension SessionBroker {
                     model: c?.status?.model ?? s.model, modified: s.modified)
             }
         }
+        directoryIncludingArchived = {
+            let lib = Library.shared
+            return lib.sessions.map { s in
+                let c = lib.conversation(s.id)
+                let state = switch lib.live[s.id] {
+                case .running?: "running"
+                case .waiting?: "waiting"
+                default: "idle"
+                }
+                return Entry(
+                    id: s.id, name: c?.title ?? s.displayTitle, state: state, cwd: s.cwd,
+                    model: c?.status?.model ?? s.model, modified: s.modified)
+            }
+        }
+        archiver = { id, on in
+            Library.shared.setArchived(id, on)
+            Library.shared.refresh()
+        }
         reach = { [unowned self] id, from, name, message in
             guard let c = conversation(for: id) else { return false }
             c.deliver(from: from, name: name, message: message)
@@ -536,6 +574,12 @@ extension SessionBroker {
         starter = { [unowned self] req, parent in try await start(req, parent: parent) }
         Conversation.sessionRequests = { [unowned self] c, r in handle(r, from: c) }
         Conversation.userActivity = { [unowned self] c in if let id = c.sessionID { userActivity(id) } }
+    }
+
+    /// `ArchiveSession`/`UnarchiveSession`: the sidebar's archive, as a broker operation. Hides
+    /// from lists and sidebars; never deletes the log.
+    func archive(_ id: String, _ on: Bool) {
+        archiver(id, on)
     }
 
     /// `StartSession`: a new conversation (in a worktree if asked), titled, with its first

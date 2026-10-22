@@ -307,6 +307,25 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(rows.first?["state"]?.string, "idle")
     }
 
+    /// ArchiveSession / UnarchiveSession: the sidebar's archive (never deletes logs), and
+    /// unarchiving resolves names among archived sessions too.
+    func testArchiveAndUnarchiveUseTheArchiver() throws {
+        let b = broker([chief, eng])
+        var archived: [String: Bool] = [:]
+        b.archiver = { archived[$0] = $1 }
+        b.directoryIncludingArchived = { [self.chief, self.eng] }
+        // Archive by name.
+        let target = try b.resolve("Eng Manager").get()
+        b.archive(target.id, true)
+        XCTAssertEqual(archived[target.id], true)
+        // An archived session is no longer in the plain directory, but resolves for unarchiving.
+        b.directory = { [self.chief] }
+        guard case .failure = b.resolve("Eng Manager") else { return XCTFail("archived still listed") }
+        let back = try b.resolve("Eng Manager", includeArchived: true).get()
+        b.archive(back.id, false)
+        XCTAssertEqual(archived[back.id], false)
+    }
+
     func testWorktreeInATempRepo() throws {
         let repo = FileManager.default.temporaryDirectory.appending(path: "frog-broker-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
