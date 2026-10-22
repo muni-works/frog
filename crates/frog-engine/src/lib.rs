@@ -17,6 +17,7 @@ pub mod follow;
 pub mod harness;
 pub mod image_paths;
 pub mod imports;
+pub mod irc;
 pub mod mcp;
 pub mod memory;
 pub mod message;
