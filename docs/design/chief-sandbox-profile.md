@@ -67,10 +67,28 @@ worktree) and contains no `push` token anywhere — `url.insteadOf` would redire
 a push's URL too, so the overlay must never see one. `git push` keeps asking
 (auto.rs hard rule), unchanged.
 
-Risk: **low**. gh is the only thing that can read its own token (from the
-keychain, if `allow_keychain` is on, or `GH_TOKEN`); arbitrary commands can't
-see credentials either way. The ssh alternative — `allow_read = ["~/.ssh"]` —
-remains available but is strictly worse (keys readable, read-only).
+Risk: **none for the token with the default sandbox, but public repos only.**
+Tested (`sandboxed_git_https_does_not_expose_the_github_token`, frog#61 review):
+with `git_https = true` and no `allow_read`/`allow_keychain`, an ordinary
+sandboxed command can't get the GitHub token. `gh auth token`,
+`cat ~/.config/gh/*`, `security find-{internet,generic}-password` and asking the
+helper directly (`gh auth git-credential get`, `git credential fill`) all fail
+with "operation not permitted" or "item could not be found". `git_https` never
+changes the profile (unit test `sandbox_git_https_adds_no_credential_reads_to_the_profile`).
+The flip side: the overlay's helper runs inside the same sandbox, so it can't
+read the token either. Private repos fail auth (verified on `ecto/frog`), and
+the overlay only helps with public ones.
+
+Don't "fix" that with `allow_read = ["~/.config/gh"]` + `allow_keychain = true`.
+That opens the token to *every* sandboxed command (`gh auth token` prints it;
+observed in a session configured that way), and seatbelt can't scope a file or
+Keychain read to one binary. Private repos need the token held outside the
+sandbox: the engine (unsandboxed) answers git's credential protocol for
+`host=github.com` only. Even then, any command can run
+`git credential fill` and get whatever git's helper returns. So the engine
+should hand out a dedicated read-only fine-grained token, not gh's full
+`gho_` token. Not built; needs Cam's call. The ssh alternative,
+`allow_read = ["~/.ssh"]`, is worse still (private keys readable).
 
 ### 3. Default-readable config
 
@@ -139,7 +157,7 @@ the ignored test `gh_auth_status_works_with_the_opt_in_config` covers both).
 `cargo test -q -p frog-engine sandbox` — profile-generation and rewrite unit
 tests (new rules present, every SECRETS path still denied, allow_read never
 writable, `adapt_swiftpm`/`git_https_applies` selectivity) plus the two
-existing confinement tests. `-- --ignored` adds four real smoke tests, all run
+existing confinement tests. `-- --ignored` adds five real smoke tests, all run
 and passing on this machine (macOS 26, Xcode 17 / Swift 6.4):
 
 - `sandboxed_swift_version_works` — `swift --version` sandboxed.
@@ -149,6 +167,9 @@ and passing on this machine (macOS 26, Xcode 17 / Swift 6.4):
 - `sandboxed_git_ls_remote_https_works` — `git ls-remote https://…` sandboxed.
 - `sandboxed_git_ls_remote_ssh_becomes_https_with_git_https_config` — ssh URL
   resolves over https with `git_https = true`, no `~/.ssh`.
+- `sandboxed_git_https_does_not_expose_the_github_token` — with `git_https`
+  on, six token probes find nothing; public ls-remote still works
+  (`FROG_PRIVATE_REPO=owner/repo` also prints the private-repo result).
 
 All smoke tests spawn the real seatbelt profile via `run()`, so they can't be
 run from inside an already-sandboxed frog session (nested `sandbox-exec`
