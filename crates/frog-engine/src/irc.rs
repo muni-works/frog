@@ -8,7 +8,6 @@
 //! which the client only sets when config turns the bus on: off by default until the DO
 //! deploys. The engine speaks to a [`Wire`] — a stub until the client sends a real connection.
 
-use crate::protocol::Event;
 use crate::provider::ToolSpec;
 use anyhow::{Result, anyhow, bail};
 use serde::Serialize;
@@ -67,6 +66,16 @@ pub struct Line {
     pub text: String,
     /// Server time, unix milliseconds.
     pub time: i64,
+}
+
+/// Where the live [`Bus`] sits, shared between the engine's router and the [`crate::Handle`]:
+/// the client can turn the bus on (`SetClientCaps { irc }`) after the engine started, and both
+/// sides have to see it.
+pub type Slot = std::sync::Arc<Mutex<Option<std::sync::Arc<Bus>>>>;
+
+/// A fresh, empty slot: no bus until the client declares one.
+pub fn slot() -> Slot {
+    std::sync::Arc::new(Mutex::new(None))
 }
 
 /// The bus, as the engine sees it: a history ring and a connection the client owns. Shared per

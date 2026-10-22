@@ -232,6 +232,11 @@ pub struct Options {
 pub struct Handle {
     pub ops: mpsc::UnboundedSender<Op>,
     pub events: mpsc::UnboundedReceiver<Envelope>,
+    /// The IRC agent bus slot (see `irc`): empty until the client declares
+    /// `SetClientCaps { irc }`, live after. The engine is the bridge — it posts the minimal
+    /// notices and routes mentions of this session's nick to its inbox — and the client owns
+    /// the connection inside (a stub until the DO deploys).
+    pub bus: crate::irc::Slot,
 }
 
 /// State the op router touches while a turn is running.
@@ -258,6 +263,11 @@ struct Shared {
     working: AtomicBool,
     /// Background tasks, jobs and monitors (see `background`).
     bg: Arc<crate::background::Registry>,
+    /// The IRC agent bus, when the engine posts to one (`SetClientCaps { irc }`). The engine
+    /// is the bridge: it posts the minimal notices and routes mentions to this session's
+    /// inbox, the SendMessage contract all the way down. A slot, not a value, because the
+    /// client can turn the bus on after the engine started.
+    irc: crate::irc::Slot,
 }
 
 /// Event numbering and the session log. Shared, so events raised outside the agent loop (MCP
@@ -443,12 +453,16 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         },
         journal,
         panes,
+        irc: crate::irc::slot(),
     });
     shared.bg.set_wake(&work_tx);
     let mut agent = Agent::new(opts, provider, shared.clone())?;
     // What's running, before anything slow (MCP servers, a local model loading, probing the
     // provider), so a client can name the model as soon as a conversation opens.
     agent.emit_status();
+    /// The bus Handle exposes (empty until `SetClientCaps { irc }`), read before `shared`
+    /// moves into the work loop.
+    let bus = shared.irc.clone();
     // A resumed session's log, for answering `Subscribe` while the engine starts up.
     let resumed = match (&agent.store, shared.journal.has_log()) {
         (Some(dir), true) => Some((dir.clone(), agent.session_id.clone())),
@@ -692,6 +706,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     Ok(Handle {
         ops: op_tx,
         events: ev_rx,
+        bus,
     })
 }
 
@@ -1220,6 +1235,20 @@ impl Agent {
         (secs > 0.0 && self.usage.output > 0).then(|| self.usage.output as f64 / secs)
     }
 
+    /// The conversation's current title, as the client set it (`Op::SetTitle`); part of the
+    /// IRC nick (a short title reads better on the bus).
+    fn title(&self) -> String {
+        self.inputs
+            .first()
+            .map(|s| s.trim().chars().take(80).collect())
+            .unwrap_or_default()
+    }
+
+    /// The IRC bus, when it's on. Clones the Arc out from under the slot.
+    fn irc(&self) -> Option<Arc<crate::irc::Bus>> {
+        self.shared.irc.lock().unwrap().clone()
+    }
+
     fn emit_status(&self) {
         self.emit(Event::Status(Status {
             model: self.profile_name.clone(),
@@ -1288,9 +1317,31 @@ impl Agent {
         };
         self.emit(Event::TurnEnded {
             turn,
-            reason,
+            reason: reason.clone(),
             usage,
         });
+        if let Some(bus) = self.irc() {
+            use crate::irc::NoticeKind;
+            // Only the minimal kinds (the doc's accepted scope): the turn ended waiting on
+            // the user, in error, or with nothing left queued. `Cancelled` says nothing.
+            let notice = match &reason {
+                EndReason::Denied => Some((
+                    NoticeKind::WaitingOnUser,
+                    "turn ended: a tool call was denied, waiting on user".to_string(),
+                )),
+                EndReason::Error { error } => {
+                    Some((NoticeKind::Errored, format!("turn errored: {error:?}")))
+                }
+                // Idle per the SendMessage contract: no turn running, nothing queued.
+                EndReason::Complete | EndReason::MaxTokens => {
+                    Some((NoticeKind::Idle, "idle".to_string()))
+                }
+                _ => None,
+            };
+            if let Some((kind, text)) = notice {
+                bus.post_notice(kind, &text);
+            }
+        }
         self.sync_log();
         self.write_summary();
     }
@@ -1446,6 +1497,9 @@ impl Agent {
             Op::SetTitle { title } => {
                 let title: String = title.trim().chars().take(80).collect();
                 if !title.is_empty() {
+                    if let Some(bus) = self.irc() {
+                        bus.set_session(&self.session_id, &title);
+                    }
                     self.emit(Event::Titled { title });
                 }
             }
@@ -1461,10 +1515,23 @@ impl Agent {
                 panes,
                 ask,
                 sessions,
+                irc,
             } => {
                 self.shared.panes.set_client(panes);
                 self.shared.client_ask.store(ask, Ordering::Relaxed);
                 self.shared.sessions.set_enabled(sessions);
+                if irc {
+                    // The bridge: one nick per session, notices and mentions through it.
+                    // Channel and connection are the client's (a stub until the DO deploys).
+                    let mut slot = self.shared.irc.lock().unwrap();
+                    if slot.is_none() {
+                        let bus = Arc::new(crate::irc::Bus::default());
+                        bus.set_session(&self.session_id, &self.title());
+                        *slot = Some(bus);
+                    }
+                } else {
+                    *self.shared.irc.lock().unwrap() = None;
+                }
                 self.sync_specs();
                 self.apply_harness();
             }
@@ -1967,6 +2034,10 @@ impl Agent {
         self.system = format!("{base}{rules}{}", harness::guidance(self.tier));
         if !self.subagent && self.shared.sessions.enabled() {
             self.system.push_str(crate::tools::sessions::PROMPT);
+        }
+        if !self.subagent && self.irc().is_some() {
+            self.system.push_str(crate::irc::PROMPT);
+            self.system.push_str(crate::irc::APPROVAL_PROMPT);
         }
         if !self.chat && !self.subagent {
             self.system
@@ -2611,6 +2682,11 @@ impl Agent {
             if self.shared.sessions.enabled() {
                 specs.extend(crate::tools::sessions::specs());
             }
+            // The bus tool, only when the client declared the bus (never to subagents: a
+            // subagent's parent carries the channel).
+            if self.irc().is_some() {
+                specs.push(crate::irc::spec());
+            }
         }
         if self.has_recall() {
             specs.push(crate::recall::spec());
@@ -2871,6 +2947,12 @@ impl Agent {
         }
         if crate::tools::sessions::is_tool(name) && !self.subagent {
             return self.session_tool(id, name, input).await;
+        }
+        if name == crate::irc::TOOL && !self.subagent {
+            let Some(bus) = self.irc() else {
+                anyhow::bail!("the IRC bus isn't enabled for this conversation");
+            };
+            return crate::irc::run(&bus, input);
         }
         if name == crate::present::TOOL {
             return crate::present::run(input, &self.ctx.root, self.tier == Tier::Weak);
@@ -3855,6 +3937,14 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             reason,
             subagent: None,
         });
+        // The bus mirrors the card as one line with a link. IRC never approves: the click
+        // happens in the app, on a link the bus can't forge (the id is frog's own).
+        if let Some(bus) = self.irc() {
+            bus.post_notice(
+                crate::irc::NoticeKind::WaitingOnUser,
+                &crate::irc::approval_notice(&self.session_id, item, name),
+            );
+        }
         let asked = Instant::now();
         let decision = rx.await.unwrap_or(Decision::Deny);
         self.timing.user_ms += ms(asked.elapsed());
@@ -6610,6 +6700,7 @@ for line in sys.stdin:
         let mut h = engine(script, true);
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: false,
                 ask: true,
                 sessions: false,
@@ -6632,6 +6723,7 @@ for line in sys.stdin:
         let mut h = engine(script, true);
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: false,
                 ask: true,
                 sessions: false,
@@ -6692,6 +6784,7 @@ for line in sys.stdin:
     fn caps(h: &Handle, sessions: bool) {
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: false,
                 ask: false,
                 sessions,
@@ -7455,6 +7548,7 @@ for line in sys.stdin:
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: true,
                 ask: false,
                 sessions: false,
@@ -7588,6 +7682,7 @@ for line in sys.stdin:
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: true,
                 ask: false,
                 sessions: false,
@@ -7638,6 +7733,7 @@ for line in sys.stdin:
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: true,
                 ask: false,
                 sessions: false,

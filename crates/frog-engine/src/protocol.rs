@@ -172,6 +172,11 @@ pub enum Op {
         /// model gets `ListSessions`, `SendMessage` and `StartSession`.
         #[serde(default)]
         sessions: bool,
+        /// The IRC agent bus is on (config `[irc] enabled`, a frog cloud Bus DO): the model
+        /// gets the `Irc` tool, and the client relays the bus. Off by default until the DO
+        /// deploys.
+        #[serde(default)]
+        irc: bool,
     },
     /// Open a pane. The engine mints the id and answers with [`Event::PaneOpened`]. Terminal
     /// panes are engine-owned shells; preview panes are the client's webviews.
@@ -1083,12 +1088,26 @@ mod tests {
     #[test]
     fn client_caps_default_off() {
         let old: Op = serde_json::from_str(r#"{"op":"set_client_caps","panes":true}"#).unwrap();
+        let Op::SetClientCaps {
+            panes,
+            ask,
+            sessions,
+            irc,
+        } = old
+        else {
+            panic!("not SetClientCaps");
+        };
+        assert!(panes && !ask && !sessions && !irc);
+        // Old clients never send `irc`, so the bus stays off until the client says otherwise.
+        let wire: Op =
+            serde_json::from_str(r#"{"op":"set_client_caps","panes":false,"irc":true}"#).unwrap();
         assert!(matches!(
-            old,
+            wire,
             Op::SetClientCaps {
-                panes: true,
+                panes: false,
                 ask: false,
-                sessions: false
+                sessions: false,
+                irc: true
             }
         ));
     }
