@@ -57,10 +57,11 @@ turns; don't wait in a loop."
             description: "Start a new long-running session (shown in the sidebar under this \
 one) with a first prompt. Optionally in another folder (cwd), with another model, or in its own \
 git worktree on a new branch (worktree: true) based on the repo's remote default branch \
-(origin/HEAD, e.g. origin/main) so its edits don't collide with yours. When it goes \
-idle you get a message from \"system\" with its last reply (its report), unless report: false. \
-Returns its id and name for SendMessage, and for a worktree the branch it's on and the base \
-ref it started from."
+(origin/HEAD, e.g. origin/main) so its edits don't collide with yours. mode starts it in a \
+permission mode (default, accept-edits, auto, yolo); it defaults to your own mode but is never \
+above it, and yolo only when you say so explicitly. When it goes idle you get a message from \
+\"system\" with its last reply (its report), unless report: false. Returns its id and name for \
+SendMessage, and for a worktree the branch it's on and the base ref it started from."
                 .into(),
             schema: json!({
                 "type": "object",
@@ -69,6 +70,7 @@ ref it started from."
                     "prompt": { "type": "string" },
                     "cwd": { "type": "string" },
                     "model": { "type": "string", "description": "the model the new session runs on (e.g. local/qwen3-4b, cloud/qwen3-coder-next); default: this session's model" },
+                    "mode": { "type": "string", "enum": ["default", "accept-edits", "auto", "yolo"], "description": "permission mode for the new session (default: yours, capped; yolo never inherited implicitly)" },
                     "worktree": { "type": "boolean", "description": "its own git worktree on a new branch, based on the remote default branch (default false)" },
                     "report": { "type": "boolean", "description": "send its last reply back here when it goes idle (default true)" }
                 },

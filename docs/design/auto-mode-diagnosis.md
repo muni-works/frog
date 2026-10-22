@@ -65,3 +65,23 @@ compounds in every mode except none; auto mode falls back to that fast path when
 the classifier fails (with a once-per-session notice); `StartSession` gains
 `mode` (never above the parent's, yolo never inherited implicitly) and the app's
 new-thread default comes from the `defaultMode` setting (default Auto).
+
+## Replay of today's prompts through the new layers
+
+Joining every `permission_resolved` in today's logs (excluding this
+investigation's own sessions) to the tool call it gated: **116 resolved prompts,
+79 of them Bash**. Replayed through layer 1 of the new permit()
+(`examples/replay_asks.rs`, `read_only` + no credential paths):
+
+- **8 auto-run by the rule layer** (read-only compounds like `git log … | head`).
+- **71 would still ask**, of which **4 are credential reads** (hard ask: `.env`,
+  `~/.config/frog` keychain queries) and **67 are gray area** — pushes,
+  xcodebuild runs, `rm -rf` of temp dirs, heredoc writes: these go to the
+  auto-mode classifier (layer 2), which decides with the user's intent in mind;
+  the ones it rejects (pushes, publishes, disk writes) ask, as they should.
+
+So the deterministic layers alone cut the trivial prompts to zero (all of
+today's truly-read-only compounds now auto-run in every mode, sandboxed or not),
+and what remains is work the classifier and the user should genuinely see. The
+layer-3 `permission_decision` events in session logs make the ongoing ask rate
+measurable from now on.

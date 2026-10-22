@@ -58,6 +58,8 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 /// Read-only commands that never need approval (when not chained or redirected).
+/// Compounds and pipelines are covered by `shell::read_only`, which parses them;
+/// this list handles bare commands and the user's `allow_bash` prefixes.
 const SAFE_BASH: &[&str] = &[
     "ls",
     "pwd",
@@ -923,6 +925,9 @@ struct Agent {
     warming: Arc<Mutex<(bool, Option<Warming>)>>,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
+    /// The classifier already failed once this session and the user was told:
+    /// later failures fall back quietly instead of repeating the notice.
+    classifier_failed: bool,
     session_allow: HashSet<String>,
     /// Context from `Op::Shell`, attached to the next message.
     pending: Vec<String>,
@@ -1109,6 +1114,7 @@ impl Agent {
             map_logged: false,
             edited: Vec::new(),
             classifier: None,
+            classifier_failed: false,
             vision: false,
             budget_ok: false,
             cache_key_ok: false,
@@ -3708,10 +3714,23 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         let cmd = input["command"].as_str().unwrap_or("").trim();
         let prefix = cmd.split_whitespace().next().unwrap_or("").to_string();
         let mcp = name.starts_with("mcp__");
+        let leaves_sandbox = name == "Bash" && input["unsandboxed"].as_bool() == Some(true);
+        // Layer 1, built-in rules, no model call. A command the parser proves
+        // read-only (no writes, no subshells, no credential paths) runs without
+        // asking in every mode, sandboxed or not: it can only read, and the
+        // sandbox is a write fence, not the only thing standing between the agent
+        // and `cat`.
+        if name == "Bash"
+            && !crate::shell::touches_credentials(cmd)
+            && (bash_allowed(cmd, &self.cfg.allow_bash) || crate::shell::read_only(cmd))
+        {
+            self.decision(item, "rule", "allow", "read-only command", 0);
+            return Decision::Allow;
+        }
         // A sandboxed command can only write inside the project and can't read credentials,
         // so it runs without asking; leaving the sandbox always asks.
-        let leaves_sandbox = name == "Bash" && input["unsandboxed"].as_bool() == Some(true);
         if name == "Bash" && self.ctx.shell_sandbox.is_some() && !leaves_sandbox {
+            self.decision(item, "sandbox", "allow", "sandboxed", 0);
             return Decision::Allow;
         }
         let key = match kind {
@@ -3773,9 +3792,18 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             {
                 false
             }
-            _ => bash_allowed(cmd, &self.cfg.allow_bash),
+            // Read-only commands were allowed in layer 1 above; anything left
+            // here is a write or unknown, which only auto mode's classifier may pass.
+            _ => false,
         };
         if auto || self.session_allow.contains(&key) {
+            self.decision(
+                item,
+                if self.session_allow.contains(&key) { "session" } else { "rule" },
+                "allow",
+                if self.session_allow.contains(&key) { "allowed earlier this session" } else { "mode allows it" },
+                0,
+            );
             return Decision::Allow;
         }
         let mut reason = leaves_sandbox.then(|| {
@@ -3796,10 +3824,20 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             };
             let started = Instant::now();
             let verdict = self.auto_judge(item, name, input, sandbox).await;
-            self.timing.classifier_ms += ms(started.elapsed());
+            let took = ms(started.elapsed());
+            self.timing.classifier_ms += took;
             match verdict {
-                Ok(()) => return Decision::Allow,
+                Ok(()) => {
+                    self.decision(item, "classifier", "allow", "the classifier approved it", took);
+                    return Decision::Allow;
+                }
                 Err(why) => {
+                    let layer = if why.contains("classifier is unavailable") {
+                        "fallback"
+                    } else {
+                        "classifier"
+                    };
+                    self.decision(item, layer, "ask", &why, took);
                     reason = Some(format!(
                         "Auto mode asked because {}.",
                         why.trim_end_matches('.')
@@ -3808,6 +3846,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             }
         }
         if !self.can_ask {
+            self.decision(item, "ask", "ask", "not interactive: denied", 0);
             return Decision::Deny;
         }
         let always = match kind {
@@ -3845,6 +3884,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         let (tx, rx) = oneshot::channel();
         self.shared.pending.lock().unwrap().insert(id.clone(), tx);
         let preview = tools::fs::preview(name, input, &self.ctx);
+        self.decision(
+            item,
+            "ask",
+            "ask",
+            reason.as_deref().unwrap_or("no rule or verdict allowed it"),
+            0,
+        );
         self.emit(Event::PermissionRequest {
             id: id.clone(),
             item: item.into(),
@@ -3863,6 +3909,18 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.session_allow.insert(key);
         }
         decision
+    }
+
+    /// Record how one permission check was decided, so the ask rate can be
+    /// measured from session logs. Not shown as a notice; a durable event.
+    fn decision(&self, item: &str, layer: &str, outcome: &str, reason: &str, ms: u64) {
+        self.emit(Event::PermissionDecision {
+            item: item.to_string(),
+            layer: layer.to_string(),
+            outcome: outcome.to_string(),
+            reason: reason.to_string(),
+            ms,
+        });
     }
 
     /// `ListSessions`, `SendMessage`, `StartSession`: the client carries them out.
@@ -3965,13 +4023,11 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             return Err(format!("it {why}"));
         }
         if self.classifier.is_none() {
-            match crate::auto::Classifier::new(
-                &self.cfg,
-                (&self.profile_name, &self.profile),
-                &self.root,
-            ) {
+            match crate::auto::Classifier::new(&self.cfg, &self.root) {
                 Ok(c) => self.classifier = Some(c),
-                Err(e) => return Err(format!("the classifier couldn't start ({e:#})")),
+                Err(e) => {
+                    self.classifier_unavailable(format!("couldn't start ({e:#})"));
+                }
             }
         }
         let model = self
@@ -3987,7 +4043,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         let preview = tools::fs::preview(name, input, &self.ctx);
         let action = crate::auto::describe(name, input, preview.as_ref(), sandbox);
         let inputs = self.inputs.clone();
-        let classifier = self.classifier.as_mut().expect("set above");
+        let Some(classifier) = self.classifier.as_mut() else {
+            return Err("the classifier is unavailable".into());
+        };
         match classifier.judge(&inputs, &action).await {
             crate::auto::Verdict::Allow(reason) => {
                 self.emit(Event::AutoApproved {
@@ -3997,6 +4055,32 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 Ok(())
             }
             crate::auto::Verdict::Ask(reason) => Err(format!("the classifier said: {reason}")),
+            // The classifier is down, not cautious: read-only commands still run
+            // (the fast path needs no model), everything else asks.
+            crate::auto::Verdict::Failed(why) => {
+                self.classifier_unavailable(why);
+                if name == "Bash" && crate::shell::read_only(input["command"].as_str().unwrap_or(""))
+                {
+                    self.emit(Event::AutoApproved {
+                        item: item.to_string(),
+                        reason: "read-only command; the classifier is down".into(),
+                    });
+                    Ok(())
+                } else {
+                    Err("the classifier is unavailable".into())
+                }
+            }
+        }
+    }
+
+    /// The auto-mode classifier failed: note it once per session.
+    fn classifier_unavailable(&mut self, why: String) {
+        if !self.classifier_failed {
+            self.classifier_failed = true;
+            self.notice(
+                Level::Warn,
+                format!("auto mode's classifier failed ({why}); read-only commands still run without asking, the rest ask"),
+            );
         }
     }
 
@@ -8414,5 +8498,170 @@ for line in sys.stdin:
         assert!(!bash_allowed("ls && rm -rf /", &[]));
         assert!(!bash_allowed("cat x > y", &[]));
         assert!(bash_allowed("cargo check --all", &["cargo check".into()]));
+    }
+
+    /// An engine in a permission mode, with an optional classifier spec. The shell
+    /// sandbox is off so Bash calls reach the permission logic, not the sandbox's
+    /// blanket allow.
+    fn engine_perm(script: Vec<Response>, mode: Mode, classifier: Option<&str>) -> Handle {
+        let mut cfg = Config {
+            hermetic: true,
+            sandbox_shell: false,
+            ..Config::default()
+        };
+        cfg.auto_classifier = classifier.map(String::from);
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg,
+            profile_name: "test".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    #[tokio::test]
+    async fn read_only_compounds_run_without_asking_in_every_mode() {
+        for mode in [Mode::Default, Mode::AcceptEdits, Mode::Auto] {
+            // The sandbox is off in tests, so these go through the fast path.
+            let script = vec![
+                reply(
+                    vec![Block::ToolUse {
+                        id: "ro".into(),
+                        name: "Bash".into(),
+                        input: json!({ "command": "cd /tmp && git log --oneline | head -3; ls | wc -l" }),
+                    }],
+                    Stop::ToolUse,
+                ),
+                reply(vec![text("done")], Stop::End),
+            ];
+            let mut h = engine_perm(script, mode, Some("nonexistent/no-classifier"));
+            let evs = run(&mut h, "look around").await;
+            assert!(
+                !evs.iter().any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+                "{mode:?} asked for a read-only compound"
+            );
+            assert!(evs.iter().any(|e| matches!(
+                e.event,
+                Event::ItemCompleted { .. }
+            )));
+        }
+    }
+
+    #[tokio::test]
+    async fn writes_and_unknowns_still_ask_in_default_mode() {
+        for cmd in ["cat x > y", "cargo build", "echo $(rm -rf x)"] {
+            let script = vec![
+                reply(
+                    vec![Block::ToolUse {
+                        id: "w".into(),
+                        name: "Bash".into(),
+                        input: json!({ "command": cmd }),
+                    }],
+                    Stop::ToolUse,
+                ),
+                reply(vec![text("done")], Stop::End),
+            ];
+            let mut h = engine_perm(script, Mode::Default, None);
+            while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+            h.ops
+                .send(Op::Submit {
+                    text: "go".into(),
+                    images: Vec::new(),
+                })
+                .unwrap();
+            let mut asked = false;
+            loop {
+                let env = h.events.recv().await.unwrap();
+                if let Event::PermissionRequest { id, .. } = &env.event {
+                    asked = true;
+                    h.ops
+                        .send(Op::Permission {
+                            id: id.clone(),
+                            decision: Decision::Deny,
+                        })
+                        .unwrap();
+                }
+                if matches!(env.event, Event::Idle) {
+                    break;
+                }
+            }
+            assert!(asked, "`{cmd}` didn't ask in default mode");
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_mode_falls_back_to_the_fast_path_when_the_classifier_fails() {
+        // A classifier spec that can't resolve: the classifier is down all turn.
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "ro".into(),
+                    name: "Bash".into(),
+                    input: json!({ "command": "git log --oneline | head -3" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(
+                vec![Block::ToolUse {
+                    id: "w".into(),
+                    name: "Bash".into(),
+                    input: json!({ "command": "touch made-up-file" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Auto, Some("nonexistent/no-classifier"));
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        let mut asked = 0;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let idle = matches!(env.event, Event::Idle);
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                asked += 1;
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Deny,
+                    })
+                    .unwrap();
+            }
+            evs.push(env);
+            if idle {
+                break;
+            }
+        }
+        // The read-only command ran without asking: the fast path is checked
+        // before any model call, so a down classifier can't block it.
+        let read_only_ran = evs.iter().any(|e| matches!(
+            e.event,
+            Event::ItemCompleted { ref id, item: Item::ToolCall { outcome: ToolOutcome::Ok, .. }, .. } if id == "ro"
+        ));
+        assert!(read_only_ran, "the read-only call ran");
+        // …the write asked…
+        assert_eq!(asked, 1, "the write asked");
+        // …and the failure was logged once, not per call.
+        let notices = evs
+            .iter()
+            .filter(|e| matches!(&e.event, Event::Notice { message, .. } if message.contains("classifier failed")))
+            .count();
+        assert_eq!(notices, 1, "one classifier-failure notice");
     }
 }
