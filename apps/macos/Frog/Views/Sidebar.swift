@@ -20,6 +20,8 @@ struct SessionList: View {
     @State private var expanded: Set<String> = []
     /// Folded branches whose older sessions are disclosed, by the branch's newest session id.
     @State private var openFolds: Set<String> = []
+    /// Parents whose finished children are disclosed (their "+N done" row is open).
+    @State private var openDone: Set<String> = []
     /// Folded project groups, by folder path (newline-separated).
     @AppStorage("foldedGroups") private var foldedRaw = ""
     @AppStorage("sidebarGrouping") private var grouping = Grouping.project
@@ -127,23 +129,31 @@ struct SessionList: View {
         return folder.lastPathComponent
     }
 
-    /// Rows in tree order: each session followed by the ones it started, indented — with how
-    /// many sessions each row has nested under it (a manager's workers), for its count.
-    private func nested(_ items: [SessionInfo]) -> [(session: SessionInfo, depth: Int, children: Int)] {
-        let ids = Set(items.map(\.id))
-        var children: [String: [SessionInfo]] = [:]
-        var roots: [SessionInfo] = []
-        for s in items {
-            if let p = library.parents[s.id], ids.contains(p) { children[p, default: []].append(s) } else { roots.append(s) }
+    /// A row's state, the same derivation its glyph uses.
+    private func rowState(_ s: SessionInfo) -> SessionNesting.State {
+        SessionNesting.State(SessionEndGlyph.derive(live: library.live[s.id], end: s.end))
+    }
+
+    /// Fold heads in tree order: each followed by the ones it started, settled children
+    /// folded under a "+N done" row. A fold's parent is any member's (a resumed worker keeps
+    /// its manager), and a parent folded away under its newest session nests under that.
+    private func tree(_ folds: [SessionFolds.Fold]) -> [SessionNesting.Entry] {
+        var alias: [String: String] = [:]
+        for f in folds { for o in f.older { alias[o.id] = f.session.id } }
+        var parentOf: [String: String] = [:]
+        for f in folds {
+            let p = ([f.session] + f.older).lazy.compactMap { self.library.parents[$0.id] }.first
+            if let p { parentOf[f.session.id] = alias[p] ?? p }
         }
-        var out: [(SessionInfo, Int, Int)] = []
-        func walk(_ s: SessionInfo, _ depth: Int) {
-            guard !out.contains(where: { $0.0.id == s.id }) else { return }
-            out.append((s, depth, (children[s.id] ?? []).count))
-            for c in (children[s.id] ?? []).sorted(by: before) { walk(c, min(depth + 1, 4)) }
+        return SessionNesting.rows(
+            folds.map(\.session), parent: { parentOf[$0] }, state: rowState, before: before,
+            openDone: openDone, keep: current.map { [$0] } ?? [])
+    }
+
+    private func toggleDone(_ parent: String) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if openDone.remove(parent) == nil { openDone.insert(parent) }
         }
-        roots.forEach { walk($0, 0) }
-        return out
     }
 
     private var chats: [SessionInfo] {
@@ -258,12 +268,37 @@ struct SessionList: View {
     /// behind the row's disclosure, and other nesting (started-by) applied on top.
     private func compactDayRows(_ dayItems: [SessionInfo]) -> some View {
         let folds = SessionFolds.group(dayItems)
-        let hidden = Set(folds.flatMap(\.older).map(\.id))
-        let visible = folds.map(\.session).filter { s in !hidden.contains(s.id) }
         let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
-        return ForEach(nested(visible), id: \.session.id) { entry in
-            compactBranchRow(entry.session, depth: entry.depth, children: entry.children, fold: byId[entry.session.id])
+        return ForEach(tree(folds)) { entry in
+            switch entry {
+            case .row(let s, let depth, let children):
+                compactBranchRow(s, depth: depth, children: children, fold: byId[s.id])
+            case .done(let parent, let depth, let count, let failed, let open):
+                doneRow(parent: parent, count: count, failed: failed, open: open)
+                    .padding(.leading, CGFloat(max(depth - 1, 0)) * 10 + 21)
+            }
         }
+    }
+
+    /// A parent's finished children folded into one line: "+3 done", with how many failed.
+    private func doneRow(parent: String, count: Int, failed: Int, open: Bool) -> some View {
+        Button { toggleDone(parent) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                Text("+\(count) done")
+                if failed > 0 {
+                    Text("· \(failed) failed").foregroundStyle(.red.opacity(0.8))
+                }
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+            .frame(height: 22)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help(open ? "Hide finished sessions" : "Show \(count) finished session\(count == 1 ? "" : "s")")
     }
 
     /// One fold's row (its newest session) plus, when disclosed, the older ones indented.
@@ -373,14 +408,18 @@ struct SessionList: View {
                 i < Self.groupLimit || library.live[s.id] != nil || s.id == current
             }.map(\.element)
             let folds = SessionFolds.group(shown)
-            let hidden = Set(folds.flatMap(\.older).map(\.id))
-            let visible = folds.map(\.session).filter { s in !hidden.contains(s.id) }
             let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
-            ForEach(nested(visible), id: \.session.id) { entry in
-                if let fold = byId[entry.session.id], fold.folded {
-                    branchRow(entry.session, depth: entry.depth, fold: fold)
-                } else {
-                    row(entry.session, showPlace: false).padding(.leading, CGFloat(entry.depth) * 10)
+            ForEach(tree(folds)) { entry in
+                switch entry {
+                case .row(let s, let depth, _):
+                    if let fold = byId[s.id], fold.folded {
+                        branchRow(s, depth: depth, fold: fold)
+                    } else {
+                        row(s, showPlace: false, nested: depth > 0).padding(.leading, CGFloat(depth) * 10)
+                    }
+                case .done(let parent, let depth, let count, let failed, let open):
+                    doneRow(parent: parent, count: count, failed: failed, open: open)
+                        .padding(.leading, CGFloat(depth) * 10 + 10)
                 }
             }
             if items.count > shown.count || (all && items.count > Self.groupLimit) {
@@ -470,14 +509,15 @@ struct SessionList: View {
 
     // MARK: Pieces
 
-    private func row(_ s: SessionInfo, showPlace: Bool) -> some View {
+    private func row(_ s: SessionInfo, showPlace: Bool, nested: Bool = false) -> some View {
         ConversationRow(
             session: s,
             selected: s.id == current,
             pinned: library.pinned.contains(s.id),
             live: library.live[s.id],
             pane: paneNumbers[s.id],
-            showPlace: showPlace
+            showPlace: showPlace,
+            nested: nested
         ) {
             open(s)
         } menu: {
@@ -499,12 +539,12 @@ struct SessionList: View {
             }
             .buttonStyle(.plain).foregroundStyle(.tertiary)
             .help("\(fold.older.count) older on this branch")
-            row(session, showPlace: false)
+            row(session, showPlace: false, nested: depth > 0)
         }
         .padding(.leading, indent)
         if isOpen {
             ForEach(fold.older) { older in
-                row(older, showPlace: false).padding(.leading, indent + 12)
+                row(older, showPlace: false, nested: true).padding(.leading, indent + 12)
             }
         }
     }
@@ -771,9 +811,11 @@ private struct CompactSessionRow<Menu: View>: View {
         case .unread:
             Circle().fill(Color.accentColor).frame(width: 6, height: 6).help("finished while you were away")
         case .idle:
-            if freshComplete {
+            // A finished worker keeps a quiet check so it never reads as live work; a
+            // top-level row only flashes it.
+            if freshComplete || (depth > 0 && session.end == .complete) {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 11))
-                    .foregroundStyle(.green).help("done")
+                    .foregroundStyle(.green.opacity(freshComplete ? 1 : 0.6)).help("done")
             } else {
                 EmptyView()
             }
@@ -911,6 +953,8 @@ struct ConversationRow<Menu: View>: View {
     /// The pane showing it, when the window is split.
     var pane: Int? = nil
     var showPlace = true
+    /// Nested under the session that started it: a finished one keeps its check.
+    var nested = false
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
     @State private var hovering = false
@@ -978,6 +1022,9 @@ struct ConversationRow<Menu: View>: View {
         case .idle:
             if pinned {
                 Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary)
+            } else if nested && session.end == .complete {
+                Image(systemName: "checkmark.circle.fill").font(.caption)
+                    .foregroundStyle(.green.opacity(0.6)).help("done")
             } else if !showPlace {
                 Text(SessionAge.short(session.modifiedDate))
                     .font(.caption)

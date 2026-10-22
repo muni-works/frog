@@ -445,7 +445,14 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
             header,
             first_input,
             title,
-            end: end.or(if open { Some(EndState::Open) } else { None }),
+            // A turn still open with nobody holding the log died mid-run (the engine is
+            // gone): that's a failure, not work in progress. A newer open turn wins over an
+            // older turn's end.
+            end: if open {
+                Some(if Log::in_use(dir, id) { EndState::Open } else { EndState::Failed })
+            } else {
+                end
+            },
         });
     }
     out.sort_by_key(|i| std::cmp::Reverse(i.modified));
@@ -724,11 +731,14 @@ mod tests {
             },
         ))
         .unwrap();
-        drop(log);
+        // Open while an engine holds the log...
         let listed = list(&dir, None).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].end, Some(EndState::Open));
         assert_eq!(listed[0].id, "a");
+        // ...and dead once nobody does: the engine died mid-turn.
+        drop(log);
+        assert_eq!(list(&dir, None).unwrap()[0].end, Some(EndState::Failed));
 
         // A turn that finished completes it; a later open turn reopens it.
         let mut log = Log::open(&dir, "a").unwrap();
