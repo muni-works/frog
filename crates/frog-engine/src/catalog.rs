@@ -75,8 +75,22 @@ fn write_cache(provider: &str, models: &[Model]) {
     }
 }
 
+/// Tests seed this instead of the on-disk cache, so they don't read (or write) the real one.
+#[cfg(test)]
+pub static TEST_CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, Model>>> =
+    std::sync::Mutex::new(None);
+
 /// What's known about one model, from the cache alone (no network): for `resolve`.
 pub fn cached(spec: &str) -> Option<Model> {
+    #[cfg(test)]
+    if let Some(m) = TEST_CACHE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|c| c.get(spec))
+    {
+        return Some(m.clone());
+    }
     let (provider, _) = spec.split_once('/')?;
     let found = read_cache(provider).and_then(|c| c.models.into_iter().find(|m| m.spec == spec));
     if provider == "cloudflare" {
