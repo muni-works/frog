@@ -1621,7 +1621,7 @@ impl Agent {
         let mut compacted = None;
         let mut guard = LoopGuard::default();
         let mut steps = 0;
-        // Times this turn was continued after a reply hit the output limit.
+        // Cut-off replies continued in a row (reset whenever a reply runs tools).
         let mut continued = 0;
         // A reply asking for files it could Read is nudged once, before any tool has run.
         let (mut nudged, mut used_tools) = (false, false);
@@ -1787,6 +1787,8 @@ impl Agent {
             }
 
             used_tools = true;
+            // A reply that acted is progress: the next cut-off gets a fresh set of continues.
+            continued = 0;
             match self.run_tools(uses, &mut guard, streamed.early).await? {
                 Batch::Continue => {}
                 Batch::Denied => break EndReason::Denied,
