@@ -8,6 +8,7 @@ struct TranscriptView: View {
     /// Told which turns are on screen.
     var onVisibleTurns: ([TurnState.ID]) -> Void = { _ in }
     @AppStorage("density") private var density = Density.comfortable.rawValue
+    private var space: TurnSpace.Scale { TurnSpace.scale(density) }
     /// The toolbar's height over the transcript, for the fade under it.
     @State private var topInset: CGFloat = 0
     /// The view keeps to the bottom as content grows (see `onScrollGeometryChange`).
@@ -139,7 +140,7 @@ struct TranscriptView: View {
 
     private var transcript: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 12 : 22) {
+            LazyVStack(alignment: .leading, spacing: space.betweenTurns) {
                 let footers = TurnFooter.pinned(conversation.turns) { ModelStats.shared.cost(of: $0) }
                 ForEach(conversation.turns) { turn in
                     TurnView(turn: turn, conversation: conversation, actions: actions, pinsFooter: footers.contains(turn.id))
@@ -183,6 +184,7 @@ struct TranscriptView: View {
             }
             .scrollTargetLayout()
             .coordinateSpace(.named(Self.content))
+            .environment(\.turnSpace, space)
             .frame(maxWidth: 820)
             .padding(.horizontal, 28)
             .padding(.top, 20)

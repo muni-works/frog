@@ -203,10 +203,11 @@ struct MarkdownView: View {
     /// Still arriving from the model: written in at a reading pace.
     var streaming = false
     @State private var cache = MarkdownCache()
+    @Environment(\.turnSpace) private var space
 
     var body: some View {
         // One selectable text view per stretch of the message; a diagram is a card of its own.
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: space.block) {
             ForEach(Array(Self.segments(cache.blocks(for: text)).enumerated()), id: \.offset) { _, segment in
                 switch segment {
                 case .text(let blocks): MessageText(blocks: blocks, streaming: streaming)

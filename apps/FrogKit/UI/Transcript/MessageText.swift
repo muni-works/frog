@@ -276,15 +276,24 @@ extension NSAttributedString.Key {
     static let frogCode = NSAttributedString.Key("frogCode")
 }
 
-/// How each markdown block looks as attributed text.
+/// How each markdown block looks as attributed text. Spacing comes from `TurnSpace`, so a
+/// message reads with the transcript's rhythm: taller line height within a paragraph, more
+/// room between blocks, and list items tighter than blocks.
 enum MessageStyle {
-    static let blockGap: CGFloat = 10
+    /// The density setting, as `piece` is built on a text-queue (AppKit) thread at times.
+    static var compact: Bool {
+        UserDefaults.standard.string(forKey: "density") == Density.compact.rawValue
+    }
+
+    static var blockGap: CGFloat { compact ? TurnSpace.blockCompact : TurnSpace.block }
+    static var listGap: CGFloat { compact ? TurnSpace.listItemCompact : TurnSpace.listItem }
+    static var lineHeight: CGFloat { compact ? TurnSpace.lineHeightCompact : TurnSpace.lineHeight }
 
     static var body: NSFont { .systemFont(ofSize: NSFont.systemFontSize) }
 
     static func paragraph(_ configure: (NSMutableParagraphStyle) -> Void = { _ in }) -> NSMutableParagraphStyle {
         let p = NSMutableParagraphStyle()
-        p.lineSpacing = 3
+        p.lineSpacing = lineHeight
         configure(p)
         return p
     }
@@ -307,6 +316,7 @@ enum MessageStyle {
             let head = lead + max(markerWidth, 10) + 8
             let style = paragraph {
                 $0.paragraphSpacingBefore = gap
+                $0.paragraphSpacing = listGap
                 $0.firstLineHeadIndent = lead
                 $0.headIndent = head
                 $0.tabStops = [NSTextTab(textAlignment: .left, location: head)]
