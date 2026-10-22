@@ -81,6 +81,76 @@ final class SessionBrokerTests: XCTestCase {
 
     /// An engine that died mid-turn (not live, no `turn_ended`) is detected on its next
     /// report and its turn restarted, not reported idle-and-done.
+    private func env(_ json: String) throws -> Envelope {
+        try JSONDecoder.frog.decode(Envelope.self, from: Data(json.utf8))
+    }
+
+    /// 2h: spawn a child, its engine is killed before the first model call, the broker
+    /// respawns it — and the first prompt is still delivered, not lost.
+    @MainActor
+    func testAChildKilledBeforeItsFirstCallGetsItsPromptOnRespawn() throws {
+        let b = broker([chief, eng])
+        var replayed: [(String, String)] = []
+        b.replayPrompt = { id, prompt in replayed.append((id, prompt)); return true }
+        b.firstTurnRan = { _ in false }
+        b.recordBirth(eng.id, prompt: "build the lymb package")
+        let child = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-birth"))
+        try child.ingest(env(#"{"seq":1,"session":"eng-0002","created":1,"event":"turn_started","turn":1,"input":"build the lymb package"}"#))
+        b.track(child, as: eng.id)
+        b.watchStarted(eng.id, reportTo: chief.id)
+        b.observe(eng.id, running: true, waiting: false)
+        // Killed before the first model call: no turn_ended, process gone.
+        child.engineExited("killed")
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertEqual(replayed.map(\.0), [eng.id], "respawned")
+        XCTAssertEqual(replayed.map(\.1), ["build the lymb package"], "with its first prompt")
+        XCTAssertTrue(delivered.isEmpty, "the parent isn't told it's idle")
+        XCTAssertEqual(b.births[eng.id]?.attempts, 1)
+    }
+
+    /// The cancel-at-birth signature: turn 1 ends cancelled with 0 model calls, the engine
+    /// lives on. The first prompt runs again; once a turn makes a call, the record goes.
+    @MainActor
+    func testAFirstTurnCancelledAtBirthIsReplayedThenForgotten() throws {
+        let b = broker([chief, eng])
+        var replayed: [String] = []
+        var ran = false
+        b.replayPrompt = { _, prompt in replayed.append(prompt); return true }
+        b.firstTurnRan = { _ in ran }
+        b.recordBirth(eng.id, prompt: "the brief")
+        let child = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-birth2"))
+        try child.ingest(env(#"{"seq":1,"session":"eng-0002","created":1,"event":"turn_started","turn":1,"input":"the brief"}"#))
+        b.track(child, as: eng.id)
+        // Still starting: busy, nothing replayed.
+        b.targetBusy = { _ in true }
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertTrue(replayed.isEmpty)
+        // Cancelled at 0 calls and settled: replayed once.
+        try child.ingest(env(#"{"seq":2,"session":"eng-0002","created":2,"event":"turn_ended","turn":1,"reason":{"type":"cancelled"},"usage":{"input_tokens":0,"output_tokens":0,"model_calls":0}}"#))
+        try child.ingest(env(#"{"seq":3,"session":"eng-0002","created":3,"event":"idle"}"#))
+        b.targetBusy = { _ in false }
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertEqual(replayed, ["the brief"])
+        // The replay runs a real turn: the record is dropped, nothing more replays.
+        ran = true
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertNil(b.births[eng.id])
+        XCTAssertEqual(replayed.count, 1)
+    }
+
+    /// The first prompt is on disk, so an app restart before turn 1 ran doesn't lose it.
+    func testBirthsArePersisted() throws {
+        let url = FileManager.default.temporaryDirectory.appending(path: "frog-births-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let a = broker([chief, eng])
+        a.birthsURL = url
+        a.recordBirth(eng.id, prompt: "persist me")
+        let b = SessionBroker()
+        b.birthsURL = url
+        b.loadBirths()
+        XCTAssertEqual(b.births[eng.id]?.prompt, "persist me")
+    }
+
     @MainActor
     func testADeadEngineMidTurnIsRestartedNotReportedIdle() throws {
         let b = broker([chief, eng])
