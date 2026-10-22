@@ -244,9 +244,12 @@ impl Renderer {
 
     pub fn event(&mut self, ev: Event) {
         match ev {
-            Event::TurnStarted { input, .. } if self.replay => {
+            Event::TurnStarted { input, more, .. } if self.replay => {
                 self.idle();
                 outln!("\n{} {}", ">".dark_grey(), input.dark_grey());
+                for part in more {
+                    outln!("{} {}", ">".dark_grey(), part.text.dark_grey());
+                }
             }
             Event::Progress { label, .. } => {
                 self.idle();

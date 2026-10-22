@@ -8,7 +8,7 @@ use crate::message::{Block, Message, Role, Usage};
 use crate::prompt;
 use crate::protocol::{
     CallTiming, Decision, Delta, EndReason, EngineError, Envelope, Event, Item, ItemKind, Level,
-    Mode, Op, Status, ToolOutcome, ToolTiming, TurnTiming, TurnUsage,
+    Mode, Op, Part, Status, ToolOutcome, ToolTiming, TurnTiming, TurnUsage,
 };
 use crate::provider::{
     HttpError, Provider, Request, Response, Stop, StreamError, StreamEvent, ToolSpec, new_id,
@@ -1132,6 +1132,22 @@ impl Agent {
         }
     }
 
+    /// The user's images, after the text they came with.
+    fn attach_images(&mut self, images: Vec<crate::protocol::Image>) {
+        if images.is_empty() {
+            return;
+        }
+        self.extend_last(
+            images
+                .into_iter()
+                .map(|i| Block::Image {
+                    mime: i.mime,
+                    data: i.data,
+                })
+                .collect(),
+        );
+    }
+
     fn reset(&mut self, messages: Vec<Message>) {
         self.record(Record::Reset {
             messages: messages.clone(),
@@ -1305,10 +1321,14 @@ impl Agent {
 
     async fn handle(&mut self, op: Op) -> Result<()> {
         match op {
-            Op::Submit { text, images } => {
-                if !self.memory_command(&text) {
+            Op::Submit { text, images, more } => {
+                // A memory command is answered alone; one sent with others is just words.
+                if !more.is_empty() || !self.memory_command(&text) {
                     self.remember_from(&text);
-                    self.turn(&text, images).await?
+                    for part in &more {
+                        self.remember_from(&part.text);
+                    }
+                    self.turn_with(&text, images, more).await?
                 }
             }
             Op::Act { label, send } => {
@@ -1550,25 +1570,47 @@ impl Agent {
         ))
     }
 
-    async fn turn(&mut self, input: &str, mut images: Vec<crate::protocol::Image>) -> Result<()> {
+    async fn turn(&mut self, input: &str, images: Vec<crate::protocol::Image>) -> Result<()> {
+        self.turn_with(input, images, Vec::new()).await
+    }
+
+    /// A turn on `input` and any further messages sent with it (`more`, in order): one user
+    /// message, each of them its own text block followed by its images.
+    async fn turn_with(
+        &mut self,
+        input: &str,
+        mut images: Vec<crate::protocol::Image>,
+        more: Vec<Part>,
+    ) -> Result<()> {
         // A completed background map can be adopted at a turn boundary. Never wait for it;
         // if it is still running, this turn proceeds with the current prompt.
         self.poll_repo_map();
         let (input, named) = crate::image_paths::attach(input);
         let input = input.as_str();
         images.extend(named);
+        let more: Vec<Part> = more
+            .into_iter()
+            .map(|p| {
+                let (text, named) = crate::image_paths::attach(&p.text);
+                let mut images = p.images;
+                images.extend(named);
+                Part { text, images }
+            })
+            .collect();
         self.turn += 1;
         let turn = self.turn;
         self.emit(Event::TurnStarted {
             turn,
             input: input.to_string(),
             images: images.clone(),
+            more: more.clone(),
         });
         self.active_turn = Some(turn);
         // A draft still waiting to warm is stale now; the turn itself leaves the cache warm.
         self.warming.lock().unwrap().1 = None;
         self.shared.panes.set_in_turn(true);
         self.inputs.push(input.to_string());
+        self.inputs.extend(more.iter().map(|p| p.text.clone()));
         self.turn_clock = Some(Instant::now());
         if let Some(m) = &self.meter {
             // Idle from the seconds spent waiting before this turn (the op loop marked it busy).
@@ -1601,7 +1643,7 @@ impl Agent {
         };
         text.push_str(&self.expand_mentions(&input));
         // Only the user's own words: not skill text or shell output.
-        let (extra, named) = self.attach_named(&typed);
+        let (extra, mut named) = self.attach_named(&typed);
         text.push_str(&extra);
         // Files the user pointed at (`@path` or by name): their scoped rules, and on a session's
         // first turn a fresh repo map if they aren't on it. Both happen before the first model
@@ -1628,16 +1670,35 @@ impl Agent {
         self.log_map();
         self.apply_harness();
         self.push_user(text);
-        if !images.is_empty() {
-            self.extend_last(
-                images
-                    .into_iter()
-                    .map(|i| Block::Image {
-                        mime: i.mime,
-                        data: i.data,
-                    })
-                    .collect(),
-            );
+        self.attach_images(images);
+        // Each message sent with it: its own block, read the way the first one is.
+        for part in more {
+            let input = match crate::skills::expand_command(&self.skills, &part.text) {
+                Some((expanded, name)) => {
+                    self.skills_loaded.insert(name);
+                    expanded
+                }
+                None => part.text.clone(),
+            };
+            let mut text = self.expand_mentions(&input);
+            let (extra, files) = self.attach_named(&part.text);
+            text.push_str(&extra);
+            let pointed: Vec<PathBuf> = part
+                .text
+                .split_whitespace()
+                .filter_map(|t| t.strip_prefix('@'))
+                .map(|t| {
+                    self.ctx
+                        .resolve(t.trim_end_matches([',', ')', ':', ';', '?', '!', '.']))
+                })
+                .chain(files.iter().cloned())
+                .collect();
+            for p in &pointed {
+                text.push_str(&self.rules_for(p));
+            }
+            named.extend(files);
+            self.push_user(text);
+            self.attach_images(part.images);
         }
         // The user's message is on disk before any model call: a crash or quit mid-turn
         // loses the reply, never the request. One fsync per accepted message.
@@ -4107,7 +4168,7 @@ fn bash_allowed(cmd: &str, extra: &[String]) -> bool {
 mod tests {
     use super::*;
     use crate::config::{Profile, ProviderKind};
-    use crate::protocol::Answer;
+    use crate::protocol::{Answer, Image};
     use crate::provider::scripted;
     use serde_json::json;
 
@@ -4324,6 +4385,7 @@ mod tests {
             .send(Op::Submit {
                 text: prompt.into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut out = Vec::new();
@@ -4335,6 +4397,94 @@ mod tests {
                 return out;
             }
         }
+    }
+
+    /// Messages queued while a turn ran arrive as one submit: one turn, each message its own
+    /// block of the user's message, in order, images after the text they came with.
+    #[tokio::test]
+    async fn submit_with_more_runs_one_turn_with_every_message_in_order() {
+        let (mut h, sent) = engine_sent(
+            vec![reply(vec![text("done")], Stop::End)],
+            None,
+            None,
+            None,
+            std::env::temp_dir(),
+        );
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        let png = Image {
+            mime: "image/png".into(),
+            data: "AAAA".into(),
+        };
+        let part = |t: &str, images: Vec<Image>| Part {
+            text: t.into(),
+            images,
+        };
+        h.ops
+            .send(Op::Submit {
+                text: "alpha-msg".into(),
+                images: Vec::new(),
+                more: vec![
+                    part("bravo-msg", Vec::new()),
+                    part("charlie-msg", vec![png]),
+                ],
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle {
+                break;
+            }
+        }
+        let started: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::TurnStarted { input, more, .. } => Some((input.clone(), more.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(started.len(), 1, "one turn");
+        assert_eq!(started[0].0, "alpha-msg");
+        assert_eq!(
+            started[0]
+                .1
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect::<Vec<_>>(),
+            ["bravo-msg", "charlie-msg"]
+        );
+        assert_eq!(started[0].1[1].images.len(), 1);
+
+        // The turn's request: system prompt, tool names, then the messages as JSON.
+        let req = sent.lock().unwrap().last().cloned().expect("a model call");
+        let json = &req[req.rfind("[{\"role\"").expect("messages in the request")..];
+        let messages: Vec<Message> = serde_json::from_str(json).expect("messages parse");
+        let user: Vec<&Message> = messages.iter().filter(|m| m.role == Role::User).collect();
+        assert_eq!(user.len(), 1, "one user message");
+        let blocks: Vec<String> = user[0]
+            .content
+            .iter()
+            .map(|b| match b {
+                Block::Text { text } => text.trim().to_string(),
+                Block::Image { mime, .. } => format!("<{mime}>"),
+                _ => "?".into(),
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+        let at = |s: &str| blocks.iter().position(|b| b.ends_with(s)).unwrap();
+        assert!(at("alpha-msg") < at("bravo-msg"), "{blocks:?}");
+        assert!(
+            at("bravo-msg") + 1 == at("charlie-msg"),
+            "each its own block: {blocks:?}"
+        );
+        // Right after the text it came with (as a note: the test model can't see images).
+        assert!(
+            blocks[at("charlie-msg") + 1].contains("image/png"),
+            "{blocks:?}"
+        );
+        assert_eq!(blocks.len(), at("charlie-msg") + 2, "{blocks:?}");
     }
 
     fn names(evs: &[Envelope]) -> Vec<String> {
@@ -4729,6 +4879,7 @@ mod tests {
             .send(Op::Submit {
                 text: "what's in my project?".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut evs = Vec::new();
@@ -4898,6 +5049,7 @@ mod tests {
             .send(Op::Submit {
                 text: "more".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let second = until_idle(&mut h).await;
@@ -4953,6 +5105,7 @@ mod tests {
             .send(Op::Submit {
                 text: "more".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let second = until_idle(&mut h).await;
@@ -4979,6 +5132,7 @@ mod tests {
                     turn: 1,
                     input: "go".into(),
                     images: Vec::new(),
+                    more: Vec::new(),
                 },
             },
         })?;
@@ -5139,6 +5293,7 @@ mod tests {
             .send(Op::Submit {
                 text: "/memory".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let evs = until_idle(&mut h).await;
@@ -5218,6 +5373,7 @@ mod tests {
             .send(Op::Submit {
                 text: "fix the widget\nit doesn't paint".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let evs = until_idle(&mut h).await;
@@ -5248,6 +5404,7 @@ mod tests {
             .send(Op::Submit {
                 text: "/recall widget paint".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let evs = until_idle(&mut h).await;
@@ -5263,6 +5420,7 @@ mod tests {
             .send(Op::Submit {
                 text: "/recall file:widget.rs".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let evs = until_idle(&mut h).await;
@@ -5273,6 +5431,7 @@ mod tests {
             .send(Op::Submit {
                 text: "Remember that widgets paint lazily. Now say hi".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let evs = until_idle(&mut h).await;
@@ -5293,6 +5452,7 @@ mod tests {
             .send(Op::Submit {
                 text: "/recall lazily".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let evs = until_idle(&mut h).await;
@@ -5430,6 +5590,7 @@ mod tests {
             .send(Op::Submit {
                 text: "again".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let next = calls(&until_idle(&mut h).await);
@@ -5475,6 +5636,7 @@ mod tests {
             .send(Op::Submit {
                 text: "thanks".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let second = calls(&until_idle(&mut h).await);
@@ -5901,6 +6063,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "again".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         until_idle(&mut h).await;
@@ -6180,6 +6343,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "fix it".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         loop {
@@ -6245,6 +6409,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "fix it".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut asked = None;
@@ -6335,6 +6500,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "who's around?".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut order = Vec::new();
@@ -6407,6 +6573,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "list".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         loop {
@@ -6438,6 +6605,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "hi".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         while !matches!(
@@ -6469,6 +6637,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "nap".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         loop {
@@ -6569,6 +6738,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "fix add".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let preview = loop {
@@ -6632,6 +6802,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "create notes".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         until_idle(&mut h).await;
@@ -6639,6 +6810,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "bump notes".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         until_idle(&mut h).await;
@@ -6700,6 +6872,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "make a mess".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         until_idle(&mut h).await;
@@ -6748,6 +6921,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "try it".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let (mut asked, mut requested, mut evs) = (Vec::new(), Vec::new(), Vec::new());
@@ -6880,6 +7054,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "open the preview".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut opened = false;
@@ -6929,6 +7104,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "open it".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut result = None;
@@ -7341,6 +7517,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "edit it".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let evs = until_idle(&mut h).await;
@@ -7378,6 +7555,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "look".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut evs = Vec::new();
@@ -7453,6 +7631,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: text.into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
     }

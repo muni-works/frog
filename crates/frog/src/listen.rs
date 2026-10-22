@@ -207,6 +207,7 @@ async fn handle(mut sock: TcpStream, token: &str, t: &Template) -> Result<()> {
     h.ops.send(Op::Submit {
         text: turn.text,
         images: Vec::new(),
+        more: Vec::new(),
     })?;
     h.ops.send(Op::Shutdown)?;
     let (mut ended, mut gone) = (false, false);

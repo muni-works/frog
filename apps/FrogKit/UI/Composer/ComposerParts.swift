@@ -72,7 +72,8 @@ struct QueuedMessages: View {
                     Image(systemName: "clock").foregroundStyle(.secondary)
                     Text(text).lineLimit(1)
                     Spacer()
-                    Button("Remove", systemImage: "xmark.circle.fill") { conversation.unqueue(at: i) }
+                    Button("Back to the Field", systemImage: "xmark.circle.fill") { conversation.unqueue(at: i) }
+                        .help("Take it out of the queue and back into the field to edit")
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)

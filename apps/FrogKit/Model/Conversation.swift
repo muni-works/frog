@@ -89,10 +89,21 @@ final class Conversation {
     /// `continueInterrupted` called before the engine could take it: it goes first.
     @ObservationIgnored private var continuePending = false
 
+    /// Queued messages taken back out (their "x"), for the composer to put back in its field.
+    var restored: [Queued] = []
+
     /// A message sent while a turn was running.
-    struct Queued {
+    struct Queued: Equatable {
         var text: String
         var images: [ToolImage] = []
+
+        /// The composer's field and attachments with this message back in them: its text first,
+        /// then a blank line and whatever was already typed; its images ahead of the rest.
+        func restore(into draft: String, attachments: [ToolImage]) -> (text: String, images: [ToolImage]) {
+            let kept = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : draft
+            let text = [self.text, kept].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            return (text, images + attachments)
+        }
     }
 
     @ObservationIgnored private(set) var link: ConversationLink?
@@ -191,6 +202,28 @@ final class Conversation {
         link?.send(.submit(text, images: images))
     }
 
+    /// The engine is free: everything queued goes as the next turn, together, in order, each
+    /// message its own block (and bubble). A `!command` or memory command can't join a turn,
+    /// so one at the front goes alone, and the run of messages before the next one goes after.
+    private func flushQueue() {
+        guard !queue.isEmpty else { return }
+        let head = queue.removeFirst()
+        guard Self.joinable(head.text) else { return submit(head.text, images: head.images) }
+        var more: [MessagePart] = []
+        while let next = queue.first, Self.joinable(next.text) {
+            more.append(MessagePart(text: next.text, images: next.images))
+            queue.removeFirst()
+        }
+        guard !more.isEmpty else { return submit(head.text, images: head.images) }
+        turns.append(TurnState(number: nil, input: head.text, images: head.images, more: more, sentAt: .now))
+        busy = true
+        link?.send(.submit(head.text, images: head.images, more: more))
+    }
+
+    private static func joinable(_ text: String) -> Bool {
+        !text.hasPrefix("!") && !isMemoryCommand(text)
+    }
+
     /// A press on a `Present` actions button: the model gets `send` (or the label) as the
     /// user's next message.
     func act(_ choice: Present.Choice) {
@@ -209,9 +242,19 @@ final class Conversation {
         return ["/remember", "/forget", "/memory"].contains(String(name))
     }
 
+    /// Take a queued message back for editing: it leaves the queue and goes back to the
+    /// composer (see `restored`), not away.
     func unqueue(at index: Int) {
         guard queue.indices.contains(index) else { return }
-        queue.remove(at: index)
+        restored.append(queue.remove(at: index))
+    }
+
+    /// The composer's field and attachments with every taken-back message restored, oldest
+    /// first; `restored` is emptied.
+    func takeRestored(into draft: String, attachments: [ToolImage]) -> (text: String, images: [ToolImage]) {
+        let back = restored
+        restored = []
+        return back.reversed().reduce((text: draft, images: attachments)) { $1.restore(into: $0.text, attachments: $0.images) }
     }
 
     func interrupt() {
@@ -365,13 +408,13 @@ final class Conversation {
         }
         defer { reportLive() }
         switch env.event {
-        case .turnStarted(let n, let input, let images):
+        case .turnStarted(let n, let input, let images, let more):
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             if let i = turns.lastIndex(where: { $0.number == nil && !$0.finished && $0.input == input }) {
                 turns[i].number = n
                 turns[i].startedAt = at
             } else {
-                turns.append(TurnState(number: n, input: input, images: images, startedAt: at))
+                turns.append(TurnState(number: n, input: input, images: images, more: more, startedAt: at))
             }
             panes.currentTurn = n
             if !replaying { userStopped = false }
@@ -502,8 +545,7 @@ final class Conversation {
             // Sent while the history loaded: it goes now (the engine takes it once started).
             if !busy, flushContinue() {
             } else if !busy, !queue.isEmpty {
-                let next = queue.removeFirst()
-                submit(next.text, images: next.images)
+                flushQueue()
             }
         case .idle:
             if !sawFirstIdle {
@@ -521,8 +563,7 @@ final class Conversation {
             // While the history loads, what's queued waits for it (see `.synced`).
             if !replaying, flushContinue() {
             } else if !replaying, !queue.isEmpty {
-                let next = queue.removeFirst()
-                submit(next.text, images: next.images)
+                flushQueue()
             }
         case .titled(let t):
             title = t

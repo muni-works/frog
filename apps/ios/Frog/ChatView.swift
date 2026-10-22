@@ -256,6 +256,11 @@ struct ChatView: View {
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 8)
+        // A queued message's "x" puts it back in the field to edit, ahead of what's typed.
+        .onChange(of: conversation.restored) { _, back in
+            guard !back.isEmpty else { return }
+            (draft, attachments) = conversation.takeRestored(into: draft, attachments: attachments)
+        }
     }
 
     /// Images for the next message: from Photos, or what's been copied.

@@ -191,6 +191,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         h.ops.send(Op::Submit {
             text: turn.prompt.clone(),
             images: Vec::new(),
+            more: Vec::new(),
         })?;
         let mut at = Place {
             turn: i as u32,

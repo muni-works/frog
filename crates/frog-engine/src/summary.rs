@@ -445,6 +445,7 @@ mod tests {
                     turn: seq,
                     input: input.into(),
                     images: Vec::new(),
+                    more: Vec::new(),
                 },
             )
         };
@@ -578,6 +579,7 @@ mod tests {
                         "turn {i}: please do something fairly long-winded about module {i}"
                     ),
                     images: Vec::new(),
+                    more: Vec::new(),
                 },
             ));
             evs.push(env(

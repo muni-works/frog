@@ -63,9 +63,15 @@ struct TurnView: View {
         VStack(alignment: .leading, spacing: space.inTurn) {
             if let delivered = SessionMessage.parse(turn.input) {
                 SessionMessageCard(message: delivered)
-            } else if !turn.input.isEmpty {
+            } else if !turn.input.isEmpty || !turn.more.isEmpty {
                 VStack(alignment: .trailing, spacing: 2) {
-                    UserPrompt(text: turn.input, images: turn.images, tint: promptTint)
+                    // Messages queued while the last turn ran go together: a bubble each.
+                    VStack(alignment: .trailing, spacing: 6) {
+                        UserPrompt(text: turn.input, images: turn.images, tint: promptTint)
+                        ForEach(Array(turn.more.enumerated()), id: \.offset) { _, part in
+                            UserPrompt(text: part.text, images: part.images, tint: promptTint)
+                        }
+                    }
                         // Sent like an iMessage: up from the composer, a little small, then a
                         // springy settle into place. Just a fade under Reduce Motion.
                         .scaleEffect(landed || reduceMotion ? 1 : 0.86, anchor: .bottomTrailing)

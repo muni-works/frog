@@ -41,6 +41,10 @@ struct PromptContext: Identifiable, Equatable {
 }
 
 extension TurnState {
-    /// What you asked, without the context sent along with it.
-    var request: String { PromptContext.split(input).message }
+    /// What you asked, without the context sent along with it: every message of the turn,
+    /// a blank line apart.
+    var request: String {
+        ([input] + more.map(\.text)).map { PromptContext.split($0).message }
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
 }

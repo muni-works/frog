@@ -597,6 +597,7 @@ mod tests {
                 turn: 1,
                 input: "hi".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             },
         ))
         .unwrap();
@@ -642,6 +643,7 @@ mod tests {
                 turn: 1,
                 input: "hi".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             },
         ))
         .unwrap();
@@ -699,6 +701,7 @@ mod tests {
                 turn: 1,
                 input: "one".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             },
         ))
         .unwrap();
@@ -712,6 +715,7 @@ mod tests {
                 turn: 2,
                 input: "two".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             },
         ))
         .unwrap();

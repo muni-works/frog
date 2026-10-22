@@ -424,6 +424,7 @@ impl Tui {
             self.send(Op::Submit {
                 text: line.into(),
                 images: Vec::new(),
+                more: Vec::new(),
             });
         }
         true
@@ -546,6 +547,7 @@ impl Tui {
             "remember" | "forget" | "memory" | "recall" => Op::Submit {
                 text: format!("/{cmd}"),
                 images: Vec::new(),
+                more: Vec::new(),
             },
             _ => {
                 render::warn(&format!("  unknown command /{name} — try /help"));
