@@ -4,9 +4,10 @@ import Foundation
 /// dead children fold under one "+N done" row per parent, so live work stands out. Pure logic,
 /// so the sidebar and the tests share it.
 enum SessionNesting {
-    /// A row's state for nesting, most urgent first.
+    /// A row's state for nesting, most urgent first: children sort in this order (waiting on
+    /// you, then running, then finished unseen, then failed and done).
     enum State: Int, Comparable, Sendable {
-        case waiting, running, unread, done, failed
+        case waiting, running, unread, failed, done
 
         static func < (a: State, b: State) -> Bool { a.rawValue < b.rawValue }
 
@@ -44,7 +45,8 @@ enum SessionNesting {
     /// Rows in tree order: each session followed by the ones it started. A child counts as
     /// settled only when it and everything under it is (a quiet manager whose workers run
     /// stays up). Settled children collapse under a `.done` row unless their parent is in
-    /// `openDone`; `keep` (the session on screen, say) is never tucked away.
+    /// `openDone`; `keep` (the session on screen, say) is never tucked away. Children sort by
+    /// state (`State`'s order), roots by `before`.
     ///
     /// - Parameters:
     ///   - parent: the session that started `id`, if any (only parents in `items` nest).
@@ -90,7 +92,11 @@ enum SessionNesting {
             let kids = (children[s.id] ?? []).filter { !placed.contains($0.id) }
             out.append(.row(s, depth: depth, children: kids.count))
             let next = min(depth + 1, maxDepth)
-            let ordered = kids.sorted(by: before)
+            // Most urgent first; the list's order within a state.
+            let ordered = kids.sorted { a, b in
+                let (ea, eb) = (effective(a), effective(b))
+                return ea != eb ? ea < eb : before(a, b)
+            }
             let active = ordered.filter { !effective($0).settled || keep.contains($0.id) }
             let settled = ordered.filter { effective($0).settled && !keep.contains($0.id) }
             active.forEach { walk($0, next) }

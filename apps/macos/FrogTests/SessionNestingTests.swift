@@ -68,6 +68,27 @@ final class SessionNestingTests: XCTestCase {
         XCTAssertEqual(ids(out), ["a", ">b"])
     }
 
+    func testChildrenSortWaitingThenRunningThenTheRest() {
+        // Newest first by the list's order: idle, running, waiting, unread, running2, failed.
+        let parents = ["i": "m", "r": "m", "w": "m", "u": "m", "r2": "m", "f": "m"]
+        let states: [String: State] = ["i": .done, "r": .running, "w": .waiting, "u": .unread, "r2": .running, "f": .failed]
+        let out = rows(states, parents: parents, openDone: ["m"], order: ["m", "i", "r", "w", "u", "r2", "f"])
+        XCTAssertEqual(ids(out), ["m", ">w", ">r", ">r2", ">u", ">+2 done 1x", ">f", ">i"])
+    }
+
+    func testAManagerSortsByItsWorkersUrgency() {
+        // An idle manager whose worker waits on you sorts as waiting, ahead of a running one.
+        let parents = ["busy": "chief", "mgr": "chief", "w": "mgr"]
+        let states: [String: State] = ["busy": .running, "mgr": .done, "w": .waiting]
+        let out = rows(states, parents: parents, order: ["chief", "busy", "mgr", "w"])
+        XCTAssertEqual(ids(out), ["chief", ">mgr", ">>w", ">busy"])
+    }
+
+    func testRootsKeepTheListOrder() {
+        let out = rows(["a": .done, "b": .waiting], parents: [:], order: ["a", "b"])
+        XCTAssertEqual(ids(out), ["a", "b"])
+    }
+
     func testStateFollowsTheGlyph() {
         XCTAssertEqual(State(.waiting), .waiting)
         XCTAssertEqual(State(.running), .running)
