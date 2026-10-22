@@ -19,7 +19,7 @@ over cat/sed/find/grep. Avoid interactive commands; they will hang until the tim
         "run_in_background": { "type": "boolean", "description": "Start the command as a background job and return its id at once, for servers, watchers and long builds. Its output goes to a file; you're told when it exits (exit code and the tail of its output). Read it with JobOutput, stop it with JobStop." }
     });
     if available() {
-        description.push_str(" Commands run in a sandbox: they can write only inside the project (and, in a git worktree, its git dirs so commit works), temp folders and toolchain caches, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
+        description.push_str(" Commands run in a sandbox: they can write only inside the project (and, in a git worktree, its git dirs so commit works), temp folders, toolchain caches and paths the user configured, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works; swift builds get SwiftPM's inner sandbox disabled (frog's is the boundary), and read-only git commands can go over https to GitHub when configured. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
         props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox. Asks the user first; use only when the sandbox blocked something the task needs." });
     }
     ToolSpec {
@@ -100,6 +100,15 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     );
     let cwd_file = std::env::temp_dir().join(format!("frog-cwd-{}", std::process::id()));
     let _ = std::fs::remove_file(&cwd_file);
+    // Under our sandbox, SwiftPM's own inner seatbelt sandbox can never apply (macOS rejects a
+    // nested sandbox_apply outright), so `swift build` fails with "Invalid manifest" until it's
+    // told not to use it. frog's sandbox stays the boundary; this only removes the redundant
+    // inner one. Applied when we actually sandbox the command.
+    let cmd = if ctx.shell_sandbox.is_some() || ctx.sandbox.is_some() {
+        adapt_swiftpm(&cmd)
+    } else {
+        cmd.to_string()
+    };
     let script = format!(
         "{{\n{cmd}\n}} 2>&1\n__frog_ec=$?\npwd -P > '{}'\nexit $__frog_ec",
         cwd_file.display()
@@ -226,6 +235,20 @@ pub fn shell(
             }
         }
     }
+    // Git reads that would otherwise need ~/.ssh: with `git_https` on, git's ssh URLs to
+    // github.com become https through a config overlay that exists only for this one command
+    // (GIT_CONFIG_* env; no file is touched), and gh's credential helper supplies auth — no
+    // keys ever readable. Only for read subcommands with no `push` in the command: a push
+    // stays an approval, and `url.insteadOf` would redirect its URL too.
+    let cmd = input["command"].as_str().unwrap_or("");
+    if jail.is_some() && ctx.sandbox_extra.git_https && git_https_applies(cmd) {
+        command
+            .env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", "url.https://github.com/.insteadOf")
+            .env("GIT_CONFIG_VALUE_0", "git@github.com:")
+            .env("GIT_CONFIG_KEY_1", "credential.helper")
+            .env("GIT_CONFIG_VALUE_1", "!gh auth git-credential");
+    }
     command
         .arg("-c")
         .current_dir(&ctx.cwd)
@@ -240,6 +263,115 @@ fn blocked(out: &str) -> bool {
     out.contains("Operation not permitted") && out.contains("exit code")
         || out.contains("Read-only file system")
         || out.contains("deny(1) file-")
+}
+
+/// Add `--disable-sandbox` to `swift build`/`run`/`test`/`package` when missing. Under our
+/// seatbelt sandbox SwiftPM's own (inner) sandbox can't apply — macOS rejects a nested
+/// `sandbox_apply` unconditionally, so manifest compilation fails with "Invalid manifest ...
+/// sandbox_apply: Operation not permitted". frog's sandbox is still the outer boundary; this
+/// only skips the redundant inner one. Invocations that already pass the flag, and other
+/// `swift` subcommands (`swiftc`, `swift repl`), are left alone.
+///
+/// Token-level single pass: everything that isn't a matched `swift <verb>` pair is copied
+/// byte-for-byte, so quoting, separators and spacing survive. A `swift` inside quotes or after
+/// another word (e.g. `echo swift build`) is never rewritten: we only match at a command
+/// position — the start of the command, or right after `; & | ( {` or a line break.
+fn adapt_swiftpm(cmd: &str) -> String {
+    const VERBS: &[&str] = &["build", "run", "test", "package"];
+    let looks_like_swift_verb = |tok: &str| VERBS.contains(&tok);
+    let is_word = |c: char| !c.is_whitespace() && !";&|(){".contains(c);
+
+    let mut out = String::with_capacity(cmd.len() + 24);
+    let bytes: Vec<char> = cmd.chars().collect();
+    let mut i = 0;
+    // Command positions: the very start, or after one of ; & | ( { or a newline, once the
+    // following whitespace runs out. Env prefixes and trampolines are stepped over.
+    let mut at_command = true;
+    let mut rewrote = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if ";&|({\n".contains(c) {
+            out.push(c);
+            i += 1;
+            at_command = true;
+            continue;
+        }
+        if c.is_whitespace() {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        // Read one word.
+        let start = i;
+        while i < bytes.len() && is_word(bytes[i]) {
+            i += 1;
+        }
+        let word: String = bytes[start..i].iter().collect();
+        if at_command {
+            let envish = word == "env"
+                || word == "nice"
+                || word == "nohup"
+                || word == "command"
+                || (word.contains('=') && !word.starts_with('-'));
+            if word == "swift" {
+                // Peek the next word; if it's a verb we rewrite, unless the invocation
+                // already carries the flag before the next command separator.
+                let mut j = i;
+                while j < bytes.len() && bytes[j].is_whitespace() && !";&|({\n".contains(bytes[j]) {
+                    j += 1;
+                }
+                let vstart = j;
+                while j < bytes.len() && is_word(bytes[j]) {
+                    j += 1;
+                }
+                let verb: String = bytes[vstart..j].iter().collect();
+                let has_flag = {
+                    let mut k = j;
+                    let mut found = false;
+                    while k < bytes.len() {
+                        if ";\n".contains(bytes[k])
+                            || (bytes[k] == '&' && bytes.get(k + 1) == Some(&'&'))
+                            || (bytes[k] == '|' && bytes.get(k + 1) == Some(&'|'))
+                        {
+                            break;
+                        }
+                        if bytes[k].is_whitespace() {
+                            k += 1;
+                            continue;
+                        }
+                        let ws = k;
+                        while k < bytes.len() && is_word(bytes[k]) && !";&|()".contains(bytes[k]) {
+                            k += 1;
+                        }
+                        let w: String = bytes[ws..k].iter().collect();
+                        if w == "--disable-sandbox" {
+                            found = true;
+                            break;
+                        }
+                    }
+                    found
+                };
+                if looks_like_swift_verb(&verb) && !has_flag {
+                    out.push_str(&word);
+                    // Insert the whitespace we skipped between swift and the verb.
+                    for b in &bytes[i..vstart] {
+                        out.push(*b);
+                    }
+                    out.push_str(&verb);
+                    out.push_str(" --disable-sandbox");
+                    i = j;
+                    rewrote = true;
+                    at_command = false;
+                    continue;
+                }
+            }
+            out.push_str(&word);
+            at_command = envish;
+            continue;
+        }
+        out.push_str(&word);
+    }
+    if rewrote { out } else { cmd.to_string() }
 }
 
 /// Toolchain caches that builds write to (a `cargo build` locks ~/.cargo, npm keeps ~/.npm):
@@ -260,6 +392,9 @@ const CACHES: &[&str] = &[
     ".nuget",
     ".swiftpm",
     "Library/Developer/Xcode/DerivedData",
+    // SwiftPM's user-level configuration/security fingerprints and, on newer toolchains,
+    // manifest/plugin caches: builds warn or fail without them.
+    "Library/org.swift.swiftpm",
     ".gem",
     ".local/share/pnpm",
     ".deno",
@@ -269,6 +404,15 @@ const CACHES: &[&str] = &[
     ".cabal",
     ".mix",
     ".hex",
+];
+
+/// Non-secret config that sandboxed commands may read by default (under $HOME). Everything a
+/// build or a read-only git command routinely looks at, and nothing that holds a credential:
+/// the credential paths stay in SECRETS and only open with `allow_read`.
+const DEFAULT_READABLE: &[&str] = &[
+    ".gitconfig",
+    ".cargo/config.toml",
+    ".gitignore_global",
 ];
 
 /// Credentials a sandboxed command can't read, so a prompt-injected command can't read them
@@ -285,6 +429,9 @@ const SECRETS: &[&str] = &[
     ".azure",
     ".password-store",
     "Library/Keychains",
+    // frog's config dir holds config.toml (which may embed `api_key`) and models.json. The
+    // non-secret file agents read, config.toml, is allowed by name after the deny — keys
+    // added to this dir later (providers' `keys*`) stay hidden.
     ".config/frog",
     ".npmrc",
     ".pypirc",
@@ -293,17 +440,54 @@ const SECRETS: &[&str] = &[
     ".vault-token",
 ];
 
-/// Paths the user let sandboxed commands read (config `[sandbox]`), canonical where they
-/// exist. Reads only: none of them becomes writable.
+/// Whether the git-https overlay should apply to this command: it's git with a read-only-ish
+/// subcommand (fetch, ls-remote, clone, submodule update, status, diff, log, show, branch,
+/// rev-parse, describe, remote, worktree), or `git pull` (with or without --ff-only), and no
+/// `push` anywhere (auto.rs's hard rule already makes a push ask; `url.insteadOf` would
+/// redirect a push's URL too, so the overlay must never see one). Applies only when sandboxed
+/// and the config opt-in `[sandbox] git_https` is on (default on: it only widens what already
+/// works over the network and exposes no credentials; ssh keys stay hidden either way).
+fn git_https_applies(cmd: &str) -> bool {
+    const READ_SUBCOMMANDS: &[&str] = &[
+        "fetch", "ls-remote", "pull", "clone", "submodule", "status", "diff", "log", "show",
+        "branch", "rev-parse", "describe", "remote", "worktree",
+    ];
+    let tokens: Vec<&str> = cmd.split_whitespace().collect();
+    // Any push token anywhere disqualifies the whole command.
+    if tokens.iter().any(|t| *t == "push") {
+        return false;
+    }
+    // Any `git` whose remaining arguments contain a read subcommand before the next command
+    // separator (`;`, `&&`, `|`). Covers `git fetch`, `git -C path ls-remote`, `cd x && git
+    // pull --ff-only`; a `git add`/`git commit` alone doesn't trigger it.
+    let mut applies = false;
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i] == "git" {
+            for t in &tokens[i + 1..] {
+                if *t == ";" || *t == "&&" || *t == "||" || *t == "|" {
+                    break;
+                }
+                if READ_SUBCOMMANDS.contains(t) {
+                    applies = true;
+                    break;
+                }
+            }
+        }
+        i += 1;
+    }
+    applies
+}
 fn readable(extra: &SandboxConfig, home: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut paths: Vec<std::path::PathBuf> = extra
-        .allow_read
+    let mut paths: Vec<std::path::PathBuf> = DEFAULT_READABLE
         .iter()
-        .map(|p| match p.strip_prefix("~/") {
-            Some(rest) => home.join(rest),
-            None if p == "~" => home.to_path_buf(),
-            None => p.into(),
-        })
+        .map(|c| home.join(c))
+        .chain(
+            // frog's own config.toml, by name: agents read it to learn the project's setup.
+            // models.json and any `keys*`/`config.d/` stay denied.
+            [home.join(".config/frog/config.toml")],
+        )
+        .chain(extra.allow_read.iter().map(|p| expand_home(p, home)))
         .filter(|p| p.is_absolute())
         .collect();
     if extra.allow_keychain && cfg!(target_os = "macos") {
@@ -313,6 +497,28 @@ fn readable(extra: &SandboxConfig, home: &std::path::Path) -> Vec<std::path::Pat
         .into_iter()
         .map(|p| p.canonicalize().unwrap_or(p))
         .collect()
+}
+
+/// Paths the user let sandboxed commands write (config `[sandbox] allow_write`), canonical
+/// where they exist. Off by default; for things the workspace alone can't cover, like shared
+/// build dirs (`~/Developer/.shared-target`) or agent worktrees of sibling projects.
+fn writable(extra: &SandboxConfig, home: &std::path::Path) -> Vec<std::path::PathBuf> {
+    extra
+        .allow_write
+        .iter()
+        .map(|p| expand_home(p, home))
+        .filter(|p| p.is_absolute())
+        .map(|p| p.canonicalize().unwrap_or(p))
+        .collect()
+}
+
+/// `~/…` → under `home`; anything else passes through.
+fn expand_home(p: &str, home: &std::path::Path) -> std::path::PathBuf {
+    match p.strip_prefix("~/") {
+        Some(rest) => home.join(rest),
+        None if p == "~" => home.to_path_buf(),
+        None => p.into(),
+    }
 }
 
 /// Hosts `sandbox.network = "dev"` lets commands reach (https, port 443 only).
@@ -473,6 +679,10 @@ fn seatbelt(
         .iter()
         .map(|p| format!("\n  (subpath \"{}\")", quote(p)))
         .collect();
+    let writes: String = writable(extra, &home)
+        .iter()
+        .map(|p| format!("\n  (subpath \"{}\")", quote(p)))
+        .collect();
     let network = if extra.network.as_deref() == Some("dev") {
         "\n(deny network-outbound)\n(allow network-outbound (remote ip \"localhost:*\"))"
             .to_string()
@@ -490,7 +700,7 @@ fn seatbelt(
   (subpath "/private/var/folders")
   (literal "/dev/null")
   (literal "/dev/tty")
-  (regex #"^/dev/fd/"){caches}{git})
+  (regex #"^/dev/fd/"){caches}{git}{writes})
 (deny file-read* file-write*{secrets}){reads}{network}"#,
         quote(root),
         quote(&tmp)
@@ -520,18 +730,19 @@ fn bubblewrap(
 
     let mut cmd = tokio::process::Command::new(bwrap);
     cmd.args(["--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev"]);
-    let mut writable: Vec<PathBuf> = vec![root.to_path_buf()];
-    writable.extend(real(&std::env::temp_dir()));
-    writable.extend(
+    let mut writable_paths: Vec<PathBuf> = vec![root.to_path_buf()];
+    writable_paths.extend(real(&std::env::temp_dir()));
+    writable_paths.extend(
         ["/tmp", "/var/tmp"]
             .iter()
             .filter_map(|p| real(Path::new(p))),
     );
-    writable.extend(CACHES.iter().filter_map(|c| real(&home.join(c))));
-    writable.extend(git.iter().cloned());
-    writable.sort();
-    writable.dedup();
-    for p in &writable {
+    writable_paths.extend(CACHES.iter().filter_map(|c| real(&home.join(c))));
+    writable_paths.extend(git.iter().cloned());
+    writable_paths.extend(writable(extra, &home));
+    writable_paths.sort();
+    writable_paths.dedup();
+    for p in &writable_paths {
         cmd.arg("--bind").arg(p).arg(p);
     }
     // Credentials the user let commands read stay visible, read-only even inside a writable
@@ -803,6 +1014,237 @@ mod tests {
         let gh = json!({ "command": format!("GH_TOKEN='{}' gh auth status", token.trim()) });
         let out = run(&gh, &mut ctx).await.unwrap();
         assert!(out.content.contains("Logged in"), "{}", out.content);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// The seatbelt profile text carries the SwiftPM caches and the default-readable config,
+    /// still denies every credential path, and adds `allow_write` paths as writable. Pure
+    /// string check on the generated profile: no sandbox is executed.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sandbox_profile_has_the_expected_holes_and_still_hides_credentials() {
+        // `seatbelt` builds subpaths under the real home, so test against that.
+        let home = dirs::home_dir().unwrap();
+        let home_s = home.display().to_string();
+        let extra = SandboxConfig {
+            allow_read: vec!["~/.config/gh".into()],
+            allow_write: vec!["~/Developer/.shared-target".into()],
+            ..Default::default()
+        };
+        let git = vec![std::path::PathBuf::from("/definitely/not/home/.git")];
+        let cmd = seatbelt(home.join("proj").as_path(), "/bin/zsh", &extra, &git).unwrap();
+        // `seatbelt` builds the command; the profile is its second arg.
+        let borrowed = cmd.as_std();
+        let profile = borrowed
+            .get_args()
+            .nth(1)
+            .and_then(|a| a.to_str().map(|s| s.to_string()))
+            .expect("profile after -p");
+
+        // SwiftPM's user-level dir is writable (nested-sandbox workaround needs its caches).
+        assert!(
+            profile.contains(&format!("(subpath \"{home_s}/Library/org.swift.swiftpm\")")),
+            "swiftpm cache missing:\n{profile}"
+        );
+        // The default-readable config is re-allowed for reading, after the secrets deny.
+        assert!(
+            profile.contains(&format!("(allow file-read* (subpath \"{home_s}/.gitconfig\"))")),
+            ".gitconfig read missing:\n{profile}"
+        );
+        assert!(
+            profile.contains(&format!("(subpath \"{home_s}/.config/frog/config.toml\")")),
+            "frog config.toml read missing:\n{profile}"
+        );
+        // allow_write became a writable subpath.
+        assert!(
+            profile.contains(&format!("(subpath \"{home_s}/Developer/.shared-target\")")),
+            "allow_write missing:\n{profile}"
+        );
+        // allow_read is read-only.
+        assert!(
+            !profile.contains(&format!("(allow file-write*\n  (subpath \"{home_s}/.config/gh\")")),
+            "allow_read path became writable:\n{profile}"
+        );
+        // Every credential path is still denied.
+        for secret in SECRETS {
+            assert!(
+                profile.contains(&format!("(subpath \"{home_s}/{secret}\")")),
+                "secret {secret} missing from the deny set:\n{profile}"
+            );
+        }
+        // frog's config dir is denied but its config.toml re-allowed: both must appear.
+        let deny_pos = profile.find("(deny file-read* file-write*").unwrap();
+        let allow_pos = profile
+            .find(&format!("(allow file-read* (subpath \"{home_s}/.config/frog/config.toml\"))"))
+            .unwrap();
+        assert!(deny_pos < allow_pos, "config.toml allow must come after the deny");
+    }
+
+    /// `adapt_swiftpm` adds the flag to sandboxed swift builds and leaves everything else
+    /// alone, byte-for-byte.
+    #[test]
+    fn sandbox_swiftpm_adaptation_rewrites_only_swift_build_invocations() {
+        let f = |cmd: &str| adapt_swiftpm(cmd);
+        assert_eq!(f("swift build"), "swift build --disable-sandbox");
+        assert_eq!(f("swift build -c release"), "swift build --disable-sandbox -c release");
+        assert_eq!(
+            f("swift test --package-path sidecars/frog-apple"),
+            "swift test --disable-sandbox --package-path sidecars/frog-apple"
+        );
+        assert_eq!(f("cd /tmp && swift run App"), "cd /tmp && swift run --disable-sandbox App");
+        assert_eq!(
+            f("FOO=1 swift package resolve"),
+            "FOO=1 swift package --disable-sandbox resolve"
+        );
+        // Already has it: untouched.
+        assert_eq!(f("swift build --disable-sandbox"), "swift build --disable-sandbox");
+        // Other subcommands and non-command positions: untouched.
+        assert_eq!(f("swiftc foo.swift"), "swiftc foo.swift");
+        assert_eq!(f("swift repl"), "swift repl");
+        assert_eq!(f("echo swift build"), "echo swift build");
+        assert_eq!(f("swiftlint"), "swiftlint");
+        // Quoting and spacing survive.
+        assert_eq!(
+            f("swift build  --package-path \"a b\""),
+            "swift build --disable-sandbox  --package-path \"a b\""
+        );
+        // Two invocations in one command both get it.
+        assert_eq!(
+            f("swift build; swift test"),
+            "swift build --disable-sandbox; swift test --disable-sandbox"
+        );
+    }
+
+    /// The git-https overlay targets git reads and never a command that pushes.
+    #[test]
+    fn sandbox_git_https_overlay_targets_read_commands_only() {
+        let f = |cmd: &str| git_https_applies(cmd);
+        assert!(f("git fetch"));
+        assert!(f("git ls-remote origin"));
+        assert!(f("git -C /Users/x/proj ls-remote https://github.com/o/r"));
+        assert!(f("cd /tmp && git pull --ff-only"));
+        assert!(f("git clone git@github.com:o/r.git d"));
+        assert!(f("git status && git diff"));
+        // Pushes and non-reads are left alone.
+        assert!(!f("git push origin main"));
+        assert!(!f("git fetch && git push origin main"));
+        assert!(!f("git commit -m x"));
+        assert!(!f("git add . && git commit"));
+        assert!(!f("cargo build"));
+    }
+
+    /// `--disable-sandbox` really does make `swift build` work under the frog sandbox: a tiny
+    /// package builds sandboxed once the inner sandbox is off. Run with `cargo test -- --ignored`
+    /// on macOS with Xcode installed; ~30s.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore]
+    async fn sandboxed_swift_build_works_with_the_inner_sandbox_disabled() {
+        let base = std::env::temp_dir().join(format!("frog-swift-{}", crate::session::new_id()));
+        let pkg = base.join("SwiftPkg");
+        std::fs::create_dir_all(pkg.join("Sources/SwiftPkg")).unwrap();
+        std::fs::write(
+            pkg.join("Package.swift"),
+            "// swift-tools-version:5.9\nimport PackageDescription\nlet package = Package(name: \"SwiftPkg\", targets: [.target(name: \"SwiftPkg\")])\n",
+        )
+        .unwrap();
+        std::fs::write(
+            pkg.join("Sources/SwiftPkg/SwiftPkg.swift"),
+            "public func hi() -> String { \"hello\" }\n",
+        )
+        .unwrap();
+        let mut ctx = Ctx::new(pkg.clone());
+        ctx.sandbox = Some(pkg.canonicalize().unwrap());
+        // Cold manifest cache is the failure case: drop it so the manifest really compiles.
+        let _ = std::fs::remove_dir_all(dirs::home_dir().unwrap().join("Library/Caches/org.swift.swiftpm/manifests"));
+
+        // Without the adaptation (`sh -c` hides the invocation from the rewriter), plain
+        // `swift build` fails: SwiftPM's inner sandbox can't apply inside ours.
+        let plain = run(
+            &json!({ "command": "sh -c 'swift build'" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !plain.content.contains("Build complete"),
+            "plain swift build unexpectedly worked:\n{}",
+            plain.content
+        );
+
+        // With the engine's adaptation, the same command the agent writes builds fine.
+        let adapted = run(&json!({ "command": "swift build" }), &mut ctx).await.unwrap();
+        assert!(
+            adapted.content.contains("Build complete"),
+            "adapted swift build failed:\n{}",
+            adapted.content
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A trivially sandboxed command (`swift --version`) still runs: the sandbox profile
+    /// doesn't break the toolchain itself. Run with `cargo test -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn sandboxed_swift_version_works() {
+        let ws = std::env::temp_dir().join(format!("frog-swift-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.sandbox = Some(ws.canonicalize().unwrap());
+        let out = run(&json!({ "command": "swift --version" }), &mut ctx).await.unwrap();
+        assert!(
+            out.content.contains("Swift version"),
+            "swift --version failed:\n{}",
+            out.content
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// Read-only git over https works sandboxed (network is open by default; this checks the
+    /// whole path). Run with `cargo test -- --ignored` with the network up.
+    #[tokio::test]
+    #[ignore]
+    async fn sandboxed_git_ls_remote_https_works() {
+        let ws = std::env::temp_dir().join(format!("frog-git-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.sandbox = Some(ws.canonicalize().unwrap());
+        let out = run(
+            &json!({ "command": "git ls-remote https://github.com/octocat/Hello-World HEAD" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(
+            out.content.contains("7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"),
+            "ls-remote failed:\n{}",
+            out.content
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// With `[sandbox] git_https` on, an ssh URL to a public GitHub repo resolves over https
+    /// through the overlay, sandboxed, without ~/.ssh being readable. Run with
+    /// `cargo test -- --ignored` with the network up.
+    #[tokio::test]
+    #[ignore]
+    async fn sandboxed_git_ls_remote_ssh_becomes_https_with_git_https_config() {
+        let ws = std::env::temp_dir().join(format!("frog-git-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.sandbox = Some(ws.canonicalize().unwrap());
+        ctx.sandbox_extra.git_https = true;
+        let out = run(
+            &json!({ "command": "git ls-remote git@github.com:octocat/Hello-World HEAD" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(
+            out.content.contains("7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"),
+            "ssh ls-remote didn't resolve over https:\n{}",
+            out.content
+        );
         let _ = std::fs::remove_dir_all(&ws);
     }
 }
