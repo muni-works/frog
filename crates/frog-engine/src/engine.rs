@@ -460,8 +460,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     // What's running, before anything slow (MCP servers, a local model loading, probing the
     // provider), so a client can name the model as soon as a conversation opens.
     agent.emit_status();
-    /// The bus Handle exposes (empty until `SetClientCaps { irc }`), read before `shared`
-    /// moves into the work loop.
+    // The bus slot the Handle exposes (empty until `SetClientCaps { irc }`), cloned before
+    // `shared` moves into the work loop. It's shared, so the cap can land later.
     let bus = shared.irc.clone();
     // A resumed session's log, for answering `Subscribe` while the engine starts up.
     let resumed = match (&agent.store, shared.journal.has_log()) {
@@ -6782,9 +6782,13 @@ for line in sys.stdin:
     }
 
     fn caps(h: &Handle, sessions: bool) {
+        caps_irc(h, sessions, false);
+    }
+
+    fn caps_irc(h: &Handle, sessions: bool, irc: bool) {
         h.ops
             .send(Op::SetClientCaps {
-                irc: false,
+                irc,
                 panes: false,
                 ask: false,
                 sessions,
@@ -6885,6 +6889,219 @@ for line in sys.stdin:
                 "end 2"
             ]
         );
+    }
+
+    // -- the IRC agent bus (docs/design/agent-bus-irc.md) --
+
+    /// The Irc tool calls the model makes in tests.
+    fn irc_call(action: &str, channel: &str) -> Block {
+        use serde_json::json;
+        Block::ToolUse {
+            id: "t0".into(),
+            name: crate::irc::TOOL.into(),
+            input: json!({ "action": action, "channel": channel }),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_irc_mention_delivers_at_the_turn_boundary_not_mid_turn() {
+        // A mention arriving mid-turn never interrupts it: it queues like SendMessage and
+        // runs at the next boundary, wrapped untrusted.
+        let script = vec![
+            reply(vec![irc_call("read", "#frog")], Stop::ToolUse),
+            reply(vec![text("read")], Stop::End),
+            reply(vec![text("got it")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps_irc(&h, false, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "check the channel".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut mentioned = false;
+        let mut order = Vec::new();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, .. },
+                    ..
+                } if name == crate::irc::TOOL => {
+                    // Mid-turn: the bridge routes the mention into the router's inbox.
+                    let bus = h.bus.lock().unwrap().clone().unwrap();
+                    let nick = bus.nick().unwrap();
+                    let line =
+                        crate::irc::Line::at("f-peer", "#frog", &format!("{nick}: ping?"), 1000)
+                            .unwrap();
+                    let Some((from, from_name, message)) = bus.arrive(line) else {
+                        panic!("a mention must route to the inbox");
+                    };
+                    h.ops
+                        .send(Op::Deliver {
+                            from,
+                            from_name,
+                            message,
+                        })
+                        .unwrap();
+                    mentioned = true;
+                    order.push("tool".into());
+                }
+                Event::TurnStarted { turn, input, .. } => {
+                    order.push(format!("start {turn} {}", input.contains("<chat")));
+                }
+                Event::TurnEnded { turn, .. } => {
+                    order.push(format!("end {turn}"));
+                    if turn == 2 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(mentioned);
+        assert_eq!(
+            order,
+            ["start 1 false", "tool", "end 1", "start 2 true", "end 2"],
+            "the mention lands at the boundary, as one wrapped turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_irc_tool_is_absent_until_the_client_declares_the_bus() {
+        let script = vec![
+            reply(vec![irc_call("read", "#frog")], Stop::ToolUse),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        // No SetClientCaps { irc }: the tool isn't offered and can't run.
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "read the channel".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == crate::irc::TOOL => {
+                    assert!(output.starts_with("There's no `Irc` tool"));
+                    break;
+                }
+                Event::TurnEnded { .. } => panic!("the bus is off: the call must be refused"),
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_permission_card_posts_a_notice_with_a_link_never_an_approval() {
+        // A permission request mid-turn posts exactly one waiting-on-user notice, carrying a
+        // frog:// link. IRC never approves: the notice has no decision and no commands.
+        let dir = tmp_store();
+        std::fs::write(dir.join("calc.py"), "def add(a, b):\n    return a - b\n").unwrap();
+        let read = Block::ToolUse {
+            id: "r".into(),
+            name: "Read".into(),
+            input: json!({ "file_path": "calc.py" }),
+        };
+        let edit = Block::ToolUse {
+            id: "e".into(),
+            name: "Edit".into(),
+            input: json!({ "file_path": "calc.py", "old_string": "a - b", "new_string": "a + b" }),
+        };
+        let script = vec![
+            reply(vec![read], Stop::ToolUse),
+            reply(vec![edit], Stop::ToolUse),
+            reply(vec![text("fixed")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        caps_irc(&h, false, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        // The client (here: the test) tells the bus which team channel this session posts to.
+        h.bus
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .set_channel("#frog");
+        h.ops
+            .send(Op::Submit {
+                text: "fix add".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        let mut notices = Vec::new();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::PermissionRequest { id, name, .. } => {
+                    let bus = h.bus.lock().unwrap().clone().unwrap();
+                    // The bridge posted the notice synchronously with the event.
+                    for line in bus.read("#frog").unwrap_or_default() {
+                        notices.push(line.text.clone());
+                    }
+                    assert_eq!(name, "Edit");
+                    h.ops
+                        .send(Op::Permission {
+                            id,
+                            decision: Decision::Allow,
+                        })
+                        .unwrap();
+                }
+                Event::TurnEnded { turn, .. } if turn == 1 => break,
+                _ => {}
+            }
+        }
+        let link = notices.iter().find(|n| n.contains("frog://"));
+        assert!(link.is_some(), "the notice carries a link: {notices:?}");
+        assert!(
+            notices.iter().any(|n| n.contains("waiting on cam")),
+            "it names the card"
+        );
+        for n in &notices {
+            let low = n.to_lowercase();
+            assert!(!low.contains("reply yes"), "no confirm-by-chat: {n}");
+            assert!(!low.contains("approved"), "no decision over IRC: {n}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_irc_tool_reads_quarantined_lines_and_posts_within_the_cap() {
+        let script = vec![
+            reply(vec![irc_call("read", "#frog")], Stop::ToolUse),
+            reply(vec![text("read")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps_irc(&h, false, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        // History a peer wrote before the read.
+        let bus = h.bus.lock().unwrap().clone().unwrap();
+        bus.arrive(crate::irc::Line::at("f-peer", "#frog", "release out", 999).unwrap());
+        h.ops
+            .send(Op::Submit {
+                text: "read the channel".into(),
+                images: Vec::new(),
+            })
+            .unwrap();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == crate::irc::TOOL => {
+                    assert!(output.contains("untrusted=\"true\""), "{output}");
+                    assert!(output.contains("release out"));
+                    assert!(output.contains("no user authority"));
+                    break;
+                }
+                Event::TurnEnded { .. } => panic!("tool should have run"),
+                _ => {}
+            }
+        }
     }
 
     #[tokio::test]
