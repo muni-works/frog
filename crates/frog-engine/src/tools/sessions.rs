@@ -39,7 +39,7 @@ state (running, idle or waiting on the user), folder and model."
             name: SEND.into(),
             description: "Send a message to another session, by id or by name. It's queued: the \
 target reads it at its next turn boundary and starts a turn if idle. Set notify_when_idle to get \
-a message from \"system\" when the target goes idle. Replies come back as <session-message> \
+a message from \"system\" with its last reply when the target goes idle. Replies come back as <session-message> \
 turns; don't wait in a loop."
                 .into(),
             schema: json!({
@@ -56,8 +56,9 @@ turns; don't wait in a loop."
             name: START.into(),
             description: "Start a new long-running session (shown in the sidebar under this \
 one) with a first prompt. Optionally in another folder (cwd), with another model, or in its own \
-git worktree on a new branch (worktree: true) so its edits don't collide with yours. Returns its \
-id and name for SendMessage."
+git worktree on a new branch (worktree: true) so its edits don't collide with yours. When it goes \
+idle you get a message from \"system\" with its last reply (its report), unless report: false. \
+Returns its id and name for SendMessage."
                 .into(),
             schema: json!({
                 "type": "object",
@@ -66,7 +67,8 @@ id and name for SendMessage."
                     "prompt": { "type": "string" },
                     "cwd": { "type": "string" },
                     "model": { "type": "string" },
-                    "worktree": { "type": "boolean" }
+                    "worktree": { "type": "boolean" },
+                    "report": { "type": "boolean", "description": "send its last reply back here when it goes idle (default true)" }
                 },
                 "required": ["title", "prompt"]
             }),
