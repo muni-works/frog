@@ -18,6 +18,8 @@ struct SessionList: View {
     @State private var newTitle = ""
     /// Groups showing all their conversations rather than the latest few.
     @State private var expanded: Set<String> = []
+    /// Folded branches whose older sessions are disclosed, by the branch's newest session id.
+    @State private var openFolds: Set<String> = []
     /// Folded project groups, by folder path (newline-separated).
     @AppStorage("foldedGroups") private var foldedRaw = ""
     @AppStorage("sidebarGrouping") private var grouping = Grouping.project
@@ -222,9 +224,7 @@ struct SessionList: View {
             if !isFolded {
                 ForEach(compactDated(items), id: \.0) { title, dayItems in
                     compactHeader(title)
-                    ForEach(nested(dayItems), id: \.session.id) { entry in
-                        compactRow(entry.session, depth: entry.depth)
-                    }
+                    compactDayRows(dayItems)
                 }
             }
         }
@@ -254,10 +254,47 @@ struct SessionList: View {
     }
 
     private func compactRow(_ session: SessionInfo, depth: Int) -> some View {
+        compactRow(session, depth: depth, folded: 0, foldOpen: false, onFold: nil)
+    }
+
+    /// A day's rows, branches folded: one row for each fold's newest session, older sessions
+    /// behind the row's disclosure, and other nesting (started-by) applied on top.
+    private func compactDayRows(_ dayItems: [SessionInfo]) -> some View {
+        let folds = SessionFolds.group(dayItems)
+        let hidden = Set(folds.flatMap(\.older).map(\.id))
+        let visible = folds.map(\.session).filter { s in !hidden.contains(s.id) }
+        let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
+        return ForEach(nested(visible), id: \.session.id) { entry in
+            compactBranchRow(entry.session, depth: entry.depth, fold: byId[entry.session.id])
+        }
+    }
+
+    /// One fold's row (its newest session) plus, when disclosed, the older ones indented.
+    @ViewBuilder
+    private func compactBranchRow(_ session: SessionInfo, depth: Int, fold: SessionFolds.Fold?) -> some View {
+        let fold = fold ?? SessionFolds.Fold(session: session, older: [])
+        let isOpen = openFolds.contains(session.id)
+        compactRow(session, depth: depth, folded: fold.older.count, foldOpen: isOpen,
+                   onFold: fold.folded ? { toggleFoldBranch(session.id) } : nil)
+        if fold.folded, isOpen {
+            ForEach(fold.older) { older in
+                compactRow(older, depth: depth + 1)
+            }
+        }
+    }
+
+    private func toggleFoldBranch(_ id: String) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if openFolds.remove(id) == nil { openFolds.insert(id) }
+        }
+    }
+
+    private func compactRow(_ session: SessionInfo, depth: Int, folded: Int, foldOpen: Bool, onFold: (() -> Void)?) -> some View {
         CompactSessionRow(
             session: session, selected: session.id == current,
             live: library.live[session.id], depth: depth,
-            pr: session.folder.flatMap { CompactPRCache.shared.value(for: $0) }
+            pr: session.folder.flatMap { CompactPRCache.shared.value(for: $0) },
+            folded: folded, foldOpen: foldOpen, onFold: onFold
         ) { open(session) } menu: { rowMenu(session) }
     }
 
@@ -338,9 +375,16 @@ struct SessionList: View {
             let shown = all ? items : items.enumerated().filter { i, s in
                 i < Self.groupLimit || library.live[s.id] != nil || s.id == current
             }.map(\.element)
-            ForEach(nested(shown), id: \.session.id) { s, depth in
-                row(s, showPlace: false)
-                    .padding(.leading, CGFloat(depth) * 14)
+            let folds = SessionFolds.group(shown)
+            let hidden = Set(folds.flatMap(\.older).map(\.id))
+            let visible = folds.map(\.session).filter { s in !hidden.contains(s.id) }
+            let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
+            ForEach(nested(visible), id: \.session.id) { entry, depth in
+                if let fold = byId[entry.id], fold.folded {
+                    branchRow(entry, depth: depth, fold: fold)
+                } else {
+                    row(entry, showPlace: false).padding(.leading, CGFloat(depth) * 14)
+                }
             }
             if items.count > shown.count || (all && items.count > Self.groupLimit) {
                 Button(all ? "Show less" : "Show \(items.count - shown.count) more") {
@@ -441,6 +485,30 @@ struct SessionList: View {
             open(s)
         } menu: {
             rowMenu(s)
+        }
+    }
+
+    /// A folded branch's row: its newest session as the row, a chevron disclosing the older
+    /// ones (indented beneath).
+    @ViewBuilder
+    private func branchRow(_ session: SessionInfo, depth: Int, fold: SessionFolds.Fold) -> some View {
+        let isOpen = openFolds.contains(session.id)
+        let indent = CGFloat(depth) * 14
+        HStack(spacing: 0) {
+            Button { toggleFoldBranch(session.id) } label: {
+                Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                    .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    .frame(width: 14, height: 20).contentShape(.rect)
+            }
+            .buttonStyle(.plain).foregroundStyle(.tertiary)
+            .help("\(fold.older.count) older on this branch")
+            row(session, showPlace: false)
+        }
+        .padding(.leading, indent)
+        if isOpen {
+            ForEach(fold.older) { older in
+                row(older, showPlace: false).padding(.leading, indent + 18)
+            }
         }
     }
 
@@ -553,15 +621,33 @@ struct SessionList: View {
     }
 }
 
-/// Compact, title-only sidebar row and its cached GitHub pull request indicator.
+/// Compact, title-only sidebar row, with its state glyph, trailing meta (age, commits ahead)
+/// and cached GitHub pull request indicator.
 private struct CompactSessionRow<Menu: View>: View {
     let session: SessionInfo
     let selected: Bool
     let live: Library.Live?
     let depth: Int
     let pr: CompactPRCache.Info?
+    /// How many older sessions of this branch are folded behind the row's disclosure.
+    var folded: Int = 0
+    /// Whether the row's disclosure is open (its older sessions are listed).
+    var foldOpen = false
+    var onFold: (() -> Void)? = nil
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
+    @State private var meta: SessionMetaCache.Meta?
+
+    /// The row's state, combining live tracking with the listing's last-turn end. A turn
+    /// that finished ok keeps a green check for ten seconds, then settles to nothing.
+    private var glyph: SessionEndGlyph {
+        SessionEndGlyph.derive(live: live, end: session.end)
+    }
+
+    /// Whether the last turn ended recently enough to still show its green check.
+    private var freshComplete: Bool {
+        session.end == .complete && abs(Date().timeIntervalSince(session.modifiedDate)) < 10
+    }
 
     var body: some View {
         // The tick re-checks the 30 s activity rule so the indicator and the title
@@ -576,7 +662,11 @@ private struct CompactSessionRow<Menu: View>: View {
         .contextMenu { menu() }
         .paneDraggable(.session(session), title: session.displayTitle)
         .help(helpText)
-        .task(id: session.folder?.path) { if let folder = session.folder { await CompactPRCache.shared.refresh(folder) } }
+        .task(id: session.folder?.path) {
+            if let folder = session.folder { await CompactPRCache.shared.refresh(folder) }
+            meta = SessionMetaCache.shared.value(for: session.folder)
+            if meta == nil { await SessionMetaCache.shared.refresh(session.folder); meta = SessionMetaCache.shared.value(for: session.folder) }
+        }
     }
 
     private func content(working: Bool) -> some View {
@@ -589,11 +679,28 @@ private struct CompactSessionRow<Menu: View>: View {
             } else {
                 Color.clear.frame(width: 6)
             }
+            if folded > 0 {
+                Button { onFold?() } label: {
+                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                        .rotationEffect(.degrees(foldOpen ? 90 : 0))
+                        .frame(width: 12, height: 20).contentShape(.rect)
+                }
+                .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    .help("\(folded) older on this branch")
+            } else {
+                Color.clear.frame(width: 6)
+            }
             Button(action: open) {
-                Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.primary.opacity(selected || running ? 1 : 0.82))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 5) {
+                    Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.primary.opacity(selected || running ? 1 : 0.82))
+                    if let wt = SessionList.worktreeName(session.folder) {
+                        Text(wt).lineLimit(1).truncationMode(.middle)
+                            .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -604,11 +711,16 @@ private struct CompactSessionRow<Menu: View>: View {
                 Text("\(pr.changedFiles)").font(.system(size: 11, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary).frame(minWidth: 16, alignment: .trailing)
             }
-            if working {
-                PulsingDot().padding(.leading, 4).help("working")
-            } else {
-                Circle().fill(statusColor).frame(width: 6, height: 6).padding(.leading, 7).padding(.trailing, 3)
+            if let ahead = meta?.ahead, ahead > 0 {
+                Text("\(ahead)↑").font(.system(size: 11, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.secondary).padding(.leading, 5).help("\(ahead) commit\(ahead == 1 ? "" : "s") ahead of main")
             }
+            TimelineView(.periodic(from: .now, by: freshComplete ? 5 : 30)) { ctx in
+                Text(SessionAgeShort.age(session.modifiedDate, now: ctx.date))
+                    .font(.system(size: 11, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
+            }
+            glyphView.padding(.leading, 5)
             SwiftUI.Menu { menu() } label: {
                 Image(systemName: "ellipsis").font(.system(size: 10)).frame(width: 14, height: 20)
             }
@@ -624,30 +736,27 @@ private struct CompactSessionRow<Menu: View>: View {
         return session.displayTitle
     }
 
-    private var statusColor: Color {
-        switch live {
-        case .running: .blue
-        case .waiting, .unread: .orange
-        case nil: .clear
+    /// The state glyph: a spinner while running, an amber dot waiting on you, red for a turn
+    /// that ended in error, tinted for unseen, nothing for idle.
+    @ViewBuilder
+    private var glyphView: some View {
+        switch glyph {
+        case .running:
+            ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 12, height: 12).help("working")
+        case .waiting:
+            Circle().fill(.orange).frame(width: 6, height: 6).help("waiting on you")
+        case .failed:
+            Circle().fill(.red).frame(width: 6, height: 6).help("ended with an error")
+        case .unread:
+            Circle().fill(Color.accentColor).frame(width: 6, height: 6).help("finished while you were away")
+        case .idle:
+            if freshComplete {
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 11))
+                    .foregroundStyle(.green).help("done")
+            } else {
+                EmptyView()
+            }
         }
-    }
-}
-
-/// The "working" indicator: an accent-colored dot that pulses while a session is busy.
-/// Under Reduce Motion it stays lit without animating.
-private struct PulsingDot: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulsing = false
-
-    var body: some View {
-        Circle()
-            .fill(Color.accentColor)
-            .frame(width: 7, height: 7)
-            .scaleEffect(pulsing ? 1.35 : 0.75)
-            .opacity(pulsing ? 1 : 0.45)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
-            .onAppear { pulsing = true }
-            .frame(width: 12, height: 12)
     }
 }
 
@@ -810,7 +919,7 @@ struct ConversationRow<Menu: View>: View {
     }
 
     private var label: some View {
-        ConversationRowLabel(session: session, live: live, pane: pane, showPlace: showPlace)
+        ConversationRowLabel(session: session, live: live, end: session.end, pane: pane, showPlace: showPlace)
     }
 
     /// Status and the hover menu share one slot sized to the larger of the two, so the row
@@ -836,15 +945,24 @@ struct ConversationRow<Menu: View>: View {
 
     @ViewBuilder
     private var status: some View {
-        if live != nil {
-            LiveGlyph(live: live)
-        } else if !showPlace {
-            Text(SessionAge.short(session.modifiedDate))
+        switch SessionEndGlyph.derive(live: live, end: session.end) {
+        case .running: LiveGlyph(live: .running)
+        case .waiting: LiveGlyph(live: .waiting)
+        case .unread: LiveGlyph(live: .unread)
+        case .failed:
+            Image(systemName: "exclamationmark.circle.fill")
                 .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.tertiary)
-        } else if pinned {
-            Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary)
+                .foregroundStyle(.red)
+                .help("ended with an error")
+        case .idle:
+            if pinned {
+                Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary)
+            } else if !showPlace {
+                Text(SessionAge.short(session.modifiedDate))
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 
