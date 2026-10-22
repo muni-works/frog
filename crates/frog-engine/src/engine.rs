@@ -6919,6 +6919,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "check the channel".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut mentioned = false;
@@ -6981,6 +6982,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "read the channel".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         loop {
@@ -7033,6 +7035,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "fix add".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut notices = Vec::new();
@@ -7085,6 +7088,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "read the channel".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         loop {
