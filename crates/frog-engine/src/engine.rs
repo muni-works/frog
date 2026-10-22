@@ -84,10 +84,98 @@ const SAFE_BASH: &[&str] = &[
     "git blame",
 ];
 
-/// The Nth identical tool call in one turn is refused, with a nudge to change approach…
-const LOOP_REFUSE: u32 = 3;
+/// The 2nd identical tool call in one turn gets its earlier result back with a nudge…
+const LOOP_NUDGE: u32 = 2;
+/// …the 3rd and 5th also get a re-plan message listing what's been tried…
+const LOOP_REPLAN: u32 = 3;
 /// …and at this count the turn stops. opencode saw a sub-agent make 364 identical greps.
-const LOOP_STOP: u32 = 5;
+const LOOP_STOP: u32 = 6;
+/// Re-plans in a row, with no new distinct call in between, before the turn stops.
+const LOOP_STALE_REPLANS: u32 = 3;
+/// Distinct calls a re-plan message lists.
+const LOOP_RECENT: usize = 8;
+
+/// Tools whose result for the same arguments only changes when something else changes the
+/// world, so an earlier result can stand in for a repeat.
+fn replayable(name: &str) -> bool {
+    matches!(name, "Read" | "Grep" | "Glob")
+}
+
+/// Per-turn record of repeated tool calls. Pure bookkeeping: no model calls.
+#[derive(Default)]
+struct LoopGuard {
+    /// Times each exact call (name + input) was made this turn.
+    counts: HashMap<String, u32>,
+    /// The last good result of each replayable call.
+    last: HashMap<String, String>,
+    /// Distinct calls this turn, oldest first, as "Name arg".
+    recent: Vec<String>,
+    /// Re-plans since the last call that was new to this turn.
+    stale_replans: u32,
+}
+
+impl LoopGuard {
+    fn note_recent(&mut self, label: String) {
+        self.recent.retain(|l| *l != label);
+        self.recent.push(label);
+    }
+
+    /// The system-side message asking the model to change course.
+    fn replan(&self, repeated: &str, times: u32) -> String {
+        let tried: Vec<String> = self
+            .recent
+            .iter()
+            .rev()
+            .take(LOOP_RECENT)
+            .rev()
+            .map(|l| format!("- {l}"))
+            .collect();
+        format!(
+            "[frog] You have made the same call ({repeated}) {times} times this turn and got the \
+same result each time. Calls tried this turn (duplicates removed):\n{}\n\
+Before your next call, state in one sentence what you still need to learn and your next step. Then \
+use a different tool or different arguments; repeating this call will not give a different answer.",
+            tried.join("\n")
+        )
+    }
+}
+
+/// What to tell the model when it repeats a call whose earlier `result` it already has.
+fn repeat_nudge(name: &str, input: &Value, result: &str, times: u32) -> String {
+    let lead = format!(
+        "(Repeat #{times} of this exact call; this is the earlier result, not a fresh run.)"
+    );
+    match name {
+        "Read" => {
+            let numbered: Vec<usize> = result
+                .lines()
+                .filter_map(|l| l.split_once('\t')?.0.trim().parse().ok())
+                .collect();
+            let more = result
+                .lines()
+                .rev()
+                .find(|l| l.starts_with('…') && l.contains("more lines"));
+            match (numbered.first(), numbered.last(), more) {
+                (Some(a), Some(b), Some(_)) => format!(
+                    "{lead} That Read showed lines {a}-{b} only, and the file continues. Re-reading \
+returns the same slice. Use offset={} (with a limit) to read the next part, or Grep for the part you need.",
+                    b + 1
+                ),
+                (Some(a), Some(b), None) => format!(
+                    "{lead} That Read showed lines {a}-{b}, which is all of what it asked for. Act on it, or Grep for something specific."
+                ),
+                _ => format!("{lead} Change offset/limit or the path, or Grep for what you need."),
+            }
+        }
+        "Grep" | "Glob" => format!(
+            "{lead} The same pattern gives the same matches. Change the pattern or path, or Read one of these files."
+        ),
+        _ => {
+            let _ = input;
+            format!("{lead} Change the arguments or try a different approach.")
+        }
+    }
+}
 /// Model calls per turn before stopping to check in with the user.
 const MAX_STEPS: u32 = 60;
 
@@ -1487,7 +1575,7 @@ impl Agent {
         self.sync_log();
 
         let mut compacted = None;
-        let mut repeats: HashMap<String, u32> = HashMap::new();
+        let mut guard = LoopGuard::default();
         let mut steps = 0;
         // A reply asking for files it could Read is nudged once, before any tool has run.
         let (mut nudged, mut used_tools) = (false, false);
@@ -1645,7 +1733,7 @@ impl Agent {
             }
 
             used_tools = true;
-            match self.run_tools(uses, &mut repeats, streamed.early).await? {
+            match self.run_tools(uses, &mut guard, streamed.early).await? {
                 Batch::Continue => {}
                 Batch::Denied => break EndReason::Denied,
                 Batch::Looping => break EndReason::Looping,
@@ -2664,7 +2752,7 @@ impl Agent {
     async fn run_tools(
         &mut self,
         uses: Vec<(String, String, Value)>,
-        repeats: &mut HashMap<String, u32>,
+        guard: &mut LoopGuard,
         mut early: crate::early::Early,
     ) -> Result<Batch> {
         // Results accumulate in place so an interrupt keeps what already ran.
@@ -2674,17 +2762,39 @@ impl Agent {
         });
         let mut denied = false;
         let mut looping = false;
+        let mut replan: Option<String> = None;
         for (index, (id, name, input)) in uses.into_iter().enumerate() {
             // Taken for every call, so a mismatch drops all the early runs after it.
             let started_early = early.take(index, &name, &input);
-            let seen = repeats.entry(format!("{name}\u{0}{input}")).or_insert(0);
+            let key = format!("{name}\u{0}{input}");
+            let count = guard.counts.entry(key.clone()).or_insert(0);
             // Reading a pane again is polling, not looping: what's there changes.
             if !crate::panes::is_read(&name, &input) {
-                *seen += 1;
+                *count += 1;
             }
-            let seen = *seen;
-            looping |= seen >= LOOP_STOP;
+            let seen = *count;
             let (_, arg) = tools::label(&name, &input, &self.ctx);
+            if seen <= 1 {
+                guard.stale_replans = 0;
+            }
+            guard.note_recent(format!("{name} {arg}"));
+            // The 3rd and 5th identical call ask the model to re-plan; the last stops the turn.
+            if seen == LOOP_REPLAN || seen == LOOP_STOP - 1 {
+                guard.stale_replans += 1;
+                replan = Some(guard.replan(&format!("{name} {arg}"), seen));
+            }
+            if seen >= LOOP_STOP || guard.stale_replans >= LOOP_STALE_REPLANS {
+                looping = true;
+            }
+            let replay = if seen >= LOOP_NUDGE && !looping {
+                guard
+                    .last
+                    .get(&key)
+                    .map(|r| format!("{r}\n{}", repeat_nudge(&name, &input, r, seen)))
+            } else {
+                None
+            };
+            let mut executed = false;
             self.emit(Event::ItemStarted {
                 id: id.clone(),
                 kind: ItemKind::ToolCall {
@@ -2703,7 +2813,22 @@ impl Agent {
                     },
                 )
             };
-            let (outcome, out) = if seen >= LOOP_REFUSE {
+            let (outcome, out) = if looping {
+                let msg = format!(
+                    "Not run: repeated calls (this one made {seen} times). Stopping the turn; the work so far is kept."
+                );
+                text(
+                    ToolOutcome::Error,
+                    msg,
+                    Some("refused: repeated identical call"),
+                )
+            } else if let Some(content) = replay {
+                text(
+                    ToolOutcome::Ok,
+                    content,
+                    Some("repeated call: earlier result reused"),
+                )
+            } else if seen > LOOP_NUDGE && seen >= LOOP_REPLAN {
                 let msg = format!(
                     "Not run: this exact call already ran {} times this turn with the same result. \
 Don't repeat it. Change the arguments or try a different approach.",
@@ -2756,11 +2881,31 @@ Don't repeat it. Change the arguments or try a different approach.",
                     t.ms = took;
                     t.early = early.is_some();
                 }
+                executed = true;
                 match r {
                     Ok(o) => (ToolOutcome::Ok, o),
                     Err(e) => text(ToolOutcome::Error, format!("Error: {e:#}"), None),
                 }
             };
+            let mut out = out;
+            if outcome == ToolOutcome::Ok {
+                if executed && replayable(&name) {
+                    guard.last.insert(key.clone(), out.content.clone());
+                }
+                // The world changed, so earlier results and repeat counts no longer apply.
+                if matches!(&*name, "Edit" | "Write") {
+                    guard.last.clear();
+                    guard.counts.clear();
+                    guard.stale_replans = 0;
+                } else if name == "Bash" {
+                    guard.last.clear();
+                }
+            }
+            // A repeat that had to run fresh still gets the nudge.
+            if executed && seen == LOOP_NUDGE && outcome == ToolOutcome::Ok {
+                let n = repeat_nudge(&name, &input, &out.content, seen);
+                out.content = format!("{}\n{n}", out.content);
+            }
             let output = out.content;
             // Rules scoped to the file just read or edited go in front of its result, the
             // first time this session.
@@ -2815,6 +2960,16 @@ Don't repeat it. Change the arguments or try a different approach.",
                     app: out.app,
                 },
             });
+        }
+        if looping {
+            let why = format!(
+                "[frog] Turn stopped: the same tool call repeated {LOOP_STOP} times, or {LOOP_STALE_REPLANS} \
+re-plans passed with no new call. Everything done so far is kept; give a different instruction to continue."
+            );
+            self.notice(Level::Warn, why.clone());
+            self.extend_last(vec![Block::Text { text: why }]);
+        } else if let Some(r) = replan {
+            self.extend_last(vec![Block::Text { text: r }]);
         }
         Ok(if denied {
             Batch::Denied
@@ -5498,23 +5653,116 @@ for line in sys.stdin:
         assert_eq!(no_think, [false, true, true, false]);
     }
 
+    fn big_read(limit: u32) -> Block {
+        Block::ToolUse {
+            id: new_id(),
+            name: "Read".into(),
+            input: json!({ "file_path": "big.txt", "limit": limit }),
+        }
+    }
+
+    /// Output text of every completed tool call, in order.
+    fn tool_outputs(evs: &[Envelope]) -> Vec<String> {
+        evs.iter()
+            .filter_map(|e| match &e.event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { output, .. },
+                    ..
+                } => Some(output.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn big_file_dir() -> PathBuf {
+        let dir = tmp_store();
+        let body: String = (1..=50).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(dir.join("big.txt"), body).unwrap();
+        dir
+    }
+
     #[tokio::test]
-    async fn identical_calls_are_refused_then_the_turn_stops() {
-        let call = || Block::ToolUse {
+    async fn repeated_read_is_nudged_then_replanned_then_the_turn_stops() {
+        let script = (0..LOOP_STOP)
+            .map(|_| reply(vec![big_read(5)], Stop::ToolUse))
+            .collect();
+        let (mut h, sent) = engine_sent(script, None, None, None, big_file_dir());
+        let evs = run(&mut h, "read it").await;
+        let outs = tool_outputs(&evs);
+        assert_eq!(outs.len() as u32, LOOP_STOP);
+        // 1st: plain result. 2nd: the same result plus which lines were shown and how to go on.
+        assert!(!outs[0].contains("Repeat #"));
+        assert!(outs[1].contains("line 5") && outs[1].contains("Repeat #2"));
+        assert!(outs[1].contains("lines 1-5") && outs[1].contains("offset=6"));
+        // Only the 3rd and 5th calls carry a re-plan message.
+        let requests = sent.lock().unwrap();
+        let replans = |r: &str| r.matches("You have made the same call").count();
+        assert_eq!(replans(&requests[2]), 0);
+        assert_eq!(replans(&requests[3]), 1);
+        assert!(requests[3].contains("Read big.txt") || requests[3].contains("big.txt"));
+        assert_eq!(replans(&requests[5]), 2);
+        drop(requests);
+        // The last is refused, the turn ends as Looping, with a notice and the work kept.
+        assert!(outs[LOOP_STOP as usize - 1].starts_with("Not run"));
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Looping,
+                ..
+            }
+        )));
+        assert!(notices(&evs).iter().any(|n| n.contains("Turn stopped")));
+    }
+
+    #[tokio::test]
+    async fn switching_calls_after_a_replan_keeps_the_turn_going() {
+        let grep = Block::ToolUse {
+            id: new_id(),
+            name: "Grep".into(),
+            input: json!({ "pattern": "line 4" }),
+        };
+        let script = vec![
+            reply(vec![big_read(5)], Stop::ToolUse),
+            reply(vec![big_read(5)], Stop::ToolUse),
+            reply(vec![big_read(5)], Stop::ToolUse),
+            reply(vec![grep], Stop::ToolUse),
+            reply(vec![text("found it")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, None, None, None, big_file_dir());
+        let evs = run(&mut h, "read it").await;
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+        assert!(!notices(&evs).iter().any(|n| n.contains("Turn stopped")));
+        assert!(sent.lock().unwrap()[3].contains("You have made the same call"));
+    }
+
+    #[tokio::test]
+    async fn replans_without_a_new_call_stop_the_turn() {
+        // Two different calls, each repeated to its 3rd time: 2 re-plans, then a 3rd.
+        let other = || Block::ToolUse {
             id: new_id(),
             name: "Glob".into(),
             input: json!({ "pattern": "*.nothing" }),
         };
-        let script = (0..LOOP_STOP)
-            .map(|_| reply(vec![call()], Stop::ToolUse))
-            .collect();
-        let mut h = engine(script, true);
-        let evs = run(&mut h, "loop forever").await;
-        let refused = evs
-            .iter()
-            .filter(|e| matches!(&e.event, Event::ItemCompleted { item: Item::ToolCall { display: Some(d), .. }, .. } if d.starts_with("refused")))
-            .count();
-        assert_eq!(refused as u32, LOOP_STOP - LOOP_REFUSE + 1);
+        let script = vec![
+            reply(vec![big_read(5)], Stop::ToolUse),
+            reply(vec![other()], Stop::ToolUse),
+            reply(vec![big_read(5)], Stop::ToolUse),
+            reply(vec![other()], Stop::ToolUse),
+            reply(vec![big_read(5)], Stop::ToolUse), // replan 1
+            reply(vec![other()], Stop::ToolUse),     // replan 2
+            reply(vec![big_read(5)], Stop::ToolUse), // 4th: no replan
+            reply(vec![other()], Stop::ToolUse),     // 4th
+            reply(vec![big_read(5)], Stop::ToolUse), // replan 3 -> stop
+            reply(vec![text("unreachable")], Stop::End),
+        ];
+        let (mut h, _) = engine_sent(script, None, None, None, big_file_dir());
+        let evs = run(&mut h, "read it").await;
         assert!(evs.iter().any(|e| matches!(
             e.event,
             Event::TurnEnded {
