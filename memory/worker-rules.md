@@ -8,3 +8,5 @@ description: lessons from running frog workers on 2026-10-22 (disk, limits, resu
 - Hosted models need an explicit output budget (frog#49); GLM thinking hit the gateway default and turns ended MaxTokens.
 - Mid-stream gateway errors (Baseten "upstream stream ended") aren't retried yet: frog/stream-retry.
 - Put the task first and the RULES after it in prompts, so session titles come from the task.
+
+- 2026-10-22 (Cam): no worker/slot cap, "full send to launch". The old cap was GPU load-shedding. The only limit is disk (floor 10G); builds in /private/tmp, deleted right after.
