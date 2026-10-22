@@ -70,7 +70,7 @@ impl Client {
             .as_array()?
             .iter()
             .find(|m| m["id"].as_str() == Some(self.model.as_str()))
-            .and_then(|m| m["max_model_len"].as_u64())
+            .and_then(|m| m["max_model_len"].as_u64().or(m["context_length"].as_u64()))
     }
 
     /// OpenAI's own API (not a compatible server).

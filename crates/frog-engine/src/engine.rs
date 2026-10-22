@@ -1902,7 +1902,10 @@ impl Agent {
         self.prefill_ok = ext.prefill;
         let configured = self.profile.context_window;
         let probed = self.provider.probe_context().await;
+        // frog cloud's catalog entry is only a fallback: the server says what it runs.
+        let cloud = self.provider.is_frog_api();
         self.window = match (configured, probed) {
+            (Some(_), Some(p)) if cloud => p,
             (Some(c), Some(p)) if p < c => {
                 self.notice(
                     Level::Warn,

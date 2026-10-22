@@ -65,7 +65,10 @@ pub enum StreamEvent {
     },
     /// More of a tool call's arguments (raw JSON text, in order), for previewing them while
     /// they stream. Providers that only see whole calls never send it.
-    ToolArgs { name: String, chunk: String },
+    ToolArgs {
+        name: String,
+        chunk: String,
+    },
 }
 
 #[derive(Clone)]
@@ -227,6 +230,11 @@ impl Provider {
     }
 
     /// The context window the server reports, if it does. Bounded by a short timeout.
+    /// frog cloud, at its own address or wherever FROG_BASE_URL points.
+    pub fn is_frog_api(&self) -> bool {
+        matches!(self, Self::OpenAi(c) if c.is_frog_api())
+    }
+
     pub async fn probe_context(&self) -> Option<u64> {
         let probe = async {
             match self {

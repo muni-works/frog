@@ -88,7 +88,11 @@ pub fn cached(spec: &str) -> Option<Model> {
 
 /// frog cloud's models, built in: what the picker shows before you connect, so nothing calls
 /// frog cloud while you're logged out. (id, name, context)
-const STATIC_CLOUD: &[(&str, &str, u64)] = &[("qwen3-coder-next", "Qwen3 Coder Next", 65_536)];
+const STATIC_CLOUD: &[(&str, &str, u64)] = &[
+    ("qwen3-coder-next", "Qwen3 Coder Next", 131_072),
+    ("qwen3-8b", "Qwen3 8B", 16_384),
+    ("qwen3-vl-8b", "Qwen3 VL 8B", 16_384),
+];
 
 fn static_model(&(id, name, context): &(&str, &str, u64)) -> Model {
     Model {
@@ -445,7 +449,7 @@ mod tests {
     #[test]
     fn cloud_has_a_built_in_list() {
         let m = cached("cloud/qwen3-coder-next").unwrap();
-        assert_eq!(m.context, Some(65_536));
+        assert_eq!(m.context, Some(131_072));
         assert!(cloud_models().iter().any(|m| m.id == "qwen3-coder-next"));
     }
 
