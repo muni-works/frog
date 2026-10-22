@@ -3822,6 +3822,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     path.display()
                 )),
                 subagent: None,
+                card: None,
             });
             let decision = rx.await.unwrap_or(Decision::Deny);
             self.emit(Event::PermissionResolved { id, decision });
@@ -3835,7 +3836,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 self.mode == Mode::AcceptEdits
                     // Auto mode: edits inside the project are checkpointed and can be undone.
                     || (self.mode == Mode::Auto
-                        && crate::auto::hard_rule(name, input, &self.root).is_none())
+                        && crate::auto::hard_rule(name, input, &self.ctx.root).is_none())
             }
             Kind::Net => false,
             _ if matches!(name, "Image" | "Screenshot" | "Compare")
@@ -3935,10 +3936,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // Shell commands get a card, and no blanket "always allow `rm`": the only
         // session-wide choice is this program under the card's path prefix.
         let card = (name == "Bash").then(|| {
+            // A command's own relative paths resolve where the shell runs (`ctx.cwd`,
+            // which `cd` moves); "outside the project" is judged against the session's
+            // checkout (`ctx.root`), which never moves.
             crate::approval::card(
                 cmd,
                 &self.ctx.cwd,
-                &self.root,
+                &self.ctx.root,
                 reason.as_deref().unwrap_or("no rule or verdict allowed it"),
                 self.agent_reason(),
                 &self.created,
@@ -4146,11 +4150,11 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         input: &Value,
         sandbox: crate::auto::Sandbox,
     ) -> std::result::Result<(), String> {
-        if let Some(why) = crate::auto::hard_rule(name, input, &self.root) {
+        if let Some(why) = crate::auto::hard_rule(name, input, &self.ctx.root) {
             return Err(format!("it {why}"));
         }
         if self.classifier.is_none() {
-            match crate::auto::Classifier::new(&self.cfg, &self.root) {
+            match crate::auto::Classifier::new(&self.cfg, &self.ctx.root) {
                 Ok(c) => self.classifier = Some(c),
                 Err(e) => {
                     self.classifier_unavailable(format!("couldn't start ({e:#})"));
@@ -7367,6 +7371,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -7482,6 +7487,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Deny,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -7514,6 +7520,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -8714,6 +8721,7 @@ for line in sys.stdin:
                 .send(Op::Submit {
                     text: "go".into(),
                     images: Vec::new(),
+                    more: Vec::new(),
                 })
                 .unwrap();
             let mut asked = false;
@@ -8765,6 +8773,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "go".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut evs = Vec::new();
@@ -8826,6 +8835,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "go".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut evs = Vec::new();
