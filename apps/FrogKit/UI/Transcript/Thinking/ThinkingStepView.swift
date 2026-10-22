@@ -29,7 +29,6 @@ struct ThinkingStepView: View {
 
     /// "✓ Title · short result", clickable when there's a thought to open.
     private var doneLine: some View {
-        let clickable = step.kind == .thought && !step.text.isEmpty
         return Group {
             if clickable {
                 Button {
@@ -44,6 +43,8 @@ struct ThinkingStepView: View {
             }
         }
     }
+
+    private var clickable: Bool { step.kind == .thought && !step.text.isEmpty }
 
     private var label: some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -284,7 +285,7 @@ struct OptionPills: View {
                 .font(.system(size: 11))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(option.chosen ? Color.frog.opacity(0.16) : Color.quaternary.opacity(0.4), in: .capsule)
+                .background(option.chosen ? Color.frog.opacity(0.16) : Color.secondary.opacity(0.1), in: .capsule)
                 .foregroundStyle(option.chosen ? Color.frog : Color.secondary)
             }
         }

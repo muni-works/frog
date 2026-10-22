@@ -73,7 +73,7 @@ struct AttentionChip: View {
             .truncationMode(.middle)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(active ? Color.frog.opacity(0.16) : Color.quaternary.opacity(0.5), in: .capsule)
+            .background(active ? Color.frog.opacity(0.16) : Color.secondary.opacity(0.12), in: .capsule)
             .overlay(alignment: .bottom) {
                 if active {
                     GeometryReader { geo in
