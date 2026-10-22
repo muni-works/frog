@@ -10,3 +10,4 @@
 - [Codex agents](codex-agents.md) — Claude budget exhausted: dispatch work via `codex exec` (ChatGPT plan, default model), managers paused
 
 - Forked 2026-10-22 from the Claude chief-of-staff memory. This copy is canonical for the frog chief; it evolves independently.
+- [open items](open-items.md) — threads handed over from Claude CoS 2026-10-22
