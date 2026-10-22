@@ -13,7 +13,7 @@
 #      Mac: generate_keys -x key.txt here, generate_keys -f key.txt there (Sparkle's bin/).
 #   4. A tang checkout (TANG_DIR, else ../tang): a release always ships tang-llm.
 #
-# The release lands on $FROG_RELEASE_REPO (ecto/frog) as Frog.dmg and appcast.xml. frog.eco
+# The release lands on $FROG_RELEASE_REPO (ecto/frog) as Frog.dmg and appcast.xml. frog.toys
 # redirects /download and /appcast.xml to the latest release's copies (site/vercel.json).
 set -euo pipefail
 

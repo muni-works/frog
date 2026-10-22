@@ -12,7 +12,7 @@ use std::process::Command;
 /// The model a bare `frog` starts on (see `models::pick_default`).
 pub const DEFAULT_MODEL: &str = "mlx-community/Qwen3-4B-4bit";
 
-const TANG_GIT: &str = "https://github.com/ecto/tang";
+const TANG_GIT: &str = "https://github.com/muni-works/tang";
 
 // Prebuilt tang-llm release asset URL. The asset must be built with:
 //   cargo build --release -p tang-llm --features metal
@@ -20,7 +20,7 @@ const TANG_GIT: &str = "https://github.com/ecto/tang";
 //
 //
 const TANG_RELEASE: &str =
-    "https://github.com/ecto/tang/releases/latest/download/tang-llm-aarch64-apple-darwin.tar.gz";
+    "https://github.com/muni-works/tang/releases/latest/download/tang-llm-aarch64-apple-darwin.tar.gz";
 
 /// Where setup installs sidecars; `sidecar::binary` checks it after `$FROG_*_BIN` and the
 /// directory next to `frog`.
