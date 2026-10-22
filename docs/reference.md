@@ -150,6 +150,15 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
   allow_read = ["~/.config/gh"]  # paths commands may read even though they're credentials
   allow_keychain = false         # macOS: let commands read the login Keychain
   ```
+  Inside a linked git worktree, the worktree's git dir and the common git dir (from `git rev-parse --git-dir --git-common-dir`) are writable, so `git commit` works; the rest of the main checkout stays closed. `git push` still asks.
+
+  To restrict the network to dev hosts, set `network = "dev"`:
+  ```toml
+  [sandbox]
+  network = "dev"  # default (unset): open. "dev": github.com, objects.githubusercontent.com, codeload.github.com, crates.io, static.crates.io, index.crates.io, registry.npmjs.org, swiftpackageindex.com, swift.org, download.swift.org
+  ```
+  macOS only (Linux stays open). Seatbelt can't match remote hosts, so it blocks all outbound except localhost, and frog runs a small local CONNECT proxy that only tunnels https (port 443) to those hosts; `HTTPS_PROXY`/`ALL_PROXY` point at it for sandboxed commands. Tools that ignore proxy variables, plain http and ssh get no network.
+
   The trade-off: anything you open is readable by every sandboxed command, including one a prompt injection wrote, and the network is open. `allow_keychain` is the broad one: it exposes every Keychain item that doesn't prompt, not just gh's.
 - **gh, minimal setup:** hand gh its token through the environment and let it read its config directory (gh refuses to start if it can't read `config.yml`):
   ```toml

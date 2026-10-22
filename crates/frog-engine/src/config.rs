@@ -293,6 +293,10 @@ pub struct SandboxConfig {
     /// read any Keychain item that doesn't prompt.
     #[serde(default)]
     pub allow_keychain: bool,
+    /// Outbound network policy. Unset (default): open. `"dev"`: only GitHub, crates.io, npm
+    /// and Swift package hosts (via a local proxy). macOS only; Linux stays open.
+    #[serde(default)]
+    pub network: Option<String>,
 }
 
 impl Default for Config {

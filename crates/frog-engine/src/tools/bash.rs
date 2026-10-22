@@ -19,7 +19,7 @@ over cat/sed/find/grep. Avoid interactive commands; they will hang until the tim
         "run_in_background": { "type": "boolean", "description": "Start the command as a background job and return its id at once, for servers, watchers and long builds. Its output goes to a file; you're told when it exits (exit code and the tail of its output). Read it with JobOutput, stop it with JobStop." }
     });
     if available() {
-        description.push_str(" Commands run in a sandbox: they can write only inside the project, temp folders and toolchain caches, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
+        description.push_str(" Commands run in a sandbox: they can write only inside the project (and, in a git worktree, its git dirs so commit works), temp folders and toolchain caches, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
         props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox. Asks the user first; use only when the sandbox blocked something the task needs." });
     }
     ToolSpec {
@@ -213,8 +213,19 @@ pub fn shell(
         .or_else(|| (!unsandboxed).then(|| ctx.shell_sandbox.clone()).flatten());
     let mut command = match &jail {
         None => tokio::process::Command::new(shell),
-        Some(root) => sandboxed(root, &shell, &ctx.sandbox_extra)?,
+        Some(root) => sandboxed(root, &shell, &ctx.sandbox_extra, &git_dirs(&ctx.cwd))?,
     };
+    if jail.is_some()
+        && cfg!(target_os = "macos")
+        && ctx.sandbox_extra.network.as_deref() == Some("dev")
+    {
+        if let Some(port) = dev_proxy() {
+            let url = format!("http://127.0.0.1:{port}");
+            for k in ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"] {
+                command.env(k, &url);
+            }
+        }
+    }
     command
         .arg("-c")
         .current_dir(&ctx.cwd)
@@ -304,6 +315,100 @@ fn readable(extra: &SandboxConfig, home: &std::path::Path) -> Vec<std::path::Pat
         .collect()
 }
 
+/// Hosts `sandbox.network = "dev"` lets commands reach (https, port 443 only).
+pub const DEV_HOSTS: &[&str] = &[
+    "github.com",
+    "objects.githubusercontent.com",
+    "codeload.github.com",
+    "crates.io",
+    "static.crates.io",
+    "index.crates.io",
+    "registry.npmjs.org",
+    // Swift packages mostly resolve through GitHub; these cover the toolchain and index.
+    "swiftpackageindex.com",
+    "swift.org",
+    "download.swift.org",
+];
+
+/// When `cwd` is in a git worktree, the dirs git writes to (`index.lock`, refs, objects): the
+/// per-worktree git dir and the common dir. Nothing else of the main checkout opens up.
+pub fn git_dirs(cwd: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(out) = std::process::Command::new("git")
+        .args(["rev-parse", "--git-dir", "--git-common-dir"])
+        .current_dir(cwd)
+        .output()
+    else {
+        return vec![];
+    };
+    if !out.status.success() {
+        return vec![];
+    }
+    let mut dirs: Vec<std::path::PathBuf> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| cwd.join(l.trim()))
+        .filter_map(|p| p.canonicalize().ok())
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+/// Seatbelt can only match `*` or localhost for network peers, so `network = "dev"` blocks all
+/// outbound except localhost and sends HTTPS through this allowlisting CONNECT proxy. Started
+/// once per process; returns its port.
+fn dev_proxy() -> Option<u16> {
+    static PORT: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
+    *PORT.get_or_init(|| {
+        let std_listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+        std_listener.set_nonblocking(true).ok()?;
+        let port = std_listener.local_addr().ok()?.port();
+        let listener = tokio::net::TcpListener::from_std(std_listener).ok()?;
+        tokio::spawn(async move {
+            while let Ok((conn, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let _ = proxy_connection(conn).await;
+                });
+            }
+        });
+        Some(port)
+    })
+}
+
+async fn proxy_connection(mut conn: tokio::net::TcpStream) -> std::io::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut head = Vec::new();
+    let mut buf = [0u8; 1024];
+    while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 8192 {
+        let n = conn.read(&mut buf).await?;
+        if n == 0 {
+            return Ok(());
+        }
+        head.extend_from_slice(&buf[..n]);
+    }
+    let line = String::from_utf8_lossy(&head);
+    let target = line
+        .lines()
+        .next()
+        .and_then(|l| l.strip_prefix("CONNECT "))
+        .and_then(|l| l.split_whitespace().next())
+        .and_then(|t| t.rsplit_once(':'));
+    let Some((host, "443")) = target else {
+        return conn
+            .write_all(b"HTTP/1.1 403 Forbidden\r\n\r\nfrog sandbox: only https to dev hosts\r\n")
+            .await;
+    };
+    if !DEV_HOSTS.contains(&host.to_ascii_lowercase().as_str()) {
+        return conn
+            .write_all(b"HTTP/1.1 403 Forbidden\r\n\r\nfrog sandbox: host not in sandbox.network = \"dev\"\r\n")
+            .await;
+    }
+    let mut upstream = tokio::net::TcpStream::connect((host, 443)).await?;
+    conn.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        .await?;
+    tokio::io::copy_bidirectional(&mut conn, &mut upstream).await?;
+    Ok(())
+}
+
 /// Wrap the shell in the OS sandbox: writes only inside the workspace, temp dirs and toolchain
 /// caches, credentials unreadable (except what `extra` allows), everything else (including
 /// network) allowed. Fails closed where there's no sandbox to use.
@@ -311,9 +416,10 @@ fn sandboxed(
     root: &std::path::Path,
     shell: &str,
     extra: &SandboxConfig,
+    git: &[std::path::PathBuf],
 ) -> Result<tokio::process::Command> {
     if cfg!(target_os = "macos") {
-        seatbelt(root, shell, extra)
+        seatbelt(root, shell, extra, git)
     } else if let Some(bwrap) = bwrap() {
         Ok(bubblewrap(
             bwrap,
@@ -321,6 +427,7 @@ fn sandboxed(
             &dirs::home_dir().unwrap_or_default(),
             shell,
             extra,
+            git,
         ))
     } else if cfg!(target_os = "linux") {
         bail!(
@@ -336,6 +443,7 @@ fn seatbelt(
     root: &std::path::Path,
     shell: &str,
     extra: &SandboxConfig,
+    git: &[std::path::PathBuf],
 ) -> Result<tokio::process::Command> {
     let tmp = std::env::temp_dir()
         .canonicalize()
@@ -361,6 +469,16 @@ fn seatbelt(
         .iter()
         .map(|p| format!("\n(allow file-read* (subpath \"{}\"))", quote(p)))
         .collect();
+    let git: String = git
+        .iter()
+        .map(|p| format!("\n  (subpath \"{}\")", quote(p)))
+        .collect();
+    let network = if extra.network.as_deref() == Some("dev") {
+        "\n(deny network-outbound)\n(allow network-outbound (remote ip \"localhost:*\"))"
+            .to_string()
+    } else {
+        String::new()
+    };
     let profile = format!(
         r#"(version 1)
 (allow default)
@@ -372,8 +490,8 @@ fn seatbelt(
   (subpath "/private/var/folders")
   (literal "/dev/null")
   (literal "/dev/tty")
-  (regex #"^/dev/fd/"){caches})
-(deny file-read* file-write*{secrets}){reads}"#,
+  (regex #"^/dev/fd/"){caches}{git})
+(deny file-read* file-write*{secrets}){reads}{network}"#,
         quote(root),
         quote(&tmp)
     );
@@ -394,6 +512,7 @@ fn bubblewrap(
     home: &std::path::Path,
     shell: &str,
     extra: &SandboxConfig,
+    git: &[std::path::PathBuf],
 ) -> tokio::process::Command {
     use std::path::{Path, PathBuf};
     let real = |p: &Path| p.canonicalize().ok();
@@ -409,6 +528,7 @@ fn bubblewrap(
             .filter_map(|p| real(Path::new(p))),
     );
     writable.extend(CACHES.iter().filter_map(|c| real(&home.join(c))));
+    writable.extend(git.iter().cloned());
     writable.sort();
     writable.dedup();
     for p in &writable {
@@ -436,6 +556,99 @@ fn bubblewrap(
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod tests {
     use super::*;
+
+    /// A commit inside a linked worktree works (index.lock, refs, objects live outside the
+    /// worktree); a write elsewhere in the main checkout still fails.
+    #[tokio::test]
+    async fn sandbox_lets_git_commit_in_a_linked_worktree() {
+        if !available() {
+            eprintln!("no OS sandbox here; skipping");
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("frog-wt-{}", crate::session::new_id()));
+        let main = base.join("main");
+        let wt = base.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .current_dir(dir)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?} failed");
+        };
+        git(&main, &["init", "-q"]);
+        std::fs::write(main.join("a.txt"), "a").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-qm", "init"]);
+        git(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]);
+
+        let mut ctx = Ctx::new(wt.clone());
+        ctx.sandbox = Some(wt.canonicalize().unwrap());
+        let out = run(
+            &json!({ "command": "echo b > b.txt && git add b.txt && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm wt && git log --oneline | head -1" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(out.content.contains("wt"), "{}", out.content);
+
+        // Temp dirs are writable, so the "outside" path lives in home.
+        let outside = dirs::home_dir()
+            .unwrap()
+            .join(".frog-sandbox-worktree-escape-test");
+        let out = run(
+            &json!({ "command": format!("touch '{}'", outside.display()) }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        let escaped = outside.exists();
+        let _ = std::fs::remove_file(&outside);
+        assert!(!escaped, "write outside the allowed set succeeded");
+        assert!(out.content.contains("exit code"), "{}", out.content);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// `network = "dev"` yields a valid profile (the command still runs) and blocks a host
+    /// that isn't on the list, without needing the network to be up.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn dev_network_profile_is_valid_and_blocks_other_hosts() {
+        let ws = std::env::temp_dir().join(format!("frog-net-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.sandbox = Some(ws.canonicalize().unwrap());
+        ctx.sandbox_extra.network = Some("dev".into());
+        let ok = run(&json!({ "command": "echo fine" }), &mut ctx)
+            .await
+            .unwrap();
+        assert!(ok.content.contains("fine"), "{}", ok.content);
+        let out = run(
+            &json!({ "command": "curl -sS -m 5 -o /dev/null --noproxy '*' https://1.1.1.1/ ; echo rc=$?" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(!out.content.contains("rc=0"), "{}", out.content);
+        // Through the proxy, a host off the list gets 403 (curl rc 56) without touching the net.
+        let out = run(
+            &json!({ "command": "curl -sS -m 5 -o /dev/null https://example.com/ ; echo rc=$?" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(!out.content.contains("rc=0"), "{}", out.content);
+    }
 
     #[tokio::test]
     async fn sandbox_confines_shell_writes_to_the_workspace() {
@@ -503,6 +716,7 @@ mod tests {
             &home,
             "/bin/bash",
             &Default::default(),
+            &[],
         )
         .current_dir(&home)
         .arg("-c")
