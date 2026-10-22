@@ -17,3 +17,5 @@ Handed over 2026-10-22 ~01:15Z:
 - 01:2xZ update: frog-cloud-3 = 5972sc9ke6kh3d (US-GA-2) booting with keep-alive/health/metrics; mew targets.json seeded; old node deleted once published. zest#30 DEPLOYED and verified (pricing in /v1/models, request ids, /v1/generation).
 
 - 01:3xZ: frog-cloud-3 live, the only node. Models: qwen3-coder-next 128k (245 tok/s), qwen3-8b 16k (117-194 tok/s), qwen3-vl-8b 16k (vision verified). Keep-alive, health and metrics live. Watch: KV for 8x128k is allocated on demand next to the 2 small models, so check for OOM under full load. Long agent runs are unblocked: start pond step 1.
+
+- 2026-10-22 ~02:30Z: Cam turned RunPod off for the night. frog-cloud-3 (5972sc9ke6kh3d) is STOPPED (disk kept). frog cloud is down until restarted, and frog falls back to local. Morning: start the pod (or node-up.sh if no GPU), verify, then the FA2 swap (needs Cam go). frog#38 (CI git identity) is still unmerged; main CI is red.
