@@ -74,6 +74,9 @@ fn write_cache(provider: &str, models: &[Model]) {
 pub fn cached(spec: &str) -> Option<Model> {
     let (provider, _) = spec.split_once('/')?;
     let found = read_cache(provider).and_then(|c| c.models.into_iter().find(|m| m.spec == spec));
+    if provider == "cloudflare" {
+        return found.or_else(|| cf_models().into_iter().find(|m| m.spec == spec));
+    }
     found.or_else(|| {
         (provider == providers::CLOUD)
             .then(|| {
@@ -123,6 +126,30 @@ fn public(provider: &str) -> bool {
     matches!(provider, "openrouter" | "vercel")
 }
 
+/// Cloudflare Workers AI's suggested models, built in: the account id in the base URL means
+/// the key alone can't list them yet. (id, name)
+const STATIC_CF: &[(&str, &str)] = providers::CF_MODELS;
+
+fn static_cf_model(&(id, name): &(&str, &str)) -> Model {
+    Model {
+        spec: format!("cloudflare/{id}"),
+        provider: "cloudflare".into(),
+        id: id.into(),
+        name: name.into(),
+        context: Some(1_048_576),
+        tools: true,
+        ..Default::default()
+    }
+}
+
+/// Cloudflare's models, without the network: the last fetched list, else the built-in one.
+fn cf_models() -> Vec<Model> {
+    read_cache("cloudflare")
+        .map(|c| c.models)
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| STATIC_CF.iter().map(static_cf_model).collect())
+}
+
 /// The models of every connected remote provider (and the public gateways): cached, or
 /// fetched when stale (or when `refresh`). A provider that can't be reached keeps its last list.
 pub async fn all(refresh: bool) -> Vec<Model> {
@@ -134,6 +161,7 @@ pub async fn all(refresh: bool) -> Vec<Model> {
         .any(|p| p.id == providers::CLOUD && !p.connected)
         .then(|| STATIC_CLOUD.iter().map(static_model).collect::<Vec<_>>())
         .unwrap_or_default();
+    let cf_connected = all.iter().any(|p| p.id == "cloudflare" && p.connected);
     let remote: Vec<ProviderInfo> = all
         .into_iter()
         .filter(|p| !p.local && (p.connected || public(&p.id)))
@@ -173,6 +201,11 @@ pub async fn all(refresh: bool) -> Vec<Model> {
         .flatten()
         .collect();
     out.extend(cloud_static);
+    // Cloudflare's suggested models: its live list is fetched too, so only fill in
+    // when the fetch (and cache) came back empty.
+    if cf_connected && !out.iter().any(|m| m.provider == "cloudflare") {
+        out.extend(cf_models());
+    }
     out
 }
 

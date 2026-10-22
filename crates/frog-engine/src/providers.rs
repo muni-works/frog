@@ -148,6 +148,18 @@ pub const PRESETS: &[Preset] = &[
         key_url: "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys",
         local: false,
     },
+    // Cloudflare Workers AI: OpenAI-compatible, but the account id lives in the URL, so
+    // the base URL is built at request time from CLOUDFLARE_ACCOUNT_ID (cf_base_url).
+    // Model names keep their @cf/ prefix: cloudflare/@cf/zai-org/glm-5.3.
+    Preset {
+        id: "cloudflare",
+        name: "Cloudflare Workers AI",
+        kind: ProviderKind::Openai,
+        base_url: "", // resolved per-request via cf_base_url_from
+        key_env: &["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY"],
+        key_url: "https://dash.cloudflare.com/profile/api-tokens",
+        local: false,
+    },
     Preset {
         id: "anthropic",
         name: "Anthropic",
@@ -190,6 +202,26 @@ pub fn preset(id: &str) -> Option<&'static Preset> {
     let id = canonical(id);
     PRESETS.iter().find(|p| p.id == id)
 }
+
+/// Cloudflare Workers AI's base URL, OpenAI-compatible, with the account id in the URL.
+/// `None` until `CLOUDFLARE_ACCOUNT_ID` is set: it can't be a static `Preset::base_url`.
+pub fn cf_base_url_from(env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let id = env("CLOUDFLARE_ACCOUNT_ID")?;
+    Some(format!(
+        "https://api.cloudflare.com/client/v4/accounts/{id}/ai/v1"
+    ))
+}
+
+/// Cloudflare Workers AI's base URL, once `CLOUDFLARE_ACCOUNT_ID` is set.
+pub fn cf_base_url() -> Option<String> {
+    cf_base_url_from(&env_var)
+}
+
+/// Cloudflare's models on Workers AI frog suggests: the two this eval added it for.
+pub const CF_MODELS: &[(&str, &str)] = &[
+    ("@cf/zai-org/glm-5.3", "GLM 5.3"),
+    ("@cf/deepseek-ai/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash"),
+];
 
 /// frog cloud's base URL, from the first non-empty override, else the preset's.
 pub fn cloud_base_url_from(env: &dyn Fn(&str) -> Option<String>) -> String {
@@ -293,13 +325,19 @@ pub struct ProviderInfo {
 pub fn list(state: &State) -> Vec<ProviderInfo> {
     let presets = PRESETS.iter().map(|p| {
         let key = key_source(p.id);
+        // Cloudflare's base URL has the account id in it: empty until CLOUDFLARE_ACCOUNT_ID
+        // is set, and it needs that id (with the key) to count as connected.
+        let cf = p.id == "cloudflare";
         let base_url = if p.id == CLOUD {
             cloud_base_url()
+        } else if cf {
+            cf_base_url().unwrap_or_default()
         } else {
             p.base_url.into()
         };
         let connected = match p.id {
             LOCAL => crate::sidecar::available("tang"),
+            _ if cf => key.is_some() && !base_url.is_empty(),
             _ => p.local || key.is_some(),
         };
         ProviderInfo {
@@ -775,6 +813,32 @@ mod tests {
             assert!(e.contains("taken"), "{id}: {e}");
         }
         assert!(s.custom.is_empty());
+    }
+
+    #[test]
+    fn cf_base_url_needs_the_account_id() {
+        let set = env_of(&[("CLOUDFLARE_ACCOUNT_ID", "abc123")]);
+        assert_eq!(
+            cf_base_url_from(&set).unwrap(),
+            "https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1"
+        );
+        let empty = env_of(&[]);
+        assert_eq!(cf_base_url_from(&empty), None);
+        // The preset exists but has no static base URL: it's built per-request.
+        let p = preset("cloudflare").unwrap();
+        assert_eq!(p.base_url, "");
+        assert!(p.key_env.contains(&"CLOUDFLARE_API_TOKEN"));
+    }
+
+    #[test]
+    fn cf_model_specs_round_trip() {
+        for (id, _) in CF_MODELS {
+            let spec = format!("cloudflare/{id}");
+            assert_eq!(normalize(&spec), spec);
+            let (prov, model) = spec.split_once('/').unwrap();
+            assert_eq!(preset(prov).unwrap().id, "cloudflare");
+            assert_eq!(model, *id);
+        }
     }
 
     #[test]

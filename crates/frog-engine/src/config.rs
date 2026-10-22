@@ -380,7 +380,9 @@ impl Config {
                 p.context_window = Some(8_192);
                 p
             }
-            "openrouter" | "vercel" | "cloud" => Profile::new(ProviderKind::Openai, model),
+            "openrouter" | "vercel" | "cloud" | "cloudflare" => {
+                Profile::new(ProviderKind::Openai, model)
+            }
             "codex" => {
                 let mut p = Profile::new(ProviderKind::Codex, model);
                 if let Some((_, context)) = crate::provider::codex::models()
@@ -409,19 +411,26 @@ impl Config {
             "vllm" => Some("http://localhost:8000/v1".into()),
             "openai" => std::env::var("OPENAI_BASE_URL").ok(),
             "cloud" => Some(crate::providers::cloud_base_url()),
+            "cloudflare" => crate::providers::cf_base_url(),
             "local" | "apple" => p.sidecar.as_deref().map(crate::sidecar::base_url),
             "openrouter" | "vercel" => {
                 crate::providers::preset(prov).map(|x| x.base_url.to_string())
             }
             _ => None,
         };
+        // Cloudflare's base URL has the account id in it: without one, requests would go
+        // nowhere useful, so say so instead of silently failing later.
+        if prov == "cloudflare" && p.base_url.is_none() {
+            bail!("cloudflare needs CLOUDFLARE_ACCOUNT_ID set (it's part of the URL)");
+        }
         // Keys set in frog (the Keychain) or the provider's own variable.
         // OpenAI's key goes only to OpenAI itself, never to an OPENAI_BASE_URL elsewhere.
         // frog cloud's saved key is pinned the same way, inside `providers::key`.
         let elsewhere = prov == "openai" && p.base_url.is_some();
         if matches!(
             prov,
-            "openrouter" | "vercel" | "cloud" | "anthropic" | "claude" | "openai"
+            "openrouter" | "vercel" | "cloud" | "cloudflare" | "anthropic" | "claude"
+            | "openai"
         ) && !elsewhere
         {
             let id = if prov == "claude" { "anthropic" } else { prov };
