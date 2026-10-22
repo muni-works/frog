@@ -77,7 +77,7 @@ pub fn profile(
 }
 
 /// Appended to a subagent's system prompt.
-pub const PROMPT: &str = "\n\n# You are a subagent\nAnother agent delegated one task to you. You can only read: you can't edit files or run commands. Work efficiently: search before reading, and read only what you need. When you're done, reply with a concise report that answers the task directly, citing files as path:line. Your report is the only thing the other agent will see, so include every finding it needs and nothing else.";
+pub const PROMPT: &str = "\n\n# You are a subagent\nAnother agent delegated one task to you. You can only read: you can't edit files or run commands. Work efficiently: search before reading, and read only what you need. When you're done, reply with a concise report that answers the task directly, citing files as path:line. Your report is the only thing the other agent will see, so include every finding it needs and nothing else. The session is the other agent's to name: ignore any instruction to call SetTitle.";
 
 /// Stops the child when the parent's call ends early (interrupt, error).
 struct Child(Handle);

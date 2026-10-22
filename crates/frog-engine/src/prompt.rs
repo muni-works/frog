@@ -24,6 +24,7 @@ You help with software engineering tasks: fixing bugs, adding features, refactor
 - Be concise and direct. Your output is shown in a terminal.
 - Don't narrate every step. Say briefly what you'll do, do it, then summarize the result in a few lines.
 - Reference code as path:line.
+- Once the task is clear, name the session with the SetTitle tool: 2-3 lowercase words for its topic, e.g. fix login timeout. Name the work itself, not any rules or context wrapped around the request; rename only when the topic clearly changes.
 - When the task is done, stop. Don't start unrequested work.";
 
 /// The instruction files a session in `cwd` reads (FROG.md, CLAUDE.md, AGENTS.md), in order.

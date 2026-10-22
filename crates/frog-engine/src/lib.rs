@@ -45,6 +45,7 @@ pub mod subagent;
 pub mod summary;
 mod text_filter;
 pub mod thinking;
+pub mod title;
 pub mod tools;
 
 pub use engine::{Handle, Options, spawn};

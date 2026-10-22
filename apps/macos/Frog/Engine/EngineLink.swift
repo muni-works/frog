@@ -80,7 +80,9 @@ final class MacEffects: ConversationEffects {
         let request = turn.input
         Task { [weak c] in
             guard let t = await Titler.title(for: request, answer: answer) else { return }
-            c?.send(.setTitle(t))
+            // The model's SetTitle (or a rename) may have landed while this ran; it wins.
+            guard let c, c.title == nil else { return }
+            c.send(.setTitle(t))
         }
     }
 }
