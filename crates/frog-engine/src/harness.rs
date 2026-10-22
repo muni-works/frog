@@ -117,6 +117,10 @@ pub fn save(p: &Profile, caps: &Caps) {
 pub fn is_cloud(p: &Profile) -> bool {
     let url = p.base_url.as_deref().map(|u| u.trim_end_matches('/'));
     is_hosted(p)
+        || (p.provider == ProviderKind::Openai
+            && p.base_url
+                .as_deref()
+                .is_some_and(|u| u.starts_with("https://api.cloudflare.com/client/v4/accounts/")))
         || crate::providers::PRESETS
             .iter()
             .any(|pre| !pre.local && url == Some(pre.base_url.trim_end_matches('/')))
