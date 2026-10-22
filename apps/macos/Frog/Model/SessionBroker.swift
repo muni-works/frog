@@ -54,12 +54,17 @@ final class SessionBroker {
     /// The input of the turn session `id` is running, if known: an idle watch arms only once
     /// the target runs the sender's message, not the turn it was already busy with.
     var currentInput: (_ id: String) -> String? = { _ in nil }
+    /// What session `id` said and how its last turn ended, for the report a watcher gets when
+    /// it goes idle (the hand-back from a session it started or messaged).
+    var lastReport: (_ id: String) -> String? = { _ in nil }
 
     /// Sends since the user last did something, per sending session.
     private var sent: [String: [Date]] = [:]
     /// Senders waiting to hear that a target went idle. `armed` once the target has been seen
     /// running, so the idle it's in when the message lands doesn't count.
-    private struct Watch { var sender: String; var armed: Bool }
+    /// `anyTurn`: arm on the target's next turn, whatever it runs (a session started for work,
+    /// whose first turn is its prompt, not a message from the sender).
+    private struct Watch { var sender: String; var armed: Bool; var anyTurn = false }
     private var watches: [String: [Watch]] = [:]
     /// Engines the broker started or kept running with no pane showing them.
     private var background: [String: Conversation] = [:]
@@ -101,6 +106,8 @@ final class SessionBroker {
             Task { [weak c] in
                 do {
                     let s = try await starter(req, c)
+                    // A session started for work reports back when it's done, unless asked not to.
+                    if input["report"]?.bool ?? true { self.watchStarted(s.id, reportTo: sender) }
                     var out: [String: JSONValue] = ["id": .string(s.id), "name": .string(s.name), "cwd": .string(s.cwd)]
                     if let b = s.branch { out["branch"] = .string(b) }
                     c?.replySession(r.id, result: .object(out))
@@ -112,6 +119,15 @@ final class SessionBroker {
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
         }
     }
+
+    /// Report session `child`'s next turn back to `parent` when it goes idle (the hand-back).
+    func watchStarted(_ child: String, reportTo parent: String) {
+        guard !parent.isEmpty else { return }
+        watches[child, default: []].append(Watch(sender: parent, armed: false, anyTurn: true))
+    }
+
+    /// How much of a session's last reply goes into its idle report.
+    static let reportLimit = 2000
 
     func list(excluding id: String? = nil) -> [Entry] {
         directory().filter { $0.id != id }.sorted { $0.modified > $1.modified }
@@ -178,7 +194,7 @@ final class SessionBroker {
         if running {
             if var list = watches[id] {
                 let input = currentInput(id)
-                for i in list.indices where input == nil || input!.hasPrefix("<session-message from=\"\(list[i].sender)\"") {
+                for i in list.indices where input == nil || list[i].anyTurn || input!.hasPrefix("<session-message from=\"\(list[i].sender)\"") {
                     list[i].armed = true
                 }
                 watches[id] = list
@@ -193,7 +209,8 @@ final class SessionBroker {
             if watches[id]?.isEmpty == true { watches[id] = nil }
             let name = directory().first { $0.id == id }?.name ?? id
             for w in ready {
-                _ = reach(w.sender, "system", "system", "Session \"\(name)\" (\(id)) is idle.")
+                let report = lastReport(id).map { "\n\nIts last reply:\n\($0)" } ?? ""
+                _ = reach(w.sender, "system", "system", "Session \"\(name)\" (\(id)) is idle.\(report)")
             }
         }
         // A background engine that did its work lets go; a new message starts it again.
@@ -337,6 +354,14 @@ extension SessionBroker {
                 warning: true)
         }
         currentInput = { id in Library.shared.conversation(id)?.turns.last?.input }
+        lastReport = { id in
+            guard let t = (Library.shared.conversation(id) ?? self.background[id])?.turns.last else { return nil }
+            var text = t.items.filter { $0.kind == .message }.map(\.text).joined(separator: "\n\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.count > Self.reportLimit { text = String(text.suffix(Self.reportLimit)) + "\n(… earlier text cut)" }
+            let ended = t.end.map { "\n(turn ended: \(String(describing: $0)))" } ?? ""
+            return text.isEmpty && ended.isEmpty ? nil : text + ended
+        }
         starter = { [unowned self] req, parent in try await start(req, parent: parent) }
         Conversation.sessionRequests = { [unowned self] c, r in handle(r, from: c) }
         Conversation.userActivity = { [unowned self] c in if let id = c.sessionID { userActivity(id) } }

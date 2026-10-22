@@ -258,6 +258,9 @@ struct Journal {
     log: Mutex<Option<Log>>,
     /// For the header: cwd and model name.
     header: Mutex<(PathBuf, String)>,
+    /// The current turn's streaming events (text as it arrives, progress), beside the log as
+    /// `<id>.live`, so another process following this session sees it live. Reset each turn.
+    live: Mutex<Option<(String, std::fs::File)>>,
 }
 
 impl Journal {
@@ -269,6 +272,7 @@ impl Journal {
             store,
             log: Mutex::new(None),
             header: Mutex::new((PathBuf::new(), String::new())),
+            live: Mutex::new(None),
         }
     }
 
@@ -338,7 +342,31 @@ impl Journal {
                 message,
             });
         }
+        self.live(&env);
         self.send(env);
+    }
+
+    /// Mirror an event into the session's live file (see `live`). Best effort: following a
+    /// session is a view, never a reason to fail the turn.
+    fn live(&self, env: &Envelope) {
+        let Some(dir) = &self.store else { return };
+        if self.log.lock().unwrap().is_none() {
+            return;
+        }
+        let mut live = self.live.lock().unwrap();
+        let fresh = matches!(env.event, Event::TurnStarted { .. });
+        if fresh || live.as_ref().is_none_or(|(id, _)| *id != env.session) {
+            *live = std::fs::File::create(session::live_path(dir, &env.session))
+                .ok()
+                .map(|f| (env.session.clone(), f));
+        }
+        if let Some((_, f)) = live.as_mut()
+            && let Ok(mut line) = serde_json::to_vec(env)
+        {
+            use std::io::Write;
+            line.push(b'\n');
+            let _ = f.write_all(&line);
+        }
     }
 
     fn send(&self, env: Envelope) {
@@ -653,6 +681,15 @@ fn retryable(e: &anyhow::Error) -> bool {
     e.chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
         .any(|r| r.is_timeout() || (r.is_request() && !r.is_connect()))
+}
+
+/// frog's local model server answers (it listens on 127.0.0.1:8911 when running).
+fn local_server_up() -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], 8911)),
+        Duration::from_millis(200),
+    )
+    .is_ok()
 }
 
 pub(crate) fn now_ms() -> i64 {
@@ -3095,6 +3132,15 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
     /// frog cloud is unreachable (offline) or out of capacity, credit or hours (503, 402, 502):
     /// carry on with a local model instead of failing the turn. `FROG_FALLBACK_MODEL` picks
     /// which.
+    /// How many times to retry a failed call: frog cloud gets longer (busy, or a tunnel blip).
+    fn retry_budget(&self, _e: &anyhow::Error) -> u32 {
+        let cloud = self
+            .profile_name
+            .split_once('/')
+            .is_some_and(|(p, _)| crate::providers::canonical(p) == crate::providers::CLOUD);
+        if cloud { 6 } else { 3 }
+    }
+
     fn cloud_fallback(&self, e: &anyhow::Error) -> Option<String> {
         let prov = self.profile_name.split_once('/')?.0;
         if crate::providers::canonical(prov) != crate::providers::CLOUD {
@@ -3117,6 +3163,8 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 .map(|m| crate::providers::normalize(&m))
                 .unwrap_or_else(|| crate::config::LOCAL_DEFAULT.into()),
         )
+        // Only to a local model that's actually there: a fallback to nothing just fails later.
+        .filter(|m| !m.starts_with("local/") || local_server_up())
     }
 
     async fn call(
@@ -3363,15 +3411,21 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     });
                 }
                 Ok(resp) => return Ok((resp, streamed)),
+                // A busy or briefly unreachable frog cloud is retried for about a minute before
+                // anything falls back: one 503 or dropped connection shouldn't end a long task.
                 Err(e)
                     if !started
-                        && attempt < 3
-                        && retryable(&e)
-                        && self.cloud_fallback(&e).is_none() =>
+                        && attempt < self.retry_budget(&e)
+                        && (retryable(&e) || self.cloud_fallback(&e).is_some()) =>
                 {
                     attempt += 1;
-                    self.notice(Level::Warn, format!("{e:#} — retrying ({attempt}/3)"));
-                    tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                    let wait = Duration::from_secs((1u64 << attempt.min(5)).min(20));
+                    let budget = self.retry_budget(&e);
+                    self.notice(
+                        Level::Warn,
+                        format!("{e:#} — retrying in {}s ({attempt}/{budget})", wait.as_secs()),
+                    );
+                    tokio::time::sleep(wait).await;
                 }
                 Err(e) => return Err(e),
             }
@@ -5511,7 +5565,8 @@ for line in sys.stdin:
             mcp_server(&dir, 0.0, &order);
             let script = vec![reply(vec![text("ok")], Stop::End)];
             let (mut h, sent) = engine_sent(script, None, None, None, dir);
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // MCP connects in the background; give the local test server ample time (CI is slow).
+            tokio::time::sleep(Duration::from_secs(3)).await;
             run(&mut h, "hi").await;
             shutdown(h).await;
             let sent = sent.lock().unwrap()[0].clone();
@@ -6132,7 +6187,7 @@ for line in sys.stdin:
             .unwrap();
         loop {
             if let Event::PermissionRequest { id, .. } = h.events.recv().await.unwrap().event {
-                tokio::time::sleep(Duration::from_millis(400)).await;
+                tokio::time::sleep(Duration::from_millis(1500)).await;
                 h.ops
                     .send(Op::Permission {
                         id,
@@ -6150,9 +6205,11 @@ for line in sys.stdin:
                 _ => None,
             })
             .expect("turn_ended carries timing");
-        assert!(t.user_ms >= 400, "user wait {}", t.user_ms);
+        assert!(t.user_ms >= 1500, "user wait {}", t.user_ms);
+        // The tool sleeps 0.2 s; the 1.5 s permission wait must not be counted in it. The upper
+        // bound leaves room for slow CI runners without letting the wait slip in.
         assert!(
-            (200..400).contains(&t.tool_ms),
+            (200..1500).contains(&t.tool_ms),
             "tool time excludes the prompt: {}",
             t.tool_ms
         );

@@ -17,6 +17,15 @@ use crate::session;
 /// How often to look for new records in the log.
 const POLL: Duration = Duration::from_millis(300);
 
+/// Whether an event opens (true) or closes (false) a turn.
+fn turn_state(e: &Event) -> Option<bool> {
+    match e {
+        Event::TurnStarted { .. } => Some(true),
+        Event::TurnEnded { .. } => Some(false),
+        _ => None,
+    }
+}
+
 pub fn follow(store: PathBuf, id: String) -> Handle {
     let (op_tx, mut op_rx) = mpsc::unbounded_channel::<Op>();
     let (ev_tx, ev_rx) = mpsc::unbounded_channel::<Envelope>();
@@ -24,6 +33,8 @@ pub fn follow(store: PathBuf, id: String) -> Handle {
         let mut last = 0u64;
         let mut subscribed = false;
         let mut released = false;
+        // A turn the owner started and hasn't ended: show it as working.
+        let mut open = false;
         let notice = |seq: u64, level: Level, message: &str| Envelope {
             seq,
             session: id.clone(),
@@ -38,6 +49,7 @@ pub fn follow(store: PathBuf, id: String) -> Handle {
                     Some(Op::Subscribe { after }) => {
                         for env in session::events_after(&store, &id, after).unwrap_or_default() {
                             last = last.max(env.seq);
+                            open = turn_state(&env.event).unwrap_or(open);
                             if ev_tx.send(env).is_err() { return; }
                         }
                         let _ = ev_tx.send(Envelope {
@@ -46,8 +58,6 @@ pub fn follow(store: PathBuf, id: String) -> Handle {
                             created: crate::engine::now_ms(),
                             event: Event::Synced { upto: last },
                         });
-                        let _ = ev_tx.send(notice(last, Level::Info,
-                            "following live: another frog process is running this session"));
                         subscribed = true;
                     }
                     Some(Op::Submit { .. } | Op::Shell { .. }) => {
@@ -61,14 +71,18 @@ pub fn follow(store: PathBuf, id: String) -> Handle {
                     Some(_) => {}
                 },
                 _ = tick.tick(), if subscribed && !released => {
-                    for env in session::events_after(&store, &id, last).unwrap_or_default() {
+                    // Finished steps from the log, and what's streaming now from the live file.
+                    let mut new = session::events_after(&store, &id, last).unwrap_or_default();
+                    new.extend(session::live_after(&store, &id, last));
+                    new.sort_by_key(|e| e.seq);
+                    new.dedup_by_key(|e| e.seq);
+                    for env in new {
                         last = last.max(env.seq);
+                        open = turn_state(&env.event).unwrap_or(open);
                         if ev_tx.send(env).is_err() { return; }
                     }
                     if !session::Log::in_use(&store, &id) {
                         released = true;
-                        let _ = ev_tx.send(notice(last, Level::Info,
-                            "the worker finished; reopen this conversation to continue it"));
                     }
                 }
             }
@@ -105,7 +119,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replays_then_streams_what_the_owner_appends_then_notices_release() {
+    async fn replays_then_streams_log_and_live_events_like_a_live_session() {
         let dir = std::env::temp_dir().join(format!("frog-follow-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let header = Header { version: VERSION, id: "s".into(), cwd: "/x".into(), model: "m".into(), created: 0, forked_from: None };
@@ -115,16 +129,18 @@ mod tests {
         let mut h = follow(dir.clone(), "s".into());
         h.ops.send(Op::Subscribe { after: 0 }).unwrap();
         assert_eq!(next_text(&mut h).await, "first");
-        assert!(next_text(&mut h).await.starts_with("following live"));
 
-        owner.append(&env(2, "second, live")).unwrap();
-        assert_eq!(next_text(&mut h).await, "second, live");
+        // A streaming event (only in the live file) and a finished step (in the log).
+        let live = Envelope { seq: 2, session: "s".into(), created: 0,
+            event: Event::Notice { level: Level::Info, message: "streaming".into() } };
+        std::fs::write(session::live_path(&dir, "s"), format!("{}\n", serde_json::to_string(&live).unwrap())).unwrap();
+        owner.append(&env(3, "second, logged")).unwrap();
+        assert_eq!(next_text(&mut h).await, "streaming");
+        assert_eq!(next_text(&mut h).await, "second, logged");
 
         h.ops.send(Op::Submit { text: "hi".into(), images: vec![] }).unwrap();
         assert!(next_text(&mut h).await.contains("can't reach it"));
-
         drop(owner);
-        assert!(next_text(&mut h).await.contains("finished"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

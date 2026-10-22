@@ -106,6 +106,19 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(delivered.count, 1)
     }
 
+    func testAStartedSessionReportsItsLastReplyToItsParent() {
+        let b = broker([chief, eng])
+        b.currentInput = { _ in "build the thing" }
+        b.lastReport = { _ in "Done: built it on branch frog/x (3 commits), tests pass." }
+        b.watchStarted(eng.id, reportTo: chief.id)
+        b.observe(eng.id, running: true, waiting: false)
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertEqual(delivered.count, 1)
+        XCTAssertEqual(delivered.first?.to, chief.id)
+        XCTAssertTrue(delivered.first?.message.contains("Its last reply:") ?? false)
+        XCTAssertTrue(delivered.first?.message.contains("frog/x") ?? false)
+    }
+
     func testListingLeavesOutTheCaller() {
         let b = broker([chief, eng])
         XCTAssertEqual(b.list(excluding: chief.id).map(\.id), [eng.id])
