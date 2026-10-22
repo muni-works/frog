@@ -183,6 +183,9 @@ fn max_steps() -> u32 {
 }
 /// How many times a turn carries on after a reply runs out of output room.
 const MAX_CONTINUES: u32 = 3;
+/// Output budget requested from hosted APIs that don't set their own: well within what current
+/// frontier and open models accept, and far above the defaults that cut thinking short.
+const CLOUD_MAX_OUTPUT: u32 = 16_384;
 
 /// How a batch of tool calls ended.
 #[derive(PartialEq)]
@@ -3212,7 +3215,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // A local server fills whatever's left of the window unless told otherwise, and
         // overflows it; hosted APIs have their own output limits.
         let max_tokens = if crate::harness::is_cloud(&self.profile) {
-            self.profile.max_tokens
+            // Ask for room explicitly: left unset, some gateways apply a small default that long
+            // thinking (GLM at high effort) exhausts before any answer or tool call.
+            self.profile.max_tokens.or(Some(CLOUD_MAX_OUTPUT))
         } else {
             Some(context::reply_budget(
                 self.window,
