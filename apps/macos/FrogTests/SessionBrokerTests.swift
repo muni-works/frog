@@ -521,6 +521,25 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertNil(SessionMessage.parse("just a prompt"))
     }
 
+    func testChildModeInheritsCappedAndNeverSilentYolo() {
+        // Inherits the parent's mode.
+        XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: .auto), .auto)
+        XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: .acceptEdits), .acceptEdits)
+        XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: .default), .default)
+        // Yolo is never inherited silently: a yolo parent's children start in auto.
+        XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: .yolo), .auto)
+        // An explicit mode is honored when it's not above the parent's…
+        XCTAssertEqual(SessionBroker.childMode(asked: "auto", parent: .auto), .auto)
+        XCTAssertEqual(SessionBroker.childMode(asked: "default", parent: .auto), .default)
+        XCTAssertEqual(SessionBroker.childMode(asked: "yolo", parent: .yolo), .yolo)
+        // …and capped when it is.
+        XCTAssertEqual(SessionBroker.childMode(asked: "yolo", parent: .auto), .auto)
+        XCTAssertEqual(SessionBroker.childMode(asked: "auto", parent: .default), .default)
+        // Unknown strings and a missing parent both fall back safely.
+        XCTAssertEqual(SessionBroker.childMode(asked: "nonsense", parent: .auto), .auto)
+        XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: nil), .default)
+    }
+
     func testSessionOpsEncode() throws {
         let data = try JSONEncoder().encode(Op.deliver(from: "s1", fromName: "Chief", message: "hi"))
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
