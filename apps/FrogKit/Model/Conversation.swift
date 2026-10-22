@@ -89,10 +89,21 @@ final class Conversation {
     /// `continueInterrupted` called before the engine could take it: it goes first.
     @ObservationIgnored private var continuePending = false
 
+    /// Queued messages taken back out (their "x"), for the composer to put back in its field.
+    var restored: [Queued] = []
+
     /// A message sent while a turn was running.
-    struct Queued {
+    struct Queued: Equatable {
         var text: String
         var images: [ToolImage] = []
+
+        /// The composer's field and attachments with this message back in them: its text first,
+        /// then a blank line and whatever was already typed; its images ahead of the rest.
+        func restore(into draft: String, attachments: [ToolImage]) -> (text: String, images: [ToolImage]) {
+            let kept = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : draft
+            let text = [self.text, kept].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            return (text, images + attachments)
+        }
     }
 
     @ObservationIgnored private(set) var link: ConversationLink?
@@ -209,9 +220,19 @@ final class Conversation {
         return ["/remember", "/forget", "/memory"].contains(String(name))
     }
 
+    /// Take a queued message back for editing: it leaves the queue and goes back to the
+    /// composer (see `restored`), not away.
     func unqueue(at index: Int) {
         guard queue.indices.contains(index) else { return }
-        queue.remove(at: index)
+        restored.append(queue.remove(at: index))
+    }
+
+    /// The composer's field and attachments with every taken-back message restored, oldest
+    /// first; `restored` is emptied.
+    func takeRestored(into draft: String, attachments: [ToolImage]) -> (text: String, images: [ToolImage]) {
+        let back = restored
+        restored = []
+        return back.reversed().reduce((text: draft, images: attachments)) { $1.restore(into: $0.text, attachments: $0.images) }
     }
 
     func interrupt() {

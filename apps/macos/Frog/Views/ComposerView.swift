@@ -221,6 +221,12 @@ struct ComposerView: View {
             conversation.dropped = []
             accept(urls)
         }
+        // A queued message's "x" puts it back here to edit, ahead of what's typed.
+        .onChange(of: conversation.restored) { _, back in
+            guard !back.isEmpty else { return }
+            (text, attachments) = conversation.takeRestored(into: text, attachments: attachments)
+            controller.focus()
+        }
         // An element picked in the preview's inspect mode lands here as an @mention.
         .onChange(of: conversation.panes.insert) { _, mention in
             guard let mention else { return }
