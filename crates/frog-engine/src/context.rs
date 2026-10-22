@@ -20,11 +20,11 @@ pub const PRUNE_AT: f64 = 0.60;
 pub const PRUNE_TO: f64 = 0.45;
 /// If pruning can't get below this, summarize with the LLM.
 pub const COMPACT_AT: f64 = 0.80;
-/// The estimate is calibrated from server-reported counts and the provider's limit is real: past
-/// this fraction, compact now rather than risk one big tool result blowing the window on the next
-/// call. [`KEEP_RECENT`] results are never pruned, so they can still cross it — the overflow
-/// recovery in the engine handles that.
-pub const HARD_LIMIT: f64 = 0.92;
+/// Pre-flight, before every call: past this fraction of the provider's real window, compact now,
+/// even mid-turn and even right after a compaction, rather than send a request the provider may
+/// reject. The estimate is calibrated from server counts but can be off; the overflow recovery in
+/// the engine covers what slips past.
+pub const HARD_LIMIT: f64 = 0.85;
 /// The largest share of the window one tool result may occupy: a single oversized result can't
 /// overflow the window (and, being recent, would never be pruned).
 pub const MAX_RESULT_SHARE: f64 = 0.25;

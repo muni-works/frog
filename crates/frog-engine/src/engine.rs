@@ -9037,19 +9037,17 @@ for line in sys.stdin:
     /// (d) A provider "maximum context length" 400 compacts and retries the step once.
     #[tokio::test]
     async fn a_context_overflow_compacts_and_retries_once() {
-        let overflow = || {
-            anyhow::Error::new(HttpError {
-                status: 400,
-                body: "{\"error\":{\"message\":\"This model's maximum context length is 1048576 \
-tokens. However, your request has 1579729 input tokens. Please reduce the length of the \
-input.\"}}".into(),
-            })
-        };
-        let mut client = scripted::Client::new(vec![
+        // Vercel's gateway wording from session 20261022-132854-96e9.
+        let overflow = scripted::Fail::http(
+            400,
+            "{\"error\":{\"message\":\"This model's maximum context length is 1048576 tokens. \
+However, your request has 1579729 input tokens. Please reduce the length of the input.\"}}",
+        );
+        let client = scripted::Client::new(vec![
             reply(vec![text("Summary after overflow.")], Stop::End),
             reply(vec![text("Recovered.")], Stop::End),
         ]);
-        client.errors.lock().unwrap().push_back(overflow());
+        client.fails.lock().unwrap().push_back(overflow);
         let sent = client.sent.clone();
         let opts = Options {
             cfg: Config {
@@ -9103,18 +9101,14 @@ input.\"}}".into(),
     #[tokio::test]
     async fn a_context_overflow_twice_ends_the_turn_with_a_clear_error() {
         let overflow = || {
-            anyhow::Error::new(HttpError {
-                status: 400,
-                body: "Input too long: 1579729 input tokens, limit is 1048576 for this model"
-                    .into(),
-            })
+            scripted::Fail::http(
+                400,
+                "Input too long: 1579729 input tokens, limit is 1048576 for this model",
+            )
         };
-        let mut client = scripted::Client::new(vec![reply(
-            vec![text("Summary.")],
-            Stop::End,
-        )]);
+        let client = scripted::Client::new(vec![reply(vec![text("Summary.")], Stop::End)]);
         client
-            .errors
+            .fails
             .lock()
             .unwrap()
             .extend([overflow(), overflow()]);
