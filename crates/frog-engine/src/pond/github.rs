@@ -61,13 +61,19 @@ fn from_graphql(v: &Value) -> Vec<Item> {
     let mut items = Vec::new();
     let data = &v["data"];
     for pr in data["search"]["nodes"].as_array().into_iter().flatten() {
-        let Some(it) = pr_item(pr, Kind::Review) else { continue };
+        let Some(it) = pr_item(pr, Kind::Review) else {
+            continue;
+        };
         items.push(Item {
             who: pr["author"]["login"].as_str().map(str::to_owned),
             ..it
         });
     }
-    for pr in data["viewer"]["pullRequests"]["nodes"].as_array().into_iter().flatten() {
+    for pr in data["viewer"]["pullRequests"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
         if pr["isDraft"].as_bool() == Some(true) {
             continue;
         }
@@ -88,7 +94,10 @@ fn pr_item(pr: &Value, kind: Kind) -> Option<Item> {
     let repo = pr["repository"]["nameWithOwner"].as_str()?;
     let n = pr["number"].as_u64()?;
     Some(Item {
-        id: format!("gh:{}:{repo}#{n}", serde_json::to_value(kind).ok()?.as_str()?),
+        id: format!(
+            "gh:{}:{repo}#{n}",
+            serde_json::to_value(kind).ok()?.as_str()?
+        ),
         source: "github".into(),
         kind,
         title: pr["title"].as_str()?.to_string(),
@@ -131,7 +140,10 @@ fn web_url(api: &str, repo: &str) -> String {
     let Some(rest) = api.strip_prefix("https://api.github.com/repos/") else {
         return format!("https://github.com/{repo}");
     };
-    format!("https://github.com/{}", rest.replacen("/pulls/", "/pull/", 1))
+    format!(
+        "https://github.com/{}",
+        rest.replacen("/pulls/", "/pull/", 1)
+    )
 }
 
 #[cfg(test)]
@@ -154,7 +166,14 @@ mod tests {
         }});
         let items = from_graphql(&v);
         let ids: Vec<_> = items.iter().map(|i| (i.id.as_str(), i.kind)).collect();
-        assert_eq!(ids, [("gh:review:o/s#9", Kind::Review), ("gh:failing:o/r#1", Kind::Failing), ("gh:ready:o/r#3", Kind::Ready)]);
+        assert_eq!(
+            ids,
+            [
+                ("gh:review:o/s#9", Kind::Review),
+                ("gh:failing:o/r#1", Kind::Failing),
+                ("gh:ready:o/r#3", Kind::Ready)
+            ]
+        );
         assert_eq!(items[0].who.as_deref(), Some("alex"));
     }
 

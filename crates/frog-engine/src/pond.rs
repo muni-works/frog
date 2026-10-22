@@ -16,8 +16,8 @@ pub mod ask;
 pub mod background;
 pub mod brief;
 pub mod calendar;
-pub mod morning;
 pub mod github;
+pub mod morning;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -213,7 +213,12 @@ impl Pond {
     /// How much an open item deserves your attention now: its kind's weight, scaled by how
     /// often you act on that kind, fading over a couple of weeks of no activity.
     pub fn priority(&self, e: &Entry, now: DateTime<Utc>) -> f64 {
-        let rate = self.scores.get(&e.item.kind).copied().unwrap_or_default().rate();
+        let rate = self
+            .scores
+            .get(&e.item.kind)
+            .copied()
+            .unwrap_or_default()
+            .rate();
         let days = (now - e.item.updated).num_hours().max(0) as f64 / 24.0;
         e.item.kind.weight() * (0.5 + rate) * (1.0 / (1.0 + days / 14.0))
     }
@@ -226,7 +231,10 @@ impl Pond {
             .filter(|e| e.state == State::Open)
             .map(|e| (e, self.priority(e, now)))
             .collect();
-        open.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.0.item.updated.cmp(&a.0.item.updated)));
+        open.sort_by(|a, b| {
+            b.1.total_cmp(&a.1)
+                .then(b.0.item.updated.cmp(&a.0.item.updated))
+        });
         open
     }
 
@@ -257,7 +265,9 @@ impl Place {
                 reqwest::Url::parse(u)
                     .ok()
                     .and_then(|u| u.host_str().map(str::to_owned))
-                    .is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]")
+                    .is_some_and(|h| {
+                        h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]"
+                    })
             });
         if here { Place::Mac } else { Place::Server }
     }
@@ -303,7 +313,11 @@ pub struct Sent {
 impl Receipt {
     /// Bytes of your data that left this Mac.
     pub fn private_bytes(&self) -> u64 {
-        self.sent.iter().filter(|s| s.private).map(|s| s.bytes).sum()
+        self.sent
+            .iter()
+            .filter(|s| s.private)
+            .map(|s| s.bytes)
+            .sum()
     }
 }
 
@@ -443,7 +457,14 @@ mod tests {
     fn items_that_leave_the_sense_resolve_and_count_as_acted_when_shown() {
         let mut p = Pond::default();
         let now = at("2026-09-30T08:00:00Z");
-        p.fold("github", vec![item("a", Kind::Review, "2026-09-29T00:00:00Z"), item("b", Kind::Review, "2026-09-29T00:00:00Z")], now);
+        p.fold(
+            "github",
+            vec![
+                item("a", Kind::Review, "2026-09-29T00:00:00Z"),
+                item("b", Kind::Review, "2026-09-29T00:00:00Z"),
+            ],
+            now,
+        );
         p.items.get_mut("a").unwrap().shown = Some(now);
         p.fold("github", vec![], now);
         assert_eq!(p.items["a"].state, State::Resolved);
@@ -456,13 +477,25 @@ mod tests {
     fn dismissed_items_stay_down_until_they_change() {
         let mut p = Pond::default();
         let now = at("2026-09-30T08:00:00Z");
-        p.fold("github", vec![item("a", Kind::Mention, "2026-09-29T00:00:00Z")], now);
+        p.fold(
+            "github",
+            vec![item("a", Kind::Mention, "2026-09-29T00:00:00Z")],
+            now,
+        );
         p.items.get_mut("a").unwrap().shown = Some(now);
         assert!(p.dismiss("a"));
         assert_eq!(p.scores[&Kind::Mention].dismissed, 1);
-        p.fold("github", vec![item("a", Kind::Mention, "2026-09-29T00:00:00Z")], now);
+        p.fold(
+            "github",
+            vec![item("a", Kind::Mention, "2026-09-29T00:00:00Z")],
+            now,
+        );
         assert_eq!(p.items["a"].state, State::Dismissed);
-        p.fold("github", vec![item("a", Kind::Mention, "2026-09-30T07:00:00Z")], now);
+        p.fold(
+            "github",
+            vec![item("a", Kind::Mention, "2026-09-30T07:00:00Z")],
+            now,
+        );
         assert_eq!(p.items["a"].state, State::Open);
         assert!(p.items["a"].shown.is_none());
     }
@@ -471,9 +504,22 @@ mod tests {
     fn a_kind_you_keep_dismissing_sinks() {
         let mut p = Pond::default();
         let now = at("2026-09-30T08:00:00Z");
-        p.fold("github", vec![item("m", Kind::Mention, "2026-09-30T00:00:00Z"), item("r", Kind::Ready, "2026-09-30T00:00:00Z")], now);
+        p.fold(
+            "github",
+            vec![
+                item("m", Kind::Mention, "2026-09-30T00:00:00Z"),
+                item("r", Kind::Ready, "2026-09-30T00:00:00Z"),
+            ],
+            now,
+        );
         assert_eq!(p.ranked(now)[0].0.item.id, "m");
-        p.scores.insert(Kind::Mention, Score { acted: 0, dismissed: 6 });
+        p.scores.insert(
+            Kind::Mention,
+            Score {
+                acted: 0,
+                dismissed: 6,
+            },
+        );
         assert_eq!(p.ranked(now)[0].0.item.id, "r");
     }
 
@@ -481,8 +527,18 @@ mod tests {
     fn stale_items_fade() {
         let p = Pond::default();
         let now = at("2026-09-30T08:00:00Z");
-        let fresh = Entry { item: item("a", Kind::Review, "2026-09-30T00:00:00Z"), state: State::Open, first_seen: now, shown: None };
-        let old = Entry { item: item("b", Kind::Review, "2026-08-30T00:00:00Z"), state: State::Open, first_seen: now, shown: None };
+        let fresh = Entry {
+            item: item("a", Kind::Review, "2026-09-30T00:00:00Z"),
+            state: State::Open,
+            first_seen: now,
+            shown: None,
+        };
+        let old = Entry {
+            item: item("b", Kind::Review, "2026-08-30T00:00:00Z"),
+            state: State::Open,
+            first_seen: now,
+            shown: None,
+        };
         assert!(p.priority(&fresh, now) > 2.0 * p.priority(&old, now));
     }
 }

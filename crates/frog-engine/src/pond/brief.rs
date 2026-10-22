@@ -102,7 +102,9 @@ pub async fn write(
         && let Some((name, profile)) = choose(cfg)
     {
         let place = Place::of(&profile);
-        let meter = (place == Place::Mac).then(crate::energy::Meter::new).flatten();
+        let meter = (place == Place::Mac)
+            .then(crate::energy::Meter::new)
+            .flatten();
         let mark = meter.as_ref().map(|m| m.mark());
         let prompt = prompt(&items, &today, now);
         // Counted before the call: once asked, it's gone, whether or not an answer comes.
@@ -119,7 +121,9 @@ pub async fn write(
                 if grounded(&w.headline, &items, &today) {
                     headline = clip(w.headline.trim_end_matches(['.', ' ']), 100);
                 } else {
-                    trouble.push(format!("{name}'s headline wasn't about the brief, so it's from a template"));
+                    trouble.push(format!(
+                        "{name}'s headline wasn't about the brief, so it's from a template"
+                    ));
                 }
                 receipt.model = Some(ModelUse {
                     name,
@@ -245,9 +249,12 @@ async fn words(profile: &Profile, prompt: &str) -> anyhow::Result<(Words, crate:
         cache_key: None,
     };
     let mut ignore = |_| {};
-    let r = tokio::time::timeout(Duration::from_secs(90), provider.complete(&req, &mut ignore))
-        .await
-        .map_err(|_| anyhow::anyhow!("timed out"))??;
+    let r = tokio::time::timeout(
+        Duration::from_secs(90),
+        provider.complete(&req, &mut ignore),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out"))??;
     Ok((parse(&r.message.text())?, r.usage))
 }
 
@@ -276,11 +283,21 @@ fn grounded(headline: &str, items: &[Line], today: &[Event]) -> bool {
     }
     let given: std::collections::HashSet<String> = items
         .iter()
-        .flat_map(|l| words(&format!("{} {} {}", l.title, l.place, l.who.as_deref().unwrap_or(""))))
+        .flat_map(|l| {
+            words(&format!(
+                "{} {} {}",
+                l.title,
+                l.place,
+                l.who.as_deref().unwrap_or("")
+            ))
+        })
         .collect();
     let names_one = said.iter().any(|w| given.contains(w));
     static TIME: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"(?i)\b(standup|stand-up|meeting|sync|call|1:1|\d{1,2}(:\d\d)?\s?(am|pm))\b").unwrap()
+        regex::Regex::new(
+            r"(?i)\b(standup|stand-up|meeting|sync|call|1:1|\d{1,2}(:\d\d)?\s?(am|pm))\b",
+        )
+        .unwrap()
     });
     names_one && (!today.is_empty() || !TIME.is_match(headline))
 }
@@ -324,7 +341,21 @@ pub(crate) fn short_title(title: &str) -> String {
     while words.len() > 1
         && matches!(
             words.last().map(|w| w.to_lowercase()).as_deref(),
-            Some("and" | "or" | "of" | "the" | "a" | "an" | "to" | "for" | "with" | "in" | "on" | "—" | "-")
+            Some(
+                "and"
+                    | "or"
+                    | "of"
+                    | "the"
+                    | "a"
+                    | "an"
+                    | "to"
+                    | "for"
+                    | "with"
+                    | "in"
+                    | "on"
+                    | "—"
+                    | "-"
+            )
         )
     {
         words.pop();
@@ -391,7 +422,8 @@ mod tests {
 
     #[test]
     fn finds_the_json_in_a_chatty_answer() {
-        let w = parse("Sure! ```json\n{\"headline\": \"Two {things}\"}\n``` Hope that helps").unwrap();
+        let w =
+            parse("Sure! ```json\n{\"headline\": \"Two {things}\"}\n``` Hope that helps").unwrap();
         assert_eq!(w.headline, "Two {things}");
         assert!(parse("no json here").is_err());
     }
@@ -402,11 +434,26 @@ mod tests {
         let items = [Line::of(&entry("Add vcad", Kind::Mention, None), now, None)];
         assert!(grounded("Answer the vcad mention first", &items, &[]));
         // A meeting that isn't on any calendar.
-        assert!(!grounded("Answer the vcad mention before standup", &items, &[]));
+        assert!(!grounded(
+            "Answer the vcad mention before standup",
+            &items,
+            &[]
+        ));
         // Nothing from the items.
         assert!(!grounded("Review Priya's cache PR first", &items, &[]));
-        let standup = Event { title: "Standup".into(), start: now, end: now, all_day: false, calendar: None, location: None };
-        assert!(grounded("Answer the vcad mention before standup", &items, &[standup]));
+        let standup = Event {
+            title: "Standup".into(),
+            start: now,
+            end: now,
+            all_day: false,
+            calendar: None,
+            location: None,
+        };
+        assert!(grounded(
+            "Answer the vcad mention before standup",
+            &items,
+            &[standup]
+        ));
     }
 
     #[test]
@@ -416,15 +463,43 @@ mod tests {
         let b = Line::of(&entry("b", Kind::Review, None), now, None);
         let c = Line::of(&entry("c", Kind::Failing, None), now, None);
         assert_eq!(a.note, "alex asked for your review yesterday");
-        assert_eq!(template_headline(&[a.clone(), b, c], &[], now), "Review alex’s “a”, then 2 more");
-        let standup = Event { title: "Standup".into(), start: now + chrono::Duration::minutes(40), end: now + chrono::Duration::minutes(55), all_day: false, calendar: None, location: None };
-        assert_eq!(template_headline(&[a.clone()], &[standup.clone()], now), "Review alex’s “a” before Standup");
-        let later = Event { start: now + chrono::Duration::hours(4), ..standup };
+        assert_eq!(
+            template_headline(&[a.clone(), b, c], &[], now),
+            "Review alex’s “a”, then 2 more"
+        );
+        let standup = Event {
+            title: "Standup".into(),
+            start: now + chrono::Duration::minutes(40),
+            end: now + chrono::Duration::minutes(55),
+            all_day: false,
+            calendar: None,
+            location: None,
+        };
+        assert_eq!(
+            template_headline(&[a.clone()], &[standup.clone()], now),
+            "Review alex’s “a” before Standup"
+        );
+        let later = Event {
+            start: now + chrono::Duration::hours(4),
+            ..standup
+        };
         assert_eq!(template_headline(&[a], &[later], now), "Review alex’s “a”");
-        assert_eq!(template_headline(&[], &[], now), "Nothing needs you. The pond is still.");
-        assert_eq!(short_title("WIP: faithful K1 ollie experiments and residual PPO"), "faithful K1 ollie experiments");
-        assert_eq!(short_title("feat(qcd): kosm-qcd — SU(3) lattice QCD"), "kosm-qcd — SU(3) lattice");
-        assert_eq!(short_title("K1 locomotion research: standing-start running"), "K1 locomotion research");
+        assert_eq!(
+            template_headline(&[], &[], now),
+            "Nothing needs you. The pond is still."
+        );
+        assert_eq!(
+            short_title("WIP: faithful K1 ollie experiments and residual PPO"),
+            "faithful K1 ollie experiments"
+        );
+        assert_eq!(
+            short_title("feat(qcd): kosm-qcd — SU(3) lattice QCD"),
+            "kosm-qcd — SU(3) lattice"
+        );
+        assert_eq!(
+            short_title("K1 locomotion research: standing-start running"),
+            "K1 locomotion research"
+        );
     }
 
     #[tokio::test]
@@ -439,7 +514,8 @@ mod tests {
         });
         let now: DateTime<Utc> = "2026-09-30T08:00:00Z".parse().unwrap();
         let mut pond = Pond::default();
-        pond.items.insert("a".into(), entry("a", Kind::Review, Some("alex")));
+        pond.items
+            .insert("a".into(), entry("a", Kind::Review, Some("alex")));
         let b = write(&cfg, &mut pond, vec![], Receipt::default(), vec![], now).await;
         assert_eq!(b.items.len(), 1);
         assert!(b.items[0].new);

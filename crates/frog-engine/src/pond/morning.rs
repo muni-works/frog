@@ -52,7 +52,9 @@ pub async fn check(cfg: &crate::config::Config) -> Result<Option<Notice>> {
 /// this only peeks, and wakes it once a day at most. Only for a watcher running from inside
 /// Frog.app (the Settings toggle installs it that way), which is how it knows which app to wake.
 pub fn wake_app(brief: &Brief) -> Result<()> {
-    let Some(app) = app_bundle() else { return Ok(()) };
+    let Some(app) = app_bundle() else {
+        return Ok(());
+    };
     let now = Local::now();
     if !after_start(now.time()) {
         return Ok(());
@@ -61,7 +63,10 @@ pub fn wake_app(brief: &Brief) -> Result<()> {
     let dir = super::dir();
     let _lock = Lock::take(&dir)?;
     let mut pond = Pond::load(&dir);
-    if pond.woke_on == Some(today) || decide(brief, pond.notified_on, today).is_none() || running(&app) {
+    if pond.woke_on == Some(today)
+        || decide(brief, pond.notified_on, today).is_none()
+        || running(&app)
+    {
         return Ok(());
     }
     pond.woke_on = Some(today);
@@ -114,8 +119,16 @@ fn decide(brief: &Brief, notified_on: Option<NaiveDate>, today: NaiveDate) -> Op
     if new.len() > 2 {
         body.push_str(&format!(" · {} more", new.len() - 2));
     }
-    if let Some(e) = brief.today.iter().find(|e| !e.all_day && e.start > brief.at) {
-        body.push_str(&format!("\n{} at {}", e.title, super::calendar::clock(e.start)));
+    if let Some(e) = brief
+        .today
+        .iter()
+        .find(|e| !e.all_day && e.start > brief.at)
+    {
+        body.push_str(&format!(
+            "\n{} at {}",
+            e.title,
+            super::calendar::clock(e.start)
+        ));
     }
     Some(Notice {
         title: brief.headline.clone(),
@@ -126,9 +139,9 @@ fn decide(brief: &Brief, notified_on: Option<NaiveDate>, today: NaiveDate) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pond::Kind;
     use crate::pond::Receipt;
     use crate::pond::brief::Line;
-    use crate::pond::Kind;
 
     fn line(title: &str, new: bool) -> Line {
         Line {
@@ -160,7 +173,12 @@ mod tests {
     fn once_a_day_and_only_for_something_new() {
         let today = NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
         let yesterday = today.pred_opt().unwrap();
-        let b = brief(vec![line("a", true), line("b", false), line("c", true), line("d", true)]);
+        let b = brief(vec![
+            line("a", true),
+            line("b", false),
+            line("c", true),
+            line("d", true),
+        ]);
         let n = decide(&b, Some(yesterday), today).unwrap();
         assert_eq!(n.title, "Review “a”");
         assert_eq!(n.body, "a · c · 1 more");

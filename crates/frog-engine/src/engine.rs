@@ -1116,7 +1116,9 @@ impl Agent {
         self.turn_usage.input_tokens += u.input + u.cache_read;
         self.turn_usage.output_tokens += u.output;
         self.turn_usage.model_calls += 1;
-        if let Some(model) = &u.model { self.turn_usage.model = Some(model.clone()); }
+        if let Some(model) = &u.model {
+            self.turn_usage.model = Some(model.clone());
+        }
         let (ttft, decode, think) = (ms(streamed.ttft), ms(streamed.decode), ms(streamed.think));
         let t = &mut self.timing;
         if compact {
@@ -2828,7 +2830,7 @@ impl Agent {
                     content,
                     Some("repeated call: earlier result reused"),
                 )
-            } else if seen > LOOP_NUDGE && seen >= LOOP_REPLAN {
+            } else if seen >= LOOP_REPLAN {
                 let msg = format!(
                     "Not run: this exact call already ran {} times this turn with the same result. \
 Don't repeat it. Change the arguments or try a different approach.",
@@ -4037,7 +4039,10 @@ mod tests {
         let mut profile = Profile::new(ProviderKind::Ollama, "test");
         profile.tool_mode = mode;
         let opts = Options {
-            cfg: Config::default(),
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
             profile_name: "test".into(),
             profile,
             cwd: std::env::temp_dir(),
@@ -4059,7 +4064,10 @@ mod tests {
         profile.sidecar = Some(model);
         profile.tool_mode = mode;
         let opts = Options {
-            cfg: Config::default(),
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
             profile_name: "test".into(),
             profile,
             cwd: std::env::temp_dir(),
@@ -4087,7 +4095,10 @@ mod tests {
         profile.context_window = window;
         profile.tool_mode = ToolMode::Native;
         let opts = Options {
-            cfg: Config::default(),
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
             profile_name: "test".into(),
             profile,
             cwd,
@@ -4115,7 +4126,10 @@ mod tests {
         profile.context_window = window;
         profile.tool_mode = ToolMode::Native;
         let opts = Options {
-            cfg: Config::default(),
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
             profile_name: "test".into(),
             profile,
             cwd,
@@ -4353,7 +4367,10 @@ mod tests {
         let mut profile = Profile::new(ProviderKind::Ollama, "test");
         profile.tool_mode = ToolMode::Native;
         let opts = Options {
-            cfg: Config::default(),
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
             profile_name: "test".into(),
             profile,
             cwd: chat,
@@ -4422,7 +4439,10 @@ mod tests {
         let mut profile = Profile::new(ProviderKind::Ollama, "test");
         profile.tool_mode = ToolMode::Native;
         let opts = Options {
-            cfg: Config::default(),
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
             profile_name: "test".into(),
             profile,
             cwd,
@@ -5015,7 +5035,14 @@ mod tests {
         // Size the window so the fixed prompt plus one read fits under PRUNE_AT, and two land
         // past it but short of COMPACT_AT.
         let fixed = fixed_chars(
-            &prompt::system_prompt(&dir, &Config::default(), "test"),
+            &prompt::system_prompt(
+                &dir,
+                &Config {
+                    hermetic: true,
+                    ..Config::default()
+                },
+                "test",
+            ),
             &[tools::specs(), vec![crate::present::spec(false)]].concat(),
         );
         let read_chars: usize = big.lines().map(|l| 6 + 1 + l.len() + 1).sum();
@@ -5372,6 +5399,13 @@ mod tests {
 
     /// The same, listing `tools` (each described as "Ping.") in the order given.
     fn mcp_server(dir: &Path, delay: f64, tools: &[&str]) {
+        mcp_server_gated(dir, delay, tools, None);
+    }
+
+    /// The same, but `initialize` also waits until the `gate` file exists, so a test decides
+    /// exactly when the server comes up instead of racing a sleep.
+    fn mcp_server_gated(dir: &Path, delay: f64, tools: &[&str], gate: Option<&Path>) {
+        let gate = gate.map(|g| g.display().to_string()).unwrap_or_default();
         let tools = json!(
             tools
                 .iter()
@@ -5380,13 +5414,16 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         let script = format!(
-            r#"import json, sys, time
+            r#"import json, os, sys, time
+GATE = {gate:?}
 for line in sys.stdin:
     m = json.loads(line)
     if "id" not in m:
         continue
     if m["method"] == "initialize":
         time.sleep({delay})
+        while GATE and not os.path.exists(GATE):
+            time.sleep(0.01)
         r = {{"protocolVersion": m["params"]["protocolVersion"], "capabilities": {{"tools": {{}}}},
              "serverInfo": {{"name": "slow", "version": "1"}},
              "instructions": "SLOW_MCP_READY: call `ping` to check in."}}
@@ -5441,7 +5478,10 @@ for line in sys.stdin:
         }
         let profile = Profile::new(ProviderKind::Ollama, "test");
         let opts = Options {
-            cfg: Config::default(),
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
             profile_name: "test".into(),
             profile,
             cwd,
@@ -5496,14 +5536,26 @@ for line in sys.stdin:
     #[tokio::test]
     async fn late_mcp_tools_wait_for_the_next_turn() {
         let dir = tmp_store();
-        slow_mcp_server(&dir, 0.2);
+        // The server stays down until the first turn is over, so it is late by construction.
+        let gate = dir.join("mcp.gate");
+        mcp_server_gated(&dir, 0.0, &["ping"], Some(&gate));
         let script = vec![
             reply(vec![text("done")], Stop::End),
             reply(vec![text("ok")], Stop::End),
         ];
         let (mut h, sent) = engine_sent(script, None, None, None, dir);
         run(&mut h, "first").await;
-        tokio::time::sleep(Duration::from_millis(350)).await;
+        std::fs::write(&gate, "").unwrap();
+        // The idle engine emits a status once the server's tools have arrived.
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if matches!(h.events.recv().await.unwrap().event, Event::Status(_)) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("MCP server never connected");
         h.ops
             .send(Op::Submit {
                 text: "again".into(),

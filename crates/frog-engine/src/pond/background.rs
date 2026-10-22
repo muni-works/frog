@@ -19,7 +19,9 @@ fn plist_path() -> PathBuf {
 }
 
 fn log_path() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join("Library/Logs/Frog/pond.log")
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join("Library/Logs/Frog/pond.log")
 }
 
 fn domain() -> String {
@@ -38,7 +40,10 @@ pub fn status() -> Option<PathBuf> {
 /// Install (or replace) the agent to run `bin --watch`, and start it.
 pub fn on(bin: &Path) -> Result<()> {
     if !bin.is_absolute() || !bin.exists() {
-        bail!("{} isn't a frog binary to run in the background", bin.display());
+        bail!(
+            "{} isn't a frog binary to run in the background",
+            bin.display()
+        );
     }
     off()?;
     let plist = plist_path();
@@ -122,11 +127,15 @@ fn plist_text(bin: &Path, path: &str, log: &Path) -> String {
 }
 
 fn escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn unescape(s: &str) -> String {
-    s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 #[cfg(test)]
@@ -135,10 +144,23 @@ mod tests {
 
     #[test]
     fn the_plist_runs_watch_and_its_binary_reads_back() {
-        let text = plist_text(Path::new("/Apps/F & G.app/frog"), "/usr/bin", Path::new("/tmp/p.log"));
+        let text = plist_text(
+            Path::new("/Apps/F & G.app/frog"),
+            "/usr/bin",
+            Path::new("/tmp/p.log"),
+        );
         assert!(text.contains("<string>/Apps/F &amp; G.app/frog</string>"));
         assert!(text.contains("<string>--watch</string>"));
-        let bin = text.split("<key>ProgramArguments</key>").nth(1).unwrap().split("<string>").nth(1).unwrap().split("</string>").next().unwrap();
+        let bin = text
+            .split("<key>ProgramArguments</key>")
+            .nth(1)
+            .unwrap()
+            .split("<string>")
+            .nth(1)
+            .unwrap()
+            .split("</string>")
+            .next()
+            .unwrap();
         assert_eq!(unescape(bin), "/Apps/F & G.app/frog");
     }
 }

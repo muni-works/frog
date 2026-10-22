@@ -30,11 +30,26 @@ fn compose(item: &Item, details: Option<&Value>) -> String {
             item.who.as_deref().unwrap_or("Someone"),
             item.place
         ),
-        Kind::Failing => format!("The checks are failing on my pull request “{t}” in {}. Find out why and how to fix it.", item.place),
-        Kind::ChangesRequested => format!("A reviewer asked for changes on my pull request “{t}” in {}. Go through what they asked and make a plan to address it.", item.place),
-        Kind::Mention => format!("I was mentioned on “{t}” in {}. Tell me what's being asked of me and help me answer.", item.place),
-        Kind::Assigned => format!("“{t}” in {} was assigned to me. Tell me what it needs and where to start.", item.place),
-        Kind::Ready => format!("My pull request “{t}” in {} is approved and green. Check nothing important changed since the approval and whether it's safe to merge.", item.place),
+        Kind::Failing => format!(
+            "The checks are failing on my pull request “{t}” in {}. Find out why and how to fix it.",
+            item.place
+        ),
+        Kind::ChangesRequested => format!(
+            "A reviewer asked for changes on my pull request “{t}” in {}. Go through what they asked and make a plan to address it.",
+            item.place
+        ),
+        Kind::Mention => format!(
+            "I was mentioned on “{t}” in {}. Tell me what's being asked of me and help me answer.",
+            item.place
+        ),
+        Kind::Assigned => format!(
+            "“{t}” in {} was assigned to me. Tell me what it needs and where to start.",
+            item.place
+        ),
+        Kind::Ready => format!(
+            "My pull request “{t}” in {} is approved and green. Check nothing important changed since the approval and whether it's safe to merge.",
+            item.place
+        ),
     };
     let label = match item.url.rsplit_once('/') {
         Some((_, n)) if n.chars().all(|c| c.is_ascii_digit()) => format!("{}#{n}", item.place),
@@ -47,7 +62,10 @@ fn compose(item: &Item, details: Option<&Value>) -> String {
             render(d)
         ));
     }
-    if matches!(item.kind, Kind::Review | Kind::Failing | Kind::ChangesRequested | Kind::Ready) {
+    if matches!(
+        item.kind,
+        Kind::Review | Kind::Failing | Kind::ChangesRequested | Kind::Ready
+    ) {
         ctx.push_str("\nIf you can run commands here, `gh pr view`, `gh pr diff` and `gh pr checks` have the rest.\n");
     }
     // What other people wrote can't close the block early.
@@ -69,7 +87,13 @@ async fn details(url: &str) -> Result<Value> {
     let out = tokio::time::timeout(
         Duration::from_secs(20),
         tokio::process::Command::new("gh")
-            .args([if is_pr { "pr" } else { "issue" }, "view", url, "--json", fields])
+            .args([
+                if is_pr { "pr" } else { "issue" },
+                "view",
+                url,
+                "--json",
+                fields,
+            ])
             .stdin(std::process::Stdio::null())
             .output(),
     )
@@ -81,7 +105,8 @@ async fn details(url: &str) -> Result<Value> {
 
 fn render(d: &Value) -> String {
     let mut s = String::new();
-    let text = |v: &Value, max: usize| crate::tools::truncate_middle(v.as_str().unwrap_or("").trim(), max);
+    let text =
+        |v: &Value, max: usize| crate::tools::truncate_middle(v.as_str().unwrap_or("").trim(), max);
     if let Some(a) = d["author"]["login"].as_str() {
         s.push_str(&format!("author: {a}\n"));
     }
@@ -96,10 +121,17 @@ fn render(d: &Value) -> String {
         .into_iter()
         .flatten()
         .filter(|c| {
-            matches!(c["conclusion"].as_str(), Some("FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED"))
-                || matches!(c["state"].as_str(), Some("FAILURE" | "ERROR"))
+            matches!(
+                c["conclusion"].as_str(),
+                Some("FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED")
+            ) || matches!(c["state"].as_str(), Some("FAILURE" | "ERROR"))
         })
-        .filter_map(|c| c["name"].as_str().or(c["context"].as_str()).map(str::to_owned))
+        .filter_map(|c| {
+            c["name"]
+                .as_str()
+                .or(c["context"].as_str())
+                .map(str::to_owned)
+        })
         .collect();
     if !failing.is_empty() {
         s.push_str(&format!("failing checks: {}\n", failing.join(", ")));
@@ -118,7 +150,10 @@ fn render(d: &Value) -> String {
             ));
         }
     }
-    let comments = d["comments"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let comments = d["comments"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
     for c in &comments[comments.len().saturating_sub(4)..] {
         s.push_str(&format!(
             "\ncomment by {}:\n{}\n",

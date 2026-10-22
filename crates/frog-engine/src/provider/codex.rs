@@ -49,7 +49,11 @@ impl Client {
         let user = format!("{}\n\n--- Conversation so far ---\n{}", req.system, history);
         let mut child = Command::new("codex")
             .args(["exec", "--json", "--skip-git-repo-check", "-m"])
-            .arg(if self.model == "default" { "gpt-6-luna" } else { &self.model })
+            .arg(if self.model == "default" {
+                "gpt-6-luna"
+            } else {
+                &self.model
+            })
             .arg("--cd")
             .arg(&self.cwd)
             .arg(user)
@@ -73,7 +77,9 @@ impl Client {
             let Ok(v) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
-            if let Some(model) = event_model(&v) { actual_model = Some(model.to_owned()); }
+            if let Some(model) = event_model(&v) {
+                actual_model = Some(model.to_owned());
+            }
             if let Some(item) = v.get("item") {
                 let typ = item["type"].as_str().unwrap_or("");
                 let id = item["id"].as_str().unwrap_or("").to_owned();
@@ -190,12 +196,20 @@ impl Client {
 }
 
 fn event_model(v: &Value) -> Option<&str> {
-    ["model", "turn.model", "session.model", "turn_metadata.model"]
-        .iter().find_map(|path| {
-            let mut value = v;
-            for part in path.split('.') { value = value.get(part)?; }
-            value.as_str()
-        })
+    [
+        "model",
+        "turn.model",
+        "session.model",
+        "turn_metadata.model",
+    ]
+    .iter()
+    .find_map(|path| {
+        let mut value = v;
+        for part in path.split('.') {
+            value = value.get(part)?;
+        }
+        value.as_str()
+    })
 }
 
 #[cfg(test)]
@@ -203,15 +217,25 @@ mod event_tests {
     use super::*;
     #[test]
     fn reads_model_metadata_and_maps_specs() {
-        assert_eq!(event_model(&json!({"type":"turn.started","model":"gpt-6-luna"})), Some("gpt-6-luna"));
-        assert_eq!(event_model(&json!({"session":{"model":"gpt-5.6-terra"}})), Some("gpt-5.6-terra"));
+        assert_eq!(
+            event_model(&json!({"type":"turn.started","model":"gpt-6-luna"})),
+            Some("gpt-6-luna")
+        );
+        assert_eq!(
+            event_model(&json!({"session":{"model":"gpt-5.6-terra"}})),
+            Some("gpt-5.6-terra")
+        );
         assert!(models().iter().any(|(m, _)| *m == "gpt-6-luna"));
         assert!(!models().iter().any(|(m, _)| *m == "gpt-6-astra"));
     }
 }
 
 pub fn models() -> &'static [(&'static str, u64)] {
-    &[("gpt-6-luna", 272_000), ("gpt-5.6-terra", 272_000), ("gpt-5.6-luna", 272_000)]
+    &[
+        ("gpt-6-luna", 272_000),
+        ("gpt-5.6-terra", 272_000),
+        ("gpt-5.6-luna", 272_000),
+    ]
 }
 
 pub async fn check_available() -> Result<()> {
