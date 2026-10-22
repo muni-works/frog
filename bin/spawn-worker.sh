@@ -16,6 +16,9 @@ if [[ ! -d $wt ]]; then
 fi
 
 cd $wt
-nohup /Applications/Frog.app/Contents/Resources/frog -m $model -p "$task" > $log 2>&1 &
+rules="RULES: work ONLY inside $wt (a git worktree). Never cd into ~/Developer/$repo or any other checkout; write with relative paths here; reading elsewhere is fine. Keep command output small (| head -80, jq/grep filters). Commit on this branch when a step is done.
+
+"
+nohup /Applications/Frog.app/Contents/Resources/frog -m $model -p "$rules$task" > $log 2>&1 &
 echo "worker pid $! · $repo:$branch · $wt"
 echo "log $log"
