@@ -2810,6 +2810,30 @@ impl Agent {
 
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
     async fn run_tool(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
+        // A working directory that was deleted out from under the session (a worktree cleaned
+        // up, a temp folder gone) would fail every command with "No such file or directory".
+        // Fall back to the session root and say so.
+        if !self.ctx.cwd.is_dir() {
+            let gone = std::mem::take(&mut self.ctx.cwd);
+            self.ctx.cwd = self.root.clone();
+            self.ctx.read_files.clear();
+            // The sandbox roots pointed into the deleted folder too; the session root confines
+            // what's left, if it still sandboxes at all.
+            if self.ctx.sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
+                self.ctx.sandbox = Some(self.root.clone());
+            }
+            if self.ctx.shell_sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
+                self.ctx.shell_sandbox = Some(self.root.clone());
+            }
+            self.notice(
+                Level::Warn,
+                format!(
+                    "The working directory {} is gone; continuing in the session root {}.",
+                    gone.display(),
+                    self.root.display()
+                ),
+            );
+        }
         if name == crate::skills::TOOL {
             return crate::skills::run(&self.skills, &mut self.skills_loaded, input);
         }
@@ -5104,6 +5128,88 @@ mod tests {
     async fn shutdown(mut h: Handle) {
         h.ops.send(Op::Shutdown).unwrap();
         while h.events.recv().await.is_some() {}
+    }
+
+    /// A working directory deleted out from under the session (a worktree cleaned up) would
+    /// fail every Bash call with "No such file or directory", even `echo`. The tool falls back
+    /// to the session root and says so.
+    #[tokio::test]
+    async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
+        let base = std::env::temp_dir().join(format!("frog-cwd-gone-{}", session::new_id()));
+        let project = base.join("project");
+        let gone = project.join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        let cd = Block::ToolUse {
+            id: "c".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "cd gone" }),
+        };
+        let echo = Block::ToolUse {
+            id: "e".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "echo still-here" }),
+        };
+        let script = vec![
+            // Turn 1: cd into the doomed folder, then finish.
+            reply(vec![cd], Stop::ToolUse),
+            reply(vec![text("in place")], Stop::End),
+            // Turn 2 (after the folder is deleted): echo, then finish.
+            reply(vec![echo], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: project.clone(),
+            mode: Mode::Yolo,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+        // Turn 1: into the folder that's about to disappear.
+        let evs = run(&mut h, "cd around").await;
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::ItemCompleted { item: Item::ToolCall { outcome: ToolOutcome::Ok, .. }, .. })));
+        // The folder goes away between turns.
+        std::fs::remove_dir_all(&gone).unwrap();
+        // Turn 2: the echo still works, from the session root, with a notice about it.
+        h.ops
+            .send(Op::Submit {
+                text: "keep going".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        let notices = notices(&evs);
+        assert!(
+            notices.iter().any(|n| n.contains("is gone; continuing in the session root")),
+            "{notices:?}"
+        );
+        let outputs: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "Bash" => Some(output.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(outputs.iter().any(|o| o.contains("still-here")), "{outputs:?}");
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[tokio::test]
