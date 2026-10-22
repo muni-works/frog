@@ -4,6 +4,7 @@ echo "== workers running"
 pgrep -fl "Resources/frog -m" | grep -v -- "--serve" | sed -E 's/ -p .*//' || echo "none"
 
 echo "\n== recent worker logs (last line each)"
+setopt nullglob
 for f in $(ls -t ~/Developer/chief/logs/*.log 2>/dev/null | head -6); do
   printf "%s: " ${f:t}; tail -c 160 $f | tr '\n' ' ' | cut -c1-150; echo
 done
