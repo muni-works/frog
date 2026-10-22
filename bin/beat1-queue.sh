@@ -1,0 +1,14 @@
+#!/bin/zsh
+# Wait for frog cloud, then run Beat 1 workers (2 at a time).
+S=~/Developer/chief/bin/spawn-worker.sh
+for i in {1..60}; do
+  out=$(cd /tmp && perl -e 'alarm 60; exec @ARGV' /Applications/Frog.app/Contents/Resources/frog -m cloud/qwen3-coder-next -p "reply with just: ok" 2>&1 | tail -1)
+  [[ $out == *ok* && $out != *local* ]] && break; sleep 30
+done
+echo "frog cloud up $(date -u +%H:%MZ)"
+$S frog frog/public-scrub "Prepare this repo to go public as github.com/muni-works/frog. Work in small steps; commit after each one. (1) Remove internal references: grep -rn 'pedersen.garden\|\bmew\b\|192\.168\.' and replace them with neutral examples (e.g. example.local) or delete the internal-only docs (docs/ios-siri.md internal hostnames). (2) git rm --cached .claude/launch.json and add .claude/ to .gitignore. (3) Change ecto/frog and ecto/ GitHub URLs to muni-works/ (grep -rn 'github.com/ecto'), including setup.rs, the web.rs User-Agent, release.sh and vercel.json; standardize frog.eco to frog.toys. (4) Add a DCO check workflow (.github/workflows/dco.yml) requiring Signed-off-by on PR commits. (5) README: add a 'macOS: unsigned build' note (xattr -dr com.apple.quarantine) and fix the Cline snippet context to 131072. Run 'cargo check' with CARGO_TARGET_DIR=/private/tmp/frog-scrub-target and delete it after. List the changes at the end."
+$S frog frog/release-dryrun "Release pipeline dry run, unsigned. Read .github/workflows/release.yml, mac-release.yml, scripts/release.sh, install.sh and crates/frog/src/setup.rs (TODO(release) at line ~17). Make the workflows build unsigned artifacts when signing secrets are missing (macOS arm64 frog CLI + Frog.app zip, Linux x86_64/arm64 CLI), publish to a GitHub prerelease on tags matching v*-rc*, and make install.sh download the right artifact. Have setup.rs fetch a prebuilt tang-llm from the tang repo's release when present and fall back to cargo install. Add a Homebrew formula draft at packaging/homebrew/frog.rb. Don't push tags. Commit and summarize what a maintainer must do to cut v0.1.0-rc1."
+wait
+$S zest zest/launch-surface "frog cloud launch surface on the edge worker (edge/): add public pages at api.frog.toys /docs (quickstart: get a key, OpenAI-compatible base URL https://api.frog.toys/v1, model ids qwen3-coder-next / qwen3-8b / qwen3-vl-8b, a curl example and agent snippets), /pricing (fresh input \$0.60/M, cached \$0.06/M, output \$1.50/M; plans Pro \$20 / Max 5x \$100 / Max 20x \$200 'coming soon'; beta: 2 streams, 30 rpm, \$2 credit), and /privacy (draft, marked DRAFT for Cam's review). Add a beta waitlist and signup form that stores an email in the existing store and shows how invite codes are redeemed. Match the existing edge style. Add tests where the edge has them. Don't deploy. Commit and summarize."
+wait
+echo "beat1 queue done $(date -u +%H:%MZ)"

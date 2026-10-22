@@ -19,3 +19,5 @@ Handed over 2026-10-22 ~01:15Z:
 - 01:3xZ: frog-cloud-3 live, the only node. Models: qwen3-coder-next 128k (245 tok/s), qwen3-8b 16k (117-194 tok/s), qwen3-vl-8b 16k (vision verified). Keep-alive, health and metrics live. Watch: KV for 8x128k is allocated on demand next to the 2 small models, so check for OOM under full load. Long agent runs are unblocked: start pond step 1.
 
 - 2026-10-22 ~02:30Z: Cam turned RunPod off for the night. frog-cloud-3 (5972sc9ke6kh3d) is STOPPED (disk kept). frog cloud is down until restarted, and frog falls back to local. Morning: start the pod (or node-up.sh if no GPU), verify, then the FA2 swap (needs Cam go). frog#38 (CI git identity) is still unmerged; main CI is red.
+
+- 2026-10-22 10:26Z: Claude credits nearly out, so work moves to frog. Created frog-cloud-4 (phd7liagvpatty, US-NC-1, $5.29/hr); the stopped frog-cloud-3 (5972sc9ke6kh3d) still needs deleting (ask Cam). bin/beat1-queue.sh runs frog workers once cloud is up: frog/public-scrub, frog/release-dryrun, zest/launch-surface. Logs are in logs/. Cam owns frog.toys DNS (does not resolve) and the Novita key. Beat 1 readiness: memory/beat1-readiness.md.
