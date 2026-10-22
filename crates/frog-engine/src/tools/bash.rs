@@ -98,7 +98,12 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             .unwrap_or(120_000)
             .clamp(1_000, 600_000),
     );
-    let cwd_file = std::env::temp_dir().join(format!("frog-cwd-{}", std::process::id()));
+    // One file per call: concurrent calls in one process (parallel subagents, tests) would
+    // otherwise read each other's final directory.
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let cwd_file =
+        std::env::temp_dir().join(format!("frog-cwd-{}-{call}", std::process::id()));
     let _ = std::fs::remove_file(&cwd_file);
     // Under our sandbox, SwiftPM's own inner seatbelt sandbox can never apply (macOS rejects a
     // nested sandbox_apply outright), so `swift build` fails with "Invalid manifest" until it's
@@ -1248,6 +1253,97 @@ mod tests {
             "ssh ls-remote didn't resolve over https:\n{}",
             out.content
         );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// `git_https` changes only the command's environment, never the profile: no read rule
+    /// opens ~/.config/gh or the Keychain because of it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sandbox_git_https_adds_no_credential_reads_to_the_profile() {
+        let home = dirs::home_dir().unwrap();
+        let home = home.canonicalize().unwrap_or(home);
+        let profile = |extra: &SandboxConfig| {
+            let cmd = seatbelt(home.join("proj").as_path(), "/bin/zsh", extra, &[]).unwrap();
+            cmd.as_std()
+                .get_args()
+                .nth(1)
+                .and_then(|a| a.to_str().map(String::from))
+                .unwrap()
+        };
+        let off = profile(&SandboxConfig::default());
+        let on = profile(&SandboxConfig {
+            git_https: true,
+            ..Default::default()
+        });
+        assert_eq!(off, on, "git_https must not change the profile");
+        let h = home.display();
+        for p in [".config/gh", "Library/Keychains"] {
+            assert!(
+                !on.contains(&format!("(allow file-read* (subpath \"{h}/{p}")),
+                "{p} readable with git_https:\n{on}"
+            );
+            assert!(on.contains(&format!("(subpath \"{h}/{p}\")")), "{p} not denied");
+        }
+    }
+
+    /// With `git_https` on and the default sandbox (no `allow_read`/`allow_keychain`), an
+    /// ordinary sandboxed command can't get the GitHub token: not from gh, gh's config, the
+    /// Keychain, or by asking the overlay's helper directly. Public ls-remote over the overlay
+    /// still works. Needs a real sandbox, a logged-in gh and the network: run with `--ignored`.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore]
+    async fn sandboxed_git_https_does_not_expose_the_github_token() {
+        let token = std::process::Command::new("gh")
+            .args(["auth", "token"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        assert!(token.len() > 20, "needs a logged-in gh outside the sandbox");
+        let ws = std::env::temp_dir().join(format!("frog-tok-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.shell_sandbox = Some(ws.canonicalize().unwrap());
+        ctx.sandbox_extra.git_https = true;
+        let ask = "printf 'protocol=https\\nhost=github.com\\n\\n'";
+        let probes = [
+            "env -u GH_TOKEN -u GITHUB_TOKEN gh auth token".to_string(),
+            "cat ~/.config/gh/hosts.yml ~/.config/gh/config.yml".to_string(),
+            "security find-internet-password -s github.com -w".to_string(),
+            "security find-generic-password -s gh:github.com -w".to_string(),
+            format!("{ask} | env -u GH_TOKEN -u GITHUB_TOKEN gh auth git-credential get"),
+            format!("{ask} | git -c credential.helper='!gh auth git-credential' credential fill"),
+        ];
+        for probe in &probes {
+            let out = run(&json!({ "command": probe }), &mut ctx).await.unwrap();
+            let first = out.content.lines().next().unwrap_or("").replace(&token, "<TOKEN>");
+            eprintln!("probe `{probe}` -> {first}");
+            assert!(
+                !out.content.contains(&token),
+                "token leaked to a sandboxed command: {probe}"
+            );
+        }
+        let out = run(
+            &json!({ "command": "git ls-remote git@github.com:octocat/Hello-World HEAD" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(
+            out.content.contains("7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"),
+            "{}",
+            out.content
+        );
+        // Informational: a private repo, if FROG_PRIVATE_REPO names one (e.g. `ecto/frog`).
+        // With the default sandbox the overlay's helper can't read gh's token either, so this
+        // is expected to fail auth; it's printed, not asserted.
+        if let Ok(repo) = std::env::var("FROG_PRIVATE_REPO") {
+            let cmd = format!("GIT_TERMINAL_PROMPT=0 git ls-remote git@github.com:{repo} HEAD");
+            let out = run(&json!({ "command": cmd }), &mut ctx).await.unwrap();
+            let first = out.content.lines().next().unwrap_or("").replace(&token, "<TOKEN>");
+            eprintln!("private `{repo}` -> {first}");
+        }
         let _ = std::fs::remove_dir_all(&ws);
     }
 }
