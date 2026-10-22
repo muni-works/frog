@@ -1,3 +1,4 @@
 /target
 apps/macos/build/
 apps/macos/Frog.xcodeproj/
+.claude/

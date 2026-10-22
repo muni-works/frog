@@ -27,7 +27,7 @@ const CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 pub const USER_AGENT: &str = concat!(
     "frog/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/ecto/frog)"
+    " (+https://github.com/muni-works/frog)"
 );
 
 pub fn spec() -> ToolSpec {

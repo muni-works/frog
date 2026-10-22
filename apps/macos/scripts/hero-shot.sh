@@ -1,5 +1,5 @@
 #!/bin/zsh
-# frog.eco's hero screenshots: the real app, replaying scripts/hero_fixture.py's session, captured
+# frog.toys's hero screenshots: the real app, replaying scripts/hero_fixture.py's session, captured
 # with its window shadow in light and dark, into site/shot-{light,dark}.png.
 #
 #   apps/macos/scripts/hero-shot.sh

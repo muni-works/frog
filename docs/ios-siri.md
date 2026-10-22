@@ -12,7 +12,7 @@ Siri / Shortcuts / the Frog app
   │  AskHouseIntent (apps/ios/Frog/HouseIntents.swift)
   │  POST /v1/turn  {"text": …}   Authorization: Bearer …
   ▼
-caddy (TLS, frog.pedersen.garden) ─► frog --chat --listen 127.0.0.1:8915   (crates/frog/src/listen.rs)
+caddy (TLS, frog.example.com) ─► frog --chat --listen 127.0.0.1:8915   (crates/frog/src/listen.rs)
                                         │ one engine per request, can_ask off
                                         ├─► model (ollama on the 3090)
                                         └─► MCP: homelab-mcp /act (HA, Frigate; allowlisted call_service)
@@ -47,7 +47,7 @@ caddy (TLS, frog.pedersen.garden) ─► frog --chat --listen 127.0.0.1:8915   (
 
 ## Set it up
 
-On mew, as a systemd unit. The real deploy lives in `~/Developer/home`; this is the shape.
+On your home server, as a systemd unit. The real deploy lives in `~/Developer/home`; this is the shape.
 
 ```ini
 # /etc/systemd/system/frog-house.service
@@ -80,7 +80,7 @@ context_window = 32768
 # the quarantine check. /act is the household tools plus call_service. Use /home/mcp and
 # MCP_TOKEN_HOME instead to keep Siri read-only.
 [mcp_servers.homelab]
-url = "https://mcp.pedersen.garden/act/mcp"
+url = "https://mcp.example.com/act/mcp"
 headers = { Authorization = "Bearer ${MCP_TOKEN_ACT}" }
 trust = true
 ```
@@ -89,7 +89,7 @@ Caddy terminates TLS. Turn buffering off so answers stream, and keep the site of
 internet, since it's LAN and Tailscale only like the rest:
 
 ```
-frog.pedersen.garden {
+frog.example.com {
     reverse_proxy 127.0.0.1:8915 {
         flush_interval -1
     }
@@ -99,11 +99,11 @@ frog.pedersen.garden {
 Generate a token with `openssl rand -hex 24`. Check it from the dev box:
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" https://frog.pedersen.garden/v1/health
+curl -H "Authorization: Bearer $TOKEN" https://frog.example.com/v1/health
 ```
 
 On the iPhone, open Frog › Settings › The House, or "Ask the House Instead" on the connect
-screen. Enter `https://frog.pedersen.garden`, the token, and optionally a model. The token goes in
+screen. Enter `https://frog.example.com`, the token, and optionally a model. The token goes in
 the Keychain. Then say "Ask Frog about the house", or add **Ask the house** in Shortcuts.
 
 **Why HTTPS through caddy.** App Transport Security allows plain HTTP only to local addresses.

@@ -59,7 +59,7 @@ enum Cmd {
     },
     /// Summarize a results file from an earlier run.
     Report { results: PathBuf },
-    /// Write a results file as the public JSON frog.eco/energy reads (no paths or output).
+    /// Write a results file as the public JSON frog.toys/energy reads (no paths or output).
     Export { results: PathBuf },
     /// List the tasks.
     List {

@@ -8,7 +8,7 @@
 //! counters stall at zero on every Apple silicon chip (vladkens/macmon#76), and they never saw
 //! the rest of the machine anyway.
 //!
-//! Everything else running on the Mac lands in the same number. See frog.eco/energy.
+//! Everything else running on the Mac lands in the same number. See frog.toys/energy.
 
 use serde::{Deserialize, Serialize};
 
@@ -628,7 +628,7 @@ impl Meter {
 ///   reference as is, and says so.
 ///
 /// It ignores prompt caching, which agent loops lean on, so treat it as the high end;
-/// frog.eco/energy has the caveats.
+/// frog.toys/energy has the caveats.
 pub mod cloud {
     /// The reference model's active parameters, in billions (Epoch AI's GPT-4o assumption).
     const REFERENCE_ACTIVE_B: f64 = 100.0;

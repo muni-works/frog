@@ -1355,8 +1355,8 @@ mod tests {
             "http://localhost:5173/x"
         );
         assert_eq!(
-            resolve_url("https://frog.eco", &root).unwrap(),
-            "https://frog.eco"
+            resolve_url("https://frog.toys", &root).unwrap(),
+            "https://frog.toys"
         );
         let index = format!("file://{}", root.join("site/index.html").display());
         assert_eq!(resolve_url("site", &root).unwrap(), index);
