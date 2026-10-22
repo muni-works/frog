@@ -22,6 +22,8 @@ struct SessionList: View {
     @State private var openFolds: Set<String> = []
     /// Parents whose finished children are disclosed (their "+N done" row is open).
     @State private var openDone: Set<String> = []
+    /// Parents showing only their children's counts ("4 running · 1 waiting"), not the rows.
+    @State private var collapsedParents: Set<String> = []
     /// Folded project groups, by folder path (newline-separated).
     @AppStorage("foldedGroups") private var foldedRaw = ""
     @AppStorage("sidebarGrouping") private var grouping = Grouping.project
@@ -147,7 +149,13 @@ struct SessionList: View {
         }
         return SessionNesting.rows(
             folds.map(\.session), parent: { parentOf[$0] }, state: rowState, before: before,
-            openDone: openDone, keep: current.map { [$0] } ?? [])
+            openDone: openDone, keep: current.map { [$0] } ?? [], collapsed: collapsedParents)
+    }
+
+    private func toggleChildren(_ parent: String) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if collapsedParents.remove(parent) == nil { collapsedParents.insert(parent) }
+        }
     }
 
     private func toggleDone(_ parent: String) {
@@ -271,8 +279,8 @@ struct SessionList: View {
         let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
         return ForEach(tree(folds)) { entry in
             switch entry {
-            case .row(let s, let depth, let children):
-                compactBranchRow(s, depth: depth, children: children, fold: byId[s.id])
+            case .row(let s, let depth, let counts, let collapsed):
+                compactBranchRow(s, depth: depth, counts: counts, collapsed: collapsed, fold: byId[s.id])
             case .done(let parent, let depth, let count, let failed, let open):
                 doneRow(parent: parent, count: count, failed: failed, open: open)
                     .padding(.leading, CGFloat(max(depth - 1, 0)) * 10 + 21)
@@ -303,11 +311,12 @@ struct SessionList: View {
 
     /// One fold's row (its newest session) plus, when disclosed, the older ones indented.
     @ViewBuilder
-    private func compactBranchRow(_ session: SessionInfo, depth: Int, children: Int, fold: SessionFolds.Fold?) -> some View {
+    private func compactBranchRow(_ session: SessionInfo, depth: Int, counts: SessionNesting.Counts,
+                                  collapsed: Bool, fold: SessionFolds.Fold?) -> some View {
         let fold = fold ?? SessionFolds.Fold(session: session, older: [])
         let isOpen = openFolds.contains(session.id)
-        compactRow(session, depth: depth, folded: fold.older.count, foldOpen: isOpen, children: children,
-                   onFold: fold.folded ? { toggleFoldBranch(session.id) } : nil)
+        compactRow(session, depth: depth, folded: fold.older.count, foldOpen: isOpen, counts: counts,
+                   collapsed: collapsed, onFold: fold.folded ? { toggleFoldBranch(session.id) } : nil)
         if fold.folded, isOpen {
             ForEach(fold.older) { older in
                 compactRow(older, depth: depth + 1)
@@ -321,12 +330,15 @@ struct SessionList: View {
         }
     }
 
-    private func compactRow(_ session: SessionInfo, depth: Int, folded: Int = 0, foldOpen: Bool = false, children: Int = 0, onFold: (() -> Void)? = nil) -> some View {
+    private func compactRow(_ session: SessionInfo, depth: Int, folded: Int = 0, foldOpen: Bool = false,
+                            counts: SessionNesting.Counts = .init(), collapsed: Bool = false,
+                            onFold: (() -> Void)? = nil) -> some View {
         CompactSessionRow(
             session: session, selected: session.id == current,
             live: library.live[session.id], depth: depth,
             pr: session.folder.flatMap { CompactPRCache.shared.value(for: $0) },
-            folded: folded, foldOpen: foldOpen, children: children, onFold: onFold
+            folded: folded, foldOpen: foldOpen, counts: counts, collapsed: collapsed, onFold: onFold,
+            onCollapse: counts.total > 0 ? { toggleChildren(session.id) } : nil
         ) { open(session) } menu: { rowMenu(session) }
     }
 
@@ -411,11 +423,13 @@ struct SessionList: View {
             let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
             ForEach(tree(folds)) { entry in
                 switch entry {
-                case .row(let s, let depth, _):
+                case .row(let s, let depth, let counts, let collapsed):
+                    let summary = collapsed ? counts.summary : nil
                     if let fold = byId[s.id], fold.folded {
-                        branchRow(s, depth: depth, fold: fold)
+                        branchRow(s, depth: depth, fold: fold, summary: summary)
                     } else {
-                        row(s, showPlace: false, nested: depth > 0).padding(.leading, CGFloat(depth) * 10)
+                        row(s, showPlace: false, nested: depth > 0, summary: summary)
+                            .padding(.leading, CGFloat(depth) * 10)
                     }
                 case .done(let parent, let depth, let count, let failed, let open):
                     doneRow(parent: parent, count: count, failed: failed, open: open)
@@ -509,7 +523,7 @@ struct SessionList: View {
 
     // MARK: Pieces
 
-    private func row(_ s: SessionInfo, showPlace: Bool, nested: Bool = false) -> some View {
+    private func row(_ s: SessionInfo, showPlace: Bool, nested: Bool = false, summary: String? = nil) -> some View {
         ConversationRow(
             session: s,
             selected: s.id == current,
@@ -517,7 +531,8 @@ struct SessionList: View {
             live: library.live[s.id],
             pane: paneNumbers[s.id],
             showPlace: showPlace,
-            nested: nested
+            nested: nested,
+            summary: summary
         ) {
             open(s)
         } menu: {
@@ -528,7 +543,7 @@ struct SessionList: View {
     /// A folded branch's row: its newest session as the row, a chevron disclosing the older
     /// ones (indented beneath).
     @ViewBuilder
-    private func branchRow(_ session: SessionInfo, depth: Int, fold: SessionFolds.Fold) -> some View {
+    private func branchRow(_ session: SessionInfo, depth: Int, fold: SessionFolds.Fold, summary: String? = nil) -> some View {
         let isOpen = openFolds.contains(session.id)
         let indent = CGFloat(depth) * 10
         HStack(spacing: 0) {
@@ -539,7 +554,7 @@ struct SessionList: View {
             }
             .buttonStyle(.plain).foregroundStyle(.tertiary)
             .help("\(fold.older.count) older on this branch")
-            row(session, showPlace: false, nested: depth > 0)
+            row(session, showPlace: false, nested: depth > 0, summary: summary)
         }
         .padding(.leading, indent)
         if isOpen {
@@ -649,6 +664,11 @@ struct SessionList: View {
         if s.id == current {
             Button("Session Tree…") { showTree = true }
         }
+        if library.parents.values.contains(s.id) {
+            Button(collapsedParents.contains(s.id) ? "Show Started Sessions" : "Collapse Started Sessions") {
+                toggleChildren(s.id)
+            }
+        }
         Divider()
         if library.archived.contains(s.id) {
             Button("Unarchive") { library.setArchived(s.id, false) }
@@ -670,9 +690,13 @@ private struct CompactSessionRow<Menu: View>: View {
     var folded: Int = 0
     /// Whether the row's disclosure is open (its older sessions are listed).
     var foldOpen = false
-    /// How many sessions this one started (a manager's workers), for its count.
-    var children: Int = 0
+    /// How the sessions this one started (a manager's workers) stand.
+    var counts = SessionNesting.Counts()
+    /// Whether those children are collapsed into this row (it shows their counts).
+    var collapsed = false
     var onFold: (() -> Void)? = nil
+    /// Collapse or show the children, when there are any.
+    var onCollapse: (() -> Void)? = nil
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
     @State private var meta: SessionMetaCache.Meta?
@@ -739,30 +763,24 @@ private struct CompactSessionRow<Menu: View>: View {
             } else {
                 Color.clear.frame(width: 6)
             }
-            Button(action: open) {
-                // The title takes the width it has; a branch suffix only when it says
-                // something the title doesn't (a slugged title never repeats itself).
-                HStack(spacing: 5) {
-                    Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color.primary.opacity(selected || running ? 1 : 0.82))
-                    if let suffix, showSuffix {
-                        Text(suffix).lineLimit(1)
-                            .font(.system(size: 11)).foregroundStyle(.tertiary)
-                            .help(suffix)
-                    }
-                    if children > 0 {
-                        Text("\(children)")
-                            .font(.system(size: 10, design: .rounded).monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                            .padding(.leading, 2)
-                            .help("\(children) session\(children == 1 ? "" : "s") started by this one")
-                    }
+            // The title takes the width it has; a branch suffix only when it says something
+            // the title doesn't (a slugged title never repeats itself). The child badge is its
+            // own button, so the open target is a tap on the rest rather than a wrapping button.
+            HStack(spacing: 5) {
+                Text(session.displayTitle).lineLimit(1).truncationMode(.tail)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.primary.opacity(selected || running ? 1 : 0.82))
+                if let suffix, showSuffix {
+                    Text(suffix).lineLimit(1)
+                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                        .help(suffix)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(.rect)
+                if counts.total > 0 { childBadge }
             }
-            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+            .onTapGesture(perform: open)
+            .accessibilityAddTraits(.isButton)
             .onHover { hovering = $0 }
             if let pr {
                 Image(systemName: pr.merged ? "arrow.triangle.merge" : "point.3.connected.trianglepath.dotted")
@@ -794,6 +812,28 @@ private struct CompactSessionRow<Menu: View>: View {
             return session.displayTitle + "\n" + wt
         }
         return session.displayTitle
+    }
+
+    /// The children's count; collapsed, how they stand ("· 4 running · 1 waiting"). Clicking
+    /// it folds the children into the row or shows them again.
+    private var childBadge: some View {
+        let n = counts.total
+        return Button { onCollapse?() } label: {
+            Group {
+                if collapsed, let summary = counts.summary {
+                    Text("· " + summary).foregroundStyle(.secondary)
+                } else {
+                    Text("\(n)").foregroundStyle(.tertiary)
+                }
+            }
+            .font(.system(size: 10, design: .rounded).monospacedDigit())
+            .lineLimit(1).fixedSize()
+            .padding(.leading, 2)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help(collapsed ? "Show the \(n) session\(n == 1 ? "" : "s") this one started"
+                        : "Collapse the \(n) session\(n == 1 ? "" : "s") this one started")
     }
 
 
@@ -955,6 +995,8 @@ struct ConversationRow<Menu: View>: View {
     var showPlace = true
     /// Nested under the session that started it: a finished one keeps its check.
     var nested = false
+    /// Its collapsed children's counts ("4 running · 1 waiting"), shown after the title.
+    var summary: String? = nil
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
     @State private var hovering = false
@@ -964,8 +1006,12 @@ struct ConversationRow<Menu: View>: View {
         // the conversation.
         HStack(alignment: .center, spacing: 8) {
             Button(action: open) {
-                HStack(spacing: 0) {
+                HStack(spacing: 6) {
                     label
+                    if let summary {
+                        Text(summary).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).fixedSize().help(summary)
+                    }
                     Spacer(minLength: 0)
                 }
                 .contentShape(.rect)

@@ -13,17 +13,18 @@ final class SessionNestingTests: XCTestCase {
     /// A manager with workers in every state, newest-first by `modified`.
     private func rows(_ states: [String: State], parents: [String: String],
                       openDone: Set<String> = [], keep: Set<String> = [],
-                      order: [String]) -> [SessionNesting.Entry] {
+                      collapsed: Set<String> = [], order: [String]) -> [SessionNesting.Entry] {
         let items = order.enumerated().map { i, id in session(id, modified: Int64(1000 - i)) }
         return SessionNesting.rows(
             items, parent: { parents[$0] }, state: { states[$0.id] ?? .done },
-            before: { $0.modified > $1.modified }, openDone: openDone, keep: keep)
+            before: { $0.modified > $1.modified }, openDone: openDone, keep: keep, collapsed: collapsed)
     }
 
     private func ids(_ entries: [SessionNesting.Entry]) -> [String] {
         entries.map { e in
             switch e {
-            case .row(let s, let depth, _): String(repeating: ">", count: depth) + s.id
+            case .row(let s, let depth, _, let collapsed):
+                String(repeating: ">", count: depth) + s.id + (collapsed ? " [-]" : "")
             case .done(_, let depth, let count, let failed, _):
                 String(repeating: ">", count: depth) + "+\(count) done" + (failed > 0 ? " \(failed)x" : "")
             }
@@ -87,6 +88,33 @@ final class SessionNestingTests: XCTestCase {
     func testRootsKeepTheListOrder() {
         let out = rows(["a": .done, "b": .waiting], parents: [:], order: ["a", "b"])
         XCTAssertEqual(ids(out), ["a", "b"])
+    }
+
+    func testACollapsedParentShowsOnlyItsCounts() {
+        let parents = ["r1": "m", "r2": "m", "r3": "m", "r4": "m", "w": "m", "d": "m", "sub": "r1"]
+        let states: [String: State] = ["m": .done, "r1": .running, "r2": .running, "r3": .running,
+                                       "r4": .running, "w": .waiting, "d": .done, "sub": .running]
+        let out = rows(states, parents: parents, collapsed: ["m"],
+                       order: ["m", "r1", "r2", "r3", "r4", "w", "d", "sub"])
+        XCTAssertEqual(ids(out), ["m [-]"], "no child rows, no done row")
+        guard case .row(_, _, let counts, true)? = out.first else { return XCTFail("collapsed row") }
+        XCTAssertEqual(counts, SessionNesting.Counts(waiting: 1, running: 4, done: 1))
+        XCTAssertEqual(counts.summary, "4 running · 1 waiting · 1 done")
+    }
+
+    func testExpandedParentsCountTheirDirectChildren() {
+        let parents = ["a": "m", "b": "m", "c": "a"]
+        let out = rows(["a": .done, "b": .failed, "c": .waiting], parents: parents, order: ["m", "a", "b", "c"])
+        guard case .row(_, _, let counts, false)? = out.first else { return XCTFail("expanded row") }
+        // `a` counts as waiting: its own worker waits on you.
+        XCTAssertEqual(counts, SessionNesting.Counts(waiting: 1, failed: 1))
+        XCTAssertEqual(counts.total, 2)
+    }
+
+    func testCollapsingAChildlessRowDoesNothing() {
+        let out = rows(["x": .running], parents: [:], collapsed: ["x"], order: ["x"])
+        XCTAssertEqual(ids(out), ["x"])
+        XCTAssertNil(SessionNesting.Counts().summary)
     }
 
     func testStateFollowsTheGlyph() {

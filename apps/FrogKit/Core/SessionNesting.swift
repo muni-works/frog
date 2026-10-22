@@ -25,15 +25,40 @@ enum SessionNesting {
         }
     }
 
+    /// How a parent's children stand, for its collapsed row: "4 running · 1 waiting".
+    struct Counts: Equatable, Sendable {
+        var waiting = 0, running = 0, unread = 0, failed = 0, done = 0
+
+        var total: Int { waiting + running + unread + failed + done }
+
+        mutating func add(_ state: State) {
+            switch state {
+            case .waiting: waiting += 1
+            case .running: running += 1
+            case .unread: unread += 1
+            case .failed: failed += 1
+            case .done: done += 1
+            }
+        }
+
+        /// What's live first, then how the rest ended; nil without children.
+        var summary: String? {
+            let parts = [(running, "running"), (waiting, "waiting"), (unread, "new"), (failed, "failed"), (done, "done")]
+                .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }
+    }
+
     enum Entry: Identifiable, Equatable {
-        /// A session's row, how deep it sits, and how many sessions it started.
-        case row(SessionInfo, depth: Int, children: Int)
+        /// A session's row, how deep it sits, how its children stand, and whether they're
+        /// collapsed into it.
+        case row(SessionInfo, depth: Int, counts: Counts, collapsed: Bool)
         /// A parent's settled children, folded into one disclosure row at their depth.
         case done(parent: String, depth: Int, count: Int, failed: Int, open: Bool)
 
         var id: String {
             switch self {
-            case .row(let s, _, _): s.id
+            case .row(let s, _, _, _): s.id
             case .done(let parent, _, _, _, _): "done:" + parent
             }
         }
@@ -46,7 +71,8 @@ enum SessionNesting {
     /// settled only when it and everything under it is (a quiet manager whose workers run
     /// stays up). Settled children collapse under a `.done` row unless their parent is in
     /// `openDone`; `keep` (the session on screen, say) is never tucked away. Children sort by
-    /// state (`State`'s order), roots by `before`.
+    /// state (`State`'s order), roots by `before`. A parent in `collapsed` shows none of its
+    /// children, only their counts.
     ///
     /// - Parameters:
     ///   - parent: the session that started `id`, if any (only parents in `items` nest).
@@ -58,7 +84,8 @@ enum SessionNesting {
         state: (SessionInfo) -> State,
         before: (SessionInfo, SessionInfo) -> Bool,
         openDone: Set<String> = [],
-        keep: Set<String> = []
+        keep: Set<String> = [],
+        collapsed: Set<String> = []
     ) -> [Entry] {
         let ids = Set(items.map(\.id))
         var children: [String: [SessionInfo]] = [:]
@@ -87,10 +114,19 @@ enum SessionNesting {
 
         var out: [Entry] = []
         var placed: Set<String> = []
+        // Tucked away, but placed: a cycle can't surface them elsewhere.
+        func hide(_ x: SessionInfo) {
+            guard placed.insert(x.id).inserted else { return }
+            (children[x.id] ?? []).forEach(hide)
+        }
         func walk(_ s: SessionInfo, _ depth: Int) {
             guard placed.insert(s.id).inserted else { return }
             let kids = (children[s.id] ?? []).filter { !placed.contains($0.id) }
-            out.append(.row(s, depth: depth, children: kids.count))
+            var counts = Counts()
+            kids.forEach { counts.add(effective($0)) }
+            let folded = collapsed.contains(s.id) && !kids.isEmpty
+            out.append(.row(s, depth: depth, counts: counts, collapsed: folded))
+            if folded { kids.forEach(hide); return }
             let next = min(depth + 1, maxDepth)
             // Most urgent first; the list's order within a state.
             let ordered = kids.sorted { a, b in
@@ -107,11 +143,6 @@ enum SessionNesting {
             if open {
                 settled.forEach { walk($0, next) }
             } else {
-                // Tucked away, but placed: a cycle can't surface them elsewhere.
-                func hide(_ x: SessionInfo) {
-                    guard placed.insert(x.id).inserted else { return }
-                    (children[x.id] ?? []).forEach(hide)
-                }
                 settled.forEach(hide)
             }
         }
