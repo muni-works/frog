@@ -176,8 +176,11 @@ returns the same slice. Use offset={} (with a limit) to read the next part, or G
         }
     }
 }
-/// Model calls per turn before stopping to check in with the user.
-const MAX_STEPS: u32 = 60;
+/// Model calls per top-level turn: uncapped unless `FROG_MAX_STEPS` sets one. Runaway loops are
+/// caught by the repeat guard above, so long agentic work can run to completion.
+fn max_steps() -> u32 {
+    std::env::var("FROG_MAX_STEPS").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX)
+}
 /// How many times a turn carries on after a reply runs out of output room.
 const MAX_CONTINUES: u32 = 3;
 
@@ -1618,7 +1621,7 @@ impl Agent {
         let mut compacted = None;
         let mut guard = LoopGuard::default();
         let mut steps = 0;
-        // Times this turn was continued after a reply hit the output limit.
+        // Cut-off replies continued in a row (reset whenever a reply runs tools).
         let mut continued = 0;
         // A reply asking for files it could Read is nudged once, before any tool has run.
         let (mut nudged, mut used_tools) = (false, false);
@@ -1627,7 +1630,7 @@ impl Agent {
             let limit = if self.subagent {
                 self.cfg.subagent_max_steps.max(1)
             } else {
-                MAX_STEPS
+                max_steps()
             };
             if steps > limit {
                 break EndReason::StepLimit;
@@ -1784,6 +1787,8 @@ impl Agent {
             }
 
             used_tools = true;
+            // A reply that acted is progress: the next cut-off gets a fresh set of continues.
+            continued = 0;
             match self.run_tools(uses, &mut guard, streamed.early).await? {
                 Batch::Continue => {}
                 Batch::Denied => break EndReason::Denied,
