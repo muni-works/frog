@@ -9,7 +9,7 @@ wt=$root/.claude/worktrees/$name
 log=~/Developer/chief/logs/$(date +%Y%m%d-%H%M%S)-$repo-$name.log
 
 [[ -d $root/.git ]] || { echo "no repo at $root" >&2; exit 1; }
-git -C $root fetch -q origin
+git -C $root fetch -q origin 2>/dev/null || { u=$(git -C $root remote get-url origin | sed -E "s#git@github.com:#https://github.com/#"); git -C $root fetch -q $u "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null || echo "warn: fetch failed, using local origin/main" >&2; }
 if [[ ! -d $wt ]]; then
   git -C $root worktree add -q -b $branch $wt origin/main 2>/dev/null \
     || git -C $root worktree add -q $wt $branch
