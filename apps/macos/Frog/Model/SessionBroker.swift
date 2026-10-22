@@ -182,6 +182,11 @@ final class SessionBroker {
     private var inbound: [String: Int] = [:]
     /// When each session's current permission card arrived (ListApprovals reports its age).
     private var waitingSince: [String: Date] = [:]
+    /// The session that started session `id`, if one did (pending approvals escalate to it).
+    var parentOf: (_ id: String) -> String? = { _ in nil }
+    /// The session that started session `id`, if one did (pending approvals escalate to it).
+    var parentOf: (_ id: String) -> String? = { _ in nil }
+
 
     /// Sends since the user last did something, per sending session.
     private var sent: [String: [Date]] = [:]
@@ -621,6 +626,39 @@ final class SessionBroker {
     private func tracked(_ id: String) -> Conversation? {
         if let c = Library.shared.conversation(id), c.isLive { return c }
         return background[id]
+=======
+    /// A permission prompt opened in session `child`: tell the session that started it,
+    /// so a manager can decide (or tell the user) instead of the prompt sitting unseen.
+    /// The child waits on it until answered or its timeout takes the safe path.
+    @discardableResult
+    func escalate(_ req: PermissionRequest, from child: String, name: String) -> Bool {
+        guard let parent = parentOf(child), parent != child else { return false }
+        return reach(parent, "system", "system", Self.escalation(req, session: child, name: name))
+    }
+
+    /// The structured notice a parent gets for a child's pending approval.
+    static func escalation(_ req: PermissionRequest, session: String, name: String) -> String {
+        var lines = [
+            "Approval pending in session \"\(name)\" (\(session)).",
+            "card: \(req.id)",
+            "tool: \(req.name)",
+            "command: \(req.arg)",
+        ]
+        if let r = req.reason { lines.append("reason: \(r)") }
+        if let c = req.card {
+            if let a = c.agentReason { lines.append("agent says: \(a)") }
+            lines.append("trigger: \(c.trigger)")
+            for t in c.touches ?? [] {
+                let size = t.bytes.map { " \(ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file))" } ?? ""
+                let mine = t.createdHere == true ? " (made by this session)" : ""
+                lines.append("touches: \(t.path)\(size)\(mine)")
+            }
+            lines.append("risk: \(c.risk)")
+            lines.append("recommendation: \(c.recommendation)")
+            lines.append("If nobody answers in \(c.timeoutSecs / 60) min it's denied and the session carries on.")
+        }
+        lines.append("Only the user can answer it, in that session's window; tell them if it matters.")
+        return lines.joined(separator: "\n")
     }
 
     /// Report session `child`'s next turn back to `parent` when it goes idle (the hand-back).
@@ -1024,6 +1062,11 @@ extension SessionBroker {
         starter = { [unowned self] req, parent in try await start(req, parent: parent) }
         Conversation.sessionRequests = { [unowned self] c, r in handle(r, from: c) }
         Conversation.userActivity = { [unowned self] c in if let id = c.sessionID { userActivity(id) } }
+        parentOf = { id in Library.shared.parents[id] }
+        Conversation.permissionRequests = { [unowned self] c, req in
+            guard let id = c.sessionID else { return }
+            escalate(req, from: id, name: name(of: c))
+        }
     }
 
     /// `ArchiveSession`/`UnarchiveSession`: the sidebar's archive, as a broker operation. Hides

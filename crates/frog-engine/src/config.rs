@@ -165,6 +165,10 @@ fn default_subagent_steps() -> u32 {
     100
 }
 
+fn default_approval_timeout() -> u64 {
+    600
+}
+
 fn default_background_tasks() -> usize {
     4
 }
@@ -245,10 +249,14 @@ pub struct Config {
     /// same as without it; only the waiting overlaps.
     #[serde(default = "default_true")]
     pub early_tools: bool,
-    /// The model auto mode's classifier uses (a profile or provider/model). Default: Apple's
-    /// on-device model when available, else the session's model.
+    /// The model auto mode's classifier uses (a profile or provider/model). Default:
+    /// `cloud/qwen3-8b`, then Apple's on-device model; with neither usable, it asks.
     #[serde(default)]
     pub auto_classifier: Option<String>,
+    /// Seconds a permission prompt waits for an answer before frog takes the safe path
+    /// (denies the call, tells the agent, and carries on). 0 waits forever.
+    #[serde(default = "default_approval_timeout")]
+    pub approval_timeout_secs: u64,
     /// The model that writes the pond's brief (a profile or provider/model). Default: Apple's
     /// on-device model when available, else the default model if it runs on your devices.
     #[serde(default)]
