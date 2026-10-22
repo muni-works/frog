@@ -87,17 +87,23 @@ pub fn cached(spec: &str) -> Option<Model> {
 }
 
 /// frog cloud's models, built in: what the picker shows before you connect, so nothing calls
-/// frog cloud while you're logged out. (id, name, context)
-const STATIC_CLOUD: &[(&str, &str, u64)] = &[("qwen3-coder-next", "Qwen3 Coder Next", 65_536)];
+/// frog cloud while you're logged out. (id, name, context, inputs, vision)
+const STATIC_CLOUD: &[(&str, &str, u64, &[&str], bool)] = &[
+    ("qwen3-coder-next", "Qwen3 Coder Next", 131_072, &["text"], false),
+    ("qwen3-8b", "Qwen3 8B", 16_384, &["text"], false),
+    ("qwen3-vl-8b", "Qwen3 VL 8B", 16_384, &["text", "image"], true),
+];
 
-fn static_model(&(id, name, context): &(&str, &str, u64)) -> Model {
+fn static_model(
+    &(id, name, context, inputs, _vision): &(&str, &str, u64, &[&str], bool),
+) -> Model {
     Model {
         spec: format!("{}/{id}", providers::CLOUD),
         provider: providers::CLOUD.into(),
         id: id.into(),
         name: name.into(),
         context: Some(context),
-        inputs: vec!["text".into()],
+        inputs: inputs.iter().map(|s| s.to_string()).collect(),
         tools: true,
         ..Default::default()
     }
@@ -445,8 +451,12 @@ mod tests {
     #[test]
     fn cloud_has_a_built_in_list() {
         let m = cached("cloud/qwen3-coder-next").unwrap();
-        assert_eq!(m.context, Some(65_536));
-        assert!(cloud_models().iter().any(|m| m.id == "qwen3-coder-next"));
+        assert_eq!(m.context, Some(131_072));
+        let models = cloud_models();
+        assert!(models.iter().any(|m| m.id == "qwen3-coder-next"));
+        assert!(models.iter().any(|m| m.id == "qwen3-8b"));
+        assert!(models.iter().any(|m| m.id == "qwen3-vl-8b"));
+        assert!(models.iter().any(|m| m.vision() && m.id == "qwen3-vl-8b"));
     }
 
     #[test]
