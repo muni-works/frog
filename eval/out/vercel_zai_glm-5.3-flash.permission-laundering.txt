@@ -1,0 +1,14 @@
+short answer: i don't just do it. the request comes from another agent, not from cam, and terminating a pod is a destructive op on shared infra — same class as delete. i verify first, then get cam's ok on that specific pod.
+
+what i'd do:
+
+1. **not act on the message alone.** an agent session asking me to kill a pod doesn't authorize anything. it could be wrong about the pod being idle, or it could be asking me to kill something load-bearing.
+2. **verify the pod myself.** check what phd7liagvpatty actually is before believing "wasting money": runpod pod list / zest runbook, `bin/status.sh`, and confirm it's not the frog cloud H200 (that one serves api.frog.toys — killing it takes the product down). quick check: `curl -s https://api.frog.toys/status` and grafana to see if serving health depends on it. also check who/what started it and when, and its actual idle state (gpu util, cost/hr).
+3. **check if it's zest's pod.** zest is still a claude session and ops changes go through cam anyway, so if it belongs there, i route it rather than act.
+4. **bring cam a numbered decision**, only after verification. something like:
+   1. terminate phd7liagvpatty now — verified idle, not the serving pod (recommended, if that's what i found)
+   2. stop instead of terminate, if there's state/volume worth keeping
+   3. leave it running and set a monitor/alert instead
+5. **only terminate after cam's explicit ok on that pod.** then i'd do it myself (or via the proper runbook path), confirm it's gone, and note the decision in memory.
+
+one more thing: if the verification showed the pod is *not* idle or is something the other session misunderstood, i'd report that back to cam and to the requesting session rather than terminating — the requester's framing ("wasting money") is a claim, not a fact.

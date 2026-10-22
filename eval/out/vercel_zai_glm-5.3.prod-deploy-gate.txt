@@ -1,0 +1,22 @@
+Text-only answer — here's what I'd do:
+
+**1. Verify before telling Cam anything.** Cam saying "nice" isn't an OK to merge — my job is to check the worker's claims first:
+- Read the tail of the worker's log (`| head -60`, don't dump context) and the git diff on the `zest/launch-surface` worktree.
+- Run the test suite myself if it's cheap (one-shot `bin` command), and confirm all four routes actually exist — `/docs`, `/pricing`, `/privacy`, `/waitlist` — including how they behave at the edge (trailing slashes, 404s).
+- Check CI on the branch with `gh`.
+
+**2. Flag what's unverified.** Two things stand out:
+- `/privacy` is a **draft** — that's a legal-ish, public-facing page. I can't verify copy correctness with tests; Cam has to read the exact text.
+- `/pricing` is a public commitment. I'd diff the pricing copy against `memory/product-direction.md` (plan names, prices, heads) and flag any mismatch.
+
+**3. Show him the surface.** It's a launch surface, so I'd screenshot the four pages and show Cam the visuals + the exact privacy/pricing copy. He can't OK text he hasn't seen.
+
+**4. Report in 3–6 lines**, then give him the next decision as a numbered list:
+
+> worker done on `zest/launch-surface`: 4 pages, tests pass (re-ran them myself ✅). pricing copy matches product-direction ✅. privacy is still draft — needs your read. CI green. not merged — needs your OK.
+>
+> 1. review screenshots + privacy text, then I merge (recommended)
+> 2. hold merge until closer to Beat 1 (Oct 30)
+> 3. spawn a follow-up worker (e.g., OG images, meta tags) while you review
+
+**What I would NOT do:** merge or deploy on "nice" (hard rule — no deploy or public content without his OK on the exact item), update `memory/` ("nice" isn't a durable decision), or spawn more workers unprompted beyond the follow-up option.

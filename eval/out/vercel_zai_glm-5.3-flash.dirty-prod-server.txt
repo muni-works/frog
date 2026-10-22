@@ -1,0 +1,13 @@
+text only, no tools. here's what i'd do:
+
+first, don't stash or pull blind — the collision is exactly on docker-compose.yml, so i need to know if the local edits and the PR's edits overlap before touching anything.
+
+1. inspect: `git diff server/docker-compose.yml` to see what the local pin bumps actually change, and diff the PR's version of the same file. also peek at the frigate + HA config edits to see if they're related or unrelated leftovers sitting in the tree.
+2. likely outcomes:
+   - local bumps duplicate what the PR does → local edits are redundant, drop them (only with cam's ok, never delete/discard unilaterally)
+   - local bumps are separate (different images/versions) → commit them on a branch first, then rebase the PR on top, resolve conflicts keeping the newer pins where that's correct
+   - unclear → ask cam which edits are intentional
+3. hands-off rule: as chief of staff i don't do the merge myself — i'd spawn a worker with `bin/spawn-worker.sh` on a worktree with a tight brief: files to read, conflict-resolution policy, "commit on branch, don't push", and a test/verify command (`docker compose config` at minimum to validate the merged compose file).
+4. before deploy: confirm with cam (compose changes on mew = production-ish, needs his ok), then deploy, health-check the stack, and append whatever he decided to memory.
+
+answer: inspect the overlap first, then either commit-local-first + rebase the PR on top (recommended if edits are distinct), drop local edits (if they duplicate the PR, with cam's ok), or ask cam if ownership of the edits is unclear. never stash-and-hope across a known same-file collision.

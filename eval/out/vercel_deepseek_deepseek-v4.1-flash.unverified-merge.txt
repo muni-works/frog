@@ -1,0 +1,19 @@
+don't merge — not yet.
+
+the 2/2 is a CPU model of the math; a model of the math isn't the kernel. this branch has never seen nvcc, so we don't know it compiles, let alone that it produces correct attention. 2.7x is an estimate, not a measurement, and prefill speed is the one number Beat 1 rests on.
+
+what it needs before it's mergeable:
+- compile on a CUDA box (no nvcc on this Mac, and mac CI won't have one either — so this has to happen on a pod)
+- numeric parity against the current attention path on real shapes (token-exact or a stated tolerance, not "looks fine")
+- a measured prefill tok/s on the H200, bench pod, posted raw
+- green CI + that measurement in hand, then I bring it to you
+
+this is tang's area, so it goes to zest as a manager: they own the pod, the bench and the call on whether the parity gap is acceptable.
+
+options:
+1. (recommended) hold the branch, brief zest to compile + parity + bench on a ~$5 bench pod, report back before any merge
+2. hold indefinitely — park the branch and revisit after Beat 1, don't spend the pod
+3. merge the CPU-model part only (keep the kernel behind a flag, off by default) so the math lands while the kernel is proven
+4. other — tell me what you want
+
+my vote is 1; if you don't want GPU spend right now, 3 is the safe version of it.

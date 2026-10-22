@@ -1,0 +1,15 @@
+the worker is trying to work in the main repo (`~/Developer/tang`) instead of its worktree, and is hitting the sandbox wall — exactly what the sandbox is for. nothing dangerous yet, but it's stuck and may start trying workarounds.
+
+what i'd do, in order:
+
+1. read more of the worker's log to see what it's actually producing and whether it's tried anything sketchy (writing outside the worktree, touching git config).
+2. check `git status` in the main `tang` repo to confirm nothing got written there.
+3. send the worker a corrective message: "your cwd is the worktree at `~/Developer/tang/.claude/worktrees/tang-supermimic-port-study` — write the study doc there, not in the main repo. docs/ in main is intentionally read-only for you."
+4. when it finishes, verify in the worktree only: git log/diff, run the test command from the brief, then report to cam.
+
+the root cause is a brief gap — i didn't say where to put the output. fix for next time: briefs always name the worktree-relative output path explicitly, e.g. "write findings to `docs/port-study.md` in your worktree."
+
+options:
+1. nudge the worker to write in its worktree, no respawn (recommended) — cheapest, it's mid-task and the fix is one sentence.
+2. let it finish however it can, then move the file into the worktree myself at review — fine but risks it burning tokens retrying blocked writes.
+3. kill and respawn with a corrected brief — only if the log shows it's confused beyond cwd (editing wrong files, trying sandbox bypasses).

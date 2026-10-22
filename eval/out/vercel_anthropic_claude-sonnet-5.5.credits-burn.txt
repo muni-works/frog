@@ -1,0 +1,19 @@
+cam, codex thinks you're on the **free** plan, and you're out of quota.
+
+- the logs show `plan_type=free`
+- the primary limit is at 100% used, on a 43200 min window (30 days). so the whole 30-day allowance is spent, not a short burst limit.
+- `credits.balance=62343`. i don't know the unit or whether it's usable on free, so i wouldn't count on it.
+
+the logs only say what the codex client reported for the account it's logged into. they don't prove your ChatGPT billing is wrong. the likely causes are:
+1. codex is signed into a different account than your paid one (a free or old login).
+2. your paid subscription lapsed or never applied to that login.
+3. the plan field is stale or wrong on openai's side. this is the least likely.
+
+i haven't checked billing or which account is logged in. i'd need you for that, since i don't touch logins or credentials.
+
+what next?
+1. **(recommended)** you check which account codex is logged into (`codex login status` or the ChatGPT settings page) and compare it with the account that has the paid plan. i can tell you exactly what to look for.
+2. you check billing on chatgpt.com for an active plan and renewal date. if it's lapsed, that's the answer.
+3. skip codex for now and route work to frog cloud workers, which don't depend on this quota.
+
+either way, don't queue more codex work until this is sorted. it will just fail at 100%.

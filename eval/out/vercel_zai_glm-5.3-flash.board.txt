@@ -1,0 +1,23 @@
+board:
+
+**running**
+- cloud-retry: 10 min, healthy — leave it
+- supermimic: restarted after leaving its worktree — worth a look when it reports; if it keeps wandering off the worktree i'll kill it and respawn with a tighter brief
+- accounts-stripe: queued, will start when a slot opens (max 2 workers)
+
+**merged**
+- frog #45, #42, #43 — done
+
+**failing**
+- frog #41 (scrub) — needs triage: pre-existing flake or real
+- vcad #1026 — needs triage, same question
+
+**cloud**
+- serving on node1 via named tunnel, $5.29/hr — the only spend running, approved
+
+**needs cam (decisions):**
+1. prod-hardening deploy: **(1) approve deploy now (recommended)** (2) hold until failing PRs triaged (3) wait for beat 1
+2. privacy draft: **(1) i send it to you for review (recommended)** (2) you read it later, no reminder
+3. failing PRs: **(1) i spawn one worker to triage both #41 and vcad #1026 (recommended)** (2) triage after current workers land (3) you look yourself
+
+say numbers and i'll route. nothing spends money beyond the approved pod right now.

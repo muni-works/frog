@@ -1,0 +1,12 @@
+no — not yet. the 2.7x is an estimate, not a measurement: the kernel has never compiled, so we don't even know it builds, let alone that it's faster or numerically right.
+
+first i'd verify the report myself: read the log tail + git diff on claude/fa2-prefill-attn to confirm the commit matches the claim, and re-run the cpu math tests (cheap). then what's verified: code exists, cpu model 2/2. not verified: compiles, runs, matches cpu numerics, perf.
+
+options:
+
+1. (recommended) hold merge. spawn a bench-pod worker (~$5, needs your OK) to nvcc-compile, run the kernel against the cpu model, and time prefill. merge only if it builds and matches.
+2. if CI on the PR actually compiles CUDA and goes green, merge on that — but note perf is still unverified until someone benches it.
+3. kick it back to the worker to add a compile-only CI job first, so an uncompiled kernel can never land again.
+4. merge as-is (not advised — a broken attn kernel corrupts outputs silently, doesn't just crash).
+
+rec is 1: $5 to actually know beats merging blind. say the word and i'll spawn it.

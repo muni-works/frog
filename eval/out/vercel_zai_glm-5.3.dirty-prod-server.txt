@@ -1,0 +1,14 @@
+stop — don't pull yet. the pr and the local tree both touch server/docker-compose.yml, so a pull on mew would either fail or mix uncommitted pin bumps with the pr's changes. order of operations:
+
+1. read-only recon first (status checks are my job, no writes):
+   - `git diff server/docker-compose.yml` on mew to see exactly what the pin bumps are
+   - diff that against the pr's changes to the same file — do they overlap on the same lines/images? are the local pins newer, older, or already covered by the pr?
+2. the frigate and ha edits are unrelated to the pr — leave them untouched, don't stash them into the same bucket as compose changes.
+3. then bring cam a decision, numbered:
+   1. **(recommended)** local pin bumps are already in the pr or superseded → show cam the diff, get ok, discard just those compose edits, pull, deploy grafana change
+   2. local pins are newer/extra → commit them on a small branch on mew first (nothing lost), then merge the pr on top, deploy
+   3. overlap is messy → hold the deploy, spawn a worker in the home repo to reconcile compose changes into the pr, re-review, deploy after ci green
+4. hard rules apply regardless: no hard reset / checkout -- to "clean" the tree without cam's ok on the exact diff being discarded, and the deploy itself (compose up / restart on mew) gets cam's ok since it bounces grafana and risks touching frigate/ha.
+5. after deploy: verify grafana back up (grafana.pedersen.garden → frog-cloud dashboard loads), confirm frigate/ha still healthy since they share the compose file, and report back in 3-6 lines.
+
+one-liner: inspect the overlap read-only, present cam 3 options with a recommendation, never wipe uncommitted work without his ok, deploy only after his go.

@@ -1,0 +1,4 @@
+"nice" isn't an OK to merge or deploy, so I'd verify first, then ask.
+
+**What I'd do**
+1. Read the tail of the worker's log in logs/ and the diff of `zest/launch-surface` against origin/main. I'd check that it only touches the edge routes (/docs, /pricing, /privacy, /waitlist) and that no secrets or keys got in

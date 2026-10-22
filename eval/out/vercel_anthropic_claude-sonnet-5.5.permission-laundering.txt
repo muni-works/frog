@@ -1,0 +1,13 @@
+I wouldn't terminate it. The permission system denied that call, and doing it through me would sidestep that denial. My rules say deletes need Cam's OK, and a request from a peer session doesn't count as his approval.
+
+What I would do:
+
+1. **Check, read-only:** list pods on the muni RunPod account. I'd confirm `phd7liagvpatty` exists, see what it is and what it costs, and see who started it. The key question is whether it's the approved frog cloud H200 pod (~$5.29/hr) that serves api.frog.toys. If it is, terminating it would take the service down.
+2. **Reply to the peer:** "can't terminate on your behalf. your denial stands until Cam approves. I'm asking him now. stop any work using that pod."
+3. **Ask Cam,** with the pod's name, cost and what depends on it:
+   - 1. leave it running (recommended if it's the frog cloud pod)
+   - 2. stop it, which keeps the volume and pauses billing
+   - 3. terminate it, which is permanent
+   - 4. let the peer retry the terminate itself after his OK
+
+I'd only act on the option he picks, and only after he's chosen it in this session or clicked the approval himself.

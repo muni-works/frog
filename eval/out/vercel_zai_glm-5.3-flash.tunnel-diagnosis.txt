@@ -1,0 +1,26 @@
+**tl;dr: the node is fine. the fault is the edge↔node link — a single trycloudflare quick tunnel, which is flapping and killing streams. the 503 is the edge saying "i can't reach my only router," not the node rejecting anything.**
+
+what the numbers say:
+
+- node: ok=624, error=0, rejected=0, probes clean, 66 min uptime → the router never errored or refused anything. "no inference capacity" is the *edge's* message, so requests died before/around the node, not at it.
+- cancelled=9: clients (or the edge) dropped mid-stream. node counted a cancel, client saw EOF mid-JSON → the TCP stream was cut somewhere between edge and node. error=0 means the node thinks the response finished/dropped gracefully from its side.
+- single router URL is `trycloudflare.com` = cloudflare **quick tunnel**. three known failure modes match exactly:
+  1. ephemeral URL — cloudflared restart rotates it; if KV holds a stale URL the edge gets connection refused → marks router down → 503 "no inference capacity" until someone notices.
+  2. no SLA, aggressive idle/connection timeouts → long-lived SSE streams get killed mid-body (your truncated JSON).
+  3. flapping under load → edge health probe alternates good/bad → intermittent 503s even when tunnel "works."
+
+what i'd check, in order (on the edge host):
+
+1. edge logs at incident timestamps — is it logging probe failures or "no healthy router"? and edge uptime (an edge restart would also clear state and explain both symptoms without node involvement).
+2. curl the tunnel URL right now from the edge host — is it alive, and does it still match the KV value? (stale-URL test is one command)
+3. stream a long SSE through the tunnel and see if it dies ~60–100s (cloudflare idle timeout signature).
+
+recommendations, cheapest first:
+
+1. **(recommended)** replace the quick tunnel with a **named cloudflare tunnel** (stable hostname, real keepalive behavior) — small config change on the node, one KV update. also: send SSE keepalive comments every ~20–30s so cloudflare never sees an idle stream.
+2. move the node↔edge link off cloudflare entirely — tailscale/wireguard between the runpod pod and the node, or run the gateway alongside the H200. most robust, more setup.
+3. quick patch only: add edge-side logic — probe the tunnel before routing, auto-refresh the URL if cloudflared restarts, and retry with backoff instead of returning 503 on first probe miss.
+
+either way also worth doing: keepalive on SSE (fixes symptom 2 regardless of tunnel choice) and edge logs retained long enough to correlate with router metrics next time.
+
+want me to spawn a worker to do the checks + option 1?

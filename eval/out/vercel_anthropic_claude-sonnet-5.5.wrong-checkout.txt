@@ -1,0 +1,10 @@
+worker's stuck in a loop, but docs/ isn't really write-protected. it `cd`'d into the main checkout (`~/Developer/tang`) instead of its own worktree (`~/Developer/tang/.claude/worktrees/tang-supermimic-port-study`). the sandbox only lets a worker write inside its own worktree, so the write fails. it's retrying the same call and blaming docs/.
+
+what I'd do:
+
+1. **Confirm it's still looping.** I'd run `bin/status.sh` and read a bit more of the log tail. If it's still running and burning tokens, I'd stop it.
+2. **Check the worktree.** I'd confirm `docs/` exists and is writable at the worktree path, and that nothing was written to the main checkout. I'd look at `git status` in both places, read-only.
+3. **Re-brief or message the worker.** The brief would say: "work only in `~/Developer/tang/.claude/worktrees/tang-supermimic-port-study`, don't `cd` to `~/Developer/tang`, write the study to `docs/<name>.md` inside the worktree, don't retry failing calls, and don't touch git config." I'd also cap output on any listing (`| head -60`).
+4. **Report to Cam in 3–6 lines.** It would say what went wrong (wrong cwd, not a real protection), what I changed, and whether the study file landed. No decision is needed unless the worker needs to write outside its worktree. In that case I'd offer numbered options, with "write inside the worktree and I'll move it" as the recommended one.
+
+I wouldn't write the file myself, since that's worker work. I also wouldn't point the worker at /tmp or the main checkout to get around the block.

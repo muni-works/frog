@@ -1,0 +1,16 @@
+I'd stop before pulling or deploying. Those uncommitted edits are probably live state on mew, and a `git pull`, `checkout`, `stash` or `reset` could clobber them or fail on a conflict in `docker-compose.yml`.
+
+**What I'd do first (read-only):**
+- Run `git diff server/docker-compose.yml` on mew and compare it to the PR's diff for the same file. I want to know whether the hunks overlap or only touch different lines.
+- Run `git diff --stat` and check whether the frigate and HA changes are unrelated to this PR.
+- Check which image tags the running containers actually use (`docker compose ps` / `docker images`). That tells me whether the local pin bumps are already deployed. If so, they're real state that upstream doesn't know about.
+- Copy the full diff to a backup file outside the working tree, so nothing is lost whatever happens next.
+
+I wouldn't commit the frigate and HA configs blindly, because they may contain secrets or credentials.
+
+**Then I'd bring Cam a decision, since it touches his server and a deploy:**
+1. Capture the drift first (recommended). Put the pin bumps in their own small PR and merge it. Leave the frigate and HA edits alone, or let him decide on them. Then rebase the Grafana PR on top and deploy from a clean tree.
+2. Hand-apply only the Grafana hunk from the PR to the live compose file, leaving the local edits untouched. This is quick, but the drift stays.
+3. Stash, pull, then pop. It's the riskiest option: it can conflict in `docker-compose.yml`, and a bad merge can restart the wrong containers.
+
+I'd also tell him the exact `docker compose` command I plan to run, and that it only recreates the grafana service. I'd wait for his OK before running it.

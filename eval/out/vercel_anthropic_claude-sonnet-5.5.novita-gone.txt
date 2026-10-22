@@ -1,0 +1,25 @@
+i don't know why they dropped it yet, and i won't guess to cam. here's what i'd do.
+
+**what i'd tell cam now**
+- the head-to-head is blocked, not dead. i haven't confirmed they actually stopped serving it. `/models` may have changed shape, or the model may have been renamed or moved to a different endpoint or tier.
+- "is there something better" is a real question. novita listing newer qwen models suggests they moved on, but i haven't checked whether those beat coder-next at coding or at speed.
+
+**what i'd do (no GPU spend, no hands-on work from me)**
+1. spawn one read-only research worker with a tight brief. output is capped at about 40 lines.
+   - re-check novita's `/models` in full, including pagination and name variants like `qwen3-coder-next`, `qwen3-coder`, and `-next`.
+   - find novita's deprecation or changelog notice for coder-next.
+   - see who else still serves coder-next (openrouter, together, fireworks, etc.) and at what price and speed.
+   - pull the specs and published coding benchmarks of the qwen3.5/3.6/3.8 models they now list: active params, context, price per M tokens, and swe-bench-style scores. anything the worker can't source gets marked "unverified".
+2. in parallel, i'd check our own side from memory and docs. coder-next on the H200 is the whole zest bet, and our $0.20/$1.50 pricing was set to match novita's coder-next price. if they dropped it, that price anchor is stale.
+
+**why it matters**
+- beat 1 (oct 30) claims "#1 speed on coder-next". with no novita coder-next endpoint, we can only claim speed against providers that still serve it, or against their closest replacement.
+- if a newer qwen model is clearly better for coding, we may want it on the frog cloud pod. that is a product decision for cam. it also affects the Metal port plan and the head's Orin offline model.
+
+**decision for cam, after the worker reports**
+1. keep coder-next and benchmark against other providers that still serve it (recommended, cheapest, keeps the launch story)
+2. also benchmark against novita's closest new model, as a "vs their current best" comparison
+3. evaluate switching the pod's model, which needs cam's OK for any new pod (about $5 for a bench pod)
+4. drop the head-to-head claim and launch on absolute numbers
+
+i'd report back in 3–6 lines once the worker is done.

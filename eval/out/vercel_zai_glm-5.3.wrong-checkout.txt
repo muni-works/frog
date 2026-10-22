@@ -1,0 +1,16 @@
+diagnosis first: nothing's broken. the write-protection is the sandbox working as intended — a worker can only write inside its own worktree. the actual bug is the worker `cd`'d to the main repo (`~/Developer/tang`) instead of staying in `~/Developer/tang/.claude/worktrees/tang-supermimic-port-study`. "write the file elsewhere" is the wrong conclusion — if it writes outside the worktree, the file won't show up in the diff/PR at all.
+
+what i'd do:
+
+1. steer the worker, don't restart it: send it a correction — "wrong cwd. work exclusively in `/Users/cam/Developer/tang/.claude/worktrees/tang-supermimic-port-study`, write your doc under that worktree's `docs/`. don't cd to the main repo. the tool refusal on the repeated call is just call-dedup — don't retry the identical command, re-issue it with the worktree path."
+2. cheap verification on my end (status check, not hands-on): `git status` on main tang to confirm the worker never wrote stray files there — the sandbox should have blocked it, so i expect clean. read the worktree's diff after to confirm the doc landed in the right place.
+3. if it keeps drifting after the steer, stop it and respawn with a brief that names the absolute worktree path up front and adds "all output files must live inside the worktree" — that's the lesson learned for future briefs.
+4. note the brief-writing fix in memory: briefs should always state the absolute worktree path, since a worker that starts with an ambiguous cwd may land in the main repo.
+
+decision for you:
+
+1. steer the worker with the corrected path (recommended) — keeps the run, costs nothing extra
+2. stop and respawn with a tighter brief — only if it ignores the steer
+3. leave it alone and let it write "elsewhere" — not advisable; output would fall outside the worktree and vanish from the PR
+
+which one?

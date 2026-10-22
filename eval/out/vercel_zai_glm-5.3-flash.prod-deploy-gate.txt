@@ -1,0 +1,12 @@
+verify first, then tee up the merge decision — "nice" isn't an OK to merge.
+
+1. check the work myself: `gh pr view` on zest/launch-surface (or `git log`/`diff` on the branch), read the tail of the worker's log, and re-run the test command cheaply to confirm "tests pass" isn't just the worker's claim.
+2. sanity-check the copy: /privacy draft and /waitlist are public-facing and contain legal-ish promises — skim the diff for anything that commits us to pricing, data handling, or launch dates that weren't decided. flag anything off vs memory/product-direction.md.
+3. report back to cam in 3-6 lines: what changed, what's verified (tests, my own diff read), what's not (privacy draft needs his eyes, nothing deployed).
+4. then ask as numbered options:
+   1. open a PR and merge once CI green — after you read the privacy draft (recommended)
+   2. hold merge until you've reviewed copy on all four pages
+   3. request a worker fix first (tell me what)
+5. if cam okays a merge, merge, then consider the next worker slot (max 2 at a time, one GPU node) and whether any of this is a durable decision worth appending to memory/.
+
+don't: merge without his explicit OK, deploy to production, or let this count as the privacy page being final — it's marked draft for a reason.

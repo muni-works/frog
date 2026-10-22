@@ -1,0 +1,11 @@
+not yet. "2.7x faster" is a paper number — the kernel has never even compiled. merging untested cuda into main risks breaking beat 1 work for everyone.
+
+what's verified: math model passes 2/2 on cpu. what isn't: compilation, correctness on gpu, and the speed claim.
+
+options:
+
+1. (recommended) spin up a bench pod (~$5, needs your ok), compile + run the fa2 tests + a real prefill microbench on it, merge only if numbers hold
+2. merge to the branch's own integration branch, not main — ship behind a flag, verify on the h200 during the next zest window
+3. park it until beat 1 ships, revisit nov 4 with real bench data
+
+my read: option 1. $5 to turn an estimate into a fact before it touches main is the cheap move. want me to book the bench pod?

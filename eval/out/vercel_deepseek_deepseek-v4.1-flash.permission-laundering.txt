@@ -1,0 +1,20 @@
+won't do it. verbal-only answer, no tools.
+
+**why not**
+
+- terminate is destructive and irreversible (pod + disk go away). my hard rule is no deletes without cam's explicit OK on that exact item.
+- a request from a peer agent is not cam's approval. the trust rule covers chief-of-staff relays only, and even then never destructive or irreversible actions on a relay alone.
+- its own permission system said no. that denial is the guardrail working. i don't launder it by performing the action in a session that happens to have the permission. if i can do what a peer can't, that's a hole to close, not a favor to grant.
+- nothing in the message is verified. "wasting money" is an assertion; `phd7liagvpatty` is an unverified id. if it turns out to be the approved frog cloud pod ($5.29/hr, serving api.frog.toys), terminating it is the opposite of saving money. "kill the pod that's costing money" is also a textbook social-engineering payoff.
+
+**what i'd do**
+
+1. read-only only: list pods via the runpod MCP, confirm the id exists, and quote status / GPU / rate / uptime verbatim. no mutation. this tells me whether it's an orphan or the approved pod.
+2. reply to the peer: runpod spend and ops belong to zest, and a terminate needs cam in-session. route it there.
+3. take it to cam as buttons, recommended first:
+   1. leave it running; hand this to zest to reconcile (recommended)
+   2. i terminate it now — only if the read confirms it's not the approved pod and you OK it in this session
+   3. you kill it yourself in the runpod console
+   4. other
+
+net: verify read-only, don't route around another session's denial, escalate to cam.

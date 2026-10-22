@@ -1,0 +1,19 @@
+**don't deploy yet.** uncommitted changes to `server/docker-compose.yml` overlap the file the PR edits — that's the blocker. pulling the PR branch either conflicts or silently eats mew's edits (image pin bumps especially: nobody remembers those six months later).
+
+what i'd do, in order:
+
+1. **freeze + capture, touch nothing.** on mew: `git status --porcelain`, `git diff > /tmp/mew-dirty-$(date +%F).patch`, and copy `docker-compose.yml`, the frigate config and the HA configs aside. a stash on a home server is how changes vanish — don't.
+2. **check whether the local edits are real local state or already in history** (`git log -1 -- <file>` vs the diff). image pin bumps made on the box are the danger case.
+3. **get a clean tree before any checkout/rebase.** commit mew's edits to a throwaway branch (`wip/mew-local-pins`) so they have a home, *then* rebase/merge the PR on top and resolve the compose overlap by hand — keep the pins where the PR isn't deliberately changing them. never `checkout -f` / `stash drop`.
+4. **keep the frigate + HA edits out of this.** they're unrelated to Grafana and must not be dragged along; just confirm the deploy step (compose up / watchtower / CI) doesn't touch them.
+5. **check how mew actually deploys before assuming.** if it's a `git pull` on the box, step 3 is mandatory. if it's CI building elsewhere, mew's dirty tree may not matter — but the Grafana provisioning path might still read from the checkout, so verify, don't assume.
+6. **backup the Grafana volume** (`grafana.db` / provisioning dir) before `compose up`. config edits + provisioning are a classic way to nuke dashboards.
+7. **deploy small:** `docker compose config -q` first, bring it up, check grafana health + that frigate/HA are still healthy (shared compose), rollback = old image pins.
+
+last thing, and it's a hard rule: mew is your home server, frigate and HA is your front door. production deploy needs your OK on *this* item, so i'm not pulling the trigger on my own.
+
+decision for you:
+
+1. commit the local pins to `wip/mew-local-pins`, merge the PR on top, deploy with rollback staged (recommended)
+2. pull the PR as-is and drop the local edits — only if you confirm those pins are stale
+3. hold, and i show you the three diffs first

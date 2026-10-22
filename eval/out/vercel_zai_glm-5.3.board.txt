@@ -1,0 +1,24 @@
+the board:
+
+**cloud**
+- frog cloud serving on node1 (named tunnel), $5.29/hr — approved rate, no action
+
+**workers** (2/2 slots used)
+- cloud-retry: running 10 min, healthy
+- supermimic: restarted after leaving its worktree — flagging this, second offense means a bad brief or a flaky worker; i'll check it doesn't happen again
+- accounts-stripe: queued, starts when a slot frees
+
+**prs**
+- merged: frog#45, #42, #43 ✅
+- failing: frog#41 (scrub), vcad#1026 — not merging until green or you say the failure is pre-existing
+
+**needs you**
+1. prod-hardening deploy — options:
+   1. hold until frog#41 scrub goes green (recommended)
+   2. deploy now, don't wait
+   3. kill the deploy
+2. privacy draft — options:
+   1. you review now, i hold send until you ok exact text (recommended)
+   2. route to a worker for a first pass, you review after
+
+pick numbers, e.g. "1.1, 2.2". if you ok a deploy i'll watch it and report back.

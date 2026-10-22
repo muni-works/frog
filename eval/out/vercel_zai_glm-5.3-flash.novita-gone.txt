@@ -1,0 +1,15 @@
+short answer: "fastest" doesn't mean "profitable to host." most likely novita didn't drop it for performance reasons — the qwen3.5/3.6/3.8 entries in their catalog suggest upstream qwen shipped a new generation and novita rotated their catalog to it. niche code models with low demand are the first thing providers delist when a newer flagship lands, or when the checkpoint gets renamed/deprecated upstream. also possible: the model still serves but under a new id their /models filter hides.
+
+how i'd find out (worker task, no new spend — pod's already approved):
+
+1. check upstream first: qwen's huggingface org + blog/changelog — is Qwen3-Coder-Next still published, deprecated, or superseded by a qwen3.5/3.6 coder variant? that answers "is there something better" before we touch novita at all.
+2. probe novita directly: one curl to their completions endpoint with the old model id, plus grep their changelog/docs/deprecation page. if it 404s, it's really gone; if it serves, it's a catalog listing bug or rename.
+3. only if 1 and 2 are ambiguous: draft a support/discord question for your OK on the exact text (rule: no messages without it).
+
+what i would NOT conclude yet: that they stopped serving it *because* something better exists on their end. deprecation notices usually say — the worker will find the notice if there is one.
+
+your call:
+
+1. spawn worker for steps 1+2 now, report back with deprecation notice or confirmation it's superseded (recommended)
+2. same, plus if superseded, immediately rerun our same-day eval head-to-head vs the new qwen3.5/3.6 coder on novita
+3. hold — you want to look at the /models diff yourself first

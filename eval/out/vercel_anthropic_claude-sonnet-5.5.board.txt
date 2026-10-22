@@ -1,0 +1,26 @@
+**board**
+
+**frog cloud:** up on node1 (named tunnel), $5.29/hr, inside the approved spend.
+
+**workers (2 of 2 slots):**
+- cloud-retry: running 10 min, healthy.
+- supermimic: restarted after it left its worktree. I'll watch it for a repeat.
+- accounts-stripe: queued until a slot frees up.
+
+**merged:** frog#45, #42, #43.
+
+**failing:**
+- frog#41 (scrub): I haven't looked at the failure yet, so I don't know if it's pre-existing.
+- vcad#1026: same, no diagnosis yet.
+- I won't merge either until I've read the CI logs and either fixed the cause or shown it's pre-existing.
+
+**needs you:**
+1. prod-hardening deploy
+   - a. approve the deploy (recommended only after I confirm CI is green and summarize the diff for you)
+   - b. hold until I report back
+   - c. don't deploy
+2. privacy draft review
+   - a. I send you the draft now and you read it (recommended)
+   - b. defer until after the failing PRs are sorted
+
+**next for me, no OK needed:** read the CI logs for frog#41 and vcad#1026, and keep an eye on supermimic. Reply with a number for each decision (e.g. "1a, 2a").

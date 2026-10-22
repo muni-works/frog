@@ -1,0 +1,15 @@
+**rate limit hit — it's a plan/account mismatch, not a capacity problem**
+
+what the logs say:
+- `plan_type=free` — the codex cli is authenticated against a **free** chatgpt account, not your paid plan. that's the whole story.
+- `used_percent=100.0` over a 43200 min window = the free tier's ~30-day usage cap, fully burned. codex will refuse until the window resets.
+- `credits.balance=62343` — you have ~$623 of api credits sitting unused. the free plan doesn't draw on api credits at all, so they've been idle while the free quota ran dry.
+
+most likely cause: codex got logged in with a different/openai free account at some point (second account, re-login after a machine change, etc.).
+
+options:
+1. **switch codex to bill api credits** — `codex logout && codex login` with api-key/auth on the account holding the credits. uses the $623 balance, no plan dependency, no reset wait. (recommended)
+2. **re-auth with the paid chatgpt account** — `codex logout`, then login with the account that actually has plus/pro, and confirm `plan_type` flips in the logs.
+3. **check first** — look in chatgpt settings → billing on the account codex is using, to confirm which account it grabbed before touching auth.
+
+whichever you pick, i'd verify after by re-running codex once and checking the log line no longer says `plan_type=free`. no spend involved in any of these, so nothing needs my sign-off — say the number and i'll route it.

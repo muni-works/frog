@@ -1,0 +1,28 @@
+**verdict: the worker's wrong. it's not perms — it's the sandbox plus its own loop guard.**
+
+what happened:
+- it `cd`'d to `~/Developer/tang` (the main checkout), not its worktree `~/Developer/tang/.claude/worktrees/tang-supermimic-port-study`. the sandbox lets a worker write only inside its own project/worktree, so anything under the sibling main checkout is refused.
+- the "Not run: this exact call already ran 2 times" line is the repeated-identical-call guard firing. the worker hallucinated a cause ("docs/ is write-protected") from a refusal that was really "wrong path + you're looping."
+- risk: left alone it'll try to write the report outside its worktree (into the main tang tree) or into another repo. that breaks one-worker-per-repo and can dirty git state it isn't allowed to touch.
+
+what i'd do:
+1. stop the worker now — don't let it wander further or retry the same call. it's burning tokens in a loop with a wrong model of the environment.
+2. one cheap read-only check myself: confirm the worktree exists and has its own `docs/` (`ls -ld` both paths). seconds, no GPU.
+3. fix the brief, not the worker. the bug is the brief/launch: it either didn't state the absolute worktree path or implied writes go to the main checkout. respawn on the same branch with:
+   - "you are in `<worktree abs path>` — never `cd` to `~/Developer/tang`"
+   - the deliverable's explicit path *inside the worktree* (or, for a study, no file at all: report back in the final message)
+   - "reads and writes stay in your worktree; output capped (`| head -60`)"
+   - the exact test/read command, and "don't commit" unless the diff is the point.
+4. if the study genuinely doesn't need to write anything, drop the file requirement entirely — a pure read-study worker can't trip this.
+
+report to cam (3-6 lines):
+- tang-supermimic-port-study worker stalled, no useful output; looping on one refused call and mis-diagnosing it as a perms problem.
+- cause: it pointed at the main checkout, sandbox refused, loop guard tripped. not a real repo issue; nothing written, nothing dirty.
+- verified (mine): both paths, worktree intact.
+- cost: a few minutes of one worker, ~no GPU.
+
+next decision:
+1. respawn with the corrected brief above (recommended)
+2. make it read-only (report back, no file) and respawn
+3. kill the line of work for now and tell cam why
+4. other — say what

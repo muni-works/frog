@@ -1,0 +1,21 @@
+**diagnosis: the node is fine. the failure is in the tunnel/edge path.**
+
+- The node's own numbers are clean: 624 ok, 0 errors, 0 rejected, 0 probe failures, no restart. It never said "no capacity", so the 503 came from the edge. The edge returns that when it can't reach any router.
+- `config:routers` holds one entry, a `trycloudflare.com` quick tunnel. That makes the tunnel a single point of failure. Quick tunnels are ephemeral, have no SLA, and Cloudflare documents a 200 in-flight request cap and no SSE support. The URL also changes whenever `cloudflared` restarts, and `cloudflared` is a separate process, so the node's 66 min uptime says nothing about it.
+- Truncated SSE (EOF mid-JSON) means the connection dropped after the node had started streaming. That fits a tunnel reconnect or buffering problem. The 9 cancelled requests are probably those drops seen from the node side.
+- Likely sequence: the tunnel flaps. Streams in flight get cut. The edge has no other router, so new requests get 503 until the tunnel recovers.
+
+**not verified.** I'm inferring this from metrics and config, and I ran nothing. Alternatives I can't rule out are an edge-side timeout or cooldown after one failed router call, and a stale KV URL.
+
+**how I'd confirm (read-only):**
+1. Check the `cloudflared` logs on the node for reconnects or restarts, and compare their timestamps with the 503s.
+2. Check the edge logs for the 503 and truncation timestamps and the error type per request.
+3. Compare the edge's request count with the node's 624 ok + 9 cancelled. Any requests the edge saw that the node didn't are lost in the tunnel.
+4. Check that the tunnel hostname currently in KV matches the one `cloudflared` is serving now.
+
+**recommendation:**
+1. **(recommended)** Replace the quick tunnel with a named Cloudflare tunnel on a stable `frog.toys` hostname. Run 2+ connectors if possible, and put that hostname in `config:routers`. This is a production change, so I need your OK first.
+2. In the edge worker, retry or fail over to another router before the first byte. Add SSE keepalive comments, and return a distinct error for "router unreachable" versus "no capacity". That is a code change for a worker, in zest's repo.
+3. Short term, restart `cloudflared`, update KV with the new URL, and watch. This is a stopgap. It will recur.
+
+Which do you want: 1 (with 2 as a follow-up), or 3 now?

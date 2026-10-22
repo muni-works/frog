@@ -1,0 +1,17 @@
+**note to cam — codex is on the free plan, not paid**
+
+what the log says: `plan_type=free`, primary rate limit **100% used** on a 43200 min window (= 30 days, so a monthly quota, now exhausted), `credits.balance=62343`.
+
+what that means:
+- the account the codex CLI is authed as is **free tier**, so it's drawing down a credit balance, not a subscription. it'll hard-stop on the monthly window until reset or the plan changes.
+- so either (a) the CLI is logged in as a different account than the one with the ChatGPT sub, (b) the sub lapsed / was cancelled, or (c) the paid plan is on that account but codex is picking up the free entitlement — this happens when the CLI is authed via an API key or an old `auth.json` instead of the ChatGPT login.
+- the 62343 credit figure has no unit in the log, so i'm not guessing what it's worth until i see it in the billing page.
+
+what i'd do (not doing it yet): check which identity the CLI is using, diff against the account holding the paid sub, and re-auth if they don't match. i won't touch keys or paste anything — you enter creds yourself.
+
+pick one:
+1. **(recommended)** i pull the codex auth/account identity and tell you exactly which email it's on — then you decide whether to re-auth or move the sub.
+2. you check the OpenAI billing page yourself for the sub status, and tell me the answer; i take it from there.
+3. leave it — we route codex work to frog cloud instead and don't spend time on this.
+
+one more: want me to set a standing check so i flag this if it happens again (any window ≥100%)?

@@ -1,0 +1,29 @@
+## Diagnosis
+
+**The node is healthy — the edge→node path is broken.** Reconciling the metrics:
+
+- `ok=624, error=0, rejected_total=0` — the node never rejected a request and completed everything it received. The "no inference capacity" 503 is **not** coming from the node; there's no capacity shortage on the GPU.
+- `cancelled=9` — the node saw downstream connections drop mid-stream. That's the fingerprint of the truncated SSE streams (EOF mid-JSON): something between the client and the node cut the connection, and the node correctly counted an abort rather than an error.
+- `health_probe_failures=0`, uptime 66 min — rules out node crash-looping or probe failures on the node side.
+
+So the failure is in the transport layer. The smoking gun is the edge's config KV: **one router, at a `trycloudflare.com` URL** — an ephemeral Cloudflare quick tunnel. Two problems:
+
+1. **Stale/flapping tunnel URL.** Quick-tunnel hostnames rotate every time `cloudflared` restarts — and the node's 66-minute uptime says nothing about the tunnel process. If `cloudflared` restarted or flapped, the KV is now pointing at a dead hostname. The edge can't reach any router, reports "no capacity" (a misleading message for a connectivity failure), and the 624 OKs accumulated during the windows when the tunnel was alive.
+2. **Quick tunnels are not production-grade.** They're unauthenticated, best-effort, and prone to resetting long-lived connections — exactly what kills SSE streams mid-JSON. A single router entry is also a single point of failure with no failover.
+
+## Recommendations
+
+**Now (mitigate):**
+1. Verify the tunnel is the failure point: check whether `cloudflared` (or its log) shows a restart / new hostname in the last hour, and compare the current quick-tunnel URL against the KV entry. If stale, update the KV with the live URL (or restart the tunnel and republish).
+2. Confirm edge-side: its connect/timeout errors to the router should spike at the same timestamps as the client 503s.
+
+**Soon (stop the bleeding):**
+3. Replace the quick tunnel with a **named Cloudflare tunnel** on a stable hostname (or direct/mesh ingress), so the router URL is durable across restarts.
+4. Add a second router to the KV for failover — one entry means any blip is a full outage.
+
+**Structural (prevent recurrence):**
+5. Make the node auto-register its router URL via heartbeat, so the KV can never go stale after a tunnel restart.
+6. Fix the error semantics at the edge: distinguish "router unreachable" from "router rejected for capacity" so a 503 says the right thing.
+7. For SSE specifically: check Cloudflare's idle timeout (~100s) against long token streams — add keep-alive heartbeats or bypass the proxy for streaming endpoints; and add an edge metric for router connect failures so this is diagnosable from metrics alone next time.
+
+**Bottom line:** it's a stale/unstable quick-tunnel URL, not GPU capacity. Update or replace the tunnel, add router redundancy and auto-registration, and correct the edge's error reporting.

@@ -1,0 +1,12 @@
+heads up — codex is tapped out and it thinks you're on the free plan. log shows `rate_limits.primary.used_percent=100.0` on a 43200-min (~30-day) window, and `plan_type=free`, even though you've got 62k credits sitting there. so either codex is signed in with a different openai account than your chatgpt sub, or the sub lapsed/isn't linked. credits and chatgpt plan are separate things — the balance being fat doesn't make the plan paid.
+
+what's verified: those log fields, nothing else. what isn't: which account codex is authed with, and your actual billing status — that's your login, i won't touch it.
+
+worth fixing now, since riding out the window means ~30 days of no codex.
+
+1. (recommended) you run `codex /login` and re-auth with the account that has your chatgpt sub — takes a minute, fixes it if it's just wrong-account auth
+2. you check chatgpt.com → account → billing to confirm the sub is actually active, then decide
+3. park codex work on frog cloud for now and sort it later
+4. do nothing and wait for the window to reset — not great, that's a month
+
+reply with a number.
