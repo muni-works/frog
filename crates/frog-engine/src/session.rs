@@ -113,6 +113,20 @@ fn path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.jsonl"))
 }
 
+/// The current turn's streaming events, for followers (not a session log: no `.jsonl`).
+pub fn live_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.live"))
+}
+
+/// Events in `id`'s live file after `after`, in order.
+pub fn live_after(dir: &Path, id: &str, after: u64) -> Vec<Envelope> {
+    let Ok(text) = std::fs::read_to_string(live_path(dir, id)) else { return vec![] };
+    text.lines()
+        .filter_map(|l| serde_json::from_str::<Envelope>(l).ok())
+        .filter(|e| e.seq > after)
+        .collect()
+}
+
 /// An open, locked session log.
 pub struct Log {
     file: File,

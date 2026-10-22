@@ -258,6 +258,9 @@ struct Journal {
     log: Mutex<Option<Log>>,
     /// For the header: cwd and model name.
     header: Mutex<(PathBuf, String)>,
+    /// The current turn's streaming events (text as it arrives, progress), beside the log as
+    /// `<id>.live`, so another process following this session sees it live. Reset each turn.
+    live: Mutex<Option<(String, std::fs::File)>>,
 }
 
 impl Journal {
@@ -269,6 +272,7 @@ impl Journal {
             store,
             log: Mutex::new(None),
             header: Mutex::new((PathBuf::new(), String::new())),
+            live: Mutex::new(None),
         }
     }
 
@@ -338,7 +342,31 @@ impl Journal {
                 message,
             });
         }
+        self.live(&env);
         self.send(env);
+    }
+
+    /// Mirror an event into the session's live file (see `live`). Best effort: following a
+    /// session is a view, never a reason to fail the turn.
+    fn live(&self, env: &Envelope) {
+        let Some(dir) = &self.store else { return };
+        if self.log.lock().unwrap().is_none() {
+            return;
+        }
+        let mut live = self.live.lock().unwrap();
+        let fresh = matches!(env.event, Event::TurnStarted { .. });
+        if fresh || live.as_ref().is_none_or(|(id, _)| *id != env.session) {
+            *live = std::fs::File::create(session::live_path(dir, &env.session))
+                .ok()
+                .map(|f| (env.session.clone(), f));
+        }
+        if let Some((_, f)) = live.as_mut()
+            && let Ok(mut line) = serde_json::to_vec(env)
+        {
+            use std::io::Write;
+            line.push(b'\n');
+            let _ = f.write_all(&line);
+        }
     }
 
     fn send(&self, env: Envelope) {
