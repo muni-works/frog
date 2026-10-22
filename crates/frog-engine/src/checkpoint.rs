@@ -11,6 +11,18 @@ use std::process::Command;
 fn git(root: &Path, index: Option<&Path>, args: &[&str]) -> Result<String> {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(root).args(args);
+    // Checkpoint commits need an identity even where none is configured (CI runners, fresh
+    // containers); only fill in what the environment doesn't already provide.
+    for (k, v) in [
+        ("GIT_AUTHOR_NAME", "frog"),
+        ("GIT_AUTHOR_EMAIL", "frog@localhost"),
+        ("GIT_COMMITTER_NAME", "frog"),
+        ("GIT_COMMITTER_EMAIL", "frog@localhost"),
+    ] {
+        if std::env::var_os(k).is_none() {
+            cmd.env(k, v);
+        }
+    }
     if let Some(i) = index {
         cmd.env("GIT_INDEX_FILE", i);
     }
