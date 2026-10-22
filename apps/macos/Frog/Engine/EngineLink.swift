@@ -6,6 +6,10 @@ extension EngineProcess: ConversationLink {
         let tail = stderr.split(separator: "\n").suffix(3).joined(separator: "\n")
         return tail.isEmpty ? "The frog engine exited (\(exitDescription))." : tail
     }
+
+    /// The process is there to send events. False once it has exited (the pipe's `nil` may
+    /// still be on its way), which is what a stale busy conversation checks.
+    var isAlive: Bool { isRunning }
 }
 
 extension Conversation {

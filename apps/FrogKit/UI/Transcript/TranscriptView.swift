@@ -163,10 +163,12 @@ struct TranscriptView: View {
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 // The running turn's live line shows progress once there's something to show.
+                // A busy state with no live engine behind it (the stream died mid-turn) doesn't:
+                // it's a stale window until the watchdog reconciles from the log.
                 if conversation.replaying {
                     LoadingIndicator(since: conversation.opened)
-                } else if conversation.busy, conversation.permission == nil, conversation.elicitation == nil,
-                   conversation.question == nil,
+                } else if conversation.busy, conversation.engineAlive, conversation.permission == nil,
+                   conversation.elicitation == nil, conversation.question == nil,
                    conversation.turns.last?.items.isEmpty ?? true {
                     WorkingIndicator(progress: conversation.progress, since: conversation.progressSince)
                 }

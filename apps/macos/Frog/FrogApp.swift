@@ -25,6 +25,21 @@ struct FrogApp: App {
         UserDefaults.standard.set(true, forKey: "AppleReduceDesktopTinting")
         Notifier.shared.setup()
         Conversation.effects = MacEffects.shared
+        Conversation.logReader = { id, after in
+            // The durable half of the session log (what a dead engine left behind), read the
+            // same way the phone bridge reads it.
+            let log = Frog.sessions.appending(path: "\(id).jsonl")
+            guard let text = try? String(contentsOf: log, encoding: .utf8) else { return [] }
+            let decoder = JSONDecoder.frog
+            return text.split(separator: "\n").compactMap { line -> Envelope? in
+                guard line.contains(#""type":"event""#) else { return nil }
+                guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                      let env = obj["env"] else { return nil }
+                guard let data = try? JSONSerialization.data(withJSONObject: env) else { return nil }
+                guard let e = try? decoder.decode(Envelope.self, from: data), e.seq > after else { return nil }
+                return e
+            }
+        }
         SessionBroker.shared.install()
         ModelContext.useMac()
         DiagramLayout.mermaid = { source, cwd in

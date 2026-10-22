@@ -159,6 +159,9 @@ final class EngineProcess {
         return "\(how) \(process.terminationStatus)"
     }
 
+    /// The engine process is still running (see `ConversationLink.isAlive`).
+    var isRunning: Bool { process.isRunning }
+
     /// Engine stderr is also appended here, for debugging.
     nonisolated static let logURL: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Frog")
