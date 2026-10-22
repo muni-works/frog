@@ -2,7 +2,9 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
+      - "v*-rc*"
 
 permissions:
   contents: write
@@ -19,12 +21,15 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-14
             zig: false
+            bundle: true
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             zig: false
+            bundle: false
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             zig: true
+            bundle: false
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -53,11 +58,32 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
+          BUNDLE: ${{ matrix.bundle }}
         run: |
           name="frog-${GITHUB_REF_NAME}-${TARGET}"
           mkdir -p "dist/$name"
           cp "target/${TARGET}/release/frog" "dist/$name/"
           cp README.md "dist/$name/"
+          if [ "$BUNDLE" = "true" ]; then
+            # For macOS, also build and package the app for unsigned releases
+            # Signed releases use the full release.sh script
+            cd apps/macos
+            xcodegen generate --quiet
+            xcodebuild build -quiet \
+              -project Frog.xcodeproj -scheme Frog -configuration Release \
+              -derivedDataPath build/release -destination 'generic/platform=macOS' \
+              ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+              MARKETING_VERSION="${GITHUB_REF_NAME#v}" CURRENT_PROJECT_VERSION="1" \
+              FROG_REQUIRE_TANG=1 \
+              CODE_SIGN_IDENTITY="-" \
+              DEVELOPMENT_TEAM="" \
+              CODE_SIGN_STYLE="Manual"
+            APP="build/dist/${GITHUB_REF_NAME#v}/Frog.app"
+            ditto "build/release/Build/Products/Release/Frog.app" "$APP"
+            ditto -c -k --keepParent "$APP" "$APP/../Frog.zip"
+            cd -
+            cp "apps/macos/build/dist/${GITHUB_REF_NAME#v}/Frog.zip" "dist/$name/"
+          fi
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           cd dist
           if command -v sha256sum >/dev/null; then
@@ -65,12 +91,17 @@ jobs:
           else
             shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
           fi
+          if [ "$BUNDLE" = "true" ]; then
+            sha256sum "Frog.zip" > "Frog.zip.sha256"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
           path: |
             dist/*.tar.gz
             dist/*.sha256
+            dist/Frog.zip
+            dist/Frog.zip.sha256
 
   release:
     needs: build
@@ -82,9 +113,20 @@ jobs:
           merge-multiple: true
       - name: combined checksums
         run: cd dist && cat ./*.sha256 > SHA256SUMS
+      - name: check if prerelease
+        id: prerelease
+        run: |
+          if [[ "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.tar.gz
             dist/*.sha256
             dist/SHA256SUMS
+            dist/Frog.zip
+            dist/Frog.zip.sha256
+          prerelease: ${{ steps.prerelease.outputs.prerelease == 'true' }}

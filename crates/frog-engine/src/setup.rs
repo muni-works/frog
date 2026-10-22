@@ -14,11 +14,11 @@ pub const DEFAULT_MODEL: &str = "mlx-community/Qwen3-4B-4bit";
 
 const TANG_GIT: &str = "https://github.com/ecto/tang";
 
-// TODO(release): no prebuilt tang-llm exists yet. Needed: a GitHub release on ecto/tang with an
-// asset `tang-llm-aarch64-apple-darwin.tar.gz` holding a single `tang-llm` binary built with
-// `cargo build --release -p tang-llm --features metal`, Developer ID signed and notarized (or
-// at least ad-hoc signed), so `releases/latest/download/<asset>` resolves. Until then this URL
-// 404s and setup falls back to `cargo install --git`.
+// Prebuilt tang-llm release asset URL. The asset must be built with:
+//   cargo build --release -p tang-llm --features metal
+// and signed (Developer ID or ad-hoc) for Apple silicon.
+//
+//
 const TANG_RELEASE: &str =
     "https://github.com/ecto/tang/releases/latest/download/tang-llm-aarch64-apple-darwin.tar.gz";
 

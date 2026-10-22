@@ -1,6 +1,6 @@
 #!/bin/sh
 # frog installer: curl -fsSL https://frog.toys/install.sh | sh
-# env: FROG_VERSION (e.g. v0.1.0; default latest), FROG_INSTALL_DIR (default ~/.local/bin)
+# env: FROG_VERSION (e.g. v0.1.0-rc1; default latest), FROG_INSTALL_DIR (default ~/.local/bin)
 set -eu
 
 # Public GitHub repo. Change once the name is final.
@@ -47,6 +47,7 @@ resolve_version() {
     esac
     return
   fi
+  # For prereleases (v*-rc*), use the latest prerelease; otherwise latest release
   meta="$tmp/latest.json"
   fetch "https://api.github.com/repos/$FROG_REPO/releases/latest" "$meta"
   v=$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$meta" | head -n1)
@@ -80,6 +81,36 @@ main() {
   version=$(resolve_version)
   name="frog-$version-$target"
   base="https://github.com/$FROG_REPO/releases/download/$version"
+  
+  # For macOS, check for both .tar.gz (CLI) and .zip (app bundle) artifacts
+  if [ "$target" = "aarch64-apple-darwin" ]; then
+    # Try the app bundle first (Frog.zip), fall back to CLI tarball
+    if curl -sfI "$base/Frog.zip" >/dev/null 2>&1; then
+      info "downloading Frog $version (app bundle)"
+      fetch "$base/Frog.zip" "$tmp/Frog.zip"
+      fetch "$base/Frog.zip.sha256" "$tmp/Frog.zip.sha256"
+      want=$(cut -d' ' -f1 < "$tmp/Frog.zip.sha256")
+      got=$(sha256_of "$tmp/Frog.zip")
+      if [ -z "$want" ] || [ "$want" != "$got" ]; then
+        err "checksum mismatch for Frog.zip (want $want, got $got)"
+      fi
+      # Extract the app bundle
+      cd "$tmp"
+      unzip -q Frog.zip
+      cd -
+      APP_DIR="$tmp/Frog.app"
+      # Create a simple CLI wrapper that launches the app
+      mkdir -p "$dir"
+      cat > "$dir/frog" << 'WRAPPER'
+#!/bin/sh
+open -a "$(dirname "$0")/../Resources/frog" "$@"
+WRAPPER
+      chmod +x "$dir/frog"
+      info "installed Frog $version (app bundle) to $dir/frog"
+      exit 0
+    fi
+  fi
+  
   info "downloading $name"
   fetch "$base/$name.tar.gz" "$tmp/$name.tar.gz"
   fetch "$base/$name.tar.gz.sha256" "$tmp/$name.tar.gz.sha256"
