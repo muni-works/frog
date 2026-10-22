@@ -40,7 +40,8 @@ enum Decision: String, Codable, Sendable {
 }
 
 enum Op: Encodable, Sendable {
-    case submit(String, images: [ToolImage] = [])
+    /// `more`: further messages sent with this one (queued follow-ups), run as the same turn.
+    case submit(String, images: [ToolImage] = [], more: [MessagePart] = [])
     case shell(String)
     /// A press on a `Present` actions button; runs a turn with `send` (or the label).
     case act(label: String, send: String)
@@ -90,16 +91,17 @@ enum Op: Encodable, Sendable {
         case op, text, command, id, decision, mode, spec, focus, after, title
         case action, content, server, tool, arguments, images
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
-        case ask, choices, other, label, send, note, sessions, from, fromName = "from_name"
+        case ask, choices, other, label, send, note, sessions, from, fromName = "from_name", more
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         switch self {
-        case .submit(let text, let images):
+        case .submit(let text, let images, let more):
             try c.encode("submit", forKey: .op)
             try c.encode(text, forKey: .text)
             if !images.isEmpty { try c.encode(images, forKey: .images) }
+            if !more.isEmpty { try c.encode(more, forKey: .more) }
         case .act(let label, let send):
             try c.encode("act", forKey: .op)
             try c.encode(label, forKey: .label)
@@ -441,6 +443,31 @@ struct ToolImage: Codable, Sendable, Hashable {
     var data: String
 }
 
+/// One message the user typed, when several go as one turn (`Op.submit`'s `more`).
+struct MessagePart: Codable, Sendable, Hashable {
+    var text: String
+    var images: [ToolImage] = []
+
+    init(text: String, images: [ToolImage] = []) {
+        self.text = text
+        self.images = images
+    }
+
+    private enum Key: String, CodingKey { case text, images }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        text = try c.decode(String.self, forKey: .text)
+        images = try c.decodeIfPresent([ToolImage].self, forKey: .images) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Key.self)
+        try c.encode(text, forKey: .text)
+        if !images.isEmpty { try c.encode(images, forKey: .images) }
+    }
+}
+
 /// An MCP App (`ui://` resource): its HTML and the tool's raw result, saved by the engine.
 struct AppView: Decodable, Sendable, Hashable {
     var server: String
@@ -516,7 +543,8 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
 }
 
 enum Event: Decodable, Sendable {
-    case turnStarted(turn: UInt64, input: String, images: [ToolImage])
+    /// `more`: the messages sent along with `input`, in order, each its own bubble.
+    case turnStarted(turn: UInt64, input: String, images: [ToolImage], more: [MessagePart])
     case turnEnded(turn: UInt64, reason: EndReason, usage: TurnUsage)
     case itemStarted(id: String, kind: ItemKind)
     case itemCompleted(id: String, item: Item)
@@ -587,7 +615,7 @@ extension Event {
         case turn, input, reason, usage, id, kind, item, delta, decision, ids
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
-        case images
+        case images, more
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
     }
 
@@ -599,7 +627,8 @@ extension Event {
             self = .turnStarted(
                 turn: try c.decode(UInt64.self, forKey: .turn),
                 input: try c.decode(String.self, forKey: .input),
-                images: try c.decodeIfPresent([ToolImage].self, forKey: .images) ?? [])
+                images: try c.decodeIfPresent([ToolImage].self, forKey: .images) ?? [],
+                more: try c.decodeIfPresent([MessagePart].self, forKey: .more) ?? [])
         case "turn_ended":
             self = .turnEnded(
                 turn: try c.decode(UInt64.self, forKey: .turn),

@@ -62,6 +62,7 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
     h.ops.send(Op::Submit {
         text: prompt,
         images: Vec::new(),
+        more: Vec::new(),
     })?;
     h.ops.send(Op::Shutdown)?;
     let mut ok = false;

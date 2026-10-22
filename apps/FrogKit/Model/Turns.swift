@@ -114,6 +114,8 @@ struct TurnState: Identifiable {
     var input: String
     /// Images attached to the message.
     var images: [ToolImage] = []
+    /// Messages sent along with `input` as the same turn (queued follow-ups), in order.
+    var more: [MessagePart] = []
     var items: [ItemState] = []
     var end: EndReason?
     var usage: TurnUsage?

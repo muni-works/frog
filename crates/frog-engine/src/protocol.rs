@@ -72,6 +72,10 @@ pub enum Op {
         /// Images attached to the message.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<Image>,
+        /// More messages sent with this one, in order (follow-ups queued while a turn ran).
+        /// They run as the same turn, each its own block of the user's message.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        more: Vec<Part>,
     },
     /// The user pressed a button in a `Present` actions block. Runs a turn like [`Op::Submit`]
     /// with `send` (or `label` when `send` is empty) as the message.
@@ -322,6 +326,9 @@ pub enum Event {
         input: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<Image>,
+        /// The messages sent along with `input` ([`Op::Submit`]'s `more`), in order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        more: Vec<Part>,
     },
     TurnEnded {
         turn: u64,
@@ -674,6 +681,14 @@ pub struct Image {
     pub data: String,
 }
 
+/// One message the user typed, when several go as one turn (see [`Op::Submit`]'s `more`).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Part {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<Image>,
+}
+
 /// An MCP App (`ui://` resource) to render for a tool result. The HTML and the raw
 /// `CallToolResult` can be large, so they live in files under the frog data dir.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -961,6 +976,31 @@ pub struct Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn submit_more_is_optional_both_ways() {
+        // An older client's submit still parses, and one message serializes as it always did.
+        let old = r#"{"op":"submit","text":"hi"}"#;
+        let op: Op = serde_json::from_str(old).unwrap();
+        assert!(matches!(&op, Op::Submit { more, .. } if more.is_empty()));
+        assert_eq!(serde_json::to_string(&op).unwrap(), old);
+        let op: Op = serde_json::from_str(
+            r#"{"op":"submit","text":"a","more":[{"text":"b"},{"text":"c","images":[{"mime":"image/png","data":"AA"}]}]}"#,
+        )
+        .unwrap();
+        let Op::Submit { more, .. } = op else {
+            panic!("not a submit")
+        };
+        assert_eq!(
+            more.iter().map(|p| p.text.as_str()).collect::<Vec<_>>(),
+            ["b", "c"]
+        );
+        assert_eq!(more[1].images.len(), 1);
+        // Logged turns from before parse too.
+        let started: Event =
+            serde_json::from_str(r#"{"event":"turn_started","turn":1,"input":"x"}"#).unwrap();
+        assert!(matches!(started, Event::TurnStarted { more, .. } if more.is_empty()));
+    }
 
     #[test]
     fn turn_usage_without_timing_still_parses() {

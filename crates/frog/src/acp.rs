@@ -202,6 +202,7 @@ pub async fn serve(
                 let _ = s.ops.send(frog_engine::protocol::Op::Submit {
                     text,
                     images: prompt_images(&req.prompt),
+                    more: Vec::new(),
                 });
                 let conn = conn.clone();
                 tokio::spawn(async move {

@@ -105,6 +105,7 @@ pub async fn run(
     child.0.ops.send(Op::Submit {
         text: prompt,
         images: Vec::new(),
+        more: Vec::new(),
     })?;
     let (mut report, mut steps, mut started) = (String::new(), 0u32, false);
     // The message being written, so a stop keeps the partial report.
