@@ -173,6 +173,9 @@ final class SessionBroker {
     /// Whether session `id` is really mid-turn or has messages waiting (replayed history
     /// reports otherwise, and a notice about a session that's working would be false).
     var targetBusy: (_ id: String) -> Bool = { _ in false }
+    /// The conversation a window shows for session `id`, if any (the app's `Library`); the
+    /// broker's own background engines are in `background`.
+    var windowConversation: (_ id: String) -> Conversation? = { _ in nil }
     /// What session `id` said and how its last turn ended, for the report a watcher gets when
     /// it goes idle (the hand-back from a session it started or messaged).
     var lastReport: (_ id: String) -> String? = { _ in nil }
@@ -837,12 +840,13 @@ final class SessionBroker {
         // flush. Reconcile from the log the way the window's own watchdog does: the turn
         // ends as the log says and the queued count clears, so delivered messages run when
         // an engine next starts (a user action; no auto-resume here).
-        if let c = Library.shared.conversation(id) ?? background[id], !c.isLive,
+        if let c = windowConversation(id) ?? background[id], !c.isLive,
            inbound[id] != 0 || !c.queue.isEmpty || c.turns.last.map({ !$0.finished }) == true {
             // Cleared here (not inside the async reconcile): callers reading the queued
             // count right after this report must see it drained.
             inbound[id] = 0
             Task { await c.reconcile() }
+            return
         }
         // Idle only when nothing is running and nothing is queued: a live engine mid-turn
         // (or one with messages waiting) gets no notice, whatever the last report said.
@@ -1081,6 +1085,7 @@ extension SessionBroker {
                 warning: true)
         }
         currentInput = { id in Library.shared.conversation(id)?.turns.last?.input }
+        windowConversation = { id in Library.shared.conversation(id) }
         targetBusy = { id in
             guard let c = Library.shared.conversation(id) ?? self.background[id] else { return false }
             return c.busy || c.turns.last.map { !$0.finished } == true || !c.queue.isEmpty

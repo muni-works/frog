@@ -285,7 +285,7 @@ final class SessionBrokerTests: XCTestCase {
     }
 
     @MainActor
-    func testADeadEngineMidTurnIsReconciledNotReportedIdle() throws {
+    func testADeadEngineMidTurnIsReconciledNotReportedIdle() async throws {
         let b = broker([chief, eng])
         let child = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-dead"))
         let start = try JSONDecoder.frog.decode(Envelope.self, from: Data(
@@ -306,6 +306,22 @@ final class SessionBrokerTests: XCTestCase {
         Conversation.logReader = { [self] id, after in id == eng.id && after < 2 ? [end] : [] }
         b.observe(eng.id, running: false, waiting: false)
         XCTAssertTrue(delivered.isEmpty, "no idle notice: the open turn is settled from the log, not finished")
+        // The log settles it (the turn ended there); the conversation's next report (as
+        // `Library.report` forwards it) finds it idle: now the parent hears, once.
+        await settled(child)
+        XCTAssertEqual(child.busy, false)
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertEqual(delivered.count, 1)
+        XCTAssertTrue(delivered.first?.message.contains("is idle") == true)
+    }
+
+    /// Wait for a dead conversation's reconcile (a Task) to apply the log, so the next test
+    /// never sees it half-done (it's registered in `Library.shared` until it lets go).
+    private func settled(_ c: Conversation) async {
+        for _ in 0..<200 where c.turns.last.map({ !$0.finished }) ?? false {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(c.turns.last?.finished, true, "the reconcile applied the log's turn_ended")
     }
 
     /// A dead engine leaves the session "busy" forever: the broker reconciles the open turn
@@ -336,9 +352,20 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertTrue(replayed.isEmpty)
         // …and nothing is delivered while no engine is live.
         XCTAssertTrue(delivered.isEmpty)
-        // The open turn settles with the log.
+        // The open turn settles with the log: not busy any more…
+        await settled(target)
+        XCTAssertEqual(target.busy, false)
         let info = await b.status(of: eng.id)
         XCTAssertEqual(info?.turnRunning, false)
+        XCTAssertEqual(info?.queuedMessages, 0)
+        // …so the next message delivers (reaching the session restarts its engine) instead
+        // of queueing behind a turn that will never end.
+        b.observe(eng.id, running: false, waiting: false)
+        guard case .success = b.send(from: chief.id, name: chief.name, to: eng.id, message: "again", notifyWhenIdle: false) else {
+            return XCTFail("the reconciled session couldn't be reached")
+        }
+        XCTAssertEqual(delivered.map(\.message), ["again"])
+        XCTAssertTrue(replayed.isEmpty, "still no auto-resume")
     }
 
     func testRoutesByNameIgnoringCase() throws {
