@@ -25,7 +25,7 @@ extension ConversationLink {
     func stop(reason: String) { stop() }
     /// No-op for links without a process of their own (the phone bridge); the Mac's engine
     /// process overrides it.
-    func forceKill() {}
+    func forceKill(reason: String) {}
 }
 
 /// What a platform does when things happen in a conversation: sounds, the Mac's sidebar and
@@ -481,9 +481,10 @@ final class Conversation {
     }
 
     /// Force-kill the engine: an app update's drain deadline passed without an ack. Its turn
-    /// stays open in the log — the crash shape the resume path picks up.
-    func forceKillEngine() {
-        link?.forceKill()
+    /// stays open in the log — the crash shape the resume path picks up. `reason` lands in
+    /// the engine log's `exit:` line.
+    func forceKillEngine(reason: String) {
+        link?.forceKill(reason: reason)
     }
 
     /// Returns once a reopened session's history is in, or after `limit` if that's slow.

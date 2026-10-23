@@ -40,7 +40,7 @@ enum UpdateDrain {
         }
         for c in conversations {
             let outcome = await c.awaitDrain(within: budget)
-            if outcome == .timeout { c.forceKillEngine() }
+            if outcome == .timeout { c.forceKillEngine(reason: "app update (drain deadline missed)") }
         }
     }
 }

@@ -293,14 +293,15 @@ final class EngineProcess {
     }
 
     /// Force-kill now: an engine that missed an update's drain deadline. Its turn stays open
-    /// in the log, which is exactly the crash shape the resume path already picks up.
-    func kill() {
-        if process.isRunning { process.terminate() }
-        let p = process
-        Task.detached {
-            try? await Task.sleep(for: .milliseconds(500))
-            if p.isRunning { p.terminate() }
+    /// in the log, which is exactly the crash shape the resume path already picks up. One
+    /// stop path with `stop(reason:)`: the kill records the reason the same way, then
+    /// terminates at once (SIGTERM; the engine's own runtime turns that into its exit).
+    func kill(reason: String) {
+        if identity.stopReason == nil {
+            identity.stopReason = reason
+            Self.log("stop pid \(process.processIdentifier) session \(identity.session ?? "?"): \(reason)")
         }
+        if process.isRunning { process.terminate() }
     }
 }
 

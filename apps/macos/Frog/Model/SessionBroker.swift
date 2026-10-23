@@ -806,7 +806,7 @@ final class SessionBroker {
             inbound[id] = (Library.shared.conversation(id) ?? background[id])?.pendingDeliveries ?? 0
             // What it HAS taken is off the re-send list: an update restart must not replay
             // messages the engine already ran.
-            let taken = inbound[id]
+            let taken = inbound[id] ?? 0
             if var list = pendingInbox[id] {
                 list.removeFirst(min(taken, list.count))
                 pendingInbox[id] = list.isEmpty ? nil : list
