@@ -915,7 +915,6 @@ final class SessionBroker {
     static func apply(_ stored: (model: String?, mode: Mode?), to c: Conversation) {
         if let mode = stored.mode { c.setMode(mode) }
     }
-    }
 
     /// A pane opening session `id` takes over its background engine instead of starting another.
     func adopt(_ id: String) -> Conversation? {

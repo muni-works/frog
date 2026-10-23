@@ -3076,11 +3076,11 @@ impl Agent {
                 });
             }
         };
+        let cwd_before = self.ctx.cwd.clone();
         let mut out = {
             // Stop cancels a long tool in flight (Bash kills its process group), not just
             // between tools: watch the turn's token alongside the tool future.
             self.ctx.cancel = Some(self.shared.cancel.lock().unwrap().clone());
-        let cwd_before = self.ctx.cwd.clone();
             let run = tools::run(name, input, &mut self.ctx);
             tokio::pin!(run);
             loop {
