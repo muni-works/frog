@@ -279,7 +279,12 @@ async fn drive(
 
 /// Shut the engine down and read what's left.
 async fn close(h: Handle, out: &mut RunResult, at: &mut Place) {
-    let Handle { ops, mut events } = h;
+    // The bench never bridges the IRC bus; `..` keeps this compiling as Handle grows.
+    let Handle {
+        ops,
+        mut events,
+        bus: _,
+    } = h;
     let _ = ops.send(Op::Shutdown);
     while let Ok(Some(env)) = tokio::time::timeout(Duration::from_secs(15), events.recv()).await {
         record(env, out, at);
