@@ -122,11 +122,15 @@ final class Library {
         conversations[id]?.value
     }
 
-    /// An open conversation's state; called as its events arrive.
+    /// An open conversation's state; called as its events arrive. The one truth for the
+    /// sidebar's dot and every list: a session is running when a turn is open OR messages
+    /// are still queued in its engine's inbox (bug 2d — a queued-only session used to read
+    /// as idle until its next turn boundary).
     func report(_ id: String, conversation: Conversation, running: Bool, waiting: Bool) {
         conversations[id] = WeakConversation(value: conversation)
         SessionBroker.shared.observe(id, running: running, waiting: waiting)
-        let now: Live? = waiting ? .waiting : running ? .running : (live[id] == .unread ? .unread : nil)
+        let queued = SessionBroker.shared.pendingInbound(id) != 0
+        let now: Live? = waiting ? .waiting : (running || queued) ? .running : (live[id] == .unread ? .unread : nil)
         if live[id] != now {
             live[id] = now
             RemoteBridge.shared.listChanged()
@@ -142,6 +146,15 @@ final class Library {
 
     func markRead(_ id: String) {
         if live[id] == .unread { live[id] = nil }
+    }
+
+    /// A message landed in session `id`'s engine inbox while it was busy: the sidebar dot
+    /// says running right away, not only at the next turn boundary.
+    func reportQueued(_ id: String) {
+        if live[id] != .waiting, live[id] != .running {
+            live[id] = .running
+            RemoteBridge.shared.listChanged()
+        }
     }
 
     // MARK: Windows

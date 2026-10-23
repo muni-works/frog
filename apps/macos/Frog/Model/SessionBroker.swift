@@ -20,6 +20,66 @@ final class SessionBroker {
         var cwd: String?
         var model: String?
         var modified: Int64 = 0
+        /// Worktree info, when asked for (ListSessions fields: branch, ahead, dirty).
+        var branch: String?
+        var ahead: Int?
+        var dirty: Int?
+    }
+
+    /// Everything `SessionStatus` reports about one session, in one structured answer.
+    /// The state is the single truth the sidebar and picker use too: idle only when no turn
+    /// is running AND nothing is queued (bug 2d: replayed history used to read as idle).
+    struct StatusInfo: Equatable {
+        var engineAlive = false
+        /// A turn is open right now (turn number in `turn`).
+        var turnRunning = false
+        var turn: Int?
+        var turnSeconds: Int?
+        /// Waiting on the user: a permission, a question, an elicitation.
+        var waiting = false
+        var lastEnd: String?
+        var model: String?
+        var mode: String?
+        /// Model calls across the session's turns so far.
+        var modelCalls = 0
+        var pendingApprovals = 0
+        var pendingSummary: String?
+        /// Inbound session messages sitting in the engine's inbox, waiting for the boundary.
+        var queuedMessages = 0
+        var cwd: String?
+        var branch: String?
+        var ahead: Int?
+        var dirty: Int?
+
+        /// "running", "waiting", "idle", or "dead" (no live engine). A queued message keeps
+        /// a session running, whatever the last live report said.
+        var state: String {
+            if !engineAlive { return "dead" }
+            if waiting { return "waiting" }
+            if turnRunning || queuedMessages > 0 { return "running" }
+            return "idle"
+        }
+
+        var json: JSONValue {
+            var o: [String: JSONValue] = [
+                "engine_alive": .bool(engineAlive),
+                "state": .string(state),
+                "model_calls": .number(Double(modelCalls)),
+                "pending_approvals": .number(Double(pendingApprovals)),
+                "queued_messages": .number(Double(queuedMessages)),
+            ]
+            if let t = turn { o["turn"] = .number(Double(t)) }
+            if let s = turnSeconds { o["turn_seconds"] = .number(Double(s)) }
+            if let e = lastEnd { o["last_ended"] = .string(e) }
+            if let m = model { o["model"] = .string(m) }
+            if let m = mode { o["mode"] = .string(m) }
+            if let s = pendingSummary { o["pending"] = .string(s) }
+            if let c = cwd { o["cwd"] = .string(c) }
+            if let b = branch { o["branch"] = .string(b) }
+            if let a = ahead { o["ahead"] = .number(Double(a)) }
+            if let d = dirty { o["dirty"] = .number(Double(d)) }
+            return .object(o)
+        }
     }
 
     /// What `StartSession` asked for.
@@ -40,11 +100,63 @@ final class SessionBroker {
         var base: String?
     }
 
+    /// ListSessions filters: a small, bounded answer instead of every row.
+    struct ListFilter: Equatable {
+        var cwdPrefix: String?
+        var state: String?
+        /// Unix seconds; only sessions active after this.
+        var since: Int?
+        var limit: Int
+        var fields: [String]
+
+        /// The default row cap: a chief's ListSessions never dumps the whole app.
+        static let defaultLimit = 30
+
+        init(input: JSONValue) {
+            cwdPrefix = input["cwd_prefix"]?.string
+            state = input["state"]?.string
+            since = input["since"]?.int
+            limit = min(max(input["limit"]?.int ?? Self.defaultLimit, 1), 100)
+            fields = (input["fields"]?.array ?? []).compactMap(\.string)
+        }
+
+        func apply(to entries: [Entry], now: Date) -> [Entry] {
+            let sinceDate = since.map { Date(timeIntervalSince1970: Double($0)) }
+            return entries.filter { e in
+                if let p = cwdPrefix, !(e.cwd ?? "").hasPrefix(p) { return false }
+                if let s = state, e.state != s { return false }
+                if let d = sinceDate, e.modified < Int(d.timeIntervalSince1970 * 1000) { return false }
+                return true
+            }
+            .prefix(limit)
+            .map { $0 }
+        }
+    }
+
+    /// Worktree git info for each row that asked for it (fields: branch, ahead, dirty).
+    private static func withGit(_ rows: [Entry]) async -> [Entry] {
+        var out: [Entry] = []
+        for var e in rows {
+            if let cwd = e.cwd.map({ URL(fileURLWithPath: $0) }) {
+                let (branch, ahead, dirty) = await Git.quick(cwd)
+                e.branch = branch
+                e.ahead = ahead
+                e.dirty = dirty
+            }
+            out.append(e)
+        }
+        return out
+    }
+
     /// Messages a session may send (or sessions it may start) without the user doing anything.
     static let rateLimit = 30
     static let rateWindow: TimeInterval = 10 * 60
 
     var directory: () -> [Entry] = { [] }
+    /// Like `directory`, but including archived sessions (to resolve one for unarchiving).
+    var directoryIncludingArchived: () -> [Entry] = { [] }
+    /// Hide (or show) a session in the sidebar, exactly like the sidebar's own archive.
+    var archiver: (_ id: String, _ on: Bool) -> Void = { _, _ in }
     /// Deliver an op to session `id`, starting its engine if needed. False if it can't be reached.
     var reach: (_ id: String, _ from: String, _ fromName: String, _ message: String) -> Bool = { _, _, _, _ in false }
     var starter: (_ request: StartRequest, _ parent: Conversation?) async throws -> Started = { _, _ in
@@ -62,6 +174,12 @@ final class SessionBroker {
     /// What session `id` said and how its last turn ended, for the report a watcher gets when
     /// it goes idle (the hand-back from a session it started or messaged).
     var lastReport: (_ id: String) -> String? = { _ in nil }
+    /// Inbound session messages waiting in a target engine's inbox, by session id. Counted
+    /// here because the engine holds them; bumped on send, cleared when the target runs
+    /// them (its turn starts) or is restarted dead.
+    private var inbound: [String: Int] = [:]
+    /// When each session's current permission card arrived (ListApprovals reports its age).
+    private var waitingSince: [String: Date] = [:]
 
     /// Sends since the user last did something, per sending session.
     private var sent: [String: [Date]] = [:]
@@ -134,8 +252,23 @@ final class SessionBroker {
         let sender = c.sessionID ?? ""
         let input = r.input
         switch r.tool {
-        case "ListSessions":
-            c.replySession(r.id, result: Self.json(list(excluding: sender)))
+        case "ListSessions": {
+            // Filters (cwd_prefix, state, since, fields) with a default limit of 30: never
+            // the ~150-row dump the unfiltered listing was. Branch info (branch, ahead,
+            // dirty) costs a git call per worktree row, so only when asked for.
+            let filter = Self.ListFilter(input: input)
+            let base = list(excluding: sender)
+            let rows = filter.apply(to: base, now: now())
+            let wantGit = !filter.fields.filter { ["branch", "ahead", "dirty"].contains($0) }.isEmpty
+            if !wantGit {
+                c.replySession(r.id, result: Self.json(rows, fields: filter.fields))
+                return
+            }
+            Task { [weak c] in
+                let enriched = await Self.withGit(rows)
+                c?.replySession(r.id, result: Self.json(enriched, fields: filter.fields))
+            }
+        }()
         case "SendMessage":
             let result = send(
                 from: sender, name: name(of: c),
@@ -167,9 +300,324 @@ final class SessionBroker {
                     c?.replySession(r.id, error: error.localizedDescription)
                 }
             }
+        case "ArchiveSession", "UnarchiveSession":
+            // Exactly the sidebar's archive (Library.setArchived): hides from lists, never
+            // deletes the log. The archived set lives in the app's defaults, so resolving a
+            // name only sees unarchived sessions — resolve against everything to unarchive.
+            let key = input["id"]?.string ?? ""
+            let on = r.tool == "ArchiveSession"
+            switch on ? resolve(key) : resolve(key, includeArchived: true) {
+            case .success(let e):
+                guard e.id != sender else { return c.replySession(r.id, error: "That's this session.") }
+                archive(e.id, on)
+                c.replySession(r.id, result: .string(
+                    "\(on ? "Archived" : "Unarchived") \(e.name) (\(e.id)).\(on ? " Its log is kept; UnarchiveSession brings it back." : " It's back in the sidebar.")"))
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
+        case "SessionStatus":
+            let key = input["id"]?.string ?? ""
+            let target: Result<Entry, BrokerError>
+            if key.isEmpty || key == sender {
+                // This session: answer from what it knows about itself.
+                c.replySession(r.id, result: selfStatus(of: c).map(\.json) ?? .null)
+                return
+            }
+            target = resolve(key)
+            switch target {
+            case .success(let e):
+                Task { [weak c] in
+                    guard var info = await Self.readStatus(e.id, broker: self) else {
+                        c?.replySession(r.id, error: "Couldn't read \(e.name) (\(e.id)).")
+                        return
+                    }
+                    info.queuedMessages = self.inbound[e.id] ?? 0
+                    c?.replySession(r.id, result: info.json)
+                }
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
+        case "ReadSession":
+            switch resolve(input["id"]?.string ?? "") {
+            case .success(let e):
+                let n = input["last_n"]?.int ?? 20
+                let kinds = (input["kinds"]?.array ?? []).compactMap(\.string)
+                Task { [weak c] in
+                    let text = await Self.readTranscript(e.id, lastN: max(1, min(n, 200)), kinds: kinds, broker: self)
+                    c?.replySession(r.id, result: .string(text))
+                }
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
+        case "StopSession":
+            // The explicit stop — the only interrupt now that SendMessage only queues. Sent
+            // straight to the engine (Op.interrupt applies immediately, not at the boundary),
+            // never starting one that's gone: a dead engine has nothing running.
+            switch resolve(input["id"]?.string ?? "") {
+            case .success(let e):
+                guard e.id != sender else { return c.replySession(r.id, error: "That's this session: use your own stop.") }
+                guard let target = tracked(e.id) else {
+                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) has no live engine; nothing to stop."))
+                    return
+                }
+                guard target.busy || e.state == "running" || e.state == "waiting" else {
+                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) isn't running; nothing to stop."))
+                    return
+                }
+                target.interrupt()
+                c.replySession(r.id, result: .string("Stopping \(e.name) (\(e.id)): its turn ends cancelled and it goes idle."))
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
+        case "SetSessionMode":
+            // Never above the caller's own mode (a child can't grant itself more than its
+            // parent has), and yolo additionally needs an explicit flag.
+            switch resolve(input["id"]?.string ?? "") {
+            case .success(let e):
+                guard let target = tracked(e.id) else {
+                    return c.replySession(r.id, error: "\(e.name) (\(e.id)) has no engine running; its mode is picked up when one starts.")
+                }
+                guard let raw = input["mode"]?.string, let wanted = Mode(rawValue: raw) else {
+                    return c.replySession(r.id, error: "`mode` must be default, accept-edits, auto or yolo.")
+                }
+                let mine = c.status?.mode ?? .default
+                if wanted.rank > mine.rank {
+                    return c.replySession(r.id, error: "You're in \(mine.rawValue) mode; you can't raise another session to \(wanted.rawValue).")
+                }
+                if wanted == .yolo, mine != .yolo || input["yolo"]?.bool != true {
+                    return c.replySession(r.id, error: "Setting a session to yolo needs mode: \"yolo\" and an explicit yolo: true.")
+                }
+                target.setMode(wanted)
+                c.replySession(r.id, result: .string("\(e.name) (\(e.id)) is now in \(wanted.rawValue) mode (from its next turn)."))
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
+        case "SetSessionModel":
+            switch resolve(input["id"]?.string ?? "") {
+            case .success(let e):
+                guard let target = tracked(e.id) else {
+                    return c.replySession(r.id, error: "\(e.name) (\(e.id)) has no engine running; a restart picks up the session's stored model.")
+                }
+                guard let model = input["model"]?.string, !model.isEmpty else {
+                    return c.replySession(r.id, error: "`model` is required (provider/model, e.g. local/qwen3-4b).")
+                }
+                target.setModel(model)
+                c.replySession(r.id, result: .string("\(e.name) (\(e.id)) moves to \(model) (from its next model call)."))
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
+        case "ListApprovals":
+            // Read-only: pending permission cards across every session. Approving stays the
+            // user's job — the caller sees what's waiting, it never answers it.
+            let rows: [JSONValue] = approvals().map { row in
+                .object([
+                    "session": .string(row.id),
+                    "name": .string(row.name),
+                    "command": .string(row.command),
+                    "tool": .string(row.tool),
+                    "reason": .string(row.reason),
+                    "age_seconds": .number(Double(row.ageSeconds)),
+                ] as [String: JSONValue])
+            }
+            let note = rows.isEmpty
+                ? "No pending approvals."
+                : "\(rows.count) pending approval\(rows.count == 1 ? "" : "s"). Approving is the user's job; don't answer them yourself."
+            c.replySession(r.id, result: .object(["approvals": .array(rows), "note": .string(note)]))
+        case "RenameSession":
+            switch resolve(input["id"]?.string ?? "", includeArchived: true) {
+            case .success(let e):
+                let title = input["title"]?.string ?? ""
+                let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    return c.replySession(r.id, error: "`title` is required.")
+                }
+                // An open conversation renames through its engine (Op.setTitle, the sidebar's
+                // own path); a closed one through the CLI, which writes the session's log.
+                if let target = tracked(e.id) {
+                    target.rename(trimmed)
+                    Library.shared.refresh()
+                    c.replySession(r.id, result: .string("Renamed \(e.id) to \"\(trimmed)\"."))
+                } else {
+                    Task { [weak c] in
+                        await Library.shared.rename(e.id, to: trimmed)
+                        c?.replySession(r.id, result: .string("Renamed \(e.id) to \"\(trimmed)\"."))
+                    }
+                }
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
         default:
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
         }
+    }
+
+    /// One pending approval, as ListApprovals reports it.
+    struct Approval: Equatable {
+        var id: String
+        var name: String
+        var command: String
+        var tool: String
+        var reason: String
+        var ageSeconds: Int
+    }
+
+    /// Every session's pending permission card, oldest fact first. Read-only.
+    func approvals() -> [Approval] {
+        list().compactMap { entry in
+            guard let conv = Library.shared.conversation(entry.id) ?? background[entry.id],
+                  let p = conv.permission else { return nil }
+            let since = waitingSince[entry.id] ?? now()
+            return Approval(
+                id: entry.id, name: entry.name, command: p.arg, tool: p.name,
+                reason: p.reason ?? "", ageSeconds: Int(now().timeIntervalSince(since)))
+        }
+    }
+
+    /// This session's own status (SessionStatus on itself): the conversation knows.
+    private func selfStatus(of c: Conversation) -> StatusInfo? {
+        var info = StatusInfo()
+        info.engineAlive = c.isLive
+        info.turnRunning = c.busy || c.turns.last.map { !$0.finished } == true
+        info.turn = c.turns.last?.number.map(Int.init)
+        info.turnSeconds = c.turns.last?.startedAt.map { Int(Date().timeIntervalSince($0)) }
+        info.waiting = c.permission != nil || c.elicitation != nil || c.question != nil
+        info.lastEnd = c.turns.last?.end.map { String(describing: $0) }
+        info.model = c.status?.model
+        info.mode = c.status?.mode.rawValue
+        info.modelCalls = c.turns.reduce(0) { $0 + Int($1.usage?.modelCalls ?? 0) }
+        info.pendingApprovals = c.permission != nil ? 1 : 0
+        info.pendingSummary = c.permission.map { "\($0.name) \($0.arg)" }
+        info.queuedMessages = c.queue.count
+        info.cwd = c.status?.cwd ?? c.folder.path
+        return info
+    }
+
+    /// The status of session `id`, as one structured answer — the same computation
+    /// SessionStatus uses, for the sidebar and picker.
+    func status(of id: String) async -> StatusInfo? {
+        guard var info = await Self.readStatus(id, broker: self) else { return nil }
+        info.queuedMessages = inbound[id] ?? 0
+        return info
+    }
+
+    /// Messages queued in session `id`'s engine inbox, waiting for its next turn boundary.
+    /// The sidebar's dot uses this: queued counts as running, not idle (bug 2d).
+    func pendingInbound(_ id: String) -> Int {
+        inbound[id] ?? 0
+    }
+
+    /// `ReadSession`: the last items of a session's transcript as text — assistant text, user
+    /// inputs, tool calls with args, results capped at 400 chars. Live conversations read
+    /// from their folded turns; dead ones from the log's recorded items.
+    private static func readTranscript(_ id: String, lastN n: Int, kinds: [String], broker: SessionBroker) async -> String {
+        let want = Set(kinds)
+        // Live: the conversation holds every item already folded. Everything main-actor
+        // happens in one hop; only the log-file read runs detached.
+        let live: String? = await MainActor.run(body: {
+            func keeps(_ kind: String) -> Bool { want.isEmpty || want.contains(kind) }
+            func trim(_ text: String) -> String {
+                let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                return t.count > 400 ? String(t.prefix(400)) + "…" : t
+            }
+            guard let c = broker.liveConversation(id), c.isLive else { return nil }
+            var lines: [String] = []
+            for turn in c.turns {
+                if keeps("message"), !turn.input.isEmpty { lines.append("USER: \(trim(turn.input))") }
+                for item in turn.items {
+                    switch item.kind {
+                    case .message where keeps("message"):
+                        lines.append("ASSISTANT: \(trim(item.text))")
+                    case .reasoning where keeps("reasoning"):
+                        lines.append("REASONING: \(trim(item.text))")
+                    case .notice where keeps("notice"):
+                        lines.append("NOTICE: \(trim(item.text))")
+                    case .tool(let name, _) where keeps("tool"):
+                        var line = "TOOL \(name)"
+                        if let r = item.result {
+                            let body = r.output.isEmpty ? r.display ?? "" : r.output
+                            line += " -> \(r.outcome == .ok ? "ok" : String(describing: r.outcome)): \(trim(body))"
+                        }
+                        lines.append(line)
+                    default:
+                        break
+                    }
+                }
+            }
+            return lines.isEmpty ? "" : lines.suffix(n).joined(separator: "\n")
+        })
+        if let live {
+            return live.isEmpty ? "(nothing recorded yet)" : live
+        }
+        // Dead or closed: the log's durable items.
+        if let text = await Task.detached { Self.logItems(id, lastN: n, kinds: want) }.value {
+            return text
+        }
+        return "(couldn't read session \(id))"
+    }
+
+    /// The last `n` transcript lines from a session's log file: turn inputs, messages,
+    /// reasoning and tool calls with their outputs. Nil when the log can't be read.
+    nonisolated private static func logItems(_ id: String, lastN n: Int, kinds: Set<String>) -> String? {
+        let file = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        func keeps(_ kind: String) -> Bool { kinds.isEmpty || kinds.contains(kind) }
+        func trim(_ text: String) -> String {
+            let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.count > 400 ? String(t.prefix(400)) + "…" : t
+        }
+        var lines: [String] = []
+        for line in text.split(separator: "\n") {
+            guard let v = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                  let env = v["env"] as? [String: Any] else { continue }
+            switch env["event"] as? String {
+            case "turn_started" where keeps("message"):
+                if let input = env["input"] as? String, !input.isEmpty { lines.append("USER: \(trim(input))") }
+            case "item_completed":
+                guard let item = env["item"] as? [String: Any], let type = item["type"] as? String else { continue }
+                switch type {
+                case "message" where keeps("message"):
+                    if let t = item["text"] as? String { lines.append("ASSISTANT: \(trim(t))") }
+                case "reasoning" where keeps("reasoning"):
+                    if let t = item["text"] as? String { lines.append("REASONING: \(trim(t))") }
+                case "tool_call" where keeps("tool"):
+                    let name = item["name"] as? String ?? "?"
+                    let outcome = item["outcome"] as? String ?? "ok"
+                    let output = (item["output"] as? String) ?? (item["display"] as? String) ?? ""
+                    lines.append("TOOL \(name) -> \(outcome): \(trim(output))")
+                default:
+                    break
+                }
+            default:
+                break
+            }
+        }
+        let kept = lines.suffix(n)
+        return kept.isEmpty ? "(nothing recorded yet)" : kept.joined(separator: "\n")
+    }
+
+    /// The conversation for session `id` when it's live (on screen or background).
+    private func liveConversation(_ id: String) -> Conversation? {
+        if let c = Library.shared.conversation(id), c.isLive { return c }
+        if let c = background[id], c.isLive { return c }
+        return nil
+    }
+
+    #if DEBUG
+    /// Tests reach the transcript reader without a live engine.
+    static func testTranscript(_ id: String, lastN n: Int, kinds: [String], broker: SessionBroker) async -> String {
+        await readTranscript(id, lastN: n, kinds: kinds, broker: broker)
+    }
+
+    /// Tests read the approval cards and their age tracking.
+    var approvalsForTesting: [Approval] { approvals() }
+    var waitingSinceForTesting: [String: Date] { waitingSince }
+    #endif
+
+    /// The conversation tracked for session `id`: on screen or in the broker's background
+    /// fleet (never started — StopSession must not wake a dead engine just to tell it to halt).
+    private func tracked(_ id: String) -> Conversation? {
+        if let c = Library.shared.conversation(id), c.isLive { return c }
+        return background[id]
     }
 
     /// Report session `child`'s next turn back to `parent` when it goes idle (the hand-back).
@@ -186,10 +634,11 @@ final class SessionBroker {
     }
 
     /// Find a session by id (or a unique id prefix), else by name (case-insensitive).
-    func resolve(_ to: String) -> Result<Entry, BrokerError> {
+    /// `includeArchived` also looks among archived sessions (to unarchive one).
+    func resolve(_ to: String, includeArchived: Bool = false) -> Result<Entry, BrokerError> {
         let key = to.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return .failure(BrokerError("`to` is empty")) }
-        let all = directory()
+        let all = includeArchived ? directoryIncludingArchived() : directory()
         if let e = all.first(where: { $0.id == key }) { return .success(e) }
         let named = all.filter { $0.name.caseInsensitiveCompare(key) == .orderedSame }
         if named.count == 1 { return .success(named[0]) }
@@ -214,6 +663,10 @@ final class SessionBroker {
         guard reach(target.id, sender, name, message) else {
             return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
         }
+        // The message sits in the target's inbox until its next turn boundary: a queued
+        // message keeps it "running" in the status truth (bug 2d).
+        inbound[target.id, default: 0] += 1
+        Library.shared.reportQueued(target.id)
         if notifyWhenIdle {
             watches[target.id, default: []].append(Watch(sender: sender, armed: false))
         }
@@ -243,7 +696,15 @@ final class SessionBroker {
 
     /// A session's live state changed (from `Library.report`).
     func observe(_ id: String, running: Bool, waiting: Bool) {
+        // When the current permission card arrived, for its age in ListApprovals.
+        if waiting {
+            if waitingSince[id] == nil { waitingSince[id] = now() }
+        } else {
+            waitingSince[id] = nil
+        }
         if running {
+            // The engine is working a turn: anything we queued into its inbox has been taken.
+            inbound[id] = 0
             if var list = watches[id] {
                 let input = currentInput(id)
                 for i in list.indices where input == nil || list[i].anyTurn || input!.hasPrefix("<session-message from=\"\(list[i].sender)\"") {
@@ -331,6 +792,8 @@ final class SessionBroker {
         let unfinished = background[id].map { c in c.turns.last.map { !$0.finished } ?? false } ?? false
         let c = Conversation(folder: folder, arguments: ["-r", id] + Workspace.engineFlags(chat: info.isChat, mode: false), model: nil)
         background[id] = c
+        // A fresh engine has an empty inbox; its session's queued count starts over.
+        inbound[id] = 0
         if unfinished, continueOpen { c.continueInterrupted() }
         return c
     }
@@ -361,11 +824,15 @@ final class SessionBroker {
         return Library.shared.sessions.first { $0.id == id }?.displayTitle ?? ""
     }
 
-    static func json(_ entries: [Entry]) -> JSONValue {
-        .array(entries.map { e in
+    static func json(_ entries: [Entry], fields: [String] = []) -> JSONValue {
+        let want = Set(fields)
+        return .array(entries.map { e in
             var o: [String: JSONValue] = ["id": .string(e.id), "name": .string(e.name), "state": .string(e.state)]
             if let c = e.cwd { o["cwd"] = .string(c) }
             if let m = e.model { o["model"] = .string(m) }
+            if want.contains("branch"), let b = e.branch { o["branch"] = .string(b) }
+            if want.contains("ahead"), let a = e.ahead { o["ahead"] = .number(Double(a)) }
+            if want.contains("dirty"), let d = e.dirty { o["dirty"] = .number(Double(d)) }
             return .object(o)
         })
     }
@@ -476,6 +943,24 @@ extension SessionBroker {
                     model: c?.status?.model ?? s.model, modified: s.modified)
             }
         }
+        directoryIncludingArchived = {
+            let lib = Library.shared
+            return lib.sessions.map { s in
+                let c = lib.conversation(s.id)
+                let state = switch lib.live[s.id] {
+                case .running?: "running"
+                case .waiting?: "waiting"
+                default: "idle"
+                }
+                return Entry(
+                    id: s.id, name: c?.title ?? s.displayTitle, state: state, cwd: s.cwd,
+                    model: c?.status?.model ?? s.model, modified: s.modified)
+            }
+        }
+        archiver = { id, on in
+            Library.shared.setArchived(id, on)
+            Library.shared.refresh()
+        }
         reach = { [unowned self] id, from, name, message in
             guard let c = conversation(for: id) else { return false }
             c.deliver(from: from, name: name, message: message)
@@ -536,6 +1021,89 @@ extension SessionBroker {
         starter = { [unowned self] req, parent in try await start(req, parent: parent) }
         Conversation.sessionRequests = { [unowned self] c, r in handle(r, from: c) }
         Conversation.userActivity = { [unowned self] c in if let id = c.sessionID { userActivity(id) } }
+    }
+
+    /// `ArchiveSession`/`UnarchiveSession`: the sidebar's archive, as a broker operation. Hides
+    /// from lists and sidebars; never deletes the log.
+    func archive(_ id: String, _ on: Bool) {
+        archiver(id, on)
+    }
+
+    /// The full structured status of session `id` (SessionStatus). Reads the live conversation
+    /// when there is one, else the session log's tail — the same fields either way, so a dead
+    /// engine's session still answers (state "dead", its last turn as the log left it).
+    private static func readStatus(_ id: String, broker: SessionBroker) async -> StatusInfo? {
+        var info = StatusInfo()
+        let lib = Library.shared
+        let conv = lib.conversation(id) ?? broker.background[id]
+        let entry = lib.sessions.first { $0.id == id }
+        guard entry != nil || conv != nil else { return nil }
+        info.cwd = entry?.cwd ?? conv?.folder.path
+        if let c = conv, c.isLive {
+            // Live: everything comes from the folded events.
+            info.engineAlive = true
+            info.turnRunning = c.busy || c.turns.last.map { !$0.finished } == true
+            info.turn = c.turns.last?.number.map(Int.init)
+            info.turnSeconds = c.turns.last?.startedAt.map { Int(Date().timeIntervalSince($0)) }
+            info.waiting = c.permission != nil || c.elicitation != nil || c.question != nil
+            info.lastEnd = c.turns.last?.end.map { String(describing: $0) }
+            info.model = c.status?.model ?? entry?.model
+            info.mode = c.status?.mode.rawValue
+            info.modelCalls = c.turns.reduce(0) { $0 + Int($1.usage?.modelCalls ?? 0) }
+            if let p = c.permission {
+                info.pendingApprovals = 1
+                info.pendingSummary = "\(p.name) \(p.arg)"
+            }
+        } else {
+            // Dead or closed: the log's tail answers what it can.
+            info.engineAlive = false
+            if let c = conv { info.lastEnd = c.turns.last?.end.map { String(describing: $0) } }
+            info.model = entry?.model
+            let tail = await Task.detached { Self.logTail(id) }.value
+            if let (model, mode, modelCalls, lastEnd) = tail {
+                info.model = info.model ?? model
+                info.mode = mode
+                info.modelCalls = modelCalls
+                info.lastEnd = info.lastEnd ?? lastEnd
+            }
+        }
+        // Worktrees report their branch, commits ahead of origin/main, and dirty files.
+        if let cwd = info.cwd.map({ URL(fileURLWithPath: $0) }) {
+            let (branch, ahead, dirty) = await Git.quick(cwd)
+            info.branch = branch
+            info.ahead = ahead
+            info.dirty = dirty
+        }
+        return info
+    }
+
+    /// The model, mode, model-call count and last turn end from a session's log, without
+    /// folding the whole history: the last `model_changed`/`mode_changed`, the summed
+    /// `turn_ended` usage, and the last `turn_ended` reason. Nil when the log can't be read.
+    nonisolated private static func logTail(_ id: String) -> (String?, String?, Int, String?)? {
+        let file = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        var model: String?
+        var mode: String?
+        var calls = 0
+        var lastEnd: String?
+        for line in text.split(separator: "\n") {
+            guard let v = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                  let env = v["env"] as? [String: Any] else { continue }
+            switch env["event"] as? String {
+            case "model_changed": model = env["model"] as? String
+            case "mode_changed": mode = env["mode"] as? String
+            case "turn_ended":
+                if let usage = env["usage"] as? [String: Any] {
+                    calls += (usage["model_calls"] as? Int) ?? 0
+                }
+                if let reason = env["reason"] as? [String: Any], let type = reason["type"] as? String {
+                    lastEnd = type
+                }
+            default: break
+            }
+        }
+        return (model, mode, calls, lastEnd)
     }
 
     /// `StartSession`: a new conversation (in a worktree if asked), titled, with its first

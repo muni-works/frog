@@ -307,6 +307,156 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(rows.first?["state"]?.string, "idle")
     }
 
+    /// ListSessions filters: cwd_prefix, state, since and limit, with a default cap of 30 —
+    /// never the ~150-row dump of every session in the app.
+    func testListSessionsFiltersAndLimit() throws {
+        var busy = SessionBroker.Entry(id: "a-0001", name: "alpha", state: "running", cwd: "/repo/sub", modified: 3_000)
+        busy.branch = "frog/x"
+        let idle = SessionBroker.Entry(id: "b-0002", name: "beta", state: "idle", cwd: "/repo", modified: 1_000)
+        var old = SessionBroker.Entry(id: "c-0003", name: "gamma", state: "idle", cwd: "/elsewhere", modified: 500)
+        old.ahead = 2
+        let entries = [busy, idle, old]
+
+        // No filters: everything, most recent first, capped at 30.
+        let none = SessionBroker.ListFilter(input: .object([:]))
+        XCTAssertEqual(none.limit, 30)
+        XCTAssertEqual(none.apply(to: entries, now: Date()).map(\.id), ["a-0001", "b-0002", "c-0003"])
+
+        // cwd_prefix keeps only sessions under that folder.
+        let byCwd = SessionBroker.ListFilter(input: .object(["cwd_prefix": .string("/repo")]))
+        XCTAssertEqual(byCwd.apply(to: entries, now: Date()).map(\.id), ["a-0001", "b-0002"])
+
+        // state keeps only that state.
+        let byState = SessionBroker.ListFilter(input: .object(["state": .string("idle")]))
+        XCTAssertEqual(byState.apply(to: entries, now: Date()).map(\.id), ["b-0002", "c-0003"])
+
+        // since: only activity after that unix time (modified is ms).
+        let bySince = SessionBroker.ListFilter(input: .object(["since": .number(2)]))
+        XCTAssertEqual(bySince.apply(to: entries, now: Date()).map(\.id), ["a-0001"])
+
+        // limit caps the rows.
+        let capped = SessionBroker.ListFilter(input: .object(["limit": .number(1)]))
+        XCTAssertEqual(capped.apply(to: entries, now: Date()).map(\.id), ["a-0001"])
+
+        // fields carry branch/ahead/dirty through the JSON.
+        guard case .array(let rows) = SessionBroker.json([busy, old], fields: ["branch", "ahead", "dirty"]) else {
+            return XCTFail()
+        }
+        XCTAssertEqual(rows.first?["branch"]?.string, "frog/x")
+        XCTAssertEqual(rows.last?["ahead"]?.number, 2)
+    }
+
+    /// ArchiveSession / UnarchiveSession: the sidebar's archive (never deletes logs), and
+    /// unarchiving resolves names among archived sessions too.
+    func testArchiveAndUnarchiveUseTheArchiver() throws {
+        let b = broker([chief, eng])
+        var archived: [String: Bool] = [:]
+        b.archiver = { archived[$0] = $1 }
+        b.directoryIncludingArchived = { [self.chief, self.eng] }
+        // Archive by name.
+        let target = try b.resolve("Eng Manager").get()
+        b.archive(target.id, true)
+        XCTAssertEqual(archived[target.id], true)
+        // An archived session is no longer in the plain directory, but resolves for unarchiving.
+        b.directory = { [self.chief] }
+        guard case .failure = b.resolve("Eng Manager") else { return XCTFail("archived still listed") }
+        let back = try b.resolve("Eng Manager", includeArchived: true).get()
+        b.archive(back.id, false)
+        XCTAssertEqual(archived[back.id], false)
+    }
+
+    /// SessionStatus's single truth: a queued inbound message keeps a session "running"
+    /// even when its engine reports idle (bug 2d), and the count drains when it starts.
+    func testQueuedInboundKeepsAQueuedSessionRunning() throws {
+        let b = broker([chief, eng])
+        XCTAssertEqual(b.pendingInbound(eng.id), 0)
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "one", notifyWhenIdle: false).get()
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "two", notifyWhenIdle: false).get()
+        XCTAssertEqual(b.pendingInbound(eng.id), 2, "both messages queued")
+        var info = SessionBroker.StatusInfo()
+        info.engineAlive = true
+        info.queuedMessages = b.pendingInbound(eng.id)
+        XCTAssertEqual(info.state, "running", "queued means running, not idle")
+        // The target starts its turn: the inbox drains, and the state follows the turn.
+        b.observe(eng.id, running: true, waiting: false)
+        XCTAssertEqual(b.pendingInbound(eng.id), 0)
+        info.queuedMessages = 0
+        info.turnRunning = true
+        XCTAssertEqual(info.state, "running")
+        b.observe(eng.id, running: false, waiting: false)
+        info.turnRunning = false
+        XCTAssertEqual(info.state, "idle")
+        // A dead engine is "dead", whatever else.
+        info.engineAlive = false
+        XCTAssertEqual(info.state, "dead")
+    }
+
+    /// ReadSession without a live engine reads the session's log: user inputs, assistant
+    /// text and tool calls, capped at 400 chars, and kinds filters.
+    func testReadSessionReadsTheLogWhenTheEngineIsDead() async throws {
+        let id = "readtest-\(UUID().uuidString.prefix(8))"
+        let path = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        try? FileManager.default.createDirectory(at: FrogPaths.sessions, withIntermediateDirectories: true)
+        var jsonl = """
+        {"type":"event","env":{"seq":3,"session":"\(id)","created":0,"event":"turn_started","turn":1,"input":"fix the bug"}}
+        {"type":"event","env":{"seq":4,"session":"\(id)","created":0,"event":"item_completed","id":"i1","item":{"type":"message","text":"done: fixed it"}}}
+        {"type":"event","env":{"seq":5,"session":"\(id)","created":0,"event":"item_completed","id":"i2","item":{"type":"tool_call","name":"Bash","arg":"","input":{},"outcome":"ok","output":"\(String(repeating: "x", count: 500))","display":null}}}
+        """
+        try jsonl.write(to: path, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: path) }
+
+        let b = broker([])
+        b.directory = { [] }
+        let text = await SessionBroker.testTranscript(id, lastN: 20, kinds: [], broker: b)
+        XCTAssertTrue(text.contains("USER: fix the bug"), text)
+        XCTAssertTrue(text.contains("ASSISTANT: done: fixed it"), text)
+        XCTAssertTrue(text.contains("TOOL Bash -> ok:"), text)
+        // The 500-char result is capped at 400 (plus the 400th char and the ellipsis).
+        let toolLine = text.split(separator: "\n").first { $0.hasPrefix("TOOL Bash") }
+        XCTAssertNotNil(toolLine)
+        XCTAssertLessThanOrEqual(toolLine?.count ?? 999, "TOOL Bash -> ok: ".count + 400 + 1)
+
+        // kinds filter: only tools.
+        let toolsOnly = await SessionBroker.testTranscript(id, lastN: 20, kinds: ["tool"], broker: b)
+        XCTAssertTrue(toolsOnly.contains("TOOL Bash"))
+        XCTAssertFalse(toolsOnly.contains("ASSISTANT:"))
+    }
+    func testStatusInfoJsonCarriesTheFields() throws {
+        var info = SessionBroker.StatusInfo()
+        info.engineAlive = true
+        info.turnRunning = true
+        info.turn = 3
+        info.turnSeconds = 42
+        info.lastEnd = "complete"
+        info.model = "local/qwen3-4b"
+        info.mode = "auto"
+        info.modelCalls = 7
+        info.pendingApprovals = 1
+        info.pendingSummary = "Bash cargo test"
+        info.queuedMessages = 1
+        info.cwd = "/tmp/proj"
+        info.branch = "frog/fix-the-parser"
+        info.ahead = 2
+        info.dirty = 5
+        guard case .object(let o) = info.json else { return XCTFail() }
+        XCTAssertEqual(o["state"]?.string, "running")
+        XCTAssertEqual(o["engine_alive"]?.bool, true)
+        XCTAssertEqual(o["turn"]?.number, 3)
+        XCTAssertEqual(o["turn_seconds"]?.number, 42)
+        XCTAssertEqual(o["model"]?.string, "local/qwen3-4b")
+        XCTAssertEqual(o["mode"]?.string, "auto")
+        XCTAssertEqual(o["model_calls"]?.number, 7)
+        XCTAssertEqual(o["pending_approvals"]?.number, 1)
+        XCTAssertEqual(o["pending"]?.string, "Bash cargo test")
+        XCTAssertEqual(o["queued_messages"]?.number, 1)
+        XCTAssertEqual(o["branch"]?.string, "frog/fix-the-parser")
+        XCTAssertEqual(o["ahead"]?.number, 2)
+        XCTAssertEqual(o["dirty"]?.number, 5)
+        // Waiting outranks running.
+        info.waiting = true
+        XCTAssertEqual(info.state, "waiting")
+    }
+
     func testWorktreeInATempRepo() throws {
         let repo = FileManager.default.temporaryDirectory.appending(path: "frog-broker-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
@@ -382,5 +532,111 @@ final class SessionBrokerTests: XCTestCase {
         let env = try JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8))
         guard case .sessionRequest(let r) = env.event else { return XCTFail() }
         XCTAssertEqual(r.tool, "ListSessions")
+    }
+
+    /// SetSessionMode can never raise a child above the caller's own mode, and yolo needs
+    /// an explicit flag; SetSessionModel forwards the spec to the target.
+    @MainActor
+    func testSetSessionModeCeilingAndYoloFlag() throws {
+        let b = broker([chief, eng])
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-mode"))
+        b.track(target, as: eng.id)
+        let sender = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-sender"))
+        // Both conversations are booted (a status from the engine).
+        let statusLine = { (session: String, mode: String) in
+            #"{"seq":1,"session":"\#(session)","created":1,"event":"status","model":"m","mode":"\#(mode)","cwd":"/tmp","messages":0,"context_tokens":null,"context_window":1,"tool_mode":"native","tier":"weak","tokens_per_sec":null,"todos":[]}"#
+        }
+        sender.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(statusLine(chief.id, "accept-edits").utf8)))
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(statusLine(eng.id, "default").utf8)))
+
+        // Equal or lower mode is allowed.
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("accept-edits")])), from: sender)
+        XCTAssertEqual(target.status?.mode, .acceptEdits)
+
+        // Raising above the caller's mode is refused: the target stays where it was.
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("auto")])), from: sender)
+        XCTAssertEqual(target.status?.mode, .acceptEdits, "auto refused: the caller is accept-edits")
+
+        // Even a caller in yolo needs the explicit flag to set yolo.
+        sender.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(statusLine(chief.id, "yolo").utf8)))
+        b.handle(SessionRequest(id: "r3", item: "t3", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("yolo")])), from: sender)
+        XCTAssertEqual(target.status?.mode, .acceptEdits, "yolo refused without the flag")
+        b.handle(SessionRequest(id: "r4", item: "t4", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("yolo"), "yolo": .bool(true)])), from: sender)
+        XCTAssertEqual(target.status?.mode, .yolo)
+    }
+
+    /// StopSession interrupts a busy target's running turn (Op.interrupt applies
+    /// immediately, unlike SendMessage which only queues); an idle one gets "nothing to
+    /// stop", and the caller itself is refused.
+    @MainActor
+    func testStopSessionInterruptsABusyTarget() throws {
+        let b = broker([chief, eng])
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-stop"))
+        // A turn is open, so the target reads busy.
+        let start = try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"turn_started","turn":1,"input":"long task"}"#.utf8))
+        target.ingest(start)
+        b.track(target, as: eng.id)
+        let chiefConv = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-chief"))
+
+        // Busy: the interrupt is sent (a preview conversation records it as userStopped).
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "StopSession", input: .object(["id": .string(eng.id)])), from: chiefConv)
+        XCTAssertTrue(target.userStopped, "a running target is interrupted")
+
+        // Idle: a fresh conversation with no turn open is not interrupted.
+        let idleTarget = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-idle"))
+        b.track(idleTarget, as: ops.id)
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "StopSession", input: .object(["id": .string(ops.id)])), from: chiefConv)
+        XCTAssertFalse(idleTarget.userStopped, "an idle target is not interrupted")
+
+        // Stopping yourself is refused.
+        b.handle(SessionRequest(id: "r3", item: "t3", tool: "StopSession", input: .object(["id": .string(chief.id)])), from: chiefConv)
+    }
+
+    /// ListApprovals collects the pending permission cards across sessions (read-only,
+    /// with age) and clears their age once they stop waiting.
+    @MainActor
+    func testListApprovalsCollectsPendingCards() throws {
+        let b = broker([chief, eng])
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-approval"))
+        b.track(target, as: eng.id)
+        // A permission card arrives on the target.
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"permission_request","id":"p1","item":"t1","name":"Bash","arg":"cargo build","always":"Allow cargo","preview":null,"reason":"leaves the sandbox"}"#.utf8)))
+        b.observe(eng.id, running: true, waiting: true)
+        clock += 30
+        // The card is there to see, with its age.
+        XCTAssertEqual(b.approvalsForTesting.count, 1)
+        let row = b.approvalsForTesting.first
+        XCTAssertEqual(row?.command, "cargo build")
+        XCTAssertEqual(row?.tool, "Bash")
+        XCTAssertEqual((row?.ageSeconds ?? 0) >= 30, true)
+        // The user answers the card: it's resolved, the age tracking clears, nothing lists.
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":2,"session":"eng-0002","created":2,"event":"permission_resolved","id":"p1","decision":"allow"}"#.utf8)))
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertTrue(b.approvalsForTesting.isEmpty)
+        XCTAssertNil(b.waitingSinceForTesting[eng.id])
+    }
+
+    /// RenameSession renames an open conversation through its engine (the sidebar's own
+    /// path: Op.setTitle, then the sidebar refreshes).
+    @MainActor
+    func testRenameSessionSetsTheTitle() async throws {
+        let b = broker([chief, eng])
+        b.directoryIncludingArchived = { [self.chief, self.eng] }
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-rename"))
+        b.track(target, as: eng.id)
+        let probe = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-probe"))
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "RenameSession",
+                                input: .object(["id": .string(eng.id), "title": .string("engine room")])), from: probe)
+        XCTAssertEqual(target.title, "engine room")
+        // An empty title is refused.
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "RenameSession",
+                                input: .object(["id": .string(eng.id), "title": .string("  ")])), from: probe)
     }
 }
