@@ -126,6 +126,8 @@ final class SessionBroker {
     /// here because the engine holds them; bumped on send, cleared when the target runs
     /// them (its turn starts) or is restarted dead.
     private var inbound: [String: Int] = [:]
+    /// When each session's current permission card arrived (ListApprovals reports its age).
+    private var waitingSince: [String: Date] = [:]
 
     /// Sends since the user last did something, per sending session.
     private var sent: [String: [Date]] = [:]
@@ -337,8 +339,47 @@ final class SessionBroker {
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
+        case "ListApprovals":
+            // Read-only: pending permission cards across every session. Approving stays the
+            // user's job — the caller sees what's waiting, it never answers it.
+            let rows: [JSONValue] = approvals().map { row in
+                .object([
+                    "session": .string(row.id),
+                    "name": .string(row.name),
+                    "command": .string(row.command),
+                    "tool": .string(row.tool),
+                    "reason": .string(row.reason),
+                    "age_seconds": .number(Double(row.ageSeconds)),
+                ] as [String: JSONValue])
+            }
+            let note = rows.isEmpty
+                ? "No pending approvals."
+                : "\(rows.count) pending approval\(rows.count == 1 ? "" : "s"). Approving is the user's job; don't answer them yourself."
+            c.replySession(r.id, result: .object(["approvals": .array(rows), "note": .string(note)]))
         default:
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
+        }
+    }
+
+    /// One pending approval, as ListApprovals reports it.
+    struct Approval: Equatable {
+        var id: String
+        var name: String
+        var command: String
+        var tool: String
+        var reason: String
+        var ageSeconds: Int
+    }
+
+    /// Every session's pending permission card, oldest fact first. Read-only.
+    func approvals() -> [Approval] {
+        list().compactMap { entry in
+            guard let conv = Library.shared.conversation(entry.id) ?? background[entry.id],
+                  let p = conv.permission else { return nil }
+            let since = waitingSince[entry.id] ?? now()
+            return Approval(
+                id: entry.id, name: entry.name, command: p.arg, tool: p.name,
+                reason: p.reason ?? "", ageSeconds: Int(now().timeIntervalSince(since)))
         }
     }
 
@@ -476,6 +517,10 @@ final class SessionBroker {
     static func testTranscript(_ id: String, lastN n: Int, kinds: [String], broker: SessionBroker) async -> String {
         await readTranscript(id, lastN: n, kinds: kinds, broker: broker)
     }
+
+    /// Tests read the approval cards and their age tracking.
+    var approvalsForTesting: [Approval] { approvals() }
+    var waitingSinceForTesting: [String: Date] { waitingSince }
     #endif
 
     /// The conversation tracked for session `id`: on screen or in the broker's background
@@ -561,6 +606,12 @@ final class SessionBroker {
 
     /// A session's live state changed (from `Library.report`).
     func observe(_ id: String, running: Bool, waiting: Bool) {
+        // When the current permission card arrived, for its age in ListApprovals.
+        if waiting {
+            if waitingSince[id] == nil { waitingSince[id] = now() }
+        } else {
+            waitingSince[id] = nil
+        }
         if running {
             // The engine is working a turn: anything we queued into its inbox has been taken.
             inbound[id] = 0

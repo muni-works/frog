@@ -28,6 +28,7 @@ pub const READ: &str = "ReadSession";
 pub const STOP: &str = "StopSession";
 pub const SET_MODE: &str = "SetSessionMode";
 pub const SET_MODEL: &str = "SetSessionModel";
+pub const APPROVALS: &str = "ListApprovals";
 
 pub fn is_tool(name: &str) -> bool {
     matches!(
@@ -41,6 +42,7 @@ pub fn is_tool(name: &str) -> bool {
             | STOP
             | SET_MODE
             | SET_MODEL
+            | APPROVALS
     )
 }
 
@@ -188,6 +190,14 @@ the model it started with."
                 },
                 "required": ["id", "model"]
             }),
+        },
+        ToolSpec {
+            name: APPROVALS.into(),
+            description: "Pending permission cards across all sessions: which session, what \
+command, why it asks, and how long it's been waiting. Read-only: approving stays the user's job \
+— surface the list, don't answer it."
+                .into(),
+            schema: json!({ "type": "object", "properties": {} }),
         },
     ]
 }
@@ -351,15 +361,18 @@ mod tests {
         assert!(validate(SET_MODE, &json!({"id": "x", "mode": "yolo"})).is_ok());
         assert!(validate(SET_MODEL, &json!({"id": "x"})).is_err());
         assert!(validate(SET_MODEL, &json!({"id": "x", "model": "local/qwen3-4b"})).is_ok());
+        // ListApprovals takes no arguments.
+        assert!(validate(APPROVALS, &json!({})).is_ok());
     }
 
     #[test]
     fn specs_cover_every_tool_name() {
         let names: Vec<String> = specs().into_iter().map(|s| s.name.into_owned()).collect();
-        for tool in [LIST, SEND, START, ARCHIVE, UNARCHIVE, STATUS, READ, STOP, SET_MODE, SET_MODEL] {
+        for tool in [LIST, SEND, START, ARCHIVE, UNARCHIVE, STATUS, READ, STOP, SET_MODE, SET_MODEL, APPROVALS] {
             assert!(names.contains(&tool.into()), "{tool} missing from specs");
         }
         assert!(is_tool(SET_MODE));
         assert!(is_tool(SET_MODEL));
+        assert!(is_tool(APPROVALS));
     }
 }

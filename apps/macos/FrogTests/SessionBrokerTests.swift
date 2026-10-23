@@ -557,4 +557,30 @@ final class SessionBrokerTests: XCTestCase {
         // Stopping yourself is refused.
         b.handle(SessionRequest(id: "r3", item: "t3", tool: "StopSession", input: .object(["id": .string(chief.id)])), from: chiefConv)
     }
+
+    /// ListApprovals collects the pending permission cards across sessions (read-only,
+    /// with age) and clears their age once they stop waiting.
+    @MainActor
+    func testListApprovalsCollectsPendingCards() throws {
+        let b = broker([chief, eng])
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-approval"))
+        b.track(target, as: eng.id)
+        // A permission card arrives on the target.
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"permission_request","id":"p1","item":"t1","name":"Bash","arg":"cargo build","always":"Allow cargo","preview":null,"reason":"leaves the sandbox"}"#.utf8)))
+        b.observe(eng.id, running: true, waiting: true)
+        clock += 30
+        // The card is there to see, with its age.
+        XCTAssertEqual(b.approvalsForTesting.count, 1)
+        let row = b.approvalsForTesting.first
+        XCTAssertEqual(row?.command, "cargo build")
+        XCTAssertEqual(row?.tool, "Bash")
+        XCTAssertEqual((row?.ageSeconds ?? 0) >= 30, true)
+        // The user answers the card: it's resolved, the age tracking clears, nothing lists.
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":2,"session":"eng-0002","created":2,"event":"permission_resolved","id":"p1","decision":"allow"}"#.utf8)))
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertTrue(b.approvalsForTesting.isEmpty)
+        XCTAssertNil(b.waitingSinceForTesting[eng.id])
+    }
 }
