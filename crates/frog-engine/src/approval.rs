@@ -133,6 +133,158 @@ pub fn created_here(p: &Path, created: &HashSet<PathBuf>) -> bool {
     p.ancestors().any(|a| created.contains(a))
 }
 
+/// Programs that destroy or relocate what already exists: on paths under the
+/// shared temp dir these may only touch what this session created.
+const DESTRUCTIVE: &[&str] = &["rm", "rmdir", "unlink", "mv", "dd", "truncate"];
+
+/// Whether `p` is in the session's own scope: inside the project, or something
+/// this session created, or a fresh path under the shared temp dir. Used for
+/// the Write/Edit outside-project check and `own_scope` below.
+pub fn path_in_own_scope(p: &Path, root: &Path, created: &HashSet<PathBuf>) -> bool {
+    if p.starts_with(root) || created_here(p, created) {
+        return true;
+    }
+    // The shared temp dir is scratch space, but only for *creating*: an
+    // existing tree there may belong to another session or the user.
+    let temp = normalize(&std::env::temp_dir());
+    let in_temp = p.starts_with(&temp) || p.starts_with("/private/tmp") || p.starts_with("/tmp");
+    in_temp && !p.exists()
+}
+
+/// Whether a command writes only inside the project or the session's own
+/// scratch space: every path it names is in-project or session-created, or —
+/// under the shared temp dir — fresh, or existing but this session's own,
+/// unless a destructive program acts on it (then provenance is required).
+/// Credential paths never pass; the caller checks those first.
+pub fn own_scope(cmd: &str, cwd: &Path, root: &Path, created: &HashSet<PathBuf>) -> bool {
+    let found = paths(cmd, cwd);
+    let destructive = destructive_anywhere(cmd);
+    if found.is_empty() {
+        // No path arguments: it acts where the shell is. Deleting or moving
+        // what it can't name never passes.
+        return !destructive && normalize(cwd).starts_with(normalize(root));
+    }
+    found.iter().all(|p| {
+        // Deleting or moving needs provenance everywhere, the project included:
+        // only what this session made is disposable.
+        if destructive {
+            return created_here(p, created);
+        }
+        if p.starts_with(root) {
+            return true;
+        }
+        let temp = normalize(&std::env::temp_dir());
+        let in_temp =
+            p.starts_with(&temp) || p.starts_with("/private/tmp") || p.starts_with("/tmp");
+        // Fresh scratch (a build's own target dir, a log file) or the session's
+        // own existing scratch — but a destructive program anywhere in the
+        // command needs provenance, not freshness.
+        in_temp && (!p.exists() || created_here(p, created))
+    })
+}
+
+/// Whether any segment of `cmd` runs a destructive program (`&& rm -rf …`
+/// sneaks past the first program's check). Unparsable counts as destructive.
+fn destructive_anywhere(cmd: &str) -> bool {
+    match crate::shell::segments(cmd) {
+        Some(segs) => segs.iter().any(|seg| DESTRUCTIVE.contains(&program(seg).as_str())),
+        None => true,
+    }
+}
+
+/// Whether `cmd` is a routine build/test step: every top-level segment is a
+/// known build or test tool (with a build/test subcommand), a plain file
+/// operation, or a command the read-only parser proves harmless. Anything the
+/// path check can't see through (substitutions, heredocs, newlines, URLs,
+/// interpreters, installers, network tools) isn't routine. This is what keeps
+/// the provenance layer from passing `cd proj && curl -d @f https://…`.
+pub fn routine(cmd: &str) -> bool {
+    if cmd.contains('\n')
+        || cmd.contains("<<")
+        || cmd.contains("$(")
+        || cmd.contains('`')
+        || cmd.contains("://")
+    {
+        return false;
+    }
+    let Some(segs) = crate::shell::segments(cmd) else {
+        return false;
+    };
+    !segs.is_empty() && segs.iter().all(|seg| routine_segment(seg))
+}
+
+fn routine_segment(seg: &str) -> bool {
+    if crate::shell::read_only(seg) {
+        return true;
+    }
+    let ws = words(seg);
+    // Skip `VAR=value` assignments, `env` and `timeout N`; `export` of plain
+    // assignments is itself routine.
+    let mut rest: &[String] = &ws;
+    loop {
+        match rest.first().map(String::as_str) {
+            Some(w) if w.contains('=') && !w.starts_with('-') => rest = &rest[1..],
+            Some("export") => return rest.len() > 1 && rest[1..].iter().all(|w| w.contains('=')),
+            Some("env") => rest = &rest[1..],
+            Some("timeout") if rest.len() > 1 => rest = &rest[2..],
+            _ => break,
+        }
+    }
+    let Some(prog) = rest.first().map(String::as_str) else {
+        return true; // bare assignments
+    };
+    let sub = rest.get(1).map(String::as_str).unwrap_or("");
+    match prog {
+        "cargo" => matches!(
+            sub,
+            "build" | "test" | "check" | "clippy" | "fmt" | "run" | "bench" | "doc" | "nextest"
+        ),
+        "xcodebuild" => {
+            rest[1..].iter().any(|w| {
+                matches!(
+                    w.as_str(),
+                    "build" | "test" | "test-without-building" | "build-for-testing" | "-list"
+                )
+            }) && !rest
+                .iter()
+                .any(|w| matches!(w.as_str(), "archive" | "-exportArchive" | "install"))
+        }
+        "swift" => matches!(sub, "build" | "test"),
+        "xcodegen" => matches!(sub, "generate" | ""),
+        "npm" => matches!(sub, "test" | "run" | "run-script")
+            || (sub == "run" && rest.get(2).map(String::as_str) == Some("dev"))
+            || sub == "start"
+            || sub == "dev",
+        "cd" | "mkdir" | "touch" | "true" | "cp" | "mv" | "rm" | "tee" => true,
+        // A local dev server serving the project: python's http.server binds localhost,
+        // and the dev-server subcommands of the JS toolchains do too. Only the module
+        // form (no script files, no -c code) and no extra hosts/ports beyond the well-
+        // known local flags. Interpreters with scripts, -c code or args stay asking.
+        "python3" | "python" => {
+            rest.len() == 3 && rest[1] == "-m" && rest[2] == "http.server"
+                || (rest.len() == 4 && rest[1] == "-m" && rest[2] == "http.server"
+                    && rest[3].chars().all(|c| c.is_ascii_digit()))
+        }
+        "vite" | "next" | "astro" => {
+            matches!(sub, "dev" | "")
+                && !rest.iter().any(|w| w.starts_with("--host") && !w.contains("localhost"))
+        }
+        // In-place edits (an Edit by another name): the script must pass the
+        // read-only sed checks (no w/W/e/r commands) once -i is set aside.
+        "sed" => {
+            let kept: Vec<&String> = rest
+                .iter()
+                .filter(|w| !w.starts_with("-i") && !w.is_empty())
+                .collect();
+            !kept.iter().any(|w| w.contains('\''))
+                && crate::shell::read_only(
+                    &kept.iter().map(|w| format!("'{w}'")).collect::<Vec<_>>().join(" "),
+                )
+        }
+        _ => false,
+    }
+}
+
 /// Which of a command's paths don't exist yet: checked before it runs, so the
 /// ones that exist afterwards were made by it.
 pub fn missing(cmd: &str, cwd: &Path) -> Vec<PathBuf> {
@@ -315,6 +467,66 @@ mod tests {
             ]
         );
         assert_eq!(program("FOO=1 rm -rf x"), "rm");
+    }
+
+    #[test]
+    fn own_scope_covers_the_project_and_own_scratch_only() {
+        let (root, cwd) = (Path::new("/work/proj"), Path::new("/work/proj"));
+        let own = tmp(); // a real dir this "session" made
+        let created: HashSet<PathBuf> = [own.clone()].into();
+        // In-project and session-created paths pass.
+        // No path arguments: it acts in the shell's cwd, in or out of the project.
+        assert!(own_scope("cargo build", cwd, root, &created));
+        assert!(!own_scope("cargo build", Path::new("/work/elsewhere"), root, &created));
+        assert!(own_scope("touch src/a.rs", cwd, root, &created));
+        // Deleting in the project needs provenance too.
+        assert!(!own_scope("rm -rf src", cwd, root, &created));
+        assert!(!own_scope("mv src/a.rs src/b.rs", cwd, root, &created));
+        assert!(own_scope(
+            &format!("rm -rf {}", own.display()),
+            cwd,
+            root,
+            &created
+        ));
+        // Fresh scratch under the shared temp dir (a build's own target dir): passes.
+        // std::env::temp_dir() is what `own_scope` itself checks against, so this is
+        // portable (on macOS it's /var/... inside /private/var/tmp; the /private/tmp
+        // alias is covered by own_scope's extra literals).
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        let fresh = temp.join("skittish-fresh-target");
+        let fresh_s = fresh.to_string_lossy().into_owned();
+        assert!(own_scope(
+            &format!("CARGO_TARGET_DIR={fresh_s} cargo test"),
+            cwd,
+            root,
+            &created
+        ));
+        // An existing scratch tree it didn't create: doesn't pass…
+        let not_ours = temp.join("skittish-not-ours");
+        let not_ours_s = not_ours.to_string_lossy().into_owned();
+        std::fs::create_dir_all(&not_ours).unwrap();
+        assert!(!own_scope(
+            &format!("ls {not_ours_s} && echo hi > {not_ours_s}/x"),
+            cwd,
+            root,
+            &created
+        ));
+        // …and a destructive program there needs provenance even if fresh-ish.
+        assert!(!own_scope(&format!("rm -rf {not_ours_s}"), cwd, root, &created));
+        let _ = std::fs::remove_dir_all(&not_ours);
+        let _ = std::fs::remove_dir_all(own);
+        // Write/Edit: a fresh temp file is ours; an existing one we didn't make isn't.
+        let fresh_file = temp.join("skittish-fresh/f.log");
+        assert!(path_in_own_scope(&fresh_file, root, &created));
+        let theirs = temp.join("skittish-theirs");
+        std::fs::create_dir_all(&theirs).unwrap();
+        assert!(!path_in_own_scope(&theirs, root, &created));
+        let _ = std::fs::remove_dir_all(&theirs);
+        assert!(!path_in_own_scope(Path::new("/Users/cam/.zshrc"), root, &created));
+        // Outside everywhere: never passes.
+        assert!(!own_scope("cat > /etc/motd", cwd, root, &created));
+        // Credential paths are the caller's hard check, but don't pass here either.
+        assert!(!own_scope("cat ~/.ssh/id_rsa", cwd, root, &created));
     }
 
     #[test]
