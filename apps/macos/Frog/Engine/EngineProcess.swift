@@ -291,6 +291,17 @@ final class EngineProcess {
             if p.isRunning { p.terminate() }
         }
     }
+
+    /// Force-kill now: an engine that missed an update's drain deadline. Its turn stays open
+    /// in the log, which is exactly the crash shape the resume path already picks up.
+    func kill() {
+        if process.isRunning { process.terminate() }
+        let p = process
+        Task.detached {
+            try? await Task.sleep(for: .milliseconds(500))
+            if p.isRunning { p.terminate() }
+        }
+    }
 }
 
 /// Splits a byte stream into lines. Only touched from one readability handler at a time.

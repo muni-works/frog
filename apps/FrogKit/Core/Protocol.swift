@@ -52,6 +52,11 @@ enum Decision: String, Codable, Sendable {
     case deny
 }
 
+/// What `Op.continue` tells the model when an app update's drain suspended the turn and the
+/// relaunched app picks it back up (the engine's own default when `note` is nil).
+let SUSPENDED_NOTE =
+    "<resumed after the app updated; your previous turn was suspended; continue>"
+
 enum Op: Encodable, Sendable {
     /// `more`: further messages sent with this one (queued follow-ups), run as the same turn.
     case submit(String, images: [ToolImage] = [], more: [MessagePart] = [])
@@ -350,7 +355,7 @@ struct TurnEnergy: Decodable, Sendable {
     var estimated: Bool { remoteWh != nil }
 }
 
-struct EngineError: Decodable, Sendable, CustomStringConvertible {
+struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
     var type: String
     var status: Int?
     var message: String?
