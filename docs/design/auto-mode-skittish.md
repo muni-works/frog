@@ -200,3 +200,78 @@ framing the local `cp` half as a push; the replay counts it once, under NECESSAR
 - What the new rules still ask: `create-pod`, `delete-pod`, `pod-action`, `create-secret`/
   `delete-secret`, `desktop look`, deploys (`wrangler deploy`), `git fetch`/`ls-remote`/`stash`,
   loops, heredocs, and builds into another session's scratch.
+
+## Round 3 (Cam's decisions via the frog manager, 2026-10-23)
+
+1. **Web reads now run without permission in EVERY mode** (previously only auto): WebSearch always;
+   WebFetch when `web::public_host` says the host is a plain public domain (no IP literals, no
+   localhost, no embedded credentials). The fetch still re-checks every resolved IP against private
+   ranges, and non-public hosts keep today's behavior. Tested across default/accept-edits/auto, plus
+   a localhost WebFetch still asking in default mode.
+2. **Allow-by-default in auto mode:**
+   - Screenshot of localhost or a workspace file (auto mode): allowed — the tool's own workspace
+     fence refuses anything outside the session's files before rendering.
+   - Writes/Edits inside the session root: confirmed already allowed in auto mode ("mode allows it").
+     The okc card (and 16 like it across the two days) happened in **default** mode — the mode had
+     flipped to default before the ask (each of those sessions has a `mode_changed`/live-status
+     showing non-auto at the ask time). Auto mode never asks for an in-root write. The mode-revert
+     bug family is the thing to fix, not the permit layers.
+   - runpod read verbs (`list-*`, `get-*`, `stream-*`): covered by `auto::read_tool` — verified in the
+     replay (`list-gpu-types`, `list-pods`, `stream-pod-logs`, `list-pod-billing`, `list-billing`,
+     `get-pod` all now allowed); `create-*`/`delete-*`/`pod-action` still card.
+   - Local dev server in the session root (`python3 -m http.server`, `npm run dev`/`start`,
+     `vite dev`, in-root `sed -i`): added to `approval::routine`, so the classifier never sees it —
+     this is also R3.2e: the live card whose reason said "within project scope and low-impact" can't
+     recur, because the call now never reaches the classifier. A dev server pointed at a foreign host
+     (`--bind 0.0.0.0`) or an arbitrary script (`python3 serve.py`) still asks.
+   - Kept on cards: anything outside the session root, remote writes (push, deploy, email, post),
+     pod create/delete, spend, deletes.
+3. **Classifier retry-once on transport errors**: folded in (tiny). A TLS/connection-reset/timeout
+   error retries once after a 300 ms backoff; a second failure, a refusal or a bad request goes
+   straight to the ask fallback, logged as a notice. `transport_error` is unit-tested.
+4. **The workaround finding, in full**: the tang manager's session (20261022-164358-cf21), blocked on
+   approval cards, base64-encoded its pod script into the command and fetched it back from a
+   SHA-pinned raw.githubusercontent URL — its own words: "I'm wary of embedding a large base64 blob
+   in the tool call since that risks transcription errors … I'm considering just inlining the script
+   as plain text in the command instead of encoding it." **Approval overhead changes agent behavior;
+   workarounds are a security smell, not a safety win.** The permission system pushed risk into
+   opacity (a base64 blob is harder to audit than the file write it dodged), and the wait plus the
+   Vercel 402 outage meant the first-tokens pod was never created on the first two attempts.
+
+## Round-3 evidence added to the replay
+
+- The `cp /private/tmp/glm5-first/pod.sh tools/bench/…` compound (2 asks, "pushes to a remote") —
+  the compound's `git push` half is a hard rule, so it still asks; the classifier prompt now keeps a
+  local `cp`/`mv` from being framed as a push.
+- `mcp__runpod__list-gpu-types` ×2, `stream-pod-logs` ×2, `list-pods` ×2 (read verbs, now allowed);
+  `create-pod` ×1 as a control (still asks).
+- The okc Write ×1 (in-root, mode was default — counted under MODE) and its two public WebFetch asks
+  (`raw.githubusercontent.com/vllm-project/…`, `openkernelchallenge.dev/rules`) — now allowed.
+- The dev-server card case (`python3 -m http.server` in the worktree) ×1 — now routine.
+
+## Final table
+
+| Category | Before | After |
+|---|---|---|
+| SKITTISH: build/test writing own dirs | 75 | 4 |
+| SKITTISH: read-only the parser missed | 2 | 0 |
+| SKITTISH: own tmp write (Write/Edit) | 3 | 1 |
+| SKITTISH: mcp read verb (`list-*`, `get-*`, `stream-*`) | 9 | 0 |
+| SKITTISH: public web read (WebFetch GET of a public host, WebSearch) | 18 | 0 |
+| SKITTISH: local dev server in the session root | 1 | 0 |
+| NECESSARY: outside project | 46 | 46 |
+| NECESSARY: push/publish (incl. the `cp … && git push` compound) | 9 | 9 |
+| NECESSARY: destructive/system | 4 | 4 |
+| NECESSARY: credentials | 0 | 0 |
+| NECESSARY: mcp write/action (`create-pod`, `delete-pod`, `pod-action`, `desktop look`) | 8 | 8 |
+| NECESSARY: another checkout | 1 | 1 |
+| NECESSARY: non-public fetch (localhost WebFetch, control) | 0 | 1 |
+| GRAY: unknown program (deploys, `git fetch`/`ls-remote`/`stash`, loops, heredocs, own test binaries) | 48 | 48 |
+| MODE: in-project edits in sessions whose mode was default at the time | 17 | 17 |
+| OTHER: non-shell tools | 10 | 10 |
+| **Total** | **230** | **128 (−44%)** |
+
+- Newly allowed: **102, non-skittish among them: 0.**
+- Skittish asks: **108 → 5 (−95%)**. The 5 left are writes into another session's scratch and one
+  own-tmp write whose target existed before the session started.
+- The replay now spans both days' logs plus all three rounds of relayed evidence.

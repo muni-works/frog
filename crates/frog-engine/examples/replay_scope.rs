@@ -207,9 +207,16 @@ fn main() {
                 && now_allowed(&a.name, &a.input, &root, &created).is_none()
             {
                 let what = a.input["command"].as_str().or(a.input["file_path"].as_str()).unwrap_or("");
-                let seg = frog_engine::shell::segments(what)
-                    .and_then(|v| v.into_iter().find(|s| !frog_engine::approval::routine(s)))
-                    .unwrap_or_else(|| if frog_engine::approval::routine(what) { "(scope)".into() } else { "(unparsable)".into() });
+                let seg = if !frog_engine::approval::routine(what) {
+                    frog_engine::shell::segments(what)
+                        .and_then(|v| v.into_iter().find(|s| !frog_engine::approval::routine(s)))
+                        .unwrap_or_else(|| "(unparsable)".into())
+                } else {
+                    // routine but out of scope: show the first path that isn't ours
+                    frog_engine::approval::paths(what, &root).first()
+                        .map(|p| format!("path: {}", p.display()))
+                        .unwrap_or_else(|| "(no paths)".into())
+                };
                 println!("  still: {} || first non-routine: {}", what.replace('\n', "\\n").chars().take(70).collect::<String>(), seg.chars().take(70).collect::<String>());
             }
         }
