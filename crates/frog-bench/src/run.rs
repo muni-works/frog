@@ -127,7 +127,6 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
             profile: profile.clone(),
             cwd: r.workspace.clone(),
             mode: Mode::Yolo,
-            keep_mode: false,
             can_ask: false,
             resume,
             store: Some(r.sessions.to_path_buf()),
