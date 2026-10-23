@@ -25,6 +25,8 @@ struct FrogFace: View {
     @State private var lift: CGFloat = 0
     /// Squash-stretch during the done hop, as fractions of the box.
     @State private var squash: CGSize = .zero
+    /// Waiting mood: head tilt in degrees, side to side.
+    @State private var tilt: CGFloat = 0
 
     private var still: Bool { reduceMotion }
 
@@ -43,6 +45,8 @@ struct FrogFace: View {
         }
         .frame(width: size, height: size)
         .scaleEffect(x: 1 + squash.width, y: 1 + squash.height, anchor: .bottom)
+        .scaleEffect(mood == .waiting && !still ? 1.12 : 1)
+        .rotationEffect(.degrees(tilt))
         .offset(y: still ? sink : 0)
         .offset(y: -lift)
         .animation(.snappy(duration: 0.25), value: mood)
@@ -89,6 +93,7 @@ struct FrogFace: View {
             gaze = 0
             gazeY = restingY
         }
+        withAnimation(.easeInOut(duration: 0.2)) { tilt = 0 }
         if mood == .done { jump() }
     }
 
@@ -110,9 +115,8 @@ struct FrogFace: View {
         }
     }
 
-    /// The mood loops: idle/working blinks, thinking drift, reading scan, on their own
-    /// timer while the mood lasts. waiting tilts and sad droops are pure geometry on
-    /// `mood`, so they need no timer.
+    /// The mood loops: idle/working blinks, thinking drift, reading scan, waiting tilt,
+    /// on their own timer while the mood lasts. sad droops are geometry on `mood`.
     private func live() async {
         guard !still else { return }
         switch mood {
@@ -140,6 +144,13 @@ struct FrogFace: View {
                 withAnimation(.easeInOut(duration: 0.55)) { gaze = side }
                 side = -side
                 try? await Task.sleep(for: .seconds(1.2))
+            }
+        case .waiting:
+            // Head tilts side to side, eyes a little wide.
+            withAnimation(.easeInOut(duration: 0.2)) { lids = 1 }
+            while !Task.isCancelled {
+                withAnimation(.easeInOut(duration: 0.9)) { tilt = tilt == 0 ? -7 : (tilt < 0 ? 7 : -7) }
+                try? await Task.sleep(for: .seconds(0.9))
             }
         case .sad:
             withAnimation(.easeInOut(duration: 0.5)) { lids = 0.45 }
