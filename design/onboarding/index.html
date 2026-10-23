@@ -143,7 +143,7 @@ code{font:12px var(--mono);color:var(--fg2)}
 </style>
 <style>
 /* ---------- screens ---------- */
-.hello{flex:1;display:flex;flex-direction:column;align-items:center;padding-top:40px}
+.hello{flex:1;display:flex;flex-direction:column;align-items:center;padding-top:34px}
 .pond{position:relative;width:150px;height:96px;display:grid;place-items:center}
 .pond svg.pad{position:absolute;bottom:0;left:0;width:150px;height:40px;color:color-mix(in srgb,var(--frog) 22%,var(--win))}
 .pond .ff{position:relative;top:-2px}
@@ -163,7 +163,13 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
 .fold::before{content:"";position:absolute;left:0;top:-3px;width:8px;height:4px;border-radius:2px 2px 0 0;background:inherit}
 .dotc{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
 .alt{display:flex;gap:12px;align-items:center;margin-top:14px;color:var(--mut);font-size:13px}
-.hello .fine{margin-top:auto;margin-bottom:22px}
+.hello .fine{margin-top:auto;margin-bottom:0}
+.modstats{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mut);margin:-8px 0 12px}
+.modstats .ff{--s:14px}
+.dl{display:flex;align-items:center;gap:10px;margin:6px 0 10px 24px;font:12px var(--mono);color:var(--mut)}
+.dlbar{width:220px;height:6px;border-radius:4px;background:var(--chip);overflow:hidden}
+.dlbar i{display:block;width:71%;height:100%;border-radius:4px;background:var(--frog)}
+.dlpct{color:var(--fg2);width:32px}
 
 .tasks{display:flex;flex-direction:column;gap:10px;margin:6px 0 0 24px;max-width:660px}
 .task{display:grid;grid-template-columns:18px 1fr auto;gap:0 12px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--card)}
@@ -214,6 +220,8 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
 .field{display:flex;gap:6px}
 .field input{flex:1;font:inherit;font-size:13.5px;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:9px;padding:7px 11px;outline:none}
 .field input:focus{border-color:var(--green)}
+.adds{font-size:12.5px;color:var(--mut);line-height:1.55;margin:0 0 14px;text-align:left}
+.adds b{color:var(--fg2);font-weight:600}
 .sheet .fine{margin:14px 0 0}
 
 .term{width:980px;height:612px;border-radius:12px;background:#0d0e0f;color:#d7d9d6;box-shadow:0 30px 80px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.08);overflow:hidden;display:flex;flex-direction:column}
@@ -291,13 +299,13 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
 .ladder .stp{padding:2px 10px;border:1px solid var(--line);border-radius:999px}
 .ladder .stp.on{border-color:var(--green);color:var(--green)}
 
-.states{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;gap:12px;padding:16px;flex:1;background:var(--side);min-height:0}
+.states{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;gap:12px;padding:16px;flex:1;background:var(--side);min-height:0}
 .st{border:1px solid var(--line);border-radius:12px;background:var(--win);padding:13px 15px;display:flex;flex-direction:column;gap:5px;min-height:0}
 .st .lab{font:600 10px var(--ui);letter-spacing:.07em;text-transform:uppercase;color:var(--mut2);display:flex;align-items:center;gap:6px}
-.st h3{margin:4px 0 0;font:600 15px/1.25 var(--round);display:flex;gap:8px;align-items:center}
-.st p{margin:0;color:var(--mut);font-size:12.5px;line-height:1.45}
+.st h3{margin:4px 0 0;font:600 14px/1.25 var(--round);display:flex;gap:8px;align-items:center}
+.st p{margin:0;color:var(--mut);font-size:12px;line-height:1.45}
 .st .ask{margin:auto 0 0;gap:6px}
-.st .btn{font-size:12px;padding:4px 10px}
+.st .btn{font-size:11.5px;padding:3px 9px}
 .st .chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
 </style>
 </head>
@@ -361,8 +369,8 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
 
 <!-- ============ act 1 · the first win (under 90 s) ============ -->
 
-<section class="screen" id="open" data-act="the first win · under 90 s" data-title="open the app" data-t="0"
-  data-note="no tour, no sign-in. recent repos are git dirs touched in the last 30 days under ~, ~/code, ~/Developer and ~/src. first tasks run on an anonymous device trial on frog cloud, so the first win needs no account.">
+<section class="screen" id="open" data-act="the first win · on this mac" data-title="open the app" data-t="0"
+  data-note="no tour, no sign-in. recent repos are git dirs touched in the last 30 days under ~, ~/code, ~/Developer and ~/src. the moment the app opens, two things start in the background: the read-only scan of the recent repos, and the local model (unless one is already on the mac).">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>frog</div>
     <div class="hello">
@@ -372,6 +380,7 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
       </div>
       <h1>what shall we fix?</h1>
       <p class="sub">pick a repo. i'll read it and suggest three things i can finish right now.</p>
+      <div class="modstats"><i class="ff" data-m="working"></i><span>borrowing your mac's brain for ideas · full model, 2.4 gb, in the background</span></div>
       <div class="repos">
         <div class="h">recent on this mac<span>4 found</span></div>
         <button class="repo hot" data-go="next"><span class="fold"></span><b>ledger</b><span class="path">~/code/ledger</span><span class="meta"><i class="dotc" style="background:#3178c6"></i>typescript · 2 h ago</span><span class="go">›</span></button>
@@ -380,86 +389,91 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
         <button class="repo" data-go="next"><span class="fold"></span><b>dotfiles</b><span class="path">~/dotfiles</span><span class="meta"><i class="dotc" style="background:#89e051"></i>shell · 2 wk ago</span><span class="go">›</span></button>
       </div>
       <div class="alt"><button class="btn">open another folder…</button><span>or drop one on me</span></div>
-      <p class="fine">no account needed. your first tasks run on frog cloud, free. <a href="#" data-go="states">use a model on this mac instead</a></p>
+      <p class="fine">everything runs on this mac, free and private. no account, ever, unless you want one. <a href="#" data-go="states">already have a local model?</a></p>
+      <p class="fine" style="margin-bottom:26px">in a hurry? frog cloud does the first fix in seconds · <a href="#" data-go="login">$0.50 trial, still no account</a></p>
     </div>
   </div>
 </section>
 
-<section class="screen" id="read" data-act="the first win · under 90 s" data-title="frog reads the repo" data-t="9"
-  data-note="read-only pass, about 15 s: manifest, git log, the test suite, README against the manifest, outdated deps. each finding becomes a candidate task, ranked by confidence and by how fast it can be checked.">
+<section class="screen" id="getready" data-act="the first win · on this mac" data-title="scan and model, in parallel" data-t="8"
+  data-note="the scan is read-only and starts at once: manifest, git log, the test suite, README against the manifest, outdated deps. downloads are resumable and cached, and frog looks for an existing model first: ollama, LM Studio or the tang cache. when the scan lands, the three proposals come out on the spot, written by the small model; the big one keeps loading for the task itself.">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — frog</div>
     <div class="app">
-      <aside class="side" data-th="reading ledger" data-m="reading" data-name="frog" data-acct="trial · no account"></aside>
+      <aside class="side" data-th="reading ledger" data-m="reading" data-name="frog" data-acct="local · no account"></aside>
       <div class="main">
         <div class="tx">
-          <div class="row"><i class="ff" data-m="reading"></i><span class="who">frog</span><span class="hl">reading ledger</span><span class="time">0:09</span></div>
+          <div class="row"><i class="ff" data-m="reading"></i><span class="who">frog</span><span class="hl">reading ledger</span><span class="time">0:08</span></div>
           <div class="tool"><span class="v">read</span>package.json, tsconfig.json · 214 files, vitest</div>
           <div class="tool"><span class="v">ran</span><code>git log -30</code> · last commit 2 h ago, 3 people</div>
           <div class="tool"><span class="v">ran</span><code>npm test</code> · 212 passed, <span class="r">2 failing</span> in src/auth/</div>
           <div class="tool"><span class="v">read</span>README.md against package.json · install steps don't match</div>
           <div class="tool"><span class="v">ran</span><code>npm outdated</code><span class="spin"></span></div>
           <p class="say">just reading and running your tests. nothing changes until you say so.</p>
+          <div class="sep"></div>
+          <div class="row"><i class="ff" data-m="working"></i><span class="who">frog</span><span class="hl">waking my brain up, first run only</span><span class="time">2.4 gb</span></div>
+          <div class="dl"><div class="dlbar"><i></i></div><span class="dlpct">71%</span><span>18 mb/s · 40 s left · resumes if you close the app</span></div>
+          <p class="say">found qwen3-4b in ollama? <a href="#" data-go="states">i'll use that while this finishes.</a></p>
         </div>
-        <div class="composer">ask me anything about ledger…<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">↑</span></div></div>
+        <div class="composer">ask me anything about ledger…<div class="bot"><span class="chip">auto · local</span><span>on this mac</span><span class="send">↑</span></div></div>
       </div>
     </div>
   </div>
 </section>
 
-<section class="screen" id="propose" data-act="the first win · under 90 s" data-title="three things to finish" data-t="21"
-  data-note="exactly three, each with the evidence behind it, the files it touches and an honest estimate. the one your own tests can check is marked first. one click runs it; typing still works.">
+<section class="screen" id="ready2" data-act="the first win · on this mac" data-title="three things to finish" data-t="38"
+  data-note="no waiting for the download: the small model turns the scan into three tasks within seconds of the scan landing. the chip says honestly that the big model is still loading; the clock keeps the 90 s promise for the mac it was already on.">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — frog</div>
     <div class="app">
-      <aside class="side" data-th="ledger · 3 ideas" data-m="waiting" data-name="frog" data-acct="trial · no account"></aside>
+      <aside class="side" data-th="ledger · 3 ideas" data-m="waiting" data-name="frog" data-acct="local · no account"></aside>
       <div class="main">
         <div class="tx">
-          <div class="row"><i class="ff" data-m="waiting"></i><span class="who">frog</span><span class="hl">read ledger · 214 files, tests, readme, deps</span><span class="time">0:21</span></div>
+          <div class="row"><i class="ff" data-m="waiting"></i><span class="who">frog</span><span class="hl">read ledger · 214 files, tests, readme, deps</span><span class="time">0:38</span></div>
           <p class="say">here's what i can finish right now. pick one.</p>
           <div class="tasks">
-            <div class="task rec"><span class="num">1</span><div><b>fix 2 failing tests in auth/</b><p>an expired token gets a 500 instead of a 401. <code>verify()</code> throws before the guard can answer.</p><div class="meta"><span class="chip">src/auth/session.ts</span><span>~40 s · your tests will check it</span></div></div><button class="btn pri" data-go="next">fix it</button></div>
-            <div class="task"><span class="num">2</span><div><b>README install steps are stale</b><p>it says <code>npm i -g ledger-cli</code>. the package has been <code>@ledger/cli</code> since 2.0.</p><div class="meta"><span class="chip">README.md</span><span>~20 s</span></div></div><button class="btn">update it</button></div>
-            <div class="task"><span class="num">3</span><div><b>bump zod 3.22 → 3.23 and run tests</b><p>the patch fixes the parse bug your TODO at <code>utils/money.ts:41</code> works around.</p><div class="meta"><span class="chip">package.json</span><span class="chip">utils/money.ts</span><span>~1 min</span></div></div><button class="btn">bump it</button></div>
+            <div class="task rec"><span class="num">1</span><div><b>fix 2 failing tests in auth/</b><p>an expired token gets a 500 instead of a 401. <code>verify()</code> throws before the guard can answer.</p><div class="meta"><span class="chip">src/auth/session.ts</span><span>~90 s on this mac · your tests will check it</span></div></div><button class="btn pri" data-go="next">fix it</button></div>
+            <div class="task"><span class="num">2</span><div><b>README install steps are stale</b><p>it says <code>npm i -g ledger-cli</code>. the package has been <code>@ledger/cli</code> since 2.0.</p><div class="meta"><span class="chip">README.md</span><span>~40 s on this mac</span></div></div><button class="btn">update it</button></div>
+            <div class="task"><span class="num">3</span><div><b>bump zod 3.22 → 3.23 and run tests</b><p>the patch fixes the parse bug your TODO at <code>utils/money.ts:41</code> works around.</p><div class="meta"><span class="chip">package.json</span><span class="chip">utils/money.ts</span><span>~2 min</span></div></div><button class="btn">bump it</button></div>
           </div>
         </div>
-        <div class="composer">or tell me what to do…<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">↑</span></div></div>
+        <div class="composer">or tell me what to do…<div class="bot"><span class="chip">auto · local</span><span>on this mac</span><span class="send">↑</span></div></div>
       </div>
     </div>
   </div>
 </section>
 
-<section class="screen" id="run" data-act="the first win · under 90 s" data-title="one click runs it" data-t="52"
-  data-note="the app's inline rows: one line per tool call, one plain sentence on what was wrong. the face is in its working mood, and the sidebar shows the same face.">
+<section class="screen" id="run" data-act="the first win · on this mac" data-title="one click runs it, locally" data-t="150"
+  data-note="the app's inline rows: one line per tool call, one plain sentence on what was wrong. the face is in its working mood, and the sidebar shows the same face. no code or prompt leaves this mac, and it still fixes the same bug.">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — frog</div>
     <div class="app">
-      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="working" data-name="frog" data-acct="trial · no account"></aside>
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="working" data-name="frog" data-acct="local · no account"></aside>
       <div class="main">
         <div class="tx">
           <div class="you">fix 2 failing tests in auth/</div>
-          <div class="row"><i class="ff" data-m="working"></i><span class="who">frog</span><span class="hl">on it</span><span class="time">0:52</span></div>
+          <div class="row"><i class="ff" data-m="working"></i><span class="who">frog</span><span class="hl">on it</span><span class="time">2:30</span></div>
           <div class="tool"><span class="v">read</span>src/auth/session.ts, src/auth/session.test.ts</div>
           <div class="tool"><span class="v">ran</span><code>npx vitest src/auth</code> · <span class="r">2 failed</span>: expired token → 401, refresh after expiry → 401</div>
           <p class="say"><code>verify()</code> throws on an expired token, so <code>requireSession</code> never sends its 401 and the error handler answers 500. i'll have <code>verify</code> return the expiry and let the guard decide.</p>
           <div class="tool"><span class="v">edit</span>src/auth/session.ts <span class="g">+4</span> <span class="r">−2</span></div>
           <div class="tool"><span class="v">ran</span><code>npx vitest src/auth</code><span class="spin"></span></div>
         </div>
-        <div class="composer">steer me, or press esc to stop…<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">■</span></div></div>
+        <div class="composer">steer me, or press esc to stop…<div class="bot"><span class="chip">auto · local</span><span>on this mac</span><span class="send">■</span></div></div>
       </div>
     </div>
   </div>
 </section>
 
-<section class="screen" id="diff" data-act="the first win · under 90 s" data-title="accept the diff" data-t="74"
-  data-note="the win is the accept, not the run: we time first open → first accepted diff. accept writes to the working tree only, no commit, so yes is safe. ⌘↩ accepts.">
+<section class="screen" id="diff" data-act="the first win · on this mac" data-title="accept the diff" data-t="185"
+  data-note="the win is the accept, not the run. two honest clocks, measured separately: 1:12 p50 on a mac that already had a model, 3:05 p50 when the model had to download. accept writes to the working tree only, no commit, so yes is safe. ⌘↩ accepts.">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — frog</div>
     <div class="app">
-      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="done" data-name="frog" data-acct="trial · no account"></aside>
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="done" data-name="frog" data-acct="local · no account"></aside>
       <div class="main">
         <div class="tx">
-          <div class="row"><i class="ff" data-m="done"></i><span class="who">frog</span><span class="k g">done</span><span class="hl">both tests pass · nothing else in auth/ moved</span><span class="time">1:09</span></div>
+          <div class="row"><i class="ff" data-m="done"></i><span class="who">frog</span><span class="k g">done</span><span class="hl">both tests pass · nothing else in auth/ moved</span><span class="time">3:05</span></div>
           <p class="say">fixed. here's the change. nothing is applied until you accept.</p>
           <div class="diff">
             <div class="dh">src/auth/session.ts<span class="n"><span class="g">+4</span> <span class="r">−2</span></span></div>
@@ -467,7 +481,7 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
             <div class="df"><i class="ok">✓ 14 of 14 pass in src/auth/ · 214 of 214 overall</i><button class="btn ghost">discard</button><button class="btn">change something…</button><button class="btn pri" data-go="next">accept <kbd>⌘↩</kbd></button></div>
           </div>
         </div>
-        <div class="composer">or tell me what to change…<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">↑</span></div></div>
+        <div class="composer">or tell me what to change…<div class="bot"><span class="chip">auto · local</span><span>on this mac</span><span class="send">↑</span></div></div>
       </div>
     </div>
   </div>
@@ -475,15 +489,15 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
 
 <!-- ============ act 2 · after the win ============ -->
 
-<section class="screen" id="name" data-act="after the win" data-title="name your frog" data-t="78"
+<section class="screen" id="name" data-act="after the win" data-title="name your frog" data-t=""
   data-note="only after the accept, and skippable. four suggestions plus keep 'frog'. each name chip wears a mood; picking one makes the big face react. the name follows the frog everywhere: app, cli, head.">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — frog</div>
     <div class="app">
-      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="done" data-name="frog" data-acct="trial · no account"></aside>
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="done" data-name="frog" data-acct="local · no account"></aside>
       <div class="main">
         <div class="tx">
-          <div class="row"><span class="k g" style="padding-left:24px">✓ accepted</span><span class="hl">applied to your working tree, not committed</span><span class="time">first fix · 1:14</span></div>
+          <div class="row"><span class="k g" style="padding-left:24px">✓ accepted</span><span class="hl">applied to your working tree, not committed</span><span class="time">first fix · 3:05 fresh · 1:12 warm</span></div>
           <div class="card">
             <div class="top"><i class="ff" id="namer" data-m="done" style="--s:56px"></i><div><h2>nice one. want to name me?</h2><p>the name sticks: in the app, in the terminal, and on your desk if i ever move in.</p></div></div>
             <div class="names" id="names">
@@ -497,18 +511,18 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
             <div style="display:flex;gap:8px"><button class="btn pri" id="callme" data-go="next">call me pip</button><button class="btn ghost" data-go="next">skip</button></div>
           </div>
         </div>
-        <div class="composer">what's next?<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">↑</span></div></div>
+        <div class="composer">what's next?<div class="bot"><span class="chip">auto · local</span><span>on this mac</span><span class="send">↑</span></div></div>
       </div>
     </div>
   </div>
 </section>
 
 <section class="screen" id="routines" data-act="after the win" data-title="do this every morning?" data-t=""
-  data-note="routines come from what frog saw in the repo (ci history, pr volume, outdated deps), never a generic list. two are pre-checked when there's evidence. they run while the mac is awake; the cloud line is the first, soft pro trigger.">
+  data-note="routines come from what frog saw in the repo (ci history, pr volume, outdated deps), never a generic list. two are pre-checked when there's evidence. they run while the mac is awake; the sign-in line is the cloud upsell, soft and contextual.">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
     <div class="app">
-      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="idle" data-name="pip" data-acct="trial · no account"></aside>
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="idle" data-name="pip" data-acct="local · no account"></aside>
       <div class="main">
         <div class="tx">
           <div class="row"><i class="ff" data-m="idle"></i><span class="who">pip</span><span class="hl">that's me now</span></div>
@@ -517,10 +531,10 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
             <div class="rt first"><div><b>overnight ci triage</b><p>ci failed on 4 of the last 20 runs. at 8:00 i read what broke and have a fix waiting.</p></div><span class="when">weekdays · 8:00</span><button class="tg on"></button></div>
             <div class="rt"><div><b>first pass on new prs</b><p>11 prs opened last month. i read each one and draft notes. you decide what to send.</p></div><span class="when">when a pr opens</span><button class="tg on"></button></div>
             <div class="rt"><div><b>dependency bumps, tests first</b><p>6 packages are a patch behind. i bump, run the tests, and keep only what passes.</p></div><span class="when">mondays · 9:00</span><button class="tg"></button></div>
-            <div style="display:flex;gap:8px;align-items:center;margin-top:12px"><button class="btn pri" data-go="next">turn on 2</button><button class="btn ghost" data-go="next">not now</button><span class="fine" style="margin-left:auto">runs while your mac is awake · <a href="#">or in frog cloud, with pro</a></span></div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:12px"><button class="btn pri" data-go="next">turn on 2</button><button class="btn ghost" data-go="next">not now</button><span class="fine" style="margin-left:auto">runs while your mac is awake · <a href="#" data-go="login">sign in and it runs in frog cloud while you sleep</a></span></div>
           </div>
         </div>
-        <div class="composer">what's next?<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">↑</span></div></div>
+        <div class="composer">what's next?<div class="bot"><span class="chip">auto · local</span><span>on this mac</span><span class="send">↑</span></div></div>
       </div>
     </div>
   </div>
@@ -528,12 +542,12 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
 
 <!-- ============ act 3 · save your frog ============ -->
 
-<section class="screen" id="save" data-act="save your frog" data-title="sign in = save pip" data-t=""
-  data-note="asked once, right after the routines, framed as keeping what you just made. github first, magic link second. no card. 'not now' keeps pip on this mac only; we ask again only when there's a reason (a second device, cloud routines, credits).">
+<section class="screen" id="save" data-act="sign in adds, never unlocks" data-title="sign in, if you want" data-t=""
+  data-note="signing in adds, it never unlocks. asked once, right after the routines, framed as taking pip with you. github first, magic link second. no card. 'not now' changes nothing: pip, its memory and routines keep working on this mac. we ask again only at a real moment (a hard task, a routine while asleep, a second device, a head, the receipt).">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
     <div class="app">
-      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="idle" data-name="pip" data-acct="not saved yet"></aside>
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="idle" data-name="pip" data-acct="local · no account"></aside>
       <div class="main">
         <div class="tx">
           <div class="row"><i class="ff" data-m="idle"></i><span class="who">pip</span><span class="hl">2 routines on</span></div>
@@ -544,53 +558,55 @@ h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
       <div class="sheet">
         <i class="ff" data-m="waiting" style="--s:54px"></i>
         <h2>save pip</h2>
-        <p class="sub">sign in and pip keeps its name, its notes on ledger and its routines, here and on any other mac.</p>
+        <p class="sub">sign in and pip comes with you: its name, its notes on ledger and its routines, on any mac. nothing here changes if you don't.</p>
         <div class="keeps"><span class="chip">name · pip</span><span class="chip">memory · 9 notes</span><span class="chip">2 routines</span></div>
+        <p class="adds">signing in adds: <b>fast cloud speed</b>, <b>routines while your mac sleeps</b>, <b>pip on every device</b>, <b>head pairing</b>, <b>the shared fix cache</b>. it never takes anything away.</p>
         <button class="gh" data-go="next"><svg width="17" height="17"><use href="#ghmark"/></svg>continue with github</button>
         <div class="or">or</div>
         <div class="field"><input placeholder="you@email.com" value=""><button class="btn">email me a link</button></div>
-        <p class="fine">no card. $5 in beta credits when you sign in.<br><a href="#" data-go="next">not now</a> · pip stays on this mac</p>
+        <p class="fine">no card. $5 in cloud credits when you sign in.<br><a href="#" data-go="next">not now</a> · everything keeps working on this mac</p>
       </div>
     </div>
   </div>
 </section>
 
-<section class="screen" id="saved" data-act="save your frog" data-title="pip is saved" data-t=""
-  data-note="the browser hands back to the app via deep link; the app confirms in the transcript, not a modal. the anonymous trial, memory and routines move onto the account in one step. the sidebar footer is the account's home from now on.">
+<section class="screen" id="saved" data-act="sign in adds, never unlocks" data-title="pip is saved" data-t=""
+  data-note="the browser hands back to the app via deep link; the app confirms in the transcript, not a modal. local memory, routines and any $0.50 device trial move onto the account in one step. local stays the default model. the sidebar footer is the account's home from now on.">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
     <div class="app">
-      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="done" data-name="pip" data-acct="beta · $5.00 left"></aside>
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="done" data-name="pip" data-acct="frog cloud · $5.00 free"></aside>
       <div class="main">
         <div class="tx">
           <div class="row"><i class="ff" data-m="idle"></i><span class="who">pip</span><span class="hl">2 routines on</span></div>
           <div class="row"><i class="ff" data-m="done"></i><span class="who">pip</span><span class="k g">saved</span><span class="hl">signed in as samr via github</span><span class="chip">name</span><span class="chip">9 notes</span><span class="chip">2 routines</span></div>
-          <p class="say">i'm saved. $5 in beta credits are on your account, and there's no card on file. open frog on another mac, or run <code>frog</code> in a terminal, and it's still me.</p>
+          <p class="say">i'm saved. i still run on this mac by default; $5 in cloud credits are there for the hard ones, and there's no card on file. open frog on another mac, or run <code>frog</code> in a terminal, and it's still me.</p>
           <div class="sep"></div>
           <div class="row"><i class="ff" data-m="waiting"></i><span class="who">pip</span><span class="hl">two more i can do in ledger</span></div>
           <div class="ask"><button class="btn rec">update the README install steps</button><button class="btn">bump zod and run tests</button></div>
         </div>
-        <div class="composer">what's next?<div class="bot"><span class="chip">auto · dart</span><span>frog cloud · beta</span><span class="send">↑</span></div></div>
+        <div class="composer">what's next?<div class="bot"><span class="chip">auto · local</span><span>on this mac</span><span class="send">↑</span></div></div>
       </div>
     </div>
   </div>
 </section>
 
-<section class="screen" id="cli" data-act="save your frog" data-title="cli first run" data-t=""
-  data-note="same thesis in the terminal: no login before the first win. `frog` in a repo reads it, offers three numbered tasks, shows the diff, y to apply. the time line at the end is the same metric as the app.">
+<section class="screen" id="cli" data-act="sign in adds, never unlocks" data-title="cli first run" data-t=""
+  data-note="same thesis in the terminal: no login before the first win, and the first win is local. `frog` in a repo reads it, offers three numbered tasks, shows the diff, y to apply. the first run warms the model in the background; the time line is honest about what the mac cost.">
   <div class="term">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>~/code/ledger — zsh</div>
 <pre><span class="m">~/code/ledger</span> <span class="p">❯</span> frog
-<span class="w">frog</span> <span class="m">0.9 · free and open source · trial on frog cloud, no account needed</span>
-
+<span class="w">frog</span> <span class="m">0.9 · free and open source · runs on this mac, no account needed</span>
 <span class="m">reading ledger…</span> 214 files · vitest · <span class="r">2 failing</span> in src/auth/ · README is stale · 6 deps behind
+<span class="m">warming up qwen3-4b…</span> <span class="hi">████████████████░░░░</span> 82%   <span class="m">36 s · resumes if you close the terminal</span>
 
 here's what i can finish right now:
-  <span class="w">1</span>  fix 2 failing tests in auth/            <span class="m">~40 s · your tests will check it</span>
-  <span class="w">2</span>  update stale install steps in README    <span class="m">~20 s</span>
-  <span class="w">3</span>  bump zod 3.22 → 3.23 and run tests      <span class="m">~1 min</span>
+  <span class="w">1</span>  fix 2 failing tests in auth/          <span class="m">~90 s · your tests will check it</span>
+  <span class="w">2</span>  update stale install steps in README  <span class="m">~40 s</span>
+  <span class="w">3</span>  bump zod 3.22 → 3.23 and run tests   <span class="m">~2 min</span>
 
 <span class="p">pick 1–3, or say anything ›</span> 1
+
 <span class="m">  read</span>  src/auth/session.ts, session.test.ts
 <span class="m">  edit</span>  src/auth/session.ts <span class="p">+4</span> <span class="r">−2</span>
 <span class="m">  ran </span>  npx vitest src/auth   <span class="p">14 passed</span>
@@ -604,22 +620,44 @@ here's what i can finish right now:
 <span class="p">+  }</span>
 
 <span class="p">apply? [y/n/e to edit] ›</span> y
-<span class="p">✓</span> applied, not committed. first fix in 1:02.
+<span class="p">✓</span> applied, not committed. first fix in 2:51. <span class="m">(1:04 once i'm warm)</span>
 <span class="m">  i'm frog. name me with</span> frog name <span class="m">· save me with</span> frog login
 
 <span class="m">~/code/ledger</span> <span class="p">❯</span> <span class="cursor"></span></pre>
   </div>
 </section>
 
-<section class="screen" id="login" data-act="save your frog" data-title="frog login (device code)" data-t=""
-  data-note="oauth device flow: works over ssh and on headless boxes. the code is 8 letters, no lookalikes (0/o, 1/l). enter opens the browser when there is one. after approval the trial session, name and memory attach to the account, same as the app.">
+<section class="screen" id="struggle" data-act="sign in adds, never unlocks" data-title="a task my mac finds hard" data-t=""
+  data-note="the main cloud moment, and the honest one. the local model gets as far as it gets; when it stalls or looks like many passes, frog says so in seconds, names the cost of both roads, and hands over only if you say so. free trial needs no account; sign-in keeps credits and history.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
+    <div class="app">
+      <aside class="side" data-th="rename Money to Amount" data-m="thinking" data-name="pip" data-acct="local · no account"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="you">rename Money to Amount everywhere</div>
+          <div class="row"><i class="ff" data-m="thinking"></i><span class="who">pip</span><span class="hl">first pass done · 31 files touched, 3 tests still red</span><span class="time">4:10</span></div>
+          <div class="tool"><span class="v">ran</span><code>npx vitest</code> · <span class="r">3 failed</span> in src/report/</div>
+          <div class="card" style="padding-bottom:14px">
+            <div class="top"><i class="ff" data-m="thinking" style="--s:44px"></i><div><h2 style="font-size:17px">this one's big, and my small brain keeps missing corner cases</h2><p>two more passes here, about 6 minutes. dart on frog cloud does most of this in one, about 40 seconds. sign in and your first $0.50 of cloud work is free. no card, no account unless you want one.</p></div></div>
+            <div class="ask" style="margin:14px 0 4px"><button class="btn rec" data-go="login">try dart free · sign in</button><button class="btn">$0.50 trial, no account</button><button class="btn ghost">keep going local</button></div>
+          </div>
+        </div>
+        <div class="composer">steer me, or press esc to stop…<div class="bot"><span class="chip">auto · local</span><span>on this mac</span><span class="send">■</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="login" data-act="sign in adds, never unlocks" data-title="frog login (device code)" data-t=""
+  data-note="oauth device flow: works over ssh and on headless boxes. reached from the name card, routines, a second device, a head, or a task the local model finds hard. the code is 8 letters, no lookalikes (0/o, 1/l). enter opens the browser when there is one. after approval the local name, memory and any device trial attach to the account, same as the app.">
   <div class="term">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>~/code/ledger — zsh</div>
 <pre><span class="m">~/code/ledger</span> <span class="p">❯</span> frog name pip
 <span class="p">✓</span> i'm pip now.
 
 <span class="m">~/code/ledger</span> <span class="p">❯</span> frog login
-save pip so it keeps its name, memory and routines.
+signing in adds cloud speed, sync and routines while you sleep. it never takes anything away.
 
   open      <span class="b">https://frog.toys/device</span>
   and enter <span class="w code">KXRT-4QPM</span>
@@ -628,15 +666,15 @@ save pip so it keeps its name, memory and routines.
 
 <span class="p">✓</span> signed in as <span class="w">samr</span> <span class="m">(github)</span>
 <span class="p">✓</span> pip is saved   <span class="m">name · 9 notes · 2 routines</span>
-<span class="p">✓</span> beta credits   <span class="m">$5.00 · no card on file</span>
+<span class="p">✓</span> cloud credits  <span class="m">$5.00 for hard tasks · local stays the default · no card</span>
 
 <span class="m">  this terminal and the app are the same pip now.</span>
 <span class="m">  see what's left any time:</span> frog usage
 
 <span class="m">~/code/ledger</span> <span class="p">❯</span> frog usage
-<span class="w">pip</span> <span class="m">· beta</span>
+<span class="w">pip</span> <span class="m">· free · local by default</span>
   this week   7 tasks · 3 diffs accepted · $0.41
-  left        $4.59 of $5.00
+  cloud       $4.59 of $5.00 left
   routines    ci triage <span class="m">weekdays 8:00</span> · pr first pass <span class="m">on open</span>
 
 <span class="m">~/code/ledger</span> <span class="p">❯</span> <span class="cursor"></span></pre>
@@ -650,7 +688,7 @@ save pip so it keeps its name, memory and routines.
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
     <div class="app">
-      <aside class="side" data-th="tuesday" data-m="waiting" data-name="pip" data-acct="beta · $2.10 left" data-more="ci triage · 8:00|now;rename Money to Amount|10:40;3 queued|15:05"></aside>
+      <aside class="side" data-th="tuesday" data-m="waiting" data-name="pip" data-acct="local + trial · $2.10 left" data-more="ci triage · 8:00|now;rename Money to Amount|10:40;3 queued|15:05"></aside>
       <div class="main">
         <div class="tx">
           <div class="datel" style="margin-left:24px">tue · 8:02</div>
@@ -672,11 +710,11 @@ save pip so it keeps its name, memory and routines.
 </section>
 
 <section class="screen" id="receipt" data-act="value, never walls" data-title="the weekly receipt" data-t=""
-  data-note="monday 9:00, one card, once. counts, not streaks: what got done, what it cost. 'saved' is frog's estimate of hands-on time minus your review time, and the card links to how it's counted. one click turns receipts off.">
+  data-note="monday 9:00, one card, once. counts, not streaks: what got done, what it cost. logged out it's computed on the mac and shows; signing in keeps the history across weeks and devices (one line, once). 'saved' links to how it's counted. one click turns receipts off.">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
     <div class="app">
-      <aside class="side" data-th="last week with pip" data-m="idle" data-name="pip" data-acct="beta · $1.80 left" data-more="ci triage · 8:00|mon;first pass on #52|sun"></aside>
+      <aside class="side" data-th="last week with pip" data-m="idle" data-name="pip" data-acct="frog cloud · $1.80 left" data-more="ci triage · 8:00|mon;first pass on #52|sun"></aside>
       <div class="main">
         <div class="tx">
           <div class="row"><i class="ff" data-m="idle"></i><span class="who">pip</span><span class="hl">last week, oct 13 – 19</span><span class="time">mon · 9:00</span></div>
@@ -694,32 +732,31 @@ save pip so it keeps its name, memory and routines.
               <li>dependency bumps<span>2 kept · 1 dropped, tests failed</span></li>
               <li>things you asked for<span>25 tasks · 19 accepted</span></li>
             </ul>
-            <div class="rf"><a href="#">how 'saved' is counted</a><span>$3.20 of $5.00 beta credits</span><a href="#" style="margin-left:auto">turn off receipts</a></div>
+            <div class="rf"><a href="#">how 'saved' is counted</a><span>$3.20 cloud · 29 tasks local, free</span><a href="#" style="margin-left:auto">turn off receipts</a></div>
           </div>
         </div>
-        <div class="composer">what's next?<div class="bot"><span class="chip">auto · dart</span><span>frog cloud · beta</span><span class="send">↑</span></div></div>
+        <div class="composer">what's next?<div class="bot"><span class="chip">auto · local</span><span>on this mac</span><span class="send">↑</span></div></div>
       </div>
     </div>
   </div>
 </section>
 
 <section class="screen" id="credits" data-act="value, never walls" data-title="credits run out mid-task" data-t=""
-  data-note="the task that crossed zero finishes; we eat the overage (capped at one task's worth). the ask comes after the result, with a free path (local model) given equal weight. no countdown banners before this.">
+  data-note="signed in, cloud credits used up. the task that crossed zero finishes; we eat the overage (capped at one task's worth). then frog drops back to the local model on its own, the free default it started on, and the ask comes after the result. no countdown banners before this.">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
     <div class="app">
-      <aside class="side" data-th="bump zod and run tests" data-m="done" data-name="pip" data-acct="beta · $0.00 left" data-more="fix 2 failing tests in auth/|2 d;update README install steps|2 d"></aside>
+      <aside class="side" data-th="bump zod and run tests" data-m="done" data-name="pip" data-acct="local · cloud $0.00" data-more="fix 2 failing tests in auth/|2 d;update README install steps|2 d"></aside>
       <div class="main">
         <div class="tx">
           <div class="you">bump zod and run tests</div>
-          <div class="tool"><span class="v">edit</span>package.json, package-lock.json · zod 3.22.4 → 3.23.8</div>
-          <div class="tool"><span class="v">edit</span>utils/money.ts <span class="g">+1</span> <span class="r">−6</span> · removed the TODO workaround</div>
+          <div class="tool"><span class="v">edit</span>package.json · zod 3.22.4 → 3.23.8 · utils/money.ts <span class="g">+1</span> <span class="r">−6</span>, workaround gone</div>
           <div class="tool"><span class="v">ran</span><code>npm test</code> · <span class="g">214 passed</span></div>
           <div class="row"><i class="ff" data-m="done"></i><span class="who">pip</span><span class="k g">done</span><span class="hl">zod 3.23 · workaround gone · 214 of 214 pass</span><button class="btn pri" style="margin-left:auto;padding:3px 10px">accept <kbd>⌘↩</kbd></button></div>
-          <div class="card" style="margin-top:16px">
-            <div class="top"><i class="ff" data-m="waiting" style="--s:40px"></i><div><h2 style="font-size:17px">that one finished on the last of your beta credits</h2><p>i didn't stop halfway. here's how to keep going.</p></div></div>
+          <div class="card" style="margin-top:10px;padding:14px 18px 12px">
+            <div class="top"><i class="ff" data-m="waiting" style="--s:40px"></i><div><h2 style="font-size:17px">that one finished on the last of your cloud credits</h2><p>i didn't stop halfway. from here i'm back on this mac, free, unless you pick otherwise.</p></div></div>
             <div class="rt w first" style="margin-top:8px"><div><b>pro · $20 a month</b><p>routines run in frog cloud while your mac sleeps, 2 tasks at once, the bigger model when it helps.</p></div><span class="when"></span><button class="btn pri" data-go="plan">get pro</button></div>
-            <div class="rt w"><div><b>keep going on this mac</b><p>free. qwen3-4b runs locally. slower, and good for small fixes.</p></div><span class="when">2.4 gb download</span><button class="btn">use local</button></div>
+            <div class="rt w"><div><b>stay on this mac</b><p>free, forever. everything works locally, just slower on big tasks. this is already on.</p></div><span class="when">qwen3-4b · local</span><button class="btn rec">✓ on</button></div>
             <div class="rt w"><div><b>pay as you go</b><p>frog api: $0.60 per million tokens in, $1.50 out. $5 lasts most people a week or two.</p></div><span class="when"></span><button class="btn">add $5</button></div>
             <p class="fine" style="margin:10px 0 0">no rush. pip, its memory and routines stay whatever you pick.</p>
           </div>
@@ -739,7 +776,7 @@ save pip so it keeps its name, memory and routines.
         <h2>plan</h2>
         <p class="fine" style="margin:0">signed in as samr · pip is on pro since today</p>
         <div class="plans">
-          <div class="plan"><h3>beta</h3><div class="pr">free</div><ul><li>$5 in credits</li><li>routines while your mac is awake</li><li>1 task at a time</li><li>dart</li></ul><button class="btn ghost">was your plan</button></div>
+          <div class="plan"><h3>free</h3><div class="pr">$0</div><ul><li>the full agent, local models</li><li>local memory and routines</li><li>signed in: $5 cloud credits, sync</li><li>forever, no account needed</li></ul><button class="btn ghost">was your plan</button></div>
           <div class="plan"><h3>api</h3><div class="pr">per token</div><ul><li>$0.60 / M in, $0.06 cached</li><li>$1.50 / M out</li><li>any tool, any editor</li><li>api.frog.toys</li></ul><button class="btn">get a key</button></div>
           <div class="plan cur"><h3>pro <span class="tag">your plan</span></h3><div class="pr">$20 <small>/ month</small></div><ul><li>routines in frog cloud while your mac sleeps</li><li>2 tasks at once</li><li>tree when it helps</li></ul><button class="btn rec">✓ active</button></div>
           <div class="plan"><h3>max</h3><div class="pr">$200 <small>/ month</small></div><ul><li>everything in pro</li><li>8 tasks at once</li><li>bull, our biggest model</li><li>or max 5x at $100</li></ul><button class="btn">switch to max</button></div>
@@ -858,13 +895,15 @@ save pip so it keeps its name, memory and routines.
 <!-- ============ states ============ -->
 
 <section class="screen" id="states" data-act="edge states" data-title="when things aren't ideal" data-t=""
-  data-note="every state keeps a path to a first win. no dead ends, no error codes up front. credits-out-mid-task has its own screen in act 4.">
+  data-note="every state keeps a path to a first win. no dead ends, no error codes up front. logged out never means less: local memory, local routines, local names are the baseline. cloud moments are additions, shown once per trigger, and credits-out-mid-task has its own screen in act 4.">
   <div class="win">
     <div class="tb"><div class="lights"><i></i><i></i><i></i></div>states</div>
     <div class="states">
       <div class="st"><div class="lab">empty repo</div><h3><i class="ff" data-m="idle" style="--s:20px"></i>notes is empty</h3><p>no files yet. tell me what it should be and i'll set it up, tests included.</p><div class="chips"><span class="chip">a cli in rust</span><span class="chip">a next.js app</span><span class="chip">just a readme</span></div><div class="ask"><button class="btn rec">start something</button><button class="btn ghost">pick another repo</button></div></div>
       <div class="st"><div class="lab">no git</div><h3><i class="ff" data-m="thinking" style="--s:20px"></i>~/scratch isn't a git repo</h3><p>i like git so every change i make can be undone. i can set it up here, one commit of what's there now.</p><div class="ask"><button class="btn rec">set up git</button><button class="btn">work without it</button></div></div>
-      <div class="st"><div class="lab">offline · local only</div><h3><i class="ff" data-m="working" style="--s:20px"></i>offline, so i'm on this mac</h3><p>running qwen3-4b locally. slower, and nothing leaves your mac. no local model yet? connect once to get one (2.4 gb), then i work offline.</p><div class="chips"><span class="chip">local · qwen3-4b</span><span class="chip">est. ×3 slower</span></div><div class="ask"><button class="btn">keep going local</button></div></div>
+      <div class="st"><div class="lab">model · already on this mac</div><h3><i class="ff" data-m="done" style="--s:20px"></i>found qwen3-4b in ollama</h3><p>no download. i'll use it as is, and the ideas come in about 20 seconds. lm studio and the tang cache count too.</p><div class="chips"><span class="chip">local · ollama</span><span class="chip">first diff ~1:12</span></div><div class="ask"><button class="btn rec">use it</button><button class="btn ghost">pick another</button></div></div>
+      <div class="st"><div class="lab">model · fresh download</div><h3><i class="ff" data-m="working" style="--s:20px"></i>qwen3-4b, 2.4 gb, one time</h3><p>the scan runs while it downloads, so the ideas don't wait. 71% · 18 mb/s · 40 s left. it resumes if you close the app, and it's cached from then on.</p><div class="chips"><span class="chip">first diff ~3:05</span></div><div class="ask"><button class="btn rec">read the repo meanwhile</button></div></div>
+      <div class="st"><div class="lab">model · download paused</div><h3><i class="ff" data-m="sad" style="--s:20px"></i>offline at 64%</h3><p>i'll pick the download up when you're back. the small model still reads the repo and proposes. or try the cloud once you're online.</p><div class="ask"><button class="btn rec">resume</button><button class="btn ghost">$0.50 cloud trial</button></div></div>
       <div class="st"><div class="lab">sign-in failed</div><h3><i class="ff" data-m="sad" style="--s:20px"></i>github didn't let me in</h3><p>access was denied in the browser. pip is still here, on this mac. nothing's lost.</p><div class="ask"><button class="btn rec">try again</button><button class="btn">email me a link</button></div></div>
       <div class="st"><div class="lab">magic link</div><h3><i class="ff" data-m="waiting" style="--s:20px"></i>check sam@hey.com</h3><p>the link opens frog and signs you in. it works for 15 minutes. expired? i'll say so and send a new one.</p><div class="ask"><button class="btn">resend in 0:30</button><button class="btn ghost">use github</button></div></div>
       <div class="st"><div class="lab">nothing to fix</div><h3><i class="ff" data-m="done" style="--s:20px"></i>garden looks healthy</h3><p>tests pass, docs match, deps are current. three things i could still do:</p><div class="chips"><span class="chip">tests for src/parse.rs</span><span class="chip">explain the codebase</span><span class="chip">a ci workflow</span></div><div class="ask"><button class="btn rec">tests for parse.rs</button></div></div>
@@ -954,9 +993,11 @@ save pip so it keeps its name, memory and routines.
       const pct = Math.min(100, (Math.min(t, 74) / 90) * 100);
       document.getElementById('rfill').style.width = pct + '%';
       document.getElementById('rnow').style.left = pct + '%';
-      document.getElementById('rlbl').innerHTML = t >= 74
-        ? `first accepted diff at <b>1:14</b> · 16 s under budget`
-        : `<b>${fmt(t)}</b> since first open`;
+      document.getElementById('rlbl').innerHTML = t >= 90
+        ? `first accepted diff: <b>1:12</b> with a model · <b>3:05</b> downloading`
+        : t > 0
+          ? `<b>${fmt(t)}</b> since first open`
+          : '0:00 · the clock starts';
     }
     history.replaceState(null, '', `?s=${s.id}&t=${theme}`);
   }

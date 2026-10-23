@@ -1,79 +1,111 @@
-# frog first run: onboarding spec
+# frog first run: onboarding spec (v2, local-first)
 
-Mockups: `index.html` (19 screens, dark and light, ← → to step, `t` flips the theme, `?s=<id>&t=light` deep-links). Captures: `shots/`.
-Thesis (approved): value first, then name, then save, then upgrades that follow value, then the head. No tour, no streaks, no badges.
+Mockups: `index.html` (20 screens, dark and light, ← → to step, `t` flips the theme, `?s=<id>&t=light` deep-links). Captures: `shots/`. Colors and type live in CSS variables at the top of `index.html`, ready to swap for `design/system/tokens.json`.
+Thesis (approved): value first, then name, then routines, then sign-in that adds, then upgrades that follow value, then the head. No tour, no streaks, no badges.
 Copy rules: lowercase, short, warm, no exclamation marks, no emoji. frog speaks in the first person.
 
-## 1. Flow
+## 0. Principles (Cam, 2026-10-23)
 
-1 open → 2 read (read-only scan, 0:05–0:20) → 3 propose (exactly 3 tasks; the one the repo's own tests can check comes first, 0:21) → 4 run (one click) → 5 diff (accept writes to the working tree only, no commit; **accepted by 1:14**) → 6 name (skippable) → 7 routines (drawn from repo evidence) → 8 save (sign-in sheet) → 9 saved. CLI: 10 `frog` (same first win) → 11 `frog login` (device code). Later: 12 nudges (days in) → 13 weekly receipt → 14 credits out mid-task → 15 plan (checkout, cancel). Then: 16 head card (30+ days) → 17 unbox → 18 greet. 19 edge states.
+- **frog is free and fully usable logged out, forever.** Logged out: the full agent, all tools, local models, local memory, a local frog name, local routines (while the Mac is awake), MCP.
+- **Signing in adds, it never unlocks.** Signed in adds: free frog cloud credits (dart/tree at cloud speed), sync of name, memory and routines across machines, cloud routines while the laptop sleeps, head pairing, the shared fix cache, session share links, weekly receipt history.
+- **The first run is local-first.** frog cloud is opt-in: a $0.50 device trial with no account, or credits after sign-in.
+- **Prompts are contextual, dismissible, once per trigger.** Never degrade, nag, badge or count down the logged-out experience. Never a modal during a task.
+- References: Obsidian (the app is free and local with no account; Sync and Publish are paid add-ons, offered in settings and never in the editor) and VS Code Settings Sync (off by default, one "turn on sync" entry point, sign-in only when you ask for sync, and a machine that never signs in loses nothing). We take three rules from them: the local product is complete, the account sits on a feature you just reached for, and saying no costs nothing.
 
-Budget: install → first accepted diff under 90 s. The scan is capped at 20 s; if it's still running, propose what's known so far. Task 1 must be finishable in under 60 s by dart; otherwise it ranks lower.
+## 1. Flow and the local clock
+
+1 open → 2 scan and model in parallel → 3 three proposals → 4 run locally → 5 accept → 6 name → 7 routines → 8 sign-in sheet (optional) → 9 saved. CLI: 10 `frog` (same local first win). Cloud moment: 11 a task the Mac finds hard → 12 `frog login` (device code). Later: 13 nudges → 14 weekly receipt → 15 credits out mid-task (signed in) → 16 plan. Then 17 head card → 18 unbox → 19 greet. 20 edge states.
+
+**How the local first win gets close to 90 s:**
+1. **At app open** (before a repo is picked): look for an existing model (ollama, LM Studio, the tang cache). If none, start the download (qwen3-4b, 2.4 GB). It is resumable and cached, and closing the app doesn't lose it.
+2. **Pre-scan the recent repos** in the background, read-only: manifest, `git log`, test run, README vs manifest, `npm outdated` or the language's equivalent. Most findings are heuristic (failing test names, version drift, stale commands), so they don't need the big model.
+3. **A tiny proposal model.** A ~0.5B model ships inside the app (≈300 MB, no download) and writes the 3 task cards from the scan results within seconds. The big model only runs the task itself.
+4. **Run the chosen task** once the big model is loaded. Estimates on the cards are local ones ("~90 s on this mac").
+5. **Show progress honestly**: one download row (percent, MB/s, time left, "resumes if you close the app"), and both clocks in the copy.
+
+| path | open → proposals | proposals → accept | **first accepted diff (p50)** |
+|---|---|---|---|
+| model already on the mac (ollama / LM Studio / tang cache, or a re-install) | ~0:20 | ~0:50 | **1:12** |
+| fresh download, 2.4 GB at ~18 MB/s | ~0:38 (tiny model, during the download) | ~2:25 (wait for the model, then run) | **3:05** |
+| opt-in frog cloud trial (dart) | ~0:20 | ~0:30 | 0:55 |
+
+The 90 s target holds for the existing-model path. A fresh download takes about 3 minutes, and the app says so instead of hiding it. The scan is capped at 20 s. Task 1 has to be finishable locally in under 2 minutes, otherwise it ranks lower.
 
 ## 2. Copy by screen
 
-**open** · h1 "what shall we fix?" · sub "pick a repo. i'll read it and suggest three things i can finish right now." · list header "recent on this mac · 4 found" · "open another folder…" / "or drop one on me" · footer "no account needed. your first tasks run on frog cloud, free. use a model on this mac instead"
-**read** · row "frog · reading ledger" · tool rows (`read` / `ran`) · "just reading and running your tests. nothing changes until you say so." · composer "ask me anything about ledger…" · chip "auto · dart", "frog cloud trial"
-**propose** · "here's what i can finish right now. pick one." · task: title, evidence sentence, file chips, "~40 s · your tests will check it" · buttons "fix it" / "update it" / "bump it" · composer "or tell me what to do…"
-**run** · user bubble = task title · row "on it" · cause in one sentence ("`verify()` throws on an expired token, so `requireSession` never sends its 401…") · composer "steer me, or press esc to stop…"
-**diff** · row "done · both tests pass · nothing else in auth/ moved" · "fixed. here's the change. nothing is applied until you accept." · footer "✓ 14 of 14 pass in src/auth/ · 214 of 214 overall" · "discard" / "change something…" / "accept ⌘↩"
-**name** · "✓ accepted · applied to your working tree, not committed · first fix · 1:14" · h2 "nice one. want to name me?" · "the name sticks: in the app, in the terminal, and on your desk if i ever move in." · chips pip (done), moss (thinking), tad (working), fern (reading), keep 'frog' · echoes "pip. i like it." / "moss. slow and thorough." / "tad. short, and quick." / "fern. quiet, always reading." / "frog it is. a classic." · "call me pip" / "skip"
-**routines** · h2 "want me to do this every morning?" · "from what i saw in ledger. you can change these any time." · "overnight ci triage · ci failed on 4 of the last 20 runs. at 8:00 i read what broke and have a fix waiting." · "first pass on new prs · 11 prs opened last month. i read each one and draft notes. you decide what to send." · "dependency bumps, tests first · 6 packages are a patch behind. i bump, run the tests, and keep only what passes." · "turn on 2" / "not now" · "runs while your mac is awake · or in frog cloud, with pro"
-**save** · h2 "save pip" · "sign in and pip keeps its name, its notes on ledger and its routines, here and on any other mac." · chips "name · pip", "memory · 9 notes", "2 routines" · "continue with github" · "or" · email field + "email me a link" · "no card. $5 in beta credits when you sign in." · "not now · pip stays on this mac"
-**saved** · row "saved · signed in as samr via github" · "i'm saved. $5 in beta credits are on your account, and there's no card on file. open frog on another mac, or run `frog` in a terminal, and it's still me." · "two more i can do in ledger" + two buttons
-**cli** · banner "frog 0.9 · free and open source · trial on frog cloud, no account needed" · "here's what i can finish right now:" · "pick 1–3, or say anything ›" · "apply? [y/n/e to edit] ›" · "✓ applied, not committed. first fix in 1:02." · "i'm frog. name me with frog name · save me with frog login"
-**login** · "save pip so it keeps its name, memory and routines." · "open https://frog.toys/device and enter KXRT-4QPM" · "press enter to open the browser · waiting for you…" · "✓ signed in as samr (github)" · "✓ pip is saved" · "✓ beta credits $5.00 · no card on file" · "this terminal and the app are the same pip now." · `frog usage`
-**nudges** · "missed · ci went red at 2:14 and your mac was asleep, so triage waited" → "triage it now" / "run routines while i sleep · pro" · "heads up · renaming Money → Amount touches 31 files. dart will need a few passes" + "tree, the bigger model, would likely do it in one. about 4 min instead of 12." → "stay on dart" / "leap to tree · pro" · "3 tasks queued. you run 1 at a time; pro runs 2, max runs 8" → "keep the queue" / "run 2 at once · pro"
-**receipt** · h2 "last week with pip" · 41 tasks · 12 prs merged · ~6 h saved · $3.20 spent · per-routine lines · "how 'saved' is counted" · "$3.20 of $5.00 beta credits" · "turn off receipts"
-**credits** · the finished task's done row and accept button come first · h2 "that one finished on the last of your beta credits" · "i didn't stop halfway. here's how to keep going." · "pro · $20 a month" / "keep going on this mac · free. qwen3-4b runs locally…" / "pay as you go · $0.60 per million tokens in, $1.50 out" · "no rush. pip, its memory and routines stay whatever you pick."
-**plan** · cards beta / api / pro / max · "cancel pro · you keep pro until nov 23. pip, its memory and routines stay; cloud routines move back to your mac." · billing lives on frog.toys/billing
-**desk** · h2 "pip could live on your desk" · "a small head that carries pip: same name, memory and routines. it says good morning, tells you when ci goes red, and keeps routines going when your laptop is shut." · mini $999 / full $1,499 · "meet the heads" / "not interested" · ladder free → pro → head
-**unbox** · "plug it in" · "pip comes along. one usb-c cable to your mac. no setup app, no pairing code. it was yours the moment you ordered it." · 3 steps · "it's plugged in"
-**greet** · head says "morning, sam. it's pip. ci went red at 2, and i have a fix waiting." · "pip moved in" · checklist: name, memory, routines, repos, voice
+**open** · h1 "what shall we fix?" · sub "pick a repo. i'll read it and suggest three things i can finish right now." · model line "borrowing your mac's brain for ideas · full model, 2.4 gb, in the background" (existing model: "using qwen3-4b from ollama") · footer "everything runs on this mac, free and private. no account, ever, unless you want one. already have a local model?" · second line "in a hurry? frog cloud does the first fix in seconds · $0.50 trial, still no account"
+**scan + model** · "reading ledger" + tool rows · "just reading and running your tests. nothing changes until you say so." · "waking my brain up, first run only · 2.4 gb" · bar "71% · 18 mb/s · 40 s left · resumes if you close the app" · chip "auto · local", "on this mac"
+**propose** · "here's what i can finish right now. pick one." · cards with evidence, files and "~90 s on this mac · your tests will check it" · "fix it" / "update it" / "bump it"
+**run** · "on it" · the cause in one sentence · composer "steer me, or press esc to stop…"
+**diff** · "done · both tests pass · nothing else in auth/ moved" · "fixed. here's the change. nothing is applied until you accept." · "discard" / "change something…" / "accept ⌘↩"
+**name** · "✓ accepted · applied to your working tree, not committed · first fix · 3:05 fresh · 1:12 warm" · "nice one. want to name me?" · pip / moss / tad / fern / keep 'frog', each with a mood · "call me pip" / "skip" (the name is stored locally; sync adds it everywhere)
+**routines** · "want me to do this every morning?" · ci triage / first pass on new prs / dependency bumps, each with its evidence · "turn on 2" / "not now" · "runs while your mac is awake · sign in and it runs in frog cloud while you sleep"
+**sign in** · "save pip" · "sign in and pip comes with you: its name, its notes on ledger and its routines, on any mac. nothing here changes if you don't." · "signing in adds: fast cloud speed, routines while your mac sleeps, pip on every device, head pairing, the shared fix cache. it never takes anything away." · "continue with github" / email + "email me a link" · "no card. $5 in cloud credits when you sign in." · "not now · everything keeps working on this mac"
+**saved** · "saved · signed in as samr via github" · "i'm saved. i still run on this mac by default; $5 in cloud credits are there for the hard ones, and there's no card on file…"
+**cli** · "frog 0.9 · free and open source · runs on this mac, no account needed" · "warming up qwen3-4b… 82% · 36 s · resumes if you close the terminal" · numbered tasks with local estimates · "✓ applied, not committed. first fix in 2:51. (1:04 once i'm warm)" · "name me with frog name · save me with frog login"
+**hard task (main cloud moment)** · "first pass done · 31 files touched, 3 tests still red" · "this one's big, and my small brain keeps missing corner cases" · "two more passes here, about 6 minutes. dart on frog cloud does most of this in one, about 40 seconds. sign in and your first $0.50 of cloud work is free. no card, no account unless you want one." · "try dart free · sign in" / "$0.50 trial, no account" / "keep going local"
+**frog login** · device code `KXRT-4QPM` at frog.toys/device · "✓ pip is saved" · "✓ cloud credits $5.00 for hard tasks · local stays the default · no card"
+**nudges** · missed routine (mac asleep), bigger model (tree), parallel queue. Each has a free action next to the paid one.
+**receipt** · 41 tasks · 12 prs merged · ~6 h saved · $3.20 spent · "29 tasks ran locally, free". Logged out it's computed locally; signing in keeps the history.
+**credits out (signed in)** · "that one finished on the last of your cloud credits" · "i didn't stop halfway. from here i'm back on this mac, free, unless you pick otherwise." · pro $20 / "stay on this mac · ✓ on" / pay as you go
+**plan** · free ("the full agent, local models · local memory and routines · signed in: $5 cloud credits, sync · forever, no account needed") / api / pro $20 / max $200 (or 5x $100) · one-button cancel
+**head** · "pip could live on your desk" (mini $999, full $1,499; pairing needs sign-in) · "plug it in" · "morning, sam. it's pip. ci went red at 2, and i have a fix waiting."
 
 ## 3. States
 
 | state | frog says | actions |
 |---|---|---|
-| empty repo | "notes is empty · no files yet. tell me what it should be and i'll set it up, tests included." | start something (chips: a cli in rust, a next.js app, just a readme) · pick another repo |
-| no git | "~/scratch isn't a git repo · i like git so every change i make can be undone. i can set it up here, one commit of what's there now." | set up git · work without it (frog keeps its own undo copies) |
-| offline / local only | "offline, so i'm on this mac · running qwen3-4b locally. slower, and nothing leaves your mac." no model yet: "connect once to get one (2.4 gb), then i work offline." | keep going local; estimates are shown ×3 |
-| sign-in failure | "github didn't let me in · access was denied in the browser. pip is still here, on this mac. nothing's lost." | try again · email me a link |
-| magic link | "check sam@hey.com · the link opens frog and signs you in. it works for 15 minutes." expired: "that link expired. i'll send a new one." | resend (30 s cooldown) · use github |
-| nothing to fix | "garden looks healthy · tests pass, docs match, deps are current." 3 generative tasks instead | tests for an untested file · explain the codebase · a ci workflow |
-| credits out mid-task | screen 14: finish, then ask. we absorb the overage, capped at one task (proposed cap $0.50) | pro · local · pay as you go |
+| model: already on the mac | "using qwen3-4b from ollama." no download row | straight to proposals (~0:20) |
+| model: downloading | "qwen3-4b, 2.4 gb, one time · the scan runs while it downloads, so the ideas don't wait. 71% · 18 mb/s · 40 s left. it resumes if you close the app." | read the repo while we wait |
+| download failed or paused | "the download paused at 64%. i'll pick it up when you're back online." the tiny model still proposes | resume · $0.50 cloud trial |
+| empty repo | "notes is empty · tell me what it should be and i'll set it up, tests included." | start something · pick another repo |
+| no git | "~/scratch isn't a git repo · i can set it up here, one commit of what's there now." | set up git · work without it |
+| sign-in failure | "github didn't let me in · pip is still here, on this mac. nothing's lost." | try again · email me a link |
+| magic link | "check sam@hey.com · works for 15 minutes." expired: "that link expired. i'll send a new one." | resend (30 s) · use github |
+| nothing to fix | "garden looks healthy." 3 generative tasks instead | tests for an untested file · explain · a ci workflow |
+| credits out mid-task | screen 15: finish (we absorb up to $0.50), drop back to local, then ask | pro · stay local (on) · pay as you go |
 
-Ask rules: at most one upgrade ask per trigger kind per week; dismissing one quiets that kind for 14 days; never during a running task; never a modal.
+**Sign-in moments** (the only places frog asks, each once per trigger, dismiss = 14 days quiet): (1) the local model struggling on a hard task, which is the main one; (2) turning on a routine ("runs while you sleep"); (3) opening frog on a second device ("pip is on your other mac, sign in to bring it here"); (4) pairing a head; (5) the weekly receipt ("keep this history"). Never during a running task, never as a modal, never at app open.
 
 ## 4. Metrics
 
 | metric | definition | target (proposed) |
 |---|---|---|
-| time to first accepted diff (TTFAD) | first app open (or first `frog` run) → first accept, p50 and p90 | p50 < 90 s, p90 < 3 min |
-| first-win rate | % of installs with ≥1 accepted diff in session 1 | ≥ 60% |
-| proposal hit rate | % of first runs where the user picks one of the 3 (vs typing) | ≥ 70% |
-| sign-in rate after first win | % of first-win users signed in within 7 days | ≥ 45% |
-| routine at D7 | % of D0 users with ≥1 enabled routine that ran on D7 | ≥ 25% |
-| retention | D1 / D7 / D30 = ran ≥1 task that day (or a routine they read) | 40 / 25 / 15% |
-| upgrade by trigger | conversions per trigger (missed routine, bigger model, parallel, credits out) | track, no target yet |
-| cancel → return | % of cancelled pro users back within 60 days | track |
+| TTFAD, existing model | first open → first accept when a model was already on the mac (p50/p90) | p50 ≤ 90 s, p90 ≤ 3 min |
+| TTFAD, fresh download | same, model downloaded on first run; also split by download speed | p50 ≤ 3:15, p90 ≤ 6 min |
+| TTFAD, cloud trial | same, user opted into the $0.50 trial | p50 ≤ 60 s |
+| first-win rate | % of installs with ≥1 accepted diff in session 1, per path | ≥ 60% |
+| download completion | % of started downloads that finish within the first session | ≥ 85% |
+| proposal hit rate | % of first runs where the user picks one of the 3 | ≥ 70% |
+| logged-out D7 / D30 | retention of users who never signed in, which shows the free product is whole | 25 / 12% |
+| sign-in rate after first win | % signed in within 7 days, and broken down by moment (hard task, routine, 2nd device, head, receipt) | ≥ 35% |
+| routine at D7 | % of D0 users with ≥1 routine that ran on D7 (local or cloud) | ≥ 25% |
+| retention | D1 / D7 / D30, all users | 40 / 25 / 15% |
+| upgrade by trigger | conversions per trigger | track |
 
-Events (opt-in telemetry in the OSS build, anonymous until sign-in): app_open, repo_picked, scan_done, proposal_shown, task_started{proposal|typed}, diff_accepted{ms_since_open}, named, routine_enabled, signin_*{method, reason}, trigger_shown{kind}, checkout_opened{plan, trigger}, subscribed, cancelled, head_paired.
+Events (opt-in telemetry in the OSS build, anonymous until sign-in): app_open, model_detected{source}, download_started/progress/done{ms}, scan_done, proposal_shown, task_started{proposal|typed, local|cloud}, diff_accepted{ms_since_open, path}, named, routine_enabled, signin_prompt{moment}, signin_done{method, moment}, trial_started, trigger_shown{kind}, checkout_opened, cancelled, head_paired.
 
 ## 5. Account fields (flag for the accounts schema: Better Auth + PlanetScale Postgres; Durable Objects for live credits)
 
-- **device trial** (pre-account): `device_id`, `trial_credits_cents`, `first_open_at`, `first_accept_at`. Merges into the user at sign-in; one trial per device.
-- **persona** (the frog): `persona_id`, `user_id`, `name` (default "frog", 1–24 chars), `default_mood`, `voice_id` (null until a head or voice is set), `created_at`. One per user for v1; the schema allows several.
-- **memory**: `memory_item {id, persona_id, repo_key (remote url hash), kind: fact|preference|convention, text, source_session_id, created_at, last_used_at, pinned}`. Plain text and user-editable (settings › memory). Synced, end-to-end encryption to decide (Q4).
-- **routines**: `routine {id, persona_id, repo_key, kind: ci_triage|pr_first_pass|dep_bump|custom, trigger: cron|github_event, schedule, prompt, runs_on: mac|cloud|head, enabled, last_run_at, last_result}`.
-- **devices**: `device {id, user_id, kind: mac|cli|head, name, last_seen_at}`; heads add `serial`, `model: mini|full`, `bound_at` (bound at checkout).
-- **plan + usage**: `plan: beta|api|pro|max5|max20`, `stripe_customer_id`, `period_end`, `cancel_at`, weekly rollup `{tasks, prs_merged, minutes_saved_est, spent_cents}` for the receipt.
-- **onboarding**: `first_accept_ms`, `named_at`, `signin_method`, `receipts_enabled`, `head_card_dismissed`.
+Local-first means each of these exists **on the Mac first** (local store) and syncs when signed in. The schema has to accept a local-origin record with its own id.
+- **device trial** (opt-in, no account): `device_id`, `trial_credits_cents` (50), `started_at`. Merges into the user at sign-in; one per device.
+- **persona**: `persona_id`, `user_id` (null locally), `name`, `default_mood`, `voice_id`, `created_at`, `origin_device_id`.
+- **memory**: `memory_item {id, persona_id, repo_key, kind, text, source_session_id, created_at, last_used_at, pinned}`. Local and editable; synced when signed in.
+- **routines**: `routine {id, persona_id, repo_key, kind, trigger, schedule, prompt, runs_on: mac|cloud|head, enabled, last_run_at, last_result}`. `cloud` requires sign-in.
+- **devices**: `device {id, user_id, kind: mac|cli|head, name, last_seen_at}`; heads add `serial`, `model`, `bound_at`.
+- **plan + usage**: `plan: free|api|pro|max5|max20`, `cloud_credits_cents`, `stripe_customer_id`, `period_end`, `cancel_at`, weekly rollup `{tasks, local_tasks, prs_merged, minutes_saved_est, spent_cents}`.
+- **onboarding**: `first_accept_ms`, `first_accept_path: existing|download|cloud`, `model_source`, `named_at`, `signin_moment`, `receipts_enabled`, `head_card_dismissed`.
 
-## 6. Open questions
+## 6. Decisions
 
-1. **first-run model.** anonymous device trial on frog cloud (as mocked, fastest), or local-first with cloud opt-in (private, but download + slower, misses 90 s).
-2. **beta credit amount.** mocked at $5 on sign-in; the trial before sign-in proposed at $0.50 per device.
-3. **max tiers.** brief says max $200; the 2026-10-22 decision is max 5x $100 + max 20x $200. Mocked as one max card with "or max 5x at $100".
-4. **memory sync.** plain server-side (simple, searchable) or end-to-end encrypted (private, no server search).
-5. **'saved' estimate.** frog's estimate of hands-on minutes minus review time, shown with "~" and a how-it's-counted link; or drop the number and show tasks and prs only.
+Chosen by Cam (2026-10-23):
+1. **first-run model: local-first.** frog cloud is opt-in, not the default. The first win runs on the Mac.
+2. **anonymous cloud trial: yes, opt-in.** $0.50 per device, no sign-in, device-bound, offered at open ("in a hurry?") and at the hard-task moment. The alternative was cloud only after sign-in.
+3. **cloud credits on sign-in: $5**, no card.
+4. **max: one card** showing max $200 with "or max 5x at $100".
+5. **memory sync: plain server-side for v1** (E2E later).
+6. **receipt keeps "~6 h saved"** with a "how 'saved' is counted" link.
+
+Still open:
+7. **the tiny proposal model in the app bundle** (~300 MB more to download, proposals in seconds during the model download) vs heuristic-only proposals (smaller app, cards are less specific until the model lands). Recommended: bundle it.
+8. **default local model size.** qwen3-4b (2.4 GB, first diff ~3:05 fresh) vs a larger coder model (better fixes, ~5 min fresh). Recommended: 4b first, then offer the bigger one after the first win.
