@@ -280,14 +280,20 @@ pub struct Config {
     pub web_allow_private: bool,
 }
 
-/// `[sandbox]`: what the Bash sandbox may read beyond its defaults. Reads only; writes never
-/// widen. The environment isn't filtered (commands inherit frog's), so there's no `pass_env`.
+/// `[sandbox]`: what the Bash sandbox may read and write beyond its defaults. Reads widen only
+/// from the credential list; writes are fully opt-in. The environment isn't filtered (commands
+/// inherit frog's), so there's no `pass_env`.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct SandboxConfig {
     /// Paths (`~/` allowed) a sandboxed command may read even though they're credentials,
     /// e.g. `~/.config/gh`.
     #[serde(default)]
     pub allow_read: Vec<String>,
+    /// Paths (`~/` allowed) a sandboxed command may write in addition to the project, temp
+    /// dirs and toolchain caches — e.g. a shared build dir or sibling agent worktrees:
+    /// `~/Developer/.shared-target`. Opt-in: the default is nothing extra.
+    #[serde(default)]
+    pub allow_write: Vec<String>,
     /// macOS: let commands read the login Keychain (`~/Library/Keychains`), so `gh` and
     /// credential helpers that keep their token there work. Every sandboxed command can then
     /// read any Keychain item that doesn't prompt.
@@ -297,6 +303,13 @@ pub struct SandboxConfig {
     /// and Swift package hosts (via a local proxy). macOS only; Linux stays open.
     #[serde(default)]
     pub network: Option<String>,
+    /// Let sandboxed git reads reach GitHub over https instead of ssh: a per-command config
+    /// overlay turns `git@github.com:` into `https://github.com/` and uses `gh` as the
+    /// credential helper, so fetch/ls-remote/pull work without exposing `~/.ssh`. Applies only
+    /// to read subcommands with no `push` in the command. Default off: the alternative that
+    /// needs no gh is `allow_read = ["~/.ssh"]` (read-only, but keys become readable).
+    #[serde(default)]
+    pub git_https: bool,
 }
 
 impl Default for Config {
