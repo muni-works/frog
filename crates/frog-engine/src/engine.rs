@@ -9141,6 +9141,16 @@ for line in sys.stdin:
             profile,
             cwd: std::env::temp_dir(),
             mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
 
     /// An engine in a permission mode, with an optional classifier spec. The shell
     /// sandbox is off so Bash calls reach the permission logic, not the sandbox's
@@ -9164,6 +9174,17 @@ for line in sys.stdin:
             profile,
             cwd: std::env::temp_dir(),
             mode,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
     /// The window after startup resolved it: the last `Status` before the first `Idle`
     /// (the engine emits `Status` before and after `resolve_window`, then `Idle`).
     async fn resolved_window(h: &mut Handle) -> u64 {
@@ -9385,6 +9406,7 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
             .unwrap();
         assert!(error.contains("context window"), "{error}");
         shutdown(h).await;
+    }
 
     #[tokio::test]
     async fn read_only_compounds_run_without_asking_in_every_mode() {
@@ -9715,4 +9737,5 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
         assert!(rm.recommendation.starts_with("allow"), "{}", rm.recommendation);
         assert!(!made.exists(), "the allowed rm ran");
         let _ = std::fs::remove_dir_all(dir);
-    }}
+       }
+}
