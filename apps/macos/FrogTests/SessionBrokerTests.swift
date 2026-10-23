@@ -307,6 +307,45 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(rows.first?["state"]?.string, "idle")
     }
 
+    /// ListSessions filters: cwd_prefix, state, since and limit, with a default cap of 30 —
+    /// never the ~150-row dump of every session in the app.
+    func testListSessionsFiltersAndLimit() throws {
+        var busy = SessionBroker.Entry(id: "a-0001", name: "alpha", state: "running", cwd: "/repo/sub", modified: 3_000)
+        busy.branch = "frog/x"
+        let idle = SessionBroker.Entry(id: "b-0002", name: "beta", state: "idle", cwd: "/repo", modified: 1_000)
+        var old = SessionBroker.Entry(id: "c-0003", name: "gamma", state: "idle", cwd: "/elsewhere", modified: 500)
+        old.ahead = 2
+        let entries = [busy, idle, old]
+
+        // No filters: everything, most recent first, capped at 30.
+        let none = SessionBroker.ListFilter(input: .object([:]))
+        XCTAssertEqual(none.limit, 30)
+        XCTAssertEqual(none.apply(to: entries, now: Date()).map(\.id), ["a-0001", "b-0002", "c-0003"])
+
+        // cwd_prefix keeps only sessions under that folder.
+        let byCwd = SessionBroker.ListFilter(input: .object(["cwd_prefix": .string("/repo")]))
+        XCTAssertEqual(byCwd.apply(to: entries, now: Date()).map(\.id), ["a-0001", "b-0002"])
+
+        // state keeps only that state.
+        let byState = SessionBroker.ListFilter(input: .object(["state": .string("idle")]))
+        XCTAssertEqual(byState.apply(to: entries, now: Date()).map(\.id), ["b-0002", "c-0003"])
+
+        // since: only activity after that unix time (modified is ms).
+        let bySince = SessionBroker.ListFilter(input: .object(["since": .number(2)]))
+        XCTAssertEqual(bySince.apply(to: entries, now: Date()).map(\.id), ["a-0001"])
+
+        // limit caps the rows.
+        let capped = SessionBroker.ListFilter(input: .object(["limit": .number(1)]))
+        XCTAssertEqual(capped.apply(to: entries, now: Date()).map(\.id), ["a-0001"])
+
+        // fields carry branch/ahead/dirty through the JSON.
+        guard case .array(let rows) = SessionBroker.json([busy, old], fields: ["branch", "ahead", "dirty"]) else {
+            return XCTFail()
+        }
+        XCTAssertEqual(rows.first?["branch"]?.string, "frog/x")
+        XCTAssertEqual(rows.last?["ahead"]?.number, 2)
+    }
+
     /// ArchiveSession / UnarchiveSession: the sidebar's archive (never deletes logs), and
     /// unarchiving resolves names among archived sessions too.
     func testArchiveAndUnarchiveUseTheArchiver() throws {

@@ -20,6 +20,10 @@ final class SessionBroker {
         var cwd: String?
         var model: String?
         var modified: Int64 = 0
+        /// Worktree info, when asked for (ListSessions fields: branch, ahead, dirty).
+        var branch: String?
+        var ahead: Int?
+        var dirty: Int?
     }
 
     /// Everything `SessionStatus` reports about one session, in one structured answer.
@@ -94,6 +98,54 @@ final class SessionBroker {
         var branch: String?
         /// The ref the worktree started from (`origin/main`, say), for the tool result.
         var base: String?
+    }
+
+    /// ListSessions filters: a small, bounded answer instead of every row.
+    struct ListFilter: Equatable {
+        var cwdPrefix: String?
+        var state: String?
+        /// Unix seconds; only sessions active after this.
+        var since: Int?
+        var limit: Int
+        var fields: [String]
+
+        /// The default row cap: a chief's ListSessions never dumps the whole app.
+        static let defaultLimit = 30
+
+        init(input: JSONValue) {
+            cwdPrefix = input["cwd_prefix"]?.string
+            state = input["state"]?.string
+            since = input["since"]?.int
+            limit = min(max(input["limit"]?.int ?? Self.defaultLimit, 1), 100)
+            fields = (input["fields"]?.array ?? []).compactMap(\.string)
+        }
+
+        func apply(to entries: [Entry], now: Date) -> [Entry] {
+            let sinceDate = since.map { Date(timeIntervalSince1970: Double($0)) }
+            return entries.filter { e in
+                if let p = cwdPrefix, !(e.cwd ?? "").hasPrefix(p) { return false }
+                if let s = state, e.state != s { return false }
+                if let d = sinceDate, e.modified < Int(d.timeIntervalSince1970 * 1000) { return false }
+                return true
+            }
+            .prefix(limit)
+            .map { $0 }
+        }
+    }
+
+    /// Worktree git info for each row that asked for it (fields: branch, ahead, dirty).
+    private static func withGit(_ rows: [Entry]) async -> [Entry] {
+        var out: [Entry] = []
+        for var e in rows {
+            if let cwd = e.cwd.map({ URL(fileURLWithPath: $0) }) {
+                let (branch, ahead, dirty) = await Git.quick(cwd)
+                e.branch = branch
+                e.ahead = ahead
+                e.dirty = dirty
+            }
+            out.append(e)
+        }
+        return out
     }
 
     /// Messages a session may send (or sessions it may start) without the user doing anything.
@@ -200,8 +252,23 @@ final class SessionBroker {
         let sender = c.sessionID ?? ""
         let input = r.input
         switch r.tool {
-        case "ListSessions":
-            c.replySession(r.id, result: Self.json(list(excluding: sender)))
+        case "ListSessions": {
+            // Filters (cwd_prefix, state, since, fields) with a default limit of 30: never
+            // the ~150-row dump the unfiltered listing was. Branch info (branch, ahead,
+            // dirty) costs a git call per worktree row, so only when asked for.
+            let filter = Self.ListFilter(input: input)
+            let base = list(excluding: sender)
+            let rows = filter.apply(to: base, now: now())
+            let wantGit = !filter.fields.filter { ["branch", "ahead", "dirty"].contains($0) }.isEmpty
+            if !wantGit {
+                c.replySession(r.id, result: Self.json(rows, fields: filter.fields))
+                return
+            }
+            Task { [weak c] in
+                let enriched = await Self.withGit(rows)
+                c?.replySession(r.id, result: Self.json(enriched, fields: filter.fields))
+            }
+        }()
         case "SendMessage":
             let result = send(
                 from: sender, name: name(of: c),
@@ -757,11 +824,15 @@ final class SessionBroker {
         return Library.shared.sessions.first { $0.id == id }?.displayTitle ?? ""
     }
 
-    static func json(_ entries: [Entry]) -> JSONValue {
-        .array(entries.map { e in
+    static func json(_ entries: [Entry], fields: [String] = []) -> JSONValue {
+        let want = Set(fields)
+        return .array(entries.map { e in
             var o: [String: JSONValue] = ["id": .string(e.id), "name": .string(e.name), "state": .string(e.state)]
             if let c = e.cwd { o["cwd"] = .string(c) }
             if let m = e.model { o["model"] = .string(m) }
+            if want.contains("branch"), let b = e.branch { o["branch"] = .string(b) }
+            if want.contains("ahead"), let a = e.ahead { o["ahead"] = .number(Double(a)) }
+            if want.contains("dirty"), let d = e.dirty { o["dirty"] = .number(Double(d)) }
             return .object(o)
         })
     }
