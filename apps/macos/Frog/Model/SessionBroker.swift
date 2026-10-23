@@ -88,6 +88,8 @@ final class SessionBroker {
         var prompt: String
         var cwd: String?
         var model: String?
+        /// "default", "accept-edits", "auto" or "yolo" (only when asked for explicitly).
+        var mode: String?
         var worktree: Bool
     }
 
@@ -180,6 +182,10 @@ final class SessionBroker {
     private var inbound: [String: Int] = [:]
     /// When each session's current permission card arrived (ListApprovals reports its age).
     private var waitingSince: [String: Date] = [:]
+    /// The session that started session `id`, if one did (pending approvals escalate to it).
+    /// The session that started session `id`, if one did (pending approvals escalate to it).
+    var parentOf: (_ id: String) -> String? = { _ in nil }
+
 
     /// Sends since the user last did something, per sending session.
     private var sent: [String: [Date]] = [:]
@@ -236,8 +242,52 @@ final class SessionBroker {
             line.contains("\"turn_ended\"") && !line.contains("\"model_calls\":0")
         }
     }
-    /// Background engines seen running: stopped when they go idle.
+    /// Background engines seen running: stopped once they've sat settled for `idleGrace`.
     private var armedBackground: Set<String> = []
+    /// How long a background engine must stay settled (see `Conversation.settled`) before it's
+    /// let go. An `idle` follows every op the engine handles (startup, `subscribe`, a rename,
+    /// a mode change, a turn's end), so letting go on the first one stopped engines at a turn
+    /// boundary with a delivered message about to run, and cancelled it.
+    var idleGrace: Duration = .seconds(30)
+    /// Runs `work` after `delay` on the main actor (tests run it by hand).
+    var after: (_ delay: Duration, _ work: @escaping @MainActor () -> Void) -> Void = { delay, work in
+        Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            work()
+        }
+    }
+    /// Per session, bumped whenever it's seen working (or its engine is replaced): a scheduled
+    /// idle stop only fires if nothing happened since it was scheduled.
+    private var idleEpoch: [String: Int] = [:]
+
+    /// A background engine may be let go: nothing running, queued, or still starting up.
+    private func canLetGo(_ c: Conversation) -> Bool {
+        guard c.settled else { return false }
+        guard let id = c.sessionID else { return true }
+        return !targetBusy(id)
+    }
+
+    /// Let background engine `c` (session `id`) go once it's been settled for `idleGrace`,
+    /// unless it works, is adopted by a pane, or is replaced meanwhile.
+    private func scheduleIdleStop(_ id: String, _ c: Conversation) {
+        guard canLetGo(c) else { return }
+        idleEpoch[id, default: 0] += 1
+        let epoch = idleEpoch[id]
+        let grace = idleGrace
+        after(grace) { [weak self, weak c] in
+            guard let self, let c, self.idleEpoch[id] == epoch,
+                  self.background[id] === c, self.armedBackground.contains(id),
+                  self.canLetGo(c) else { return }
+            self.armedBackground.remove(id)
+            self.background[id] = nil
+            c.stop(reason: "background idle (settled \(grace))")
+        }
+    }
+
+    /// Session `id` is working (or its engine changed): any idle stop scheduled for it is off.
+    private func touch(_ id: String) {
+        idleEpoch[id, default: 0] += 1
+    }
 
     struct BrokerError: LocalizedError, Equatable {
         var message: String
@@ -286,6 +336,7 @@ final class SessionBroker {
             let req = StartRequest(
                 title: input["title"]?.string ?? "", prompt: input["prompt"]?.string ?? "",
                 cwd: input["cwd"]?.string, model: input["model"]?.string,
+                mode: input["mode"]?.string,
                 worktree: input["worktree"]?.bool ?? false)
             Task { [weak c] in
                 do {
@@ -620,6 +671,40 @@ final class SessionBroker {
         return background[id]
     }
 
+    /// A permission prompt opened in session `child`: tell the session that started it,
+    /// so a manager can decide (or tell the user) instead of the prompt sitting unseen.
+    /// The child waits on it until answered or its timeout takes the safe path.
+    @discardableResult
+    func escalate(_ req: PermissionRequest, from child: String, name: String) -> Bool {
+        guard let parent = parentOf(child), parent != child else { return false }
+        return reach(parent, "system", "system", Self.escalation(req, session: child, name: name))
+    }
+
+    /// The structured notice a parent gets for a child's pending approval.
+    static func escalation(_ req: PermissionRequest, session: String, name: String) -> String {
+        var lines = [
+            "Approval pending in session \"\(name)\" (\(session)).",
+            "card: \(req.id)",
+            "tool: \(req.name)",
+            "command: \(req.arg)",
+        ]
+        if let r = req.reason { lines.append("reason: \(r)") }
+        if let c = req.card {
+            if let a = c.agentReason { lines.append("agent says: \(a)") }
+            lines.append("trigger: \(c.trigger)")
+            for t in c.touches ?? [] {
+                let size = t.bytes.map { " \(ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file))" } ?? ""
+                let mine = t.createdHere == true ? " (made by this session)" : ""
+                lines.append("touches: \(t.path)\(size)\(mine)")
+            }
+            lines.append("risk: \(c.risk)")
+            lines.append("recommendation: \(c.recommendation)")
+            lines.append("If nobody answers in \(c.timeoutSecs / 60) min it's denied and the session carries on.")
+        }
+        lines.append("Only the user can answer it, in that session's window; tell them if it matters.")
+        return lines.joined(separator: "\n")
+    }
+
     /// Report session `child`'s next turn back to `parent` when it goes idle (the hand-back).
     func watchStarted(_ child: String, reportTo parent: String) {
         guard !parent.isEmpty else { return }
@@ -703,8 +788,10 @@ final class SessionBroker {
             waitingSince[id] = nil
         }
         if running {
-            // The engine is working a turn: anything we queued into its inbox has been taken.
-            inbound[id] = 0
+            touch(id)
+            // The engine is working a turn: what it hasn't taken from its inbox yet is what's
+            // still queued (messages delivered mid-turn wait for the next one).
+            inbound[id] = (Library.shared.conversation(id) ?? background[id])?.pendingDeliveries ?? 0
             if var list = watches[id] {
                 let input = currentInput(id)
                 for i in list.indices where input == nil || list[i].anyTurn || input!.hasPrefix("<session-message from=\"\(list[i].sender)\"") {
@@ -733,7 +820,10 @@ final class SessionBroker {
                 b.attempts += 1
                 births[id] = b
                 saveBirths()
-                if dead { background[id] = nil }
+                if dead {
+                    background[id] = nil
+                    armedBackground.remove(id)
+                }
                 _ = replayPrompt(id, b.prompt)
                 return
             }
@@ -745,6 +835,7 @@ final class SessionBroker {
         // busy check: a dead engine's open turn looks busy.)
         if dead, let c = background[id], c.turns.last.map({ !$0.finished }) == true {
             background[id] = nil
+            armedBackground.remove(id)
             _ = conversation(for: id)
             return
         }
@@ -762,17 +853,12 @@ final class SessionBroker {
             }
         }
         // A background engine that did its work lets go; a new message starts it again.
-        // Never while a turn is open (a just-started child's first turn is), or while its
-        // engine is still working — that was the cancel-at-birth bug.
-        if armedBackground.remove(id) != nil, let c = background.removeValue(forKey: id) {
-            let turnOpen = c.turns.last.map { !$0.finished } ?? false
-            if turnOpen || c.busy {
-                // Still working: keep it, and re-arm so the next real idle lets it go.
-                background[id] = c
-                armedBackground.insert(id)
-            } else {
-                c.stop()
-            }
+        // Only once it's truly settled (no open turn, nothing queued here or in its inbox, not
+        // mid-resume) and has stayed so for `idleGrace`: never on the bare `idle` that follows
+        // every op, which stopped engines at a turn boundary with a delivered message about
+        // to run (cancelled at birth) and right after a resume.
+        if armedBackground.contains(id), let c = background[id] {
+            scheduleIdleStop(id, c)
         }
     }
 
@@ -790,17 +876,28 @@ final class SessionBroker {
         // An engine that died mid-turn left it open: the fresh engine continues it, ahead of
         // anything new (the user may have stopped the old one; the report says which).
         let unfinished = background[id].map { c in c.turns.last.map { !$0.finished } ?? false } ?? false
-        let c = Conversation(folder: folder, arguments: ["-r", id] + Workspace.engineFlags(chat: info.isChat, mode: false), model: nil)
+        let c = Conversation(folder: folder, arguments: Self.resumeArguments(id, chat: info.isChat), model: nil)
         background[id] = c
+        // A fresh engine isn't armed until it's seen working; nothing scheduled for the old
+        // one applies to it.
+        armedBackground.remove(id)
+        touch(id)
         // A fresh engine has an empty inbox; its session's queued count starts over.
         inbound[id] = 0
         if unfinished, continueOpen { c.continueInterrupted() }
         return c
     }
 
+    /// The flags a closed session is resumed with: `-r` and the app-wide flags, never `-m` or
+    /// a mode flag (the engine keeps the model and mode the session last used).
+    static func resumeArguments(_ id: String, chat: Bool) -> [String] {
+        ["-r", id] + Workspace.engineFlags(chat: chat, mode: false)
+    }
+
     /// A pane opening session `id` takes over its background engine instead of starting another.
     func adopt(_ id: String) -> Conversation? {
         armedBackground.remove(id)
+        touch(id)
         guard let c = background.removeValue(forKey: id), c.isLive else { return nil }
         return c
     }
@@ -808,9 +905,13 @@ final class SessionBroker {
     /// A pane is letting go of `c`: keep it running in the background if it's busy and part of
     /// a group of sessions, rather than stopping it mid-task. True if kept.
     func keep(_ c: Conversation) -> Bool {
-        guard c.busy, c.isLive, let id = c.sessionID, Library.shared.isAgentSession(id) else { return false }
+        // Busy includes a delivered message the engine hasn't started yet (between one turn's
+        // `idle` and the next's start): stopping then would cancel it.
+        let working = c.busy || c.pendingDeliveries > 0 || c.turns.last.map { !$0.finished } == true
+        guard working, c.isLive, let id = c.sessionID, Library.shared.isAgentSession(id) else { return false }
         background[id] = c
         armedBackground.insert(id)
+        touch(id)
         return true
     }
 
@@ -975,6 +1076,7 @@ extension SessionBroker {
         targetBusy = { id in
             guard let c = Library.shared.conversation(id) ?? self.background[id] else { return false }
             return c.busy || c.turns.last.map { !$0.finished } == true || !c.queue.isEmpty
+                || c.pendingDeliveries > 0
         }
         firstTurnRan = { [unowned self] id in
             guard let c = Library.shared.conversation(id) ?? self.background[id] else {
@@ -1021,6 +1123,11 @@ extension SessionBroker {
         starter = { [unowned self] req, parent in try await start(req, parent: parent) }
         Conversation.sessionRequests = { [unowned self] c, r in handle(r, from: c) }
         Conversation.userActivity = { [unowned self] c in if let id = c.sessionID { userActivity(id) } }
+        parentOf = { id in Library.shared.parents[id] }
+        Conversation.permissionRequests = { [unowned self] c, req in
+            guard let id = c.sessionID else { return }
+            escalate(req, from: id, name: name(of: c))
+        }
     }
 
     /// `ArchiveSession`/`UnarchiveSession`: the sidebar's archive, as a broker operation. Hides
@@ -1134,7 +1241,7 @@ extension SessionBroker {
         // replayed rather than lost (see `births`).
         let pending = "pending-" + UUID().uuidString
         recordBirth(pending, prompt: req.prompt)
-        let c = Conversation(folder: folder, arguments: Workspace.engineFlags(chat: false), model: model)
+        let c = Conversation(folder: folder, arguments: Self.engineFlags(req: req, parent: parent), model: model)
         guard c.failure == nil else {
             births[pending] = nil
             saveBirths()
@@ -1149,7 +1256,7 @@ extension SessionBroker {
         births[pending] = nil
         guard let id = c.sessionID else {
             saveBirths()
-            c.stop()
+            c.stop(reason: "start timeout (no session id in 20 s)")
             throw BrokerError(c.failure ?? "the new session didn't start in time")
         }
         recordBirth(id, prompt: req.prompt)
@@ -1159,5 +1266,31 @@ extension SessionBroker {
         var started = Started(id: id, name: title, cwd: folder.path, branch: branch)
         started.base = base
         return started
+    }
+
+    /// The permission mode a started session runs in: its parent's by default,
+    /// never above it, and yolo only when asked for explicitly.
+    static func childMode(asked: String?, parent: Mode?) -> Mode {
+        // Modes by how much they allow; a child's mode can't outrank its parent's.
+        func rank(_ m: Mode) -> Int { switch m { case .default: 0; case .acceptEdits: 1; case .auto: 2; case .yolo: 3 } }
+        let parentMode = parent ?? .default
+        if let asked = asked.flatMap(Mode.init(rawValue:)) {
+            return rank(asked) <= rank(parentMode) ? asked : parentMode
+        }
+        // Inherit, except yolo is never passed on silently.
+        return parentMode == .yolo ? .auto : parentMode
+    }
+
+    /// The engine flags for a session started by another session: its permission
+    /// mode (see `childMode`) plus the app-wide flags.
+    static func engineFlags(req: StartRequest, parent: Conversation?) -> [String] {
+        let mode = childMode(asked: req.mode, parent: parent?.status?.mode)
+        let flag: [String] = switch mode {
+        case .yolo: ["--yolo"]
+        case .auto: ["--auto"]
+        case .acceptEdits: ["--accept-edits"]
+        case .default: []
+        }
+        return flag + Workspace.engineFlags(chat: false).filter { $0 != "--yolo" && $0 != "--auto" && $0 != "--accept-edits" }
     }
 }
