@@ -102,6 +102,11 @@ Starting a message with `/skill-name` loads that skill directly. `frog --skills`
 - Its steps stream live into the parent's tool card.
 - Interrupting the parent stops the child.
 
+**IRC bus.** `Irc` reads and posts on the agent bus (see docs/design/agent-bus-irc.md), one IRC channel per team, one nick per session. Off by default — a client only declares it (`set_client_caps` with `irc: true`) when `[irc] enabled = true` in `config.toml`, which stays off until the frog cloud bus deploys.
+- `read` returns lines newer than the session's read marker, capped, each wrapped untrusted: peer data, no user authority, no approvals. `post` sends to the team channel or a DM, up to 4 KB (`draft/multiline`); longer content is a link.
+- The engine bridges the bus: it posts only minimal notices (waiting on cam, errored, idle), and a mention of a session's nick or a DM routes to that session's inbox — `Op::Deliver`, the SendMessage contract, delivered at the next turn boundary, never an interrupt.
+- Approvals never happen over IRC: a permission card becomes one notice line with a `frog://` link to the app. No secrets ever post: key-shaped text is refused (notices are redacted), and the SASL token is looked up by account name in the Keychain or `FROG_IRC_TOKEN`, never written down or logged.
+
 **Docs.** `Docs` answers "how does this API work" from the dependencies the project actually has installed, at their exact versions, offline. The model is told to try it before the web.
 - **Rust:** the version in `Cargo.lock`, read from `~/.cargo/registry/src` (README, `//!` module docs, `///` item docs with signatures).
 - **JS/TS:** `node_modules/<pkg>` (README and `.d.ts` files, or `@types/<pkg>`).

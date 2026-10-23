@@ -621,11 +621,13 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
         return Ok(());
     }
     // Someone's at the keyboard to answer `Ask`. Previews need a client that hosts them.
-    // Queued like any op, so it ends with its own `Idle`.
+    // Queued like any op, so it ends with its own `Idle`. The IRC bus stays off in the
+    // terminal: it's config-gated and the Mac app declares it.
     let _ = tui.h.ops.send(Op::SetClientCaps {
         panes: false,
         ask: true,
         sessions: false,
+        irc: false,
     });
     if !tui.drain_startup(false).await {
         return Ok(());

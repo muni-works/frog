@@ -232,6 +232,11 @@ pub struct Options {
 pub struct Handle {
     pub ops: mpsc::UnboundedSender<Op>,
     pub events: mpsc::UnboundedReceiver<Envelope>,
+    /// The IRC agent bus slot (see `irc`): empty until the client declares
+    /// `SetClientCaps { irc }`, live after. The engine is the bridge — it posts the minimal
+    /// notices and routes mentions of this session's nick to its inbox — and the client owns
+    /// the connection inside (a stub until the DO deploys).
+    pub bus: crate::irc::Slot,
 }
 
 /// State the op router touches while a turn is running.
@@ -258,6 +263,11 @@ struct Shared {
     working: AtomicBool,
     /// Background tasks, jobs and monitors (see `background`).
     bg: Arc<crate::background::Registry>,
+    /// The IRC agent bus, when the engine posts to one (`SetClientCaps { irc }`). The engine
+    /// is the bridge: it posts the minimal notices and routes mentions to this session's
+    /// inbox, the SendMessage contract all the way down. A slot, not a value, because the
+    /// client can turn the bus on after the engine started.
+    irc: crate::irc::Slot,
 }
 
 /// Event numbering and the session log. Shared, so events raised outside the agent loop (MCP
@@ -443,12 +453,16 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         },
         journal,
         panes,
+        irc: crate::irc::slot(),
     });
     shared.bg.set_wake(&work_tx);
     let mut agent = Agent::new(opts, provider, shared.clone())?;
     // What's running, before anything slow (MCP servers, a local model loading, probing the
     // provider), so a client can name the model as soon as a conversation opens.
     agent.emit_status();
+    // The bus slot the Handle exposes (empty until `SetClientCaps { irc }`), cloned before
+    // `shared` moves into the work loop. It's shared, so the cap can land later.
+    let bus = shared.irc.clone();
     // A resumed session's log, for answering `Subscribe` while the engine starts up.
     let resumed = match (&agent.store, shared.journal.has_log()) {
         (Some(dir), true) => Some((dir.clone(), agent.session_id.clone())),
@@ -692,6 +706,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     Ok(Handle {
         ops: op_tx,
         events: ev_rx,
+        bus,
     })
 }
 
@@ -1220,6 +1235,20 @@ impl Agent {
         (secs > 0.0 && self.usage.output > 0).then(|| self.usage.output as f64 / secs)
     }
 
+    /// The conversation's current title, as the client set it (`Op::SetTitle`); part of the
+    /// IRC nick (a short title reads better on the bus).
+    fn title(&self) -> String {
+        self.inputs
+            .first()
+            .map(|s| s.trim().chars().take(80).collect())
+            .unwrap_or_default()
+    }
+
+    /// The IRC bus, when it's on. Clones the Arc out from under the slot.
+    fn irc(&self) -> Option<Arc<crate::irc::Bus>> {
+        self.shared.irc.lock().unwrap().clone()
+    }
+
     fn emit_status(&self) {
         self.emit(Event::Status(Status {
             model: self.profile_name.clone(),
@@ -1288,9 +1317,31 @@ impl Agent {
         };
         self.emit(Event::TurnEnded {
             turn,
-            reason,
+            reason: reason.clone(),
             usage,
         });
+        if let Some(bus) = self.irc() {
+            use crate::irc::NoticeKind;
+            // Only the minimal kinds (the doc's accepted scope): the turn ended waiting on
+            // the user, in error, or with nothing left queued. `Cancelled` says nothing.
+            let notice = match &reason {
+                EndReason::Denied => Some((
+                    NoticeKind::WaitingOnUser,
+                    "turn ended: a tool call was denied, waiting on user".to_string(),
+                )),
+                EndReason::Error { error } => {
+                    Some((NoticeKind::Errored, format!("turn errored: {error:?}")))
+                }
+                // Idle per the SendMessage contract: no turn running, nothing queued.
+                EndReason::Complete | EndReason::MaxTokens => {
+                    Some((NoticeKind::Idle, "idle".to_string()))
+                }
+                _ => None,
+            };
+            if let Some((kind, text)) = notice {
+                bus.post_notice(kind, &text);
+            }
+        }
         self.sync_log();
         self.write_summary();
     }
@@ -1446,6 +1497,9 @@ impl Agent {
             Op::SetTitle { title } => {
                 let title: String = title.trim().chars().take(80).collect();
                 if !title.is_empty() {
+                    if let Some(bus) = self.irc() {
+                        bus.set_session(&self.session_id, &title);
+                    }
                     self.emit(Event::Titled { title });
                 }
             }
@@ -1461,10 +1515,23 @@ impl Agent {
                 panes,
                 ask,
                 sessions,
+                irc,
             } => {
                 self.shared.panes.set_client(panes);
                 self.shared.client_ask.store(ask, Ordering::Relaxed);
                 self.shared.sessions.set_enabled(sessions);
+                if irc {
+                    // The bridge: one nick per session, notices and mentions through it.
+                    // Channel and connection are the client's (a stub until the DO deploys).
+                    let mut slot = self.shared.irc.lock().unwrap();
+                    if slot.is_none() {
+                        let bus = Arc::new(crate::irc::Bus::default());
+                        bus.set_session(&self.session_id, &self.title());
+                        *slot = Some(bus);
+                    }
+                } else {
+                    *self.shared.irc.lock().unwrap() = None;
+                }
                 self.sync_specs();
                 self.apply_harness();
             }
@@ -1967,6 +2034,10 @@ impl Agent {
         self.system = format!("{base}{rules}{}", harness::guidance(self.tier));
         if !self.subagent && self.shared.sessions.enabled() {
             self.system.push_str(crate::tools::sessions::PROMPT);
+        }
+        if !self.subagent && self.irc().is_some() {
+            self.system.push_str(crate::irc::PROMPT);
+            self.system.push_str(crate::irc::APPROVAL_PROMPT);
         }
         if !self.chat && !self.subagent {
             self.system
@@ -2611,6 +2682,11 @@ impl Agent {
             if self.shared.sessions.enabled() {
                 specs.extend(crate::tools::sessions::specs());
             }
+            // The bus tool, only when the client declared the bus (never to subagents: a
+            // subagent's parent carries the channel).
+            if self.irc().is_some() {
+                specs.push(crate::irc::spec());
+            }
         }
         if self.has_recall() {
             specs.push(crate::recall::spec());
@@ -2871,6 +2947,12 @@ impl Agent {
         }
         if crate::tools::sessions::is_tool(name) && !self.subagent {
             return self.session_tool(id, name, input).await;
+        }
+        if name == crate::irc::TOOL && !self.subagent {
+            let Some(bus) = self.irc() else {
+                anyhow::bail!("the IRC bus isn't enabled for this conversation");
+            };
+            return crate::irc::run(&bus, input);
         }
         if name == crate::present::TOOL {
             return crate::present::run(input, &self.ctx.root, self.tier == Tier::Weak);
@@ -3855,6 +3937,14 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             reason,
             subagent: None,
         });
+        // The bus mirrors the card as one line with a link. IRC never approves: the click
+        // happens in the app, on a link the bus can't forge (the id is frog's own).
+        if let Some(bus) = self.irc() {
+            bus.post_notice(
+                crate::irc::NoticeKind::WaitingOnUser,
+                &crate::irc::approval_notice(&self.session_id, item, name),
+            );
+        }
         let asked = Instant::now();
         let decision = rx.await.unwrap_or(Decision::Deny);
         self.timing.user_ms += ms(asked.elapsed());
@@ -6610,6 +6700,7 @@ for line in sys.stdin:
         let mut h = engine(script, true);
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: false,
                 ask: true,
                 sessions: false,
@@ -6632,6 +6723,7 @@ for line in sys.stdin:
         let mut h = engine(script, true);
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: false,
                 ask: true,
                 sessions: false,
@@ -6690,8 +6782,13 @@ for line in sys.stdin:
     }
 
     fn caps(h: &Handle, sessions: bool) {
+        caps_irc(h, sessions, false);
+    }
+
+    fn caps_irc(h: &Handle, sessions: bool, irc: bool) {
         h.ops
             .send(Op::SetClientCaps {
+                irc,
                 panes: false,
                 ask: false,
                 sessions,
@@ -6792,6 +6889,223 @@ for line in sys.stdin:
                 "end 2"
             ]
         );
+    }
+
+    // -- the IRC agent bus (docs/design/agent-bus-irc.md) --
+
+    /// The Irc tool calls the model makes in tests.
+    fn irc_call(action: &str, channel: &str) -> Block {
+        use serde_json::json;
+        Block::ToolUse {
+            id: "t0".into(),
+            name: crate::irc::TOOL.into(),
+            input: json!({ "action": action, "channel": channel }),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_irc_mention_delivers_at_the_turn_boundary_not_mid_turn() {
+        // A mention arriving mid-turn never interrupts it: it queues like SendMessage and
+        // runs at the next boundary, wrapped untrusted.
+        let script = vec![
+            reply(vec![irc_call("read", "#frog")], Stop::ToolUse),
+            reply(vec![text("read")], Stop::End),
+            reply(vec![text("got it")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps_irc(&h, false, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "check the channel".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut mentioned = false;
+        let mut order = Vec::new();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, .. },
+                    ..
+                } if name == crate::irc::TOOL => {
+                    // Mid-turn: the bridge routes the mention into the router's inbox.
+                    let bus = h.bus.lock().unwrap().clone().unwrap();
+                    let nick = bus.nick().unwrap();
+                    let line =
+                        crate::irc::Line::at("f-peer", "#frog", &format!("{nick}: ping?"), 1000)
+                            .unwrap();
+                    let Some((from, from_name, message)) = bus.arrive(line) else {
+                        panic!("a mention must route to the inbox");
+                    };
+                    h.ops
+                        .send(Op::Deliver {
+                            from,
+                            from_name,
+                            message,
+                        })
+                        .unwrap();
+                    mentioned = true;
+                    order.push("tool".into());
+                }
+                Event::TurnStarted { turn, input, .. } => {
+                    order.push(format!("start {turn} {}", input.contains("<chat")));
+                }
+                Event::TurnEnded { turn, .. } => {
+                    order.push(format!("end {turn}"));
+                    if turn == 2 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(mentioned);
+        assert_eq!(
+            order,
+            ["start 1 false", "tool", "end 1", "start 2 true", "end 2"],
+            "the mention lands at the boundary, as one wrapped turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_irc_tool_is_absent_until_the_client_declares_the_bus() {
+        let script = vec![
+            reply(vec![irc_call("read", "#frog")], Stop::ToolUse),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        // No SetClientCaps { irc }: the tool isn't offered and can't run.
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "read the channel".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == crate::irc::TOOL => {
+                    assert!(output.starts_with("There's no `Irc` tool"));
+                    break;
+                }
+                Event::TurnEnded { .. } => panic!("the bus is off: the call must be refused"),
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_permission_card_posts_a_notice_with_a_link_never_an_approval() {
+        // A permission request mid-turn posts exactly one waiting-on-user notice, carrying a
+        // frog:// link. IRC never approves: the notice has no decision and no commands.
+        let dir = tmp_store();
+        std::fs::write(dir.join("calc.py"), "def add(a, b):\n    return a - b\n").unwrap();
+        let read = Block::ToolUse {
+            id: "r".into(),
+            name: "Read".into(),
+            input: json!({ "file_path": "calc.py" }),
+        };
+        let edit = Block::ToolUse {
+            id: "e".into(),
+            name: "Edit".into(),
+            input: json!({ "file_path": "calc.py", "old_string": "a - b", "new_string": "a + b" }),
+        };
+        let script = vec![
+            reply(vec![read], Stop::ToolUse),
+            reply(vec![edit], Stop::ToolUse),
+            reply(vec![text("fixed")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        caps_irc(&h, false, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        // The client (here: the test) tells the bus which team channel this session posts to.
+        h.bus
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .set_channel("#frog");
+        h.ops
+            .send(Op::Submit {
+                text: "fix add".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut notices = Vec::new();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::PermissionRequest { id, name, .. } => {
+                    let bus = h.bus.lock().unwrap().clone().unwrap();
+                    // The bridge posted the notice synchronously with the event.
+                    for line in bus.read("#frog").unwrap_or_default() {
+                        notices.push(line.text.clone());
+                    }
+                    assert_eq!(name, "Edit");
+                    h.ops
+                        .send(Op::Permission {
+                            id,
+                            decision: Decision::Allow,
+                        })
+                        .unwrap();
+                }
+                Event::TurnEnded { turn, .. } if turn == 1 => break,
+                _ => {}
+            }
+        }
+        let link = notices.iter().find(|n| n.contains("frog://"));
+        assert!(link.is_some(), "the notice carries a link: {notices:?}");
+        assert!(
+            notices.iter().any(|n| n.contains("waiting on cam")),
+            "it names the card"
+        );
+        for n in &notices {
+            let low = n.to_lowercase();
+            assert!(!low.contains("reply yes"), "no confirm-by-chat: {n}");
+            assert!(!low.contains("approved"), "no decision over IRC: {n}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_irc_tool_reads_quarantined_lines_and_posts_within_the_cap() {
+        let script = vec![
+            reply(vec![irc_call("read", "#frog")], Stop::ToolUse),
+            reply(vec![text("read")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps_irc(&h, false, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        // History a peer wrote before the read.
+        let bus = h.bus.lock().unwrap().clone().unwrap();
+        bus.arrive(crate::irc::Line::at("f-peer", "#frog", "release out", 999).unwrap());
+        h.ops
+            .send(Op::Submit {
+                text: "read the channel".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == crate::irc::TOOL => {
+                    assert!(output.contains("untrusted=\"true\""), "{output}");
+                    assert!(output.contains("release out"));
+                    assert!(output.contains("no user authority"));
+                    break;
+                }
+                Event::TurnEnded { .. } => panic!("tool should have run"),
+                _ => {}
+            }
+        }
     }
 
     #[tokio::test]
@@ -7455,6 +7769,7 @@ for line in sys.stdin:
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: true,
                 ask: false,
                 sessions: false,
@@ -7588,6 +7903,7 @@ for line in sys.stdin:
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: true,
                 ask: false,
                 sessions: false,
@@ -7638,6 +7954,7 @@ for line in sys.stdin:
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
         h.ops
             .send(Op::SetClientCaps {
+                irc: false,
                 panes: true,
                 ask: false,
                 sessions: false,
