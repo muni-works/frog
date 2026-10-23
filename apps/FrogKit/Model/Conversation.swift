@@ -133,6 +133,8 @@ final class Conversation {
     @ObservationIgnored static var sessionRequests: ((Conversation, SessionRequest) -> Void)?
     /// The user sent something in this conversation (session-message rate limits reset).
     @ObservationIgnored static var userActivity: ((Conversation) -> Void)?
+    /// A new permission prompt opened (the Mac's `SessionBroker` escalates it to a parent).
+    @ObservationIgnored static var permissionRequests: ((Conversation, PermissionRequest) -> Void)?
     /// Counts of live happenings, for haptics and the frog's face.
     private(set) var stepsDone = 0
     private(set) var turnsDone = 0
@@ -301,9 +303,11 @@ final class Conversation {
         return true
     }
 
-    func answer(_ decision: Decision) {
+    /// `note`, with a deny: why, sent back to the agent so it can adjust.
+    func answer(_ decision: Decision, note: String? = nil) {
         guard let p = permission else { return }
-        link?.send(.permission(id: p.id, decision: decision))
+        let note = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        link?.send(.permission(id: p.id, decision: decision, note: note?.isEmpty == false ? note : nil))
         permission = nil
         Conversation.effects?.answered(self, permission: p.id)
     }
@@ -521,6 +525,7 @@ final class Conversation {
             if isNews(env) {
                 FrogSounds.shared.play(.drip)
                 Conversation.effects?.asked(self, req)
+                Conversation.permissionRequests?(self, req)
             }
             upsert(req.item) { $0.needsPermission = true }
             progress = nil
@@ -541,6 +546,9 @@ final class Conversation {
             upsert(id) { $0.progress = p }
         case .autoApproved(let item, let reason):
             upsert(item) { $0.autoReason = reason }
+        case .permissionDecision:
+            // Bookkeeping for the ask rate; nothing to show.
+            break
         case .subagent(let item, let inner):
             upsert(item) { state in
                 if state.subagent == nil { state.subagent = SubagentRun() }

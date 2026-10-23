@@ -58,6 +58,8 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 /// Read-only commands that never need approval (when not chained or redirected).
+/// Compounds and pipelines are covered by `shell::read_only`, which parses them;
+/// this list handles bare commands and the user's `allow_bash` prefixes.
 const SAFE_BASH: &[&str] = &[
     "ls",
     "pwd",
@@ -245,6 +247,9 @@ pub struct Handle {
 struct Shared {
     cancel: Mutex<CancellationToken>,
     pending: Mutex<HashMap<String, oneshot::Sender<Decision>>>,
+    /// A note the user sent with a permission answer, by request id, until the
+    /// agent picks it up.
+    notes: Mutex<HashMap<String, String>>,
     /// Open `Ask` questions, answered by `Op::Answer`.
     questions: Mutex<HashMap<String, oneshot::Sender<crate::protocol::Answer>>>,
     /// A client shows questions to someone who can answer (`SetClientCaps { ask }`).
@@ -442,6 +447,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     let shared = Arc::new(Shared {
         cancel: Default::default(),
         pending: Default::default(),
+        notes: Default::default(),
         questions: Default::default(),
         client_ask: Default::default(),
         sessions: Default::default(),
@@ -514,11 +520,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                         break;
                     }
                 }
-                Op::Permission { id, decision } => {
+                Op::Permission { id, decision, note } => {
                     if let Some(tx) = router.pending.lock().unwrap().remove(&id) {
+                        if let Some(n) = note.filter(|n| !n.trim().is_empty()) {
+                            router.notes.lock().unwrap().insert(id.clone(), n);
+                        }
                         let _ = tx.send(decision);
                     } else {
-                        router.bg.answer(&id, decision);
+                        router.bg.answer(&id, decision, note);
                     }
                 }
                 Op::Answer { id, answer } => {
@@ -940,6 +949,17 @@ struct Agent {
     warming: Arc<Mutex<(bool, Option<Warming>)>>,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
+    /// The classifier already failed once this session and the user was told:
+    /// later failures fall back quietly instead of repeating the notice.
+    classifier_failed: bool,
+    /// Paths this session created (files it wrote that didn't exist, directories a
+    /// command made), so an approval card can say "this session made it".
+    created: HashSet<PathBuf>,
+    /// (program, path prefix) pairs the user allowed for this session.
+    prefix_allow: Vec<(String, PathBuf)>,
+    /// What the user said with their last answer (a deny with a note, or frog's own
+    /// note when a prompt timed out), for the tool result.
+    last_note: Option<String>,
     session_allow: HashSet<String>,
     /// Context from `Op::Shell`, attached to the next message.
     pending: Vec<String>,
@@ -1126,6 +1146,10 @@ impl Agent {
             map_logged: false,
             edited: Vec::new(),
             classifier: None,
+            classifier_failed: false,
+            created: HashSet::new(),
+            prefix_allow: Vec::new(),
+            last_note: None,
             vision: false,
             budget_ok: false,
             cache_key_ok: false,
@@ -3227,16 +3251,41 @@ Don't repeat it. Change the arguments or try a different approach.",
                     Some("refused: not an available tool"),
                 )
             } else if self.timed_permit(&id, &name, &arg, &input).await == Decision::Deny {
-                let msg = if self.can_ask {
-                    "The user rejected this tool call. Stop and wait for their instructions."
-                } else {
-                    "Not permitted in non-interactive mode (run with --yolo to allow)."
+                // A deny with a note (the user's, or frog's own when the prompt timed
+                // out) is direction, not a stop: the agent adjusts and carries on.
+                let (msg, stop) = match self.last_note.take() {
+                    Some(note) => (
+                        format!("Not run: the call was denied with this note: {note}\nAdjust your approach accordingly and continue with the rest of the task."),
+                        false,
+                    ),
+                    None if self.can_ask => (
+                        "The user rejected this tool call. Stop and wait for their instructions.".to_string(),
+                        true,
+                    ),
+                    None => (
+                        "Not permitted in non-interactive mode (run with --yolo to allow).".to_string(),
+                        false,
+                    ),
                 };
-                denied = self.can_ask;
-                text(ToolOutcome::Denied, msg.to_string(), None)
+                denied = stop;
+                text(ToolOutcome::Denied, msg, None)
             } else {
                 let started = Instant::now();
                 self.snapshot(&name, &input);
+                // Provenance: which paths this call is about to bring into being.
+                let before: Vec<PathBuf> = match &*name {
+                    "Bash" => crate::approval::missing(
+                        input["command"].as_str().unwrap_or(""),
+                        &self.ctx.cwd,
+                    ),
+                    "Write" => input["file_path"]
+                        .as_str()
+                        .map(|p| crate::approval::normalize(&self.ctx.resolve(p)))
+                        .filter(|p| !p.exists())
+                        .into_iter()
+                        .collect(),
+                    _ => Vec::new(),
+                };
                 let ran = match started_early {
                     Some(call) => self.finish_early(call, started).await,
                     None => None,
@@ -3246,6 +3295,8 @@ Don't repeat it. Change the arguments or try a different approach.",
                     Some((r, _)) => r,
                     None => self.run_tool(&id, &name, &input).await,
                 };
+                self.created
+                    .extend(before.into_iter().filter(|p| p.exists()));
                 let took = ms(started.elapsed());
                 self.timing.tool_ms += took;
                 self.timing.early_ms += early.unwrap_or(0);
@@ -3862,10 +3913,31 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         let cmd = input["command"].as_str().unwrap_or("").trim();
         let prefix = cmd.split_whitespace().next().unwrap_or("").to_string();
         let mcp = name.starts_with("mcp__");
+        let leaves_sandbox = name == "Bash" && input["unsandboxed"].as_bool() == Some(true);
+        // Layer 1, built-in rules, no model call. A command the parser proves
+        // read-only (no writes, no subshells, no credential paths) runs without
+        // asking in every mode, sandboxed or not: it can only read, and the
+        // sandbox is a write fence, not the only thing standing between the agent
+        // and `cat`.
+        if name == "Bash"
+            && !crate::shell::touches_credentials(cmd)
+            && (bash_allowed(cmd, &self.cfg.allow_bash) || crate::shell::read_only(cmd))
+        {
+            self.decision(item, "rule", "allow", "read-only command", 0);
+            return Decision::Allow;
+        }
         // A sandboxed command can only write inside the project and can't read credentials,
         // so it runs without asking; leaving the sandbox always asks.
-        let leaves_sandbox = name == "Bash" && input["unsandboxed"].as_bool() == Some(true);
         if name == "Bash" && self.ctx.shell_sandbox.is_some() && !leaves_sandbox {
+            self.decision(item, "sandbox", "allow", "sandboxed", 0);
+            return Decision::Allow;
+        }
+        // A path prefix the user allowed for this program earlier this session.
+        if name == "Bash"
+            && !crate::shell::touches_credentials(cmd)
+            && crate::approval::prefix_allows(cmd, &self.ctx.cwd, &self.prefix_allow)
+        {
+            self.decision(item, "session", "allow", "under a path prefix allowed this session", 0);
             return Decision::Allow;
         }
         let key = match kind {
@@ -3904,6 +3976,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     path.display()
                 )),
                 subagent: None,
+                card: None,
             });
             let decision = rx.await.unwrap_or(Decision::Deny);
             self.emit(Event::PermissionResolved { id, decision });
@@ -3917,7 +3990,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 self.mode == Mode::AcceptEdits
                     // Auto mode: edits inside the project are checkpointed and can be undone.
                     || (self.mode == Mode::Auto
-                        && crate::auto::hard_rule(name, input, &self.root).is_none())
+                        && crate::auto::hard_rule(name, input, &self.ctx.root).is_none())
             }
             Kind::Net => false,
             _ if matches!(name, "Image" | "Screenshot" | "Compare")
@@ -3927,9 +4000,18 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             {
                 false
             }
-            _ => bash_allowed(cmd, &self.cfg.allow_bash),
+            // Read-only commands were allowed in layer 1 above; anything left
+            // here is a write or unknown, which only auto mode's classifier may pass.
+            _ => false,
         };
         if auto || self.session_allow.contains(&key) {
+            self.decision(
+                item,
+                if self.session_allow.contains(&key) { "session" } else { "rule" },
+                "allow",
+                if self.session_allow.contains(&key) { "allowed earlier this session" } else { "mode allows it" },
+                0,
+            );
             return Decision::Allow;
         }
         let mut reason = leaves_sandbox.then(|| {
@@ -3950,10 +4032,20 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             };
             let started = Instant::now();
             let verdict = self.auto_judge(item, name, input, sandbox).await;
-            self.timing.classifier_ms += ms(started.elapsed());
+            let took = ms(started.elapsed());
+            self.timing.classifier_ms += took;
             match verdict {
-                Ok(()) => return Decision::Allow,
+                Ok(()) => {
+                    self.decision(item, "classifier", "allow", "the classifier approved it", took);
+                    return Decision::Allow;
+                }
                 Err(why) => {
+                    let layer = if why.contains("classifier is unavailable") {
+                        "fallback"
+                    } else {
+                        "classifier"
+                    };
+                    self.decision(item, layer, "ask", &why, took);
                     reason = Some(format!(
                         "Auto mode asked because {}.",
                         why.trim_end_matches('.')
@@ -3962,6 +4054,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             }
         }
         if !self.can_ask {
+            self.decision(item, "ask", "ask", "not interactive: denied", 0);
             return Decision::Deny;
         }
         let always = match kind {
@@ -3990,15 +4083,46 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 "always allow typing into terminal panes this session".to_string()
             }
             _ if pane => format!("always allow preview {pane_action} this session"),
-            _ if leaves_sandbox => {
-                format!("always allow `{prefix}` outside the sandbox this session")
-            }
-            _ => format!("always allow `{prefix}` this session"),
+            _ => String::new(), // shell commands: set from the card below
+        };
+        let timeout_secs = self.cfg.approval_timeout_secs;
+        self.last_note = None;
+        // Shell commands get a card, and no blanket "always allow `rm`": the only
+        // session-wide choice is this program under the card's path prefix.
+        let card = (name == "Bash").then(|| {
+            // A command's own relative paths resolve where the shell runs (`ctx.cwd`,
+            // which `cd` moves); "outside the project" is judged against the session's
+            // checkout (`ctx.root`), which never moves.
+            crate::approval::card(
+                cmd,
+                &self.ctx.cwd,
+                &self.ctx.root,
+                reason.as_deref().unwrap_or("no rule or verdict allowed it"),
+                self.agent_reason(),
+                &self.created,
+                timeout_secs,
+            )
+        });
+        let always = match card.as_ref().and_then(|c| c.prefix.as_ref()) {
+            Some(p) => format!(
+                "allow `{}` under {p} this session",
+                crate::approval::program(cmd)
+            ),
+            None if card.is_some() => String::new(),
+            None => always,
         };
         let id = new_id();
         let (tx, rx) = oneshot::channel();
         self.shared.pending.lock().unwrap().insert(id.clone(), tx);
         let preview = tools::fs::preview(name, input, &self.ctx);
+        self.decision(
+            item,
+            "ask",
+            "ask",
+            reason.as_deref().unwrap_or("no rule or verdict allowed it"),
+            0,
+        );
+        let card_prefix = card.as_ref().and_then(|c| c.prefix.clone());
         self.emit(Event::PermissionRequest {
             id: id.clone(),
             item: item.into(),
@@ -4008,6 +4132,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             preview,
             reason,
             subagent: None,
+            card,
         });
         // The bus mirrors the card as one line with a link. IRC never approves: the click
         // happens in the app, on a link the bus can't forge (the id is frog's own).
@@ -4018,13 +4143,76 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             );
         }
         let asked = Instant::now();
-        let decision = rx.await.unwrap_or(Decision::Deny);
+        // Waiting has a limit: past it, frog takes the safe path (deny), says so in
+        // the tool result, and the agent carries on with the rest of the task.
+        let answer = if timeout_secs == 0 {
+            Ok(rx.await)
+        } else {
+            tokio::time::timeout(Duration::from_secs(timeout_secs), rx).await
+        };
+        let decision = match answer {
+            Ok(d) => d.unwrap_or(Decision::Deny),
+            Err(_) => {
+                self.shared.pending.lock().unwrap().remove(&id);
+                let mins = (timeout_secs as f64 / 60.0).round() as u64;
+                self.last_note = Some(format!(
+                    "nobody answered within {} so frog took the safe path and skipped it; don't retry it, find another way or leave it for the user",
+                    if mins >= 1 { format!("{mins} min") } else { format!("{timeout_secs} s") }
+                ));
+                self.notice(
+                    Level::Warn,
+                    format!("A permission prompt went unanswered for {timeout_secs}s; denied it and carried on."),
+                );
+                Decision::Deny
+            }
+        };
         self.timing.user_ms += ms(asked.elapsed());
-        self.emit(Event::PermissionResolved { id, decision });
-        if decision == Decision::AllowAlways {
-            self.session_allow.insert(key);
+        // A note only means something with a deny; with an allow it's dropped.
+        let note = self.shared.notes.lock().unwrap().remove(&id);
+        if let (Some(note), Decision::Deny) = (note, decision) {
+            self.last_note = Some(format!("\"{note}\""));
         }
-        decision
+        self.emit(Event::PermissionResolved { id, decision });
+        match decision {
+            Decision::AllowAlways | Decision::AllowPrefix if name == "Bash" => {
+                if let Some(p) = card_prefix {
+                    self.prefix_allow.push((
+                        crate::approval::program(cmd),
+                        crate::approval::normalize(Path::new(&p)),
+                    ));
+                }
+                Decision::Allow
+            }
+            Decision::AllowAlways | Decision::AllowPrefix => {
+                self.session_allow.insert(key);
+                Decision::Allow
+            }
+            d => d,
+        }
+    }
+
+    /// What the agent said just before this call, for the approval card.
+    fn agent_reason(&self) -> Option<String> {
+        let text = self
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::Assistant)?
+            .text();
+        let text = text.trim();
+        (!text.is_empty()).then(|| tools::truncate_middle(text, 300))
+    }
+
+    /// Record how one permission check was decided, so the ask rate can be
+    /// measured from session logs. Not shown as a notice; a durable event.
+    fn decision(&self, item: &str, layer: &str, outcome: &str, reason: &str, ms: u64) {
+        self.emit(Event::PermissionDecision {
+            item: item.to_string(),
+            layer: layer.to_string(),
+            outcome: outcome.to_string(),
+            reason: reason.to_string(),
+            ms,
+        });
     }
 
     /// `ListSessions`, `SendMessage`, `StartSession`: the client carries them out.
@@ -4103,10 +4291,11 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     .into(),
             ),
             subagent: None,
+            card: None,
         });
         let asked = Instant::now();
         let decision = match rx.await.unwrap_or(Decision::Deny) {
-            Decision::AllowAlways => Decision::Allow,
+            Decision::AllowAlways | Decision::AllowPrefix => Decision::Allow,
             d => d,
         };
         self.timing.user_ms += ms(asked.elapsed());
@@ -4123,17 +4312,15 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         input: &Value,
         sandbox: crate::auto::Sandbox,
     ) -> std::result::Result<(), String> {
-        if let Some(why) = crate::auto::hard_rule(name, input, &self.root) {
+        if let Some(why) = crate::auto::hard_rule(name, input, &self.ctx.root) {
             return Err(format!("it {why}"));
         }
         if self.classifier.is_none() {
-            match crate::auto::Classifier::new(
-                &self.cfg,
-                (&self.profile_name, &self.profile),
-                &self.root,
-            ) {
+            match crate::auto::Classifier::new(&self.cfg, &self.ctx.root) {
                 Ok(c) => self.classifier = Some(c),
-                Err(e) => return Err(format!("the classifier couldn't start ({e:#})")),
+                Err(e) => {
+                    self.classifier_unavailable(format!("couldn't start ({e:#})"));
+                }
             }
         }
         let model = self
@@ -4149,7 +4336,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         let preview = tools::fs::preview(name, input, &self.ctx);
         let action = crate::auto::describe(name, input, preview.as_ref(), sandbox);
         let inputs = self.inputs.clone();
-        let classifier = self.classifier.as_mut().expect("set above");
+        let Some(classifier) = self.classifier.as_mut() else {
+            return Err("the classifier is unavailable".into());
+        };
         match classifier.judge(&inputs, &action).await {
             crate::auto::Verdict::Allow(reason) => {
                 self.emit(Event::AutoApproved {
@@ -4159,6 +4348,32 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 Ok(())
             }
             crate::auto::Verdict::Ask(reason) => Err(format!("the classifier said: {reason}")),
+            // The classifier is down, not cautious: read-only commands still run
+            // (the fast path needs no model), everything else asks.
+            crate::auto::Verdict::Failed(why) => {
+                self.classifier_unavailable(why);
+                if name == "Bash" && crate::shell::read_only(input["command"].as_str().unwrap_or(""))
+                {
+                    self.emit(Event::AutoApproved {
+                        item: item.to_string(),
+                        reason: "read-only command; the classifier is down".into(),
+                    });
+                    Ok(())
+                } else {
+                    Err("the classifier is unavailable".into())
+                }
+            }
+        }
+    }
+
+    /// The auto-mode classifier failed: note it once per session.
+    fn classifier_unavailable(&mut self, why: String) {
+        if !self.classifier_failed {
+            self.classifier_failed = true;
+            self.notice(
+                Level::Warn,
+                format!("auto mode's classifier failed ({why}); read-only commands still run without asking, the rest ask"),
+            );
         }
     }
 
@@ -5202,6 +5417,7 @@ mod tests {
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -7148,6 +7364,7 @@ for line in sys.stdin:
                         .send(Op::Permission {
                             id,
                             decision: Decision::Allow,
+                            note: None,
                         })
                         .unwrap();
                 }
@@ -7429,6 +7646,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id,
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
                 break;
@@ -7531,6 +7749,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id,
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
                 break preview;
@@ -7633,6 +7852,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -7748,6 +7968,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Deny,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -7780,6 +8001,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -7959,6 +8181,7 @@ for line in sys.stdin:
                         .send(Op::Permission {
                             id: id.clone(),
                             decision: Decision::Allow,
+                            note: None,
                         })
                         .unwrap();
                 }
@@ -8642,6 +8865,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -8801,6 +9025,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id,
                         decision: Decision::Deny,
+                        note: None,
                     })
                     .unwrap();
                 break;
@@ -8916,6 +9141,39 @@ for line in sys.stdin:
             profile,
             cwd: std::env::temp_dir(),
             mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// An engine in a permission mode, with an optional classifier spec. The shell
+    /// sandbox is off so Bash calls reach the permission logic, not the sandbox's
+    /// blanket allow.
+    fn engine_perm(script: Vec<Response>, mode: Mode, classifier: Option<&str>) -> Handle {
+        let mut cfg = Config {
+            hermetic: true,
+            sandbox_shell: false,
+            ..Config::default()
+        };
+        cfg.auto_classifier = classifier.map(String::from);
+        engine_perm_cfg(script, mode, cfg)
+    }
+
+    fn engine_perm_cfg(script: Vec<Response>, mode: Mode, cfg: Config) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg,
+            profile_name: "test".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode,
             can_ask: true,
             resume: None,
             store: None,
@@ -9149,4 +9407,335 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
         assert!(error.contains("context window"), "{error}");
         shutdown(h).await;
     }
+
+    #[tokio::test]
+    async fn read_only_compounds_run_without_asking_in_every_mode() {
+        for mode in [Mode::Default, Mode::AcceptEdits, Mode::Auto] {
+            // The sandbox is off in tests, so these go through the fast path.
+            let script = vec![
+                reply(
+                    vec![Block::ToolUse {
+                        id: "ro".into(),
+                        name: "Bash".into(),
+                        input: json!({ "command": "cd /tmp && git log --oneline | head -3; ls | wc -l" }),
+                    }],
+                    Stop::ToolUse,
+                ),
+                reply(vec![text("done")], Stop::End),
+            ];
+            let mut h = engine_perm(script, mode, Some("nonexistent/no-classifier"));
+            let evs = run(&mut h, "look around").await;
+            assert!(
+                !evs.iter().any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+                "{mode:?} asked for a read-only compound"
+            );
+            assert!(evs.iter().any(|e| matches!(
+                e.event,
+                Event::ItemCompleted { .. }
+            )));
+        }
+    }
+
+    #[tokio::test]
+    async fn writes_and_unknowns_still_ask_in_default_mode() {
+        for cmd in ["cat x > y", "cargo build", "echo $(rm -rf x)"] {
+            let script = vec![
+                reply(
+                    vec![Block::ToolUse {
+                        id: "w".into(),
+                        name: "Bash".into(),
+                        input: json!({ "command": cmd }),
+                    }],
+                    Stop::ToolUse,
+                ),
+                reply(vec![text("done")], Stop::End),
+            ];
+            let mut h = engine_perm(script, Mode::Default, None);
+            while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+            h.ops
+                .send(Op::Submit {
+                    text: "go".into(),
+                    images: Vec::new(),
+                    more: Vec::new(),
+                })
+                .unwrap();
+            let mut asked = false;
+            loop {
+                let env = h.events.recv().await.unwrap();
+                if let Event::PermissionRequest { id, .. } = &env.event {
+                    asked = true;
+                    h.ops
+                        .send(Op::Permission {
+                            id: id.clone(),
+                            decision: Decision::Deny,
+                            note: None,
+                        })
+                        .unwrap();
+                }
+                if matches!(env.event, Event::Idle) {
+                    break;
+                }
+            }
+            assert!(asked, "`{cmd}` didn't ask in default mode");
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_mode_falls_back_to_the_fast_path_when_the_classifier_fails() {
+        // A classifier spec that can't resolve: the classifier is down all turn.
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "ro".into(),
+                    name: "Bash".into(),
+                    input: json!({ "command": "git log --oneline | head -3" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(
+                vec![Block::ToolUse {
+                    id: "w".into(),
+                    name: "Bash".into(),
+                    input: json!({ "command": "touch made-up-file" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Auto, Some("nonexistent/no-classifier"));
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        let mut asked = 0;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let idle = matches!(env.event, Event::Idle);
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                asked += 1;
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Deny,
+                        note: None,
+                    })
+                    .unwrap();
+            }
+            evs.push(env);
+            if idle {
+                break;
+            }
+        }
+        // The read-only command ran without asking: the fast path is checked
+        // before any model call, so a down classifier can't block it.
+        let read_only_ran = evs.iter().any(|e| matches!(
+            e.event,
+            Event::ItemCompleted { ref id, item: Item::ToolCall { outcome: ToolOutcome::Ok, .. }, .. } if id == "ro"
+        ));
+        assert!(read_only_ran, "the read-only call ran");
+        // …the write asked…
+        assert_eq!(asked, 1, "the write asked");
+        // …and the failure was logged once, not per call.
+        let notices = evs
+            .iter()
+            .filter(|e| matches!(&e.event, Event::Notice { message, .. } if message.contains("classifier failed")))
+            .count();
+        assert_eq!(notices, 1, "one classifier-failure notice");
+    }
+
+    fn bash_call(id: &str, cmd: &str) -> Response {
+        reply(
+            vec![Block::ToolUse {
+                id: id.into(),
+                name: "Bash".into(),
+                input: json!({ "command": cmd }),
+            }],
+            Stop::ToolUse,
+        )
+    }
+
+    /// Run one turn, answering each permission prompt with `answer` (None: leave it
+    /// unanswered). Returns every event up to the end of the turn.
+    async fn turn_answering(
+        h: &mut Handle,
+        mut answer: impl FnMut(&Event) -> Option<(Decision, Option<String>)>,
+    ) -> Vec<Envelope> {
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event
+                && let Some((decision, note)) = answer(&env.event)
+            {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision,
+                        note,
+                    })
+                    .unwrap();
+            }
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle {
+                return evs;
+            }
+        }
+    }
+
+    fn tool_output<'a>(evs: &'a [Envelope], call: &str) -> Option<&'a str> {
+        evs.iter().find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                id,
+                item: Item::ToolCall { output, .. },
+            } if id == call => Some(output.as_str()),
+            _ => None,
+        })
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("frog-{tag}-{}", session::new_id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[tokio::test]
+    async fn deny_with_a_note_goes_back_to_the_agent_and_the_turn_continues() {
+        let script = vec![
+            bash_call("w", "touch /usr/local/frog-not-here"),
+            bash_call("r", "ls"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let evs = turn_answering(&mut h, |_| {
+            Some((Decision::Deny, Some("write it under /private/tmp instead".into())))
+        })
+        .await;
+        let out = tool_output(&evs, "w").expect("the denied call has a result");
+        assert!(out.contains("write it under /private/tmp instead"), "{out}");
+        // Not a stop: the next call ran rather than being skipped.
+        let next = tool_output(&evs, "r").unwrap();
+        assert!(!next.contains("Skipped"), "{next}");
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_prompt_times_out_to_deny_and_the_agent_carries_on() {
+        let script = vec![
+            bash_call("w", "touch /usr/local/frog-not-here"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = Config {
+            hermetic: true,
+            sandbox_shell: false,
+            approval_timeout_secs: 1,
+            ..Config::default()
+        };
+        let mut h = engine_perm_cfg(script, Mode::Default, cfg);
+        let evs = turn_answering(&mut h, |_| None).await;
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::PermissionResolved {
+                decision: Decision::Deny,
+                ..
+            }
+        )));
+        let out = tool_output(&evs, "w").unwrap();
+        assert!(out.contains("safe path"), "{out}");
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+    }
+
+    /// The prefix-allow scenario with commands naming `base` (spelled as given),
+    /// on an engine with no shell sandbox (Linux CI has none; these tests turn it off).
+    async fn prefix_allow_case(base: &str, real: &Path) {
+        let (a, b, c) = (format!("{base}/a"), format!("{base}/b"), format!("{base}/c"));
+        let script = vec![
+            bash_call("1", &format!("rm -rf {a} {b}")),
+            bash_call("2", &format!("rm -rf {c}")),
+            bash_call("3", &format!("mv {a} {c}")),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let expected = crate::approval::normalize(real);
+        let mut asked: Vec<String> = Vec::new();
+        let evs = turn_answering(&mut h, |e| {
+            let Event::PermissionRequest { arg, card, always, .. } = e else { return None };
+            asked.push(arg.clone());
+            if asked.len() == 1 {
+                let card = card.as_ref().expect("shell prompts carry a card");
+                assert_eq!(card.prefix.as_deref(), expected.to_str(), "{base}");
+                assert!(always.contains("under"), "{always}");
+                Some((Decision::AllowPrefix, None))
+            } else {
+                Some((Decision::Deny, Some("no".into())))
+            }
+        })
+        .await;
+        assert_eq!(asked.len(), 2, "the rm under the prefix didn't ask; the mv did: {asked:?}");
+        assert!(asked[1].starts_with("mv"), "{asked:?}");
+        assert!(tool_output(&evs, "2").is_some());
+    }
+
+    #[tokio::test]
+    async fn a_prefix_allow_covers_the_same_program_under_that_prefix_only() {
+        let dir = scratch("prefix");
+        prefix_allow_case(dir.to_str().unwrap(), &dir).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// What Linux CI sees: a shallow temp dir (`/tmp/frog-…`, three components)
+    /// and, on macOS, a spelling that isn't canonical (`/tmp` is `/private/tmp`).
+    #[tokio::test]
+    async fn a_prefix_allow_works_for_a_shallow_uncanonical_tmp_dir() {
+        let base = format!("/tmp/frog-prefix-{}", session::new_id());
+        std::fs::create_dir_all(&base).unwrap();
+        prefix_allow_case(&base, Path::new(&base)).await;
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn the_card_knows_what_this_session_created() {
+        let dir = scratch("prov");
+        let made = dir.join("build-out");
+        let script = vec![
+            bash_call("mk", &format!("mkdir -p {}", made.display())),
+            bash_call("rm", &format!("rm -rf {}", made.display())),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let mut cards = Vec::new();
+        turn_answering(&mut h, |e| {
+            if let Event::PermissionRequest { card: Some(c), .. } = e {
+                cards.push(c.clone());
+            }
+            Some((Decision::Allow, None))
+        })
+        .await;
+        let rm = cards.last().expect("the rm asked");
+        assert!(rm.touches[0].created_here, "{rm:?}");
+        assert!(rm.risk.contains("this session created"), "{}", rm.risk);
+        assert!(rm.recommendation.starts_with("allow"), "{}", rm.recommendation);
+        assert!(!made.exists(), "the allowed rm ran");
+        let _ = std::fs::remove_dir_all(dir);
+       }
 }

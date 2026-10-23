@@ -47,6 +47,8 @@ enum Mode: String, Codable, Sendable, CaseIterable, Identifiable {
 enum Decision: String, Codable, Sendable {
     case allow
     case allowAlways = "allow_always"
+    /// This program on paths under the card's prefix, for the rest of the session.
+    case allowPrefix = "allow_prefix"
     case deny
 }
 
@@ -60,7 +62,8 @@ enum Op: Encodable, Sendable {
     /// Pick up a turn the app's restart interrupted: the engine runs a turn on the repaired
     /// history with `note` (its own default when nil) as the message.
     case `continue`(note: String? = nil)
-    case permission(id: String, decision: Decision)
+    /// `note`, with a deny: the user's words, sent back to the agent.
+    case permission(id: String, decision: Decision, note: String? = nil)
     case setMode(Mode)
     case setModel(String)
     case compact(focus: String?)
@@ -125,10 +128,11 @@ enum Op: Encodable, Sendable {
         case .continue(let note):
             try c.encode("continue", forKey: .op)
             try c.encodeIfPresent(note, forKey: .note)
-        case .permission(let id, let decision):
+        case .permission(let id, let decision, let note):
             try c.encode("permission", forKey: .op)
             try c.encode(id, forKey: .id)
             try c.encode(decision, forKey: .decision)
+            try c.encodeIfPresent(note, forKey: .note)
         case .setMode(let mode):
             try c.encode("set_mode", forKey: .op)
             try c.encode(mode, forKey: .mode)
@@ -571,6 +575,26 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
     var preview: FileDiff?
     /// Why this one asks when similar calls don't (a command leaving the sandbox).
     var reason: String?
+    /// For shell commands: the agent's reason, the trigger, what it touches, and advice.
+    var card: ApprovalCard?
+}
+
+/// What a shell command's permission prompt shows (engine `ApprovalCard`).
+struct ApprovalCard: Codable, Sendable, Equatable {
+    struct Touch: Codable, Sendable, Equatable {
+        var path: String
+        var exists: Bool?
+        var dir: Bool?
+        var bytes: UInt64?
+        var createdHere: Bool?
+    }
+    var agentReason: String?
+    var trigger: String
+    var touches: [Touch]?
+    var risk: String
+    var recommendation: String
+    var prefix: String?
+    var timeoutSecs: UInt64
 }
 
 enum Event: Decodable, Sendable {
@@ -604,6 +628,9 @@ enum Event: Decodable, Sendable {
     case appResult(id: String, result: JSONValue?, error: String?)
     /// Auto mode's classifier let tool call `item` run without asking.
     case autoApproved(item: String, reason: String)
+    /// How one permission check was decided (rule, classifier, fallback, ask),
+    /// for measuring the ask rate; not shown in the transcript.
+    case permissionDecision(item: String, layer: String, outcome: String, reason: String, ms: UInt64)
     /// An event from the subagent running as tool call `item`.
     indirect case subagent(item: String, inner: Event)
     case notice(level: String, message: String)
@@ -646,6 +673,7 @@ extension Event {
         case turn, input, reason, usage, id, kind, item, delta, decision, ids
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
+        case layer, outcome, ms
         case images, more
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
     }
@@ -715,6 +743,13 @@ extension Event {
                     message: try c.decodeIfPresent(String.self, forKey: .message)))
         case "auto_approved":
             self = .autoApproved(item: try c.decode(String.self, forKey: .item), reason: try c.decode(String.self, forKey: .reason))
+        case "permission_decision":
+            let item = try c.decode(String.self, forKey: .item)
+            let layer = try c.decode(String.self, forKey: .layer)
+            let outcome = try c.decode(String.self, forKey: .outcome)
+            let reason = try c.decode(String.self, forKey: .reason)
+            let ms: UInt64 = try c.decodeIfPresent(UInt64.self, forKey: .ms) ?? 0
+            self = .permissionDecision(item: item, layer: layer, outcome: outcome, reason: reason, ms: ms)
         case "subagent":
             self = .subagent(item: try c.decode(String.self, forKey: .item), inner: try c.decode(Event.self, forKey: .inner))
         case "app_result":
