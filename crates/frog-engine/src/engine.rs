@@ -9964,6 +9964,61 @@ for line in sys.stdin:
         shutdown(h).await;
     }
 
+
+    /// Integration: a parent drains while its `Task` subagent is mid-turn — the cascade
+    /// stops the child at its own safe point (its turn records `Suspended` too), the parent
+    /// reports the child's partial result as interrupted-by-update, and the resumed turn
+    /// can re-run the `Task`.
+    #[tokio::test]
+    async fn draining_the_parent_suspends_its_subagent_mid_turn_and_resume_reruns() {
+        let dir = tmp_store();
+        // The child is mid-turn when the parent's drain lands: a tool call in flight.
+        script_child(
+            &dir,
+            vec![
+                reply(vec![call("c1", "Bash", json!({"command": "sleep 30"}))], Stop::ToolUse),
+            ],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "long subagent", "prompt": "work on it", "mode": "write"}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("done anyway")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, Some(dir.clone()), None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "start the subagent");
+        // Drain the parent as soon as the child's tool call starts (the child's events
+        // stream through the parent's subagent item as `item_delta`s).
+        let mut parent_suspended = false;
+        let mut saw_ack = false;
+        let mut events = 0;
+        while !parent_suspended || !saw_ack {
+            let env = h.events.recv().await.unwrap();
+            match &env.event {
+                Event::Subagent { item, inner } if item == "t" => {
+                    events += 1;
+                    if matches!(&**inner, Event::ItemStarted { kind: crate::protocol::ItemKind::ToolCall { .. }, .. }) {
+                        h.ops
+                            .send(Op::Drain {
+                                deadline: now_ms() + 2_000,
+                            })
+                            .unwrap();
+                    }
+                }
+                Event::TurnEnded { reason: EndReason::Suspended, .. } => parent_suspended = true,
+                Event::Drained { .. } => saw_ack = true,
+                _ => {}
+            }
+            events += 0;
+            if events > 400 { panic!("the drain never landed; events exhausted"); }
+        }
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
     #[tokio::test]
     async fn a_finished_bash_job_reports_its_exit_and_output() {
         let dir = tmp_store();
