@@ -278,6 +278,45 @@ pub struct Config {
     /// Let WebFetch reach localhost and private networks (off: public addresses only).
     #[serde(default)]
     pub web_allow_private: bool,
+    /// The IRC agent bus (docs/design/agent-bus-irc.md). Off until the frog cloud Bus DO
+    /// deploys; a client that sees `enabled` declares `SetClientCaps { irc }`. The URL is the
+    /// bus WebSocket; `channel` is the team channel this Mac's sessions post to.
+    #[serde(default)]
+    pub irc: IrcConfig,
+}
+
+/// `[irc]`: the agent bus. Off by default — flipping it on is the deploy switch.
+#[derive(Clone, Debug, Deserialize)]
+pub struct IrcConfig {
+    /// Turn the bus on. Off until the DO deploys; everything else here is inert without it.
+    #[serde(default)]
+    pub enabled: bool,
+    /// The bus WebSocket. Default: frog cloud's Bus Durable Object.
+    #[serde(default = "irc_url")]
+    pub url: String,
+    /// The team channel for this project's sessions (`#frog`, `#chief`, …).
+    #[serde(default)]
+    pub channel: Option<String>,
+    /// The SASL account name this Mac's sessions authenticate as. The token itself is NEVER
+    /// config: it's looked up by this name in the keychain (or `FROG_IRC_TOKEN`), and never
+    /// logged.
+    #[serde(default)]
+    pub account: Option<String>,
+}
+
+impl Default for IrcConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: irc_url(),
+            channel: None,
+            account: None,
+        }
+    }
+}
+
+fn irc_url() -> String {
+    "wss://api.frog.toys/bus".into()
 }
 
 /// `[sandbox]`: what the Bash sandbox may read and write beyond its defaults. Reads widen only
@@ -486,6 +525,25 @@ fn with_catalog(mut p: Profile, spec: &str) -> Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_irc_bus_is_off_until_config_turns_it_on() {
+        let cfg = Config::default();
+        assert!(!cfg.irc.enabled, "off by default until the DO deploys");
+        assert_eq!(cfg.irc.url, "wss://api.frog.toys/bus");
+        let text = r##"
+            [irc]
+            enabled = true
+            channel = "#frog"
+            account = "cam-mac"
+            url = "wss://example.invalid/bus"
+        "##;
+        let cfg: Config = toml::from_str(text).unwrap();
+        assert!(cfg.irc.enabled);
+        assert_eq!(cfg.irc.channel.as_deref(), Some("#frog"));
+        assert_eq!(cfg.irc.account.as_deref(), Some("cam-mac"));
+        assert_eq!(cfg.irc.url, "wss://example.invalid/bus");
+    }
 
     #[test]
     fn resolves_new_ids_aliases_and_bare_names() {

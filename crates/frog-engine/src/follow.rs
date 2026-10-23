@@ -88,7 +88,8 @@ pub fn follow(store: PathBuf, id: String) -> Handle {
             }
         }
     });
-    Handle { ops: op_tx, events: ev_rx }
+    // A follower only watches; it never bridges the bus.
+    Handle { ops: op_tx, events: ev_rx, bus: crate::irc::slot() }
 }
 
 #[cfg(test)]
