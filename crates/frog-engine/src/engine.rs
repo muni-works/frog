@@ -576,6 +576,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             agent.emit_status();
         }
         agent.connect_mcp();
+        // Restore MCP tools that were loaded in a previous session
+        if !agent.loaded_tools.is_empty() {
+            agent.mcp.restore_loaded(&agent.loaded_tools);
+            agent.loaded_tools.clear();
+        }
         agent.resolve_window().await;
         agent.emit_status();
         {
@@ -904,6 +909,8 @@ struct Agent {
     mcp_pending: Option<tokio::sync::mpsc::UnboundedReceiver<(String, crate::mcp::Hub)>>,
     /// Completed MCP deltas queued until the next turn boundary.
     mcp_ready_queue: Vec<(String, crate::mcp::Hub)>,
+    /// MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
+    loaded_tools: Vec<String>,
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
     skills_loaded: HashSet<String>,
@@ -965,6 +972,8 @@ impl Agent {
         // it, rather than silently reverting to whatever the flags say — the picker and the
         // engine must agree on the effective mode.
         let mut resumed_mode = None;
+        // MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
+        let mut loaded_tools: Vec<String> = Vec::new();
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
@@ -972,6 +981,7 @@ impl Agent {
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let (seq, turn) = (l.last_seq(), l.last_turn());
                 resumed_map = l.repo_map.clone();
+                loaded_tools = l.loaded;
                 let inputs = l
                     .events
                     .iter()
@@ -1110,6 +1120,7 @@ impl Agent {
             mcp: crate::mcp::Hub::empty(),
             mcp_pending: None,
             mcp_ready_queue: Vec::new(),
+            loaded_tools,
             skills,
             skills_loaded: HashSet::new(),
             memory,
@@ -2561,6 +2572,8 @@ impl Agent {
         if servers.is_empty() {
             return;
         }
+        // Mark that MCP servers are configured, so McpTools is offered even before they connect
+        self.mcp.expect_servers();
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let emit = {
             let journal = self.shared.journal.clone();
@@ -2968,7 +2981,17 @@ impl Agent {
         }
         if self.mcp.handles(name) {
             let hub = self.mcp.clone();
-            return hub.call(id, name, input).await;
+            let out = hub.call(id, name, input).await;
+            // Record loaded tools if McpTools was called
+            if name == crate::mcp::SEARCH_TOOL {
+                if out.is_ok() {
+                    let loaded = hub.loaded();
+                    if !loaded.is_empty() {
+                        self.record(crate::session::Record::LoadedTools { tools: loaded });
+                    }
+                }
+            }
+            return out;
         }
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         self.ctx.progress = Some(tx);

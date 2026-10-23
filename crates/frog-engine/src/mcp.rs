@@ -528,6 +528,8 @@ impl Hub {
                 .servers_expected
                 .store(true, Ordering::Relaxed);
         }
+        // Preserve the loaded tools from self before merging
+        let loaded = self.inner.loaded.lock().unwrap().clone();
         self.inner
             .servers
             .write()
@@ -538,6 +540,10 @@ impl Hub {
             .write()
             .unwrap()
             .extend(other.failed.into_inner().unwrap());
+        // Restore the loaded tools after merging
+        let mut self_loaded = self.inner.loaded.lock().unwrap();
+        self_loaded.clear();
+        self_loaded.extend(loaded);
     }
 
     pub fn host(&self) -> &Arc<Host> {
@@ -554,6 +560,19 @@ impl Hub {
     /// True when any MCP server is configured for this engine, connected or not.
     pub fn expected(&self) -> bool {
         self.inner.servers_expected.load(Ordering::Relaxed)
+    }
+
+    /// Return the list of tools that were loaded via `McpTools`.
+    pub fn loaded(&self) -> Vec<String> {
+        self.inner.loaded.lock().unwrap().clone()
+    }
+
+    /// Restore tools that were previously loaded via `McpTools`.
+    /// This is called when resuming a session to restore the loaded tools.
+    pub fn restore_loaded(&self, tools: &[String]) {
+        let mut loaded = self.inner.loaded.lock().unwrap();
+        loaded.clear();
+        loaded.extend(tools.iter().cloned());
     }
 
     pub fn status(&self) -> Vec<ServerStatus> {
