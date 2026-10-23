@@ -140,7 +140,13 @@ struct PaneView: View {
                 conversation: conversation,
                 actions: turnActions,
                 jump: Bindable(ui).jumpTo,
-                onVisibleTurns: { ui.visibleTurns = Set($0) }
+                // Called from the scroll view's layout: the rail reads this, so the write waits
+                // for the next turn of the run loop (latest wins) rather than changing the
+                // window's graph while it updates, and only when the set actually changed.
+                onVisibleTurns: { ids in
+                    let visible = Set(ids)
+                    DispatchQueue.main.async { if ui.visibleTurns != visible { ui.visibleTurns = visible } }
+                }
             )
             // Another conversation is a fresh scroll view, starting at its end, not this one's
             // offset over different content.
