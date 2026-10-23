@@ -5454,6 +5454,7 @@ mod tests {
             .send(Op::Submit {
                 text: "go".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut sid = String::new();
@@ -5528,6 +5529,7 @@ mod tests {
             .send(Op::Submit {
                 text: "go".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         // Drain with a deadline already in the past, as soon as the turn starts.
@@ -6461,6 +6463,7 @@ mod tests {
             .send(Op::Submit {
                 text: "go".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         // Drain the moment the turn starts, so the message safe point takes it.
@@ -6536,6 +6539,7 @@ mod tests {
             .send(Op::Submit {
                 text: "go".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         // Drain while the message item is streaming.
