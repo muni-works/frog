@@ -868,6 +868,10 @@ struct Agent {
     messages: Vec<Message>,
     ctx: Ctx,
     mode: Mode,
+    /// The mode the session log has on record (its last `mode_changed`; none means Default).
+    /// Whenever the effective mode differs, the next chance to write logs it (see
+    /// `log_mode`), so a restarted engine resumes in it and no change is ever silent.
+    mode_logged: Option<Mode>,
     can_ask: bool,
     rich: bool,
     subagent: bool,
@@ -1101,6 +1105,7 @@ impl Agent {
                 ctx
             },
             mode: resumed_mode.unwrap_or(o.mode),
+            mode_logged: resumed_mode,
             can_ask: o.can_ask,
             rich: o.rich,
             subagent: o.subagent,
@@ -1166,6 +1171,9 @@ impl Agent {
             if let Some(turn) = unfinished {
                 agent.end_turn(turn, EndReason::Cancelled);
             }
+            // A session last run from a flag (`--auto` from StartSession or Settings) never
+            // logged its mode: record what this engine runs in, so the next restart keeps it.
+            agent.log_mode();
         }
         agent.sync_specs();
         // A resumed session keeps the map it last sent: one rebuilt from the files as they are
@@ -1273,6 +1281,20 @@ impl Agent {
     /// The IRC bus, when it's on. Clones the Arc out from under the slot.
     fn irc(&self) -> Option<Arc<crate::irc::Bus>> {
         self.shared.irc.lock().unwrap().clone()
+    }
+
+    /// Log the effective mode if the session's log doesn't already say it (an unlogged
+    /// session counts as Default). Persisted sessions only: an in-memory engine or a
+    /// subagent has no log to resume from.
+    fn log_mode(&mut self) {
+        if self.store.is_none() || self.subagent {
+            return;
+        }
+        if self.mode_logged.unwrap_or(Mode::Default) == self.mode {
+            return;
+        }
+        self.mode_logged = Some(self.mode);
+        self.emit(Event::ModeChanged { mode: self.mode });
     }
 
     fn emit_status(&self) {
@@ -1468,6 +1490,7 @@ impl Agent {
             }
             Op::SetMode { mode } => {
                 self.mode = mode;
+                self.mode_logged = Some(mode);
                 self.emit(Event::ModeChanged { mode });
             }
             Op::SetModel { spec } => self.set_model(&spec).await?,
@@ -1752,6 +1775,8 @@ impl Agent {
             .collect();
         self.turn += 1;
         let turn = self.turn;
+        // The first turn creates a new session's log: its starting mode goes in first.
+        self.log_mode();
         self.emit(Event::TurnStarted {
             turn,
             input: input.to_string(),
@@ -6387,6 +6412,141 @@ mod tests {
         }
         assert_eq!(status, Some(Mode::Yolo), "the engine resumed in the session's mode");
         shutdown(h).await;
+    }
+
+    /// A persisted engine started in `mode` (the `--auto`-style flag), in `dir`.
+    fn engine_in_mode(
+        script: Vec<Response>,
+        mode: Mode,
+        dir: &Path,
+        resume: Option<String>,
+    ) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                sandbox_shell: false,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: dir.to_path_buf(),
+            mode,
+            can_ask: true,
+            resume,
+            store: Some(dir.to_path_buf()),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// The mode the engine reports at startup (its first `Status`).
+    async fn startup_mode(h: &mut Handle) -> Mode {
+        loop {
+            if let Event::Status(s) = h.events.recv().await.unwrap().event {
+                return s.mode;
+            }
+        }
+    }
+
+    fn logged_modes(dir: &Path, sid: &str) -> Vec<Mode> {
+        session::load(dir, sid)
+            .unwrap()
+            .events
+            .iter()
+            .filter_map(|e| match e.event {
+                Event::ModeChanged { mode } => Some(mode),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The okc manager's bug: a session StartSession began with `--auto` never logged its
+    /// mode, so when the app restarted its engine (resume, no mode flag) it ran in Default
+    /// and its next in-project Write asked. The starting mode is now logged with the first
+    /// turn, and the resumed engine keeps it.
+    #[tokio::test]
+    async fn a_flag_started_mode_survives_an_engine_restart() {
+        let dir = tmp_store();
+        let write = |id: &str, path: &str| Block::ToolUse {
+            id: id.into(),
+            name: "Write".into(),
+            input: json!({ "file_path": path, "content": "x\n" }),
+        };
+        let script = vec![
+            reply(vec![write("w1", "one.py")], Stop::ToolUse),
+            reply(vec![text("wrote it")], Stop::End),
+        ];
+        let mut h = engine_in_mode(script, Mode::Auto, &dir, None);
+        let evs = run(&mut h, "write one.py").await;
+        let sid = evs[0].session.clone();
+        let logged = evs
+            .iter()
+            .position(|e| matches!(e.event, Event::ModeChanged { mode: Mode::Auto }));
+        let turn = evs
+            .iter()
+            .position(|e| matches!(e.event, Event::TurnStarted { .. }));
+        assert!(
+            logged.is_some() && logged < turn,
+            "the starting mode is logged before turn 1"
+        );
+        shutdown(h).await;
+        assert_eq!(logged_modes(&dir, &sid), [Mode::Auto]);
+
+        // The app restarts the engine the way it resumes any session: no mode flag (Default).
+        let script = vec![
+            reply(vec![write("w2", "two.py")], Stop::ToolUse),
+            reply(vec![text("wrote it again")], Stop::End),
+        ];
+        let mut h = engine_in_mode(script, Mode::Default, &dir, Some(sid.clone()));
+        assert_eq!(startup_mode(&mut h).await, Mode::Auto, "resumed in auto");
+        let evs = tokio::time::timeout(Duration::from_secs(20), run(&mut h, "write two.py"))
+            .await
+            .expect("the in-project Write asked: the mode reverted");
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. }))
+        );
+        assert!(dir.join("two.py").exists());
+        shutdown(h).await;
+        // Nothing changed, so nothing more to log.
+        assert_eq!(logged_modes(&dir, &sid), [Mode::Auto]);
+    }
+
+    /// A log with no mode on record (written before modes were logged at start) resumed by
+    /// an engine with a mode flag: that start is a change from the log's implicit Default,
+    /// so it's logged, and the next flagless restart keeps it.
+    #[tokio::test]
+    async fn an_engine_start_that_differs_from_the_log_is_logged() {
+        let dir = tmp_store();
+        let script = vec![reply(vec![text("ok")], Stop::End)];
+        let mut h = engine_in_mode(script, Mode::Default, &dir, None);
+        let sid = run(&mut h, "hi").await[0].session.clone();
+        shutdown(h).await;
+        // A Default session logs no mode at all: no noise for the common case.
+        assert!(logged_modes(&dir, &sid).is_empty());
+
+        let mut h = engine_in_mode(Vec::new(), Mode::Auto, &dir, Some(sid.clone()));
+        assert_eq!(startup_mode(&mut h).await, Mode::Auto);
+        shutdown(h).await;
+        assert_eq!(
+            logged_modes(&dir, &sid),
+            [Mode::Auto],
+            "the auto start is logged"
+        );
+
+        let mut h = engine_in_mode(Vec::new(), Mode::Default, &dir, Some(sid.clone()));
+        assert_eq!(
+            startup_mode(&mut h).await,
+            Mode::Auto,
+            "a flagless restart keeps auto"
+        );
+        shutdown(h).await;
+        assert_eq!(logged_modes(&dir, &sid), [Mode::Auto]);
     }
 
     /// Every block the session log holds, in order.
