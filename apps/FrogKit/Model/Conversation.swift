@@ -427,6 +427,12 @@ final class Conversation {
     }
 
     private func apply(_ env: Envelope?) {
+        #if DEBUG
+        // Observed by SwiftUI: a write off the main thread corrupts its graph (see
+        // docs/design/attributegraph-corruption.md). The compiler checks @MainActor; this
+        // catches what slips past it (ObjC callbacks, @preconcurrency, unchecked Sendable).
+        dispatchPrecondition(condition: .onQueue(.main))
+        #endif
         guard let env else {
             if !stopping {
                 failure = link?.endDescription ?? "The frog engine exited."

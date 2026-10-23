@@ -34,6 +34,9 @@ final class Library {
 
     /// Reload the list (coalesced: a burst of calls makes one `frog --sessions --all`).
     func refresh() {
+        #if DEBUG
+        dispatchPrecondition(condition: .onQueue(.main))  // see Conversation.apply
+        #endif
         refreshing?.cancel()
         refreshing = Task {
             try? await Task.sleep(for: .milliseconds(150))
@@ -127,6 +130,9 @@ final class Library {
     /// are still queued in its engine's inbox (bug 2d — a queued-only session used to read
     /// as idle until its next turn boundary).
     func report(_ id: String, conversation: Conversation, running: Bool, waiting: Bool) {
+        #if DEBUG
+        dispatchPrecondition(condition: .onQueue(.main))  // see Conversation.apply
+        #endif
         conversations[id] = WeakConversation(value: conversation)
         SessionBroker.shared.observe(id, running: running, waiting: waiting)
         let queued = SessionBroker.shared.pendingInbound(id) != 0
