@@ -1,5 +1,9 @@
 import SwiftUI
 
+#if DEBUG
+import os
+#endif
+
 struct TranscriptView: View {
     let conversation: Conversation
     let actions: TurnActions
@@ -14,6 +18,8 @@ struct TranscriptView: View {
     /// The view keeps to the bottom as content grows (see `onScrollGeometryChange`).
     @State private var following = true
     @State private var userScrolling = false
+    /// A follow scroll is queued for the next run-loop turn; coalesces bursts of growth.
+    @State private var followPending = false
     /// Where the last turn starts, in the content: a long answer stops following once its
     /// prompt would pass the top of the view, so you read it from the beginning.
     @State private var lastTurnTop: CGFloat = .infinity
@@ -65,15 +71,31 @@ struct TranscriptView: View {
                         } else {
                             parked = false
                         }
-                    } else if following, conversation.busy, growth > 0,
-                              lastTurnTop < new.visibleTop + growth + topInset + 4,
-                              let id = conversation.turns.last?.id {
+                        return
+                    }
+                    if following, conversation.busy, growth > 0,
+                       lastTurnTop < new.visibleTop + growth + topInset + 4,
+                       let id = conversation.turns.last?.id {
                         // Keeping to the bottom would push the answer's start above the top:
                         // stop with the prompt at the top instead, and read from there.
                         following = false
                         park(at: old.contentHeight)
                         withAnimation(Motion.quick(reduced: reduceMotion)) { proxy.scrollTo(id, anchor: .top) }
-                    } else if following, !new.atBottom {
+                        return
+                    }
+                    // Only growth needs chasing (shrinking clamps to the bottom anyway), and the
+                    // scroll waits for the next turn of the run loop: scrolling inside the scroll
+                    // view's own update re-estimates the lazy rows, which changes the geometry
+                    // again, and AppKit aborts on the constraint loop.
+                    guard following, !new.atBottom, new.contentHeight > old.contentHeight, !followPending else { return }
+                    followPending = true
+                    DispatchQueue.main.async {
+                        followPending = false
+                        guard following, !userScrolling else { return }
+                        #if DEBUG
+                        // Perf task: the follow fires at most once per run-loop turn.
+                        os_signpost(.event, log: Self.followLog, name: "transcript.follow")
+                        #endif
                         proxy.scrollTo(Self.end, anchor: .bottom)
                     }
                 }
@@ -112,7 +134,6 @@ struct TranscriptView: View {
     /// Where the view is against the end of the content.
     private struct ScrollEnd: Equatable {
         let contentHeight: CGFloat
-        let offset: CGFloat
         let atBottom: Bool
         /// Content below the view.
         let below: CGFloat
@@ -121,7 +142,6 @@ struct TranscriptView: View {
 
         init(_ g: ScrollGeometry) {
             contentHeight = g.contentSize.height
-            offset = g.contentOffset.y
             // Against what's actually visible above the composer. The offset alone misses the top
             // inset, which is large while the content is shorter than the view (it's anchored to
             // the bottom): the transcript never thought it was at the end, and following
@@ -134,6 +154,12 @@ struct TranscriptView: View {
 
     /// The transcript's content, for measuring where a turn starts in it.
     private static let content = "transcript-content"
+
+    #if DEBUG
+    /// For the perf task: the deferred, coalesced follow-scroll signpost. Instruments' "Points
+    /// of Interest" misses `OSLog.pointsOfInterest` under explicit modules, so a named one.
+    static let followLog = OSLog(subsystem: "toys.frog", category: "transcript-follow")
+    #endif
 
     /// A row at the very end of the transcript, below the last turn and its indicators.
     private static let end = "transcript-end"
