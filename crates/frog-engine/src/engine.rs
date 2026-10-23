@@ -3902,16 +3902,18 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // terms.
         let terminal_run = name == crate::panes::TERMINAL && pane_action == "run";
         let pane = !terminal_run && matches!(name, crate::panes::TERMINAL | crate::panes::PREVIEW);
-        // Web reads change nothing and show on their tool card, like reads. Auto mode runs
-        // unwatched, so there the classifier sees the URL first (a query string can carry data) —
-        // but a public-host GET or a search is a plain read: no data goes out that the request
-        // itself doesn't show, so it runs without the classifier (same gate as the fetch).
-        if kind == Kind::Net && self.mode != Mode::Auto {
+        // Web reads change nothing and show on their tool card, like reads — in every
+        // mode (Cam's decision 2026-10-23): WebSearch always, WebFetch when the host is
+        // a plain public domain (the fetch itself still re-checks every resolved IP
+        // against private ranges, and a non-public host keeps asking as before). A
+        // public-host GET sends nothing the request itself doesn't show.
+        if kind == Kind::Net && (name == "WebSearch" || crate::tools::web::public_host(input["url"].as_str().unwrap_or("")))
+        {
+            self.decision(item, "rule", "allow", "read-only web call", 0);
             return Decision::Allow;
         }
-        if (kind == Kind::Net || name.starts_with("mcp__"))
-            && self.mode == Mode::Auto
-            && crate::auto::read_tool(name, input)
+        // MCP read verbs stay an auto-mode rule; other modes see them on cards as before.
+        if name.starts_with("mcp__") && self.mode == Mode::Auto && crate::auto::read_tool(name, input)
         {
             self.decision(item, "rule", "allow", "read-only tool call", 0);
             return Decision::Allow;
@@ -3939,6 +3941,17 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // so it runs without asking; leaving the sandbox always asks.
         if name == "Bash" && self.ctx.shell_sandbox.is_some() && !leaves_sandbox {
             self.decision(item, "sandbox", "allow", "sandboxed", 0);
+            return Decision::Allow;
+        }
+        // A screenshot of a session-local file (the tool itself refuses anything outside the
+        // workspace) or of localhost: a local capture and a localhost URL can only show the
+        // session's own work. Anything else keeps asking. (Allow-by-default in every mode
+        // would hand out the whole web; the chief's list scopes this to auto at minimum.)
+        if name == "Screenshot"
+            && self.mode == Mode::Auto
+            && crate::auto::local_capture(input)
+        {
+            self.decision(item, "rule", "allow", "captures only the session's own work", 0);
             return Decision::Allow;
         }
         // A path prefix the user allowed for this program earlier this session.
@@ -9595,6 +9608,76 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
             }],
             Stop::ToolUse,
         )
+    }
+
+    #[tokio::test]
+    async fn web_reads_run_without_asking_in_every_mode() {
+        // Cam's decision 2026-10-23: WebSearch always; WebFetch of a public host —
+        // in default, accept-edits and auto alike, classifier or not.
+        for (name, input) in [
+            ("WebSearch", json!({ "query": "qwen3 coder next pricing" })),
+            ("WebFetch", json!({ "url": "https://example.com/docs" })),
+        ] {
+            for mode in [Mode::Default, Mode::AcceptEdits, Mode::Auto] {
+                let script = vec![
+                    reply(
+                        vec![Block::ToolUse { id: "web".into(), name: name.into(), input: input.clone() }],
+                        Stop::ToolUse,
+                    ),
+                    reply(vec![text("done")], Stop::End),
+                ];
+                let mut h = engine_perm(script, mode, Some("nonexistent/no-classifier"));
+                let evs = run(&mut h, "look it up").await;
+                assert!(
+                    !evs.iter().any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+                    "{mode:?} asked for {name}"
+                );
+                // The scripted provider can't actually fetch, so the call may end in a
+                // tool error — what matters is that it never surfaced a permission card.
+                assert!(
+                    evs.iter().any(|e| matches!(
+                        e.event,
+                        Event::ItemCompleted { ref id, item: Item::ToolCall { .. }, .. } if id == "web"
+                    )),
+                    "{name} ran in {mode:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_non_public_webfetch_still_asks_in_default_mode() {
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "web".into(),
+                    name: "WebFetch".into(),
+                    input: json!({ "url": "http://localhost:8080/admin" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let mut asked = false;
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit { text: "go".into(), images: Vec::new(), more: Vec::new() })
+            .unwrap();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                asked = true;
+                h.ops
+                    .send(Op::Permission { id: id.clone(), decision: Decision::Deny, note: None })
+                    .unwrap();
+            }
+            if matches!(env.event, Event::Idle) {
+                break;
+            }
+        }
+        shutdown(h).await;
+        assert!(asked, "a localhost WebFetch didn't ask in default mode");
     }
 
     /// Auto mode: a build writing its own scratch under /private/tmp runs without
