@@ -183,7 +183,6 @@ final class SessionBroker {
     /// When each session's current permission card arrived (ListApprovals reports its age).
     private var waitingSince: [String: Date] = [:]
     /// The session that started session `id`, if one did (pending approvals escalate to it).
-    var parentOf: (_ id: String) -> String? = { _ in nil }
     /// The session that started session `id`, if one did (pending approvals escalate to it).
     var parentOf: (_ id: String) -> String? = { _ in nil }
 
@@ -626,7 +625,8 @@ final class SessionBroker {
     private func tracked(_ id: String) -> Conversation? {
         if let c = Library.shared.conversation(id), c.isLive { return c }
         return background[id]
-=======
+    }
+
     /// A permission prompt opened in session `child`: tell the session that started it,
     /// so a manager can decide (or tell the user) instead of the prompt sitting unseen.
     /// The child waits on it until answered or its timeout takes the safe path.
