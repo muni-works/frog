@@ -3940,6 +3940,22 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.decision(item, "session", "allow", "under a path prefix allowed this session", 0);
             return Decision::Allow;
         }
+        // Provenance (auto mode): a routine build/test step (known build tools,
+        // plain file ops, parser-proven reads; no interpreters, network or
+        // substitutions) acting only on in-project paths or the session's own
+        // scratch (paths it created, fresh dirs under the shared temp dir)
+        // doesn't need the classifier or a prompt. Destructive programs there
+        // need provenance; anything outside this scope still asks.
+        if name == "Bash"
+            && self.mode == Mode::Auto
+            && !crate::shell::touches_credentials(cmd)
+            && crate::auto::hard_rule(name, input, &self.ctx.root).is_none()
+            && crate::approval::routine(cmd)
+            && crate::approval::own_scope(cmd, &self.ctx.cwd, &self.ctx.root, &self.created)
+        {
+            self.decision(item, "provenance", "allow", "touches only the project or its own scratch", 0);
+            return Decision::Allow;
+        }
         let key = match kind {
             Kind::Edit => "edits".to_string(),
             Kind::Net => format!("web:{}", web_host(name, input)),
@@ -3957,6 +3973,17 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             .flatten();
         let outside = target.as_ref().is_some_and(|p| self.ctx.outside(p));
         if let Some(path) = target.filter(|_| outside) {
+            // Provenance (auto mode): writing into a path this session created,
+            // or a fresh file in the shared temp dir, is the session's own
+            // scratch — as in-project as its own checkout. Anything else
+            // outside still asks (and is denied headless).
+            if self.mode == Mode::Auto
+                && crate::approval::path_in_own_scope(&path, &self.ctx.root, &self.created)
+            {
+                self.decision(item, "provenance", "allow", "writes only its own scratch", 0);
+                self.ctx.permitted.insert(path);
+                return Decision::Allow;
+            }
             if !self.can_ask {
                 return Decision::Deny;
             }
@@ -9496,7 +9523,9 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
                 vec![Block::ToolUse {
                     id: "w".into(),
                     name: "Bash".into(),
-                    input: json!({ "command": "touch made-up-file" }),
+                    // Not a routine build step: provenance can't pass it, so
+                    // with the classifier down it asks.
+                    input: json!({ "command": "python3 -c 'print(1)' > made-up-file" }),
                 }],
                 Stop::ToolUse,
             ),
@@ -9557,6 +9586,46 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
             }],
             Stop::ToolUse,
         )
+    }
+
+    /// Auto mode: a build writing its own scratch under /private/tmp runs without
+    /// asking (the provenance layer), an outside-project command still asks.
+    #[tokio::test]
+    async fn auto_mode_lets_a_build_touch_only_its_own_scratch() {
+        let script = vec![
+            // Its own fresh build dir under /private/tmp.
+            bash_call("build", "mkdir -p /private/tmp/skittish-test-target/debug"),
+            // Another user path: still asks (answered deny below).
+            bash_call("outside", "touch /Users/frog-test-nobody/not-mine.txt"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Auto, Some("nonexistent/no-classifier"));
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        // The scratch build ran…
+        assert!(
+            evs.iter().any(|e| matches!(
+                e.event,
+                Event::ItemCompleted { ref id, item: Item::ToolCall { outcome: ToolOutcome::Ok, .. }, .. } if id == "build"
+            )),
+            "the scratch build ran without asking"
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(
+                e.event,
+                Event::PermissionRequest { ref item, .. } if item == "build"
+            )),
+            "the scratch build never asked"
+        );
+        // …and nothing else was permitted to run outside.
+        assert!(
+            evs.iter().any(|e| matches!(
+                e.event,
+                Event::PermissionRequest { ref item, .. } if item == "outside"
+            )),
+            "the outside command asked"
+        );
+        let _ = std::fs::remove_dir_all("/private/tmp/skittish-test-target");
     }
 
     /// Run one turn, answering each permission prompt with `answer` (None: leave it
