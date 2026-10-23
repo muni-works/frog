@@ -80,8 +80,26 @@ fn bwrap() -> Option<&'static std::path::Path> {
         .as_deref()
 }
 
-/// Kills the whole process group if the command is cancelled or times out.
+/// Kills the whole process group if the command is cancelled or times out: SIGTERM first so
+/// shells can clean up, then SIGKILL after a short grace — an interrupt must land within ~1 s.
 struct Group(i32);
+
+impl Group {
+    /// SIGTERM now, SIGKILL after `grace`. Called on cancel; Drop still SIGKILLs for the
+    /// timeout path, where a hard stop is fine and no one is waiting on a graceful exit.
+    fn terminate_async(&self, grace: Duration) {
+        unsafe {
+            libc::killpg(self.0, libc::SIGTERM);
+        }
+        let group = self.0;
+        tokio::spawn(async move {
+            tokio::time::sleep(grace).await;
+            unsafe {
+                libc::killpg(group, libc::SIGKILL);
+            }
+        });
+    }
+}
 
 impl Drop for Group {
     fn drop(&mut self) {
@@ -110,7 +128,22 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     // told not to use it. frog's sandbox stays the boundary; this only removes the redundant
     // inner one. Applied when we actually sandbox the command.
     let cmd = if ctx.shell_sandbox.is_some() || ctx.sandbox.is_some() {
-        adapt_swiftpm(&cmd)
+        // Off the engine's event loop, and bounded: a scanner bug must never wedge the whole
+        // session (Stop couldn't cancel a CPU-bound scan before the first await). On a timeout
+        // the unadapted command runs; a sandboxed `swift build` failing with "Invalid manifest"
+        // is recoverable, a stuck engine isn't.
+        let cmd = cmd.to_string();
+        let spawn = cmd.clone();
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::task::spawn_blocking(move || adapt_swiftpm(&spawn)),
+        )
+        .await
+        {
+            Ok(Ok(adapted)) => adapted,
+            // A spawn_blocking panic falls back too; the unadapted command still runs.
+            _ => cmd,
+        }
     } else {
         cmd.to_string()
     };
@@ -132,6 +165,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .kill_on_drop(true)
         .spawn()?;
     let group = Group(child.id().unwrap_or(0) as i32);
+    let cancel = ctx.cancel.clone();
     let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
         bail!("couldn't capture command output");
     };
@@ -155,6 +189,17 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                     0 => err_done = true,
                     n => err.extend_from_slice(&ebuf[..n]),
                 },
+                // The user pressed Stop: SIGTERM the group (SIGKILL follows after a grace),
+                // then let the reads see EOF so the result is recorded, not dropped.
+                _ = async {
+                    match &cancel {
+                        Some(t) => t.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    group.terminate_async(Duration::from_millis(500));
+                    bail!("interrupted by user");
+                }
             }
         }
         let status = child.wait().await?;
@@ -314,8 +359,8 @@ fn adapt_swiftpm(cmd: &str) -> String {
             i += 1;
         }
         if i == start {
-            // `)` and `}` are neither separators nor word characters: copy and move on,
-            // or this loop never advances.
+            // `)` and `}` are neither separators nor word characters: copy and move on, or
+            // this loop never advances and the engine wedges so Stop can't interrupt.
             out.push(c);
             i += 1;
             continue;
@@ -358,7 +403,9 @@ fn adapt_swiftpm(cmd: &str) -> String {
                             k += 1;
                         }
                         if k == ws {
-                            // A lone `|`, `&`, `(` or `)` isn't a word; step past it.
+                            // A lone `)`, `}`, `(` or unmatched quote isn't a word; step past
+                            // it, or this scan spins forever (Stop couldn't interrupt a
+                            // command while this ran).
                             k += 1;
                             continue;
                         }
@@ -1367,6 +1414,191 @@ mod tests {
             let first = out.content.lines().next().unwrap_or("").replace(&token, "<TOKEN>");
             eprintln!("private `{repo}` -> {first}");
         }
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// A fuzz probe for the shell scanners: random shells of metacharacters must terminate
+    /// and return quickly. A scanner that stalls on one (adapt_swiftpm used to spin forever
+    /// on `)` and `}`, wedging the engine so Stop couldn't fire) fails here.
+    #[test]
+    fn scanners_terminate_on_random_metacharacter_strings() {
+        const META: &[char] = &[')', '(', '}', '{', '|', '&', '<', '>', ';', '"', '\'', ' ', '\n'];
+        let mut state = 0x2545F4914F6CDD1Du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..5_000 {
+            let len = (next() % 40) as usize;
+            let s: String = (0..len)
+                .map(|_| META[(next() as usize) % META.len()])
+                .collect();
+            let t = std::time::Instant::now();
+            let _ = adapt_swiftpm(&s);
+            let _ = git_https_applies(&s);
+            assert!(
+                t.elapsed() < Duration::from_millis(50),
+                "scanner took {:?} on {s:?}",
+                t.elapsed()
+            );
+        }
+    }
+
+    /// Stop must kill a sleeping command within ~2 s: the token is watched while the tool
+    /// future runs, the group gets SIGTERM then SIGKILL, and the result reads as interrupted.
+    #[tokio::test]
+    async fn interrupt_kills_a_running_command_and_its_group() {
+        let ws = std::env::temp_dir().join(format!("frog-itp-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        let token = tokio_util::sync::CancellationToken::new();
+        ctx.cancel = Some(token.clone());
+        let marker = ws.join("done");
+        let _ = std::fs::remove_file(&marker);
+        let cmd = format!("sleep 60; touch '{}'", marker.display());
+        let input = json!({ "command": cmd, "timeout": 120000 });
+        let run = run(&input, &mut ctx);
+        tokio::pin!(run);
+        // Give the command time to spawn and start sleeping.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let started = std::time::Instant::now();
+        token.cancel();
+        let out = tokio::time::timeout(Duration::from_secs(2), run).await;
+        let _elapsed = started.elapsed();
+        let out = out.expect("interrupt must finish the tool within 2s");
+        assert!(
+            out.is_err() || out.as_ref().unwrap().content.contains("Interrupted"),
+            "expected an interrupted result, got {:?}",
+            out.as_ref().map(|o| &o.content)
+        );
+        assert!(!marker.exists(), "the cancelled command must not finish");
+        // The whole process group is gone: nothing sleeps on.
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let alive = std::process::Command::new("pgrep")
+                .args(["-f", "sleep 60"])
+                .output()
+                .map(|o| o.stdout.is_empty())
+                .unwrap_or(true);
+            if alive {
+                break;
+            }
+        }
+        let alive = std::process::Command::new("pgrep")
+            .args(["-f", "sleep 60"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+        assert!(!alive, "a `sleep 60` from the cancelled group is still running");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// A grandchild left running with `&` is still in the child's process group, so the
+    /// group kill takes it too.
+    #[tokio::test]
+    async fn interrupt_kills_backgrounded_grandchildren() {
+        let ws = std::env::temp_dir().join(format!("frog-itp-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        let token = tokio_util::sync::CancellationToken::new();
+        ctx.cancel = Some(token.clone());
+        let marker = ws.join("bg");
+        let _ = std::fs::remove_file(&marker);
+        let cmd = format!("sleep 60 & echo bg > '{}'; wait", marker.display());
+        let input = json!({ "command": cmd });
+        let run = run(&input, &mut ctx);
+        tokio::pin!(run);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        token.cancel();
+        let err = match tokio::time::timeout(Duration::from_secs(2), run).await {
+            // Elapsed without finishing, or finished as an error: both prove the interrupt
+            // ended the tool; the Err case is what production records.
+            Err(_) => anyhow::anyhow!("interrupt did not finish within 2s"),
+            Ok(Err(e)) => e,
+            Ok(Ok(o)) => panic!("expected an interrupted result, got {:?}", o.content),
+        };
+        assert!(err.to_string().contains("interrupted"), "{err}");
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let alive = std::process::Command::new("pgrep")
+                .args(["-f", "sleep 60"])
+                .output()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
+            if !alive {
+                break;
+            }
+        }
+        let alive = std::process::Command::new("pgrep")
+            .args(["-f", "sleep 60"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+        assert!(!alive, "a backgrounded `sleep 60` escaped the group kill");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// Same interrupt through the seatbelt wrapper (sandbox-exec is in the same process
+    /// group, so the kill reaches the real shell).
+    #[tokio::test]
+    async fn interrupt_kills_a_sandboxed_command() {
+        if !available() {
+            eprintln!("no OS sandbox here; skipping");
+            return;
+        }
+        let ws = std::env::temp_dir().join(format!("frog-itp-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.shell_sandbox = Some(ws.canonicalize().unwrap());
+        let token = tokio_util::sync::CancellationToken::new();
+        ctx.cancel = Some(token.clone());
+        let input = json!({ "command": "sleep 60" });
+        let run = run(&input, &mut ctx);
+        tokio::pin!(run);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        token.cancel();
+        let out = tokio::time::timeout(Duration::from_secs(2), run)
+            .await
+            .expect("interrupt must finish within 2s");
+        assert!(
+            out.is_err() || out.as_ref().unwrap().content.contains("Interrupted"),
+            "expected an interrupted result, got {:?}",
+            out.as_ref().map(|o| &o.content)
+        );
+        let alive = std::process::Command::new("pgrep")
+            .args(["-f", "sleep 60"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+        assert!(!alive, "a sandboxed `sleep 60` survived the interrupt");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// Regression: the plain timeout still fires when nothing cancels.
+    #[tokio::test]
+    async fn timeout_still_ends_a_stuck_command() {
+        let ws = std::env::temp_dir().join(format!("frog-itp-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        let started = std::time::Instant::now();
+        let err = match run(&json!({ "command": "sleep 30", "timeout": 1000 }), &mut ctx).await {
+            Err(e) => e,
+            Ok(o) => panic!("expected a timeout, got {:?}", o.content),
+        };
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert!(err.to_string().contains("timed out"), "{err}");
+        let alive = std::process::Command::new("pgrep")
+            .args(["-f", "sleep 30"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+        assert!(!alive, "a timed-out `sleep 30` is still running");
         let _ = std::fs::remove_dir_all(&ws);
     }
 }
