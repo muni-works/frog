@@ -31,6 +31,10 @@ struct MessageText: NSViewRepresentable {
     }
 
     func updateNSView(_ view: MessageTextView, context: Context) {
+        // This runs inside SwiftUI's graph update: nothing in here may invalidate the layout
+        // SwiftUI is computing (see `MessageTextView.updating`).
+        view.updating = true
+        defer { view.updating = false }
         view.reveal.streaming = streaming
         view.show(blocks)
     }
@@ -49,6 +53,36 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
     private var codeViews: [NSHostingView<CodeOverlay>] = []
     private var placePending = false
     lazy var reveal = InkReveal(view: self)
+    /// Measures code blocks: one SwiftUI graph for the view's life, rather than a new one built
+    /// and torn down for every streamed token.
+    private lazy var sizer: NSHostingController<CodeOverlay> = {
+        let c = NSHostingController(rootView: CodeOverlay(language: "", code: ""))
+        c.sizingOptions = []
+        return c
+    }()
+    /// Inside `MessageText.updateNSView`, i.e. inside SwiftUI's update of the transcript.
+    /// Invalidating this view's size from there changes an input of the graph mid-update (an
+    /// AttributeGraph corruption suspect, docs/design/attributegraph-corruption.md); SwiftUI
+    /// measures the view again after the update anyway, so it waits for the next turn.
+    var updating = false
+    private var invalidatePending = false
+
+    /// The view's height changed: tell SwiftUI, now if it's safe, else right after this update.
+    func sizeChanged() {
+        guard updating else {
+            invalidateIntrinsicContentSize()
+            superview?.needsLayout = true
+            return
+        }
+        guard !invalidatePending else { return }
+        invalidatePending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.invalidatePending = false
+            self.invalidateIntrinsicContentSize()
+            self.superview?.needsLayout = true
+        }
+    }
 
     // MARK: Content
 
@@ -68,7 +102,12 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         // the first layout.
         let before = codeAttachments(in: NSRange(location: 0, length: from)).count
         let incoming = Self.attachments(in: tail, range: NSRange(location: 0, length: tail.length))
-        while codeViews.count > before + incoming.count { codeViews.removeLast().removeFromSuperview() }
+        while codeViews.count > before + incoming.count {
+            // Not torn down mid-update: hidden now, gone once SwiftUI's update is over.
+            let gone = codeViews.removeLast()
+            gone.isHidden = true
+            DispatchQueue.main.async { gone.removeFromSuperview() }
+        }
         for (j, item) in incoming.enumerated() {
             item.cell.height = measure(item.cell, at: before + j)
         }
@@ -78,7 +117,7 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         shown = blocks
         ranges = newRanges
         needsLayout = true
-        invalidateIntrinsicContentSize()
+        sizeChanged()
         reveal.textChanged()
     }
 
@@ -173,8 +212,8 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             codeViews.append(host)
         }
         let width = textContainer?.containerSize.width ?? 0
-        let size = NSHostingController(rootView: overlay)
-            .sizeThatFits(in: CGSize(width: width > 0 && width < 10_000 ? width : 600, height: .greatestFiniteMagnitude))
+        sizer.rootView = overlay
+        let size = sizer.sizeThatFits(in: CGSize(width: width > 0 && width < 10_000 ? width : 600, height: .greatestFiniteMagnitude))
         return ceil(size.height)
     }
 
