@@ -5,9 +5,12 @@ enum FrogMood: Equatable {
     case idle, reading, thinking, working, done, waiting, sad
 }
 
-/// The frog from the app mark (round 3, tree weight), drawn live: it breathes, blinks,
-/// scans, tilts, hops and droops with the conversation. Under Reduce Motion it holds a
-/// still pose per mood and runs no timers.
+/// The frog from the app mark (round 3, tree), drawn live. Each mood is a gentle loop, so the
+/// 16 pt activity pill never looks frozen: idle breathes and blinks, thinking looks up and
+/// drifts, reading scans a line, working pumps its throat, done hops, waiting tilts its head
+/// with wide eyes, sad droops and sinks. The loops are the locked prototype's keyframes
+/// (design/round3/anim.py). Under Reduce Motion each mood holds its first frame and nothing
+/// ticks.
 struct FrogFace: View {
     var mood: FrogMood
     var size: CGFloat = 16
@@ -15,299 +18,301 @@ struct FrogFace: View {
     var hop: Int = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// 1 is open, 0 is shut.
-    @State private var lids: CGFloat = 1
-    /// -1 looks left, 1 looks right.
-    @State private var gaze: CGFloat = 0
-    /// Vertical pupil offset, glyph units (0 = resting).
-    @State private var gazeY: CGFloat = 0
-    /// Points off the ground.
-    @State private var lift: CGFloat = 0
-    /// Squash-stretch during the done hop, as fractions of the box.
-    @State private var squash: CGSize = .zero
-    /// Waiting mood: head tilt in degrees, side to side.
-    @State private var tilt: CGFloat = 0
-
-    private var still: Bool { reduceMotion }
+    /// When the current mood began; its loop starts from frame 0 here.
+    @State private var since = Date()
+    /// When the last one-off hop began.
+    @State private var hopped: Date?
 
     var body: some View {
-        ZStack {
-            FrogShape(part: .body)
-                .fill(Self.skin)
-            FrogShape(part: .spots)
-                .fill(Self.spot)
-            FrogShape(part: .mouth, frown: mood == .sad)
-                .fill(Self.ink)
-            FrogShape(part: .eyes, lids: still ? resting : lids, gaze: still ? 0 : gaze, gazeY: still ? restingY : gazeY)
-                .fill(Self.ink)
-            FrogShape(part: .glints, lids: still ? resting : lids, gaze: still ? 0 : gaze, gazeY: still ? restingY : gazeY)
-                .fill(Self.paper)
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { timeline in
+            let pose = FrogPose(
+                mood: mood,
+                t: reduceMotion ? 0 : timeline.date.timeIntervalSince(since),
+                hop: reduceMotion ? nil : hopped.map { timeline.date.timeIntervalSince($0) })
+            let unit = size / FrogMark.box.width
+            MarkCanvas(eyes: pose.eyes, frown: mood == .sad)
+                .frame(width: size, height: size)
+                .scaleEffect(x: pose.body.sx, y: pose.body.sy, anchor: FrogMark.feet)
+                .rotationEffect(.degrees(pose.body.rotation), anchor: FrogMark.feet)
+                .offset(x: pose.body.tx * unit, y: pose.body.ty * unit)
         }
         .frame(width: size, height: size)
-        .scaleEffect(x: 1 + squash.width, y: 1 + squash.height, anchor: .bottom)
-        .scaleEffect(mood == .waiting && !still ? 1.12 : 1)
-        .rotationEffect(.degrees(tilt))
-        .offset(y: still ? sink : 0)
-        .offset(y: -lift)
-        .animation(.snappy(duration: 0.25), value: mood)
-        .onChange(of: mood, initial: true) { _, new in settle(new) }
-        .onChange(of: hop) { _, _ in jump() }
-        .task(id: mood) { await live() }
+        .onChange(of: mood) { since = .now }
+        .onChange(of: hop) { hopped = .now }
         .accessibilityHidden(true)
-    }
-
-    // Locked round-3 palette (tree weight), spec-exact rather than the appearance-
-    // adaptive accent: the face must match the icon at every size.
-    static let skin = Color(red: 0x51 / 255.0, green: 0xda / 255.0, blue: 0x60 / 255.0)
-    static let spot = Color(red: 0x36 / 255.0, green: 0xb3 / 255.0, blue: 0x47 / 255.0)
-    static let ink = Color(red: 0x15 / 255.0, green: 0x17 / 255.0, blue: 0x1a / 255.0)
-    static let paper = Color(red: 0xfb / 255.0, green: 0xfb / 255.0, blue: 0xf9 / 255.0)
-
-    /// How open the eyes rest in this mood.
-    private var resting: CGFloat {
-        switch mood {
-        case .thinking: 0.82
-        case .sad: 0.55
-        default: 1
-        }
-    }
-
-    /// The mood's resting pupil lift, in glyph units.
-    private var restingY: CGFloat {
-        switch mood {
-        case .thinking: -3.4
-        case .sad: 1.6
-        default: 0
-        }
-    }
-
-    /// How far the body sinks in a mood (12/1024 of the box for sad).
-    private var sink: CGFloat {
-        mood == .sad ? size * 12 / 1024 : 0
-    }
-
-    private func settle(_ mood: FrogMood) {
-        guard !still else { return }
-        withAnimation(.easeInOut(duration: 0.2)) {
-            lids = resting
-            gaze = 0
-            gazeY = restingY
-        }
-        withAnimation(.easeInOut(duration: 0.2)) { tilt = 0 }
-        if mood == .done { jump() }
-    }
-
-    /// Squash, hop, stretch, land, settle -- the done-hop from the locked spec.
-    private func jump() {
-        guard !still else { return }
-        withAnimation(.easeOut(duration: 0.08)) { squash = CGSize(width: 0.10, height: -0.14) }
-        withAnimation(.easeIn(duration: 0.1).delay(0.08)) { squash = CGSize(width: -0.06, height: 0.08) }
-        withAnimation(.spring(duration: 0.22, bounce: 0.4).delay(0.08)) { lift = size * 120 / 1024 }
-        Task {
-            try? await Task.sleep(for: .milliseconds(180))
-            guard !Task.isCancelled else { return }
-            withAnimation(.spring(duration: 0.3, bounce: 0.5)) {
-                squash = CGSize(width: 0.12, height: -0.16)
-            }
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) { squash = .zero }
-        }
-    }
-
-    /// The mood loops: idle/working blinks, thinking drift, reading scan, waiting tilt,
-    /// on their own timer while the mood lasts. sad droops are geometry on `mood`.
-    private func live() async {
-        guard !still else { return }
-        switch mood {
-        case .idle:
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(Double.random(in: 4...7)))
-                guard !Task.isCancelled else { return }
-                await blink()
-            }
-        case .working:
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(Double.random(in: 3...4)))
-                guard !Task.isCancelled else { return }
-                await blink()
-            }
-        case .thinking:
-            while !Task.isCancelled {
-                withAnimation(.easeInOut(duration: 1.2)) { gaze = .random(in: -1...1) }
-                withAnimation(.easeInOut(duration: 1.2)) { gazeY = -3.4 + CGFloat.random(in: -0.8...0.8) }
-                try? await Task.sleep(for: .seconds(1.4))
-            }
-        case .reading:
-            var side: CGFloat = -1
-            while !Task.isCancelled {
-                withAnimation(.easeInOut(duration: 0.55)) { gaze = side }
-                side = -side
-                try? await Task.sleep(for: .seconds(1.2))
-            }
-        case .waiting:
-            // Head tilts side to side, eyes a little wide.
-            withAnimation(.easeInOut(duration: 0.2)) { lids = 1 }
-            while !Task.isCancelled {
-                withAnimation(.easeInOut(duration: 0.9)) { tilt = tilt == 0 ? -7 : (tilt < 0 ? 7 : -7) }
-                try? await Task.sleep(for: .seconds(0.9))
-            }
-        case .sad:
-            withAnimation(.easeInOut(duration: 0.5)) { lids = 0.45 }
-        default:
-            return
-        }
-    }
-
-    private func blink() async {
-        withAnimation(.easeIn(duration: 0.07)) { lids = 0 }
-        try? await Task.sleep(for: .milliseconds(90))
-        guard !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 0.12)) { lids = resting }
     }
 }
 
-/// The round-3 mark's geometry in a 100-point box, transcribed from the locked design
-/// (build.py, tree weight, 1024 grid; GLYPH_BOX = x160 y200 size704):
-///
-/// head ellipse (512, 568) rx 296 ry 224 with a +10 belly overshoot on the bottom arc;
-/// eye bumps r 120 at 512 ± 152, cy 352; pupils r 68 nudged 8 up (cy 344); glint r 22
-/// up-right plus a second glint r 9 low-left; 4 spots + 2 cheek spots in the darker
-/// spot shade; mouth a 30-wide round-capped stroke, a rounded smile (flipped for frown).
-///
-/// Parts are separate so fills layer in a ZStack (spots under the pupils) instead of
-/// interacting inside one path.
-struct FrogShape: Shape {
-    enum Part { case body, spots, mouth, eyes, glints }
-    var part: Part
-    /// 1 is open, 0 is shut.
-    var lids: CGFloat = 1
-    /// -1 looks left, 1 looks right, in glyph units of pupil offset.
-    var gaze: CGFloat = 0
-    /// Vertical pupil offset in glyph units (negative = up).
-    var gazeY: CGFloat = 0
-    /// Mouth flips (sad).
-    var frown: Bool = false
-    /// Legacy sad-bars eyes (kept for ThinkingAvatar's monochrome avatar).
-    var crossed: Bool = false
+/// The mark itself, painted in one pass: head, spots clipped to it, pupils with their two
+/// glints (moved together by `eyes`, about each pupil's centre), and the mouth.
+private struct MarkCanvas: View {
+    var eyes: Move
+    var frown: Bool
 
-    var animatableData: AnimatablePackage {
-        get { AnimatablePackage(lids: lids, gaze: gaze, gazeY: gazeY, frown: frown ? 1 : 0) }
-        set { lids = newValue.lids; gaze = newValue.gaze; gazeY = newValue.gazeY; frown = newValue.frown > 0.5 }
+    var body: some View {
+        Canvas { ctx, size in
+            let k = min(size.width, size.height) / FrogMark.box.width
+            ctx.translateBy(x: (size.width - FrogMark.box.width * k) / 2, y: (size.height - FrogMark.box.height * k) / 2)
+            ctx.scaleBy(x: k, y: k)
+            ctx.translateBy(x: -FrogMark.box.minX, y: -FrogMark.box.minY)
+
+            ctx.fill(FrogMark.silhouette, with: .color(FrogMark.skin))
+            var skin = ctx
+            skin.clip(to: FrogMark.silhouette)
+            skin.fill(FrogMark.spots, with: .color(FrogMark.spot))
+            for c in FrogMark.pupils {
+                var eye = ctx
+                eye.concatenate(eyes.matrix(about: c))
+                eye.fill(FrogMark.circle(c, FrogMark.pupil), with: .color(FrogMark.ink))
+                eye.fill(FrogMark.glints(c), with: .color(FrogMark.paper))
+            }
+            var mouth = ctx
+            if frown { mouth.concatenate(FrogMark.frown) }
+            mouth.fill(FrogMark.mouth, with: .color(FrogMark.ink))
+        }
+    }
+}
+
+/// The round-3 mark on its 1024 grid, transcribed from design/round3/build.py (tree weight).
+/// Views draw it through `box` (build.py's GLYPH_BOX, the square crop around the marks).
+enum FrogMark {
+    static let box = CGRect(x: 160, y: 200, width: 704, height: 704)
+    /// Bottom centre of the frog (head bottom 568 + 234), where the body moves pivot.
+    static let feet = UnitPoint(x: (512 - box.minX) / box.width, y: (802 - box.minY) / box.height)
+
+    static let skin = Color(srgb: 0x51da60)
+    static let spot = Color(srgb: 0x36b347)
+    static let ink = Color(srgb: 0x15171a)
+    static let paper = Color(srgb: 0xfbfbf9)
+
+    /// Pupils r68 sit 8 above the bump centres (512 ± 152, 352).
+    static let pupil: CGFloat = 68
+    static let pupils = [CGPoint(x: 360, y: 344), CGPoint(x: 664, y: 344)]
+
+    /// Head ellipse at (512, 568), rx296 ry224, its bottom half 10 deeper (belly overshoot),
+    /// plus the two r120 eye bumps.
+    static let silhouette: Path = {
+        var head = Path()
+        let at = CGAffineTransform(translationX: 512, y: 568)
+        head.move(to: CGPoint(x: 216, y: 568))
+        head.addRelativeArc(center: .zero, radius: 1, startAngle: .degrees(180), delta: .degrees(180),
+                            transform: at.scaledBy(x: 296, y: 224))
+        head.addRelativeArc(center: .zero, radius: 1, startAngle: .zero, delta: .degrees(180),
+                            transform: at.scaledBy(x: 296, y: 234))
+        head.closeSubpath()
+        var bumps = Path()
+        for x in [360.0, 664.0] { bumps.addPath(circle(CGPoint(x: x, y: 352), 120)) }
+        return head.union(bumps)
+    }()
+
+    /// Four small spots and two r30 cheeks, in the darker spot shade.
+    static let spots: Path = {
+        var p = Path()
+        for (x, y, r) in [(290.0, 469.0, 18.0), (262, 523, 11), (742, 463, 16), (772, 510, 10), (323, 541, 30), (701, 541, 30)] {
+            p.addPath(circle(CGPoint(x: x, y: y), r))
+        }
+        return p
+    }()
+
+    /// A r22 glint up and right of the pupil centre, and a r9 one down and left.
+    static func glints(_ c: CGPoint) -> Path {
+        var p = circle(CGPoint(x: c.x + 22, y: c.y - 22), 22)
+        p.addPath(circle(CGPoint(x: c.x - 24, y: c.y + 24), 9))
+        return p
+    }
+
+    /// The rounded smile: a 30-wide round-capped stroke on (420,572) ⟶ (604,572), pulled
+    /// down through a control point at (512,636).
+    static let mouth: Path = {
+        var line = Path()
+        line.move(to: CGPoint(x: 420, y: 572))
+        line.addQuadCurve(to: CGPoint(x: 604, y: 572), control: CGPoint(x: 512, y: 636))
+        return line.strokedPath(StrokeStyle(lineWidth: 30, lineCap: .round))
+    }()
+
+    /// Sad: the smile flipped about its own middle (y 588) and dropped 18, i.e. y ↦ 1194 − y.
+    static let frown = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: 1194)
+
+    /// One colour with the eyes and mouth knocked out (build.py's glyph): ring pupils, an ink
+    /// dot in each. `lids` squashes the eyes for a blink (1 open, 0 shut).
+    static func glyph(lids: CGFloat, frown: Bool) -> Path {
+        var holes = Path()
+        var dots = Path()
+        for c in pupils {
+            let squash = CGAffineTransform(translationX: c.x, y: c.y).scaledBy(x: 1, y: max(lids, 0.08))
+                .translatedBy(x: -c.x, y: -c.y)
+            holes.addPath(circle(c, pupil).applying(squash))
+            dots.addPath(circle(CGPoint(x: c.x + 4, y: c.y + 4), 34).applying(squash))
+        }
+        holes.addPath(frown ? mouth.applying(Self.frown) : mouth)
+        return silhouette.subtracting(holes).union(dots)
+    }
+
+    static func circle(_ c: CGPoint, _ r: CGFloat) -> Path {
+        Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+    }
+}
+
+/// The mark as a Shape, fitted into any rect through `FrogMark.box`: the plain silhouette, or
+/// the one-colour glyph for monochrome places (the thinking avatar).
+struct FrogShape: Shape {
+    enum Part { case silhouette, glyph }
+    var part: Part
+    /// 1 is open, 0 is shut (glyph only).
+    var lids: CGFloat = 1
+    /// Turn the smile down (glyph only).
+    var frown = false
+
+    var animatableData: CGFloat {
+        get { lids }
+        set { lids = newValue }
     }
 
     func path(in rect: CGRect) -> Path {
-        let s = min(rect.width, rect.height) / 100
-        let t = CGAffineTransform(translationX: rect.midX - 50 * s, y: rect.midY - 50 * s).scaledBy(x: s, y: s)
-        var p = Path()
-        switch part {
-        case .body:
-            // Head ellipse + two eye bumps, drawn as one silhouette: the bumps' bottom
-            // arcs are above the head's top arc (which peaks at y 35.2), so the union
-            // of the three subpaths fills the right shape with the default fill rule.
-            p.addEllipse(in: CGRect(x: 22, y: 35.2, width: 58, height: 43.75))   // (512,568) rx296 ry224(+10)
-            for cx in [30.0, 70.0] {
-                p.addEllipse(in: CGRect(x: cx - 11.7, y: 34.35 - 11.7, width: 23.4, height: 23.4))  // r120 cy352
-            }
-        case .spots:
-            // 4 spots at build.py's SPOTS layout + 2 cheek spots (r30, smile y - 0.14 ry).
-            for (fx, fy, fr) in [(-0.75, -0.44, 0.061), (-0.845, -0.20, 0.037),
-                                 (0.777, -0.47, 0.054), (0.88, -0.26, 0.034)] {
-                let cx = 50 + fx * 28.9
-                let cy = 45.55 + fy * 21.9
-                let r = fr * 28.9
-                p.addEllipse(in: CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2))
-            }
-            for sx in [-1.0, 1.0] {
-                let cx = 50 + sx * 0.64 * 28.9
-                let cy = 50.2 - 0.14 * 21.9
-                p.addEllipse(in: CGRect(x: cx - 2.93, y: cy - 2.93, width: 5.85, height: 5.85))
-            }
-        case .mouth:
-            // Rounded smile: a 30-wide round-capped stroke along
-            // (x0+20, y) -> (512, y+64) -> (x1-20, y), from build.py mouth(tree).
-            let y0: CGFloat = 50.2, x0: CGFloat = 34.5, x1: CGFloat = 65.5
-            var stroke = Path()
-            stroke.move(to: CGPoint(x: x0, y: y0))
-            stroke.addQuadCurve(to: CGPoint(x: x1, y: y0), control: CGPoint(x: 50, y: y0 + 6.3))
-            p.addPath(stroke.strokedPath(StrokeStyle(lineWidth: 2.95, lineCap: .round)))
-        case .eyes:
-            if crossed {
-                for cx in [30.0, 70.0] {
-                    for deg in [45.0, -45.0] {
-                        let bar = CGRect(x: cx - 9, y: 31.6, width: 18, height: 3)
-                        let spin = CGAffineTransform(translationX: cx, y: 33)
-                            .rotated(by: deg * .pi / 180)
-                            .translatedBy(x: -cx, y: -33)
-                        p.addPath(Path(bar).applying(spin))
-                    }
-                }
-            } else {
-                for cx in [30.0, 70.0] {
-                // The eye: the bump's inner disc, clipped by the lid.
-                let open = max(lids, 0.12)
-                let h = 11.7 * 2 * open * 0.62
-                p.addEllipse(in: CGRect(x: cx - 6.6, y: 34.35 - h / 2, width: 13.2, height: h))
-                // The pupil (r 68 -> 5.9, resting cy 344 -> 31.6 after the 8-up nudge)
-                // shrinks and sinks as the lid comes down, so it stays inside the eye.
-                let pr = 5.9 * min(1, max(0, (lids - 0.35) / 0.3))
-                if pr > 1 {
-                    let cy = 31.6 + gazeY * 0.098 + (1 - lids) * 1.2
-                    let px = cx + gaze * 4.4
-                    p.addEllipse(in: CGRect(x: px - pr, y: cy - pr, width: pr * 2, height: pr * 2))
-                }
-                }
-            }
-        case .glints:
-            // Main glint r 22 up-right of the pupil centre + second glint r 9 low-left,
-            // both travelling with the pupil.
-            for cx in [30.0, 70.0] {
-                let pr = 5.9 * min(1, max(0, (lids - 0.35) / 0.3))
-                if pr > 1 {
-                    let cy = 31.6 + gazeY * 0.098 + (1 - lids) * 1.2
-                    let px = cx + gaze * 4.4
-                    p.addEllipse(in: CGRect(x: px + 1.3, y: cy - 2.4, width: 2.05, height: 2.05))
-                    p.addEllipse(in: CGRect(x: px - 2.1, y: cy + 1.3, width: 0.85, height: 0.85))
-                }
-            }
-        }
-        if frown && part == .mouth {
-            // Flip the smile about its centre line.
-            var spin = CGAffineTransform(translationX: 50 * s, y: 51 * s)
-                .rotated(by: .pi)
-                .translatedBy(x: -50 * s, y: -51 * s)
-            return p.applying(spin.concatenating(t))
-        }
-        return p.applying(t)
+        let k = min(rect.width, rect.height) / FrogMark.box.width
+        let fit = CGAffineTransform(translationX: rect.midX, y: rect.midY).scaledBy(x: k, y: k)
+            .translatedBy(x: -FrogMark.box.midX, y: -FrogMark.box.midY)
+        let p = part == .silhouette ? FrogMark.silhouette : FrogMark.glyph(lids: lids, frown: frown)
+        return p.applying(fit)
     }
 }
 
-/// Four animatable scalars in one package, so the face can tween lids, gaze, pupil
-/// lift and the frown flip together.
-struct AnimatablePackage: VectorArithmetic {
-    var lids: CGFloat
-    var gaze: CGFloat
-    var gazeY: CGFloat
-    var frown: CGFloat
+// MARK: - Motion
 
-    var magnitudeSquared: Double {
-        Double(lids * lids + gaze * gaze + gazeY * gazeY + frown * frown)
+/// A CSS-style 2D move: translate (grid units), scale and rotate (degrees), applied as
+/// translate · rotate · scale about a pivot, like `transform: translate() scale()` with a
+/// transform-origin.
+struct Move: Equatable {
+    var tx: CGFloat = 0, ty: CGFloat = 0
+    var sx: CGFloat = 1, sy: CGFloat = 1
+    var rotation: CGFloat = 0
+
+    static let rest = Move()
+
+    func matrix(about c: CGPoint) -> CGAffineTransform {
+        CGAffineTransform(translationX: c.x + tx, y: c.y + ty)
+            .rotated(by: rotation * .pi / 180)
+            .scaledBy(x: sx, y: sy)
+            .translatedBy(x: -c.x, y: -c.y)
     }
 
-    static var zero: AnimatablePackage { .init(lids: 0, gaze: 0, gazeY: 0, frown: 0) }
+    func mix(_ to: Move, _ f: CGFloat) -> Move {
+        func m(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * f }
+        return Move(tx: m(tx, to.tx), ty: m(ty, to.ty), sx: m(sx, to.sx), sy: m(sy, to.sy),
+                    rotation: m(rotation, to.rotation))
+    }
+}
 
-    static func - (lhs: AnimatablePackage, rhs: AnimatablePackage) -> AnimatablePackage {
-        .init(lids: lhs.lids - rhs.lids, gaze: lhs.gaze - rhs.gaze, gazeY: lhs.gazeY - rhs.gazeY, frown: lhs.frown - rhs.frown)
+/// A CSS cubic-bezier timing function.
+struct Ease {
+    var x1, y1, x2, y2: Double
+    static let ease = Ease(x1: 0.25, y1: 0.1, x2: 0.25, y2: 1)
+    static let inOut = Ease(x1: 0.42, y1: 0, x2: 0.58, y2: 1)
+    static let out = Ease(x1: 0, y1: 0, x2: 0.58, y2: 1)
+
+    func callAsFunction(_ x: Double) -> Double {
+        func bez(_ s: Double, _ a: Double, _ b: Double) -> Double {
+            let u = 1 - s
+            return 3 * u * u * s * a + 3 * u * s * s * b + s * s * s
+        }
+        var lo = 0.0, hi = 1.0
+        for _ in 0..<24 {
+            let s = (lo + hi) / 2
+            if bez(s, x1, x2) < x { lo = s } else { hi = s }
+        }
+        return bez((lo + hi) / 2, y1, y2)
+    }
+}
+
+/// A looping keyframe track: stops at fractions of `period`, each with the easing of the
+/// segment that leaves it (CSS `animation-timing-function` per keyframe).
+struct Track {
+    var period: Double
+    var alternate = false
+    var stops: [(at: Double, move: Move, ease: Ease)]
+
+    func at(_ t: Double) -> Move {
+        let p = max(t, 0) / period
+        var f = p.truncatingRemainder(dividingBy: 1)
+        if alternate, Int(p) % 2 == 1 { f = 1 - f }
+        guard let i = stops.lastIndex(where: { $0.at <= f }), i + 1 < stops.count else {
+            return stops.last?.move ?? .rest
+        }
+        let a = stops[i], b = stops[i + 1]
+        let local = b.at > a.at ? (f - a.at) / (b.at - a.at) : 1
+        return a.move.mix(b.move, CGFloat(a.ease(local)))
+    }
+}
+
+/// Where the body and the pupils are `t` seconds into a mood (anim.py's keyframes, grid units).
+struct FrogPose {
+    var body = Move.rest
+    var eyes = Move.rest
+
+    init(mood: FrogMood, t: Double, hop: Double? = nil) {
+        switch mood {
+        case .idle:
+            body = Self.breathe.at(t)
+            eyes = Self.blink(5).at(t)
+        case .thinking:
+            body = Self.breathe.at(t)
+            eyes = Self.ponder.at(t)
+        case .reading:
+            eyes = Self.scan.at(t)
+        case .working:
+            body = Self.pump.at(t)
+            eyes = Self.blink(3.3).at(t)
+        case .done:
+            body = Self.hop.at(t)
+        case .waiting:
+            body = Self.tilt.at(t)
+            eyes = Self.wide.at(t)
+        case .sad:
+            body = Self.sink.at(t)
+            eyes = Self.droop.at(t)
+        }
+        // A one-off hop (the empty-state frog when poked) plays the done hop once, over the mood.
+        if let hop, hop >= 0, hop < Self.hop.period * 0.4 { body = Self.hop.at(hop) }
     }
 
-    static func + (lhs: AnimatablePackage, rhs: AnimatablePackage) -> AnimatablePackage {
-        .init(lids: lhs.lids + rhs.lids, gaze: lhs.gaze + rhs.gaze, gazeY: lhs.gazeY + rhs.gazeY, frown: lhs.frown + rhs.frown)
+    static let breathe = Track(period: 3.2, stops: [
+        (0, .rest, .inOut), (0.5, Move(sx: 1.012, sy: 0.982), .inOut), (1, .rest, .inOut)])
+    static let pump = Track(period: 1.1, stops: [
+        (0, .rest, .inOut), (0.45, Move(sx: 1.05, sy: 0.94), .inOut), (1, .rest, .inOut)])
+    static func blink(_ period: Double) -> Track {
+        Track(period: period, stops: [
+            (0, .rest, .ease), (0.92, .rest, .ease), (0.95, Move(sy: 0.08), .ease), (1, .rest, .ease)])
     }
+    static let ponder = Track(period: 4, stops: [
+        (0, Move(tx: 22, ty: -44, sy: 0.8), .inOut), (0.33, Move(tx: 44, ty: -30, sy: 0.8), .inOut),
+        (0.66, Move(tx: -10, ty: -48, sy: 0.8), .inOut), (1, Move(tx: 22, ty: -44, sy: 0.8), .inOut)])
+    static let scan = Track(period: 2.4, stops: [
+        (0, Move(tx: -46, ty: 12), .ease), (0.25, Move(tx: -16, ty: 12), .ease),
+        (0.5, Move(tx: 16, ty: 12), .ease), (0.75, Move(tx: 46, ty: 12), .ease),
+        (0.88, Move(tx: -46, ty: 22), .ease), (1, Move(tx: -46, ty: 12), .ease)])
+    static let hop = Track(period: 2.4, stops: [
+        (0, .rest, .out),
+        (0.08, Move(sx: 1.1, sy: 0.86), Ease(x1: 0.2, y1: 0.8, x2: 0.3, y2: 1)),
+        (0.20, Move(ty: -120, sx: 0.94, sy: 1.08), Ease(x1: 0.6, y1: 0, x2: 0.8, y2: 0.4)),
+        (0.31, Move(sx: 1.12, sy: 0.84), .out),
+        (0.36, Move(sx: 0.98, sy: 1.02), .ease),
+        (0.40, .rest, .out), (1, .rest, .out)])
+    static let tilt = Track(period: 1.8, stops: [
+        (0, Move(rotation: -7), .inOut), (0.5, Move(rotation: 7), .inOut), (1, Move(rotation: -7), .inOut)])
+    static let wide = Track(period: 1.8, stops: [
+        (0, Move(sx: 1.12, sy: 1.12), .inOut), (0.5, Move(sx: 1.04, sy: 1.04), .inOut),
+        (1, Move(sx: 1.12, sy: 1.12), .inOut)])
+    static let droop = Track(period: 3, alternate: true, stops: [
+        (0, Move(ty: 14, sy: 0.5), .inOut), (1, Move(ty: 18, sy: 0.42), .inOut)])
+    static let sink = Track(period: 3, alternate: true, stops: [
+        (0, .rest, .inOut), (1, Move(ty: 12), .inOut)])
+}
 
-    static func += (lhs: inout AnimatablePackage, rhs: AnimatablePackage) { lhs = lhs + rhs }
-    static func -= (lhs: inout AnimatablePackage, rhs: AnimatablePackage) { lhs = lhs - rhs }
-    mutating func scale(by rhs: Double) {
-        lids *= CGFloat(rhs); gaze *= CGFloat(rhs); gazeY *= CGFloat(rhs); frown *= CGFloat(rhs)
+private extension Color {
+    /// An sRGB colour from a 0xRRGGBB literal, for the locked mark palette.
+    init(srgb hex: UInt32) {
+        self.init(.sRGB, red: Double(hex >> 16 & 0xff) / 255, green: Double(hex >> 8 & 0xff) / 255,
+                  blue: Double(hex & 0xff) / 255)
     }
 }
 
