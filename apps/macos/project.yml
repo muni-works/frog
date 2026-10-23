@@ -26,6 +26,10 @@ targets:
     sources:
       - path: Frog
         excludes: ["Frog.entitlements"]
+      # The layered Icon Composer icon; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+      # matches this file's name (the empty appiconset holds the folder open in Xcode).
+      - path: Frog/AppIcon.icon
+        buildPhase: resources
       # Shared with the iOS app and its extensions (see FrogKit/README.md).
       - path: ../FrogKit
         excludes: ["README.md"]
