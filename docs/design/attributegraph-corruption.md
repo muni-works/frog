@@ -100,9 +100,11 @@ slips past the compiler later.
 **Sanitizers.** Thread Sanitizer (`-enableThreadSanitizer YES`) over SessionBrokerTests and
 SessionDirectoryRescanTests reported **no races**, before or after the fix. TSan didn't catch the
 init race either, so treat it as weak evidence. Main Thread Checker (on in the scheme's test
-action) reported **nothing** across the full suite and the stress runs. The real Debug app
-replaying `Fixtures/rename-symbol-long.jsonl` with `libMainThreadChecker.dylib` injected also
-reported nothing. The Address Sanitizer stress runs are under Repro.
+action) reported **nothing** across the full suite (187 tests) and the stress runs. A 150 s run
+of the real Debug app (a throwaway HOME, replaying `Fixtures/rename-symbol-long.jsonl`) with
+`libMainThreadChecker.dylib` injected logged nothing either. Neither screen capture nor
+Accessibility was available, so nobody saw what that run drew. The Address Sanitizer stress
+runs are under Repro.
 
 ## Hypothesis 2: state written during layout and scroll-geometry callbacks
 
