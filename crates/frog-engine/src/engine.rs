@@ -5508,6 +5508,130 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+
+    /// `DrainAbort` calls a drain off: the turn keeps going normally — no suspend, the
+    /// remaining steps run to a `Complete`. Then a second drain (no abort this time) still
+    /// suspends, so both paths hold in one session.
+    #[tokio::test]
+    async fn drain_abort_lets_the_turn_continue() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("a.rs"), "fn a() {}\n").unwrap();
+        let script = vec![
+            reply(
+                vec![call("t1", "Read", json!({ "file_path": "a.rs" }))],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("kept going")], Stop::End),
+        ];
+        let mut h = drain_engine(script, dir.clone(), project);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut sid = String::new();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::TurnEnded { .. });
+            match &env.event {
+                Event::TurnStarted { .. } => sid = env.session.clone(),
+                // Drain on the first tool result, then abort it at once: the update was
+                // called off before the deadline.
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, outcome: ToolOutcome::Ok, .. },
+                    ..
+                } if name == "Read" => {
+                    h.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() + 30_000,
+                        })
+                        .unwrap();
+                    h.ops.send(Op::DrainAbort).unwrap();
+                }
+                _ => {}
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(
+            evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Complete, .. })),
+            "the turn carried on: {:?}",
+            names(&evs)
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })),
+            "never suspended after an abort"
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(&e.event, Event::Drained { .. })),
+            "the aborted drain never acks"
+        );
+        shutdown(h).await;
+        // The log is a plain finished turn: no interrupted-by-update marker anywhere.
+        assert!(
+            !logged_blocks(&dir, &sid)
+                .iter()
+                .any(|(_, b)| matches!(b, Block::ToolResult { content, is_error: true, .. }
+                    if content.contains("Interrupted by app update"))),
+            "no drain markers in the log"
+        );
+
+        // A second drain, no abort, still suspends: the abort didn't wedge the engine.
+        let script = vec![
+            reply(
+                vec![call("t2", "Read", json!({ "file_path": "a.rs" }))],
+                Stop::ToolUse,
+            ),
+            // Unused if the drain lands; present so the turn would carry on if it didn't.
+            reply(vec![text("unused")], Stop::End),
+        ];
+        let mut h2 = drain_engine(script, dir.clone(), dir.join("repo"));
+        while !matches!(h2.events.recv().await.unwrap().event, Event::Idle) {}
+        h2.ops
+            .send(Op::Submit {
+                text: "again".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut evs2 = Vec::new();
+        loop {
+            let env = h2.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            match &env.event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, outcome: ToolOutcome::Ok, .. },
+                    ..
+                } if name == "Read" => {
+                    h2.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() + 30_000,
+                        })
+                        .unwrap();
+                }
+                _ => {}
+            }
+            evs2.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(
+            evs2.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })),
+            "a later drain still suspends"
+        );
+        shutdown(h2).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// `drain_kills_long_tool`: a drain whose deadline has passed records the tool in flight
     /// as interrupted-by-update (it never even starts), and the turn suspends.
     #[tokio::test]
