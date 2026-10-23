@@ -97,8 +97,7 @@ final class InkReveal: NSObject {
         let h = writtenHeight() ?? .greatestFiniteMagnitude
         guard h != lastWritten else { return }
         lastWritten = h
-        view.invalidateIntrinsicContentSize()
-        view.superview?.needsLayout = true
+        view.sizeChanged()
     }
 
     /// Code blocks are views of their own: they appear when the pen reaches them.
