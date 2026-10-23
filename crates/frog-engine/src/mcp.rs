@@ -528,8 +528,6 @@ impl Hub {
                 .servers_expected
                 .store(true, Ordering::Relaxed);
         }
-        // Preserve the loaded tools from self before merging
-        let loaded = self.inner.loaded.lock().unwrap().clone();
         self.inner
             .servers
             .write()
@@ -540,10 +538,9 @@ impl Hub {
             .write()
             .unwrap()
             .extend(other.failed.into_inner().unwrap());
-        // Restore the loaded tools after merging
-        let mut self_loaded = self.inner.loaded.lock().unwrap();
-        self_loaded.clear();
-        self_loaded.extend(loaded);
+        // `loaded` is left alone on purpose: the tools a session picked stay selected across a
+        // server reconnecting (a fresh delta merged in), so they're offered again as soon as
+        // the server's tools are back in the catalog — no new `McpTools` call needed.
     }
 
     pub fn host(&self) -> &Arc<Host> {
@@ -732,6 +729,24 @@ impl Hub {
     fn search(&self, input: &Value) -> Result<Output> {
         let query = input["query"].as_str().unwrap_or("").trim().to_lowercase();
         let catalog = self.catalog();
+        // Servers are configured but none has connected yet (still connecting, or all failed):
+        // say so instead of a misleading "no match".
+        if catalog.is_empty() && self.expected() {
+            let failed = self.inner.failed.read().unwrap();
+            if !failed.is_empty() {
+                let summary = failed
+                    .iter()
+                    .map(|f| format!("`{}` ({})", f.name, f.error.as_deref().unwrap_or("failed")))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Ok(Output::text(format!(
+                    "No MCP tools are available: {summary}. Try again once the server is reachable."
+                )));
+            }
+            return Ok(Output::text(
+                "MCP servers are still connecting; call `McpTools` again in a moment.",
+            ));
+        }
         let picked: Vec<&Entry> = if let Some(names) = query.strip_prefix("select:") {
             let want: Vec<&str> = names.split(',').map(str::trim).collect();
             catalog
@@ -1181,6 +1196,45 @@ mod tests {
             "mcp__git_hub__list_issues"
         );
         assert!(exposed_name(&"s".repeat(80), "t").len() <= 64);
+    }
+
+    /// Merging a reconnecting server's delta into a live hub keeps the tools the session had
+    /// loaded, so they're offered again as soon as the server's catalog is back — no new
+    /// `McpTools` call needed.
+    #[test]
+    fn a_reconnecting_server_keeps_its_loaded_tools() {
+        let host = Host::headless(Path::new("."));
+        let live = Hub {
+            inner: Arc::new(Inner {
+                servers: RwLock::new(BTreeMap::new()),
+                failed: RwLock::new(Vec::new()),
+                host: host.clone(),
+                loaded: Mutex::new(vec!["mcp__slow__ping".into()]),
+                preloaded: BTreeSet::new(),
+                compact: AtomicBool::new(false),
+                servers_expected: AtomicBool::new(true),
+            }),
+        };
+        // While the server is down the selection still counts as deferred: the search tool
+        // stays offered.
+        assert!(live.deferred());
+        assert_eq!(live.specs().first().map(|s| s.name.to_string()), Some("McpTools".into()));
+
+        // A fresh delta (the server reconnected) merges in; the delta has no loaded tools.
+        let delta = Hub {
+            inner: Arc::new(Inner {
+                servers: RwLock::new(BTreeMap::new()),
+                failed: RwLock::new(Vec::new()),
+                host,
+                loaded: Mutex::new(Vec::new()),
+                preloaded: BTreeSet::new(),
+                compact: AtomicBool::new(false),
+                servers_expected: AtomicBool::new(true),
+            }),
+        };
+        live.merge(delta);
+        assert_eq!(live.loaded(), ["mcp__slow__ping"]);
+        assert!(live.deferred());
     }
 
     #[test]
