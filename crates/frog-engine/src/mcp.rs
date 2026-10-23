@@ -893,6 +893,26 @@ impl Hub {
             };
             (self.inner.host.clone(), s.cfg.clone())
         };
+        // A mid-session reconnect refreshes the grant (the token may be revoked rather
+        // than expired); it never pops a browser. If the refresh can't produce a token,
+        // name the server and stop.
+        if let Some(url) = &cfg.url {
+            let refreshed = match crate::mcp_oauth::stored(server) {
+                Some(_) => {
+                    crate::mcp_oauth::refresh(&plain_http(), server, url).await
+                }
+                None => Ok(None),
+            };
+            match refreshed {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    bail!("`{server}`'s sign-in expired; reconnect to re-authorize");
+                }
+                Err(e) => {
+                    bail!("`{server}` couldn't refresh its sign-in ({e:#}); reconnect to re-authorize");
+                }
+            }
+        }
         let dirty = Arc::new(AtomicBool::new(false));
         let handler = Client {
             server: server.to_string(),
@@ -1060,15 +1080,14 @@ async fn connect_one(
         let plain = plain_http();
         let tokens = match crate::mcp_oauth::bearer(&handler.server) {
             Some(tokens) => Some(tokens),
-            None if crate::mcp_oauth::stored(&handler.server).is_some() => crate::mcp_oauth::refresh(
-                &plain,
-                &handler.server,
-                url,
-            )
-            .await
-            .ok()
-            .flatten()
-            .and_then(|_| crate::mcp_oauth::bearer(&handler.server)),
+            None if crate::mcp_oauth::stored(&handler.server).is_some() => {
+                match crate::mcp_oauth::refresh(&plain, &handler.server, url).await {
+                    Ok(_) => crate::mcp_oauth::bearer(&handler.server),
+                    // Transient (network, metadata): connect unauthenticated; the 401
+                    // path decides between a browser and a clear failure.
+                    Err(_) => None,
+                }
+            }
             None => None,
         };
         let first = StreamableHttpClientTransport::with_client(

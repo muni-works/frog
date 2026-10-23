@@ -18,7 +18,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// How long the whole browser sign-in may take: the user finds the window, signs in,
@@ -28,6 +28,20 @@ pub const AUTH_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// Opens a URL in a browser; overridable so tests can skip the real browser.
 pub type Browser = Arc<dyn Fn(String) + Send + Sync>;
+
+/// Whether OAuth should run for a configured server: only HTTP servers without a
+/// configured `Authorization` header. The header is the escape hatch — a `${VAR}` in it
+/// counts as configured whether or not the variable is set.
+pub fn authorize_url(
+    url: Option<&str>,
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    let url = url?;
+    let configured = headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
+    (!configured).then(|| url.to_string())
+}
 
 /// The browser frog opens on macOS.
 pub fn system_browser() -> Browser {
@@ -116,12 +130,20 @@ fn resource_metadata_url(header: &str, base: &str) -> Option<String> {
     Some(format!("{}/{}", base.trim_end_matches('/'), raw.trim_start_matches('/')))
 }
 
-/// One `key="value"` (or bare `key=value`) parameter of a challenge header.
+/// One `key="value"` (or bare `key=value`) parameter of a challenge header. A leading
+/// scheme word (`Bearer`) is ignored.
 fn param(header: &str, key: &str) -> Option<String> {
     for part in header.split(',') {
         let part = part.trim();
         let Some((k, v)) = part.split_once('=') else { continue };
-        if k.trim().eq_ignore_ascii_case(key) {
+        let mut k = k.trim();
+        if let Some(rest) = k
+            .strip_prefix("Bearer ")
+            .or_else(|| k.strip_prefix("bearer "))
+        {
+            k = rest.trim();
+        }
+        if k.eq_ignore_ascii_case(key) {
             return Some(v.trim().trim_matches('"').to_string());
         }
     }
@@ -149,7 +171,9 @@ fn well_known_candidates(url: &str, name: &str) -> Vec<String> {
 }
 
 async fn fetch_json<T: serde::de::DeserializeOwned>(http: &reqwest::Client, url: &str) -> Option<T> {
-    let response = http.get(url).send().await.ok()?;
+    let Ok(response) = http.get(url).send().await else {
+        return None;
+    };
     if !response.status().is_success() {
         return None;
     }
@@ -187,20 +211,58 @@ fn key(server: &str) -> String {
     format!("mcp-oauth:{server}")
 }
 
-/// Stored tokens for `server` (Keychain, keyed by the server's name).
+/// Stored tokens for `server` (Keychain, keyed by the server's name). Tests swap the
+/// store out for memory with `use_memory_store`.
 pub fn stored(server: &str) -> Option<Tokens> {
-    serde_json::from_str(&crate::mcp::keychain_get(&key(server))?).ok()
+    let text = mem_store()
+        .and_then(|m| m.lock().unwrap().get(server).cloned())
+        .or_else(|| crate::mcp::keychain_get(&key(server)))?;
+    // Values are stored base64-encoded: the `security` CLI behind the Keychain rejects
+    // quotes and other JSON punctuation, so tokens always travel encoded.
+    let json = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(text.trim())
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or(text);
+    serde_json::from_str(&json).ok()
 }
 
 /// Remember `server`'s tokens.
 pub fn save(server: &str, tokens: &Tokens) -> Result<()> {
-    let text = serde_json::to_string(tokens).context("serializing tokens")?;
+    let json = serde_json::to_string(tokens).context("serializing tokens")?;
+    let text = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json.as_bytes());
+    if let Some(memory) = mem_store() {
+        memory.lock().unwrap().insert(server.to_string(), text);
+        return Ok(());
+    }
     crate::mcp::keychain_set(&key(server), &text)
 }
 
 /// Forget a server's tokens.
 pub fn clear(server: &str) {
+    if let Some(memory) = mem_store() {
+        memory.lock().unwrap().remove(server);
+        return;
+    }
     crate::mcp::keychain_delete(&key(server));
+}
+
+/// The tests' in-memory stand-in for the Keychain.
+type Memory = Arc<Mutex<std::collections::BTreeMap<String, String>>>;
+
+static TEST_STORE: Mutex<Option<Memory>> = Mutex::new(None);
+
+fn mem_store() -> Option<Memory> {
+    TEST_STORE.lock().unwrap().clone()
+}
+
+/// Route token storage to memory (tests) instead of the Keychain. Idempotent.
+#[cfg(test)]
+pub(crate) fn use_memory_store() -> Memory {
+    let mut guard = TEST_STORE.lock().unwrap();
+    guard
+        .get_or_insert_with(|| Arc::new(Mutex::new(std::collections::BTreeMap::new())))
+        .clone()
 }
 
 fn now_epoch() -> u64 {
@@ -486,7 +548,10 @@ pub async fn authorize(
         pairs.push(("scope", scopes.join(" ")));
     }
     let auth_url = join_query(&metadata.authorization_endpoint, &pairs);
-    open(auth_url);
+    // Spawned: a blocking `open` (and any browser-adjacent work) must not park the
+    // async worker that's about to accept the redirect.
+    let open_url = auth_url.clone();
+    tokio::task::spawn_blocking(move || open(open_url));
 
     // Wait for the browser's redirect on the loopback listener.
     let deadline = tokio::time::Instant::now() + timeout;
@@ -626,4 +691,712 @@ pub async fn refresh(http: &reqwest::Client, name: &str, url: &str) -> Result<Op
     };
     save(name, &fresh)?;
     Ok(Some(fresh))
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // ---- a tiny blocking HTTP server -------------------------------------
+
+    /// One recorded request: method, path, lowercased headers, body.
+    struct Request {
+        method: String,
+        path: String,
+        headers: Vec<(String, String)>,
+        body: String,
+    }
+
+    impl Request {
+        fn header(&self, name: &str) -> Option<&str> {
+            self.headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.as_str())
+        }
+    }
+
+    fn reply_json(status: u16, body: serde_json::Value) -> Vec<u8> {
+        let body = body.to_string();
+        let reason = match status {
+            200 => "OK",
+            201 => "Created",
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            _ => "Status",
+        };
+        format!(
+            "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
+    }
+
+    fn reply_text(status: u16, body: &str, extra: &[(&str, String)]) -> Vec<u8> {
+        let reason = match status {
+            200 => "OK",
+            202 => "Accepted",
+            401 => "Unauthorized",
+            405 => "Method Not Allowed",
+            _ => "Status",
+        };
+        let mut head = format!(
+            "HTTP/1.1 {status} {reason}\r\ncontent-type: text/plain\r\ncontent-length: {}\r\n",
+            body.len()
+        );
+        for (k, v) in extra {
+            head.push_str(&format!("{k}: {v}\r\n"));
+        }
+        format!("{head}connection: close\r\n\r\n{body}").into_bytes()
+    }
+
+    /// Serve `route` on a fresh port until dropped. One thread per connection.
+    pub(crate) struct MockServer {
+        #[allow(dead_code)]
+        handle: std::thread::JoinHandle<()>,
+        pub(crate) port: u16,
+    }
+
+    impl MockServer {
+        fn spawn(route: impl Fn(Request) -> Vec<u8> + Send + Sync + 'static) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let route = Arc::new(route);
+            let handle = std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { break };
+                    let route = route.clone();
+                    std::thread::spawn(move || {
+                        if let Some(request) = read_request(&mut stream) {
+                            let bytes = route(request);
+                            let _ = stream.write_all(&bytes);
+                            let _ = stream.flush();
+                        }
+                    });
+                }
+            });
+            Self { handle, port }
+        }
+
+        pub(crate) fn url(&self, path: &str) -> String {
+            format!("http://127.0.0.1:{}{path}", self.port)
+        }
+
+    }
+
+    impl Drop for MockServer {
+        fn drop(&mut self) {
+            // The accept loop runs until the process exits; a finished test just leaves
+            // the listening thread parked. Drop without joining (detaches).
+            let _ = &self.handle;
+        }
+    }
+
+    fn read_request(stream: &mut TcpStream) -> Option<Request> {
+        let mut buf = [0u8; 16_384];
+        let mut raw = Vec::new();
+        let header_end = loop {
+            let n = stream.read(&mut buf).ok()?;
+            raw.extend_from_slice(&buf[..n]);
+            if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos;
+            }
+            if n == 0 {
+                return None;
+            }
+        };
+        let head = String::from_utf8_lossy(&raw[..header_end]).into_owned();
+        let mut lines = head.lines();
+        let mut request_line = lines.next()?.split_whitespace();
+        let method = request_line.next()?.to_string();
+        let target = request_line.next()?.to_string();
+        let mut headers = Vec::new();
+        for line in lines {
+            let Some((k, v)) = line.split_once(':') else { continue };
+            headers.push((k.trim().to_lowercase(), v.trim().to_string()));
+        }
+        let length: usize = headers
+            .iter()
+            .find(|(k, _)| k == "content-length")
+            .and_then(|(_, v)| v.parse().ok())
+            .unwrap_or(0);
+        let mut body = raw[header_end + 4..].to_vec();
+        while body.len() < length {
+            let n = stream.read(&mut buf).ok()?;
+            if n == 0 {
+                break;
+            }
+            body.extend_from_slice(&buf[..n]);
+        }
+        body.truncate(length);
+        Some(Request {
+            method,
+            path: target.split('?').next().unwrap_or("").to_string(),
+            headers,
+            body: String::from_utf8_lossy(&body).into_owned(),
+        })
+    }
+
+    // ---- the mock OAuth + MCP world ---------------------------------------
+
+    #[derive(Default)]
+    pub(crate) struct Mock {
+        /// The token the AS issues and the MCP server accepts.
+        pub(crate) token: Mutex<String>,
+        pub(crate) registrations: AtomicUsize,
+        pub(crate) exchanges: AtomicUsize,
+        pub(crate) refreshes: AtomicUsize,
+        /// The refresh token the mock accepts; a different one is refused.
+        pub(crate) refresh_token: Mutex<String>,
+    }
+
+    impl Mock {
+        fn metadata(&self, base: &str) -> serde_json::Value {
+            serde_json::json!({
+                "issuer": base,
+                "authorization_endpoint": format!("{base}/authorize"),
+                "token_endpoint": format!("{base}/token"),
+                "registration_endpoint": format!("{base}/register"),
+                "scopes_supported": ["mcp:read", "offline_access"],
+                "code_challenge_methods_supported": ["S256"],
+                "response_types_supported": ["code"]
+            })
+        }
+
+        fn resource_metadata(&self, base: &str) -> serde_json::Value {
+            serde_json::json!({
+                "resource": format!("{base}/mcp"),
+                "authorization_servers": [base],
+                "scopes_supported": ["mcp:read"]
+            })
+        }
+    }
+
+    /// Start the combined mock: OAuth docs on the origin, MCP JSON-RPC at `/mcp` that
+    /// requires the mock's bearer. Served per connection, so the MCP side answers
+    /// 401+challenge until a Bearer with the right token arrives.
+    pub(crate) fn start_mock(token: &str) -> (MockServer, Arc<Mock>) {
+        let mock = Arc::new(Mock {
+            token: Mutex::new(token.to_string()),
+            refresh_token: Mutex::new("refresh-1".to_string()),
+            ..Default::default()
+        });
+        let for_route = mock.clone();
+        let server = MockServer::spawn(move |request| {
+            route_mock(&for_route, request)
+        });
+        (server, mock)
+    }
+
+    fn route_mock(mock: &Mock, request: Request) -> Vec<u8> {
+        match request.path.as_str() {
+            p if p.starts_with("/.well-known/oauth-protected-resource") => {
+                let base = format!("http://{}", request.header("host").unwrap_or(""));
+                reply_json(200, mock.resource_metadata(&base))
+            }
+            p if p.starts_with("/.well-known/oauth-authorization-server") => {
+                let base = format!("http://{}", request.header("host").unwrap_or(""));
+                reply_json(200, mock.metadata(&base))
+            }
+            "/register" => {
+                mock.registrations.fetch_add(1, Ordering::SeqCst);
+                reply_json(
+                    201,
+                    serde_json::json!({
+                        "client_id": format!("client-{}", mock.registrations.load(Ordering::SeqCst)),
+                        "grant_types": ["authorization_code", "refresh_token"]
+                    }),
+                )
+            }
+            "/token" => token_route(mock, &request),
+            "/mcp" => {
+                let expected = format!("Bearer {}", mock.token.lock().unwrap());
+                if request.header("authorization") != Some(expected.as_str()) {
+                    let base = format!("http://{}", request.header("host").unwrap_or(""));
+                    return reply_text(
+                        401,
+                        "unauthorized",
+                        &[(
+                            "www-authenticate",
+                            format!("Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource\""),
+                        )],
+                    );
+                }
+                mcp_route(&request)
+            }
+            _ => reply_text(404, "not found", &[]),
+        }
+    }
+
+    fn token_route(mock: &Mock, request: &Request) -> Vec<u8> {
+        let form: Vec<(String, String)> = request
+            .body
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let get = |name: &str| {
+            form.iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+        };
+        match get("grant_type").as_deref() {
+            Some("authorization_code") => {
+                mock.exchanges.fetch_add(1, Ordering::SeqCst);
+                assert!(
+                    get("code_verifier").is_some_and(|v| !v.is_empty()),
+                    "the code exchange must carry the PKCE verifier"
+                );
+                assert!(
+                    get("client_id").is_some_and(|c| c.starts_with("client-")),
+                    "the exchange must carry the registered client id"
+                );
+                reply_json(
+                    200,
+                    serde_json::json!({
+                        "access_token": mock.token.lock().unwrap().clone(),
+                        "refresh_token": mock.refresh_token.lock().unwrap().clone(),
+                        "expires_in": 3600,
+                        "scope": "mcp:read"
+                    }),
+                )
+            }
+            Some("refresh_token") => {
+                mock.refreshes.fetch_add(1, Ordering::SeqCst);
+                if get("refresh_token").as_deref() != Some(mock.refresh_token.lock().unwrap().as_str()) {
+                    return reply_json(400, serde_json::json!({"error": "invalid_grant"}));
+                }
+                // Rotate the access token so a retry with the old one fails.
+                let mut token = mock.token.lock().unwrap();
+                let rotated = format!("{}-r", token.trim_end_matches("-r"));
+                *token = rotated;
+                reply_json(
+                    200,
+                    serde_json::json!({
+                        "access_token": token.clone(),
+                        "expires_in": 3600
+                    }),
+                )
+            }
+            other => panic!("unexpected grant: {other:?}"),
+        }
+    }
+
+    /// Minimal streamable-HTTP JSON-RPC: initialize answers 200 JSON, notifications 202,
+    /// tools/list answers one tool, GET answers 405 (no SSE streams).
+    fn mcp_route(request: &Request) -> Vec<u8> {
+        if request.method == "GET" {
+            return reply_text(405, "no sse", &[]);
+        }
+        let body: serde_json::Value = serde_json::from_str(&request.body).unwrap_or_default();
+        match body["method"].as_str().unwrap_or("") {
+            "initialize" => reply_json(
+                200,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "mock", "version": "0"}
+                    }
+                }),
+            ),
+            "notifications/initialized" => reply_text(202, "", &[]),
+            "tools/list" => reply_json(
+                200,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"tools": [
+                        {"name": "echo", "inputSchema": {"type": "object", "properties": {}}}
+                    ]}
+                }),
+            ),
+            _ if body["id"].is_null() => reply_text(202, "", &[]),
+            _ => reply_json(
+                200,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"content": [{"type": "text", "text": "mock tools/call"}]}
+                }),
+            ),
+        }
+    }
+
+    // ---- the fake browser --------------------------------------------------
+
+    /// The authorization URL the flow opens: GET its redirect_uri with `code=…&state=…`
+    /// and panic on a page that isn't a friendly sign-in reply. This is the leg the real
+    /// browser plays.
+    pub(crate) fn fake_browser(url: String) {
+        let query = url.split_once('?').map(|(_, q)| q).unwrap_or("");
+        let pairs: Vec<(String, String)> = query
+            .split('&')
+            .filter_map(|p| p.split_once('='))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let get = |name: &str| pairs.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+        let redirect = get("redirect_uri").expect("authorization URL names redirect_uri");
+        let state = get("state").expect("authorization URL carries state");
+        assert_eq!(get("code_challenge_method").as_deref(), Some("S256"));
+        assert!(
+            get("code_challenge").is_some_and(|c| c.len() == 43),
+            "PKCE S256 challenge is 43 base64url chars"
+        );
+        let redirect = redirect
+            .replace("%2F", "/")
+            .replace("%3A", ":")
+            .replace("%3F", "?")
+            .replace("%3D", "=")
+            .replace("%26", "&");
+        let target = format!("{redirect}?code=good-code&state={state}");
+        let page = get_page(&target);
+        assert!(
+            page.contains("signed in"),
+            "the redirect should answer a friendly page, got: {page}"
+        );
+    }
+
+    /// A raw GET over a fresh connection; the response body as text.
+    fn get_page(target: &str) -> String {
+        let (host, rest) = target
+            .strip_prefix("http://")
+            .unwrap()
+            .split_once('/')
+            .unwrap();
+        let mut stream = TcpStream::connect(host).unwrap();
+        let request = format!("GET /{rest} HTTP/1.1\r\nhost: {host}\r\nconnection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut out = String::new();
+        let _ = stream.read_to_string(&mut out);
+        out
+    }
+
+    // ---- tests -------------------------------------------------------------
+
+    /// One mock, one server name, memory store. Returns the url for `[mcp_servers.x]`.
+    struct World {
+        #[allow(dead_code)]
+        server: MockServer,
+        mock: Arc<Mock>,
+        name: String,
+        url: String,
+    }
+
+    impl World {
+        fn start(token: &str) -> Self {
+            let _memory = use_memory_store();
+            let (server, mock) = start_mock(token);
+            let name = crate::session::new_id();
+            let url = server.url("/mcp");
+            Self {
+                server,
+                mock,
+                name,
+                url,
+            }
+        }
+    }
+
+    impl Drop for World {
+        fn drop(&mut self) {
+            clear(&self.name);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn discovery_registration_and_exchange_store_tokens() {
+        let world = World::start("tok-1");
+        let http = reqwest::Client::new();
+        let tokens = authorize(
+            &http,
+            &world.name,
+            &world.url,
+            Some("Bearer resource_metadata=\"x\""),
+            Arc::new(fake_browser),
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("the flow completes");
+        assert_eq!(tokens.access_token, "tok-1");
+        assert_eq!(mock_tokens(&world.mock.registrations), 1);
+        assert_eq!(mock_tokens(&world.mock.exchanges), 1);
+        // Stored under the server name: another name reads nothing.
+        assert_eq!(stored(&world.name).unwrap().access_token, "tok-1");
+        assert!(stored("other-server").is_none());
+        assert_eq!(bearer(&world.name), Some("Bearer tok-1".into()));
+    }
+
+    fn mock_tokens(counter: &AtomicUsize) -> usize {
+        counter.load(Ordering::SeqCst)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn expired_tokens_refresh_before_connecting() {
+        let world = World::start("tok-2");
+        let http = reqwest::Client::new();
+        authorize(
+            &http,
+            &world.name,
+            &world.url,
+            None,
+            Arc::new(fake_browser),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        // Age the token out past the refresh buffer.
+        let mut tokens = stored(&world.name).unwrap();
+        tokens.expires_at = Some(now_epoch() - 1);
+        save(&world.name, &tokens).unwrap();
+        assert_eq!(bearer(&world.name), None, "expired tokens don't ride along");
+        let refreshed = refresh(&http, &world.name, &world.url)
+            .await
+            .unwrap()
+            .expect("the refresh grant is alive");
+        assert_eq!(refreshed.access_token, "tok-2-r");
+        assert_eq!(bearer(&world.name), Some("Bearer tok-2-r".into()));
+        assert_eq!(mock_tokens(&world.mock.refreshes), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refused_refresh_clears_the_grant() {
+        let world = World::start("tok-3");
+        let http = reqwest::Client::new();
+        authorize(
+            &http,
+            &world.name,
+            &world.url,
+            None,
+            Arc::new(fake_browser),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        // Corrupt the refresh token: the server refuses the grant.
+        let mut tokens = stored(&world.name).unwrap();
+        tokens.refresh_token = Some("forged".into());
+        save(&world.name, &tokens).unwrap();
+        let result = refresh(&http, &world.name, &world.url).await.unwrap();
+        assert!(result.is_none(), "a refused grant is reported, not thrown");
+        assert!(stored(&world.name).is_none(), "the dead grant is forgotten");
+    }
+
+    /// The full connect path, through [`crate::mcp::connect_one`] via a one-server hub:
+    /// a 401-challenging server ends up connected with tools, after the fake browser
+    /// signed in.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn connect_signs_in_and_lists_tools() {
+        let world = World::start("tok-4");
+        let cfg = crate::mcp::ServerConfig {
+            url: Some(world.url.clone()),
+            ..Default::default()
+        };
+        // The real `open` would launch a browser; the flow under test takes ours.
+        // connect_one uses `system_browser`, so substitute by pre-seeding: run the
+        // authorize flow ourselves first (the same leg), then connect.
+        let http = reqwest::Client::new();
+        authorize(
+            &http,
+            &world.name,
+            &world.url,
+            None,
+            Arc::new(fake_browser),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        let mut hub = crate::mcp::Hub::empty();
+        hub.connect_one_into(world.name.clone(), cfg).await;
+        let status = hub
+            .status()
+            .into_iter()
+            .find(|s| s.name == world.name)
+            .expect("the server appears in status");
+        assert!(
+            status.connected,
+            "the challenging server connects with tokens: {:?}",
+            status.error
+        );
+        assert_eq!(status.tools, vec!["echo".to_string()]);
+    }
+
+    #[test]
+    fn well_known_paths_follow_the_spec() {
+        assert_eq!(
+            well_known_candidates("https://example.com/mcp", "oauth-protected-resource"),
+            vec![
+                "https://example.com/.well-known/oauth-protected-resource/mcp".to_string(),
+                "https://example.com/.well-known/oauth-protected-resource".to_string(),
+            ]
+        );
+        assert_eq!(
+            well_known_candidates("https://example.com", "oauth-authorization-server"),
+            vec!["https://example.com/.well-known/oauth-authorization-server".to_string()]
+        );
+        assert_eq!(
+            well_known_candidates("https://example.com:8443/a/b", "x"),
+            vec![
+                "https://example.com:8443/.well-known/x/a/b".to_string(),
+                "https://example.com:8443/.well-known/x".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn challenge_parameters_are_read() {
+        let header = "Bearer scope=\"mcp:read\", resource_metadata=\"https://as.example/metadata\", error=\"invalid_token\"";
+        assert_eq!(param(header, "scope"), Some("mcp:read".into()));
+        assert_eq!(
+            param(header, "resource_metadata"),
+            Some("https://as.example/metadata".into())
+        );
+        assert_eq!(param(header, "error"), Some("invalid_token".into()));
+        assert_eq!(param(header, "missing"), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn discovery_honors_the_challenge_url_and_scope() {
+        // A server whose resource metadata lives at a non-standard URL named only in
+        // the challenge.
+        let mock = Arc::new(Mock {
+            token: Mutex::new("tok-5".into()),
+            refresh_token: Mutex::new("refresh-5".into()),
+            ..Default::default()
+        });
+        let for_route = mock.clone();
+        let server = MockServer::spawn(move |request| match request.path.as_str() {
+            "/metadata/here" => {
+                let base = format!("http://{}", request.header("host").unwrap_or(""));
+                reply_json(200, for_route.resource_metadata(&base))
+            }
+            "/.well-known/oauth-authorization-server" => {
+                let base = format!("http://{}", request.header("host").unwrap_or(""));
+                reply_json(200, for_route.metadata(&base))
+            }
+            "/register" => {
+                for_route.registrations.fetch_add(1, Ordering::SeqCst);
+                reply_json(201, serde_json::json!({"client_id": "client-x"}))
+            }
+            "/token" => {
+                for_route.exchanges.fetch_add(1, Ordering::SeqCst);
+                reply_json(
+                    200,
+                    serde_json::json!({
+                        "access_token": for_route.token.lock().unwrap().clone(),
+                        "expires_in": 3600,
+                        "scope": "mcp:write"
+                    }),
+                )
+            }
+            _ => reply_text(404, "no", &[]),
+        });
+        let _memory = use_memory_store();
+        let name = crate::session::new_id();
+        let http = reqwest::Client::new();
+        let challenge = format!(
+            "Bearer resource_metadata=\"{}\"",
+            server.url("/metadata/here")
+        );
+        let tokens = authorize(
+            &http,
+            &name,
+            &server.url("/mcp"),
+            Some(&challenge),
+            Arc::new(fake_browser),
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("the challenge's URL is followed");
+        // The challenge's scope hint wins over the metadata's.
+        assert_eq!(tokens.scopes, vec!["mcp:write"]);
+        assert_eq!(tokens.client_id, "client-x");
+        clear(&name);
+    }
+
+    /// A configured Authorization header is the escape hatch: OAuth never runs.
+    #[test]
+    fn configured_headers_skip_oauth() {
+        let mut headers = std::collections::BTreeMap::new();
+        headers.insert("Authorization".to_string(), "Bearer static".to_string());
+        assert_eq!(authorize_url(Some("https://x/mcp"), &headers), None);
+        headers.insert("Authorization".to_string(), "${MY_TOKEN}".to_string());
+        // Expanded-empty still counts as configured (the user opted in).
+        assert_eq!(authorize_url(Some("https://x/mcp"), &headers), None);
+        let mut other = std::collections::BTreeMap::new();
+        other.insert("X-Custom".to_string(), "v".to_string());
+        assert_eq!(
+            authorize_url(Some("https://x/mcp"), &other),
+            Some("https://x/mcp".to_string())
+        );
+        assert_eq!(authorize_url(None, &headers), None);
+    }
+
+    #[test]
+    fn no_token_for_an_unconfigured_server() {
+        clear("no-such-server-at-all");
+        assert_eq!(bearer("no-such-server-at-all"), None);
+    }
+}
+
+#[cfg(test)]
+mod raw_call_tests {
+    use super::use_memory_store;
+    use super::tests::{fake_browser, start_mock};
+    use super::*;
+    use crate::mcp::{Host, Hub, ServerConfig};
+    use std::path::Path;
+    use std::sync::atomic::Ordering;
+
+    /// A token revoked mid-session: the tool call 401s, one refresh fixes it, and the
+    /// retry succeeds — the model sees the tool's answer, never the raw 401.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_dead_token_refreshes_and_the_call_retries() {
+        let _memory = use_memory_store();
+        let (server, mock) = start_mock("tok-live");
+        let name = crate::session::new_id();
+        let cfg = ServerConfig {
+            url: Some(server.url("/mcp")),
+            ..Default::default()
+        };
+        let _host = Host::headless(Path::new("."));
+        // Sign in first (the same leg the browser plays), then connect.
+        let http = reqwest::Client::new();
+        authorize(
+            &http,
+            &name,
+            &server.url("/mcp"),
+            None,
+            Arc::new(fake_browser),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        let mut hub = Hub::empty();
+        hub.connect_one_into(name.clone(), cfg).await;
+        assert!(hub.status().iter().any(|s| s.name == name && s.connected));
+
+        // The server revokes the live token: the next call 401s.
+        *mock.token.lock().unwrap() = "tok-rotated".into();
+        let out = hub
+            .call("item-1", &crate::mcp::exposed_name(&name, "echo"), &serde_json::json!({}))
+            .await
+            .expect("the call retries after one refresh");
+        assert!(out.content.contains("mock tools/call"), "{}", out.content);
+        assert_eq!(mock.refreshes.load(Ordering::SeqCst), 1);
+        // The hub's connection was swapped for a working one; the mock rotated the
+        // access token once for the one refresh.
+        assert_eq!(
+            bearer(&name),
+            Some("Bearer tok-rotated-r".into()),
+            "exactly one refresh happened"
+        );
+        drop(server);
+        clear(&name);
+    }
 }
