@@ -812,7 +812,7 @@ final class SessionBroker {
                 background[id] = c
                 armedBackground.insert(id)
             } else {
-                c.stop()
+                c.stop(reason: "background idle")
             }
         }
     }
@@ -1195,7 +1195,7 @@ extension SessionBroker {
         births[pending] = nil
         guard let id = c.sessionID else {
             saveBirths()
-            c.stop()
+            c.stop(reason: "start timeout (no session id in 20 s)")
             throw BrokerError(c.failure ?? "the new session didn't start in time")
         }
         recordBirth(id, prompt: req.prompt)

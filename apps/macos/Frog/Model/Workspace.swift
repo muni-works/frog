@@ -294,7 +294,7 @@ final class Workspace {
         guard id != incoming?.sessionID else { return }
         guard id != conversation?.sessionID else {
             // Back to the one on screen before another finished opening.
-            incoming?.stop()
+            incoming?.stop(reason: "open cancelled")
             incoming = nil
             opening = nil
             return
@@ -330,10 +330,10 @@ final class Workspace {
         }
     }
 
-    func stop() {
+    func stop(reason: String = "workspace closed") {
         race?.discard()
-        incoming?.stop()
-        if let c = conversation, !SessionBroker.shared.keep(c) { c.stop() }
+        incoming?.stop(reason: "\(reason) (opening)")
+        if let c = conversation, !SessionBroker.shared.keep(c) { c.stop(reason: reason) }
     }
 
     /// The engine flags every new conversation gets from Settings. `mode: false` for a
@@ -372,7 +372,7 @@ final class Workspace {
             }
             Task { await self.refresh() }
         }
-        incoming?.stop()
+        incoming?.stop(reason: "open superseded")
         incoming = c
         // Nothing to cut from, or nothing to wait for: straight on screen.
         guard conversation != nil, c.replaying else {
@@ -392,7 +392,7 @@ final class Workspace {
         incoming = nil
         opening = nil
         // A busy agent session keeps working off screen.
-        if let old = conversation, !SessionBroker.shared.keep(old) { old.stop() }
+        if let old = conversation, !SessionBroker.shared.keep(old) { old.stop(reason: "replaced on screen") }
         cloudForThisConversation = false
         explicitModelChoice = nil
         Motion.cut { conversation = c }

@@ -10,6 +10,8 @@ protocol ConversationLink: AnyObject {
     func send(_ op: Op)
     /// Ask it to end (it ends with `nil`).
     func stop()
+    /// `stop()`, saying why (the Mac logs it beside the engine's exit).
+    func stop(reason: String)
     /// Why it ended on its own, for the transcript.
     var endDescription: String { get }
     /// Whether the engine is still there to send events. A conversation that thinks it's
@@ -20,6 +22,7 @@ protocol ConversationLink: AnyObject {
 
 extension ConversationLink {
     var isAlive: Bool { true }
+    func stop(reason: String) { stop() }
 }
 
 /// What a platform does when things happen in a conversation: sounds, the Mac's sidebar and
@@ -361,9 +364,10 @@ final class Conversation {
         link?.send(.compact(focus: nil))
     }
 
-    func stop() {
+    /// Let the engine go. `reason` is logged with its exit (pane closed, background idle…).
+    func stop(reason: String = "unspecified") {
         stopping = true
-        link?.stop()
+        link?.stop(reason: reason)
     }
 
     /// The engine exited on its own (a test simulating a dead engine calls this directly;
