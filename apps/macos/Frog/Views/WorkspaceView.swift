@@ -309,6 +309,14 @@ struct WorkspaceView: View {
         panes.open(s, in: focused, window: window)
     }
 
+    /// The phone offered the conversation you're reading here, and back: open it focused.
+    private func continueHandoff(_ a: NSUserActivity) {
+        let id = a.userInfo?["session"] as? String
+        let s = id.flatMap { id in Library.shared.sessions.first { $0.id == id } }
+        guard let s else { return }
+        openInFocused(s)
+    }
+
     private func split(_ s: SessionInfo? = nil, _ edge: PaneEdge = .right) {
         Haptics.settle()
         panes.split(s, on: edge, window: window)
@@ -399,6 +407,7 @@ struct WorkspaceView: View {
         .background(WindowReader {
             window = $0
             Library.shared.register(window: $0, panes: panes)
+            if let w = $0 { TypeToFocus.register(window: w, panes: panes) }
         })
         .animation(Motion.panel(reduced: reduceMotion), value: sessionsVisible)
         .animation(Motion.panel(reduced: reduceMotion), value: docked)
@@ -464,9 +473,7 @@ struct WorkspaceView: View {
             a.isEligibleForHandoff = true
         }
         .onContinueUserActivity(Handoff.conversation) { a in
-            guard let id = a.userInfo?["session"] as? String,
-                  let s = Library.shared.sessions.first(where: { $0.id == id }) else { return }
-            openInFocused(s)
+            continueHandoff(a)
         }
         .alert("Rename Conversation", isPresented: $renamingTitle) {
             TextField("Title", text: $newTitle)

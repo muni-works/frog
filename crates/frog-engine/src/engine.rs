@@ -2080,6 +2080,12 @@ impl Agent {
                 Batch::Denied => break EndReason::Denied,
                 Batch::Looping => break EndReason::Looping,
             }
+            // Stop landed mid-tool: the tool already recorded "Interrupted by user.", so end
+            // the turn here instead of handing the result back to the model. The outer select
+            // races this future against the token; whichever wins, the turn ends cancelled.
+            if self.shared.cancel.lock().unwrap().is_cancelled() {
+                return Err(Interrupted.into());
+            }
         };
         // Prune now, while the user reads the reply, and warm the result: the next turn then
         // starts from a prefix that's already cached instead of prefilling all of it.
@@ -3095,7 +3101,10 @@ impl Agent {
                 });
             }
         };
-        let out = {
+        let mut out = {
+            // Stop cancels a long tool in flight (Bash kills its process group), not just
+            // between tools: watch the turn's token alongside the tool future.
+            self.ctx.cancel = Some(self.shared.cancel.lock().unwrap().clone());
             let run = tools::run(name, input, &mut self.ctx);
             tokio::pin!(run);
             loop {
@@ -3106,6 +3115,7 @@ impl Agent {
                 }
             }
         };
+        self.ctx.cancel = None;
         while let Ok(chunk) = rx.try_recv() {
             emit(chunk);
         }
@@ -3117,6 +3127,14 @@ impl Agent {
         }
         self.ctx.progress = None;
         self.ctx.preview = None;
+        // Cancelled mid-run: the result reads as an interrupt, not an error, and the turn ends
+        // cleanly right after (run_tools' remaining calls skip, the caller sees Interrupted).
+        if out.is_err() && self.shared.cancel.lock().unwrap().is_cancelled() {
+            out = Ok(tools::Output {
+                content: "Interrupted by user.".into(),
+                ..Default::default()
+            });
+        }
         out
     }
 
@@ -3149,6 +3167,7 @@ impl Agent {
             permitted: self.ctx.permitted.clone(),
             progress: None,
             preview: None,
+            cancel: None,
             web: self.ctx.web.clone(),
             image: self.ctx.image.clone(),
             screenshot_endpoint: self.ctx.screenshot_endpoint.clone(),
@@ -3927,17 +3946,28 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // terms.
         let terminal_run = name == crate::panes::TERMINAL && pane_action == "run";
         let pane = !terminal_run && matches!(name, crate::panes::TERMINAL | crate::panes::PREVIEW);
-        // Web reads change nothing and show on their tool card, like reads. Auto mode runs
-        // unwatched, so there the classifier sees the URL first (a query string can carry data).
-        if kind == Kind::Net && self.mode != Mode::Auto {
+        // Web reads change nothing and show on their tool card, like reads — in every
+        // mode (Cam's decision 2026-10-23): WebSearch always, WebFetch when the host is
+        // a plain public domain (the fetch itself still re-checks every resolved IP
+        // against private ranges, and a non-public host keeps asking as before). A
+        // public-host GET sends nothing the request itself doesn't show.
+        if kind == Kind::Net && (name == "WebSearch" || crate::tools::web::public_host(input["url"].as_str().unwrap_or("")))
+        {
+            self.decision(item, "rule", "allow", "read-only web call", 0);
+            return Decision::Allow;
+        }
+        // MCP read verbs stay an auto-mode rule; other modes see them on cards as before.
+        if name.starts_with("mcp__") && self.mode == Mode::Auto && crate::auto::read_tool(name, input)
+        {
+            self.decision(item, "rule", "allow", "read-only tool call", 0);
             return Decision::Allow;
         }
         if name == crate::folder::TOOL {
             return self.ask_folder(item, name, arg).await;
         }
+        let mcp = name.starts_with("mcp__");
         let cmd = input["command"].as_str().unwrap_or("").trim();
         let prefix = cmd.split_whitespace().next().unwrap_or("").to_string();
-        let mcp = name.starts_with("mcp__");
         let leaves_sandbox = name == "Bash" && input["unsandboxed"].as_bool() == Some(true);
         // Layer 1, built-in rules, no model call. A command the parser proves
         // read-only (no writes, no subshells, no credential paths) runs without
@@ -3957,12 +3987,39 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.decision(item, "sandbox", "allow", "sandboxed", 0);
             return Decision::Allow;
         }
+        // A screenshot of a session-local file (the tool itself refuses anything outside the
+        // workspace) or of localhost: a local capture and a localhost URL can only show the
+        // session's own work. Anything else keeps asking. (Allow-by-default in every mode
+        // would hand out the whole web; the chief's list scopes this to auto at minimum.)
+        if name == "Screenshot"
+            && self.mode == Mode::Auto
+            && crate::auto::local_capture(input)
+        {
+            self.decision(item, "rule", "allow", "captures only the session's own work", 0);
+            return Decision::Allow;
+        }
         // A path prefix the user allowed for this program earlier this session.
         if name == "Bash"
             && !crate::shell::touches_credentials(cmd)
             && crate::approval::prefix_allows(cmd, &self.ctx.cwd, &self.prefix_allow)
         {
             self.decision(item, "session", "allow", "under a path prefix allowed this session", 0);
+            return Decision::Allow;
+        }
+        // Provenance (auto mode): a routine build/test step (known build tools,
+        // plain file ops, parser-proven reads; no interpreters, network or
+        // substitutions) acting only on in-project paths or the session's own
+        // scratch (paths it created, fresh dirs under the shared temp dir)
+        // doesn't need the classifier or a prompt. Destructive programs there
+        // need provenance; anything outside this scope still asks.
+        if name == "Bash"
+            && self.mode == Mode::Auto
+            && !crate::shell::touches_credentials(cmd)
+            && crate::auto::hard_rule(name, input, &self.ctx.root).is_none()
+            && crate::approval::routine(cmd)
+            && crate::approval::own_scope(cmd, &self.ctx.cwd, &self.ctx.root, &self.created)
+        {
+            self.decision(item, "provenance", "allow", "touches only the project or its own scratch", 0);
             return Decision::Allow;
         }
         let key = match kind {
@@ -3982,6 +4039,17 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             .flatten();
         let outside = target.as_ref().is_some_and(|p| self.ctx.outside(p));
         if let Some(path) = target.filter(|_| outside) {
+            // Provenance (auto mode): writing into a path this session created,
+            // or a fresh file in the shared temp dir, is the session's own
+            // scratch — as in-project as its own checkout. Anything else
+            // outside still asks (and is denied headless).
+            if self.mode == Mode::Auto
+                && crate::approval::path_in_own_scope(&path, &self.ctx.root, &self.created)
+            {
+                self.decision(item, "provenance", "allow", "writes only its own scratch", 0);
+                self.ctx.permitted.insert(path);
+                return Decision::Allow;
+            }
             if !self.can_ask {
                 return Decision::Deny;
             }
@@ -8650,6 +8718,8 @@ for line in sys.stdin:
         profile.tool_mode = tool_mode;
         let mut cfg = Config::default();
         cfg.early_tools = early;
+        // sandbox-exec can't nest inside the test process; leave it off for tool tests.
+        cfg.sandbox_shell = false;
         let opts = Options {
             cfg,
             profile_name: "test".into(),
@@ -9010,6 +9080,96 @@ for line in sys.stdin:
             name: name.into(),
             input,
         }
+    }
+
+    /// Stop cancels a Bash tool mid-run: the sleeping command dies, its result is recorded
+    /// as interrupted, and the turn ends cancelled — all within about two seconds.
+    #[tokio::test]
+    async fn interrupt_cancels_a_running_bash_tool() {
+        let dir = tmp_store();
+        let bash = call("t1", "Bash", json!({ "command": "sleep 64", "timeout": 120000 }));
+        let (mut h, _) = engine_early(
+            vec![
+                reply(vec![bash], Stop::ToolUse),
+                reply(vec![text("done")], Stop::End),
+            ],
+            false,
+            ToolMode::Native,
+            Duration::from_millis(500),
+            &dir,
+            &dir,
+        );
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        // Yolo so the sleeping command runs without a permission card nobody answers; the
+        // shell sandbox off because sandbox-exec can't nest inside the test process.
+        h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+        h.ops
+            .send(Op::Submit {
+                text: "sleep".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        // Wait for the tool to start (allowing its permission card), then stop the turn.
+        let started = std::time::Instant::now();
+        loop {
+            let env = tokio::time::timeout(Duration::from_secs(10), h.events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                        note: None,
+                    })
+                    .unwrap();
+            }
+            if matches!(
+                &env.event,
+                Event::ItemStarted { kind: ItemKind::ToolCall { name, .. }, .. } if name == "Bash"
+            ) {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        h.ops.send(Op::Interrupt).unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "interrupt took {:?}",
+            started.elapsed()
+        );
+        let reasons: Vec<String> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::TurnEnded { reason, .. } => Some(format!("{reason:?}")),
+                _ => None,
+            })
+            .collect();
+        eprintln!("reasons: {reasons:?}");
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Cancelled,
+                ..
+            }
+        )));
+        let sid = evs[0].session.clone();
+        let interrupted = logged_blocks(&dir, &sid).into_iter().any(|(_, b)| {
+            matches!(b, Block::ToolResult { content, .. } if content.contains("Interrupted"))
+        });
+        assert!(interrupted, "no interrupted tool result recorded");
+        // The sleeping child is gone.
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let alive = std::process::Command::new("pgrep")
+            .args(["-f", "sleep 64"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+        assert!(!alive, "a `sleep 64` from the interrupted turn is still running");
+        shutdown(h).await;
     }
 
     /// Collect events until `done` matches one, allowing every permission request on the way.
@@ -9656,7 +9816,9 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
                 vec![Block::ToolUse {
                     id: "w".into(),
                     name: "Bash".into(),
-                    input: json!({ "command": "touch made-up-file" }),
+                    // Not a routine build step: provenance can't pass it, so
+                    // with the classifier down it asks.
+                    input: json!({ "command": "python3 -c 'print(1)' > made-up-file" }),
                 }],
                 Stop::ToolUse,
             ),
@@ -9717,6 +9879,116 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
             }],
             Stop::ToolUse,
         )
+    }
+
+    #[tokio::test]
+    async fn web_reads_run_without_asking_in_every_mode() {
+        // Cam's decision 2026-10-23: WebSearch always; WebFetch of a public host —
+        // in default, accept-edits and auto alike, classifier or not.
+        for (name, input) in [
+            ("WebSearch", json!({ "query": "qwen3 coder next pricing" })),
+            ("WebFetch", json!({ "url": "https://example.com/docs" })),
+        ] {
+            for mode in [Mode::Default, Mode::AcceptEdits, Mode::Auto] {
+                let script = vec![
+                    reply(
+                        vec![Block::ToolUse { id: "web".into(), name: name.into(), input: input.clone() }],
+                        Stop::ToolUse,
+                    ),
+                    reply(vec![text("done")], Stop::End),
+                ];
+                let mut h = engine_perm(script, mode, Some("nonexistent/no-classifier"));
+                let evs = run(&mut h, "look it up").await;
+                assert!(
+                    !evs.iter().any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+                    "{mode:?} asked for {name}"
+                );
+                // The scripted provider can't actually fetch, so the call may end in a
+                // tool error — what matters is that it never surfaced a permission card.
+                assert!(
+                    evs.iter().any(|e| matches!(
+                        e.event,
+                        Event::ItemCompleted { ref id, item: Item::ToolCall { .. }, .. } if id == "web"
+                    )),
+                    "{name} ran in {mode:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_non_public_webfetch_still_asks_in_default_mode() {
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "web".into(),
+                    name: "WebFetch".into(),
+                    input: json!({ "url": "http://localhost:8080/admin" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let mut asked = false;
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit { text: "go".into(), images: Vec::new(), more: Vec::new() })
+            .unwrap();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                asked = true;
+                h.ops
+                    .send(Op::Permission { id: id.clone(), decision: Decision::Deny, note: None })
+                    .unwrap();
+            }
+            if matches!(env.event, Event::Idle) {
+                break;
+            }
+        }
+        shutdown(h).await;
+        assert!(asked, "a localhost WebFetch didn't ask in default mode");
+    }
+
+    /// Auto mode: a build writing its own scratch under /private/tmp runs without
+    /// asking (the provenance layer), an outside-project command still asks.
+    #[tokio::test]
+    async fn auto_mode_lets_a_build_touch_only_its_own_scratch() {
+        let script = vec![
+            // Its own fresh build dir under /private/tmp.
+            bash_call("build", "mkdir -p /private/tmp/skittish-test-target/debug"),
+            // Another user path: still asks (answered deny below).
+            bash_call("outside", "touch /Users/frog-test-nobody/not-mine.txt"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Auto, Some("nonexistent/no-classifier"));
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        // The scratch build ran…
+        assert!(
+            evs.iter().any(|e| matches!(
+                e.event,
+                Event::ItemCompleted { ref id, item: Item::ToolCall { outcome: ToolOutcome::Ok, .. }, .. } if id == "build"
+            )),
+            "the scratch build ran without asking"
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(
+                e.event,
+                Event::PermissionRequest { ref item, .. } if item == "build"
+            )),
+            "the scratch build never asked"
+        );
+        // …and nothing else was permitted to run outside.
+        assert!(
+            evs.iter().any(|e| matches!(
+                e.event,
+                Event::PermissionRequest { ref item, .. } if item == "outside"
+            )),
+            "the outside command asked"
+        );
+        let _ = std::fs::remove_dir_all("/private/tmp/skittish-test-target");
     }
 
     /// Run one turn, answering each permission prompt with `answer` (None: leave it

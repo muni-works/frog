@@ -10,6 +10,8 @@ protocol ConversationLink: AnyObject {
     func send(_ op: Op)
     /// Ask it to end (it ends with `nil`).
     func stop()
+    /// `stop()`, saying why (the Mac logs it beside the engine's exit).
+    func stop(reason: String)
     /// Why it ended on its own, for the transcript.
     var endDescription: String { get }
     /// Whether the engine is still there to send events. A conversation that thinks it's
@@ -20,6 +22,7 @@ protocol ConversationLink: AnyObject {
 
 extension ConversationLink {
     var isAlive: Bool { true }
+    func stop(reason: String) { stop() }
 }
 
 /// What a platform does when things happen in a conversation: sounds, the Mac's sidebar and
@@ -106,6 +109,10 @@ final class Conversation {
     var resumedAfterRestart = false
     /// `continueInterrupted` called before the engine could take it: it goes first.
     @ObservationIgnored private var continuePending = false
+    /// Messages from other sessions sent to the engine (`deliver`) that no turn has taken yet.
+    /// The engine queues them behind whatever it's doing; between a turn's `idle` and the
+    /// next delivered turn's `turn_started`, this is the only sign the engine has work.
+    @ObservationIgnored private(set) var pendingDeliveries = 0
 
     /// Queued messages taken back out (their "x"), for the composer to put back in its field.
     var restored: [Queued] = []
@@ -361,9 +368,10 @@ final class Conversation {
         link?.send(.compact(focus: nil))
     }
 
-    func stop() {
+    /// Let the engine go. `reason` is logged with its exit (pane closed, background idle…).
+    func stop(reason: String = "unspecified") {
         stopping = true
-        link?.stop()
+        link?.stop(reason: reason)
     }
 
     /// The engine exited on its own (a test simulating a dead engine calls this directly;
@@ -382,7 +390,20 @@ final class Conversation {
 
     /// A message from another session: the engine queues it and runs it as a turn.
     func deliver(from: String, name: String, message: String) {
+        pendingDeliveries += 1
         link?.send(.deliver(from: from, fromName: name, message: message))
+    }
+
+    /// Nothing running, nothing waiting, nothing on its way: the engine has started up, the
+    /// history is in, no turn is open, nothing is queued here or in the engine's inbox, no
+    /// interrupted turn is waiting to continue, and nothing waits on the user. Only then may
+    /// an engine nobody's looking at be let go (an `idle` alone isn't enough: one follows
+    /// every op, the startup, a rename, a mode change, as well as a turn's end).
+    var settled: Bool {
+        sawFirstIdle && !replaying && !busy && !continuePending
+            && queue.isEmpty && pendingDeliveries == 0
+            && (turns.last?.finished ?? true)
+            && permission == nil && question == nil && elicitation == nil
     }
 
     /// Has a running engine (not stopped, not failed).
@@ -427,11 +448,19 @@ final class Conversation {
     }
 
     private func apply(_ env: Envelope?) {
+        #if DEBUG
+        // Observed by SwiftUI: a write off the main thread corrupts its graph (see
+        // docs/design/attributegraph-corruption.md). The compiler checks @MainActor; this
+        // catches what slips past it (ObjC callbacks, @preconcurrency, unchecked Sendable).
+        dispatchPrecondition(condition: .onQueue(.main))
+        #endif
         guard let env else {
             if !stopping {
                 failure = link?.endDescription ?? "The frog engine exited."
                 onExit?()
             }
+            // Whatever its inbox held went with it.
+            pendingDeliveries = 0
             busy = false
             progress = nil
             stopWatchdog()
@@ -456,6 +485,11 @@ final class Conversation {
                 turns.append(TurnState(number: n, input: input, images: images, more: more, startedAt: at))
             }
             panes.currentTurn = n
+            // A delivered turn takes every message waiting in the engine's inbox (the first as
+            // its input, the rest as `more`).
+            if !replaying, input.hasPrefix("<session-message ") {
+                pendingDeliveries = max(0, pendingDeliveries - 1 - more.count)
+            }
             if !replaying { userStopped = false }
             // A replayed turn ran long ago.
             if !replaying { busy = true }
