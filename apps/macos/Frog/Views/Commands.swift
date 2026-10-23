@@ -18,6 +18,11 @@ struct FrogWindow {
     let split: ((Axis) -> Void)?
     let closePane: (() -> Void)?
     let focusPane: ((Int) -> Void)?
+    /// The sidebar's conversations, as its top-level rows (the started-by children are nested
+    /// under their parents and don't count), for the quick-switch shortcuts (⌘1…9, ⇧⌘]/⇧⌘[).
+    let sidebarOrder: [SessionInfo]
+    /// Open one of `sidebarOrder` (the same click on the row would).
+    let openSidebarSession: (SessionInfo) -> Void
 }
 
 extension FocusedValues {
@@ -101,6 +106,40 @@ struct FrogCommands: Commands {
         }
 
         CommandGroup(before: .toolbar) {
+            // Quick switch, in the sidebar's order (its top-level rows): ⌘1…8 jump to the Nth
+            // conversation, ⌘9 the last one (Safari-style), ⇧⌘] / ⇧⌘[ step through them with
+            // wrap. Disabled past the end of the list. No collision: ⌘1–9 and ⇧⌘]/⇧⌘[ were
+            // free (⌘]/⌘[ are pane focus; the Model menu's digits are ⌃⌘).
+            ForEach(1...9, id: \.self) { n in
+                let order = window?.sidebarOrder ?? []
+                let enough = order.count >= (n == 9 ? 1 : n)
+                return Button(n == 9 ? "Last Conversation" : "Conversation \(n)") {
+                    if let s = SidebarOrder.session(at: n, topLevels: order) {
+                        window?.openSidebarSession(s)
+                    }
+                }
+                .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
+                // ⌘1–8 need an Nth row; ⌘9 (the last) needs any at all (Safari-style).
+                .disabled(!enough)
+            }
+            Divider()
+            Button("Next Conversation") {
+                if let w = window,
+                   let s = SidebarOrder.neighbor(of: w.workspace.conversation?.sessionID, in: w.sidebarOrder, step: 1) {
+                    w.openSidebarSession(s)
+                }
+            }
+            .keyboardShortcut("]", modifiers: [.command, .shift])
+            .disabled((window?.sidebarOrder.count ?? 0) < 2)
+            Button("Previous Conversation") {
+                if let w = window,
+                   let s = SidebarOrder.neighbor(of: w.workspace.conversation?.sessionID, in: w.sidebarOrder, step: -1) {
+                    w.openSidebarSession(s)
+                }
+            }
+            .keyboardShortcut("[", modifiers: [.command, .shift])
+            .disabled((window?.sidebarOrder.count ?? 0) < 2)
+            Divider()
             Toggle("Compact Sidebar", isOn: $compactSidebar)
             .disabled(window == nil)
             Divider()
