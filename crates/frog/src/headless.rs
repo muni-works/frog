@@ -64,7 +64,9 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
         images: Vec::new(),
         more: Vec::new(),
     })?;
-    h.ops.send(Op::Shutdown)?;
+    // No Shutdown here: the router cancels the running turn on it, and Shutdown sent
+    // right after Submit races the turn into a cancel-at-birth. The turn ends on its
+    // own and the engine exits when the handle drops (or on the Shutdown below).
     let mut ok = false;
     let status = (!json).then(Status::new);
     loop {
@@ -76,8 +78,13 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
             }
         };
         let Some(env) = env else { break };
+        let mut done = false;
         if let Event::TurnEnded { reason, .. } = &env.event {
             ok = *reason == EndReason::Complete;
+            done = true;
+        }
+        if matches!(env.event, Event::Error { .. }) {
+            done = true;
         }
         if json {
             println!("{}", serde_json::to_string(&env)?);
@@ -156,6 +163,11 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
         }
         if then_thinking {
             status.show("thinking");
+        }
+        if done {
+            // The turn is over (or failed): shut down cleanly, after it, never during it.
+            let _ = h.ops.send(Op::Shutdown);
+            break;
         }
     }
     if let Some(s) = &status {

@@ -730,6 +730,7 @@ mod tests {
                 turn: 1,
                 input: "hi".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             },
         ))
         .unwrap();

@@ -572,8 +572,10 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         // Only seconds spent waiting for the user count toward the idle baseline: not startup
         // (MCP servers, a model loading), and not any op's work.
         agent.meter_busy(false);
+        // An op taken off the queue while gathering delivered messages, handled next.
+        let mut held: Option<Op> = None;
         loop {
-            let op = tokio::select! {
+            let op = if let Some(op) = held.take() { Some(op) } else { tokio::select! {
                 op = work_rx.recv() => op,
                 result = agent.mcp_ready() => {
                     if let Some((_name, delta)) = result {
@@ -584,19 +586,48 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     agent.emit_status();
                     continue;
                 }
-            };
+            } };
             let Some(op) = op else { break };
             agent.poll_mcp();
             if let Op::Shutdown = op {
                 break;
             }
-            // In the background, and not an op the client waits on: no `Idle` after it.
-            if let Op::Warm { draft } = op {
-                agent.warm(draft.as_deref());
-                continue;
-            }
             // A wake whose notices an earlier turn already took.
             if matches!(op, Op::Wake) && !shared.bg.has_notices() {
+                continue;
+            }
+            // Messages from other sessions never interrupt a turn: they queue behind it like
+            // any op. Those already waiting when one comes up run with it, in order, as one
+            // turn (the first as its input, the rest as `more`, as composer sends follow-ups).
+            let mut delivered = Vec::new();
+            let op = match op {
+                Op::Deliver {
+                    from,
+                    from_name,
+                    message,
+                } => {
+                    delivered.push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                    while let Ok(next) = work_rx.try_recv() {
+                        match next {
+                            Op::Deliver {
+                                from,
+                                from_name,
+                                message,
+                            } => delivered
+                                .push(crate::tools::sessions::wrap(&from, &from_name, &message)),
+                            other => {
+                                held = Some(other);
+                                break;
+                            }
+                        }
+                    }
+                    None
+                }
+                op => Some(op),
+            };
+            // In the background, and not an op the client waits on: no `Idle` after it.
+            if let Some(Op::Warm { draft }) = &op {
+                agent.warm(draft.as_deref());
                 continue;
             }
             shared.working.store(true, Ordering::Relaxed);
@@ -604,7 +635,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             let token = CancellationToken::new();
             *shared.cancel.lock().unwrap() = token.clone();
             let r = tokio::select! {
-                r = agent.handle(op) => r,
+                r = async {
+                    match op {
+                        Some(op) => agent.handle(op).await,
+                        None => agent.deliver(delivered).await,
+                    }
+                } => r,
                 _ = token.cancelled() => Err(Interrupted.into()),
             };
             shared.pending.lock().unwrap().clear();
@@ -910,6 +946,10 @@ impl Agent {
         // with that process) so a resumed client doesn't expect them.
         let mut stale_panes: Vec<String> = Vec::new();
         let mut resumed_map = None;
+        // The mode the session last ran in (its last `mode_changed`): a resumed engine keeps
+        // it, rather than silently reverting to whatever the flags say — the picker and the
+        // engine must agree on the effective mode.
+        let mut resumed_mode = None;
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
@@ -933,6 +973,7 @@ impl Agent {
                             stale_panes.push(id.clone());
                         }
                         Event::PaneClosed { id, .. } => stale_panes.retain(|p| p != id),
+                        Event::ModeChanged { mode } => resumed_mode = Some(*mode),
                         _ => {}
                     }
                 }
@@ -1022,7 +1063,7 @@ impl Agent {
                 }
                 ctx
             },
-            mode: o.mode,
+            mode: resumed_mode.unwrap_or(o.mode),
             can_ask: o.can_ask,
             rich: o.rich,
             subagent: o.subagent,
@@ -1414,7 +1455,7 @@ impl Agent {
                 message,
             } => {
                 let text = crate::tools::sessions::wrap(&from, &from_name, &message);
-                self.turn(&text, Vec::new()).await?
+                self.deliver(vec![text]).await?
             }
             Op::SetClientCaps {
                 panes,
@@ -1570,6 +1611,23 @@ impl Agent {
         Some(format!(
             "You have tools and can open this project's files yourself, so don't ask me for them: {how}, then continue with the task."
         ))
+    }
+
+    /// Messages from other sessions (each already wrapped in `<session-message>`), as one
+    /// turn: the first is its input, the rest go along as `more`, in order.
+    async fn deliver(&mut self, mut wrapped: Vec<String>) -> Result<()> {
+        if wrapped.is_empty() {
+            return Ok(());
+        }
+        let first = wrapped.remove(0);
+        let more = wrapped
+            .into_iter()
+            .map(|text| Part {
+                text,
+                images: Vec::new(),
+            })
+            .collect();
+        self.turn_with(&first, Vec::new(), more).await
     }
 
     async fn turn(&mut self, input: &str, images: Vec<crate::protocol::Image>) -> Result<()> {
@@ -2752,6 +2810,30 @@ impl Agent {
 
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
     async fn run_tool(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
+        // A working directory that was deleted out from under the session (a worktree cleaned
+        // up, a temp folder gone) would fail every command with "No such file or directory".
+        // Fall back to the session root and say so.
+        if !self.ctx.cwd.is_dir() {
+            let gone = std::mem::take(&mut self.ctx.cwd);
+            self.ctx.cwd = self.root.clone();
+            self.ctx.read_files.clear();
+            // The sandbox roots pointed into the deleted folder too; the session root confines
+            // what's left, if it still sandboxes at all.
+            if self.ctx.sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
+                self.ctx.sandbox = Some(self.root.clone());
+            }
+            if self.ctx.shell_sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
+                self.ctx.shell_sandbox = Some(self.root.clone());
+            }
+            self.notice(
+                Level::Warn,
+                format!(
+                    "The working directory {} is gone; continuing in the session root {}.",
+                    gone.display(),
+                    self.root.display()
+                ),
+            );
+        }
         if name == crate::skills::TOOL {
             return crate::skills::run(&self.skills, &mut self.skills_loaded, input);
         }
@@ -5048,6 +5130,88 @@ mod tests {
         while h.events.recv().await.is_some() {}
     }
 
+    /// A working directory deleted out from under the session (a worktree cleaned up) would
+    /// fail every Bash call with "No such file or directory", even `echo`. The tool falls back
+    /// to the session root and says so.
+    #[tokio::test]
+    async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
+        let base = std::env::temp_dir().join(format!("frog-cwd-gone-{}", session::new_id()));
+        let project = base.join("project");
+        let gone = project.join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        let cd = Block::ToolUse {
+            id: "c".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "cd gone" }),
+        };
+        let echo = Block::ToolUse {
+            id: "e".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "echo still-here" }),
+        };
+        let script = vec![
+            // Turn 1: cd into the doomed folder, then finish.
+            reply(vec![cd], Stop::ToolUse),
+            reply(vec![text("in place")], Stop::End),
+            // Turn 2 (after the folder is deleted): echo, then finish.
+            reply(vec![echo], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: project.clone(),
+            mode: Mode::Yolo,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+        // Turn 1: into the folder that's about to disappear.
+        let evs = run(&mut h, "cd around").await;
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::ItemCompleted { item: Item::ToolCall { outcome: ToolOutcome::Ok, .. }, .. })));
+        // The folder goes away between turns.
+        std::fs::remove_dir_all(&gone).unwrap();
+        // Turn 2: the echo still works, from the session root, with a notice about it.
+        h.ops
+            .send(Op::Submit {
+                text: "keep going".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h).await;
+        let notices = notices(&evs);
+        assert!(
+            notices.iter().any(|n| n.contains("is gone; continuing in the session root")),
+            "{notices:?}"
+        );
+        let outputs: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "Bash" => Some(output.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(outputs.iter().any(|o| o.contains("still-here")), "{outputs:?}");
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[tokio::test]
     async fn session_resumes_with_history_replay_and_continuing_seq() {
         let dir = tmp_store();
@@ -5723,6 +5887,36 @@ mod tests {
             extends(before.last().unwrap(), &after[0]),
             "the resumed request rewrites the prefix"
         );
+    }
+
+    /// A resumed engine keeps the mode the session last ran in (its last `mode_changed`),
+    /// rather than reverting to the flag default — the picker and the engine must agree.
+    #[tokio::test]
+    async fn a_resumed_engine_keeps_the_sessions_last_mode() {
+        let dir = tmp_store();
+        let script = vec![reply(vec![text("ok")], Stop::End)];
+        let (mut h, _) = engine_sent(script, Some(dir.clone()), None, None, dir.clone());
+        let sid = run(&mut h, "hi").await[0].session.clone();
+        // The user switches to Yolo mid-session: the op runs at a turn boundary, never
+        // cancelling the running turn.
+        h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+        while !matches!(h.events.recv().await.unwrap().event, Event::ModeChanged { .. }) {}
+        run(&mut h, "and again").await;
+        shutdown(h).await;
+
+        // A new engine resumes with the default flag (Default): the session's stored Yolo wins.
+        let script = vec![reply(vec![text("ok")], Stop::End)];
+        let (mut h, _) = engine_sent(script, Some(dir.clone()), Some(sid), None, dir.clone());
+        let mut status = None;
+        while status.is_none() {
+            match h.events.recv().await.unwrap().event {
+                Event::Status(s) => status = Some(s.mode),
+                Event::Idle => break,
+                _ => {}
+            }
+        }
+        assert_eq!(status, Some(Mode::Yolo), "the engine resumed in the session's mode");
+        shutdown(h).await;
     }
 
     /// Every block the session log holds, in order.
@@ -6601,6 +6795,75 @@ for line in sys.stdin:
     }
 
     #[tokio::test]
+    async fn queued_delivers_run_together_as_one_turn_in_order() {
+        // Three messages land while a turn runs: none of them cancels it, and the next
+        // boundary starts ONE turn carrying all three, in the order they were sent.
+        let script = vec![
+            reply(vec![list_sessions_call()], Stop::ToolUse),
+            reply(vec![text("listed")], Stop::End),
+            reply(vec![text("all three noted")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "who's around?".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut first_ended = false;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::SessionRequest { id, .. } => {
+                    for (n, m) in ["first", "second", "third"].iter().enumerate() {
+                        h.ops
+                            .send(Op::Deliver {
+                                from: format!("s{n}"),
+                                from_name: "Sender".into(),
+                                message: m.to_string(),
+                            })
+                            .unwrap();
+                    }
+                    h.ops
+                        .send(Op::SessionReply {
+                            id,
+                            result: Some(json!([])),
+                            error: None,
+                        })
+                        .unwrap();
+                }
+                Event::TurnEnded { turn, reason, .. } => {
+                    assert!(matches!(reason, EndReason::Complete), "{reason:?}");
+                    if turn == 1 {
+                        first_ended = true;
+                    }
+                    if turn == 2 {
+                        break;
+                    }
+                }
+                Event::TurnStarted {
+                    turn, input, more, ..
+                } => {
+                    if turn == 2 {
+                        assert!(first_ended, "batched turn started before turn 1 ended");
+                        // One representation: composer's `more`. The first message is the
+                        // input, the rest follow in order, each still wrapped.
+                        assert!(input.starts_with("<session-message from=\"s0\" name=\"Sender\">"));
+                        assert!(input.contains("first"));
+                        let rest: Vec<&str> = more.iter().map(|p| p.text.as_str()).collect();
+                        assert_eq!(rest.len(), 2, "all three in one turn: {rest:?}");
+                        assert!(rest[0].starts_with("<session-message from=\"s1\"") && rest[0].contains("second"));
+                        assert!(rest[1].starts_with("<session-message from=\"s2\"") && rest[1].contains("third"));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn session_tools_need_a_client_that_hosts_sessions() {
         let script = vec![
             reply(vec![list_sessions_call()], Stop::ToolUse),
@@ -6878,6 +7141,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "make a file".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut evs = Vec::new();
@@ -6984,6 +7248,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "write it".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         let mut asked = false;
@@ -7025,6 +7290,7 @@ for line in sys.stdin:
             .send(Op::Submit {
                 text: "write it".into(),
                 images: Vec::new(),
+                more: Vec::new(),
             })
             .unwrap();
         loop {

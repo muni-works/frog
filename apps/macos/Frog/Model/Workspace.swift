@@ -336,11 +336,12 @@ final class Workspace {
         if let c = conversation, !SessionBroker.shared.keep(c) { c.stop() }
     }
 
-    /// The engine flags every new conversation gets from Settings.
-    static func engineFlags(chat isChat: Bool) -> [String] {
+    /// The engine flags every new conversation gets from Settings. `mode: false` for a
+    /// resumed session, which keeps the permission mode it last used rather than whatever
+    /// Settings says new ones start in.
+    static func engineFlags(chat isChat: Bool, mode: Bool = true) -> [String] {
         // The permission mode new sessions start in (Settings > Permissions).
-        let mode = UserDefaults.standard.string(forKey: "defaultMode").flatMap(Mode.init(rawValue:))
-        let modeFlag: [String] = switch mode {
+        let flag: [String] = switch mode ? UserDefaults.standard.string(forKey: "defaultMode").flatMap(Mode.init(rawValue:)) : nil {
         case .yolo: ["--yolo"]
         case .auto: ["--auto"]
         case .acceptEdits: ["--accept-edits"]
@@ -350,7 +351,7 @@ final class Workspace {
         let chat = isChat ? ["--chat"] : []
         let sandbox = UserDefaults.standard.object(forKey: "sandboxShell") as? Bool ?? true
         let noSandbox = sandbox ? [] : ["--no-shell-sandbox"]
-        return modeFlag + computerUse + chat + noSandbox
+        return flag + computerUse + chat + noSandbox
     }
 
     @discardableResult

@@ -36,6 +36,8 @@ final class SessionBroker {
         var name: String
         var cwd: String
         var branch: String?
+        /// The ref the worktree started from (`origin/main`, say), for the tool result.
+        var base: String?
     }
 
     /// Messages a session may send (or sessions it may start) without the user doing anything.
@@ -54,6 +56,9 @@ final class SessionBroker {
     /// The input of the turn session `id` is running, if known: an idle watch arms only once
     /// the target runs the sender's message, not the turn it was already busy with.
     var currentInput: (_ id: String) -> String? = { _ in nil }
+    /// Whether session `id` is really mid-turn or has messages waiting (replayed history
+    /// reports otherwise, and a notice about a session that's working would be false).
+    var targetBusy: (_ id: String) -> Bool = { _ in false }
     /// What session `id` said and how its last turn ended, for the report a watcher gets when
     /// it goes idle (the hand-back from a session it started or messaged).
     var lastReport: (_ id: String) -> String? = { _ in nil }
@@ -68,6 +73,51 @@ final class SessionBroker {
     private var watches: [String: [Watch]] = [:]
     /// Engines the broker started or kept running with no pane showing them.
     private var background: [String: Conversation] = [:]
+    /// A started session's first prompt, kept (on disk) until its first turn makes a model
+    /// call, so a turn 1 that dies at birth (cancelled, or its engine gone before the first
+    /// call) is replayed rather than lost.
+    struct Birth: Codable, Equatable {
+        var prompt: String
+        var attempts = 0
+    }
+    private(set) var births: [String: Birth] = [:]
+    /// Replays allowed before giving up on a session that keeps dying at birth.
+    static let birthRetries = 3
+    /// Where births are kept across app restarts (nil: memory only, as in tests).
+    var birthsURL: URL?
+    /// Whether session `id`'s first turn has made a model call.
+    var firstTurnRan: (_ id: String) -> Bool = { _ in true }
+    /// Run session `id`'s first prompt again (restarting its engine if it's gone).
+    var replayPrompt: (_ id: String, _ prompt: String) -> Bool = { _, _ in false }
+
+    /// Remember a started session's first prompt until its first turn has really run.
+    func recordBirth(_ id: String, prompt: String) {
+        births[id] = Birth(prompt: prompt)
+        saveBirths()
+    }
+
+    func loadBirths() {
+        guard let url = birthsURL, let data = try? Data(contentsOf: url),
+              let b = try? JSONDecoder().decode([String: Birth].self, from: data) else { return }
+        births = b
+    }
+
+    private func saveBirths() {
+        guard let url = birthsURL else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if births.isEmpty { try? FileManager.default.removeItem(at: url); return }
+        try? JSONEncoder().encode(births).write(to: url, options: .atomic)
+    }
+
+    /// Whether a session's log shows a turn that made a model call (for births left over
+    /// from a previous run of the app, whose conversations aren't open).
+    nonisolated static func logShowsAModelCall(_ id: String) -> Bool {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/share/frog/sessions/\(id).jsonl")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        return text.split(separator: "\n").contains { line in
+            line.contains("\"turn_ended\"") && !line.contains("\"model_calls\":0")
+        }
+    }
     /// Background engines seen running: stopped when they go idle.
     private var armedBackground: Set<String> = []
 
@@ -93,7 +143,8 @@ final class SessionBroker {
                 notifyWhenIdle: input["notify_when_idle"]?.bool ?? false)
             switch result {
             case .success(let e):
-                c.replySession(r.id, result: .string("Sent to \(e.name) (\(e.id)); it's \(e.state). Its reply, if any, arrives as a <session-message>."))
+                let how = e.state == "running" ? "queued (target busy)" : "delivered (turn started)"
+                c.replySession(r.id, result: .string("Sent to \(e.name) (\(e.id)); \(how). It reads the message at its next turn boundary; its reply, if any, arrives as a <session-message>."))
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
@@ -110,6 +161,7 @@ final class SessionBroker {
                     if input["report"]?.bool ?? true { self.watchStarted(s.id, reportTo: sender) }
                     var out: [String: JSONValue] = ["id": .string(s.id), "name": .string(s.name), "cwd": .string(s.cwd)]
                     if let b = s.branch { out["branch"] = .string(b) }
+                    if let b = s.base { out["base"] = .string(b) }
                     c?.replySession(r.id, result: .object(out))
                 } catch {
                     c?.replySession(r.id, error: error.localizedDescription)
@@ -203,6 +255,41 @@ final class SessionBroker {
             return
         }
         guard !waiting else { return }
+        let dead = background[id]?.failure != nil
+        // A started session whose first turn never made a model call (cancelled at birth, or
+        // its engine died first): its first prompt is replayed, so the work it was started for
+        // isn't silently lost. Checked before anything reports it idle.
+        if var b = births[id] {
+            if firstTurnRan(id) {
+                births[id] = nil
+                saveBirths()
+            } else if dead || !targetBusy(id) {
+                guard b.attempts < Self.birthRetries else {
+                    births[id] = nil
+                    saveBirths()
+                    return
+                }
+                b.attempts += 1
+                births[id] = b
+                saveBirths()
+                if dead { background[id] = nil }
+                _ = replayPrompt(id, b.prompt)
+                return
+            }
+        }
+        // An engine that died mid-turn (its process gone, no `turn_ended`, a stale `.live`):
+        // its conversation isn't live and its last turn is still open. Restart the engine and
+        // have it pick the turn back up, rather than leaving the session stuck open forever.
+        // The restarted turn runs and settles first; idle notices wait for that. (Before the
+        // busy check: a dead engine's open turn looks busy.)
+        if dead, let c = background[id], c.turns.last.map({ !$0.finished }) == true {
+            background[id] = nil
+            _ = conversation(for: id)
+            return
+        }
+        // Idle only when nothing is running and nothing is queued: a live engine mid-turn
+        // (or one with messages waiting) gets no notice, whatever the last report said.
+        guard !targetBusy(id) else { return }
         if let list = watches[id] {
             let ready = list.filter(\.armed)
             watches[id] = list.filter { !$0.armed }
@@ -214,20 +301,37 @@ final class SessionBroker {
             }
         }
         // A background engine that did its work lets go; a new message starts it again.
+        // Never while a turn is open (a just-started child's first turn is), or while its
+        // engine is still working — that was the cancel-at-birth bug.
         if armedBackground.remove(id) != nil, let c = background.removeValue(forKey: id) {
-            c.stop()
+            let turnOpen = c.turns.last.map { !$0.finished } ?? false
+            if turnOpen || c.busy {
+                // Still working: keep it, and re-arm so the next real idle lets it go.
+                background[id] = c
+                armedBackground.insert(id)
+            } else {
+                c.stop()
+            }
         }
     }
 
     // MARK: Engines
 
     /// A running conversation for session `id`: on screen, in the background, or started now.
-    func conversation(for id: String) -> Conversation? {
+    /// Restarting a closed one resumes its log: no mode flag (the engine keeps the mode the
+    /// session last used) and no `-m` (it keeps the model it last ran on), never the sender's.
+    /// A turn the dead engine left unfinished (it died mid-turn: no `turn_ended`, a stale
+    /// `.live`) is picked back up rather than left open forever.
+    func conversation(for id: String, continueOpen: Bool = true) -> Conversation? {
         if let c = Library.shared.conversation(id), c.isLive { return c }
         if let c = background[id], c.isLive { return c }
         guard let info = Library.shared.sessions.first(where: { $0.id == id }), let folder = info.folder else { return nil }
-        let c = Conversation(folder: folder, arguments: ["-r", id] + Workspace.engineFlags(chat: info.isChat), model: nil)
+        // An engine that died mid-turn left it open: the fresh engine continues it, ahead of
+        // anything new (the user may have stopped the old one; the report says which).
+        let unfinished = background[id].map { c in c.turns.last.map { !$0.finished } ?? false } ?? false
+        let c = Conversation(folder: folder, arguments: ["-r", id] + Workspace.engineFlags(chat: info.isChat, mode: false), model: nil)
         background[id] = c
+        if unfinished, continueOpen { c.continueInterrupted() }
         return c
     }
 
@@ -268,12 +372,37 @@ final class SessionBroker {
 
     // MARK: Worktrees
 
+    /// The branch a new session's worktree starts from: the repo's remote default
+    /// (`origin/HEAD`, e.g. origin/main), so a session forked from a feature-branch checkout
+    /// doesn't inherit its half-finished work. Falls back to the current branch only when
+    /// there's no remote, and says so.
+    nonisolated static func worktreeBase(in repo: URL) throws -> (ref: String, fallback: Bool) {
+        let remoteHead = try? git(["rev-parse", "--symbolic-full-name", "origin/HEAD"], in: repo)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let remoteHead, !remoteHead.isEmpty, remoteHead != "origin/HEAD" {
+            return (remoteHead, false)
+        }
+        // `origin/HEAD` unset or missing: name the remote's main-ish branch directly.
+        let remoteBranches = ((try? git(["branch", "--remote", "--format=%(refname:short)"], in: repo)) ?? "")
+            .split(separator: "\n").map(String.init)
+        for candidate in remoteBranches where candidate == "origin/main" || candidate == "origin/master" {
+            return ("refs/remotes/\(candidate)", false)
+        }
+        guard remoteBranches.isEmpty else {
+            throw BrokerError("no origin/main or origin/master to base the worktree on; branch manually and use cwd")
+        }
+        let current = try git(["branch", "--show-current"], in: repo).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (current.isEmpty ? "HEAD" : current, true)
+    }
+
     /// A git worktree for a new session: `<repo>/.frog/worktrees/<name>` on a new branch
-    /// `frog/<name>` from HEAD (a numbered name if taken). Returns its folder and branch.
-    nonisolated static func makeWorktree(from folder: URL, name: String) throws -> (URL, String) {
+    /// `frog/<name>` from the remote default branch (a numbered name if taken). Returns its
+    /// folder, branch, and the base ref it started from.
+    nonisolated static func makeWorktree(from folder: URL, name: String) throws -> (URL, String, String) {
         let top = try git(["rev-parse", "--show-toplevel"], in: folder).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !top.isEmpty else { throw BrokerError("\(folder.path) isn't in a git repository") }
         let repo = URL(fileURLWithPath: top)
+        let (baseRef, fallback) = try worktreeBase(in: repo)
         let base = slug(name)
         let branches = Set(try git(["branch", "--format=%(refname:short)"], in: repo).split(separator: "\n").map(String.init))
         var n = 1
@@ -285,7 +414,11 @@ final class SessionBroker {
         }
         let dir = root.appending(path: pick)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        _ = try git(["worktree", "add", "--quiet", "-b", "frog/\(pick)", dir.path], in: repo)
+        _ = try git(["worktree", "add", "--quiet", "-b", "frog/\(pick)", dir.path, baseRef], in: repo)
+        if fallback {
+            // No remote: the best base available is this checkout's branch. Say so in the result.
+            _ = baseRef
+        }
         // Keep the worktrees out of the main checkout's `git status`.
         if let common = try? git(["rev-parse", "--git-common-dir"], in: repo).trimmingCharacters(in: .whitespacesAndNewlines) {
             let gitDir = common.hasPrefix("/") ? URL(fileURLWithPath: common) : repo.appending(path: common)
@@ -297,7 +430,7 @@ final class SessionBroker {
                     .write(to: exclude, atomically: true, encoding: .utf8)
             }
         }
-        return (dir, "frog/\(pick)")
+        return (dir, "frog/\(pick)", baseRef)
     }
 
     nonisolated static func slug(_ s: String) -> String {
@@ -354,6 +487,44 @@ extension SessionBroker {
                 warning: true)
         }
         currentInput = { id in Library.shared.conversation(id)?.turns.last?.input }
+        targetBusy = { id in
+            guard let c = Library.shared.conversation(id) ?? self.background[id] else { return false }
+            return c.busy || c.turns.last.map { !$0.finished } == true || !c.queue.isEmpty
+        }
+        firstTurnRan = { [unowned self] id in
+            guard let c = Library.shared.conversation(id) ?? self.background[id] else {
+                return Self.logShowsAModelCall(id)
+            }
+            return c.turns.contains { ($0.usage?.modelCalls ?? 0) > 0 }
+        }
+        replayPrompt = { [unowned self] id, prompt in
+            // The engine resumes the log (or restarts if it died); the prompt runs as its next
+            // turn once the history is in. An open turn isn't continued as well: this is it.
+            guard let c = conversation(for: id, continueOpen: false) else { return false }
+            c.submit(prompt)
+            return true
+        }
+        birthsURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Frog/births.json")
+        loadBirths()
+        // Births left over from a previous run (the app quit or crashed before a child's
+        // first turn ran): replay those whose logs show no model call, once sessions load.
+        if !births.isEmpty {
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(3))
+                guard let self else { return }
+                for (id, b) in self.births {
+                    if Self.logShowsAModelCall(id) {
+                        self.births[id] = nil
+                    } else if self.conversation(for: id) == nil {
+                        self.births[id] = nil
+                    } else {
+                        _ = self.replayPrompt(id, b.prompt)
+                    }
+                }
+                self.saveBirths()
+            }
+        }
         lastReport = { id in
             guard let t = (Library.shared.conversation(id) ?? self.background[id])?.turns.last else { return nil }
             var text = t.items.filter { $0.kind == .message }.map(\.text).joined(separator: "\n\n")
@@ -382,28 +553,43 @@ extension SessionBroker {
             throw BrokerError("No folder at \(folder.path)")
         }
         var branch: String?
+        var base: String?
         if req.worktree {
             let from = folder
-            let (dir, b) = try await Task.detached { try Self.makeWorktree(from: from, name: title) }.value
+            let (dir, b, basedOn) = try await Task.detached { try Self.makeWorktree(from: from, name: title) }.value
             folder = dir
             branch = b
+            base = basedOn
         }
         let model = req.model ?? parent?.status?.model
+        // The first prompt is on disk before the engine starts: if turn 1 dies at birth, it's
+        // replayed rather than lost (see `births`).
+        let pending = "pending-" + UUID().uuidString
+        recordBirth(pending, prompt: req.prompt)
         let c = Conversation(folder: folder, arguments: Workspace.engineFlags(chat: false), model: model)
-        guard c.failure == nil else { throw BrokerError(c.failure ?? "couldn't start") }
+        guard c.failure == nil else {
+            births[pending] = nil
+            saveBirths()
+            throw BrokerError(c.failure ?? "couldn't start")
+        }
         c.rename(title)
         c.submit(req.prompt)
         let deadline = ContinuousClock.now + .seconds(20)
         while c.sessionID == nil, c.failure == nil, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
+        births[pending] = nil
         guard let id = c.sessionID else {
+            saveBirths()
             c.stop()
             throw BrokerError(c.failure ?? "the new session didn't start in time")
         }
+        recordBirth(id, prompt: req.prompt)
         track(c, as: id)
         if let p = parent?.sessionID { Library.shared.setParent(of: id, to: p) }
         Library.shared.refresh()
-        return Started(id: id, name: title, cwd: folder.path, branch: branch)
+        var started = Started(id: id, name: title, cwd: folder.path, branch: branch)
+        started.base = base
+        return started
     }
 }
