@@ -1,0 +1,1043 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>frog · background work</title>
+<!-- built by build.sh from src/; edit src/, not this file -->
+<style>
+/* tokens: mirror of chief design/system/tokens.json v0.1.0 (frog-design-system worktree) */
+:root{
+  --font-ui:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  --font-rounded:ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --fs-title:17px;--fs-heading:15px;--fs-body:13px;--lh-body:20px;--fs-callout:12px;--fs-caption:10px;--fs-mono:12px;
+  --radius-xs:4px;--radius-s:6px;--radius-m:8px;--radius-l:10px;--radius-xl:12px;--radius-card:14px;--radius-field:16px;--radius-bubble:18px;--radius-pill:999px;
+  --shadow-menu:0 2px 6px rgba(0,0,0,.25);--shadow-float:0 10px 24px rgba(0,0,0,.35);--shadow-modal:0 12px 30px rgba(0,0,0,.35);
+  --motion-quick:220ms cubic-bezier(.25,1,.5,1);--motion-panel:420ms cubic-bezier(.34,1.3,.64,1);--motion-hover:120ms cubic-bezier(0,0,.58,1);
+  --mark-ink:#15171a;--mark-paper:#fbfbf9;
+  --model-dart-spot:#1f4f9e;--model-tree-spot:#36b347;--model-bull-spot:#7a35d6;
+}
+.light{color-scheme:light;
+  --color-bg:#f4f4f4;--color-surface:#e8e8e8;--color-hover:#e0e0e0;--color-line:#dcdcdc;--color-line-strong:#d2d2d2;
+  --color-text:#15171a;--color-muted:#6b6f75;--color-faint:#9a9da2;--color-accent:#2e9e4f;--color-on-accent:#ffffff;
+  --color-success:#34c759;--color-warning:#ff9500;--color-danger:#ff3b30;--color-info:#007aff;
+  --color-place-local:#007aff;--color-place-cloud:#34c759;
+  --color-model-dart:#3a89e0;--color-model-tree:#47c054;--color-model-bull:#9051e0;
+  --code-bg:#ebebeb;--code-add:rgba(52,199,89,.12);--code-del:rgba(255,59,48,.12);--scrim:rgba(0,0,0,.25);
+  /* local to this mockup: sidebar plate, page backdrop, warning as text (tokens: orange text only at caption+; darkened for 4.5:1 on light) */
+  --side:#ebebeb;--page:#d6d7d3;--warn-text:#d86a00}
+.dark{color-scheme:dark;
+  --color-bg:#1e1e1e;--color-surface:#292929;--color-hover:#303030;--color-line:#343434;--color-line-strong:#3e3e3e;
+  --color-text:#e8e8e6;--color-muted:#8f9297;--color-faint:#6b6e73;--color-accent:#58cc6f;--color-on-accent:#0f2419;
+  --color-success:#30d158;--color-warning:#ff9f0a;--color-danger:#ff453a;--color-info:#0a84ff;
+  --color-place-local:#0a84ff;--color-place-cloud:#30d158;
+  --color-model-dart:#429cff;--color-model-tree:#51da60;--color-model-bull:#a45cff;
+  --code-bg:#262626;--code-add:rgba(48,209,88,.12);--code-del:rgba(255,69,58,.12);--scrim:rgba(0,0,0,.45);
+  --side:#242424;--page:#0c0d0c;--warn-text:#ff9f0a}
+*{box-sizing:border-box}html,body{margin:0}
+body{font:var(--fs-body)/var(--lh-body) var(--font-ui);-webkit-font-smoothing:antialiased;background:var(--page);color:var(--color-text);min-width:1280px}
+button{font:inherit;color:inherit}
+.mono{font-family:var(--font-mono)}.num{font-variant-numeric:tabular-nums}.spacer{flex:1}
+
+/* page chrome */
+.top{display:flex;align-items:center;gap:16px;padding:18px 32px 0}
+.top h1{font:600 20px var(--font-rounded);margin:0;letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+.top p{margin:0;color:var(--color-muted);font-size:12px}
+.seg{display:inline-flex;background:var(--color-surface);border:1px solid var(--color-line);border-radius:var(--radius-pill);padding:2px}
+.seg button{border:0;background:none;padding:2px 11px;border-radius:var(--radius-pill);font-size:12px;color:var(--color-muted);cursor:pointer}
+.seg button.on{background:var(--color-bg);color:var(--color-text);box-shadow:0 0 0 .5px var(--color-line-strong)}
+.tabs{display:flex;gap:2px;padding:12px 32px 12px;flex-wrap:wrap}
+.tabs button{border:0;background:none;padding:5px 11px;border-radius:var(--radius-s);font-size:12px;color:var(--color-muted);cursor:pointer;display:flex;gap:6px;align-items:center}
+.tabs button:hover{background:color-mix(in srgb,var(--color-text) 6%,transparent)}
+.tabs button.on{background:var(--color-bg);color:var(--color-text);font-weight:500;box-shadow:0 0 0 .5px var(--color-line-strong)}
+.tabs .k{font:10px var(--font-mono);color:var(--color-faint)}
+
+/* window */
+.win{margin:0 32px 28px;height:780px;border-radius:12px;overflow:hidden;display:grid;grid-template-columns:248px 1fr;background:var(--color-bg);box-shadow:0 0 0 .5px var(--color-line-strong),var(--shadow-float);position:relative}
+.side{background:var(--side);border-right:.5px solid var(--color-line);display:flex;flex-direction:column;min-height:0}
+.lights{display:flex;gap:8px;padding:14px 14px 10px}.lights i{width:12px;height:12px;border-radius:50%}
+.lights i:nth-child(1){background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.nav{padding:2px 8px;display:grid;gap:1px}
+.nav a{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:var(--radius-s);cursor:pointer;color:var(--color-text);text-decoration:none}
+.nav a:hover{background:var(--color-hover)}
+.nav a.sel{background:color-mix(in srgb,var(--color-accent) 18%,transparent)}
+.nav .ct{margin-left:auto;font:500 11px var(--font-mono);color:var(--color-muted)}
+.nav .ct.w{background:var(--color-warning);border-radius:var(--radius-pill);padding:0 6px;line-height:16px;color:#fff}
+.dark .nav .ct.w{color:#1e1e1e}
+.grp{font:600 10px var(--font-ui);color:var(--color-faint);letter-spacing:.04em;padding:14px 16px 4px}
+.tree{padding:0 8px;overflow:auto;flex:1}
+.srow{display:grid;grid-template-columns:20px 1fr auto;align-items:center;column-gap:8px;padding:5px 8px;border-radius:var(--radius-s);cursor:pointer;position:relative}
+.srow:hover{background:var(--color-hover)}
+.srow.sel{background:color-mix(in srgb,var(--color-accent) 18%,transparent)}
+.srow .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srow .t.dim{color:var(--color-muted)}
+.srow .d{grid-column:2/4;font-size:var(--fs-caption);line-height:13px;color:var(--color-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srow .d.w{color:var(--warn-text)}.srow .d.x{color:var(--color-danger)}
+.srow.c1{margin-left:12px}.srow.c2{margin-left:24px}
+.av{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;font:600 11px var(--font-rounded);position:relative}
+.av .lg{position:absolute;right:-5px;bottom:-5px;background:var(--side);border-radius:50%;width:12px;height:12px;display:grid;place-items:center}
+.sfoot{border-top:.5px solid var(--color-line);padding:10px 16px 12px;font-size:var(--fs-caption);color:var(--color-muted);display:grid;gap:2px}
+.sfoot b{font:500 12px var(--font-mono);color:var(--color-text)}
+.burn{display:flex;align-items:center;gap:6px}
+
+.main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+.bar{height:44px;display:flex;align-items:center;gap:10px;padding:0 18px;border-bottom:.5px solid var(--color-line);flex:none}
+.bar h2{margin:0;font:600 13px var(--font-ui)}
+.bar .sub{color:var(--color-muted);font-size:12px}
+.screen{display:none;flex:1;min-height:0;flex-direction:column}
+.screen.on{display:flex}
+
+/* glyphs */
+.g{display:inline-grid;place-items:center;flex:none;width:16px;height:16px}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+.pulse{animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.spin,.pulse,.ff *{animation:none!important}}
+.still .spin,.still .pulse,.still .ff *{animation:none!important}
+
+/* state tag */
+.st{display:inline-flex;align-items:center;gap:5px;font:600 var(--fs-caption)/14px var(--font-ui);letter-spacing:.02em;white-space:nowrap}
+.st.run{color:var(--color-accent)}.st.wait{color:var(--warn-text)}.st.done{color:var(--color-success)}
+.st.fail,.st.dead,.st.orph{color:var(--color-danger)}.st.idle,.st.queue,.st.stop{color:var(--color-muted)}
+.st .g{width:12px;height:12px}
+
+/* activity */
+.act{flex:1;display:grid;grid-template-columns:1fr 330px;min-height:0}
+.list{overflow:auto;min-width:0;padding:0 0 30px}
+.stats{display:flex;padding:14px 18px 14px;border-bottom:.5px solid var(--color-line)}
+.stat{padding-right:20px;margin-right:20px;border-right:.5px solid var(--color-line)}
+.stat:last-child{border:0}
+.stat b{display:block;font:600 20px/24px var(--font-rounded);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.stat span{font-size:var(--fs-caption);color:var(--color-muted)}
+.stat.w b{color:var(--warn-text)}.stat.x b{color:var(--color-danger)}
+.filters{display:flex;gap:8px;align-items:center;padding:12px 18px 2px}
+.filters .q{margin-left:auto;font-size:var(--fs-caption);color:var(--color-faint)}
+.thead,.jrow{display:grid;grid-template-columns:18px minmax(180px,1.5fr) 92px minmax(110px,1fr) 100px 108px 54px;column-gap:10px;align-items:center}
+.thead{font:600 var(--fs-caption) var(--font-ui);color:var(--color-faint);letter-spacing:.03em;padding:10px 28px 2px}
+.thead .r,.jrow .r{text-align:right}
+.owner{display:flex;align-items:center;gap:8px;padding:12px 28px 4px;font-size:12px;font-weight:600}
+.owner .chain{font-weight:400;color:var(--color-faint);font-size:var(--fs-caption)}
+.owner .os{margin-left:auto;font-weight:400}
+.jrow{min-height:38px;padding:4px 10px;cursor:pointer;border-radius:var(--radius-m);margin:0 18px;transition:background var(--motion-hover)}
+.jrow:hover{background:var(--color-hover)}
+.jrow.sel{background:color-mix(in srgb,var(--color-accent) 14%,transparent)}
+.jrow .nm{min-width:0}
+.jrow .nm b{font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jrow .nm small{display:block;font:11px/14px var(--font-mono);color:var(--color-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jrow .wf{font-size:12px;color:var(--color-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jrow .el{display:grid;gap:2px;font:11px/14px var(--font-mono);color:var(--color-muted)}
+.jrow .cost{font:11px/14px var(--font-mono);color:var(--color-muted)}
+.jrow .cost b{color:var(--color-text);font-weight:500;display:block}
+.jrow .nx{font:11px var(--font-mono);color:var(--color-faint)}
+.jrow.ended{opacity:.55}
+.jrow.dead .nm b,.jrow.orph .nm b{color:var(--color-danger)}
+.idb{font:10px var(--font-mono);color:var(--color-faint);margin-left:5px;font-weight:400}
+.rail{display:block;width:100%;height:8px}
+
+.insp{border-left:.5px solid var(--color-line);overflow:auto;padding:16px 18px 30px;display:flex;flex-direction:column;gap:14px;background:color-mix(in srgb,var(--side) 50%,var(--color-bg))}
+.insp h3{margin:0;font:600 var(--fs-heading)/20px var(--font-ui);display:flex;gap:8px;align-items:center}
+.insp .cmd{font:11.5px/16px var(--font-mono);background:var(--code-bg);border:.5px solid var(--color-line);border-radius:var(--radius-m);padding:8px 10px;overflow-wrap:anywhere}
+.kv{display:grid;grid-template-columns:78px 1fr;row-gap:5px;column-gap:10px;font-size:12px;margin:0}
+.kv dt{color:var(--color-muted)}.kv dd{margin:0}
+.kv dd.m{font-family:var(--font-mono);font-size:11.5px}
+.sec{font:600 var(--fs-caption) var(--font-ui);color:var(--color-faint);letter-spacing:.04em;margin:2px 0 -8px}
+.tl{display:grid;font-size:12px}
+.tl div{display:grid;grid-template-columns:40px 10px 1fr;column-gap:8px;align-items:start;color:var(--color-muted)}
+.tl time{font:11px/18px var(--font-mono);color:var(--color-faint);text-align:right}
+.tl i{width:7px;height:7px;border-radius:50%;background:var(--color-line-strong);margin-top:6px;position:relative}
+.tl div:not(:last-child) i::after{content:"";position:absolute;left:3px;top:8px;width:1px;height:15px;background:var(--color-line-strong)}
+.tl i.a{background:var(--color-accent)}.tl i.w{background:var(--color-warning)}.tl i.x{background:var(--color-danger)}.tl i.o{background:none;border:1px dashed var(--color-faint)}
+.tl span{line-height:18px;padding-bottom:5px}
+.tl b{color:var(--color-text);font-weight:500}
+.tail{font:11px/16px var(--font-mono);background:var(--code-bg);border:.5px solid var(--color-line);border-radius:var(--radius-m);padding:8px 10px;color:var(--color-muted);white-space:pre-wrap;max-height:130px;overflow:auto;margin:0}
+.acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.btn{border:1px solid var(--color-line);background:var(--color-surface);border-radius:var(--radius-m);padding:3px 11px;font-size:12px;line-height:18px;cursor:pointer;display:inline-flex;gap:6px;align-items:center;white-space:nowrap;transition:background var(--motion-hover)}
+.btn:hover{background:var(--color-hover)}
+.btn:active{opacity:.8}
+.btn.p{background:var(--color-accent);border-color:transparent;color:var(--color-on-accent);font-weight:500}
+.btn.q{background:none;border-color:transparent;color:var(--color-muted)}
+.btn.q:hover{background:var(--color-hover)}
+.btn.x{color:var(--color-danger)}
+.btn kbd{font:10px var(--font-mono);opacity:.65}
+.btn[disabled]{opacity:.4;pointer-events:none}
+.meter{display:grid;gap:5px}
+.meter .ln{display:flex;justify-content:space-between;gap:10px}
+.meter .ln span{color:var(--color-muted);font:11px var(--font-mono)}
+.track{height:6px;border-radius:3px;background:var(--color-surface);box-shadow:inset 0 0 0 .5px var(--color-line-strong);position:relative;overflow:hidden}
+.track i{position:absolute;left:0;top:0;bottom:0;background:var(--color-accent);border-radius:3px;transition:width var(--motion-panel)}
+.track i.w{background:var(--color-warning)}.track i.x{background:var(--color-danger)}
+.track u{position:absolute;top:0;bottom:0;width:1.5px;background:var(--color-faint)}
+
+.toast{position:absolute;left:50%;bottom:18px;transform:translate(-50%,10px);opacity:0;background:var(--color-surface);border:.5px solid var(--color-line-strong);border-radius:var(--radius-pill);padding:5px 14px;font-size:12px;color:var(--color-muted);box-shadow:var(--shadow-menu);transition:opacity var(--motion-quick),transform var(--motion-quick);pointer-events:none;z-index:9;white-space:nowrap}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+
+/* chips */
+.chip{font:11px var(--font-mono);color:var(--color-muted);background:var(--color-surface);border:1px solid var(--color-line);border-radius:var(--radius-s);padding:0 6px;line-height:17px;white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:var(--color-success)}
+.chip .dot.h{background:none;border:1px solid var(--color-muted)}
+.chip.w{color:var(--warn-text);border-color:color-mix(in srgb,var(--color-warning) 45%,var(--color-line))}
+.chip.x{color:var(--color-danger);border-color:color-mix(in srgb,var(--color-danger) 45%,var(--color-line))}
+.chip .g{width:12px;height:12px}
+/* inbox */
+.inbox{flex:1;overflow:auto;padding:6px 0 40px}
+.inwrap{max-width:700px;margin:0 auto;padding:0 24px}
+.ihead{display:flex;align-items:baseline;gap:10px;padding:18px 0 4px}
+.ihead h3{margin:0;font:600 var(--fs-title) var(--font-ui);white-space:nowrap}
+.ihead span{color:var(--color-muted);font-size:12px;white-space:nowrap}
+.ihead .keys{margin-left:auto;white-space:nowrap;font:10px var(--font-mono);color:var(--color-faint)}
+.band{font:600 var(--fs-caption) var(--font-ui);color:var(--color-faint);letter-spacing:.04em;padding:16px 0 8px;display:flex;gap:6px;align-items:baseline}
+.band em{font-style:normal;font-weight:400;letter-spacing:0}
+.card{border-radius:var(--radius-card);border:1px solid color-mix(in srgb,var(--color-warning) 45%,transparent);background:color-mix(in srgb,var(--color-surface) 72%,transparent);padding:12px 14px;margin-bottom:10px;transition:padding var(--motion-panel),border-color var(--motion-quick)}
+.card.x{border-color:color-mix(in srgb,var(--color-danger) 45%,transparent)}
+.card.i{border-color:color-mix(in srgb,var(--color-info) 45%,transparent)}
+.card.focus{box-shadow:0 0 0 2px color-mix(in srgb,var(--color-accent) 55%,transparent)}
+.card .hd{display:flex;align-items:center;gap:8px;font-size:12px}
+.card .hd .who{font-weight:600}
+.card .hd .sub{color:var(--color-muted)}
+.card .hd .ago{margin-left:auto;font:11px var(--font-mono);color:var(--color-muted)}
+.card .what{margin:8px 0 4px;font-size:13px;font-weight:500}
+.card .what code{font:11.5px var(--font-mono);font-weight:400;background:var(--code-bg);border:.5px solid var(--color-line);border-radius:var(--radius-s);padding:1px 6px}
+.card .why{font-size:12px;color:var(--color-muted);display:grid;grid-template-columns:64px 1fr;row-gap:2px;margin:6px 0 10px}
+.card .why dt{color:var(--color-faint)}.card .why dd{margin:0}
+.card .why dd b{color:var(--color-text);font-weight:500}
+.card .res{display:none;font-size:12px;color:var(--color-muted);gap:8px;align-items:center}
+.card.answered{padding:7px 14px;border-color:var(--color-line);background:none}
+.card.answered .body{display:none}
+.card.answered .res{display:flex}
+.card .note{display:none;margin-top:8px}
+.card.noting .note{display:flex;gap:6px}
+.card .note input{flex:1;font:12px var(--font-ui);background:var(--color-bg);color:var(--color-text);border:1px solid var(--color-line-strong);border-radius:var(--radius-m);padding:4px 8px}
+
+/* transcript */
+.tx{flex:1;overflow:auto;padding:22px 0 0;display:flex;flex-direction:column}
+.col{max-width:600px;width:100%;margin:0 auto;padding:0 24px}
+.col p{margin:0 0 12px}
+.ubub{margin:0 0 24px auto;max-width:440px;width:fit-content;background:var(--color-accent);color:var(--color-on-accent);border-radius:var(--radius-bubble);padding:8px 14px}
+
+.ir{display:flex;align-items:center;gap:7px;color:var(--color-muted);font-size:var(--fs-callout);line-height:18px;padding:4px 6px;margin:0 -6px;border-radius:var(--radius-m);white-space:nowrap;cursor:pointer}
+.ir:hover{background:color-mix(in srgb,var(--color-surface) 60%,transparent)}
+.ir .who{color:var(--color-text);font-weight:500}
+.ir .hl{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ir .tr{margin-left:auto;display:flex;gap:6px;align-items:center;flex:none;padding-left:8px}
+.ir .chev{color:var(--color-faint);transition:transform var(--motion-quick);display:inline-block;width:10px;text-align:center}
+.ir.open .chev{transform:rotate(90deg)}
+.ir.ended{opacity:.62}
+.ir .k{font:600 var(--fs-caption) var(--font-ui)}
+.ir .tm{font:11px var(--font-mono);color:var(--color-muted)}
+.idet{display:none;margin:2px 0 10px 25px}
+.ir.open + .idet{display:block}
+.idet .kv{margin:6px 0 8px}
+.notice{text-align:center;font-size:var(--fs-caption);color:var(--color-muted);margin:16px 0;display:flex;align-items:center;gap:10px}
+.notice::before,.notice::after{content:"";flex:1;height:.5px;background:var(--color-line)}
+.notice.w{color:var(--warn-text)}
+.foot{font-size:var(--fs-caption);color:var(--color-faint);margin:8px 0 26px}
+.wake{display:flex;gap:8px;align-items:center;font-size:var(--fs-caption);color:var(--color-faint);margin:2px 0 10px;font-family:var(--font-mono)}
+.wake::before{content:"";width:14px;height:.5px;background:var(--color-line-strong)}
+.dock{position:sticky;bottom:0;padding:18px 0 16px;background:linear-gradient(to bottom,transparent,var(--color-bg) 40%);margin-top:auto}
+.livebar{display:flex;gap:10px;align-items:center;margin:0 auto 10px;width:fit-content;background:color-mix(in srgb,var(--color-surface) 96%,transparent);backdrop-filter:blur(20px) saturate(1.6);border:.5px solid var(--color-line-strong);border-radius:var(--radius-pill);padding:3px 4px 3px 12px;box-shadow:var(--shadow-menu);font-size:12px;color:var(--color-muted);cursor:pointer}
+.livebar b{color:var(--color-text);font-weight:500}
+.livebar .sep{width:.5px;height:12px;background:var(--color-line-strong)}
+.composer{border:1px solid var(--color-line-strong);border-radius:var(--radius-field);background:color-mix(in srgb,var(--color-bg) 95%,var(--color-text));padding:12px 14px;color:var(--color-faint);font-size:13px}
+
+/* dead manager */
+.dm{flex:1;display:flex;flex-direction:column;min-height:0;overflow:auto}
+.banner{margin:16px 24px 0;border:1px solid color-mix(in srgb,var(--color-danger) 45%,transparent);border-radius:var(--radius-card);padding:14px 16px;display:grid;grid-template-columns:44px 1fr;column-gap:14px;background:color-mix(in srgb,var(--color-surface) 60%,transparent);transition:border-color var(--motion-quick)}
+.banner.ok{border-color:color-mix(in srgb,var(--color-accent) 45%,transparent)}
+.banner h3{margin:0 0 2px;font:600 var(--fs-heading) var(--font-ui)}
+.banner p{margin:0 0 10px;font-size:12px;color:var(--color-muted);max-width:620px}
+.banner .facts{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
+.ghost{opacity:.42;filter:saturate(.3);pointer-events:none}
+.legend{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 24px 0}
+.lg4{border:.5px solid var(--color-line-strong);border-radius:var(--radius-l);padding:10px 12px;font-size:12px}
+.lg4 .h{display:flex;gap:8px;align-items:center;font-weight:600;margin-bottom:4px}
+.lg4 p{margin:0;color:var(--color-muted);font-size:11.5px;line-height:16px}
+.lg4 code{font:10.5px/14px var(--font-mono);color:var(--color-faint);display:block;margin-top:6px}
+.lgcap{margin:16px 24px 0;font:600 var(--fs-caption) var(--font-ui);color:var(--color-faint);letter-spacing:.04em}
+
+/* pod */
+.pod{flex:1;overflow:auto;padding:18px 24px 40px}
+.podgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.pane{border:.5px solid var(--color-line-strong);border-radius:var(--radius-xl);padding:14px 16px}
+.pane h4{margin:0 0 8px;font:600 var(--fs-caption) var(--font-ui);color:var(--color-faint);letter-spacing:.04em}
+.big{font:600 28px/34px var(--font-rounded);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.big small{font:400 13px var(--font-ui);color:var(--color-muted);letter-spacing:0;margin-left:6px}
+.spark{width:100%;height:40px;display:block;margin:6px 0 8px}
+.rowbox{border:.5px solid var(--color-line-strong);border-radius:var(--radius-xl);padding:6px 0}
+
+/* agent */
+.ag{flex:1;overflow:auto;padding:18px 24px 40px}
+.aggrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+.aggrid h4,.ba h4{margin:0 0 6px;font:600 12px var(--font-ui)}
+.aggrid h4 small,.ba h4 small{font-weight:400;color:var(--color-muted);margin-left:6px}
+.blk{font:11px/16px var(--font-mono);background:var(--code-bg);border:.5px solid var(--color-line);border-radius:var(--radius-m);padding:10px 12px;white-space:pre;overflow:auto;margin:0;color:var(--color-text)}
+.blk .c{color:var(--color-faint)}.blk .a{color:var(--color-accent)}.blk .w{color:var(--warn-text)}.blk .x{color:var(--color-danger)}.blk .m{color:var(--color-muted)}
+.cap{font-size:12px;color:var(--color-muted);margin:6px 0 16px}
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 8px}
+.ba .lbl{font:600 var(--fs-caption) var(--font-ui);letter-spacing:.04em;margin:0 0 4px}
+.ba .lbl.old{color:var(--color-faint)}.ba .lbl.new{color:var(--color-accent)}
+.blk.old{color:var(--color-muted)}
+
+/* menu bar */
+.mb{flex:1;position:relative;overflow:hidden;background:
+  radial-gradient(120% 90% at 85% 10%,color-mix(in srgb,var(--color-accent) 26%,transparent),transparent 60%),
+  radial-gradient(90% 80% at 10% 90%,color-mix(in srgb,var(--color-info) 22%,transparent),transparent 60%),var(--color-bg)}
+.menubar{height:26px;display:flex;align-items:center;justify-content:flex-end;gap:14px;padding:0 14px;background:color-mix(in srgb,var(--color-bg) 65%,transparent);backdrop-filter:blur(20px);font-size:12px;border-bottom:.5px solid var(--color-line)}
+.menubar .fi{display:flex;gap:5px;align-items:center;padding:1px 6px;border-radius:5px;background:color-mix(in srgb,var(--color-text) 14%,transparent);font:500 11px var(--font-mono)}
+.menubar .dim{color:var(--color-muted)}
+.pop{position:absolute;right:96px;top:32px;width:340px;border-radius:var(--radius-xl);background:color-mix(in srgb,var(--color-bg) 86%,transparent);backdrop-filter:blur(30px) saturate(1.6);box-shadow:0 0 0 .5px var(--color-line-strong),var(--shadow-float);padding:6px}
+.pop .ph{display:flex;align-items:center;gap:8px;padding:8px 10px 4px}
+.pop .ph b{font-weight:600}
+.pop .ph span{margin-left:auto;font:11px var(--font-mono);color:var(--color-muted)}
+.pop .pi{display:grid;grid-template-columns:18px 1fr auto;gap:8px;align-items:center;padding:5px 10px;border-radius:var(--radius-s);font-size:12px;cursor:default}
+.pop .pi:hover{background:color-mix(in srgb,var(--color-accent) 18%,transparent)}
+.pop .pi small{display:block;color:var(--color-muted);font-size:var(--fs-caption);line-height:13px}
+.pop .pi .r{font:11px var(--font-mono);color:var(--color-muted)}
+.pop hr{border:0;border-top:.5px solid var(--color-line-strong);margin:4px 8px}
+.pop .pl{font:600 var(--fs-caption) var(--font-ui);color:var(--color-faint);padding:6px 10px 2px;letter-spacing:.04em}
+.notifs{position:absolute;left:32px;top:50px;width:350px;display:grid;gap:10px}
+.nt{border-radius:var(--radius-card);background:color-mix(in srgb,var(--color-bg) 82%,transparent);backdrop-filter:blur(30px);box-shadow:0 0 0 .5px var(--color-line-strong),var(--shadow-menu);padding:10px 12px;display:grid;grid-template-columns:32px 1fr auto;gap:10px;font-size:12px;line-height:16px}
+.nt b{display:block;font-weight:600}
+.nt span{color:var(--color-muted)}
+.nt time{font-size:var(--fs-caption);color:var(--color-faint)}
+.nt .ic{width:32px;height:32px;border-radius:8px;background:var(--mark-paper);display:grid;place-items:center}
+.nt .acts{grid-column:2/4;margin-top:2px}
+.ntcap{font:600 var(--fs-caption) var(--font-ui);color:var(--color-faint);letter-spacing:.04em;margin-top:6px}
+.rules{position:absolute;left:32px;right:32px;bottom:28px;display:grid;grid-template-columns:1fr 1fr 150px;gap:12px;align-items:stretch}
+.rules .pane{background:color-mix(in srgb,var(--color-bg) 82%,transparent);backdrop-filter:blur(20px)}
+.rules ul{margin:0;padding-left:16px;font-size:12px;color:var(--color-muted);line-height:19px}
+.rules ul b{color:var(--color-text);font-weight:500}
+.dockwrap{display:grid;justify-items:center;align-content:end;gap:8px;padding-bottom:6px}
+.dockicon{width:64px;height:64px;border-radius:15px;background:var(--mark-paper);display:grid;place-items:center;box-shadow:var(--shadow-float);position:relative}
+.dockicon .bd{position:absolute;right:-6px;top:-6px;background:var(--color-danger);color:#fff;font:600 12px var(--font-ui);border-radius:10px;min-width:20px;height:20px;display:grid;place-items:center;padding:0 5px}
+.dockcap{text-align:center;font-size:var(--fs-caption);color:var(--color-muted);line-height:13px}
+
+/* FrogFace moods (FrogFace.swift:278-307) */
+.ff .frog,.ff .pupil{transform-box:fill-box}.ff .frog{transform-origin:50% 100%}.ff .pupil{transform-origin:50% 50%}
+.ff.idle .frog{animation:breathe 3.2s ease-in-out infinite}.ff.idle .pupil{animation:blink 5s infinite}
+.ff.working .frog{animation:pump 1.1s ease-in-out infinite}.ff.working .pupil{animation:blink 3.3s infinite}
+.ff.waiting .frog{animation:tilt 1.8s ease-in-out infinite}.ff.waiting .pupil{animation:wide 1.8s ease-in-out infinite}
+.ff.sad .pupil{animation:droop 3s ease-in-out infinite alternate}.ff.sad .frog{animation:sink 3s ease-in-out infinite alternate}
+@keyframes breathe{0%,100%{transform:scale(1,1)}50%{transform:scale(1.012,.982)}}
+@keyframes pump{0%,100%{transform:scale(1,1)}45%{transform:scale(1.05,.94)}}
+@keyframes blink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.08)}}
+@keyframes tilt{0%,100%{transform:rotate(-7deg)}50%{transform:rotate(7deg)}}
+@keyframes wide{0%,100%{transform:scale(1.12)}50%{transform:scale(1.04)}}
+@keyframes droop{from{transform:translateY(14px) scaleY(.5)}to{transform:translateY(18px) scaleY(.42)}}
+@keyframes sink{from{transform:translateY(0)}to{transform:translateY(12px)}}
+.aggrid>div,.ba>div{min-width:0}
+</style>
+</head>
+<body class="dark">
+<header class="top">
+  <h1><span id="hface"></span>background work</h1>
+  <p>one model for everything frog runs while you look away. clickable mockups, not shipped.</p>
+  <span class="spacer"></span>
+  <div class="seg" id="theme"><button data-t="light">light</button><button data-t="dark" class="on">dark</button></div>
+</header>
+<nav class="tabs" id="tabs">
+  <button data-s="activity" class="on">activity <span class="k">⌘0</span></button>
+  <button data-s="inbox">waiting on you <span class="k">⌘⇧0</span></button>
+  <button data-s="transcript">inline rows</button>
+  <button data-s="dead">dead manager</button>
+  <button data-s="pod">pod with cap</button>
+  <button data-s="agent">agent context</button>
+  <button data-s="menubar">menu bar and alerts</button>
+</nav>
+
+<div class="win" id="win">
+  <aside class="side">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="nav">
+      <a data-go="inbox"><span class="g" data-glyph="hand"></span>waiting on you<span class="ct w" data-count="inbox">4</span></a>
+      <a data-go="activity" class="sel"><span class="g" data-glyph="live"></span>activity<span class="ct" data-count="live">11 live</span></a>
+    </div>
+    <div class="grp">MUNI</div>
+    <div class="tree" id="tree"></div>
+    <div class="sfoot">
+      <div class="burn"><span class="g" data-glyph="coin"></span><b class="num" data-count="burn">$15.87/hr</b><span>2 pods</span></div>
+      <div>today <span class="mono num">$46.10</span> of <span class="mono">$120</span> · resets 00:00</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="screen on" data-screen="activity">
+      <div class="act">
+        <div class="list">
+          <div class="stats">
+            <div class="stat"><b data-count="liveN">11</b><span>live</span></div>
+            <div class="stat w"><b data-count="inboxN">4</b><span>waiting on you</span></div>
+            <div class="stat x"><b data-count="deadN">2</b><span>dead or orphaned</span></div>
+            <div class="stat"><b data-count="burnN">$15.87</b><span>per hour now</span></div>
+            <div class="stat"><b>$46.10</b><span>today · cap $120</span></div>
+          </div>
+          <div class="filters">
+            <div class="seg" id="afilter"><button class="on" data-f="live">live</button><button data-f="you">needs you</button><button data-f="ended">ended today</button><button data-f="all">all</button></div>
+            <div class="seg"><button class="on">by owner</button><button>by kind</button></div>
+            <span class="q">j k move · ⏎ open · ⌫ stop · e extend</span>
+          </div>
+          <div class="thead"><span></span><span>WHAT</span><span>STATE</span><span>WAITING FOR</span><span>ELAPSED</span><span class="r">COST · CAP</span><span class="r">NEXT</span></div>
+          <div id="jobs"></div>
+        </div>
+        <aside class="insp" id="insp"></aside>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="inbox">
+      <div class="inbox"><div class="inwrap">
+        <div class="ihead"><h3>waiting on you</h3><span id="ihSub"></span><span class="keys">j k · ⌘⏎ first · ⌘. deny</span></div>
+        <div id="cards"></div>
+        <div class="band">NOT HERE ON PURPOSE <em>finished jobs, routine checks and child reports go to their owner, not to you.</em></div>
+      </div></div>
+    </section>
+
+    <section class="screen" data-screen="transcript">
+      <div class="bar"><span class="g" data-glyph="spin"></span><h2>chief of staff</h2><span class="sub">~/Developer/chief · opus 5.5</span><span class="spacer"></span><span class="chip">5 live</span><span class="chip w">1 needs you</span></div>
+      <div class="tx"><div class="col" id="txcol"></div>
+        <div class="dock"><div class="col">
+          <div class="livebar" data-go="activity"><span class="g" data-glyph="spin"></span><b>5 running</b><span class="sep"></span><span>1 needs you</span><span class="sep"></span><span class="mono">next wake 0:12</span><span class="btn q" style="padding:0 8px">open</span></div>
+          <div class="composer">ask the chief, or type / for jobs</div>
+        </div></div>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="dead">
+      <div class="bar"><span class="g" data-glyph="flat" id="deadGlyph"></span><h2>tang manager</h2><span class="sub" id="deadSub">~/Developer/tang · engine stopped 12m ago</span></div>
+      <div class="dm">
+        <div class="banner" id="deadBanner">
+          <div id="deadFace"></div>
+          <div id="deadBody">
+            <h3>tang manager stopped 12m ago</h3>
+            <p>its engine exited at 14:21 (killed, out of memory) and did not come back. it still owns a pod that bills by the hour, so the chief is watching it for now.</p>
+            <div class="facts">
+              <span class="chip x"><span class="g" data-glyph="flat"></span>last heartbeat 14:21:08</span>
+              <span class="chip x">tang-h200-bench · $10.58/hr · $2.12 since</span>
+              <span class="chip">j4 bench loop · lost with the engine</span>
+              <span class="chip">1 approval · kept for when it is back</span>
+            </div>
+            <div class="acts">
+              <button class="btn p" data-dead="restart">Restart engine <kbd>⌘R</kbd></button>
+              <button class="btn x" data-dead="stoppod">Stop pod</button>
+              <button class="btn" data-dead="hand">Hand to chief</button>
+              <button class="btn q">Crash log</button>
+            </div>
+          </div>
+        </div>
+        <div class="lgcap">FOUR STATES THAT USED TO LOOK THE SAME</div>
+        <div class="legend" id="legend"></div>
+        <div class="tx ghost" style="padding-top:18px;flex:none"><div class="col">
+          <p>bench run 3 of 5 is up. h200 at 92%, 61 tok/s on coder-next at 128k. checking back at 14:40.</p>
+          <div class="ir"><span class="g" data-glyph="shell"></span><span class="who">j4</span><span class="hl mono">bench/loop.sh --runs 5</span><span class="tr"><span class="st dead">lost</span></span></div>
+          <div class="ir"><span class="g" data-glyph="pod"></span><span class="who">tang-h200-bench</span><span class="hl">$10.58/hr · cap $50 · 4h</span><span class="tr"><span class="st orph">orphaned</span></span></div>
+          <div class="foot">opus 5.5 · 41 tok/s · 18.2k in · $0.31</div>
+        </div></div>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="pod">
+      <div class="bar"><span class="g" data-glyph="pod"></span><h2>tang-h200-bench</h2><span class="sub">runpod · muni account · 1× h200 sxm · r3</span><span class="spacer"></span><span id="podState"></span></div>
+      <div class="pod">
+        <div class="podgrid">
+          <div class="pane">
+            <h4>COST</h4>
+            <div class="big" id="podCost">$23.40<small>of $50 cap</small></div>
+            <div style="position:relative"><svg class="spark" viewBox="0 0 300 40" preserveAspectRatio="none" id="podSpark"></svg><span style="position:absolute;right:15%;top:-16px;margin-right:-40px;font:10px var(--font-mono);color:var(--color-danger)">owner died 14:21</span></div>
+            <div class="meter"><div class="track"><i id="podCostBar"></i><u style="left:80%"></u></div>
+              <div class="ln"><span>$10.58/hr, steady since 12:08</span><span id="podCostNote">warns at $40 · stops at $50</span></div></div>
+          </div>
+          <div class="pane">
+            <h4>TIME</h4>
+            <div class="big" id="podTime">2h 13m<small>of 4h cap</small></div>
+            <p id="podFirst" style="margin:12px 0 20px;font-size:12px;color:var(--color-muted);min-height:36px"></p>
+            <div class="meter"><div class="track"><i id="podTimeBar"></i><u style="left:80%"></u></div>
+              <div class="ln"><span>started 12:08</span><span id="podEnds">stops itself at 16:08</span></div></div>
+          </div>
+          <div class="pane">
+            <h4>WHAT IT'S DOING</h4>
+            <dl class="kv">
+              <dt>probe</dt><dd class="m">runpod get-pod · every 60s</dd>
+              <dt>last probe</dt><dd><span class="mono">20s ago</span> · ok · gpu 92% · 61 tok/s</dd>
+              <dt>next probe</dt><dd class="mono" id="podNext">in 40s</dd>
+              <dt>waiting for</dt><dd>bench run 3 of 5, then idle</dd>
+              <dt>at cap</dt><dd>stop pod, keep the volume, tell the owner</dd>
+              <dt>when idle</dt><dd>stop after 15m under 5% gpu</dd>
+            </dl>
+            <div class="acts" style="margin-top:14px" id="podActs">
+              <button class="btn" data-pod="ext">Extend 1h</button>
+              <button class="btn" data-pod="cap">Raise cap to $75</button>
+              <button class="btn q" data-pod="pause">Pause</button>
+              <span class="spacer"></span>
+              <button class="btn x" data-pod="stop">Stop pod</button>
+            </div>
+          </div>
+          <div class="pane">
+            <h4>WHO OWNS IT</h4>
+            <div class="tl">
+              <div><time>12:08</time><i class="a"></i><span><b>tang manager</b> started it with a $50, 4h cap</span></div>
+              <div><time>14:21</time><i class="x"></i><span>tang manager's engine stopped</span></div>
+              <div><time>14:22</time><i class="w"></i><span>moved up to its parent, <b>chief of staff</b>. you got one alert.</span></div>
+              <div><time>now</time><i class="o"></i><span>chief holds it until tang manager is back or you stop it. the cap still applies.</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sec" style="margin:20px 0 14px">THE SAME POD AS A ROW, WITH THE OTHER OUTSIDE THINGS FROG TRACKS</div>
+        <div class="rowbox" id="podRows"></div>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="agent"><div class="ag" id="agent"></div></section>
+
+    <section class="screen" data-screen="menubar"><div class="mb" id="mb"></div></section>
+
+    <div class="toast" id="toast"></div>
+  </main>
+</div>
+<script>
+// ---------- frog face (round-3 mark, FrogFace.swift:83-134) ----------
+const WEIGHT={
+  dart:{skin:"--color-model-dart",spot:"--model-dart-spot",body:"rotate(-6 512 802) translate(512 802) scale(.86 1.04) translate(-512 -802)",mouth:"o"},
+  tree:{skin:"--color-model-tree",spot:"--model-tree-spot",body:"",mouth:"smile"},
+  gray:{skin:"--color-faint",spot:"--color-line-strong",body:"",mouth:"smile"},
+  bull:{skin:"--color-model-bull",spot:"--model-bull-spot",body:"translate(512 802) scale(1.12 .9) translate(-512 -802)",mouth:"smirk"}};
+const HEAD='<path d="M216 568 A296 224 0 0 1 808 568 A296 234 0 0 1 216 568 Z"/><circle cx="360" cy="352" r="120"/><circle cx="664" cy="352" r="120"/>';
+const SPOTS=[[290,469,18],[262,523,11],[742,463,16],[772,510,10],[323,541,30],[701,541,30]];
+let uid=0;
+function mouth(kind,sad){
+  const s='stroke="var(--mark-ink)" stroke-width="30" stroke-linecap="round" fill="none"';
+  if(kind==="o"&&!sad) return '<ellipse cx="512" cy="592" rx="30" ry="36" fill="var(--mark-ink)"/>';
+  if(kind==="smirk"&&!sad) return `<path d="M430 590 L586 590 Q606 588 616 562" ${s}/>`;
+  return `<path d="M420 572 Q512 636 604 572" ${s}${sad?' transform="matrix(1 0 0 -1 0 1194)"':''}/>`;
+}
+function face(w,size,mood,extra=""){
+  const m=WEIGHT[w],id="h"+(uid++);
+  const eyes=[360,664].map(x=>`<g class="pupil"><circle cx="${x}" cy="344" r="68" fill="var(--mark-ink)"/><circle cx="${x+22}" cy="322" r="22" fill="var(--mark-paper)"/><circle cx="${x-24}" cy="368" r="9" fill="var(--mark-paper)"/></g>`).join("");
+  return `<svg class="ff ${mood} ${extra}" width="${size}" height="${size}" viewBox="160 200 704 704" overflow="visible" role="img" aria-label="frog, ${mood}" style="display:block">`+
+   `<defs><clipPath id="${id}">${HEAD}</clipPath></defs><g transform="${m.body}"><g class="frog">`+
+   `<g fill="var(${m.skin})">${HEAD}</g>`+
+   `<g fill="var(${m.spot})" clip-path="url(#${id})">${SPOTS.map(([x,y,r])=>`<circle cx="${x}" cy="${y}" r="${r}"/>`).join("")}</g>`+
+   `${eyes}${mouth(m.mouth,mood==="sad")}</g></g></svg>`;
+}
+
+// ---------- glyphs (16pt, one per state and kind) ----------
+const sv=(b,cls="")=>`<svg viewBox="0 0 16 16" width="100%" height="100%" fill="none" stroke-linecap="round" stroke-linejoin="round" class="${cls}">${b}</svg>`;
+const C={a:"var(--color-accent)",w:"var(--color-warning)",x:"var(--color-danger)",m:"var(--color-muted)",f:"var(--color-faint)",s:"var(--color-success)",l:"var(--color-line-strong)"};
+const GLYPH={
+  // states
+  spin:()=>sv(`<circle cx="8" cy="8" r="5.5" stroke="${C.l}" stroke-width="2"/><path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5" stroke="${C.a}" stroke-width="2"/>`,"spin"),
+  run:()=>GLYPH.spin(),
+  idle:()=>sv(`<circle cx="8" cy="8" r="4.5" stroke="${C.f}" stroke-width="1.5"/>`),
+  queue:()=>sv(`<circle cx="8" cy="8" r="5" stroke="${C.f}" stroke-width="1.5" stroke-dasharray="2 2.2"/>`),
+  hand:()=>sv(`<circle cx="8" cy="8" r="6.2" stroke="${C.w}" stroke-width="1.2" opacity=".45" class="pulse"/><circle cx="8" cy="8" r="3.6" fill="${C.w}"/>`),
+  wait:()=>GLYPH.hand(),
+  flat:()=>sv(`<path d="M1 8.5h3l1.4-4 2 8 1.4-4H15" stroke="${C.x}" stroke-width="1.5"/><circle cx="15" cy="8.5" r=".1" stroke="${C.x}" stroke-width="2"/>`),
+  dead:()=>GLYPH.flat(),
+  orph:()=>sv(`<circle cx="8" cy="8" r="5.5" stroke="${C.x}" stroke-width="1.4" stroke-dasharray="2.4 2"/><circle cx="8" cy="8" r="2" fill="${C.x}"/>`),
+  done:()=>sv(`<path d="M3.5 8.4l3 3 6-6.6" stroke="${C.s}" stroke-width="1.8"/>`),
+  fail:()=>sv(`<path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="${C.x}" stroke-width="1.8"/>`),
+  stop:()=>sv(`<rect x="4.5" y="4.5" width="7" height="7" rx="1.5" fill="${C.m}"/>`),
+  live:()=>sv(`<path d="M1 8.5h3l1.4-4 2 8 1.4-4H11l1-2 1 2h2" stroke="${C.m}" stroke-width="1.4"/>`),
+  coin:()=>sv(`<circle cx="8" cy="8" r="5.5" stroke="${C.m}" stroke-width="1.3"/><path d="M8 5v6M9.6 6.2c-.4-.5-1-.7-1.7-.7-.9 0-1.5.5-1.5 1.1 0 1.5 3.3.9 3.3 2.5 0 .7-.7 1.2-1.7 1.2-.7 0-1.4-.3-1.8-.8" stroke="${C.m}" stroke-width="1.1"/>`),
+  // kinds
+  shell:()=>sv(`<rect x="1.5" y="2.5" width="13" height="11" rx="2.5" stroke="${C.m}" stroke-width="1.3"/><path d="M4.5 6l2 2-2 2M8.5 10.5h3" stroke="${C.m}" stroke-width="1.3"/>`),
+  watch:()=>sv(`<circle cx="8" cy="8" r="6" stroke="${C.m}" stroke-width="1.3"/><circle cx="8" cy="8" r="2.6" stroke="${C.m}" stroke-width="1.1"/><path d="M8 8l4.2-4.2" stroke="${C.m}" stroke-width="1.3"/>`),
+  timer:()=>sv(`<circle cx="8" cy="9" r="5.5" stroke="${C.m}" stroke-width="1.3"/><path d="M8 6v3l2 1.4M6.5 1.8h3" stroke="${C.m}" stroke-width="1.3"/>`),
+  agent:()=>sv(`<path d="M8 1.8l1.5 4.7 4.7 1.5-4.7 1.5L8 14.2l-1.5-4.7L1.8 8l4.7-1.5z" stroke="${C.m}" stroke-width="1.2"/>`),
+  pod:()=>sv(`<rect x="3.5" y="3.5" width="9" height="9" rx="1.8" stroke="${C.m}" stroke-width="1.3"/><rect x="6" y="6" width="4" height="4" rx=".6" fill="${C.m}"/><path d="M6 1.5v2M10 1.5v2M6 12.5v2M10 12.5v2M1.5 6h2M1.5 10h2M12.5 6h2M12.5 10h2" stroke="${C.m}" stroke-width="1.1"/>`),
+  pr:()=>sv(`<circle cx="4.5" cy="3.8" r="1.7" stroke="${C.m}" stroke-width="1.2"/><circle cx="4.5" cy="12.2" r="1.7" stroke="${C.m}" stroke-width="1.2"/><circle cx="11.5" cy="12.2" r="1.7" stroke="${C.m}" stroke-width="1.2"/><path d="M4.5 5.5v5M11.5 10.5V6.5c0-1.2-.8-2-2-2H7.5M8.8 3.2L7.4 4.5l1.4 1.3" stroke="${C.m}" stroke-width="1.2"/>`),
+  ci:()=>sv(`<circle cx="8" cy="8" r="6" stroke="${C.m}" stroke-width="1.3"/><path d="M6.6 5.3v5.4L11 8z" fill="${C.m}"/>`),
+  ask:()=>sv(`<path d="M3 3.5h10a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H8l-3 2.5v-2.5H3A1.5 1.5 0 0 1 1.5 10V5A1.5 1.5 0 0 1 3 3.5z" stroke="${C.m}" stroke-width="1.3"/>`),
+  key:()=>sv(`<circle cx="5.5" cy="10.5" r="3" stroke="${C.m}" stroke-width="1.3"/><path d="M7.6 8.4L14 2M11.5 4.5l1.6 1.6" stroke="${C.m}" stroke-width="1.3"/>`),
+};
+const g=(name,size)=>`<span class="g"${size?` style="width:${size}px;height:${size}px"`:""}>${GLYPH[name]()}</span>`;
+function paintGlyphs(root=document){root.querySelectorAll("[data-glyph]").forEach(el=>{el.innerHTML=GLYPH[el.dataset.glyph]();});}
+
+// ---------- folder tint (SessionRows.swift:66, skipping brown hues 15-50) ----------
+function tint(h,a=1){h=(h>=15&&h<=50)?h+40:h;const s=.5,v=.72,f=n=>{const k=(n+h/60)%6;return v-v*s*Math.max(0,Math.min(k,4-k,1));};
+  return `rgba(${Math.round(f(5)*255)},${Math.round(f(3)*255)},${Math.round(f(1)*255)},${a})`;}
+
+// ---------- state vocabulary ----------
+const STATE={
+  queue:{label:"queued",cls:"queue",glyph:"queue"},
+  run:{label:"running",cls:"run",glyph:"spin"},
+  wait:{label:"needs you",cls:"wait",glyph:"hand"},
+  idle:{label:"idle",cls:"idle",glyph:"idle"},
+  done:{label:"done",cls:"done",glyph:"done"},
+  fail:{label:"failed",cls:"fail",glyph:"fail"},
+  stop:{label:"stopped",cls:"stop",glyph:"stop"},
+  dead:{label:"dead",cls:"dead",glyph:"flat"},
+  lost:{label:"lost",cls:"dead",glyph:"flat"},
+  orph:{label:"orphaned",cls:"orph",glyph:"orph"},
+};
+const stTag=(s,label)=>`<span class="st ${STATE[s].cls}">${g(STATE[s].glyph)}${label||STATE[s].label}</span>`;
+
+// ---------- data ----------
+const SESSIONS=[
+  {id:"chief",name:"chief of staff",ini:"c",hue:150,state:"run",detail:"running · 5 live · next wake 0:12",lvl:0},
+  {id:"frogm",name:"frog manager",ini:"f",hue:205,state:"idle",detail:"idle · watching 1 pr",lvl:1},
+  {id:"bgux",name:"background-work-ux",ini:"b",hue:205,state:"run",detail:"running 18m · $0.42 of $5",lvl:2},
+  {id:"cloudm",name:"frog cloud manager",ini:"f",hue:265,state:"wait",detail:"needs you 14m · push to zest",lvl:1},
+  {id:"tangm",name:"tang manager",ini:"t",hue:330,state:"dead",detail:"stopped 12m · pod billing $10.58/hr",lvl:1},
+  {id:"zest",name:"zest",ini:"z",hue:95,state:"run",detail:"running 3h · frog-cloud-10",lvl:1},
+  {id:"vcadm",name:"vcad manager",ini:"v",hue:290,state:"idle",detail:"idle 2h · nothing live",lvl:1},
+];
+const OWN={chief:"chief of staff",frogm:"frog manager",cloudm:"frog cloud manager",tangm:"tang manager",zest:"zest"};
+// kind: shell | watch | timer | agent | session | pod | pr | ci | approval
+const JOBS=[
+  {id:"j31",owner:"chief",kind:"shell",name:"frog merge queue",cmd:"bin/merge-queue.sh frog 74 76",state:"run",wf:"exit · step 2 of 3 (#76)",el:"4m 12s",frac:.14,cost:"—",cap:"30m",next:"on exit",
+   tail:"#74 rebased on main · ci green · merged 6f2a1c0\n#76 rebased on main\nwaiting for ci (4 of 7 checks)…",
+   tl:[["14:29","a","started by <b>chief</b> as a frog job"],["14:31","a","#74 merged"],["now","o","wakes chief when it exits"]]},
+  {id:"m7",owner:"chief",kind:"watch",name:"frog cloud health",cmd:"curl -s https://api.frog.toys/status | grep -q \"Serving now\"",state:"run",wf:"“Serving now” · every 30s",el:"22m 04s",frac:.18,ticks:44,cost:"—",cap:"2h",next:"0:12",
+   tail:"14:33:08  exit 1  (pod booting · 503)\n14:32:38  exit 1\n14:32:08  exit 1",
+   tl:[["14:11","a","started · every 30s until a match, 2h cap"],["14:23","w","app restarted · watch kept its schedule"],["now","o","check 45 in 0:12 · wakes chief on match"]]},
+  {id:"m8",owner:"chief",kind:"timer",name:"check tang bench",cmd:"timer · due 14:40:00 (wall clock)",state:"run",wf:"14:40 · wall clock",el:"11m of 20m",frac:.55,cost:"—",cap:"—",next:"9m",
+   tail:"set at 14:20:00 for 20m\ndue 14:40:00 · survives restarts\nnever fires before due",
+   tl:[["14:20","a","set for 20m"],["14:40","o","wakes chief"]]},
+  {id:"t2",owner:"chief",kind:"agent",name:"survey frog background code",cmd:"Task · read-only · sonnet",state:"run",wf:"its report",el:"1m 40s",frac:.1,cost:"$0.04",cap:"$1",next:"on report",
+   tail:"read background.rs (412 lines)\nread engine.rs:2210-2380\nreading protocol.rs…",
+   tl:[["14:31","a","started by chief, in the background"],["now","o","report comes back as a task-done wake"]]},
+  {id:"s3",owner:"frogm",kind:"session",name:"background-work-ux",cmd:"worker · glm-5.3 · worktree frog/background-work-ux",state:"run",wf:"its report",el:"18m",frac:.08,cost:"$0.42",cap:"$5",next:"on idle",face:"tree",
+   tail:"wrote design/background/spec.md\nscreenshotting index.html (dark)…",
+   tl:[["14:15","a","started by <b>frog manager</b>"],["now","o","reports to frog manager when idle"]]},
+  {id:"r81",owner:"frogm",kind:"pr",name:"ecto/frog#81 · job ledger",cmd:"gh pr checks 81 -R ecto/frog",state:"run",wf:"ci · 3 of 5 checks",el:"12m",frac:.4,ticks:12,cost:"—",cap:"1h",next:"0:40",
+   tail:"build-macos   pass  6m\ntest-engine   pass  4m\nlint          pass  1m\nui-tests      running\nrelease-dry   queued",
+   tl:[["14:21","a","pushed · frog manager tracks it"],["now","o","asks you to merge when green"]]},
+  {id:"a9",owner:"cloudm",kind:"approval",name:"push branch to zest",cmd:"git push https://github.com/ecto/zest.git HEAD:cancel-safe",state:"wait",wf:"you · Allow once or Deny",el:"14m",frac:1,cost:"—",cap:"—",next:"—",
+   tail:"frog cloud manager is paused on this.\nit touches: ecto/zest, a new branch only.",
+   tl:[["14:19","w","asked you"],["now","o","manager stays paused until you answer"]]},
+  {id:"p2",owner:"cloudm",kind:"pod",name:"frog-cloud-10",cmd:"runpod · 1× h200 · serves api.frog.toys",state:"run",wf:"stays up · approved always-on",el:"2d 4h",frac:0,cost:"$5.29/hr",costb:"$41.30 today",cap:"standing",next:"0:22",
+   tail:"probe ok · 18 sessions · 74 tok/s\nqueue depth 0",
+   tl:[["oct 21","a","started · Cam approved always-on at $5.29/hr"],["now","o","probed every 60s"]]},
+  {id:"p1",owner:"tangm",kind:"pod",name:"tang-h200-bench",cmd:"runpod · 1× h200 sxm · bench coder-next 128k",state:"orph",wf:"bench run 3 of 5 · held by chief",el:"2h 13m of 4h",frac:.554,cost:"$10.58/hr",costb:"$23.40 of $50",cap:"$50",next:"0:40",costfrac:.468,
+   tail:"probe ok · gpu 92% · 61 tok/s\nowner engine gone since 14:21",
+   tl:[["12:08","a","started by <b>tang manager</b> · $50, 4h cap"],["14:21","x","tang manager stopped"],["14:22","w","moved up to chief · you got one alert"],["now","o","stops itself at $50 or 16:08"]]},
+  {id:"j4",owner:"tangm",kind:"shell",name:"bench loop",cmd:"bench/loop.sh --runs 5",state:"lost",wf:"lost with its engine at 14:21",el:"1h 52m",frac:0,cost:"—",cap:"—",next:"—",
+   tail:"[run 3/5] prefill 128k … 61.2 tok/s\n(no output after 14:21:02)\nexit code: never written",
+   tl:[["12:29","a","started"],["14:21","x","engine died · the process went with it"],["now","o","output kept · rerun from the activity view"]]},
+  {id:"j2",owner:"zest",kind:"shell",name:"gateway logs",cmd:"wrangler tail frog-gateway --format pretty",state:"run",wf:"nothing · a stream",el:"3h 02m",frac:0,cost:"—",cap:"8h",next:"stream",
+   tail:"POST /v1/chat/completions 200 812ms\nPOST /v1/chat/completions 200 1.4s"},
+  {id:"m3",owner:"zest",kind:"watch",name:"frog-cloud-10 queue depth",cmd:"curl -s localhost:9100/metrics | grep queue_depth",state:"run",wf:"depth over 8 · every 60s",el:"3h",frac:.37,ticks:180,cost:"—",cap:"8h",next:"0:31"},
+  // ended today
+  {id:"j29",owner:"chief",kind:"shell",name:"engine tests",cmd:"cargo test -p frog-engine",state:"done",wf:"exit 0 · 412 passed",el:"3m 12s",frac:1,cost:"—",cap:"—",next:"14:26",ended:true},
+  {id:"j27",owner:"frogm",kind:"shell",name:"macos build",cmd:"xcodebuild -scheme Frog build",state:"fail",wf:"exit 65 · signing",el:"2m 40s",frac:1,cost:"—",cap:"—",next:"13:58",ended:true},
+  {id:"t1",owner:"chief",kind:"agent",name:"audit open approvals",cmd:"Task · read-only",state:"done",wf:"report read",el:"2m",frac:1,cost:"$0.06",cap:"$1",next:"13:40",ended:true},
+];
+const HEADS={
+  chief:{chain:"",os:stTag("run","running")},
+  frogm:{chain:"under chief",os:stTag("idle","idle · engine ok")},
+  cloudm:{chain:"under chief",os:stTag("wait","needs you · 14m")},
+  tangm:{chain:"under chief · its work is held by chief",os:stTag("dead","engine stopped 12m")},
+  zest:{chain:"under chief",os:stTag("run","running")},
+};
+
+// ---------- rail: elapsed against the cap, one tick per check, hollow mark for the next ----------
+function rail(j){
+  const W=100,f=Math.max(0,Math.min(1,j.frac||0));
+  const tone=j.state==="orph"||j.state==="lost"||j.state==="fail"?C.x:j.state==="wait"?C.w:(j.state==="done"?C.s:C.a);
+  let s=`<rect x="0" y="3" width="${W}" height="2" rx="1" fill="var(--color-line-strong)"/>`;
+  if(j.kind==="shell"&&j.cap==="—"&&!j.ended&&j.state!=="lost") return `<svg class="rail" viewBox="0 0 ${W} 8" preserveAspectRatio="none">${s}<rect x="0" y="3" width="${W}" height="2" rx="1" fill="${C.a}" opacity=".35"/></svg>`;
+  if(f>0) s+=`<rect x="0" y="2.5" width="${W*f}" height="3" rx="1.5" fill="${tone}"/>`;
+  if(j.ticks){const n=Math.min(j.ticks,24);for(let i=1;i<=n;i++){const x=(W*f)*i/n;s+=`<rect x="${x-.35}" y="1" width=".7" height="6" fill="var(--color-bg)" opacity=".9"/>`;}}
+  if(!j.ended&&j.state!=="lost"&&j.state!=="wait"&&j.cap!=="standing") s+=`<rect x="${Math.min(W-2,W*f+3)}" y="1" width="1.4" height="6" rx=".7" fill="none" stroke="${C.f}" stroke-width=".6" vector-effect="non-scaling-stroke"/>`;
+  return `<svg class="rail" viewBox="0 0 ${W} 8" preserveAspectRatio="none">${s}</svg>`;
+}
+
+// ---------- sidebar ----------
+function renderTree(sel){
+  document.getElementById("tree").innerHTML=SESSIONS.map(s=>{
+    const d=s.state==="wait"?"w":s.state==="dead"?"x":"";
+    const lg=s.state==="idle"?"":`<span class="lg">${GLYPH[STATE[s.state].glyph]()}</span>`;
+    return `<div class="srow c${s.lvl}${sel===s.id?" sel":""}" data-sess="${s.id}">
+      <span class="av" style="background:${tint(s.hue,.18)};color:${tint(s.hue)}">${s.ini}${lg}</span>
+      <span class="t${s.state==="idle"?" dim":""}">${s.name}</span><span></span>
+      <span class="d ${d}">${s.detail}</span></div>`;}).join("");
+}
+
+// ---------- activity ----------
+let FILTER="live",SEL="p1";
+function visible(j){
+  if(FILTER==="live") return !j.ended;
+  if(FILTER==="you") return j.state==="wait"||j.state==="orph"||j.state==="lost";
+  if(FILTER==="ended") return j.ended;
+  return true;
+}
+function renderJobs(){
+  const groups=Object.keys(OWN);let h="";
+  for(const o of groups){
+    const js=JOBS.filter(j=>j.owner===o&&visible(j));if(!js.length) continue;
+    const s=SESSIONS.find(x=>x.id===o);
+    h+=`<div class="owner"><span class="av" style="background:${tint(s.hue,.18)};color:${tint(s.hue)};width:18px;height:18px;font-size:10px">${s.ini}</span>${OWN[o]}<span class="chain">${HEADS[o].chain}</span><span class="os">${HEADS[o].os}</span></div>`;
+    for(const j of js){
+      const lead=j.kind==="session"?`<span class="g">${face(j.face||"tree",16,"working")}</span>`:g(j.kind==="approval"?"key":j.kind);
+      const lab=j.state==="wait"?"needs you":j.state==="orph"?"orphaned":j.state==="lost"?"lost":null;
+      h+=`<div class="jrow ${j.ended?"ended":""} ${j.state==="orph"?"orph":""} ${j.state==="lost"?"dead":""} ${SEL===j.id?"sel":""}" data-job="${j.id}">
+        ${lead}
+        <span class="nm"><b>${j.name}<span class="idb">${j.id}</span></b><small>${j.cmd}</small></span>
+        <span>${stTag(j.state==="lost"?"lost":j.state,lab)}</span>
+        <span class="wf" title="${j.wf}">${j.wf}</span>
+        <span class="el"><span>${j.el}</span>${rail(j)}</span>
+        <span class="cost r">${j.costb?`<b>${j.cost}</b>${j.costb}`:`<b>${j.cost}</b>${j.cap!=="—"?"cap "+j.cap:""}`}</span>
+        <span class="nx r">${j.next}</span></div>`;
+    }
+  }
+  document.getElementById("jobs").innerHTML=h||`<div style="padding:30px 28px;color:var(--color-muted)">nothing here. frog will show it the moment something starts.</div>`;
+}
+function renderInsp(){
+  const j=JOBS.find(x=>x.id===SEL);if(!j) return;
+  const lead=j.kind==="session"?`<span class="g" style="width:20px;height:20px">${face("tree",20,"working")}</span>`:g(j.kind==="approval"?"key":j.kind,18);
+  const kinds={shell:"command",watch:"watch",timer:"timer",agent:"subagent",session:"child session",pod:"gpu pod",pr:"pull request",approval:"approval"};
+  const pod=j.kind==="pod"&&j.costfrac;
+  const live=!j.ended&&j.state!=="lost";
+  document.getElementById("insp").innerHTML=`
+    <div><h3>${lead}${j.name}</h3><div style="margin-top:6px;display:flex;gap:8px;align-items:center">${stTag(j.state==="lost"?"lost":j.state,j.state==="wait"?"needs you":null)}<span class="chip">${j.id}</span><span class="chip">${kinds[j.kind]}</span></div></div>
+    <div class="cmd">${j.cmd}</div>
+    <dl class="kv">
+      <dt>owner</dt><dd>${OWN[j.owner]}${j.owner==="tangm"?' <span style="color:var(--color-danger)">· dead</span>, held by chief':""}</dd>
+      <dt>waiting for</dt><dd>${j.wf}</dd>
+      <dt>elapsed</dt><dd class="m">${j.el}</dd>
+      <dt>cost</dt><dd class="m">${j.cost}${j.costb?" · "+j.costb:""}</dd>
+      <dt>cap</dt><dd class="m">${j.cap}</dd>
+      <dt>next</dt><dd class="m">${j.next}</dd>
+    </dl>
+    ${pod?`<div class="meter"><div class="ln"><span>cost</span><span>$23.40 / $50</span></div><div class="track"><i style="width:${j.costfrac*100}%"></i><u style="left:80%"></u></div>
+      <div class="ln" style="margin-top:4px"><span>time</span><span>2h 13m / 4h</span></div><div class="track"><i style="width:${j.frac*100}%"></i><u style="left:80%"></u></div></div>`:""}
+    ${j.tl?`<div class="sec">HISTORY</div><div class="tl">${j.tl.map(([t,c,s])=>`<div><time>${t}</time><i class="${c}"></i><span>${s}</span></div>`).join("")}</div>`:""}
+    ${j.tail?`<div class="sec">LAST OUTPUT</div><pre class="tail">${j.tail}</pre>`:""}
+    <div class="acts">${
+      j.kind==="approval"?`<button class="btn p" data-go="inbox">Answer</button>`:
+      j.state==="lost"?`<button class="btn p" data-toast="j4 started again as j32 · same command, same owner">Run again</button><button class="btn q">Full log</button>`:
+      !live?`<button class="btn q">Full log</button>`:
+      `${j.kind==="pod"?`<button class="btn" data-toast="cap raised to 5h · stops at 17:08">Extend 1h</button>`:`<button class="btn" data-toast="${j.id} cap extended 30m">Extend</button>`}
+       ${j.kind==="watch"||j.kind==="timer"?`<button class="btn" data-toast="${j.id} paused · it keeps its place">Pause</button>`:""}
+       <button class="btn q">Full log</button><span class="spacer"></span>
+       <button class="btn x" data-stop="${j.id}">${j.kind==="pod"?"Stop pod":"Stop"}</button>`}
+    </div>`;
+  paintGlyphs(document.getElementById("insp"));
+}
+// ---------- inbox: one place for everything blocked on Cam ----------
+const CARDS=[
+  {id:"c-bench",band:"COSTING MONEY",tone:"x",who:"tang manager",sub:"dead 12m · held by chief",ago:"12m",glyph:"orph",
+   what:"tang-h200-bench has no living owner",
+   why:[["cause","tang manager's engine stopped at 14:21 (out of memory)"],["costs","<b>$10.58/hr</b> · $23.40 of its $50 cap · $2.12 since it died"],["also","j4 bench loop was lost · its 1 open approval is kept"],["advice","<b>restart the manager</b>: it takes the pod back and resumes run 3 of 5"]],
+   acts:[["Restart manager","p","restarted · tang manager took the pod back"],["Stop pod","x","tang-h200-bench stopped · volume kept · $0/hr"],["Run to cap","","left running · stops itself at $50"]],sc:"⌘⏎"},
+  {id:"c-push",band:"BLOCKING WORK",tone:"w",who:"frog cloud manager",sub:"paused on this",ago:"14m",glyph:"key",
+   what:"wants to run <code>git push https://github.com/ecto/zest.git HEAD:cancel-safe</code>",
+   why:[["why","ship the cancel-safe image branch for review"],["touches","ecto/zest · a new branch, not main"],["blocks","<b>frog cloud manager</b> and its next step (open the pr)"],["rule","pushes of branches are routine. Always would cover this kind."]],
+   acts:[["Allow once","p","allowed once · frog cloud manager resumed"],["Always for branches","","always allowed: push to non-main branches of ecto/zest"],["Deny with note…","q","note"],["Deny","","denied · the manager was told why"]],sc:"⌘⏎"},
+  {id:"c-xc",band:"BLOCKING WORK",tone:"w",who:"frog-ui worker",sub:"under frog manager",ago:"6m",glyph:"key",
+   what:"wants to run outside the sandbox: <code>xcodebuild -scheme Frog build</code>",
+   why:[["why","the sandbox blocks DerivedData in ~/Library"],["touches","~/Library/Developer/Xcode/DerivedData"],["blocks","1 worker · its manager is idle waiting on it"]],
+   acts:[["Allow once","p","allowed once · the build is running as j33"],["Deny with note…","q","note"],["Deny","","denied · the worker will try /private/tmp"]],sc:"⌘⏎"},
+  {id:"c-merge",band:"DECISIONS",tone:"i",who:"frog manager",sub:"asks",ago:"3m",glyph:"ask",
+   what:"merge ecto/frog#81 (job ledger) when ci is green?",
+   why:[["state","3 of 5 checks passed · ui-tests running · next check 0:40"],["note","this is the ledger the rest of this design sits on"]],
+   acts:[["Merge when green","p","will merge #81 when all 5 checks pass"],["Wait for me","","held · you'll get a row when it's green"],["Close","","closed"]],sc:"⌘⏎"},
+];
+function renderCards(){
+  let band="",h="";
+  for(const c of CARDS){
+    if(c.band!==band){band=c.band;const n=CARDS.filter(x=>x.band===band&&!x.answered).length;
+      h+=`<div class="band">${band} <em>${n?n+" open":"all answered"}</em></div>`;}
+    h+=`<div class="card ${c.tone==="x"?"x":c.tone==="i"?"i":""} ${c.answered?"answered":""} ${c.id==="c-bench"&&!c.answered?"focus":""}" data-card="${c.id}">
+      <div class="body">
+        <div class="hd">${g(c.glyph)}<span class="who">${c.who}</span><span class="sub">· ${c.sub}</span><span class="ago">waiting ${c.ago}</span></div>
+        <div class="what">${c.what}</div>
+        <dl class="why">${c.why.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+        <div class="acts">${c.acts.map(([l,t,r],i)=>`${t==="q"?'<span class="spacer"></span>':""}<button class="btn ${t}" data-ans="${c.id}" data-i="${i}">${l}${i===0?` <kbd>${c.sc}</kbd>`:""}</button>`).join("")}</div>
+        <div class="note"><input placeholder="tell ${c.who} why, so it can try another way"><button class="btn" data-ans="${c.id}" data-i="deny-note">Deny</button></div>
+      </div>
+      <div class="res">${g("done")}<span>${c.answered||""}</span><span class="spacer"></span><button class="btn q" data-undo="${c.id}">Undo</button></div>
+    </div>`;
+  }
+  document.getElementById("cards").innerHTML=h;
+  const open=CARDS.filter(c=>!c.answered).length;
+  document.getElementById("ihSub").textContent=open?`${open} open · oldest 14m${CARDS[0].answered?"":" · $10.58/hr at stake"}`:"nothing needs you. frog will ask here first.";
+  setCount(open);
+  paintGlyphs(document.getElementById("cards"));
+}
+function setCount(n){
+  document.querySelectorAll('[data-count="inbox"]').forEach(e=>{e.textContent=n;e.style.display=n?"":"none";});
+  document.querySelectorAll('[data-count="inboxN"]').forEach(e=>e.textContent=n);
+  const b=document.getElementById("dockBadge");if(b){b.textContent=n;b.style.display=n?"":"none";}
+  const mf=document.getElementById("mbCount");if(mf) mf.textContent=n;
+}
+
+// ---------- transcript: inline rows ----------
+function ir({lead,who,hl,tr,cls="",det,go}){
+  return `<div class="ir ${cls}"${go?` data-go="${go}"`:""}>${lead}<span class="who">${who}</span><span class="hl">${hl}</span><span class="tr">${tr}<span class="chev">›</span></span></div>${det?`<div class="idet">${det}</div>`:""}`;
+}
+function renderTx(){
+  const x=document.getElementById("txcol");
+  x.innerHTML=`
+  <div class="ubub">run the frog merge queue, and tell me when frog cloud is serving again</div>
+  <p>starting the queue as a frog job, so it survives restarts and shows up in activity. i'll watch the status page instead of polling it.</p>
+  ${ir({cls:"open",lead:g("shell"),who:"j31",hl:'<span class="mono">bin/merge-queue.sh frog 74 76</span> · step 2 of 3',tr:`<span class="tm">4m 12s</span>${stTag("run")}`,
+    det:`<pre class="tail">#74 rebased on main · ci green · merged 6f2a1c0
+#76 rebased on main
+waiting for ci (4 of 7 checks)…</pre>
+    <div class="acts" style="margin-top:8px"><span class="chip">cap 30m</span><span class="chip">wakes me on exit</span><span class="spacer"></span><button class="btn q" data-go="activity">In activity</button><button class="btn x" data-toast="j31 stopped · #76 left unmerged">Stop</button></div>`})}
+  ${ir({lead:g("watch"),who:"m7",hl:'frog cloud health · until <span class="mono">“Serving now”</span> · every 30s',tr:`<span class="chip">44 checks</span><span class="tm">next 0:12</span>${stTag("run","watching")}`,
+    det:`<dl class="kv"><dt>command</dt><dd class="m">curl -s https://api.frog.toys/status | grep -q "Serving now"</dd><dt>last</dt><dd class="m">14:33:08 · exit 1 · 503 pod booting</dd><dt>cap</dt><dd class="m">2h · then tells me it timed out</dd></dl>`})}
+  <div class="foot">opus 5.5 · 38 tok/s · 6.1k in · $0.09</div>
+
+  <div class="notice w">${g("live")}app restarted at 14:23 · 4 jobs picked up where they were · 1 lost</div>
+
+  <div class="wake">woke on j29 · job done</div>
+  ${ir({cls:"ended",lead:g("shell"),who:"j29",hl:'<span class="mono">cargo test -p frog-engine</span> · 412 passed',tr:`<span class="tm">3m 12s</span>${stTag("done","exit 0")}`})}
+  <p>tests pass on main. the tang manager went quiet, so i checked on it.</p>
+  ${ir({go:"dead",lead:`<span class="g">${face("gray",16,"sad")}</span>`,who:"tang manager",hl:"engine stopped 12m ago · its pod still bills $10.58/hr · i'm holding it",tr:`${stTag("dead")}`})}
+  ${ir({lead:`<span class="g">${face("tree",16,"idle")}</span>`,who:"frog manager",hl:"idle · watching ecto/frog#81 · 1 worker running",tr:`${stTag("idle","idle · engine ok")}`})}
+  ${ir({lead:`<span class="g">${face("tree",16,"waiting")}</span>`,go:"inbox",who:"frog cloud manager",hl:'wants to push <span class="mono">HEAD:cancel-safe</span> to zest',tr:`<span class="tm">14m</span>${stTag("wait")}`})}
+  ${ir({lead:g("agent"),who:"t2",hl:"survey frog background code · read-only",tr:`<span class="chip">$0.04</span><span class="tm">1m 40s</span>${stTag("run")}`})}
+  ${ir({lead:g("timer"),who:"m8",hl:"check tang bench · due 14:40 by the clock",tr:`<span class="tm">in 9m</span>${stTag("queue","set")}`})}
+  ${ir({lead:g("shell"),cls:"open",who:"JobOutput j12",hl:"ended 6m ago, while the engine restarted",tr:`${stTag("done","exit 0 · kept")}`,
+    det:`<div class="ba" style="margin:4px 0 6px"><div><div class="lbl old">TODAY</div><pre class="blk old">no background task, job or monitor j12</pre></div><div><div class="lbl new">WITH THE LEDGER</div><pre class="blk">j12 ended 14:27 (exit 0, 48s) while the
+engine restarted. output is kept:
+JobOutput j12 --tail 50</pre></div></div>`})}
+  <div class="foot">opus 5.5 · 41 tok/s · 18.2k in · $0.31</div>`;
+}
+
+// ---------- dead manager legend ----------
+function renderLegend(){
+  const L=[
+    ["idle","idle","idle","engine alive. nothing running, nothing queued, nothing asked.","heartbeat ok · 0 live · 0 cards"],
+    ["hand","waiting on you","waiting","engine alive and paused on your answer.","heartbeat ok · 1 card open"],
+    ["flat","dead","sad","engine gone without saying so. its jobs stay on disk.","no heartbeat for 30s · pid gone"],
+    ["orph","orphaned","sad","a job still running whose owner is dead. it moves up to the parent.","owner dead · job alive"],
+  ];
+  document.getElementById("legend").innerHTML=L.map(([gl,t,m,p,c])=>`<div class="lg4"><div class="h">${g(gl)}${t}<span class="spacer"></span><span class="g" style="width:18px;height:18px">${face(m==="sad"?"gray":"tree",18,m)}</span></div><p>${p}</p><code>${c}</code></div>`).join("");
+  document.getElementById("deadFace").innerHTML=face("gray",40,"sad");
+}
+
+// ---------- pod ----------
+const POD={cost:23.40,cap:50,mins:133,capm:240,state:"orph"};
+function renderPod(){
+  const cf=POD.cost/POD.cap,tf=POD.mins/POD.capm;
+  const tone=f=>f>=1?"x":f>=.8?"w":"";
+  document.getElementById("podCost").innerHTML=`$${POD.cost.toFixed(2)}<small>of $${POD.cap} cap</small>`;
+  const bar=document.getElementById("podCostBar");bar.style.width=Math.min(100,cf*100)+"%";bar.className=tone(cf);
+  document.getElementById("podCostNote").textContent=`warns at $${Math.round(POD.cap*.8)} · stops at $${POD.cap}`;
+  const h=Math.floor(POD.mins/60),m=POD.mins%60;
+  document.getElementById("podTime").innerHTML=`${h}h ${String(m).padStart(2,"0")}m<small>of ${POD.capm/60}h cap</small>`;
+  const tb=document.getElementById("podTimeBar");tb.style.width=Math.min(100,tf*100)+"%";tb.className=tone(tf);
+  const end=12*60+8+POD.capm;document.getElementById("podEnds").textContent=POD.state==="stop"?"stopped 14:34":`stops itself at ${Math.floor(end/60)}:${String(end%60).padStart(2,"0")}`;
+  document.getElementById("podState").innerHTML=POD.state==="stop"?stTag("stop","stopped · volume kept · $0/hr"):POD.state==="pause"?stTag("idle","paused · volume kept"):stTag("orph","orphaned · held by chief");
+  // spark: flat burn with a step at the run boundaries
+  const pts=[];for(let i=0;i<=60;i++){const v=i<8?3:i<14?30:i<52?30+Math.sin(i/2)*3:(POD.state==="stop"?0:31);pts.push(`${i*5},${40-v}`);}
+  document.getElementById("podSpark").innerHTML=`<polyline points="${pts.join(" ")}" fill="none" stroke="var(--color-accent)" stroke-width="1.5" vector-effect="non-scaling-stroke"/><line x1="${52*5}" x2="${52*5}" y1="0" y2="40" stroke="var(--color-danger)" stroke-dasharray="2 2" vector-effect="non-scaling-stroke"/>`;
+  // which cap hits first, at the current burn
+  const rate=POD.state==="stop"?0:10.58,costAt=12*60+8+POD.mins+(rate?Math.round((POD.cap-POD.cost)/rate*60):9999),timeAt=12*60+8+POD.capm;
+  const hm=m=>`${Math.floor(m/60)}:${String(m%60).padStart(2,"0")}`;
+  const first=timeAt<=costAt?`the time cap hits first, at ${hm(timeAt)}, with about $${(POD.cost+rate*(POD.capm-POD.mins)/60).toFixed(2)} spent.`:`the cost cap hits first, at ${hm(costAt)}.`;
+  document.getElementById("podFirst").textContent=POD.state==="stop"?"stopped. no cap will fire.":"at $10.58/hr, "+first;
+  document.querySelectorAll("#podActs .btn").forEach(b=>b.disabled=POD.state==="stop");
+  const R=JOBS.filter(j=>j.id==="p1"||j.id==="p2"||j.id==="r81");
+  const b=JOBS.find(j=>j.id==="p1");b.costb=`$${POD.cost.toFixed(2)} of $${POD.cap}`;b.cap=`$${POD.cap}`;b.costfrac=cf;b.frac=tf;
+  if(POD.state==="stop"){b.state="stop";b.wf="stopped by you · volume kept";b.cost="$0/hr";b.next="—";}
+  const ci={id:"r82",owner:"frogm",kind:"ci",name:"ui-tests · ecto/frog#81",cmd:"gh run watch 18842211 -R ecto/frog",state:"run",wf:"job ui-tests · step 6 of 9",el:"5m",frac:.5,ticks:10,cost:"—",cap:"20m",next:"0:15"};
+  document.getElementById("podRows").innerHTML=[...R,ci].map(j=>`<div class="jrow" style="margin:0 6px">${g(j.kind)}
+    <span class="nm"><b>${j.name}<span class="idb">${j.id}</span></b><small>${j.cmd}</small></span>
+    <span>${stTag(j.state,j.state==="orph"?"orphaned":null)}</span><span class="wf">${j.wf}</span>
+    <span class="el"><span>${j.el}</span>${rail(j)}</span>
+    <span class="cost r">${j.costb?`<b>${j.cost}</b>${j.costb}`:`<b>${j.cost}</b>${j.cap!=="—"?"cap "+j.cap:""}`}</span><span class="nx r">${j.next}</span></div>`).join("");
+  paintGlyphs(document.querySelector('[data-screen="pod"]'));
+}
+// ---------- agent context: what the model sees ----------
+function renderAgent(){
+  const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+  const block=`<span class="c">&lt;background owner="chief" as-of="14:33:20" new="2"&gt;</span>
+live 5 · needs cam 1 · held for a dead child 1 · burn <span class="w">$10.58/hr</span>
+
+<span class="a">j31</span> shell  running 4m12s   bin/merge-queue.sh frog 74 76
+           <span class="m">waits for exit · step 2 of 3 · cap 30m · wakes you</span>
+<span class="a">m7</span>  watch  running 22m     frog cloud health
+           <span class="m">until "Serving now" · every 30s · 44 checks · next 0:12</span>
+<span class="a">m8</span>  timer  due 14:40:00     check tang bench <span class="m">(in 9m, wall clock)</span>
+<span class="a">t2</span>  agent  running 1m40s   survey frog background code <span class="m">· $0.04</span>
+
+children
+  frog manager        idle, engine ok · 1 worker running · pr #81 ci 3/5
+  frog cloud manager  <span class="w">needs cam 14m</span> · git push zest HEAD:cancel-safe
+  tang manager        <span class="x">DEAD since 14:21</span> (oom) · you hold its work:
+    <span class="a">p1</span> pod tang-h200-bench  <span class="w">$10.58/hr</span> · $23.40 of $50 · 2h13m of 4h
+    <span class="x">j4</span> lost · bench/loop.sh · output kept
+
+since your last turn
+  j29 done · exit 0 · 3m12s · cargo test -p frog-engine <span class="m">(you saw it)</span>
+  engine restarted 14:23 · 4 reattached · j12 ended during it
+
+<span class="m">ids are stable across restarts. don't poll: every live item wakes you.
+Jobs for the full list · JobOutput &lt;id&gt; for output.</span>
+<span class="c">&lt;/background&gt;</span>`;
+  const jobs=`<span class="c">› Jobs {"filter":"live","children":true}</span>
+id   kind   state      owner        waiting for        elapsed  cost
+j31  shell  running    chief        exit · step 2/3    4m12s    —
+m7   watch  running    chief        "Serving now"      22m      —
+m8   timer  set        chief        14:40:00           11m      —
+t2   agent  running    chief        report             1m40s    $0.04
+p1   pod    <span class="x">orphaned</span>   tang→you     run 3/5 · cap $50  2h13m    $23.40
+j4   shell  <span class="x">lost</span>       tang         —                  1h52m    —
+a9   appr   <span class="w">needs cam</span>  cloud mgr    Allow once / Deny  14m      —
+<span class="m">7 items · 2 need attention · burn $10.58/hr</span>`;
+const pairs=[
+    ["a handle that outlived its job","no background task, job or monitor j12",
+     `j12 ended 14:27 (exit 0, 48s) while the engine
+restarted. output is kept: JobOutput j12`],
+    ["a job lost with its engine","(nothing. the job is gone from every list.)",
+     `j4 was lost at 14:21: its engine (tang manager)
+died and the process went with it. no exit code.
+last output 14:21:02. rerun: Jobs rerun j4`],
+    ["a timer that woke early",`&lt;wakeup id=mon-2&gt; 12s elapsed`,
+     `m8 is due at 14:40:00 (wall clock, 20m from 14:20).
+it fires once, at or after that. it never wakes early;
+a restart in between doesn't reset it.`],
+    ["a second watch on the same thing",`Timer mon-9 set (a duplicate of mon-7)`,
+     `already watching this as m7 (same command and
+pattern, next check 0:12). returned m7.`],
+    ["polling a running job",`(the agent calls JobOutput j31 nine times)`,
+     `j31 is still running, 4m12s in, step 2 of 3.
+nothing new since your last read 40s ago. you'll
+get a wake when it exits; no need to check.`],
+    ["a background process frog can't see",`nohup bin/merge-queue.sh … & disown   (invisible)`,
+     `this command detaches with nohup/disown, so frog
+couldn't track it. ran it as job j31 instead (it
+survives restarts the same way). opt out: --detach`],
+  ];
+  const wake=`<span class="c">&lt;wake id="w-188" for="j31" kind="job-done" at="14:38:51"&gt;</span>
+j31 finished · exit 0 · 9m43s (started 14:29:08)
+bin/merge-queue.sh frog 74 76 · owner chief
+last lines:
+  #76 rebased on main · ci green · merged 91be0d4
+  queue empty
+still live: m7, m8, t2 · p1 held for tang manager
+<span class="c">&lt;/wake&gt;</span>`;
+  const child=`<span class="c">› ListSessions {"under":"self","fields":["liveness","jobs"]}</span>
+frog manager        engine ok · idle 3m      jobs 1 · needs cam 0
+  background-work-ux  engine ok · running 18m  $0.42 of $5
+frog cloud manager  engine ok · <span class="w">waiting on cam 14m</span> (a9)
+tang manager        <span class="x">dead 12m</span> · last beat 14:21:08 · oom
+                      holds p1 ($10.58/hr) → <span class="w">moved to you</span>
+zest                engine ok · running 3h   jobs 2
+vcad manager        engine ok · idle 2h      jobs 0`;
+  document.getElementById("agent").innerHTML=`
+  <div class="aggrid">
+    <div><h4>the background block<small>appended to every turn, after compaction and after a restart</small></h4><pre class="blk">${block}</pre>
+      <p class="cap">≤ 30 lines. ended items drop out once the agent has seen them. children show one line each; only what needs the parent expands.</p></div>
+    <div><h4>Jobs<small>one list for everything, durable ids</small></h4><pre class="blk">${jobs}</pre>
+      <p class="cap">kinds share one id space per session: j shell, m watch or timer, t subagent, s child session, p pod, r pr or ci, a approval.</p>
+      <h4 style="margin-top:14px">a wake says what happened, with real timing</h4><pre class="blk">${wake}</pre>
+      <h4 style="margin-top:14px">a parent sees its children</h4><pre class="blk">${child}</pre></div>
+  </div>
+  <h4 style="margin:22px 0 10px;font:600 12px var(--font-ui)">errors that say what happened<small style="font-weight:400;color:var(--color-muted);margin-left:6px">today on the left, with the ledger on the right</small></h4>
+  ${pairs.map(([t,a,b])=>`<div class="ba"><div><div class="lbl old">${t.toUpperCase()} · TODAY</div><pre class="blk old">${a}</pre></div><div><div class="lbl new">WITH THE LEDGER</div><pre class="blk">${b}</pre></div></div>`).join("")}`;
+}
+
+// ---------- menu bar, dock and notifications ----------
+function renderMb(){
+  document.getElementById("mb").innerHTML=`
+  <div class="menubar"><span class="dim">wi-fi</span><span class="dim">100%</span>
+    <span class="fi"><span class="g" style="width:14px;height:14px">${face("tree",14,"waiting")}</span><span id="mbCount">4</span></span>
+    <span class="dim">thu 14:33</span></div>
+  <div class="pop">
+    <div class="ph"><span class="g" style="width:20px;height:20px">${face("tree",20,"waiting")}</span><b>frog</b><span>5 sessions · 11 live</span></div>
+    <div class="pl">NEEDS YOU</div>
+    <div class="pi">${g("orph")}<span>tang-h200-bench has no owner<small>tang manager died 12m ago</small></span><span class="r">$10.58/hr</span></div>
+    <div class="pi">${g("key")}<span>frog cloud manager · git push<small>paused 14m</small></span><span class="r">⌘1</span></div>
+    <div class="pi">${g("key")}<span>frog-ui worker · xcodebuild<small>paused 6m</small></span><span class="r">⌘2</span></div>
+    <div class="pi">${g("ask")}<span>merge #81 when green?<small>frog manager</small></span><span class="r">⌘3</span></div>
+    <hr>
+    <div class="pl">RUNNING</div>
+    <div class="pi">${g("spin")}<span>chief of staff<small>merge queue step 2 of 3 · 2 watches</small></span><span class="r">4</span></div>
+    <div class="pi">${g("spin")}<span>zest<small>gateway logs · queue depth</small></span><span class="r">2</span></div>
+    <div class="pi">${g("coin")}<span>spend<small>today $46.10 of $120</small></span><span class="r">$15.87/hr</span></div>
+    <hr>
+    <div class="pi"><span></span><span>Open activity</span><span class="r">⌘0</span></div>
+    <div class="pi"><span></span><span>Pause alerts for 1 hour</span><span class="r"></span></div>
+  </div>
+  <div class="notifs">
+    <div class="ntcap">ALERTS FROG SENDS</div>
+    <div class="nt"><span class="ic">${face("gray",24,"sad")}</span><div><b>tang manager stopped</b><span>it still owns a pod at $10.58/hr. chief is holding it.</span></div><time>14:22</time>
+      <div class="acts"><button class="btn p">Restart</button><button class="btn x">Stop pod</button></div></div>
+    <div class="nt"><span class="ic">${face("tree",24,"waiting")}</span><div><b>frog cloud manager needs you</b><span>wants to push a branch to zest. paused 2m.</span></div><time>14:21</time>
+      <div class="acts"><button class="btn p">Allow once</button><button class="btn">Open</button></div></div>
+    <div class="nt"><span class="ic">${face("tree",24,"idle")}</span><div><b>tang-h200-bench is at 80% of its cap</b><span>$40 of $50. it stops itself at $50, in about 57m.</span></div><time>15:31</time>
+      <div class="acts"><button class="btn">Extend 1h</button><button class="btn q">Let it stop</button></div></div>
+  </div>
+  <div class="rules">
+    <div class="pane"><h4>ALERT WHEN</h4><ul>
+      <li><b>something waits on you</b> for 60s and you're not looking at it</li>
+      <li><b>an engine dies</b> while it owns live work or money</li>
+      <li><b>a cap</b> hits 80%, and again when it acts</li>
+      <li><b>you asked</b> to hear about this one (“tell me when”)</li></ul></div>
+    <div class="pane"><h4>STAY QUIET WHEN</h4><ul>
+      <li>a job ends normally. its owner hears, you don't.</li>
+      <li>a watch checks, or a child reports to its parent</li>
+      <li>you're already looking at the row</li>
+      <li>the same cause alerted in the last 10m. more than 3 at once become one.</li></ul></div>
+    <div class="dockwrap"><div class="dockicon">${face("tree",44,"waiting")}<span class="bd" id="dockBadge">4</span></div><div class="dockcap">dock badge = things waiting on you. nothing else.</div></div>
+  </div>`;
+  paintGlyphs(document.getElementById("mb"));
+}
+// ---------- wiring ----------
+const $=s=>document.querySelector(s);
+function toast(t){const e=$("#toast");e.textContent=t;e.classList.add("on");clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove("on"),4000);}
+function show(s){
+  document.querySelectorAll(".screen").forEach(x=>x.classList.toggle("on",x.dataset.screen===s));
+  document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.s===s));
+  document.querySelectorAll(".nav a").forEach(a=>a.classList.toggle("sel",a.dataset.go===s));
+  renderTree(s==="dead"?"tangm":s==="transcript"?"chief":s==="pod"?"tangm":null);
+  history.replaceState(null,"","#"+s+","+(document.body.classList.contains("light")?"light":"dark"));
+}
+function setTheme(t){document.body.classList.remove("light","dark");document.body.classList.add(t);document.querySelectorAll("#theme button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));}
+function render(){renderJobs();renderInsp();renderCards();renderTx();renderLegend();renderPod();renderAgent();renderMb();setCount(CARDS.filter(c=>!c.answered).length);paintGlyphs();}
+
+document.addEventListener("click",e=>{
+  const t=e.target.closest("[data-s],[data-go],[data-t],[data-job],[data-f],[data-ans],[data-undo],[data-stop],[data-toast],[data-pod],[data-dead],[data-sess],.ir");
+  if(!t) return;
+  if(t.dataset.t) return setTheme(t.dataset.t);
+  if(t.dataset.s) return show(t.dataset.s);
+  if(t.dataset.go) return show(t.dataset.go);
+  if(t.dataset.sess){const m={tangm:"dead",chief:"transcript",cloudm:"inbox"};return show(m[t.dataset.sess]||"activity");}
+  if(t.dataset.f){FILTER=t.dataset.f;document.querySelectorAll("#afilter button").forEach(b=>b.classList.toggle("on",b===t));renderJobs();paintGlyphs($("#jobs"));return;}
+  if(t.dataset.job){SEL=t.dataset.job;renderJobs();renderInsp();return;}
+  if(t.dataset.stop){const j=JOBS.find(x=>x.id===t.dataset.stop);j.state="stop";j.ended=true;j.wf="stopped by you";j.next="—";j.frac=1;
+    if(j.kind==="pod"){POD.state="stop";renderPod();}renderJobs();renderInsp();toast(`${j.id} stopped · its output is kept`);return;}
+  if(t.dataset.toast) return toast(t.dataset.toast);
+  if(t.dataset.ans){const c=CARDS.find(x=>x.id===t.dataset.ans);
+    if(t.dataset.i==="deny-note"){c.answered="denied with a note · "+c.who+" will try another way";}
+    else{const a=c.acts[+t.dataset.i];if(a[2]==="note"){t.closest(".card").classList.add("noting");t.closest(".card").querySelector("input").focus();return;}c.answered=a[2];
+      if(c.id==="c-bench"&&a[0]==="Stop pod"){POD.state="stop";renderPod();}}
+    renderCards();return;}
+  if(t.dataset.undo){CARDS.find(x=>x.id===t.dataset.undo).answered=null;renderCards();return;}
+  if(t.dataset.pod){const a=t.dataset.pod;
+    if(a==="ext"){POD.capm+=60;toast("time cap now 5h · stops itself at 17:08");}
+    if(a==="cap"){POD.cap=75;toast("cost cap now $75 · warns at $60");}
+    if(a==="pause"){POD.state="pause";toast("paused · gpu released · volume kept · resume any time");}
+    if(a==="stop"){POD.state="stop";toast("tang-h200-bench stopped · volume kept · $0/hr");}
+    renderPod();return;}
+  if(t.dataset.dead){const a=t.dataset.dead,b=$("#deadBanner");
+    if(a==="restart"){b.classList.add("ok");$("#deadFace").innerHTML=face("tree",40,"working");
+      $("#deadBody").innerHTML=`<h3>tang manager is back</h3><p>engine restarted at 14:34. it read its ledger, took the pod back from the chief and resumed bench run 3 of 5. j4 was lost, so it started j5 with the same command.</p><div class="facts"><span class="chip"><span class="dot"></span>heartbeat ok</span><span class="chip"><span class="dot"></span>p1 owned again</span><span class="chip">j5 running · replaces j4</span></div>`;
+      $("#deadGlyph").innerHTML=GLYPH.spin();$("#deadSub").textContent="~/Developer/tang · running";
+      const s=SESSIONS.find(x=>x.id==="tangm");s.state="run";s.detail="running · resumed 14:34";renderTree("tangm");}
+    if(a==="stoppod"){POD.state="stop";renderPod();toast("tang-h200-bench stopped · volume kept · $0/hr");}
+    if(a==="hand"){toast("chief now owns tang manager's work · pod p1, rerun of j4");}
+    return;}
+  if(t.classList.contains("ir")&&t.nextElementSibling&&t.nextElementSibling.classList.contains("idet")) t.classList.toggle("open");
+});
+document.addEventListener("keydown",e=>{
+  if(e.target.tagName==="INPUT") return;
+  if((e.metaKey||e.ctrlKey)&&e.key==="0"){e.preventDefault();show(e.shiftKey?"inbox":"activity");}
+  const on=$(".screen.on").dataset.screen;
+  if(on==="activity"&&(e.key==="j"||e.key==="k")){const ids=JOBS.filter(visible).map(j=>j.id);let i=ids.indexOf(SEL);i=Math.max(0,Math.min(ids.length-1,i+(e.key==="j"?1:-1)));SEL=ids[i];renderJobs();renderInsp();}
+});
+
+$("#hface").innerHTML=`<span style="display:inline-block;width:26px;height:26px">${face("tree",26,"working")}</span>`;
+// hash: #screen,theme,still  e.g. #inbox,light
+const [h0,h1,h2]=(window.BOOT||location.hash.slice(1)||"activity").split(",");
+setTheme(h1||"dark");
+if(h2==="still") document.body.classList.add("still");
+render();
+show(h0||"activity");
+</script>
+</body>
+</html>

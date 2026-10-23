@@ -1,0 +1,163 @@
+<header class="top">
+  <h1><span id="hface"></span>background work</h1>
+  <p>one model for everything frog runs while you look away. clickable mockups, not shipped.</p>
+  <span class="spacer"></span>
+  <div class="seg" id="theme"><button data-t="light">light</button><button data-t="dark" class="on">dark</button></div>
+</header>
+<nav class="tabs" id="tabs">
+  <button data-s="activity" class="on">activity <span class="k">⌘0</span></button>
+  <button data-s="inbox">waiting on you <span class="k">⌘⇧0</span></button>
+  <button data-s="transcript">inline rows</button>
+  <button data-s="dead">dead manager</button>
+  <button data-s="pod">pod with cap</button>
+  <button data-s="agent">agent context</button>
+  <button data-s="menubar">menu bar and alerts</button>
+</nav>
+
+<div class="win" id="win">
+  <aside class="side">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="nav">
+      <a data-go="inbox"><span class="g" data-glyph="hand"></span>waiting on you<span class="ct w" data-count="inbox">4</span></a>
+      <a data-go="activity" class="sel"><span class="g" data-glyph="live"></span>activity<span class="ct" data-count="live">11 live</span></a>
+    </div>
+    <div class="grp">MUNI</div>
+    <div class="tree" id="tree"></div>
+    <div class="sfoot">
+      <div class="burn"><span class="g" data-glyph="coin"></span><b class="num" data-count="burn">$15.87/hr</b><span>2 pods</span></div>
+      <div>today <span class="mono num">$46.10</span> of <span class="mono">$120</span> · resets 00:00</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="screen on" data-screen="activity">
+      <div class="act">
+        <div class="list">
+          <div class="stats">
+            <div class="stat"><b data-count="liveN">11</b><span>live</span></div>
+            <div class="stat w"><b data-count="inboxN">4</b><span>waiting on you</span></div>
+            <div class="stat x"><b data-count="deadN">2</b><span>dead or orphaned</span></div>
+            <div class="stat"><b data-count="burnN">$15.87</b><span>per hour now</span></div>
+            <div class="stat"><b>$46.10</b><span>today · cap $120</span></div>
+          </div>
+          <div class="filters">
+            <div class="seg" id="afilter"><button class="on" data-f="live">live</button><button data-f="you">needs you</button><button data-f="ended">ended today</button><button data-f="all">all</button></div>
+            <div class="seg"><button class="on">by owner</button><button>by kind</button></div>
+            <span class="q">j k move · ⏎ open · ⌫ stop · e extend</span>
+          </div>
+          <div class="thead"><span></span><span>WHAT</span><span>STATE</span><span>WAITING FOR</span><span>ELAPSED</span><span class="r">COST · CAP</span><span class="r">NEXT</span></div>
+          <div id="jobs"></div>
+        </div>
+        <aside class="insp" id="insp"></aside>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="inbox">
+      <div class="inbox"><div class="inwrap">
+        <div class="ihead"><h3>waiting on you</h3><span id="ihSub"></span><span class="keys">j k · ⌘⏎ first · ⌘. deny</span></div>
+        <div id="cards"></div>
+        <div class="band">NOT HERE ON PURPOSE <em>finished jobs, routine checks and child reports go to their owner, not to you.</em></div>
+      </div></div>
+    </section>
+
+    <section class="screen" data-screen="transcript">
+      <div class="bar"><span class="g" data-glyph="spin"></span><h2>chief of staff</h2><span class="sub">~/Developer/chief · opus 5.5</span><span class="spacer"></span><span class="chip">5 live</span><span class="chip w">1 needs you</span></div>
+      <div class="tx"><div class="col" id="txcol"></div>
+        <div class="dock"><div class="col">
+          <div class="livebar" data-go="activity"><span class="g" data-glyph="spin"></span><b>5 running</b><span class="sep"></span><span>1 needs you</span><span class="sep"></span><span class="mono">next wake 0:12</span><span class="btn q" style="padding:0 8px">open</span></div>
+          <div class="composer">ask the chief, or type / for jobs</div>
+        </div></div>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="dead">
+      <div class="bar"><span class="g" data-glyph="flat" id="deadGlyph"></span><h2>tang manager</h2><span class="sub" id="deadSub">~/Developer/tang · engine stopped 12m ago</span></div>
+      <div class="dm">
+        <div class="banner" id="deadBanner">
+          <div id="deadFace"></div>
+          <div id="deadBody">
+            <h3>tang manager stopped 12m ago</h3>
+            <p>its engine exited at 14:21 (killed, out of memory) and did not come back. it still owns a pod that bills by the hour, so the chief is watching it for now.</p>
+            <div class="facts">
+              <span class="chip x"><span class="g" data-glyph="flat"></span>last heartbeat 14:21:08</span>
+              <span class="chip x">tang-h200-bench · $10.58/hr · $2.12 since</span>
+              <span class="chip">j4 bench loop · lost with the engine</span>
+              <span class="chip">1 approval · kept for when it is back</span>
+            </div>
+            <div class="acts">
+              <button class="btn p" data-dead="restart">Restart engine <kbd>⌘R</kbd></button>
+              <button class="btn x" data-dead="stoppod">Stop pod</button>
+              <button class="btn" data-dead="hand">Hand to chief</button>
+              <button class="btn q">Crash log</button>
+            </div>
+          </div>
+        </div>
+        <div class="lgcap">FOUR STATES THAT USED TO LOOK THE SAME</div>
+        <div class="legend" id="legend"></div>
+        <div class="tx ghost" style="padding-top:18px;flex:none"><div class="col">
+          <p>bench run 3 of 5 is up. h200 at 92%, 61 tok/s on coder-next at 128k. checking back at 14:40.</p>
+          <div class="ir"><span class="g" data-glyph="shell"></span><span class="who">j4</span><span class="hl mono">bench/loop.sh --runs 5</span><span class="tr"><span class="st dead">lost</span></span></div>
+          <div class="ir"><span class="g" data-glyph="pod"></span><span class="who">tang-h200-bench</span><span class="hl">$10.58/hr · cap $50 · 4h</span><span class="tr"><span class="st orph">orphaned</span></span></div>
+          <div class="foot">opus 5.5 · 41 tok/s · 18.2k in · $0.31</div>
+        </div></div>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="pod">
+      <div class="bar"><span class="g" data-glyph="pod"></span><h2>tang-h200-bench</h2><span class="sub">runpod · muni account · 1× h200 sxm · r3</span><span class="spacer"></span><span id="podState"></span></div>
+      <div class="pod">
+        <div class="podgrid">
+          <div class="pane">
+            <h4>COST</h4>
+            <div class="big" id="podCost">$23.40<small>of $50 cap</small></div>
+            <div style="position:relative"><svg class="spark" viewBox="0 0 300 40" preserveAspectRatio="none" id="podSpark"></svg><span style="position:absolute;right:15%;top:-16px;margin-right:-40px;font:10px var(--font-mono);color:var(--color-danger)">owner died 14:21</span></div>
+            <div class="meter"><div class="track"><i id="podCostBar"></i><u style="left:80%"></u></div>
+              <div class="ln"><span>$10.58/hr, steady since 12:08</span><span id="podCostNote">warns at $40 · stops at $50</span></div></div>
+          </div>
+          <div class="pane">
+            <h4>TIME</h4>
+            <div class="big" id="podTime">2h 13m<small>of 4h cap</small></div>
+            <p id="podFirst" style="margin:12px 0 20px;font-size:12px;color:var(--color-muted);min-height:36px"></p>
+            <div class="meter"><div class="track"><i id="podTimeBar"></i><u style="left:80%"></u></div>
+              <div class="ln"><span>started 12:08</span><span id="podEnds">stops itself at 16:08</span></div></div>
+          </div>
+          <div class="pane">
+            <h4>WHAT IT'S DOING</h4>
+            <dl class="kv">
+              <dt>probe</dt><dd class="m">runpod get-pod · every 60s</dd>
+              <dt>last probe</dt><dd><span class="mono">20s ago</span> · ok · gpu 92% · 61 tok/s</dd>
+              <dt>next probe</dt><dd class="mono" id="podNext">in 40s</dd>
+              <dt>waiting for</dt><dd>bench run 3 of 5, then idle</dd>
+              <dt>at cap</dt><dd>stop pod, keep the volume, tell the owner</dd>
+              <dt>when idle</dt><dd>stop after 15m under 5% gpu</dd>
+            </dl>
+            <div class="acts" style="margin-top:14px" id="podActs">
+              <button class="btn" data-pod="ext">Extend 1h</button>
+              <button class="btn" data-pod="cap">Raise cap to $75</button>
+              <button class="btn q" data-pod="pause">Pause</button>
+              <span class="spacer"></span>
+              <button class="btn x" data-pod="stop">Stop pod</button>
+            </div>
+          </div>
+          <div class="pane">
+            <h4>WHO OWNS IT</h4>
+            <div class="tl">
+              <div><time>12:08</time><i class="a"></i><span><b>tang manager</b> started it with a $50, 4h cap</span></div>
+              <div><time>14:21</time><i class="x"></i><span>tang manager's engine stopped</span></div>
+              <div><time>14:22</time><i class="w"></i><span>moved up to its parent, <b>chief of staff</b>. you got one alert.</span></div>
+              <div><time>now</time><i class="o"></i><span>chief holds it until tang manager is back or you stop it. the cap still applies.</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="sec" style="margin:20px 0 14px">THE SAME POD AS A ROW, WITH THE OTHER OUTSIDE THINGS FROG TRACKS</div>
+        <div class="rowbox" id="podRows"></div>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="agent"><div class="ag" id="agent"></div></section>
+
+    <section class="screen" data-screen="menubar"><div class="mb" id="mb"></div></section>
+
+    <div class="toast" id="toast"></div>
+  </main>
+</div>
