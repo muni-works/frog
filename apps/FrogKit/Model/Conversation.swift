@@ -109,6 +109,10 @@ final class Conversation {
     var resumedAfterRestart = false
     /// `continueInterrupted` called before the engine could take it: it goes first.
     @ObservationIgnored private var continuePending = false
+    /// Messages from other sessions sent to the engine (`deliver`) that no turn has taken yet.
+    /// The engine queues them behind whatever it's doing; between a turn's `idle` and the
+    /// next delivered turn's `turn_started`, this is the only sign the engine has work.
+    @ObservationIgnored private(set) var pendingDeliveries = 0
 
     /// Queued messages taken back out (their "x"), for the composer to put back in its field.
     var restored: [Queued] = []
@@ -386,7 +390,20 @@ final class Conversation {
 
     /// A message from another session: the engine queues it and runs it as a turn.
     func deliver(from: String, name: String, message: String) {
+        pendingDeliveries += 1
         link?.send(.deliver(from: from, fromName: name, message: message))
+    }
+
+    /// Nothing running, nothing waiting, nothing on its way: the engine has started up, the
+    /// history is in, no turn is open, nothing is queued here or in the engine's inbox, no
+    /// interrupted turn is waiting to continue, and nothing waits on the user. Only then may
+    /// an engine nobody's looking at be let go (an `idle` alone isn't enough: one follows
+    /// every op, the startup, a rename, a mode change, as well as a turn's end).
+    var settled: Bool {
+        sawFirstIdle && !replaying && !busy && !continuePending
+            && queue.isEmpty && pendingDeliveries == 0
+            && (turns.last?.finished ?? true)
+            && permission == nil && question == nil && elicitation == nil
     }
 
     /// Has a running engine (not stopped, not failed).
@@ -436,6 +453,8 @@ final class Conversation {
                 failure = link?.endDescription ?? "The frog engine exited."
                 onExit?()
             }
+            // Whatever its inbox held went with it.
+            pendingDeliveries = 0
             busy = false
             progress = nil
             stopWatchdog()
@@ -460,6 +479,11 @@ final class Conversation {
                 turns.append(TurnState(number: n, input: input, images: images, more: more, startedAt: at))
             }
             panes.currentTurn = n
+            // A delivered turn takes every message waiting in the engine's inbox (the first as
+            // its input, the rest as `more`).
+            if !replaying, input.hasPrefix("<session-message ") {
+                pendingDeliveries = max(0, pendingDeliveries - 1 - more.count)
+            }
             if !replaying { userStopped = false }
             // A replayed turn ran long ago.
             if !replaying { busy = true }
