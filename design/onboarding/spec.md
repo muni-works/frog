@@ -106,6 +106,5 @@ Chosen by Cam (2026-10-23):
 5. **memory sync: plain server-side for v1** (E2E later).
 6. **receipt keeps "~6 h saved"** with a "how 'saved' is counted" link.
 
-Still open:
-7. **the tiny proposal model in the app bundle** (~300 MB more to download, proposals in seconds during the model download) vs heuristic-only proposals (smaller app, cards are less specific until the model lands). Recommended: bundle it.
-8. **default local model size.** qwen3-4b (2.4 GB, first diff ~3:05 fresh) vs a larger coder model (better fixes, ~5 min fresh). Recommended: 4b first, then offer the bigger one after the first win.
+7. **the tiny proposal model ships in the app bundle** (Cam, 2026-10-23): about 300 MB more on install, and the 3 cards come out in seconds during the model download, instead of heuristic-only cards that stay vague until the big model lands.
+8. **default local model: qwen3-4b** (Cam, 2026-10-23): 2.4 GB, first diff ~3:05 fresh. A larger coder model can be offered after the first win.
