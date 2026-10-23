@@ -20,6 +20,7 @@ pub mod image_paths;
 pub mod imports;
 pub mod irc;
 pub mod mcp;
+pub mod mcp_oauth;
 pub mod memory;
 pub mod message;
 pub mod models;

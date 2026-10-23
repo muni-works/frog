@@ -2055,6 +2055,12 @@ impl Agent {
                 Batch::Denied => break EndReason::Denied,
                 Batch::Looping => break EndReason::Looping,
             }
+            // Stop landed mid-tool: the tool already recorded "Interrupted by user.", so end
+            // the turn here instead of handing the result back to the model. The outer select
+            // races this future against the token; whichever wins, the turn ends cancelled.
+            if self.shared.cancel.lock().unwrap().is_cancelled() {
+                return Err(Interrupted.into());
+            }
         };
         // Prune now, while the user reads the reply, and warm the result: the next turn then
         // starts from a prefix that's already cached instead of prefilling all of it.
@@ -3070,7 +3076,10 @@ impl Agent {
                 });
             }
         };
-        let out = {
+        let mut out = {
+            // Stop cancels a long tool in flight (Bash kills its process group), not just
+            // between tools: watch the turn's token alongside the tool future.
+            self.ctx.cancel = Some(self.shared.cancel.lock().unwrap().clone());
             let run = tools::run(name, input, &mut self.ctx);
             tokio::pin!(run);
             loop {
@@ -3081,6 +3090,7 @@ impl Agent {
                 }
             }
         };
+        self.ctx.cancel = None;
         while let Ok(chunk) = rx.try_recv() {
             emit(chunk);
         }
@@ -3092,6 +3102,14 @@ impl Agent {
         }
         self.ctx.progress = None;
         self.ctx.preview = None;
+        // Cancelled mid-run: the result reads as an interrupt, not an error, and the turn ends
+        // cleanly right after (run_tools' remaining calls skip, the caller sees Interrupted).
+        if out.is_err() && self.shared.cancel.lock().unwrap().is_cancelled() {
+            out = Ok(tools::Output {
+                content: "Interrupted by user.".into(),
+                ..Default::default()
+            });
+        }
         out
     }
 
@@ -3124,6 +3142,7 @@ impl Agent {
             permitted: self.ctx.permitted.clone(),
             progress: None,
             preview: None,
+            cancel: None,
             web: self.ctx.web.clone(),
             image: self.ctx.image.clone(),
             screenshot_endpoint: self.ctx.screenshot_endpoint.clone(),
@@ -8490,6 +8509,8 @@ for line in sys.stdin:
         profile.tool_mode = tool_mode;
         let mut cfg = Config::default();
         cfg.early_tools = early;
+        // sandbox-exec can't nest inside the test process; leave it off for tool tests.
+        cfg.sandbox_shell = false;
         let opts = Options {
             cfg,
             profile_name: "test".into(),
@@ -8850,6 +8871,96 @@ for line in sys.stdin:
             name: name.into(),
             input,
         }
+    }
+
+    /// Stop cancels a Bash tool mid-run: the sleeping command dies, its result is recorded
+    /// as interrupted, and the turn ends cancelled — all within about two seconds.
+    #[tokio::test]
+    async fn interrupt_cancels_a_running_bash_tool() {
+        let dir = tmp_store();
+        let bash = call("t1", "Bash", json!({ "command": "sleep 64", "timeout": 120000 }));
+        let (mut h, _) = engine_early(
+            vec![
+                reply(vec![bash], Stop::ToolUse),
+                reply(vec![text("done")], Stop::End),
+            ],
+            false,
+            ToolMode::Native,
+            Duration::from_millis(500),
+            &dir,
+            &dir,
+        );
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        // Yolo so the sleeping command runs without a permission card nobody answers; the
+        // shell sandbox off because sandbox-exec can't nest inside the test process.
+        h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+        h.ops
+            .send(Op::Submit {
+                text: "sleep".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        // Wait for the tool to start (allowing its permission card), then stop the turn.
+        let started = std::time::Instant::now();
+        loop {
+            let env = tokio::time::timeout(Duration::from_secs(10), h.events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                        note: None,
+                    })
+                    .unwrap();
+            }
+            if matches!(
+                &env.event,
+                Event::ItemStarted { kind: ItemKind::ToolCall { name, .. }, .. } if name == "Bash"
+            ) {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        h.ops.send(Op::Interrupt).unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "interrupt took {:?}",
+            started.elapsed()
+        );
+        let reasons: Vec<String> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::TurnEnded { reason, .. } => Some(format!("{reason:?}")),
+                _ => None,
+            })
+            .collect();
+        eprintln!("reasons: {reasons:?}");
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Cancelled,
+                ..
+            }
+        )));
+        let sid = evs[0].session.clone();
+        let interrupted = logged_blocks(&dir, &sid).into_iter().any(|(_, b)| {
+            matches!(b, Block::ToolResult { content, .. } if content.contains("Interrupted"))
+        });
+        assert!(interrupted, "no interrupted tool result recorded");
+        // The sleeping child is gone.
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let alive = std::process::Command::new("pgrep")
+            .args(["-f", "sleep 64"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+        assert!(!alive, "a `sleep 64` from the interrupted turn is still running");
+        shutdown(h).await;
     }
 
     /// Collect events until `done` matches one, allowing every permission request on the way.

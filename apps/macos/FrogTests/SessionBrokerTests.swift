@@ -11,6 +11,14 @@ final class SessionBrokerTests: XCTestCase {
     private var delivered: [Delivery] = []
     private var limited: [String] = []
     private var clock = Date(timeIntervalSince1970: 1_000_000)
+    /// Idle stops the broker scheduled, with their delay; `elapse()` runs them (the grace passes).
+    private var scheduled: [(Duration, @MainActor () -> Void)] = []
+
+    private func elapse() {
+        let due = scheduled
+        scheduled = []
+        due.forEach { $0.1() }
+    }
 
     private func broker(_ entries: [SessionBroker.Entry]) -> SessionBroker {
         let b = SessionBroker()
@@ -21,6 +29,7 @@ final class SessionBrokerTests: XCTestCase {
         }
         b.onLimit = { [unowned self] in limited.append($0) }
         b.now = { [unowned self] in clock }
+        b.after = { [unowned self] delay, work in scheduled.append((delay, work)) }
         return b
     }
 
@@ -76,7 +85,130 @@ final class SessionBrokerTests: XCTestCase {
         child.ingest(end)
         child.ingest(idle)
         b.observe(eng.id, running: false, waiting: false)
-        XCTAssertTrue(child.stopping, "an idle child lets go")
+        XCTAssertFalse(child.stopping, "not on the bare idle: only after the grace")
+        elapse()
+        XCTAssertTrue(child.stopping, "an idle child lets go once the grace has passed")
+    }
+
+    // MARK: Mass exit (background engines stopped while they still had work)
+
+    /// A background engine resumed to take a message (`-r`, history replayed on `subscribe`)
+    /// emits `idle`s before the delivered turn starts: startup, the `set_client_caps` op. None
+    /// of them may stop it, even if the session was armed by its previous engine.
+    @MainActor
+    func testAJustResumedEngineIsNotStoppedByTheIdlesBeforeItsTurn() throws {
+        let b = broker([chief, eng])
+        b.idleGrace = .seconds(30)
+        // Armed by an earlier engine: seen running, then (in the old code) never disarmed.
+        let old = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-resume-old"))
+        b.track(old, as: eng.id)
+        b.observe(eng.id, running: true, waiting: false)
+        // The resumed engine: history comes in, then the message is delivered.
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-resume"), reopened: true)
+        b.track(c, as: eng.id)
+        try c.ingest(env(#"{"seq":1,"session":"eng-0002","created":1,"event":"turn_started","turn":1,"input":"earlier work"}"#))
+        try c.ingest(env(#"{"seq":2,"session":"eng-0002","created":2,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#))
+        c.deliver(from: chief.id, name: chief.name, message: "status?")
+        b.observe(eng.id, running: false, waiting: false)
+        try c.ingest(env(#"{"seq":3,"session":"eng-0002","created":3,"event":"synced","upto":2}"#))
+        // Startup idle, then the idle after set_client_caps: the delivered turn hasn't started.
+        try c.ingest(env(#"{"seq":4,"session":"eng-0002","created":4,"event":"idle"}"#))
+        b.observe(eng.id, running: false, waiting: false)
+        try c.ingest(env(#"{"seq":5,"session":"eng-0002","created":5,"event":"idle"}"#))
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertEqual(c.pendingDeliveries, 1)
+        XCTAssertFalse(c.settled, "a delivered message is on its way")
+        elapse()
+        XCTAssertFalse(c.stopping, "a just-resumed engine with a message to run is never stopped")
+        // The delivered turn runs and ends: now it can go, after the grace.
+        try c.ingest(env(#"{"seq":6,"session":"eng-0002","created":6,"event":"turn_started","turn":2,"input":"<session-message from=\"chief-0001\" name=\"Chief of Staff\">\nstatus?\n</session-message>"}"#))
+        b.observe(eng.id, running: true, waiting: false)
+        XCTAssertEqual(c.pendingDeliveries, 0)
+        try c.ingest(env(#"{"seq":7,"session":"eng-0002","created":7,"event":"turn_ended","turn":2,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#))
+        try c.ingest(env(#"{"seq":8,"session":"eng-0002","created":8,"event":"idle"}"#))
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertFalse(c.stopping)
+        XCTAssertEqual(scheduled.first?.0, .seconds(30))
+        elapse()
+        XCTAssertTrue(c.stopping, "truly idle after the grace: let go")
+    }
+
+    /// The signature in today's logs: turn N ends (`idle`), and the message delivered during
+    /// it starts as turn N+1 ~15 ms later. The broker stopped the engine on that `idle` and
+    /// turn N+1 ended cancelled ~80 ms in, with 0 model calls. A pending delivery keeps it.
+    @MainActor
+    func testATurnBoundaryWithADeliveredMessageWaitingIsNotStopped() throws {
+        let b = broker([chief, eng])
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-boundary"))
+        b.track(c, as: eng.id)
+        try c.ingest(env(#"{"seq":1,"session":"eng-0002","created":1,"event":"idle"}"#))
+        try c.ingest(env(#"{"seq":2,"session":"eng-0002","created":2,"event":"turn_started","turn":1,"input":"work"}"#))
+        b.observe(eng.id, running: true, waiting: false)
+        // A message lands mid-turn: the engine queues it behind the turn.
+        c.deliver(from: chief.id, name: chief.name, message: "and then this")
+        try c.ingest(env(#"{"seq":3,"session":"eng-0002","created":3,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#))
+        try c.ingest(env(#"{"seq":4,"session":"eng-0002","created":4,"event":"idle"}"#))
+        b.observe(eng.id, running: false, waiting: false)
+        elapse()
+        XCTAssertFalse(c.stopping, "the queued delivery would be cancelled at birth")
+        XCTAssertTrue(scheduled.isEmpty, "nothing scheduled while work is on its way")
+    }
+
+    /// Mid-turn, a queued `set_title` (RenameSession) or `set_mode` is answered with an `idle`
+    /// once the turn ends, and the app may see an `idle` while the turn's still open. Neither
+    /// stops the engine; and a stop scheduled before the turn started never fires.
+    @MainActor
+    func testAnEngineMidTurnIsNotStoppedByTheIdleOfAQueuedSetTitle() throws {
+        let b = broker([chief, eng])
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-title"))
+        b.track(c, as: eng.id)
+        try c.ingest(env(#"{"seq":1,"session":"eng-0002","created":1,"event":"idle"}"#))
+        try c.ingest(env(#"{"seq":2,"session":"eng-0002","created":2,"event":"turn_started","turn":1,"input":"work"}"#))
+        b.observe(eng.id, running: true, waiting: false)
+        try c.ingest(env(#"{"seq":3,"session":"eng-0002","created":3,"event":"titled","title":"renamed"}"#))
+        try c.ingest(env(#"{"seq":4,"session":"eng-0002","created":4,"event":"idle"}"#))
+        b.observe(eng.id, running: false, waiting: false)
+        elapse()
+        XCTAssertFalse(c.stopping, "the turn is open")
+        // Settled for a moment, then a new turn starts before the grace runs out.
+        try c.ingest(env(#"{"seq":5,"session":"eng-0002","created":5,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#))
+        try c.ingest(env(#"{"seq":6,"session":"eng-0002","created":6,"event":"idle"}"#))
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertEqual(scheduled.count, 1)
+        try c.ingest(env(#"{"seq":7,"session":"eng-0002","created":7,"event":"turn_started","turn":2,"input":"more work"}"#))
+        b.observe(eng.id, running: true, waiting: false)
+        try c.ingest(env(#"{"seq":8,"session":"eng-0002","created":8,"event":"turn_ended","turn":2,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#))
+        // The first grace runs out while it's settled again: stale, it doesn't fire.
+        let stale = scheduled.removeFirst()
+        stale.1()
+        XCTAssertFalse(c.stopping, "a stop scheduled before the engine worked again is void")
+        try c.ingest(env(#"{"seq":9,"session":"eng-0002","created":9,"event":"idle"}"#))
+        b.observe(eng.id, running: false, waiting: false)
+        elapse()
+        XCTAssertTrue(c.stopping, "settled for a whole grace: let go")
+    }
+
+    /// A pane opening a session (the sidebar, a restored window) resumes it with `-r` only: no
+    /// `-m` (it was the picker's model, so every resume flipped the session's model) and no
+    /// mode flag. A new conversation still gets the chosen model.
+    func testPaneResumeCarriesNoModelOrMode() {
+        UserDefaults.standard.set("yolo", forKey: "defaultMode")
+        defer { UserDefaults.standard.removeObject(forKey: "defaultMode") }
+        let resume = Workspace.launch(["-r", "eng-0002", "--wait-lock", "5"], chat: false, model: "vercel/anthropic/claude-opus-5.5")
+        XCTAssertNil(resume.model)
+        XCTAssertEqual(Array(resume.arguments.prefix(4)), ["-r", "eng-0002", "--wait-lock", "5"])
+        XCTAssertFalse(resume.arguments.contains("--yolo"))
+        let fresh = Workspace.launch([], chat: false, model: "vercel/anthropic/claude-opus-5.5")
+        XCTAssertEqual(fresh.model, "vercel/anthropic/claude-opus-5.5")
+        XCTAssertTrue(fresh.arguments.contains("--yolo"), "new conversations start in Settings' mode")
+    }
+
+    /// Resuming a closed session passes `-r` and nothing that overrides what it last used.
+    func testResumeArgumentsCarryNoModelOrMode() {
+        let args = SessionBroker.resumeArguments("eng-0002", chat: false)
+        XCTAssertEqual(Array(args.prefix(2)), ["-r", "eng-0002"])
+        XCTAssertFalse(args.contains("-m"))
+        for flag in ["--yolo", "--auto", "--accept-edits", "--mode"] { XCTAssertFalse(args.contains(flag)) }
     }
 
     /// An engine that died mid-turn (not live, no `turn_ended`) is detected on its next
