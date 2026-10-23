@@ -3101,6 +3101,7 @@ impl Agent {
                 });
             }
         };
+        let cwd_before = self.ctx.cwd.clone();
         let mut out = {
             // Stop cancels a long tool in flight (Bash kills its process group), not just
             // between tools: watch the turn's token alongside the tool future.
@@ -3133,6 +3134,16 @@ impl Agent {
             out = Ok(tools::Output {
                 content: "Interrupted by user.".into(),
                 ..Default::default()
+            });
+        }
+        // A `cd` that stuck: say where the shell works now, durably (SessionStatus on a dead
+        // session reads it from the log).
+        // (Compared canonically: the shell reports `pwd -P`, so `/var` comes back as
+        // `/private/var` without having moved.)
+        let canon = |p: &PathBuf| p.canonicalize().unwrap_or_else(|_| p.clone());
+        if self.ctx.cwd != cwd_before && canon(&self.ctx.cwd) != canon(&cwd_before) {
+            self.shared.journal.emit(Event::ShellCwd {
+                cwd: self.ctx.cwd.clone(),
             });
         }
         out
@@ -5562,6 +5573,68 @@ mod tests {
             chat: true,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// A `cd` that sticks (into a worktree, say) is logged as a durable `ShellCwd`, so a
+    /// dead session's log still says where it was working; a command that stays put isn't.
+    #[tokio::test]
+    async fn a_bash_cd_logs_the_shell_cwd() {
+        let base = std::env::temp_dir().join(format!("frog-shell-cwd-{}", new_id()));
+        let (root, store) = (base.join("repo"), base.join("store"));
+        let tree = root.join(".frog/worktrees/w");
+        for d in [&tree, &store] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let tree = tree.canonicalize().unwrap();
+        let bash = |id: &str, cmd: String| Block::ToolUse {
+            id: id.into(),
+            name: "Bash".into(),
+            input: json!({ "command": cmd }),
+        };
+        let script = vec![
+            reply(vec![bash("a", "true".into())], Stop::ToolUse),
+            reply(vec![bash("b", format!("cd {}", tree.display()))], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let (mut h, _) = engine_sent(script, Some(store.clone()), None, None, root.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "work in the worktree".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut sid = String::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            sid = env.session.clone();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                        note: None,
+                    })
+                    .unwrap();
+            }
+            if matches!(env.event, Event::Idle) {
+                break;
+            }
+        }
+        shutdown(h).await;
+        let logged: Vec<PathBuf> = session::load(&store, &sid)
+            .unwrap()
+            .events
+            .into_iter()
+            .filter_map(|e| match e.event {
+                Event::ShellCwd { cwd } => Some(cwd),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(logged.len(), 1, "only the cd is logged: {logged:?}");
+        assert_eq!(logged[0].canonicalize().unwrap(), tree);
+        let _ = std::fs::remove_dir_all(base);
     }
 
     /// A chat isn't offered Bash, so a model that calls it anyway gets an error, and nothing

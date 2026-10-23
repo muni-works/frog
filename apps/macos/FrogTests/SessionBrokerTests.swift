@@ -212,7 +212,8 @@ final class SessionBrokerTests: XCTestCase {
     }
 
     /// An engine that died mid-turn (not live, no `turn_ended`) is detected on its next
-    /// report and its turn restarted, not reported idle-and-done.
+    /// report: its open turn is reconciled from the log (the chief's call: reconcile, never
+    /// auto-resume), and the parent isn't told it's idle-and-done.
     private func env(_ json: String) throws -> Envelope {
         try JSONDecoder.frog.decode(Envelope.self, from: Data(json.utf8))
     }
@@ -284,7 +285,7 @@ final class SessionBrokerTests: XCTestCase {
     }
 
     @MainActor
-    func testADeadEngineMidTurnIsRestartedNotReportedIdle() throws {
+    func testADeadEngineMidTurnIsReconciledNotReportedIdle() async throws {
         let b = broker([chief, eng])
         let child = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-dead"))
         let start = try JSONDecoder.frog.decode(Envelope.self, from: Data(
@@ -296,10 +297,75 @@ final class SessionBrokerTests: XCTestCase {
         delivered.removeAll()
         b.observe(eng.id, running: true, waiting: false)
         // The engine dies mid-turn: no turn_ended, its process gone. The next report
-        // (running:false) must restart the turn instead of telling the parent it's idle.
+        // (running:false) reconciles the open turn from the log instead of telling the
+        // parent it's idle, and nothing restarts on its own.
         child.engineExited("The frog engine exited.")
+        let saved = Conversation.logReader
+        defer { Conversation.logReader = saved }
+        let end = try env(#"{"seq":2,"session":"eng-0002","created":2,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#)
+        Conversation.logReader = { [self] id, after in id == eng.id && after < 2 ? [end] : [] }
         b.observe(eng.id, running: false, waiting: false)
-        XCTAssertTrue(delivered.isEmpty, "no idle notice: the turn is picked back up, not finished")
+        XCTAssertTrue(delivered.isEmpty, "no idle notice: the open turn is settled from the log, not finished")
+        // The log settles it (the turn ended there); the conversation's next report (as
+        // `Library.report` forwards it) finds it idle: now the parent hears, once.
+        await settled(child)
+        XCTAssertEqual(child.busy, false)
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertEqual(delivered.count, 1)
+        XCTAssertTrue(delivered.first?.message.contains("is idle") == true)
+    }
+
+    /// Wait for a dead conversation's reconcile (a Task) to apply the log, so the next test
+    /// never sees it half-done (it's registered in `Library.shared` until it lets go).
+    private func settled(_ c: Conversation) async {
+        for _ in 0..<200 where c.turns.last.map({ !$0.finished }) ?? false {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(c.turns.last?.finished, true, "the reconcile applied the log's turn_ended")
+    }
+
+    /// A dead engine leaves the session "busy" forever: the broker reconciles the open turn
+    /// from the log and clears its queued count, so queued messages deliver at the next
+    /// start instead of waiting on a turn that will never end. No auto-resume.
+    @MainActor
+    func testADeadEngineIsReconciledAndQueuedMessagesCleared() async throws {
+        let b = broker([chief, eng])
+        var replayed: [(String, String)] = []
+        b.replayPrompt = { id, prompt in replayed.append((id, prompt)); return true }
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-dead2"))
+        try target.ingest(env(#"{"seq":1,"session":"eng-0002","created":1,"event":"turn_started","turn":1,"input":"long task"}"#))
+        b.track(target, as: eng.id)
+        // Queue a message: the broker counts it in the target's inbox.
+        _ = b.send(from: chief.id, name: chief.name, to: eng.id, message: "follow-up", notifyWhenIdle: false)
+        delivered.removeAll()
+        XCTAssertEqual(b.pendingInbound(eng.id), 1)
+        // The engine is killed mid-turn; the log says the turn ended.
+        target.engineExited("killed")
+        let saved = Conversation.logReader
+        defer { Conversation.logReader = saved }
+        let end = try env(#"{"seq":2,"session":"eng-0002","created":2,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#)
+        Conversation.logReader = { [self] id, after in id == eng.id && after < 2 ? [end] : [] }
+        b.observe(eng.id, running: false, waiting: false)
+        // The queued count clears (messages deliver normally at the next start)…
+        XCTAssertEqual(b.pendingInbound(eng.id), 0)
+        // …nothing auto-resumes…
+        XCTAssertTrue(replayed.isEmpty)
+        // …and nothing is delivered while no engine is live.
+        XCTAssertTrue(delivered.isEmpty)
+        // The open turn settles with the log: not busy any more…
+        await settled(target)
+        XCTAssertEqual(target.busy, false)
+        let info = await b.status(of: eng.id)
+        XCTAssertEqual(info?.turnRunning, false)
+        XCTAssertEqual(info?.queuedMessages, 0)
+        // …so the next message delivers (reaching the session restarts its engine) instead
+        // of queueing behind a turn that will never end.
+        b.observe(eng.id, running: false, waiting: false)
+        guard case .success = b.send(from: chief.id, name: chief.name, to: eng.id, message: "again", notifyWhenIdle: false) else {
+            return XCTFail("the reconciled session couldn't be reached")
+        }
+        XCTAssertEqual(delivered.map(\.message), ["again"])
+        XCTAssertTrue(replayed.isEmpty, "still no auto-resume")
     }
 
     func testRoutesByNameIgnoringCase() throws {
@@ -819,5 +885,104 @@ final class SessionBrokerTests: XCTestCase {
         // An empty title is refused.
         b.handle(SessionRequest(id: "r2", item: "t2", tool: "RenameSession",
                                 input: .object(["id": .string(eng.id), "title": .string("  ")])), from: probe)
+    }
+
+    /// SetSessionMode / SetSessionModel with no engine running: persisted (not refused), said
+    /// so in the reply, and applied by the next engine start — the model as its `-m`, the
+    /// mode as the op it takes at its first boundary — once, then forgotten. The mode
+    /// ceiling holds for a stopped target too.
+    @MainActor
+    func testSetSessionModeAndModelPersistWhenNoEngineRunsAndApplyAtNextStart() throws {
+        let b = broker([chief, eng])
+        let link = QueueLink()
+        let sender = Conversation(folder: URL(fileURLWithPath: "/tmp/demo-persist"), link: link, replay: false)
+        let status = { (mode: String) in
+            #"{"seq":1,"session":"chief-0001","created":1,"event":"status","model":"m","mode":"\#(mode)","cwd":"/tmp","messages":0,"context_tokens":null,"context_window":1,"tool_mode":"native","tier":"weak","tokens_per_sec":null,"todos":[]}"#
+        }
+        let clear = {
+            UserDefaults.standard.removeObject(forKey: "sessionModels")
+            UserDefaults.standard.removeObject(forKey: "sessionModes")
+        }
+        clear()
+        defer { clear() }
+        let replies = { link.sent.filter { $0["op"] as? String == "session_reply" } }
+
+        // The ceiling holds while stopped: an accept-edits caller can't store auto.
+        sender.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(status("accept-edits").utf8)))
+        b.handle(SessionRequest(id: "r0", item: "t0", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("auto")])), from: sender)
+        XCTAssertNil(Library.shared.storedMode(eng.id), "a refused mode isn't stored")
+        XCTAssertNotNil(replies().last?["error"])
+
+        // Within the ceiling: both persist, and the replies say so.
+        sender.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(status("yolo").utf8)))
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("auto")])), from: sender)
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "SetSessionModel",
+                                input: .object(["id": .string(eng.id), "model": .string("local/qwen3-4b")])), from: sender)
+        let texts = replies().suffix(2).compactMap { $0["result"] as? String }
+        XCTAssertEqual(texts.count, 2)
+        XCTAssertTrue(texts.allSatisfy { $0.contains("persisted (applies next start)") }, "\(texts)")
+
+        // The next start takes them: the model for `-m`, the mode sent to the fresh engine.
+        let stored = Library.shared.takeStored(eng.id)
+        XCTAssertEqual(stored.model, "local/qwen3-4b")
+        XCTAssertEqual(stored.mode, .auto)
+        let engine = QueueLink()
+        let started = Conversation(folder: URL(fileURLWithPath: "/tmp/demo-started"), link: engine, replay: true, session: eng.id)
+        SessionBroker.apply(stored, to: started)
+        XCTAssertTrue(engine.sent.contains { $0["op"] as? String == "set_mode" && $0["mode"] as? String == "auto" })
+        // Once: the engine's log remembers from here, so a later restart doesn't re-apply.
+        let again = Library.shared.takeStored(eng.id)
+        XCTAssertNil(again.model)
+        XCTAssertNil(again.mode)
+    }
+
+    /// A dead session's SessionStatus reports the ACTIVE worktree: the header says the repo
+    /// root, a Bash `cd` (logged as `shell_cwd`) moved into a worktree, and the status —
+    /// cwd, branch, ahead, dirty — follows the worktree, not the root.
+    func testStatusReportsTheActiveWorktreeFromTheLog() async throws {
+        let repo = FileManager.default.temporaryDirectory.appending(path: "frog-active-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try SessionBroker.git(["init", "-q", "-b", "main"], in: repo)
+        try "hi\n".write(to: repo.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+        try SessionBroker.git(["add", "."], in: repo)
+        try SessionBroker.git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], in: repo)
+        let (tree, branch, _) = try SessionBroker.makeWorktree(from: repo, name: "active tree")
+        // One uncommitted file in the worktree, none in the root.
+        try "wip\n".write(to: tree.appending(path: "b.txt"), atomically: true, encoding: .utf8)
+
+        let id = "cwdtest-\(UUID().uuidString.prefix(8))"
+        let path = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        try? FileManager.default.createDirectory(at: FrogPaths.sessions, withIntermediateDirectories: true)
+        let jsonl = """
+        {"type":"header","version":1,"id":"\(id)","cwd":"\(repo.path)","model":"m","created":0}
+        {"type":"event","env":{"seq":2,"session":"\(id)","created":0,"event":"shell_cwd","cwd":"\(tree.path)"}}
+        {"type":"event","env":{"seq":3,"session":"\(id)","created":0,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}}
+        """
+        try jsonl.write(to: path, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: path) }
+
+        let b = broker([])
+        let info = await b.status(of: id)
+        XCTAssertEqual(info?.cwd, tree.path, "the worktree the shell moved into, not the header's root")
+        XCTAssertEqual(info?.branch, branch)
+        XCTAssertEqual(info?.dirty, 1)
+        XCTAssertNil(info?.ahead, "no upstream: ahead is unknown, not 0")
+        XCTAssertEqual(info?.state, "dead")
+    }
+
+    /// With no move logged, the header's cwd answers (a log-only session still has a folder).
+    func testStatusFallsBackToTheHeaderCwd() async throws {
+        let id = "cwdtest-\(UUID().uuidString.prefix(8))"
+        let path = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        try? FileManager.default.createDirectory(at: FrogPaths.sessions, withIntermediateDirectories: true)
+        try """
+        {"type":"header","version":1,"id":"\(id)","cwd":"/tmp/start-here","model":"m","created":0}
+        """.write(to: path, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: path) }
+        let info = await broker([]).status(of: id)
+        XCTAssertEqual(info?.cwd, "/tmp/start-here")
     }
 }
