@@ -14,6 +14,13 @@
 //! without asking", and a wrong answer only means an unnecessary prompt or a
 //! read-only command running unattended. It must never say yes to a write.
 
+/// The command's top-level segments (`&&`/`;`/`|` split, quotes honored), for
+/// callers that check each segment separately. `None` means unparsable
+/// (subshells, backticks, a lone `&`, unbalanced quotes).
+pub fn segments(cmd: &str) -> Option<Vec<String>> {
+    split_top(cmd)
+}
+
 /// Whether `cmd` is read-only: every segment is a read-only program with safe
 /// arguments, and any redirection goes to `/dev/null` (or `2>&1`).
 pub fn read_only(cmd: &str) -> bool {
@@ -271,10 +278,26 @@ fn segment_read_only(seg: &str) -> bool {
         "df" => args.iter().all(|a| a.starts_with('-') || a.starts_with('/')),
         "ls" | "cat" | "head" | "tail" | "wc" | "stat" | "du" | "file" | "which" | "echo"
         | "jq" | "sort" | "uniq" | "cut" | "tr" | "tree" => true,
-        "grep" | "rg" => args.iter().all(|a| {
-            // -f reads patterns from a file: still read-only. -F fixed strings.
-            !a.starts_with('/') || a == "/dev/null"
+        // Process inspection reads only: ps lists processes; sample samples a
+        // live process's stacks to stdout. `sample`'s numeric args are pids and
+        // durations; anything else (an output file, `-file`) is not allowed.
+        "ps" => args
+            .iter()
+            .all(|a| a.starts_with('-') || a.contains(',') || a.chars().all(|c| c.is_ascii_digit())),
+        // pgrep only lists (pkill is the one that signals).
+        "pgrep" => true,
+        // Read-only Xcode lookups; xcrun itself runs any tool, so only these.
+        "xcrun" => matches!(
+            (args.first().map(String::as_str), args.get(1).map(String::as_str)),
+            (Some("xcresulttool"), Some("get")) | (Some("simctl"), Some("list"))
+        ),
+        "sample" => args.iter().all(|a| {
+            a.starts_with('-') && !a.starts_with("-file")
+                || a.chars().next().is_some_and(|c| c.is_ascii_digit())
         }),
+        // Reads like cat: absolute paths are fine (credential paths were
+        // rejected above), and -f only reads patterns from a file.
+        "grep" | "rg" => true,
         "find" => {
             // No -exec/-execdir/-delete/-fprint*/-ok: those act on what they find.
             let mut i = 0;
@@ -484,6 +507,14 @@ mod tests {
             "echo a; echo b",
             "echo a || echo b",
             "cat a && cat b",
+            "grep -E 'error:|^\\*\\* BUILD' /tmp/build.log",
+            "grep -ciE 'main thread checker' /private/tmp/crash.log",
+            "ps -eo pid,etime,%cpu,command | grep Frog | head",
+            "ps -p 97435 -o pid,etime,%cpu,command",
+            "pgrep -lf Frog.app",
+            "sample 58930 1 -mayDie 2>/dev/null | head -40",
+            "xcrun xcresulttool get test-results tests --path /private/tmp/dd/x.xcresult",
+            "xcrun simctl list devices",
         ] {
             if ok.starts_with("make ") || ok.starts_with("cmd ") {
                 assert!(!read_only(ok), "{ok} should NOT be allowed");
@@ -540,6 +571,12 @@ mod tests {
             "dd if=/dev/zero of=f",
             "cd x && git log | sh",
             "ls | xargs rm",
+            "sample 58930 1 -file /private/tmp/out.txt",
+            "sample Frog -file out.txt",
+            "xcrun swift build",
+            "xcrun simctl erase all",
+            "xcrun xcresulttool export --path x",
+            "grep x ~/.ssh/config",
             // credential reads ask even though they'd otherwise be read-only
             "cat ~/.ssh/id_rsa",
             "ls ~/.aws",
