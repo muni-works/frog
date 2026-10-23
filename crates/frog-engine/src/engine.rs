@@ -7270,6 +7270,7 @@ for line in sys.stdin:
                         .send(Op::Permission {
                             id,
                             decision: Decision::Allow,
+                            note: None,
                         })
                         .unwrap();
                 }
