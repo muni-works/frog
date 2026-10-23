@@ -18,4 +18,14 @@ final class SessionDirectoryRescanTests: XCTestCase {
         XCTAssertTrue(SessionDirectoryRescan.changedSessions(
             previous: ["one": timestamp], current: ["one": timestamp]).isEmpty)
     }
+
+    /// The watcher's state belongs to its queue: starting it (from main, as `Library` does) and
+    /// letting its rescans run must never touch `files` or `snapshot` from two threads at once.
+    /// Its scans assert they're on the queue, so a scan from anywhere else traps here; under
+    /// Thread Sanitizer the old init-time scan on main reported the race with the queue's.
+    func testWatcherScansOnlyOnItsQueue() {
+        _ = SessionDirectoryWatcher.shared
+        // Two rescans (one a second) on the queue after the first.
+        RunLoop.main.run(until: Date().addingTimeInterval(2.5))
+    }
 }
