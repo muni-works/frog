@@ -1,6 +1,6 @@
 # Graceful restart for Frog.app updates
 
-Design doc, not implemented. Today an app update or reinstall (Cam's 14:36) kills every engine
+Design doc; implemented on `frog/graceful-restart-design` (all six picks accepted). Before it, an an app update or reinstall (Cam's 14:36) kills every engine
 mid-turn: sessions sit with no `turn_ended` and a stale `.live` file, the app shows them
 "idle", and a message respawns them on the *sender's* model (bug 2c, fixed separately by
 "resume keeps model"). Goal: an opted-in user gets an instant update — running agents stop at a
@@ -206,3 +206,28 @@ status quo. A drain that starts and is then cancelled (user picks "Cancel" in Sp
 6. **Resume notice wording: `<resumed after the app updated; your previous turn was
    suspended; continue>` (own note, not the crash note).** The model knows it wasn't its
    fault or the user's. Tradeoff: one more string the model can quote back verbatim.
+
+## 8. Field evidence: children dying with a parent restart
+
+Reported by the frog manager session (2026-10-23), twice: the manager's own engine restarted
+(07:23:58), and about 9 minutes later all 4 of its child sessions' engines died **in the same
+second**. It happened again later the same morning (all 4 workers together).
+
+What the code says (as of this branch):
+
+- Child sessions (`StartSession`) are **not** processes of the parent engine. The app's
+  `SessionBroker` owns them (`background[id]`, `SessionBroker.swift`), each its own
+  `frog --serve` process. A parent engine restart doesn't reach them directly.
+- A child engine that dies mid-turn is already picked back up: the broker's idle check sees a
+  dead engine with an open turn, restarts it with `-r <id>` and calls `continueInterrupted()`
+  (the crash-resume path; `SessionBroker.swift`, "An engine that died mid-turn").
+- So "all 4 at once" points at a shared cause rather than the parent, e.g. a shared upstream
+  (that morning frog cloud was down and the workers ran `cloud/qwen3-coder-next`), or the app
+  itself restarting. **Not root-caused.** Next step: the four children's `~/.local/share/frog/
+  sessions/<id>.jsonl` tails, plus `EngineProcess.log` around the death second, to tell an
+  engine exit (stderr tail, exit status) from a provider error ending the turn.
+
+What this branch guarantees either way: children survive as sessions (their logs are intact)
+and are resumed. Through the broker's crash path when they die. Through `Drain` (the
+subagent cascade is tested; app-level sessions drain one by one in `UpdateDrain.drainAll`)
+when the app updates with graceful restarts on.
