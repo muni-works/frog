@@ -296,6 +296,45 @@ fn guard_addrs(host: &str, addrs: Vec<SocketAddr>, allow_private: bool) -> Resul
     Ok(addrs)
 }
 
+/// Whether a host is a plain internet name the permission layer treats as a public
+/// read: a real domain (no IP literal, no localhost, no underscore), with http(s) and
+/// no embedded credentials. This is a permit-layer fast path for public GETs — DNS is
+/// still re-checked against private ranges when the fetch runs, and the URL the agent
+/// sends is visible on its tool card, so a wrong yes only means a missed prompt for a
+/// fetch the resolver would refuse anyway.
+pub fn public_host(raw: &str) -> bool {
+    let Ok(url) = parse_url(raw) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if let Ok(ip) = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<IpAddr>()
+    {
+        return blocked_ip(ip).is_none();
+    }
+    let lower = host.to_ascii_lowercase();
+    if lower == "localhost"
+        || lower.ends_with(".localhost")
+        || lower.is_empty()
+        || !lower.contains('.')
+        || lower.contains('_')
+        || lower.contains(' ')
+    {
+        return false;
+    }
+    true
+}
+
 /// The DNS resolver WebFetch connects through: every connection, redirects included, only
 /// reaches addresses that passed `guard_addrs`.
 struct Guard {
