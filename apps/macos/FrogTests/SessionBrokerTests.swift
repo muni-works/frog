@@ -188,6 +188,21 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertTrue(c.stopping, "settled for a whole grace: let go")
     }
 
+    /// A pane opening a session (the sidebar, a restored window) resumes it with `-r` only: no
+    /// `-m` (it was the picker's model, so every resume flipped the session's model) and no
+    /// mode flag. A new conversation still gets the chosen model.
+    func testPaneResumeCarriesNoModelOrMode() {
+        UserDefaults.standard.set("yolo", forKey: "defaultMode")
+        defer { UserDefaults.standard.removeObject(forKey: "defaultMode") }
+        let resume = Workspace.launch(["-r", "eng-0002", "--wait-lock", "5"], chat: false, model: "vercel/anthropic/claude-opus-5.5")
+        XCTAssertNil(resume.model)
+        XCTAssertEqual(Array(resume.arguments.prefix(4)), ["-r", "eng-0002", "--wait-lock", "5"])
+        XCTAssertFalse(resume.arguments.contains("--yolo"))
+        let fresh = Workspace.launch([], chat: false, model: "vercel/anthropic/claude-opus-5.5")
+        XCTAssertEqual(fresh.model, "vercel/anthropic/claude-opus-5.5")
+        XCTAssertTrue(fresh.arguments.contains("--yolo"), "new conversations start in Settings' mode")
+    }
+
     /// Resuming a closed session passes `-r` and nothing that overrides what it last used.
     func testResumeArgumentsCarryNoModelOrMode() {
         let args = SessionBroker.resumeArguments("eng-0002", chat: false)

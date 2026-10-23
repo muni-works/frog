@@ -354,6 +354,15 @@ final class Workspace {
         return flag + computerUse + chat + noSandbox
     }
 
+    /// The engine arguments and `-m` model a conversation starts with. A resume (`-r`) gets
+    /// neither a model nor a mode flag: the engine keeps the model and mode the session last
+    /// used. (Passing the picker's model there flipped every session opened from the sidebar,
+    /// managers' workers included, to whatever the last chat used.)
+    static func launch(_ arguments: [String], chat: Bool, model: String?) -> (arguments: [String], model: String?) {
+        if arguments.first == "-r" { return (arguments + engineFlags(chat: chat, mode: false), nil) }
+        return (arguments + engineFlags(chat: chat), model)
+    }
+
     @discardableResult
     private func start(arguments: [String]) -> Conversation {
         // A newly opened session during a download must start on the still-runnable model.
@@ -361,7 +370,8 @@ final class Workspace {
         // A session already running in the background (another session messaged it) is
         // picked up as is; a second engine can't open its log.
         let adopted = arguments.first == "-r" && arguments.count > 1 ? SessionBroker.shared.adopt(arguments[1]) : nil
-        let c = adopted ?? Conversation(folder: folder, arguments: arguments + Self.engineFlags(chat: isChat), model: startupModel)
+        let launch = Self.launch(arguments, chat: isChat, model: startupModel)
+        let c = adopted ?? Conversation(folder: folder, arguments: launch.arguments, model: launch.model)
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID
