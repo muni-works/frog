@@ -187,8 +187,10 @@ framing the local `cp` half as a push; the replay counts it once, under NECESSAR
 
 - Newly allowed: 100 (88 parser+provenance, 8 mcp-read, 4 web-read), **non-skittish among them: 0.**
 - Round-2 rows are counted inside the categories above: the `cp … && git push` compound (2, push/publish),
-  `list-gpu-types`/`list-pods`/`stream-pod-logs` (6 today+#72 mcp-read), `create-pod`/`delete-pod`/
-  `pod-action`/`desktop look` (3 today + 2 in #72 mcp write), and 4 public WebFetch GETs.
+  `list-gpu-types` ×2 / `list-pods` ×2 / `stream-pod-logs` ×2 / `list-pod-billing` / `list-billing`
+  (mcp-read, all now allowed), `create-pod`/`delete-pod`/`pod-action`/`desktop look` (mcp write/action,
+  still ask), and 4 public WebFetch GETs (`raw.githubusercontent.com/vllm-project/…`,
+  `openkernelchallenge.dev/rules`, `huggingface.co/Qwen/Qwen3-Coder-Next`, `runpod.io/pricing`).
 - The okc manager's own-project Write ask (item 3) is the MODE row, not a provenance bug: the two earlier
   writes to the same file ran via `mode allows it` (auto), and the session's `.live` status shows
   `mode:"default"` — the session had fallen back to default mode by the third write, so the ask was the
