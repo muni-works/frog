@@ -251,8 +251,24 @@ fn routine_segment(seg: &str) -> bool {
         }
         "swift" => matches!(sub, "build" | "test"),
         "xcodegen" => matches!(sub, "generate" | ""),
-        "npm" => matches!(sub, "test" | "run" | "run-script"),
+        "npm" => matches!(sub, "test" | "run" | "run-script")
+            || (sub == "run" && rest.get(2).map(String::as_str) == Some("dev"))
+            || sub == "start"
+            || sub == "dev",
         "cd" | "mkdir" | "touch" | "true" | "cp" | "mv" | "rm" | "tee" => true,
+        // A local dev server serving the project: python's http.server binds localhost,
+        // and the dev-server subcommands of the JS toolchains do too. Only the module
+        // form (no script files, no -c code) and no extra hosts/ports beyond the well-
+        // known local flags. Interpreters with scripts, -c code or args stay asking.
+        "python3" | "python" => {
+            rest.len() == 3 && rest[1] == "-m" && rest[2] == "http.server"
+                || (rest.len() == 4 && rest[1] == "-m" && rest[2] == "http.server"
+                    && rest[3].chars().all(|c| c.is_ascii_digit()))
+        }
+        "vite" | "next" | "astro" => {
+            matches!(sub, "dev" | "")
+                && !rest.iter().any(|w| w.starts_with("--host") && !w.contains("localhost"))
+        }
         // In-place edits (an Edit by another name): the script must pass the
         // read-only sed checks (no w/W/e/r commands) once -i is set aside.
         "sed" => {
