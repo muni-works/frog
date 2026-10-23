@@ -3903,16 +3903,25 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         let terminal_run = name == crate::panes::TERMINAL && pane_action == "run";
         let pane = !terminal_run && matches!(name, crate::panes::TERMINAL | crate::panes::PREVIEW);
         // Web reads change nothing and show on their tool card, like reads. Auto mode runs
-        // unwatched, so there the classifier sees the URL first (a query string can carry data).
+        // unwatched, so there the classifier sees the URL first (a query string can carry data) —
+        // but a public-host GET or a search is a plain read: no data goes out that the request
+        // itself doesn't show, so it runs without the classifier (same gate as the fetch).
         if kind == Kind::Net && self.mode != Mode::Auto {
+            return Decision::Allow;
+        }
+        if (kind == Kind::Net || name.starts_with("mcp__"))
+            && self.mode == Mode::Auto
+            && crate::auto::read_tool(name, input)
+        {
+            self.decision(item, "rule", "allow", "read-only tool call", 0);
             return Decision::Allow;
         }
         if name == crate::folder::TOOL {
             return self.ask_folder(item, name, arg).await;
         }
+        let mcp = name.starts_with("mcp__");
         let cmd = input["command"].as_str().unwrap_or("").trim();
         let prefix = cmd.split_whitespace().next().unwrap_or("").to_string();
-        let mcp = name.starts_with("mcp__");
         let leaves_sandbox = name == "Bash" && input["unsandboxed"].as_bool() == Some(true);
         // Layer 1, built-in rules, no model call. A command the parser proves
         // read-only (no writes, no subshells, no credential paths) runs without
