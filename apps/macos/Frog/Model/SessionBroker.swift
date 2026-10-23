@@ -431,17 +431,19 @@ final class SessionBroker {
                 guard let raw = input["mode"]?.string, let wanted = Mode(rawValue: raw) else {
                     return c.replySession(r.id, error: "`mode` must be default, accept-edits, auto or yolo.")
                 }
-                guard let target = tracked(e.id) else {
-                    // No engine running: persist the mode so the next engine start picks it up.
-                    Library.shared.setStoredMode(e.id, wanted)
-                    return c.replySession(r.id, result: .string("\(e.name) (\(e.id)) set to \(wanted.rawValue) mode; persisted (applies next start)."))
-                }
+                // The ceiling holds whether or not an engine is running: a stored mode is
+                // applied at the next start just as a live one would be now.
                 let mine = c.status?.mode ?? .default
                 if wanted.rank > mine.rank {
                     return c.replySession(r.id, error: "You're in \(mine.rawValue) mode; you can't raise another session to \(wanted.rawValue).")
                 }
                 if wanted == .yolo, mine != .yolo || input["yolo"]?.bool != true {
                     return c.replySession(r.id, error: "Setting a session to yolo needs mode: \"yolo\" and an explicit yolo: true.")
+                }
+                guard let target = tracked(e.id) else {
+                    // No engine running: persist the mode so the next engine start picks it up.
+                    Library.shared.setStoredMode(e.id, wanted)
+                    return c.replySession(r.id, result: .string("\(e.name) (\(e.id)) set to \(wanted.rawValue) mode; persisted (applies next start)."))
                 }
                 target.setMode(wanted)
                 c.replySession(r.id, result: .string("\(e.name) (\(e.id)) is now in \(wanted.rawValue) mode (from its next turn)."))
@@ -885,10 +887,11 @@ final class SessionBroker {
         // An engine that died mid-turn left it open: the fresh engine continues it, ahead of
         // anything new (the user may have stopped the old one; the report says which).
         let unfinished = background[id].map { c in c.turns.last.map { !$0.finished } ?? false } ?? false
+        // A model or mode set while no engine ran (SetSessionModel/Mode) applies now, once.
+        let stored = Library.shared.takeStored(id)
         let c = Conversation(folder: folder, arguments: Self.resumeArguments(id, chat: info.isChat),
-                             model: Library.shared.storedModel(id))
-        // A stored mode override applies at the next turn boundary once the engine is up.
-        if let mode = Library.shared.storedMode(id) { c.setMode(mode) }
+                             model: stored.model)
+        Self.apply(stored, to: c)
         background[id] = c
         // A fresh engine isn't armed until it's seen working; nothing scheduled for the old
         // one applies to it.
@@ -904,6 +907,14 @@ final class SessionBroker {
     /// a mode flag (the engine keeps the model and mode the session last used).
     static func resumeArguments(_ id: String, chat: Bool) -> [String] {
         ["-r", id] + Workspace.engineFlags(chat: chat, mode: false)
+    }
+
+    /// A stored override's part an engine takes after it starts: the mode. (The model goes in
+    /// as `-m`, which a resumed engine honors; it resumes in its log's last mode whatever the
+    /// flags say, so the mode is an op it takes at its first turn boundary.)
+    static func apply(_ stored: (model: String?, mode: Mode?), to c: Conversation) {
+        if let mode = stored.mode { c.setMode(mode) }
+    }
     }
 
     /// A pane opening session `id` takes over its background engine instead of starting another.

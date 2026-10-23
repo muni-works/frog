@@ -887,30 +887,55 @@ final class SessionBrokerTests: XCTestCase {
                                 input: .object(["id": .string(eng.id), "title": .string("  ")])), from: probe)
     }
 
-    /// SetSessionMode / SetSessionModel with no engine running: the setting is persisted
-    /// (durable, applied by the next engine start) rather than refused.
+    /// SetSessionMode / SetSessionModel with no engine running: persisted (not refused), said
+    /// so in the reply, and applied by the next engine start — the model as its `-m`, the
+    /// mode as the op it takes at its first boundary — once, then forgotten. The mode
+    /// ceiling holds for a stopped target too.
     @MainActor
-    func testSetSessionModeAndModelPersistWhenNoEngineRuns() throws {
+    func testSetSessionModeAndModelPersistWhenNoEngineRunsAndApplyAtNextStart() throws {
         let b = broker([chief, eng])
-        let sender = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-persist"))
-        let statusLine = #"{"seq":1,"session":"chief-0001","created":1,"event":"status","model":"m","mode":"yolo","cwd":"/tmp","messages":0,"context_tokens":null,"context_window":1,"tool_mode":"native","tier":"weak","tokens_per_sec":null,"todos":[]}"#
-        sender.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(statusLine.utf8)))
-        let key = "persist-\(eng.id)"
-        defer {
+        let link = QueueLink()
+        let sender = Conversation(folder: URL(fileURLWithPath: "/tmp/demo-persist"), link: link, replay: false)
+        let status = { (mode: String) in
+            #"{"seq":1,"session":"chief-0001","created":1,"event":"status","model":"m","mode":"\#(mode)","cwd":"/tmp","messages":0,"context_tokens":null,"context_window":1,"tool_mode":"native","tier":"weak","tokens_per_sec":null,"todos":[]}"#
+        }
+        let clear = {
             UserDefaults.standard.removeObject(forKey: "sessionModels")
             UserDefaults.standard.removeObject(forKey: "sessionModes")
         }
-        // Only a dirty run leaves keys behind; clean them at the start too.
-        UserDefaults.standard.removeObject(forKey: "sessionModels")
-        UserDefaults.standard.removeObject(forKey: "sessionModes")
-        // Persist mode.
+        clear()
+        defer { clear() }
+        let replies = { link.sent.filter { $0["op"] as? String == "session_reply" } }
+
+        // The ceiling holds while stopped: an accept-edits caller can't store auto.
+        sender.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(status("accept-edits").utf8)))
+        b.handle(SessionRequest(id: "r0", item: "t0", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("auto")])), from: sender)
+        XCTAssertNil(Library.shared.storedMode(eng.id), "a refused mode isn't stored")
+        XCTAssertNotNil(replies().last?["error"])
+
+        // Within the ceiling: both persist, and the replies say so.
+        sender.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(status("yolo").utf8)))
         b.handle(SessionRequest(id: "r1", item: "t1", tool: "SetSessionMode",
-                                input: .object(["id": .string(key), "mode": .string("auto")])), from: sender)
-        XCTAssertEqual(Library.shared.storedMode(key), .auto)
-        // Persist model.
+                                input: .object(["id": .string(eng.id), "mode": .string("auto")])), from: sender)
         b.handle(SessionRequest(id: "r2", item: "t2", tool: "SetSessionModel",
-                                input: .object(["id": .string(key), "model": .string("local/qwen3-4b")])), from: sender)
-        XCTAssertEqual(Library.shared.storedModel(key), "local/qwen3-4b")
+                                input: .object(["id": .string(eng.id), "model": .string("local/qwen3-4b")])), from: sender)
+        let texts = replies().suffix(2).compactMap { $0["result"] as? String }
+        XCTAssertEqual(texts.count, 2)
+        XCTAssertTrue(texts.allSatisfy { $0.contains("persisted (applies next start)") }, "\(texts)")
+
+        // The next start takes them: the model for `-m`, the mode sent to the fresh engine.
+        let stored = Library.shared.takeStored(eng.id)
+        XCTAssertEqual(stored.model, "local/qwen3-4b")
+        XCTAssertEqual(stored.mode, .auto)
+        let engine = QueueLink()
+        let started = Conversation(folder: URL(fileURLWithPath: "/tmp/demo-started"), link: engine, replay: true, session: eng.id)
+        SessionBroker.apply(stored, to: started)
+        XCTAssertTrue(engine.sent.contains { $0["op"] as? String == "set_mode" && $0["mode"] as? String == "auto" })
+        // Once: the engine's log remembers from here, so a later restart doesn't re-apply.
+        let again = Library.shared.takeStored(eng.id)
+        XCTAssertNil(again.model)
+        XCTAssertNil(again.mode)
     }
 
     /// A dead session's SessionStatus reports where it actually works: a `folder_changed`

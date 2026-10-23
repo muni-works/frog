@@ -129,6 +129,19 @@ final class Library {
             .flatMap(Mode.init(rawValue:))
     }
 
+    /// Session `id`'s stored overrides, cleared as they're taken: the engine starting now
+    /// applies them, and after that its log remembers them (`model_changed`/`mode_changed`),
+    /// so a later change made in the session isn't overridden at every restart.
+    func takeStored(_ id: String) -> (model: String?, mode: Mode?) {
+        let taken = (storedModel(id), storedMode(id))
+        for key in ["sessionModels", "sessionModes"] {
+            guard var stored = UserDefaults.standard.dictionary(forKey: key) as? [String: String],
+                  stored.removeValue(forKey: id) != nil else { continue }
+            UserDefaults.standard.set(stored, forKey: key)
+        }
+        return taken
+    }
+
     // MARK: Renaming
 
     /// Rename through the open conversation if there is one (its engine holds the log), else
