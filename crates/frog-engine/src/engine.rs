@@ -186,6 +186,8 @@ const MAX_CONTINUES: u32 = 3;
 /// Output budget requested from hosted APIs that don't set their own: well within what current
 /// frontier and open models accept, and far above the defaults that cut thinking short.
 const CLOUD_MAX_OUTPUT: u32 = 16_384;
+/// The smallest useful tool-result cap: windows below this keep results whole.
+const MIN_RESULT_CAP: usize = 40_000;
 
 /// How a batch of tool calls ended.
 #[derive(PartialEq)]
@@ -1832,6 +1834,7 @@ impl Agent {
         self.sync_log();
 
         let mut compacted = None;
+        let mut overflowed = false;
         let mut guard = LoopGuard::default();
         let mut steps = 0;
         // Cut-off replies continued in a row (reset whenever a reply runs tools).
@@ -1892,6 +1895,27 @@ impl Agent {
             {
                 Ok(r) => r,
                 Err(e) => {
+                    // The request exceeded the model's context window (estimate missed, or a
+                    // result landed that the window can never hold): compact and retry the step
+                    // once, instead of ending the turn on a 400. The second failure is real.
+                    if e.downcast_ref::<HttpError>().is_some_and(HttpError::context_overflow) {
+                        if !overflowed {
+                            overflowed = true;
+                            self.notice(
+                                Level::Warn,
+                                "the request exceeded the model's context window; compacting and retrying",
+                            );
+                            if let Err(ce) = self.compact(None).await {
+                                anyhow::bail!(
+                                    "context window overflow, and compaction failed too: {ce:#}"
+                                );
+                            }
+                            continue;
+                        }
+                        anyhow::bail!(
+                            "the request still exceeds the model's context window after compaction"
+                        );
+                    }
                     let Some(local) = self.cloud_fallback(&e) else {
                         return Err(e);
                     };
@@ -2360,8 +2384,30 @@ impl Agent {
             (Some(c), _) => c,
             (None, Some(p)) if self.profile.provider == ProviderKind::Ollama => p.min(32_768),
             (None, Some(p)) => p,
-            (None, None) => self.profile.context_window(),
+            // Neither the config nor the server said: the catalog may still know the model's
+            // real limit, which beats the per-provider default.
+            (None, None) => crate::catalog::cached(&self.profile_name)
+                .and_then(|m| m.context)
+                .unwrap_or_else(|| self.profile.context_window()),
         };
+        // Once per session: where the window came from, so a wrong one is traceable. `configured`
+        // here means the catalog or the profile said it, not the server. Benchmarks (hermetic)
+        // don't care.
+        if !self.cfg.hermetic {
+            let source = match (probed, configured) {
+                (Some(_), _) => "server",
+                (None, Some(_)) => "catalog",
+                (None, None) => "default",
+            };
+            self.notice(
+                Level::Info,
+                format!(
+                    "context window: {} tokens (from {source}); auto-compacting past {}",
+                    self.window,
+                    (self.window as f64 * context::HARD_LIMIT) as u64
+                ),
+            );
+        }
         self.provider.set_context_window(self.window);
         // The tools, repo map and prompt were built before the window was known; a small one
         // trims them.
@@ -2447,16 +2493,32 @@ impl Agent {
             .tokens(self.fixed_chars() + context::history_chars(&self.messages))
     }
 
+    /// The most chars one tool result may carry: [`context::MAX_RESULT_SHARE`] of the window,
+    /// in chars via the estimator.
+    fn result_cap(&self) -> usize {
+        self.est
+            .chars((self.window as f64 * context::MAX_RESULT_SHARE) as u64)
+            .max(MIN_RESULT_CAP)
+    }
+
     /// Stage 1: prune stale and old tool output (no LLM), once the prompt passes `start` of the
-    /// window. Stage 2: summarize again when new messages fill the window.
+    /// window. Stage 2: summarize again when new messages fill the window. The hard limit
+    /// ([`context::HARD_LIMIT`]) bypasses the once-per-new-messages hysteresis: past it, the next
+    /// call is one oversized tool result away from a provider 400, so compact regardless.
     async fn fit_context(&mut self, compacted: &mut Option<usize>, start: f64) -> Result<()> {
         let pruned = self.prune(start);
-        if (self.estimate() as f64) > self.window as f64 * context::COMPACT_AT
-            && compacted.is_none_or(|len| self.messages.len() > len)
+        let hard = (self.window as f64 * context::HARD_LIMIT) as u64;
+        if self.estimate() > hard
+            || ((self.estimate() as f64) > self.window as f64 * context::COMPACT_AT
+                && compacted.is_none_or(|len| self.messages.len() > len))
         {
             self.notice(
                 Level::Warn,
-                "context is still nearly full after pruning; summarizing…",
+                if self.estimate() > hard {
+                    "context is nearly at the provider's limit; summarizing…"
+                } else {
+                    "context is still nearly full after pruning; summarizing…"
+                },
             );
             self.compact(None).await?;
             *compacted = Some(self.messages.len());
@@ -3198,6 +3260,16 @@ Don't repeat it. Change the arguments or try a different approach.",
                 }
             };
             let mut out = out;
+            // One result can't blow the window (and being the most recent, it would never be
+            // pruned): clip anything larger than MAX_RESULT_SHARE of the window.
+            let result_cap = self.result_cap();
+            if out.content.len() > result_cap {
+                out.content = crate::tools::truncate_middle(&out.content, result_cap);
+                out.content.push_str(&format!(
+                    "\n\n[frog] Output capped at {} of the model's {}-token window; ask more narrowly or read a range.",
+                    result_cap, self.window
+                ));
+            }
             if outcome == ToolOutcome::Ok {
                 if executed && replayable(&name) {
                     guard.last.insert(key.clone(), out.content.clone());
@@ -4094,6 +4166,28 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
     async fn compact(&mut self, focus: Option<&str>) -> Result<()> {
         if self.messages.is_empty() {
             return Ok(());
+        }
+        // If the history itself is over the window (one huge result that no cap caught), the
+        // summarization request would overflow too: clip every oversized result first,
+        // deterministically, recent ones included, so the summary request fits.
+        if self.estimate() > self.window {
+            let per_result = (self.result_cap() / 2).max(1_000);
+            let plan = context::plan_emergency(&self.messages, per_result);
+            for (id, content) in &plan {
+                self.record(Record::Replace {
+                    id: id.clone(),
+                    content: content.clone(),
+                });
+                context::apply(&mut self.messages, id, content);
+            }
+            if !plan.is_empty() {
+                self.emit(Event::ContextPruned {
+                    results: plan.len(),
+                    tokens_before: self.usage.context(),
+                    tokens_after: self.estimate(),
+                });
+                self.rebased();
+            }
         }
         let mut msgs = self.messages.clone();
         let mut instr = COMPACT_PROMPT.to_string();
@@ -8803,5 +8897,256 @@ for line in sys.stdin:
         assert!(!bash_allowed("ls && rm -rf /", &[]));
         assert!(!bash_allowed("cat x > y", &[]));
         assert!(bash_allowed("cargo check --all", &["cargo check".into()]));
+    }
+
+    // ---- auto-compaction off the provider's real limit ----
+
+    /// An engine helper whose profile name the catalog can know.
+    fn engine_named(script: Vec<Response>, spec: &str, window: Option<u64>) -> Handle {
+        let (_, model) = spec.split_once('/').unwrap();
+        let mut profile = Profile::new(ProviderKind::Ollama, model);
+        profile.context_window = window;
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: spec.into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// The window after startup resolved it: the last `Status` before the first `Idle`
+    /// (the engine emits `Status` before and after `resolve_window`, then `Idle`).
+    async fn resolved_window(h: &mut Handle) -> u64 {
+        let mut window = 0;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            match &env.event {
+                Event::Status(s) => window = s.context_window,
+                Event::Idle => return window,
+                _ => {}
+            }
+        }
+    }
+
+    /// (a) A window the config doesn't set comes from the catalog's context_length, not the
+    /// per-provider default.
+    #[tokio::test]
+    async fn an_unknown_window_uses_the_catalog_value() {
+        // Unknown to the catalog: the Ollama default.
+        let mut h = engine_named(vec![reply(vec![text("hi")], Stop::End)], "testprov/m", None);
+        assert_eq!(resolved_window(&mut h).await, 32_768);
+        shutdown(h).await;
+
+        // Known to the catalog: its context_length.
+        let spec = "testprov/m";
+        let model = crate::catalog::Model {
+            spec: spec.into(),
+            provider: "testprov".into(),
+            id: "m".into(),
+            name: "M".into(),
+            context: Some(100_000),
+            ..Default::default()
+        };
+        crate::catalog::TEST_CACHE
+            .lock()
+            .unwrap()
+            .get_or_insert_with(Default::default)
+            .insert(spec.into(), model);
+        let mut h = engine_named(vec![reply(vec![text("hi")], Stop::End)], spec, None);
+        assert_eq!(resolved_window(&mut h).await, 100_000);
+        shutdown(h).await;
+        crate::catalog::TEST_CACHE.lock().unwrap().take();
+    }
+
+    /// (b) A prompt past the hard limit is compacted before the model call, not after a 400.
+    #[tokio::test]
+    async fn a_prompt_past_the_hard_limit_compacts_before_the_call() {
+        let script = vec![
+            reply(vec![text("Summary of the work so far.")], Stop::End),
+            reply(vec![text("Done.")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, None, None, Some(8192), std::env::temp_dir());
+        let evs = run(&mut h, &"Do the long thing. ".repeat(1600)).await;
+        assert_eq!(
+            evs.iter()
+                .filter(|e| matches!(e.event, Event::Compacted { .. }))
+                .count(),
+            1
+        );
+        let requests = sent.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        // The first request is the compaction call, so the second is the turn's only model call.
+        assert!(requests[0].contains("detailed summary"));
+        assert!(requests[1].contains("Summary of the work so far."));
+        drop(requests);
+        shutdown(h).await;
+    }
+
+    /// (c) One tool result can't blow the window: oversized output is capped on arrival.
+    #[tokio::test]
+    async fn an_oversized_tool_result_is_capped() {
+        let dir = tmp_store();
+        // ~82KB in 80 lines; the cap for an 8192-token window is 40_000 chars.
+        let line = "0123456789abcdef".repeat(64);
+        std::fs::write(dir.join("big.txt"), format!("{line}\n").repeat(80)).unwrap();
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "r1".into(),
+                    name: "Read".into(),
+                    input: json!({"file_path": "big.txt"}),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("Done.")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, None, None, Some(8192), dir);
+        let evs = run(&mut h, "read big.txt").await;
+        let output = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "Read" => Some(output.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(output.contains("Output capped"), "{output}");
+        assert!(output.len() < 50_000, "{}", output.len());
+        // The model never sees more than the cap either.
+        let requests = sent.lock().unwrap();
+        assert!(requests[1].len() < 120_000, "{}", requests[1].len());
+        drop(requests);
+        shutdown(h).await;
+    }
+
+    /// (d) A provider "maximum context length" 400 compacts and retries the step once.
+    #[tokio::test]
+    async fn a_context_overflow_compacts_and_retries_once() {
+        // Vercel's gateway wording from session 20261022-132854-96e9.
+        let overflow = scripted::Fail::http(
+            400,
+            "{\"error\":{\"message\":\"This model's maximum context length is 1048576 tokens. \
+However, your request has 1579729 input tokens. Please reduce the length of the input.\"}}",
+        );
+        let client = scripted::Client::new(vec![
+            reply(vec![text("Summary after overflow.")], Stop::End),
+            reply(vec![text("Recovered.")], Stop::End),
+        ]);
+        client.fails.lock().unwrap().push_back(overflow);
+        let sent = client.sent.clone();
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "testprov/m".into(),
+            profile: {
+                let mut p = Profile::new(ProviderKind::Ollama, "m");
+                p.tool_mode = ToolMode::Native;
+                p
+            },
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(opts, Provider::Scripted(client)).unwrap();
+        let evs = run(&mut h, "keep going").await;
+        assert_eq!(
+            evs.iter()
+                .filter(|e| matches!(e.event, Event::Compacted { .. }))
+                .count(),
+            1,
+            "{:?}",
+            names(&evs)
+        );
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+        let requests = sent.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        // The failed call, the compaction, then the retry — which carries the compacted history.
+        assert!(requests[1].contains("detailed summary"));
+        assert!(requests[2].contains("Summary after overflow"));
+        assert!(!requests[2].contains("keep going\"}]}]"));
+        drop(requests);
+        shutdown(h).await;
+    }
+
+    /// (d) If compaction can't fix it either, the turn ends with a clear error, not a raw 400.
+    #[tokio::test]
+    async fn a_context_overflow_twice_ends_the_turn_with_a_clear_error() {
+        let overflow = || {
+            scripted::Fail::http(
+                400,
+                "Input too long: 1579729 input tokens, limit is 1048576 for this model",
+            )
+        };
+        let client = scripted::Client::new(vec![reply(vec![text("Summary.")], Stop::End)]);
+        client
+            .fails
+            .lock()
+            .unwrap()
+            .extend([overflow(), overflow()]);
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "testprov/m".into(),
+            profile: {
+                let mut p = Profile::new(ProviderKind::Ollama, "m");
+                p.tool_mode = ToolMode::Native;
+                p
+            },
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(opts, Provider::Scripted(client)).unwrap();
+        let evs = run(&mut h, "keep going").await;
+        // Turn failures arrive as TurnEnded(Error), with a message that says what happened.
+        let error = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnEnded {
+                    reason: EndReason::Error { error },
+                    ..
+                } => Some(error.to_string()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(error.contains("context window"), "{error}");
+        shutdown(h).await;
     }
 }
