@@ -1,0 +1,1015 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>frog · first run</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+/* ---------- tokens ---------- */
+:root{
+  --ui:-apple-system,"SF Pro Text",system-ui,sans-serif;
+  --round:ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --green:#5fc595;--amber:#e8b84a;--red:#e5746a;--blue:#6fa8ff;
+}
+.dark{
+  --deck:#0f110f;--deck2:#171a18;--deckfg:#e8e8e6;--deckmut:#7d827e;--glow:rgba(63,191,90,.18);
+  --win:#1b1c1d;--side:#161718;--line:#34363a;--line2:#2a2c2f;--fg:#e8e8e6;--fg2:#cfd1d4;--mut:#8f9297;--mut2:#6b6e73;
+  --card:#212325;--chip:#26282b;--hover:#25272a;--frog:#5fc595;--pri:#5fc595;--prifg:#0f2419;
+  --add:rgba(95,197,149,.13);--del:rgba(229,116,106,.13);--addfg:#8fdcb6;--delfg:#f0a199;--sel:#22362b;
+  --shadow:0 30px 80px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.07);--scrim:rgba(8,9,9,.55);--gh:#f2f2ef;--ghfg:#15171a;
+}
+.light{
+  --deck:#e6e5df;--deck2:#f1f0eb;--deckfg:#15171a;--deckmut:#6f726c;--glow:rgba(63,191,90,.16);
+  --win:#fbfbf9;--side:#f2f2ee;--line:#e1e1dc;--line2:#ebebe6;--fg:#15171a;--fg2:#2d3034;--mut:#6b6f75;--mut2:#9a9da2;
+  --card:#ffffff;--chip:#f0f0ec;--hover:#ecece7;--frog:#3fb47a;--pri:#15171a;--prifg:#fbfbf9;
+  --add:rgba(63,180,122,.12);--del:rgba(213,90,78,.1);--addfg:#1f7a4f;--delfg:#b5483d;--sel:#e3f3ea;
+  --shadow:0 30px 70px rgba(30,32,28,.18),0 0 0 1px rgba(0,0,0,.08);--scrim:rgba(240,240,236,.6);--gh:#15171a;--ghfg:#fbfbf9;
+  --green:#2e9a68;--amber:#b7861b;--red:#c9544a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font:14px/1.5 var(--ui);background:var(--deck);color:var(--deckfg);-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+a{color:inherit}
+
+/* ---------- deck ---------- */
+.deck{display:grid;grid-template-columns:240px 1fr;height:100vh;
+  background:radial-gradient(1100px 520px at 62% 112%,var(--glow),transparent 70%),linear-gradient(var(--deck2),var(--deck))}
+.rail{padding:22px 16px 16px 20px;border-right:1px solid color-mix(in srgb,var(--deckfg) 9%,transparent);overflow:auto;display:flex;flex-direction:column}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.brand .icon{width:30px;height:30px}
+.brand b{font:600 16px var(--round)}
+.brand span{display:block;font-size:12px;color:var(--deckmut);margin-top:-2px}
+.act{font:600 10px var(--ui);letter-spacing:.08em;text-transform:uppercase;color:var(--deckmut);margin:12px 0 3px 8px}
+.nav{display:flex;width:100%;align-items:baseline;gap:8px;padding:3px 8px;border-radius:7px;font-size:13px;color:color-mix(in srgb,var(--deckfg) 78%,transparent);text-align:left}
+.nav i{font:500 10.5px var(--mono);font-style:normal;color:var(--deckmut);width:16px}
+.nav:hover{background:color-mix(in srgb,var(--deckfg) 6%,transparent)}
+.nav.on{background:color-mix(in srgb,var(--deckfg) 10%,transparent);color:var(--deckfg)}
+.railfoot{margin-top:auto;padding-top:14px;display:flex;gap:6px;align-items:center;font-size:12px;color:var(--deckmut)}
+.seg{display:inline-flex;border:1px solid color-mix(in srgb,var(--deckfg) 14%,transparent);border-radius:8px;padding:2px}
+.seg button{padding:3px 10px;border-radius:6px;font-size:12px;color:var(--deckmut)}
+.seg button.on{background:color-mix(in srgb,var(--deckfg) 12%,transparent);color:var(--deckfg)}
+
+.stage{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:14px 24px;min-width:0}
+.cap{width:980px;display:flex;align-items:flex-start;gap:20px;margin-top:14px;min-height:44px}
+.cap .t{font:600 15px var(--round);white-space:nowrap;min-width:190px}
+.cap .t small{display:block;font:500 10.5px var(--mono);color:var(--deckmut);letter-spacing:.02em}
+.cap .n{font-size:12.5px;color:var(--deckmut);line-height:1.45;flex:1;max-width:600px;margin:0}
+.cap .arrows{margin-left:auto;display:flex;gap:6px}
+.cap .arrows button{width:30px;height:30px;border-radius:8px;border:1px solid color-mix(in srgb,var(--deckfg) 14%,transparent);color:var(--deckmut)}
+.cap .arrows button:hover{color:var(--deckfg)}
+
+/* 90 s ruler */
+.ruler{width:980px;height:24px;margin-bottom:10px;position:relative;visibility:hidden}
+.ruler.on{visibility:visible}
+.ruler .bar{position:absolute;left:0;right:0;top:16px;height:3px;border-radius:3px;background:color-mix(in srgb,var(--deckfg) 10%,transparent)}
+.ruler .fill{position:absolute;left:0;top:16px;height:3px;border-radius:3px;background:#5fc595;transition:width .5s cubic-bezier(.3,.7,.2,1)}
+.ruler .tick{position:absolute;top:0;white-space:nowrap;font:500 10px var(--mono);color:var(--deckmut);transform:translateX(-50%)}
+.ruler .tick:first-of-type{transform:none}.ruler .tick:last-of-type{transform:translateX(-100%)}
+.ruler .now{position:absolute;top:11px;width:13px;height:13px;border-radius:50%;background:var(--deck2);border:3px solid #5fc595;transform:translateX(-50%);transition:left .5s cubic-bezier(.3,.7,.2,1)}
+.ruler .lbl{position:absolute;left:50%;transform:translateX(-50%);top:0;font:500 10.5px var(--mono);color:var(--deckmut)}
+.ruler .lbl b{color:var(--deckfg);font-weight:600}
+
+.screen{display:none}
+.screen.on{display:block}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* ---------- window chrome ---------- */
+.win{width:980px;height:612px;border-radius:12px;background:var(--win);color:var(--fg);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;position:relative}
+.tb{height:38px;flex:none;display:flex;align-items:center;justify-content:center;position:relative;border-bottom:1px solid var(--line2);font-size:13px;color:var(--mut);font-weight:500}
+.tb .lights{position:absolute;left:14px;top:13px;display:flex;gap:8px}
+.tb .lights i{width:12px;height:12px;border-radius:50%;background:#ff5f57;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.2)}
+.tb .lights i:nth-child(2){background:#febc2e}.tb .lights i:nth-child(3){background:#28c840}
+.app{display:flex;flex:1;min-height:0}
+.side{width:212px;flex:none;background:var(--side);border-right:1px solid var(--line2);display:flex;flex-direction:column;padding:10px 8px;font-size:13px}
+.side .new{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;color:var(--fg2)}
+.side .new kbd{margin-left:auto}
+.side .grp{font-size:11px;font-weight:600;color:var(--mut2);padding:12px 8px 4px;letter-spacing:.02em}
+.side .th{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;color:var(--fg2);white-space:nowrap;overflow:hidden}
+.side .th span{overflow:hidden;text-overflow:ellipsis}
+.side .th.on{background:var(--hover);color:var(--fg)}
+.side .th.dim{color:var(--mut)}
+.side .th .ago{flex:none;margin-left:auto;font-size:11px;color:var(--mut2)}
+.side .foot{margin-top:auto;display:flex;align-items:center;gap:9px;padding:10px 16px 2px;border-top:1px solid var(--line2);margin-inline:-8px}
+.side .foot b{font:600 13.5px var(--round);display:block;line-height:1.2}
+.side .foot small{color:var(--mut);font-size:11.5px;display:block}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.tx{flex:1;overflow:hidden;padding:22px 40px 10px}
+.composer{margin:0 32px 18px;border:1px solid var(--line);border-radius:12px;padding:11px 14px 9px;background:var(--card);color:var(--mut)}
+.composer .bot{display:flex;gap:8px;align-items:center;margin-top:10px;font-size:12px}
+.composer .send{margin-left:auto;width:26px;height:26px;border-radius:8px;background:var(--chip);display:grid;place-items:center;color:var(--mut)}
+kbd{font:500 11px var(--mono);color:var(--mut2);background:none;border:1px solid var(--line);border-radius:5px;padding:0 5px}
+
+/* ---------- inline rows (match design/message-cards/inline.html) ---------- */
+.row{display:flex;align-items:center;gap:8px;color:var(--mut);font-size:13.5px;padding:3px 0;white-space:nowrap;overflow:hidden}
+.row .who{color:var(--fg);font-weight:500}
+.row .hl{color:var(--fg2);overflow:hidden;text-overflow:ellipsis}
+.row .time{margin-left:auto;font:500 11.5px var(--mono);color:var(--mut2)}
+.k{font-size:11px;font-weight:600}.k.g{color:var(--green)}.k.a{color:var(--amber)}.k.r{color:var(--red)}
+.chip{font:11.5px var(--mono);color:var(--fg2);background:var(--chip);border:1px solid var(--line);border-radius:6px;padding:1px 6px;white-space:nowrap}
+.chip.g{color:var(--green)}
+.tool{color:var(--mut);font-size:13px;padding:2px 0 2px 24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tool .v{font:500 11.5px var(--mono);color:var(--mut2);display:inline-block;width:56px}
+code{font:12px var(--mono);color:var(--fg2)}
+.tool .r,.r{color:var(--red)}.tool .g,.g{color:var(--green)}
+.say{margin:10px 0 12px 24px;color:var(--fg);font-size:14px;max-width:580px}
+.you{margin:4px 0 14px auto;max-width:420px;width:fit-content;background:var(--chip);border:1px solid var(--line2);border-radius:12px;padding:7px 12px;color:var(--fg)}
+.spin{display:inline-block;width:10px;height:10px;border-radius:50%;border:1.5px solid var(--mut2);border-top-color:transparent;animation:spin .8s linear infinite;vertical-align:-1px;margin-left:8px}
+@keyframes spin{to{transform:rotate(1turn)}}
+.btn{display:inline-flex;align-items:center;gap:6px;background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:5px 12px;font-size:13px;color:var(--fg);white-space:nowrap}
+.btn:hover{filter:brightness(1.06)}
+.btn.pri{background:var(--pri);color:var(--prifg);border-color:transparent;font-weight:600}
+.btn.rec{border-color:color-mix(in srgb,var(--green) 50%,var(--line));color:var(--green)}
+.btn.ghost{background:none;border-color:transparent;color:var(--mut)}
+.btn kbd{border-color:currentColor;color:inherit;opacity:.55}
+.ask{display:flex;gap:7px;align-items:center;margin:8px 0 14px 24px;flex-wrap:wrap}
+.fine{font-size:12px;color:var(--mut)}
+.fine a{color:var(--fg2);text-decoration:none;border-bottom:1px solid var(--line)}
+
+/* ---------- frog face (FrogFace.swift geometry, 7 moods) ---------- */
+.ff{display:inline-block;width:var(--s,16px);height:var(--s,16px);flex:none;color:var(--frog);vertical-align:middle}
+.ff svg{width:100%;height:100%;display:block;overflow:visible}
+.ff .eyes{transform-box:view-box;transform-origin:50% 30%}
+.ff[data-m=idle] .eyes,.ff[data-m=working] .eyes{animation:blink 5.5s infinite}
+.ff[data-m=working] svg{animation:bob 3.2s infinite}
+.ff[data-m=done] svg{animation:hop 2.6s infinite}
+.ff[data-m=reading] .pup{animation:glance 3.2s ease-in-out infinite}
+@keyframes blink{0%,94%,100%{transform:none}96.5%{transform:scaleY(.12)}}
+@keyframes bob{0%,80%,100%{transform:none}88%{transform:translateY(-4%)}}
+@keyframes hop{0%,62%,100%{transform:none}70%{transform:translateY(-14%)}78%{transform:none}83%{transform:translateY(-5%)}88%{transform:none}}
+@keyframes glance{0%,40%{transform:translateX(-5px)}50%,90%{transform:translateX(5px)}100%{transform:translateX(-5px)}}
+@media (prefers-reduced-motion:reduce){.ff *{animation:none!important}}
+</style>
+<style>
+/* ---------- screens ---------- */
+.hello{flex:1;display:flex;flex-direction:column;align-items:center;padding-top:40px}
+.pond{position:relative;width:150px;height:96px;display:grid;place-items:center}
+.pond svg.pad{position:absolute;bottom:0;left:0;width:150px;height:40px;color:color-mix(in srgb,var(--frog) 22%,var(--win))}
+.pond .ff{position:relative;top:-2px}
+h1{font:600 28px/1.15 var(--round);letter-spacing:-.01em;margin:16px 0 6px;color:var(--fg)}
+h2{font:600 19px/1.2 var(--round);margin:0 0 2px;color:var(--fg)}
+.sub{color:var(--mut);margin:0 0 22px;font-size:14.5px;text-align:center;max-width:500px}
+.repos{width:540px;border:1px solid var(--line);border-radius:12px;background:var(--card);overflow:hidden}
+.repos .h{font-size:11px;font-weight:600;color:var(--mut2);padding:9px 14px 6px;letter-spacing:.02em;display:flex}
+.repos .h span{margin-left:auto;font-weight:500}
+.repo{display:grid;grid-template-columns:20px 96px 1fr auto 12px;gap:10px;align-items:center;width:100%;padding:9px 14px;border-top:1px solid var(--line2);text-align:left}
+.repo:hover,.repo.hot{background:var(--hover)}
+.repo b{font-weight:600}
+.repo .path{font:12px var(--mono);color:var(--mut)}
+.repo .meta{font-size:12px;color:var(--mut)}
+.repo .go{color:var(--mut2)}
+.fold{width:18px;height:13px;border-radius:3px;background:color-mix(in srgb,var(--blue) 70%,var(--win));position:relative;margin-top:2px}
+.fold::before{content:"";position:absolute;left:0;top:-3px;width:8px;height:4px;border-radius:2px 2px 0 0;background:inherit}
+.dotc{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.alt{display:flex;gap:12px;align-items:center;margin-top:14px;color:var(--mut);font-size:13px}
+.hello .fine{margin-top:auto;margin-bottom:22px}
+
+.tasks{display:flex;flex-direction:column;gap:10px;margin:6px 0 0 24px;max-width:660px}
+.task{display:grid;grid-template-columns:18px 1fr auto;gap:0 12px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--card)}
+.task.rec{border-color:color-mix(in srgb,var(--green) 50%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 10%,transparent)}
+.task .num{font:600 12px var(--mono);color:var(--mut2);padding-top:2px}
+.task b{font-weight:600;font-size:14.5px}
+.task p{margin:2px 0 7px;color:var(--mut);font-size:13px}
+.task .meta{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--mut)}
+.task .btn{align-self:center}
+
+.diff{margin:4px 0 0 24px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);max-width:680px}
+.diff .dh{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line2);font:12.5px var(--mono);color:var(--fg2)}
+.diff .dh .n{margin-left:auto}
+.diff pre{margin:0;padding:6px 0;font:12.5px/1.65 var(--mono);color:var(--fg2);overflow:hidden}
+.diff pre span{display:block;white-space:pre}
+.diff pre span::before{content:attr(data-n);display:inline-block;width:40px;text-align:right;padding-right:14px;color:var(--mut2)}
+.diff pre .a{background:var(--add);color:var(--addfg)}.diff pre .d{background:var(--del);color:var(--delfg)}
+.diff pre .c{color:var(--mut)}
+.diff .df{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--line2)}
+.diff .df .ok{font-size:12.5px;color:var(--green);margin-right:auto}
+
+.card{margin:10px 0 12px 24px;border:1px solid var(--line);border-radius:14px;background:var(--card);padding:18px 20px;max-width:620px}
+.card .top{display:flex;gap:14px;align-items:center}
+.card .top p{margin:2px 0 0;color:var(--mut);font-size:13.5px}
+.names{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 2px}
+.name{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:5px 14px 5px 8px;font:500 14px var(--round);background:var(--win)}
+.name.on{border-color:var(--green);background:var(--sel)}
+.name.keep{color:var(--mut);padding-left:14px}
+.echo{font:500 13.5px var(--round);color:var(--mut);margin:10px 0 14px;min-height:20px}
+.rt{display:grid;grid-template-columns:1fr auto 34px;gap:14px;align-items:center;padding:12px 0;border-top:1px solid var(--line2)}
+.rt.first{border-top:0}
+.rt.w{grid-template-columns:1fr auto auto}
+.rt.w .btn{min-width:88px;justify-content:center}
+.rt b{font-weight:600}.rt p{margin:1px 0 0;color:var(--mut);font-size:13px}
+.rt .when{font-size:12px;color:var(--mut);white-space:nowrap;text-align:right}
+.tg{width:34px;height:20px;border-radius:999px;background:var(--line);position:relative;transition:.2s}
+.tg::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:.2s}
+.tg.on{background:var(--green)}.tg.on::after{left:16px}
+
+.scrim{position:absolute;inset:38px 0 0 0;background:var(--scrim);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:grid;place-items:center}
+.sheet{width:400px;background:var(--win);border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.3);padding:24px 28px 18px;text-align:center}
+.sheet h2{font-size:23px;margin-top:8px}
+.sheet .sub{margin:4px auto 14px;font-size:13.5px}
+.keeps{display:flex;justify-content:center;gap:6px;margin-bottom:18px;flex-wrap:wrap}
+.gh{width:100%;justify-content:center;padding:10px;border-radius:10px;font-weight:600;font-size:14px;background:var(--gh);color:var(--ghfg);border:0;display:flex;gap:9px;align-items:center}
+.or{display:flex;align-items:center;gap:10px;color:var(--mut2);font-size:12px;margin:12px 0}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+.field{display:flex;gap:6px}
+.field input{flex:1;font:inherit;font-size:13.5px;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:9px;padding:7px 11px;outline:none}
+.field input:focus{border-color:var(--green)}
+.sheet .fine{margin:14px 0 0}
+
+.term{width:980px;height:612px;border-radius:12px;background:#0d0e0f;color:#d7d9d6;box-shadow:0 30px 80px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.08);overflow:hidden;display:flex;flex-direction:column}
+.light .term{background:#fdfdfb;color:#25282b;box-shadow:var(--shadow)}
+.term .tb{border-color:rgba(127,127,127,.18);color:#8f9297}
+.term pre{margin:0;padding:14px 24px;font:12.5px/1.52 var(--mono);white-space:pre;overflow:hidden}
+.term .p{color:#5fc595}.term .m{color:#767a78}.term .w{color:#f2f2ef;font-weight:600}.term .y{color:#e8b84a}.term .r{color:#e5746a}.term .b{color:#8fb9ff}
+.light .term .p{color:#1f8a57}.light .term .w{color:#15171a}.light .term .m{color:#8a8d92}.light .term .y{color:#a2760f}.light .term .b{color:#2f67c4}.light .term .r{color:#c9544a}
+.term .hi{background:rgba(95,197,149,.15)}
+.cursor{display:inline-block;width:8px;height:15px;background:currentColor;vertical-align:-2px;animation:cur 1.1s steps(1) infinite}
+@keyframes cur{50%{opacity:0}}
+.term .code{border:1px solid rgba(127,127,127,.4);border-radius:6px;padding:1px 10px;letter-spacing:.2em}
+
+.receipt{margin:8px 0 14px 24px;border:1px solid var(--line);border-radius:14px;background:var(--card);max-width:580px;overflow:hidden}
+.receipt .rh{display:flex;align-items:center;gap:10px;padding:14px 18px 4px}
+.receipt .rh small{margin-left:auto;color:var(--mut);font-size:12px}
+.nums{display:grid;grid-template-columns:repeat(4,1fr);padding:6px 18px 14px}
+.nums b{display:block;font:600 27px/1.15 var(--round);letter-spacing:-.01em;color:var(--fg)}
+.nums span{font-size:12px;color:var(--mut)}
+.receipt ul{margin:0;padding:10px 18px 12px;list-style:none;border-top:1px solid var(--line2);font-size:13px;color:var(--fg2)}
+.receipt li{display:flex;gap:8px;padding:2px 0}
+.receipt li span{margin-left:auto;color:var(--mut);font:12px var(--mono)}
+.receipt .rf{padding:9px 18px;border-top:1px solid var(--line2);font-size:12px;color:var(--mut);display:flex;gap:16px}
+.sep{height:1px;background:var(--line2);margin:12px 0 12px 24px}
+.datel{font-size:11px;font-weight:600;color:var(--mut2);margin:0 0 4px;letter-spacing:.03em}
+
+.setwrap{display:flex;flex:1;min-height:0}
+.setnav{width:180px;flex:none;background:var(--side);border-right:1px solid var(--line2);padding:12px 8px;font-size:13px}
+.setnav div{padding:5px 10px;border-radius:7px;color:var(--fg2)}
+.setnav .on{background:var(--hover);color:var(--fg);font-weight:500}
+.setbody{flex:1;padding:22px 28px;overflow:hidden}
+.plans{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 14px}
+.plan{border:1px solid var(--line);border-radius:12px;padding:13px;background:var(--card);display:flex;flex-direction:column;min-height:214px}
+.plan.cur{border-color:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 12%,transparent)}
+.plan h3{margin:0;font:600 15px var(--round);display:flex;align-items:center}
+.plan .pr{font:600 22px var(--round);margin:6px 0 2px}
+.plan .pr small{font:500 12px var(--ui);color:var(--mut)}
+.plan ul{margin:4px 0 10px;padding:0;list-style:none;font-size:12.5px;color:var(--mut)}
+.plan li{padding:1px 0}
+.plan .btn{margin-top:auto;justify-content:center}
+.tag{font:600 9.5px var(--ui);text-transform:uppercase;letter-spacing:.06em;color:var(--green);margin-left:auto}
+.cancelrow{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--card);margin-top:10px}
+.cancelrow p{margin:0;flex:1;font-size:13px;color:var(--mut)}
+.cancelrow b{color:var(--fg);font-weight:600}
+
+.scene{width:980px;height:612px;border-radius:12px;overflow:hidden;position:relative;box-shadow:var(--shadow);
+  background:radial-gradient(700px 380px at 30% 88%,rgba(95,197,149,.16),transparent 70%),linear-gradient(#f5f4ef,#e4e2da);color:#15171a}
+.dark .scene{background:radial-gradient(700px 380px at 30% 88%,rgba(95,197,149,.14),transparent 70%),linear-gradient(#1d1f1d,#111211);color:#e8e8e6}
+.scene .copy{position:absolute;right:60px;top:84px;width:330px}
+.scene .step{font:600 11px var(--ui);letter-spacing:.08em;text-transform:uppercase;opacity:.5}
+.scene h1{color:inherit;font-size:31px;margin-top:10px}
+.scene .copy p{font-size:15px;opacity:.72;margin:0 0 18px}
+.scene .art{position:absolute;left:20px;bottom:0;width:580px;height:580px}
+.scene .moved{position:absolute;right:60px;bottom:52px;width:330px;border-radius:12px;background:rgba(255,255,255,.7);border:1px solid rgba(0,0,0,.07);padding:12px 16px;font-size:13px}
+.dark .scene .moved{background:rgba(34,36,38,.85);border-color:rgba(255,255,255,.08)}
+.moved .ln{display:flex;gap:8px;padding:2px 0;opacity:.85}
+.moved .ln span{margin-left:auto;opacity:.6;font:12px var(--mono)}
+.moved .ok{color:#3fb47a;font-weight:700;width:12px;font-style:normal;flex:none}
+.scene .btn{background:rgba(127,127,127,.12);border-color:rgba(127,127,127,.25);color:inherit}
+.scene .btn.pri{background:#15171a;color:#fbfbf9}
+.dark .scene .btn.pri{background:#5fc595;color:#0f2419}
+.bubble{position:absolute;background:#fbfbf9;color:#15171a;border-radius:18px;padding:11px 15px;font:500 15.5px/1.35 var(--round);box-shadow:0 12px 30px rgba(0,0,0,.14);width:250px}
+.bubble::after{content:"";position:absolute;left:34px;bottom:-6px;width:14px;height:14px;background:inherit;transform:rotate(45deg);border-radius:2px}
+
+.deskcard{margin:10px 0 12px 24px;border:1px solid var(--line);border-radius:14px;background:var(--card);max-width:640px;display:grid;grid-template-columns:190px 1fr;overflow:hidden}
+.deskcard .pic{background:linear-gradient(#efeee8,#dddbd3);display:grid;place-items:center}
+.dark .deskcard .pic{background:linear-gradient(#2b2d2c,#1c1d1d)}
+.deskcard .body{padding:16px 18px}
+.deskcard p{margin:4px 0 12px;color:var(--mut);font-size:13.5px}
+.sizes{display:flex;gap:8px;margin-bottom:12px}
+.size{flex:1;border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:12px;color:var(--mut)}
+.size b{display:flex;color:var(--fg);font:600 14px var(--round)}
+.size b em{font-style:normal;margin-left:auto;font-weight:500;color:var(--fg2)}
+.ladder{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:14px 0 0 24px}
+.ladder .stp{padding:2px 10px;border:1px solid var(--line);border-radius:999px}
+.ladder .stp.on{border-color:var(--green);color:var(--green)}
+
+.states{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;gap:12px;padding:16px;flex:1;background:var(--side);min-height:0}
+.st{border:1px solid var(--line);border-radius:12px;background:var(--win);padding:13px 15px;display:flex;flex-direction:column;gap:5px;min-height:0}
+.st .lab{font:600 10px var(--ui);letter-spacing:.07em;text-transform:uppercase;color:var(--mut2);display:flex;align-items:center;gap:6px}
+.st h3{margin:4px 0 0;font:600 15px/1.25 var(--round);display:flex;gap:8px;align-items:center}
+.st p{margin:0;color:var(--mut);font-size:12.5px;line-height:1.45}
+.st .ask{margin:auto 0 0;gap:6px}
+.st .btn{font-size:12px;padding:4px 10px}
+.st .chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
+</style>
+</head>
+<body class="dark">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="ibg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#171a18"/><stop offset="1" stop-color="#0f110f"/></linearGradient>
+    <radialGradient id="iglow" cx=".5" cy="1.05" r=".55"><stop offset="0" stop-color="#3fbf5a" stop-opacity=".55"/><stop offset="1" stop-color="#3fbf5a" stop-opacity="0"/></radialGradient>
+    <linearGradient id="iskin" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5fd36c"/><stop offset="1" stop-color="#43b552"/></linearGradient>
+    <!-- app icon, variant B (no nose + lineup eyes), from design/app-icon/variants.svg -->
+    <symbol id="appicon" viewBox="0 0 256 256">
+      <rect width="256" height="256" rx="58" fill="url(#ibg)"/><rect width="256" height="256" rx="58" fill="url(#iglow)"/>
+      <circle cx="90" cy="88" r="30" fill="url(#iskin)"/><circle cx="166" cy="88" r="30" fill="url(#iskin)"/>
+      <ellipse cx="128" cy="142" rx="74" ry="56" fill="url(#iskin)"/>
+      <circle cx="90" cy="88" r="17" fill="#15171a"/><circle cx="166" cy="88" r="17" fill="#15171a"/>
+      <circle cx="95.5" cy="82.5" r="5.5" fill="#fbfbf9"/><circle cx="171.5" cy="82.5" r="5.5" fill="#fbfbf9"/>
+      <path d="M100 144 Q 128 162 156 144" stroke="#15171a" stroke-width="7" fill="none" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ghmark" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></symbol>
+
+    <!-- the head: minimal shell, black visor, frog face on the visor, one accent -->
+    <symbol id="head" viewBox="0 0 240 240">
+      <ellipse cx="120" cy="226" rx="78" ry="8" fill="#000" opacity=".16"/>
+      <rect x="84" y="186" width="72" height="36" rx="14" fill="#d9d8d2"/>
+      <rect x="84" y="208" width="72" height="14" rx="7" fill="#c7c6bf"/>
+      <rect x="104" y="170" width="32" height="26" rx="8" fill="#cfcec8"/>
+      <rect x="104" y="176" width="32" height="5" fill="#5fc595"/>
+      <rect x="28" y="22" width="184" height="156" rx="64" fill="#f6f6f3"/>
+      <rect x="28" y="22" width="184" height="156" rx="64" fill="url(#shellshade)"/>
+      <rect x="48" y="54" width="144" height="92" rx="40" fill="#121413"/>
+      <rect x="48" y="54" width="144" height="92" rx="40" fill="url(#visorgloss)"/>
+      <g transform="translate(84 62) scale(.72)" fill="#5fc595">
+        <path fill-rule="evenodd" d="M8 62a42 29 0 1 0 84 0a42 29 0 1 0-84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0Z"/>
+        <path fill-rule="evenodd" d="M12 30a18 18 0 1 0 36 0a18 18 0 1 0-36 0Z M23.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0-13 0Z M52 30a18 18 0 1 0 36 0a18 18 0 1 0-36 0Z M63.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0-13 0Z"/>
+      </g>
+      <circle cx="214" cy="100" r="6" fill="#e9e8e3"/>
+    </symbol>
+    <linearGradient id="shellshade" x1="0" y1="0" x2="0" y2="1"><stop offset=".55" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".09"/></linearGradient>
+    <linearGradient id="visorgloss" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".1"/><stop offset=".4" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  </defs>
+</svg>
+
+<div class="deck">
+  <nav class="rail">
+    <div class="brand"><svg class="icon"><use href="#appicon"/></svg><div><b>frog</b><span>first run · onboarding</span></div></div>
+    <div id="navlist"></div>
+    <div class="railfoot">
+      <div class="seg" id="theme"><button data-t="dark" class="on">dark</button><button data-t="light">light</button></div>
+      <span style="margin-left:auto">← → to step</span>
+    </div>
+  </nav>
+
+  <main class="stage">
+    <div class="ruler" id="ruler">
+      <div class="bar"></div><div class="fill" id="rfill"></div>
+      <span class="tick" style="left:0">open</span><span class="lbl" id="rlbl"></span><span class="tick" style="left:100%">1:30 budget</span>
+      <div class="now" id="rnow"></div>
+    </div>
+    <div id="screens">
+
+<!-- ============ act 1 · the first win (under 90 s) ============ -->
+
+<section class="screen" id="open" data-act="the first win · under 90 s" data-title="open the app" data-t="0"
+  data-note="no tour, no sign-in. recent repos are git dirs touched in the last 30 days under ~, ~/code, ~/Developer and ~/src. first tasks run on an anonymous device trial on frog cloud, so the first win needs no account.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>frog</div>
+    <div class="hello">
+      <div class="pond">
+        <svg class="pad" viewBox="-1 -1 2 2" preserveAspectRatio="none"><path d="M0 0 L0.643 0.766 A1 1 0 1 1 0.985 0.174 Z" fill="currentColor"/></svg>
+        <i class="ff" data-m="idle" style="--s:78px"></i>
+      </div>
+      <h1>what shall we fix?</h1>
+      <p class="sub">pick a repo. i'll read it and suggest three things i can finish right now.</p>
+      <div class="repos">
+        <div class="h">recent on this mac<span>4 found</span></div>
+        <button class="repo hot" data-go="next"><span class="fold"></span><b>ledger</b><span class="path">~/code/ledger</span><span class="meta"><i class="dotc" style="background:#3178c6"></i>typescript · 2 h ago</span><span class="go">›</span></button>
+        <button class="repo" data-go="next"><span class="fold"></span><b>pond-api</b><span class="path">~/code/pond-api</span><span class="meta"><i class="dotc" style="background:#00add8"></i>go · yesterday</span><span class="go">›</span></button>
+        <button class="repo" data-go="next"><span class="fold"></span><b>garden</b><span class="path">~/Developer/garden</span><span class="meta"><i class="dotc" style="background:#dea584"></i>rust · 3 d ago</span><span class="go">›</span></button>
+        <button class="repo" data-go="next"><span class="fold"></span><b>dotfiles</b><span class="path">~/dotfiles</span><span class="meta"><i class="dotc" style="background:#89e051"></i>shell · 2 wk ago</span><span class="go">›</span></button>
+      </div>
+      <div class="alt"><button class="btn">open another folder…</button><span>or drop one on me</span></div>
+      <p class="fine">no account needed. your first tasks run on frog cloud, free. <a href="#" data-go="states">use a model on this mac instead</a></p>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="read" data-act="the first win · under 90 s" data-title="frog reads the repo" data-t="9"
+  data-note="read-only pass, about 15 s: manifest, git log, the test suite, README against the manifest, outdated deps. each finding becomes a candidate task, ranked by confidence and by how fast it can be checked.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — frog</div>
+    <div class="app">
+      <aside class="side" data-th="reading ledger" data-m="reading" data-name="frog" data-acct="trial · no account"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="row"><i class="ff" data-m="reading"></i><span class="who">frog</span><span class="hl">reading ledger</span><span class="time">0:09</span></div>
+          <div class="tool"><span class="v">read</span>package.json, tsconfig.json · 214 files, vitest</div>
+          <div class="tool"><span class="v">ran</span><code>git log -30</code> · last commit 2 h ago, 3 people</div>
+          <div class="tool"><span class="v">ran</span><code>npm test</code> · 212 passed, <span class="r">2 failing</span> in src/auth/</div>
+          <div class="tool"><span class="v">read</span>README.md against package.json · install steps don't match</div>
+          <div class="tool"><span class="v">ran</span><code>npm outdated</code><span class="spin"></span></div>
+          <p class="say">just reading and running your tests. nothing changes until you say so.</p>
+        </div>
+        <div class="composer">ask me anything about ledger…<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">↑</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="propose" data-act="the first win · under 90 s" data-title="three things to finish" data-t="21"
+  data-note="exactly three, each with the evidence behind it, the files it touches and an honest estimate. the one your own tests can check is marked first. one click runs it; typing still works.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — frog</div>
+    <div class="app">
+      <aside class="side" data-th="ledger · 3 ideas" data-m="waiting" data-name="frog" data-acct="trial · no account"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="row"><i class="ff" data-m="waiting"></i><span class="who">frog</span><span class="hl">read ledger · 214 files, tests, readme, deps</span><span class="time">0:21</span></div>
+          <p class="say">here's what i can finish right now. pick one.</p>
+          <div class="tasks">
+            <div class="task rec"><span class="num">1</span><div><b>fix 2 failing tests in auth/</b><p>an expired token gets a 500 instead of a 401. <code>verify()</code> throws before the guard can answer.</p><div class="meta"><span class="chip">src/auth/session.ts</span><span>~40 s · your tests will check it</span></div></div><button class="btn pri" data-go="next">fix it</button></div>
+            <div class="task"><span class="num">2</span><div><b>README install steps are stale</b><p>it says <code>npm i -g ledger-cli</code>. the package has been <code>@ledger/cli</code> since 2.0.</p><div class="meta"><span class="chip">README.md</span><span>~20 s</span></div></div><button class="btn">update it</button></div>
+            <div class="task"><span class="num">3</span><div><b>bump zod 3.22 → 3.23 and run tests</b><p>the patch fixes the parse bug your TODO at <code>utils/money.ts:41</code> works around.</p><div class="meta"><span class="chip">package.json</span><span class="chip">utils/money.ts</span><span>~1 min</span></div></div><button class="btn">bump it</button></div>
+          </div>
+        </div>
+        <div class="composer">or tell me what to do…<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">↑</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="run" data-act="the first win · under 90 s" data-title="one click runs it" data-t="52"
+  data-note="the app's inline rows: one line per tool call, one plain sentence on what was wrong. the face is in its working mood, and the sidebar shows the same face.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — frog</div>
+    <div class="app">
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="working" data-name="frog" data-acct="trial · no account"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="you">fix 2 failing tests in auth/</div>
+          <div class="row"><i class="ff" data-m="working"></i><span class="who">frog</span><span class="hl">on it</span><span class="time">0:52</span></div>
+          <div class="tool"><span class="v">read</span>src/auth/session.ts, src/auth/session.test.ts</div>
+          <div class="tool"><span class="v">ran</span><code>npx vitest src/auth</code> · <span class="r">2 failed</span>: expired token → 401, refresh after expiry → 401</div>
+          <p class="say"><code>verify()</code> throws on an expired token, so <code>requireSession</code> never sends its 401 and the error handler answers 500. i'll have <code>verify</code> return the expiry and let the guard decide.</p>
+          <div class="tool"><span class="v">edit</span>src/auth/session.ts <span class="g">+4</span> <span class="r">−2</span></div>
+          <div class="tool"><span class="v">ran</span><code>npx vitest src/auth</code><span class="spin"></span></div>
+        </div>
+        <div class="composer">steer me, or press esc to stop…<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">■</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="diff" data-act="the first win · under 90 s" data-title="accept the diff" data-t="74"
+  data-note="the win is the accept, not the run: we time first open → first accepted diff. accept writes to the working tree only, no commit, so yes is safe. ⌘↩ accepts.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — frog</div>
+    <div class="app">
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="done" data-name="frog" data-acct="trial · no account"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="row"><i class="ff" data-m="done"></i><span class="who">frog</span><span class="k g">done</span><span class="hl">both tests pass · nothing else in auth/ moved</span><span class="time">1:09</span></div>
+          <p class="say">fixed. here's the change. nothing is applied until you accept.</p>
+          <div class="diff">
+            <div class="dh">src/auth/session.ts<span class="n"><span class="g">+4</span> <span class="r">−2</span></span></div>
+<pre><span class="c" data-n="18"> export function requireSession(req: Request): Session {</span><span data-n="19">   const token = readToken(req)</span><span class="d" data-n="20">-  const claims = verify(token)</span><span class="d" data-n="21">-  if (!claims) throw new HttpError(401, "no session")</span><span class="a" data-n="20">+  const claims = verify(token, { throwOnExpired: false })</span><span class="a" data-n="21">+  if (!claims || claims.expired) {</span><span class="a" data-n="22">+    throw new HttpError(401, claims ? "session expired" : "no session")</span><span class="a" data-n="23">+  }</span><span data-n="24">   return loadSession(claims.sub)</span><span class="c" data-n="25"> }</span></pre>
+            <div class="df"><i class="ok">✓ 14 of 14 pass in src/auth/ · 214 of 214 overall</i><button class="btn ghost">discard</button><button class="btn">change something…</button><button class="btn pri" data-go="next">accept <kbd>⌘↩</kbd></button></div>
+          </div>
+        </div>
+        <div class="composer">or tell me what to change…<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">↑</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ act 2 · after the win ============ -->
+
+<section class="screen" id="name" data-act="after the win" data-title="name your frog" data-t="78"
+  data-note="only after the accept, and skippable. four suggestions plus keep 'frog'. each name chip wears a mood; picking one makes the big face react. the name follows the frog everywhere: app, cli, head.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — frog</div>
+    <div class="app">
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="done" data-name="frog" data-acct="trial · no account"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="row"><span class="k g" style="padding-left:24px">✓ accepted</span><span class="hl">applied to your working tree, not committed</span><span class="time">first fix · 1:14</span></div>
+          <div class="card">
+            <div class="top"><i class="ff" id="namer" data-m="done" style="--s:56px"></i><div><h2>nice one. want to name me?</h2><p>the name sticks: in the app, in the terminal, and on your desk if i ever move in.</p></div></div>
+            <div class="names" id="names">
+              <button class="name on" data-n="pip" data-m="done"><i class="ff" data-m="done" style="--s:18px"></i>pip</button>
+              <button class="name" data-n="moss" data-m="thinking"><i class="ff" data-m="thinking" style="--s:18px"></i>moss</button>
+              <button class="name" data-n="tad" data-m="working"><i class="ff" data-m="working" style="--s:18px"></i>tad</button>
+              <button class="name" data-n="fern" data-m="reading"><i class="ff" data-m="reading" style="--s:18px"></i>fern</button>
+              <button class="name keep" data-n="frog" data-m="idle">keep 'frog'</button>
+            </div>
+            <div class="echo" id="echo">pip. i like it.</div>
+            <div style="display:flex;gap:8px"><button class="btn pri" id="callme" data-go="next">call me pip</button><button class="btn ghost" data-go="next">skip</button></div>
+          </div>
+        </div>
+        <div class="composer">what's next?<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">↑</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="routines" data-act="after the win" data-title="do this every morning?" data-t=""
+  data-note="routines come from what frog saw in the repo (ci history, pr volume, outdated deps), never a generic list. two are pre-checked when there's evidence. they run while the mac is awake; the cloud line is the first, soft pro trigger.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
+    <div class="app">
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="idle" data-name="pip" data-acct="trial · no account"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="row"><i class="ff" data-m="idle"></i><span class="who">pip</span><span class="hl">that's me now</span></div>
+          <div class="card" style="padding-bottom:14px">
+            <div class="top" style="margin-bottom:8px"><div><h2>want me to do this every morning?</h2><p>from what i saw in ledger. you can change these any time.</p></div></div>
+            <div class="rt first"><div><b>overnight ci triage</b><p>ci failed on 4 of the last 20 runs. at 8:00 i read what broke and have a fix waiting.</p></div><span class="when">weekdays · 8:00</span><button class="tg on"></button></div>
+            <div class="rt"><div><b>first pass on new prs</b><p>11 prs opened last month. i read each one and draft notes. you decide what to send.</p></div><span class="when">when a pr opens</span><button class="tg on"></button></div>
+            <div class="rt"><div><b>dependency bumps, tests first</b><p>6 packages are a patch behind. i bump, run the tests, and keep only what passes.</p></div><span class="when">mondays · 9:00</span><button class="tg"></button></div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:12px"><button class="btn pri" data-go="next">turn on 2</button><button class="btn ghost" data-go="next">not now</button><span class="fine" style="margin-left:auto">runs while your mac is awake · <a href="#">or in frog cloud, with pro</a></span></div>
+          </div>
+        </div>
+        <div class="composer">what's next?<div class="bot"><span class="chip">auto · dart</span><span>frog cloud trial</span><span class="send">↑</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ act 3 · save your frog ============ -->
+
+<section class="screen" id="save" data-act="save your frog" data-title="sign in = save pip" data-t=""
+  data-note="asked once, right after the routines, framed as keeping what you just made. github first, magic link second. no card. 'not now' keeps pip on this mac only; we ask again only when there's a reason (a second device, cloud routines, credits).">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
+    <div class="app">
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="idle" data-name="pip" data-acct="not saved yet"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="row"><i class="ff" data-m="idle"></i><span class="who">pip</span><span class="hl">2 routines on</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="scrim">
+      <div class="sheet">
+        <i class="ff" data-m="waiting" style="--s:54px"></i>
+        <h2>save pip</h2>
+        <p class="sub">sign in and pip keeps its name, its notes on ledger and its routines, here and on any other mac.</p>
+        <div class="keeps"><span class="chip">name · pip</span><span class="chip">memory · 9 notes</span><span class="chip">2 routines</span></div>
+        <button class="gh" data-go="next"><svg width="17" height="17"><use href="#ghmark"/></svg>continue with github</button>
+        <div class="or">or</div>
+        <div class="field"><input placeholder="you@email.com" value=""><button class="btn">email me a link</button></div>
+        <p class="fine">no card. $5 in beta credits when you sign in.<br><a href="#" data-go="next">not now</a> · pip stays on this mac</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="saved" data-act="save your frog" data-title="pip is saved" data-t=""
+  data-note="the browser hands back to the app via deep link; the app confirms in the transcript, not a modal. the anonymous trial, memory and routines move onto the account in one step. the sidebar footer is the account's home from now on.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
+    <div class="app">
+      <aside class="side" data-th="fix 2 failing tests in auth/" data-m="done" data-name="pip" data-acct="beta · $5.00 left"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="row"><i class="ff" data-m="idle"></i><span class="who">pip</span><span class="hl">2 routines on</span></div>
+          <div class="row"><i class="ff" data-m="done"></i><span class="who">pip</span><span class="k g">saved</span><span class="hl">signed in as samr via github</span><span class="chip">name</span><span class="chip">9 notes</span><span class="chip">2 routines</span></div>
+          <p class="say">i'm saved. $5 in beta credits are on your account, and there's no card on file. open frog on another mac, or run <code>frog</code> in a terminal, and it's still me.</p>
+          <div class="sep"></div>
+          <div class="row"><i class="ff" data-m="waiting"></i><span class="who">pip</span><span class="hl">two more i can do in ledger</span></div>
+          <div class="ask"><button class="btn rec">update the README install steps</button><button class="btn">bump zod and run tests</button></div>
+        </div>
+        <div class="composer">what's next?<div class="bot"><span class="chip">auto · dart</span><span>frog cloud · beta</span><span class="send">↑</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="cli" data-act="save your frog" data-title="cli first run" data-t=""
+  data-note="same thesis in the terminal: no login before the first win. `frog` in a repo reads it, offers three numbered tasks, shows the diff, y to apply. the time line at the end is the same metric as the app.">
+  <div class="term">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>~/code/ledger — zsh</div>
+<pre><span class="m">~/code/ledger</span> <span class="p">❯</span> frog
+<span class="w">frog</span> <span class="m">0.9 · free and open source · trial on frog cloud, no account needed</span>
+
+<span class="m">reading ledger…</span> 214 files · vitest · <span class="r">2 failing</span> in src/auth/ · README is stale · 6 deps behind
+
+here's what i can finish right now:
+  <span class="w">1</span>  fix 2 failing tests in auth/            <span class="m">~40 s · your tests will check it</span>
+  <span class="w">2</span>  update stale install steps in README    <span class="m">~20 s</span>
+  <span class="w">3</span>  bump zod 3.22 → 3.23 and run tests      <span class="m">~1 min</span>
+
+<span class="p">pick 1–3, or say anything ›</span> 1
+<span class="m">  read</span>  src/auth/session.ts, session.test.ts
+<span class="m">  edit</span>  src/auth/session.ts <span class="p">+4</span> <span class="r">−2</span>
+<span class="m">  ran </span>  npx vitest src/auth   <span class="p">14 passed</span>
+
+<span class="m">src/auth/session.ts</span>
+<span class="r">-  const claims = verify(token)</span>
+<span class="r">-  if (!claims) throw new HttpError(401, "no session")</span>
+<span class="p">+  const claims = verify(token, { throwOnExpired: false })</span>
+<span class="p">+  if (!claims || claims.expired) {</span>
+<span class="p">+    throw new HttpError(401, claims ? "session expired" : "no session")</span>
+<span class="p">+  }</span>
+
+<span class="p">apply? [y/n/e to edit] ›</span> y
+<span class="p">✓</span> applied, not committed. first fix in 1:02.
+<span class="m">  i'm frog. name me with</span> frog name <span class="m">· save me with</span> frog login
+
+<span class="m">~/code/ledger</span> <span class="p">❯</span> <span class="cursor"></span></pre>
+  </div>
+</section>
+
+<section class="screen" id="login" data-act="save your frog" data-title="frog login (device code)" data-t=""
+  data-note="oauth device flow: works over ssh and on headless boxes. the code is 8 letters, no lookalikes (0/o, 1/l). enter opens the browser when there is one. after approval the trial session, name and memory attach to the account, same as the app.">
+  <div class="term">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>~/code/ledger — zsh</div>
+<pre><span class="m">~/code/ledger</span> <span class="p">❯</span> frog name pip
+<span class="p">✓</span> i'm pip now.
+
+<span class="m">~/code/ledger</span> <span class="p">❯</span> frog login
+save pip so it keeps its name, memory and routines.
+
+  open      <span class="b">https://frog.toys/device</span>
+  and enter <span class="w code">KXRT-4QPM</span>
+
+<span class="m">  press enter to open the browser · waiting for you… 0:14</span>
+
+<span class="p">✓</span> signed in as <span class="w">samr</span> <span class="m">(github)</span>
+<span class="p">✓</span> pip is saved   <span class="m">name · 9 notes · 2 routines</span>
+<span class="p">✓</span> beta credits   <span class="m">$5.00 · no card on file</span>
+
+<span class="m">  this terminal and the app are the same pip now.</span>
+<span class="m">  see what's left any time:</span> frog usage
+
+<span class="m">~/code/ledger</span> <span class="p">❯</span> frog usage
+<span class="w">pip</span> <span class="m">· beta</span>
+  this week   7 tasks · 3 diffs accepted · $0.41
+  left        $4.59 of $5.00
+  routines    ci triage <span class="m">weekdays 8:00</span> · pr first pass <span class="m">on open</span>
+
+<span class="m">~/code/ledger</span> <span class="p">❯</span> <span class="cursor"></span></pre>
+  </div>
+</section>
+
+<!-- ============ act 4 · value, never walls ============ -->
+
+<section class="screen" id="nudges" data-act="value, never walls" data-title="triggers, not walls" data-t=""
+  data-note="three triggers, each tied to a moment where pro would have done something concrete: a routine that missed while the mac slept, a task the bigger model would finish in fewer passes, a queue that could run in parallel. once per kind per week; dismiss = quiet for 14 days.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
+    <div class="app">
+      <aside class="side" data-th="tuesday" data-m="waiting" data-name="pip" data-acct="beta · $2.10 left" data-more="ci triage · 8:00|now;rename Money to Amount|10:40;3 queued|15:05"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="datel" style="margin-left:24px">tue · 8:02</div>
+          <div class="row"><i class="ff" data-m="sad"></i><span class="who">pip</span><span class="k a">missed</span><span class="hl">ci went red at 2:14 and your mac was asleep, so triage waited</span></div>
+          <div class="ask"><button class="btn rec">triage it now</button><button class="btn">run routines while i sleep · pro</button></div>
+          <div class="sep"></div>
+          <div class="datel" style="margin-left:24px">tue · 10:40</div>
+          <div class="row"><i class="ff" data-m="thinking"></i><span class="who">pip</span><span class="k a">heads up</span><span class="hl">renaming Money → Amount touches 31 files. dart will need a few passes</span></div>
+          <div class="tool" style="white-space:normal">tree, the bigger model, would likely do it in one. about 4 min instead of 12.</div>
+          <div class="ask"><button class="btn">stay on dart</button><button class="btn rec">leap to tree · pro</button></div>
+          <div class="sep"></div>
+          <div class="datel" style="margin-left:24px">tue · 15:05</div>
+          <div class="row"><i class="ff" data-m="working"></i><span class="who">pip</span><span class="hl">3 tasks queued. you run 1 at a time; pro runs 2, max runs 8</span><span class="chip">readme</span><span class="chip">lint</span><span class="chip">#48 review</span></div>
+          <div class="ask"><button class="btn">keep the queue</button><button class="btn rec">run 2 at once · pro</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="receipt" data-act="value, never walls" data-title="the weekly receipt" data-t=""
+  data-note="monday 9:00, one card, once. counts, not streaks: what got done, what it cost. 'saved' is frog's estimate of hands-on time minus your review time, and the card links to how it's counted. one click turns receipts off.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
+    <div class="app">
+      <aside class="side" data-th="last week with pip" data-m="idle" data-name="pip" data-acct="beta · $1.80 left" data-more="ci triage · 8:00|mon;first pass on #52|sun"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="row"><i class="ff" data-m="idle"></i><span class="who">pip</span><span class="hl">last week, oct 13 – 19</span><span class="time">mon · 9:00</span></div>
+          <div class="receipt">
+            <div class="rh"><h2 style="font-size:16px">last week with pip</h2><small>ledger, pond-api</small></div>
+            <div class="nums">
+              <div><b>41</b><span>tasks</span></div>
+              <div><b>12</b><span>prs merged</span></div>
+              <div><b>~6 h</b><span>saved</span></div>
+              <div><b>$3.20</b><span>spent</span></div>
+            </div>
+            <ul>
+              <li>ci triage, 5 mornings<span>3 fixes merged</span></li>
+              <li>first pass on new prs<span>9 prs · 17 notes sent</span></li>
+              <li>dependency bumps<span>2 kept · 1 dropped, tests failed</span></li>
+              <li>things you asked for<span>25 tasks · 19 accepted</span></li>
+            </ul>
+            <div class="rf"><a href="#">how 'saved' is counted</a><span>$3.20 of $5.00 beta credits</span><a href="#" style="margin-left:auto">turn off receipts</a></div>
+          </div>
+        </div>
+        <div class="composer">what's next?<div class="bot"><span class="chip">auto · dart</span><span>frog cloud · beta</span><span class="send">↑</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="credits" data-act="value, never walls" data-title="credits run out mid-task" data-t=""
+  data-note="the task that crossed zero finishes; we eat the overage (capped at one task's worth). the ask comes after the result, with a free path (local model) given equal weight. no countdown banners before this.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
+    <div class="app">
+      <aside class="side" data-th="bump zod and run tests" data-m="done" data-name="pip" data-acct="beta · $0.00 left" data-more="fix 2 failing tests in auth/|2 d;update README install steps|2 d"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="you">bump zod and run tests</div>
+          <div class="tool"><span class="v">edit</span>package.json, package-lock.json · zod 3.22.4 → 3.23.8</div>
+          <div class="tool"><span class="v">edit</span>utils/money.ts <span class="g">+1</span> <span class="r">−6</span> · removed the TODO workaround</div>
+          <div class="tool"><span class="v">ran</span><code>npm test</code> · <span class="g">214 passed</span></div>
+          <div class="row"><i class="ff" data-m="done"></i><span class="who">pip</span><span class="k g">done</span><span class="hl">zod 3.23 · workaround gone · 214 of 214 pass</span><button class="btn pri" style="margin-left:auto;padding:3px 10px">accept <kbd>⌘↩</kbd></button></div>
+          <div class="card" style="margin-top:16px">
+            <div class="top"><i class="ff" data-m="waiting" style="--s:40px"></i><div><h2 style="font-size:17px">that one finished on the last of your beta credits</h2><p>i didn't stop halfway. here's how to keep going.</p></div></div>
+            <div class="rt w first" style="margin-top:8px"><div><b>pro · $20 a month</b><p>routines run in frog cloud while your mac sleeps, 2 tasks at once, the bigger model when it helps.</p></div><span class="when"></span><button class="btn pri" data-go="plan">get pro</button></div>
+            <div class="rt w"><div><b>keep going on this mac</b><p>free. qwen3-4b runs locally. slower, and good for small fixes.</p></div><span class="when">2.4 gb download</span><button class="btn">use local</button></div>
+            <div class="rt w"><div><b>pay as you go</b><p>frog api: $0.60 per million tokens in, $1.50 out. $5 lasts most people a week or two.</p></div><span class="when"></span><button class="btn">add $5</button></div>
+            <p class="fine" style="margin:10px 0 0">no rush. pip, its memory and routines stay whatever you pick.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="plan" data-act="value, never walls" data-title="checkout and cancel" data-t=""
+  data-note="payments are web only (stripe). 'get pro' opens checkout in the browser with the email prefilled, then deep-links back here. cancel is one button, no survey, effective at period end; nothing of pip's is deleted.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>settings — plan</div>
+    <div class="setwrap">
+      <div class="setnav"><div>general</div><div>pip</div><div>memory</div><div>routines</div><div>models</div><div class="on">plan</div><div>devices</div></div>
+      <div class="setbody">
+        <h2>plan</h2>
+        <p class="fine" style="margin:0">signed in as samr · pip is on pro since today</p>
+        <div class="plans">
+          <div class="plan"><h3>beta</h3><div class="pr">free</div><ul><li>$5 in credits</li><li>routines while your mac is awake</li><li>1 task at a time</li><li>dart</li></ul><button class="btn ghost">was your plan</button></div>
+          <div class="plan"><h3>api</h3><div class="pr">per token</div><ul><li>$0.60 / M in, $0.06 cached</li><li>$1.50 / M out</li><li>any tool, any editor</li><li>api.frog.toys</li></ul><button class="btn">get a key</button></div>
+          <div class="plan cur"><h3>pro <span class="tag">your plan</span></h3><div class="pr">$20 <small>/ month</small></div><ul><li>routines in frog cloud while your mac sleeps</li><li>2 tasks at once</li><li>tree when it helps</li></ul><button class="btn rec">✓ active</button></div>
+          <div class="plan"><h3>max</h3><div class="pr">$200 <small>/ month</small></div><ul><li>everything in pro</li><li>8 tasks at once</li><li>bull, our biggest model</li><li>or max 5x at $100</li></ul><button class="btn">switch to max</button></div>
+        </div>
+        <div class="cancelrow"><p><b>cancel pro</b> · you keep pro until nov 23. pip, its memory and routines stay; cloud routines move back to your mac.</p><button class="btn">cancel pro</button></div>
+        <div class="cancelrow" style="opacity:.92"><p><b>receipts</b> · stripe emails them to sam@hey.com. billing history and card live on <a href="#">frog.toys/billing</a>.</p><button class="btn ghost">open ↗</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ act 5 · your frog moves in ============ -->
+
+<section class="screen" id="desk" data-act="your frog moves in" data-title="pip could live on your desk" data-t=""
+  data-note="shown once, to people with pip saved, at least one routine and 30+ days of use (most will be on pro). same tone as the receipt: what it would do for you. 'not interested' means never again. ladder: free → pro → head.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>ledger — pip</div>
+    <div class="app">
+      <aside class="side" data-th="last week with pip" data-m="idle" data-name="pip" data-acct="pro"></aside>
+      <div class="main">
+        <div class="tx">
+          <div class="row"><i class="ff" data-m="idle"></i><span class="who">pip</span><span class="hl">last week: 52 tasks · 15 prs merged · ~8 h saved</span><span class="chev" style="color:var(--mut2)">›</span></div>
+          <div class="deskcard">
+            <div class="pic"><svg width="150" height="150"><use href="#head"/></svg></div>
+            <div class="body">
+              <h2>pip could live on your desk</h2>
+              <p>a small head that carries pip: same name, memory and routines. it says good morning, tells you when ci goes red, and keeps routines going when your laptop is shut.</p>
+              <div class="sizes">
+                <div class="size"><b>mini<em>$999</em></b>for a desk · runs small models on board</div>
+                <div class="size"><b>full<em>$1,499</em></b>humanoid-size head · fits a rose body</div>
+              </div>
+              <div style="display:flex;gap:8px"><button class="btn pri" data-go="next">meet the heads</button><button class="btn ghost">not interested</button></div>
+            </div>
+          </div>
+          <div class="ladder"><span class="stp">free</span>→<span class="stp on">pro</span>→<span class="stp">head</span><span style="margin-left:8px">complete products only; designs are open source if you'd rather build one</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="unbox" data-act="your frog moves in" data-title="the unboxing" data-t=""
+  data-note="no setup app, no pairing code, no wi-fi password on first boot. the head is bound to the account at checkout, so usb-c to a mac signed in as that account is the whole setup.">
+  <div class="scene">
+    <svg class="art" viewBox="0 0 580 580">
+      <defs>
+        <linearGradient id="boxf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbfbf9"/><stop offset="1" stop-color="#e9e8e2"/></linearGradient>
+        <linearGradient id="boxs" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#dddcd5"/><stop offset="1" stop-color="#cfcec7"/></linearGradient>
+      </defs>
+      <ellipse cx="300" cy="528" rx="250" ry="26" fill="#000" opacity=".12"/>
+      <!-- back flaps -->
+      <path d="M130 300 L170 218 L410 218 L452 300 Z" fill="#e2e1da"/>
+      <path d="M130 300 L60 250 L92 236 L170 296 Z" fill="#eeede7"/>
+      <path d="M452 300 L520 246 L492 232 L412 296 Z" fill="#e5e4dd"/>
+      <!-- foam -->
+      <path d="M150 300 L178 236 L402 236 L432 300 Z" fill="#1d1f1e"/>
+      <!-- the head, sitting in the foam -->
+      <use href="#head" x="170" y="96" width="240" height="240"/>
+      <rect x="218" y="150" width="144" height="92" rx="40" fill="#121413"/><rect x="218" y="150" width="144" height="92" rx="40" fill="url(#visorgloss)"/>
+      <!-- box front + side -->
+      <path d="M452 300 L500 270 L500 486 L452 520 Z" fill="url(#boxs)"/>
+      <rect x="130" y="300" width="322" height="220" rx="6" fill="url(#boxf)"/>
+      <path d="M130 300 L452 300" stroke="#d6d5ce" stroke-width="2"/>
+      <!-- front flap folded down -->
+      <path d="M130 300 L452 300 L430 330 L152 330 Z" fill="#f2f1ec" opacity=".0"/>
+      <!-- wordmark -->
+      <g transform="translate(268 380) scale(.46)" fill="#3fb47a">
+        <path fill-rule="evenodd" d="M8 62a42 29 0 1 0 84 0a42 29 0 1 0-84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0Z"/>
+        <path fill-rule="evenodd" d="M12 30a18 18 0 1 0 36 0a18 18 0 1 0-36 0Z M23.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0-13 0Z M52 30a18 18 0 1 0 36 0a18 18 0 1 0-36 0Z M63.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0-13 0Z"/>
+      </g>
+      <text x="291" y="458" text-anchor="middle" font-family="ui-rounded,-apple-system,sans-serif" font-size="26" font-weight="600" fill="#15171a">frog</text>
+      <text x="291" y="482" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="11" fill="#7a7d78" letter-spacing="2">MINI HEAD · MUNICIPAL ROBOTICS</text>
+      <!-- usb-c cable -->
+      <path d="M470 520 C 520 520, 560 500, 548 470 C 538 444, 500 452, 506 478 C 512 502, 560 510, 580 498" stroke="#f3f3ef" stroke-width="7" fill="none" stroke-linecap="round"/>
+      <path d="M470 520 C 520 520, 560 500, 548 470 C 538 444, 500 452, 506 478 C 512 502, 560 510, 580 498" stroke="#000" stroke-opacity=".08" stroke-width="7" fill="none" stroke-linecap="round" transform="translate(0 2)"/>
+      <rect x="446" y="512" width="28" height="15" rx="6" fill="#e6e5df" stroke="#cfcec7"/>
+      <rect x="436" y="516" width="12" height="7" rx="3" fill="#9a9b96"/>
+    </svg>
+    <div class="copy">
+      <div class="step">your frog moves in · 1 of 2</div>
+      <h1>plug it in</h1>
+      <p>pip comes along. one usb-c cable to your mac. no setup app, no pairing code. it was yours the moment you ordered it.</p>
+      <div class="moved" style="position:static;width:auto;margin-bottom:18px">
+        <div class="ln"><i class="ok" style="margin:0">1</i>lift it out of the foam</div>
+        <div class="ln"><i class="ok" style="margin:0">2</i>usb-c into your mac, or the dock</div>
+        <div class="ln"><i class="ok" style="margin:0">3</i>wait for the face</div>
+      </div>
+      <button class="btn pri" data-go="next">it's plugged in</button>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="greet" data-act="your frog moves in" data-title="it greets you by name" data-t=""
+  data-note="first boot shows the face, then speaks within ~10 s of power. it already knows the repos and routines because they live on the account, not the laptop. light tasks run on the head; heavy ones still go to frog cloud.">
+  <div class="scene">
+    <svg class="art" viewBox="0 0 580 580">
+            <path d="M318 468 C 380 470, 420 500, 470 530 S 540 570, 560 600" stroke="#f3f3ef" stroke-width="7" fill="none" stroke-linecap="round"/>
+      <use href="#head" x="90" y="150" width="360" height="360"/>
+    </svg>
+    <div class="bubble" style="left:268px;top:84px">morning, sam. it's pip. ci went red at 2, and i have a fix waiting.</div>
+    <div class="copy" style="top:118px">
+      <div class="step">your frog moves in · 2 of 2</div>
+      <h1>pip moved in</h1>
+      <p>same name, same memory, same routines. now it has a face on your desk, and it keeps working when your laptop is closed.</p>
+    </div>
+    <div class="moved">
+      <div class="ln"><i class="ok">✓</i>name<span>pip</span></div>
+      <div class="ln"><i class="ok">✓</i>memory<span>214 notes</span></div>
+      <div class="ln"><i class="ok">✓</i>routines<span>ci triage · pr first pass</span></div>
+      <div class="ln"><i class="ok">✓</i>repos<span>ledger · pond-api · +2</span></div>
+      <div class="ln"><i class="ok">✓</i>voice<span>pick one in settings</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ states ============ -->
+
+<section class="screen" id="states" data-act="edge states" data-title="when things aren't ideal" data-t=""
+  data-note="every state keeps a path to a first win. no dead ends, no error codes up front. credits-out-mid-task has its own screen in act 4.">
+  <div class="win">
+    <div class="tb"><div class="lights"><i></i><i></i><i></i></div>states</div>
+    <div class="states">
+      <div class="st"><div class="lab">empty repo</div><h3><i class="ff" data-m="idle" style="--s:20px"></i>notes is empty</h3><p>no files yet. tell me what it should be and i'll set it up, tests included.</p><div class="chips"><span class="chip">a cli in rust</span><span class="chip">a next.js app</span><span class="chip">just a readme</span></div><div class="ask"><button class="btn rec">start something</button><button class="btn ghost">pick another repo</button></div></div>
+      <div class="st"><div class="lab">no git</div><h3><i class="ff" data-m="thinking" style="--s:20px"></i>~/scratch isn't a git repo</h3><p>i like git so every change i make can be undone. i can set it up here, one commit of what's there now.</p><div class="ask"><button class="btn rec">set up git</button><button class="btn">work without it</button></div></div>
+      <div class="st"><div class="lab">offline · local only</div><h3><i class="ff" data-m="working" style="--s:20px"></i>offline, so i'm on this mac</h3><p>running qwen3-4b locally. slower, and nothing leaves your mac. no local model yet? connect once to get one (2.4 gb), then i work offline.</p><div class="chips"><span class="chip">local · qwen3-4b</span><span class="chip">est. ×3 slower</span></div><div class="ask"><button class="btn">keep going local</button></div></div>
+      <div class="st"><div class="lab">sign-in failed</div><h3><i class="ff" data-m="sad" style="--s:20px"></i>github didn't let me in</h3><p>access was denied in the browser. pip is still here, on this mac. nothing's lost.</p><div class="ask"><button class="btn rec">try again</button><button class="btn">email me a link</button></div></div>
+      <div class="st"><div class="lab">magic link</div><h3><i class="ff" data-m="waiting" style="--s:20px"></i>check sam@hey.com</h3><p>the link opens frog and signs you in. it works for 15 minutes. expired? i'll say so and send a new one.</p><div class="ask"><button class="btn">resend in 0:30</button><button class="btn ghost">use github</button></div></div>
+      <div class="st"><div class="lab">nothing to fix</div><h3><i class="ff" data-m="done" style="--s:20px"></i>garden looks healthy</h3><p>tests pass, docs match, deps are current. three things i could still do:</p><div class="chips"><span class="chip">tests for src/parse.rs</span><span class="chip">explain the codebase</span><span class="chip">a ci workflow</span></div><div class="ask"><button class="btn rec">tests for parse.rs</button></div></div>
+    </div>
+  </div>
+</section>
+
+    </div><!-- /screens -->
+    <div class="cap">
+      <div class="t" id="ctitle"></div>
+      <p class="n" id="cnote"></p>
+      <div class="arrows"><button id="prev" aria-label="previous">‹</button><button id="next" aria-label="next">›</button></div>
+    </div>
+  </main>
+</div>
+
+<script>
+(() => {
+  // ---- FrogFace: geometry from apps/FrogKit/UI/Basics/FrogFace.swift (100-pt box) ----
+  const C = (cx, cy, r) => `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0Z`;
+  const E = (cx, cy, rx, ry) => `M${cx - rx} ${cy}a${rx} ${ry} 0 1 0 ${2 * rx} 0a${rx} ${ry} 0 1 0 ${-2 * rx} 0Z`;
+  const BODY = E(50, 62, 42, 29) + 'M31 66Q50 82 69 66Q50 75 31 66Z' + C(44, 53, 2.5) + C(56, 53, 2.5);
+  let uid = 0;
+  function face(m) {
+    const id = 'fm' + uid++;
+    let eyes;
+    if (m === 'sad') {
+      eyes = [30, 70].map(cx => [45, -45].map(d =>
+        `<rect x="${cx - 12}" y="27.5" width="24" height="5" rx="1" transform="rotate(${d} ${cx} 30)"/>`).join('')).join('');
+      eyes = `<g class="eyes" fill="currentColor">${eyes}</g>`;
+    } else {
+      const lids = m === 'thinking' ? 0.45 : 1;
+      const h = 18 * Math.max(lids, 0.12);
+      const r = 6.5 * Math.min(1, Math.max(0, (lids - 0.4) / 0.35));
+      const cy = 27 + (1 - lids) * 3;
+      const pupils = r > 2 ? [30, 70].map(cx => `<circle cx="${cx}" cy="${cy}" r="${r}"/>`).join('') : '';
+      eyes = `<mask id="${id}" maskUnits="userSpaceOnUse" x="-10" y="-10" width="120" height="120"><rect x="-10" y="-10" width="120" height="120" fill="#fff"/><g class="pup" fill="#000">${pupils}</g></mask>` +
+        `<g class="eyes"><path d="${E(30, 30, 18, h)}${E(70, 30, 18, h)}" fill="currentColor" mask="url(#${id})"/></g>`;
+    }
+    const tilt = m === 'waiting' ? ' transform="rotate(-5 50 55) translate(50 55) scale(1.08) translate(-50 -55)"' : '';
+    return `<svg viewBox="0 0 100 100"><g${tilt}><path d="${BODY}" fill="currentColor" fill-rule="evenodd"/>${eyes}</g></svg>`;
+  }
+  const paint = root => root.querySelectorAll('.ff').forEach(el => { el.innerHTML = face(el.dataset.m || 'idle'); });
+
+  // ---- sidebar ----
+  document.querySelectorAll('aside.side').forEach(el => {
+    const d = el.dataset;
+    const more = (d.more || '').split(';').filter(Boolean).map(s => {
+      const [t, ago] = s.split('|');
+      return `<div class="th dim"><i class="ff" data-m="idle"></i><span>${t}</span><span class="ago">${ago}</span></div>`;
+    }).join('');
+    el.innerHTML = `<div class="new"><span style="font-size:15px;line-height:1">+</span>new thread<kbd>⌘N</kbd></div>
+      <div class="grp">ledger</div>
+      <div class="th on"><i class="ff" data-m="${d.m}"></i><span>${d.th}</span></div>${more}
+      <div class="foot"><i class="ff" data-m="idle" style="--s:28px"></i><div><b>${d.name}</b><small>${d.acct}</small></div></div>`;
+  });
+  paint(document);
+
+  // ---- deck navigation ----
+  const screens = [...document.querySelectorAll('.screen')];
+  const list = document.getElementById('navlist');
+  let lastAct = '';
+  screens.forEach((s, k) => {
+    if (s.dataset.act !== lastAct) {
+      lastAct = s.dataset.act;
+      list.insertAdjacentHTML('beforeend', `<div class="act">${lastAct}</div>`);
+    }
+    list.insertAdjacentHTML('beforeend', `<button class="nav" data-i="${k}"><i>${String(k + 1).padStart(2, '0')}</i>${s.dataset.title}</button>`);
+  });
+  const navs = [...list.querySelectorAll('.nav')];
+  const fmt = t => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+  let cur = 0;
+  const params = new URLSearchParams(location.search);
+  let theme = params.get('t') === 'light' ? 'light' : 'dark';
+
+  function show(n) {
+    cur = Math.max(0, Math.min(screens.length - 1, n));
+    screens.forEach((s, k) => s.classList.toggle('on', k === cur));
+    navs.forEach((b, k) => b.classList.toggle('on', k === cur));
+    const s = screens[cur];
+    document.getElementById('ctitle').innerHTML = `<small>${String(cur + 1).padStart(2, '0')} / ${screens.length} · ${s.dataset.act}</small>${s.dataset.title}`;
+    document.getElementById('cnote').textContent = s.dataset.note || '';
+    const ruler = document.getElementById('ruler');
+    const t = s.dataset.t === '' || s.dataset.t == null ? null : +s.dataset.t;
+    ruler.classList.toggle('on', t !== null);
+    if (t !== null) {
+      const pct = Math.min(100, (Math.min(t, 74) / 90) * 100);
+      document.getElementById('rfill').style.width = pct + '%';
+      document.getElementById('rnow').style.left = pct + '%';
+      document.getElementById('rlbl').innerHTML = t >= 74
+        ? `first accepted diff at <b>1:14</b> · 16 s under budget`
+        : `<b>${fmt(t)}</b> since first open`;
+    }
+    history.replaceState(null, '', `?s=${s.id}&t=${theme}`);
+  }
+  function setTheme(t) {
+    theme = t;
+    document.body.className = t;
+    document.querySelectorAll('#theme button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+    show(cur);
+  }
+  list.addEventListener('click', e => { const b = e.target.closest('.nav'); if (b) show(+b.dataset.i); });
+  document.getElementById('prev').onclick = () => show(cur - 1);
+  document.getElementById('next').onclick = () => show(cur + 1);
+  document.getElementById('theme').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setTheme(b.dataset.t); });
+  document.addEventListener('keydown', e => {
+    if (e.target.matches('input')) return;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { show(cur + 1); e.preventDefault(); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { show(cur - 1); e.preventDefault(); }
+    if (e.key === 't') setTheme(theme === 'dark' ? 'light' : 'dark');
+  });
+  document.getElementById('screens').addEventListener('click', e => {
+    const g = e.target.closest('[data-go]');
+    if (!g) return;
+    e.preventDefault();
+    const to = g.dataset.go;
+    show(to === 'next' ? cur + 1 : screens.findIndex(s => s.id === to));
+  });
+
+  // ---- name your frog ----
+  const echoes = { pip: 'pip. i like it.', moss: 'moss. slow and thorough.', tad: 'tad. short, and quick.', fern: 'fern. quiet, always reading.', frog: "frog it is. a classic." };
+  document.getElementById('names').addEventListener('click', e => {
+    const b = e.target.closest('.name');
+    if (!b) return;
+    e.stopPropagation();
+    document.querySelectorAll('#names .name').forEach(x => x.classList.toggle('on', x === b));
+    const big = document.getElementById('namer');
+    big.dataset.m = b.dataset.m; big.innerHTML = face(b.dataset.m);
+    document.getElementById('echo').textContent = echoes[b.dataset.n];
+    document.getElementById('callme').textContent = b.dataset.n === 'frog' ? "keep 'frog'" : `call me ${b.dataset.n}`;
+  });
+
+  // ---- routine toggles ----
+  document.querySelectorAll('#routines .tg').forEach(t => t.addEventListener('click', e => {
+    e.stopPropagation();
+    t.classList.toggle('on');
+    const n = document.querySelectorAll('#routines .tg.on').length;
+    const b = document.querySelector('#routines .btn.pri');
+    b.textContent = n ? `turn on ${n}` : 'done';
+  }));
+
+  const start = screens.findIndex(s => s.id === params.get('s'));
+  setTheme(theme);
+  show(start < 0 ? 0 : start);
+})();
+</script>
+</body>
+</html>
