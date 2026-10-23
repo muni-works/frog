@@ -313,6 +313,13 @@ fn adapt_swiftpm(cmd: &str) -> String {
         while i < bytes.len() && is_word(bytes[i]) {
             i += 1;
         }
+        if i == start {
+            // `)` and `}` are neither separators nor word characters: copy and move on,
+            // or this loop never advances.
+            out.push(c);
+            i += 1;
+            continue;
+        }
         let word: String = bytes[start..i].iter().collect();
         if at_command {
             let envish = word == "env"
@@ -349,6 +356,11 @@ fn adapt_swiftpm(cmd: &str) -> String {
                         let ws = k;
                         while k < bytes.len() && is_word(bytes[k]) && !";&|()".contains(bytes[k]) {
                             k += 1;
+                        }
+                        if k == ws {
+                            // A lone `|`, `&`, `(` or `)` isn't a word; step past it.
+                            k += 1;
+                            continue;
                         }
                         let w: String = bytes[ws..k].iter().collect();
                         if w == "--disable-sandbox" {
@@ -1120,6 +1132,17 @@ mod tests {
         assert_eq!(
             f("swift build; swift test"),
             "swift build --disable-sandbox; swift test --disable-sandbox"
+        );
+        // Closing parens/braces and lone pipes used to spin this forever.
+        assert_eq!(
+            f("ps aux | grep -E 'git (reset|commit|status)' | head -5"),
+            "ps aux | grep -E 'git (reset|commit|status)' | head -5"
+        );
+        assert_eq!(f("{ echo hi; }"), "{ echo hi; }");
+        assert_eq!(f("(cd x)"), "(cd x)");
+        assert_eq!(
+            f("swift build | tee log (x)"),
+            "swift build --disable-sandbox | tee log (x)"
         );
     }
 
