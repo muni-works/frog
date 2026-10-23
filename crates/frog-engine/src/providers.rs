@@ -515,6 +515,20 @@ pub fn set_key(id: &str, key: &str) -> Result<()> {
     keychain::set(id, key)
 }
 
+/// MCP OAuth's Keychain accounts (`mcp-oauth:<server>`), through the same module so
+/// `FROG_KEYCHAIN=off` and the cache behave the same.
+pub(crate) fn keychain_mcp_get(id: &str) -> Option<String> {
+    keychain::get(id)
+}
+
+pub(crate) fn keychain_mcp_set(id: &str, value: &str) -> Result<()> {
+    keychain::set(id, value)
+}
+
+pub(crate) fn keychain_mcp_delete(id: &str) {
+    let _ = keychain::delete(id);
+}
+
 /// A provider id for a server you add: lowercase letters, digits and dashes, not a preset's.
 pub fn add_custom(state: &mut State, id: &str, custom: Custom) -> Result<()> {
     let ok = !id.is_empty()

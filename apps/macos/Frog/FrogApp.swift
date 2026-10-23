@@ -42,6 +42,8 @@ struct FrogApp: App {
         }
         SessionBroker.shared.install()
         ModelContext.useMac()
+        // Type-to-focus: printable keys reach the composer when no field holds them.
+        TypeToFocus.begin()
         DiagramLayout.mermaid = { source, cwd in
             await Diagram.fromMermaid(source, cwd: cwd ?? FileManager.default.homeDirectoryForCurrentUser)
         }

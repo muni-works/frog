@@ -48,6 +48,9 @@ pub struct Ctx {
     pub progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
     /// Bounded approximate image deltas for transcript display, never model context.
     pub preview: Option<tokio::sync::mpsc::UnboundedSender<crate::protocol::Delta>>,
+    /// The turn's cancel token, when a turn is running: a long tool (Bash) selects on it so
+    /// Stop interrupts it in flight instead of waiting for it to finish.
+    pub cancel: Option<tokio_util::sync::CancellationToken>,
     /// Web settings, the page cache and the search backend.
     pub web: std::sync::Arc<web::Web>,
 }
@@ -68,6 +71,7 @@ impl Ctx {
             permitted: HashSet::new(),
             progress: None,
             preview: None,
+            cancel: None,
             web: Default::default(),
         }
     }

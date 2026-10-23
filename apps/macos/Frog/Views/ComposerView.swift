@@ -193,6 +193,9 @@ struct ComposerView: View {
         .onChange(of: window?.dictationRequest) { toggleDictation() }
         // Nothing listens once the conversation or window goes away, or Frog isn't in front.
         .onDisappear { dictation.cancel() }
+        // Type-to-focus targets the focused pane's composer while it exists.
+        .onAppear { window?.composer = controller }
+        .onDisappear { if window?.composer === controller { window?.composer = nil } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             dictation.stop()
         }
