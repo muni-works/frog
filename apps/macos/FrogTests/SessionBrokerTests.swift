@@ -938,23 +938,51 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertNil(again.mode)
     }
 
-    /// A dead session's SessionStatus reports where it actually works: a `folder_changed`
-    /// in the log beats the start cwd from the header, and git info follows that cwd.
-    func testStatusUsesTheCurrentWorkingFolderFromTheLog() async throws {
+    /// A dead session's SessionStatus reports the ACTIVE worktree: the header says the repo
+    /// root, a Bash `cd` (logged as `shell_cwd`) moved into a worktree, and the status —
+    /// cwd, branch, ahead, dirty — follows the worktree, not the root.
+    func testStatusReportsTheActiveWorktreeFromTheLog() async throws {
+        let repo = FileManager.default.temporaryDirectory.appending(path: "frog-active-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try SessionBroker.git(["init", "-q", "-b", "main"], in: repo)
+        try "hi\n".write(to: repo.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+        try SessionBroker.git(["add", "."], in: repo)
+        try SessionBroker.git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], in: repo)
+        let (tree, branch, _) = try SessionBroker.makeWorktree(from: repo, name: "active tree")
+        // One uncommitted file in the worktree, none in the root.
+        try "wip\n".write(to: tree.appending(path: "b.txt"), atomically: true, encoding: .utf8)
+
         let id = "cwdtest-\(UUID().uuidString.prefix(8))"
         let path = FrogPaths.sessions.appending(path: "\(id).jsonl")
         try? FileManager.default.createDirectory(at: FrogPaths.sessions, withIntermediateDirectories: true)
         let jsonl = """
-        {"type":"header","version":1,"id":"\(id)","cwd":"/tmp/old-start","model":"m","created":0}
-        {"type":"event","env":{"seq":2,"session":"\(id)","created":0,"event":"folder_changed","cwd":"/tmp/new-work"}}
+        {"type":"header","version":1,"id":"\(id)","cwd":"\(repo.path)","model":"m","created":0}
+        {"type":"event","env":{"seq":2,"session":"\(id)","created":0,"event":"shell_cwd","cwd":"\(tree.path)"}}
         {"type":"event","env":{"seq":3,"session":"\(id)","created":0,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}}
         """
         try jsonl.write(to: path, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: path) }
 
         let b = broker([])
-        b.directory = { [] }
         let info = await b.status(of: id)
-        XCTAssertEqual(info?.cwd, "/tmp/new-work")
+        XCTAssertEqual(info?.cwd, tree.path, "the worktree the shell moved into, not the header's root")
+        XCTAssertEqual(info?.branch, branch)
+        XCTAssertEqual(info?.dirty, 1)
+        XCTAssertNil(info?.ahead, "no upstream: ahead is unknown, not 0")
+        XCTAssertEqual(info?.state, "dead")
+    }
+
+    /// With no move logged, the header's cwd answers (a log-only session still has a folder).
+    func testStatusFallsBackToTheHeaderCwd() async throws {
+        let id = "cwdtest-\(UUID().uuidString.prefix(8))"
+        let path = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        try? FileManager.default.createDirectory(at: FrogPaths.sessions, withIntermediateDirectories: true)
+        try """
+        {"type":"header","version":1,"id":"\(id)","cwd":"/tmp/start-here","model":"m","created":0}
+        """.write(to: path, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: path) }
+        let info = await broker([]).status(of: id)
+        XCTAssertEqual(info?.cwd, "/tmp/start-here")
     }
 }

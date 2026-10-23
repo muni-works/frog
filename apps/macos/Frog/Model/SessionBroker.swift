@@ -1168,7 +1168,7 @@ extension SessionBroker {
         let lib = Library.shared
         let conv = lib.conversation(id) ?? broker.background[id]
         let entry = lib.sessions.first { $0.id == id }
-        guard entry != nil || conv != nil else { return nil }
+        guard entry != nil || conv != nil || Self.hasLog(id) else { return nil }
         info.cwd = conv?.status?.cwd ?? entry?.cwd ?? conv?.folder.path
         if let c = conv, c.isLive {
             // Live: everything comes from the folded events.
@@ -1196,8 +1196,8 @@ extension SessionBroker {
                 info.mode = mode
                 info.modelCalls = modelCalls
                 info.lastEnd = info.lastEnd ?? lastEnd
-                // Where the session actually works now (a `UseFolder` move beats the
-                // start cwd from the header).
+                // Where the session actually works now: the last `UseFolder` move or Bash
+                // `cd` (into a worktree, say) beats the start cwd from the header.
                 if let cwd { info.cwd = cwd }
             }
         }
@@ -1211,10 +1211,17 @@ extension SessionBroker {
         return info
     }
 
+    /// The session's log exists on disk (a session the sidebar's listing doesn't know yet,
+    /// or one from another Mac): its log still answers SessionStatus.
+    nonisolated private static func hasLog(_ id: String) -> Bool {
+        FileManager.default.fileExists(atPath: FrogPaths.sessions.appending(path: "\(id).jsonl").path)
+    }
+
     /// The model, mode, model-call count, last turn end and current working folder from a
     /// session's log, without folding the whole history: the last `model_changed` /
-    /// `mode_changed` / `folder_changed`, the summed `turn_ended` usage, and the last
-    /// `turn_ended` reason. Nil when the log can't be read.
+    /// `mode_changed`, the summed `turn_ended` usage, the last `turn_ended` reason, and the
+    /// last `folder_changed` / `shell_cwd` (else the header's cwd). Nil when the log can't
+    /// be read.
     nonisolated private static func logTail(_ id: String) -> (String?, String?, Int, String?, String?)? {
         let file = FrogPaths.sessions.appending(path: "\(id).jsonl")
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
@@ -1223,13 +1230,15 @@ extension SessionBroker {
         var calls = 0
         var lastEnd: String?
         var cwd: String?
+        var headerCwd: String?
         for line in text.split(separator: "\n") {
-            guard let v = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
-                  let env = v["env"] as? [String: Any] else { continue }
+            guard let v = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
+            if v["type"] as? String == "header" { headerCwd = v["cwd"] as? String }
+            guard let env = v["env"] as? [String: Any] else { continue }
             switch env["event"] as? String {
             case "model_changed": model = env["model"] as? String
             case "mode_changed": mode = env["mode"] as? String
-            case "folder_changed": cwd = env["cwd"] as? String
+            case "folder_changed", "shell_cwd": cwd = env["cwd"] as? String
             case "turn_ended":
                 if let usage = env["usage"] as? [String: Any] {
                     calls += (usage["model_calls"] as? Int) ?? 0
@@ -1240,7 +1249,7 @@ extension SessionBroker {
             default: break
             }
         }
-        return (model, mode, calls, lastEnd, cwd)
+        return (model, mode, calls, lastEnd, cwd ?? headerCwd)
     }
 
     /// `StartSession`: a new conversation (in a worktree if asked), titled, with its first
