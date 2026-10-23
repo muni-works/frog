@@ -42,12 +42,14 @@ fn category(name: &str, input: &Value, root: &Path) -> &'static str {
                     "pushes to a remote" | "publishes" => "NECESSARY: push/publish",
                     _ => "NECESSARY: destructive/system",
                 }
+            } else if frog_engine::shell::read_only(cmd) {
+                // Read-only commands (reads outside included) already ran unasked on
+                // main's layer 1; these asked only because an older engine build missed them.
+                "SKITTISH: read-only"
             } else if frog_engine::approval::paths(cmd, root).iter().any(|p| {
                 !p.starts_with(root) && !p.starts_with("/private/tmp") && !p.starts_with("/tmp")
             }) {
                 "NECESSARY: outside project"
-            } else if frog_engine::shell::read_only(cmd) {
-                "SKITTISH: read-only"
             } else if frog_engine::approval::routine(cmd) {
                 "SKITTISH: build/test own dirs"
             } else {
@@ -68,6 +70,22 @@ fn category(name: &str, input: &Value, root: &Path) -> &'static str {
                 "SKITTISH: own tmp write"
             } else {
                 "NECESSARY: outside project"
+            }
+        }
+        _ if name.starts_with("mcp__") => {
+            if frog_engine::auto::read_tool(name, input) {
+                "SKITTISH: mcp read verb"
+            } else {
+                "NECESSARY: mcp write/action"
+            }
+        }
+        "WebFetch" | "WebSearch" => {
+            if name == "WebSearch"
+                || frog_engine::tools::web::public_host(input["url"].as_str().unwrap_or(""))
+            {
+                "SKITTISH: public web read"
+            } else {
+                "NECESSARY: non-public fetch"
             }
         }
         _ => "OTHER: non-shell tool",
@@ -102,15 +120,23 @@ fn now_allowed(
             (!p.starts_with(root) && frog_engine::approval::path_in_own_scope(&p, root, created))
                 .then_some("provenance")
         }
+        _ if name.starts_with("mcp__") => {
+            frog_engine::auto::read_tool(name, input).then_some("mcp-read")
+        }
+        "WebFetch" => frog_engine::tools::web::public_host(input["url"].as_str().unwrap_or(""))
+            .then_some("web-read"),
+        "WebSearch" => Some("web-read"),
         _ => None,
     }
 }
 
 /// Whether the read-only parser passes `cmd` only thanks to this change's
-/// additions (`ps`, `sample`); otherwise main's layer 1 already ran it.
+/// additions; otherwise main's layer 1 already ran it.
 fn new_parser_program(cmd: &str) -> bool {
     frog_engine::shell::segments(cmd).unwrap_or_default().iter().any(|s| {
-        matches!(frog_engine::approval::program(s).as_str(), "ps" | "sample")
+        // pgrep with -lf has a path-ish arg that the old parser wouldn't pass; the
+        // new one does. `ls` was already allowed by main.
+        matches!(frog_engine::approval::program(s).as_str(), "pgrep")
     })
 }
 
