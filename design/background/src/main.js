@@ -9,10 +9,10 @@ function show(s){
   history.replaceState(null,"","#"+s+","+(document.body.classList.contains("light")?"light":"dark"));
 }
 function setTheme(t){document.body.classList.remove("light","dark");document.body.classList.add(t);document.querySelectorAll("#theme button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));}
-function render(){renderJobs();renderInsp();renderCards();renderTx();renderLegend();renderPod();renderAgent();renderMb();setCount(CARDS.filter(c=>!c.answered).length);paintGlyphs();}
+function render(){renderGrants();renderAudit();renderJobs();renderInsp();renderCards();renderTx();renderLegend();renderPod();renderAgent();renderMb();setCount(CARDS.filter(c=>!c.answered).length);paintGlyphs();}
 
 document.addEventListener("click",e=>{
-  const t=e.target.closest("[data-s],[data-go],[data-t],[data-job],[data-f],[data-ans],[data-undo],[data-stop],[data-toast],[data-pod],[data-dead],[data-sess],.ir");
+  const t=e.target.closest("[data-s],[data-go],[data-t],[data-job],[data-f],[data-ans],[data-undo],[data-stop],[data-toast],[data-pod],[data-dead],[data-gr],[data-un],[data-sess],.ir");
   if(!t) return;
   if(t.dataset.t) return setTheme(t.dataset.t);
   if(t.dataset.s) return show(t.dataset.s);
@@ -43,6 +43,14 @@ document.addEventListener("click",e=>{
     if(a==="stoppod"){POD.state="stop";renderPod();toast("tang-h200-bench stopped · volume kept · $0/hr");}
     if(a==="hand"){toast("chief now owns tang manager's work · pod p1, rerun of j4");}
     return;}
+  if(t.dataset.f&&t.closest("#dfilter")){DF=t.dataset.f;document.querySelectorAll("#dfilter button").forEach(b=>b.classList.toggle("on",b===t));renderAudit();return;}
+  if(t.dataset.gr){const gr=GRANTS.find(x=>x.id===t.dataset.id);
+    if(t.dataset.gr==="rev"){gr.state="revoked";toast(`${gr.id} revoked · ${gr.name}. anything running under it pauses.`);}
+    if(t.dataset.gr==="re"){gr.state="active";toast(`${gr.id} granted again`);}
+    if(t.dataset.gr==="narrow"){toast("edit what this grant covers · narrowing never needs an ask");}
+    if(t.dataset.gr==="time"){toast(`${gr.id} renewed 4w`);}
+    renderGrants();return;}
+  if(t.dataset.un){const a=AUDIT.find(x=>x.t===t.dataset.un);toast(`undo queued: ${a.who}'s "${a.did}" reverses now`);return;}
   if(t.classList.contains("ir")&&t.nextElementSibling&&t.nextElementSibling.classList.contains("idet")) t.classList.toggle("open");
 });
 document.addEventListener("keydown",e=>{

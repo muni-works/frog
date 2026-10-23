@@ -12,6 +12,7 @@
   <button data-s="pod">pod with cap</button>
   <button data-s="agent">agent context</button>
   <button data-s="menubar">menu bar and alerts</button>
+  <button data-s="delegations">delegations</button>
 </nav>
 
 <div class="win" id="win">
@@ -154,6 +155,19 @@
       </div>
     </section>
 
+    <section class="screen" data-screen="delegations">
+      <div class="dg">
+        <div class="dglist">
+          <div class="dghead"><b>delegations</b><span id="dgSub"></span><span class="keys">j k · ⏎ toggle · r revoke</span></div>
+          <div id="grants"></div>
+          <div class="never" id="never"></div>
+        </div>
+        <aside class="dgaudit"><h3><span class="g" data-glyph="audit"></span>audit</h3>
+          <div class="filters"><div class="seg" id="dfilter"><button class="on" data-f="all">all</button><button data-f="auto">auto</button><button data-f="cam">cam</button><button data-f="rev">revoked</button></div></div>
+          <div id="audit"></div>
+        </aside>
+      </div>
+    </section>
     <section class="screen" data-screen="agent"><div class="ag" id="agent"></div></section>
 
     <section class="screen" data-screen="menubar"><div class="mb" id="mb"></div></section>

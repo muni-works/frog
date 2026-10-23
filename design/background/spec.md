@@ -153,3 +153,64 @@ Where it's practical, frog computes these from the ledger and shows them in acti
    1. items 1–5 above (recommended)
    2. items 1–3 only: engine-side, no UI
    3. items 1–8
+
+## 8. delegated approvals
+
+Today Cam answers every card himself; the retro counted ~40 in one day that the chief could have judged. A **grant** is a class of approval handed down the hierarchy. Cam grants classes once, in calm conditions, instead of approving single cards under load.
+
+**Anatomy of a grant.** Every grant is one record with six fields:
+
+| field | example |
+|---|---|
+| what it covers | parsed command shapes, not string patterns |
+| who holds it | a session, its role, or "its workers" |
+| budget | dollars, disk, or n/a (reads cost tokens only) |
+| time cap | 4 weeks, then it expires |
+| action at the limit | asks, stops, or degrades to an ask |
+| revocation | one click, retroactive for queued uses |
+
+**Scope is parsed, not matched.** The checker reads the command the way the approval card does: arguments, refspecs, `host:path`, heredoc bodies. "ssh to mew inside a named scratch dir" passes only when every path the command can touch is inside `~/scratch/<session>/`; a second path buried in a heredoc fails the grant, which is exactly the class of fake `touches:` paths being removed today. A push whose refspec resolves to `main` does not pass a "branches except main" grant.
+
+**Where they sit in the hierarchy.** Cam grants to a manager (or the chief); a manager may hand a narrower version to its workers, never wider. Each hand-down tightens at least one field. A worker asking outside its grant escalates to its manager's card; a manager escalates to Cam.
+
+**Seed grants, from the chief's own day:**
+
+- `dg1` read-only remote calls: `runpod list-pods`, `gh pr view`, `gh run list`, `gh api` reads, status curls. no budget.
+- `dg2` writes in a session's own scratch: `<repo>/.frog/worktrees/<name>/`, `/private/tmp/<task>/`. disk budget, 20 GB.
+- `dg3` ssh to mew inside `~/scratch/<session>/` only.
+- `dg4` bench pods under a weekly $ budget, any gpu up to h200, pinned public images, no public endpoints.
+- `dg5` push branches (never `main`, `master`, `release/*`) with a pr.
+- `dg6` merge prs with green ci, no release branches. this is Cam's standing line, formalized: it still audits per merge.
+- `dg7` restart a crashed engine, once per session per hour. shown revoked in the mockup, because restarts may re-run commands approved only once.
+
+**Never delegable**, at any level, for any reason: force-push or history rewrite, deletes outside a scratch dir, production deploys, purchases and account changes, posts, emails or messages, credentials. A grant cannot cover them, and an agent asking for one goes straight to Cam with what it touches and why it thinks it needs it.
+
+**The delegations panel** (mockup, tab 8) lists every grant: what it covers and how it's parsed, who holds it, budget and time left with a meter when near, use counts and near-misses, and **Narrow, Renew, Revoke**. Revoke is one click and takes effect on queued uses too; the panel never asks to confirm a revoke, it just does it and says so. Narrowing a grant is an edit, never an ask.
+
+**The audit view** (right side of the same screen) is one stream, filterable to auto-allowed, by-Cam, and revoked. Every delegated use lands in it — allowed, blocked, or escalated — with the grant id, what was parsed out of the command, and one-click **Undo** where reversing is possible. Cam scans it the way he reads a receipt: by exception. The panel surface in frog shows "11 allowed · 2 asked today", so silence stays trustworthy.
+
+**Agent surface.** The background block names the grants the session holds (`grants: dg1 dg2`), so an agent knows what it may do without trying. A use that fails a grant returns why, and which grant would have covered it if widened — that's Cam's cue to narrow up, not the agent's to retry around.
+
+## 9. the orchestrator's view
+
+What the chief's own day needs, kept tight.
+
+**Liveness events.** The owner or watcher is told the moment a child's engine dies, its monitor dies, or an external resource outlives its owner. Not on the next poll — as the event happens, with what the dead thing owned. This is the difference between "tang manager died at 14:21" and finding out at 16:00.
+
+**Approval digests.** One event per batch: `3 new cards: 2 safe (pushes to zest, routine), 1 risky because it writes outside the worktree`. One system message per card was the pile that hid the one card that mattered. The risky one links to its card.
+
+**A native merge queue.** `Queue {repo, prs, gate: ci-green, on_green: merge, cap}` — the thing the chief built today as `nohup … & disown` scripts in /private/tmp, invisible to frog. It survives restarts like any job, shows as a row with steps and progress, and PR/CI waits are watches (`until pr 81 is green`) in the same id space.
+
+**Cross-session search for what Cam said.** `Recall` covers the chief's own notes; what's missing is `Search {who: cam, scope: today, kind: user-message}` over all sessions. "did Cam say X anywhere today?" should be one call, not ten ReadSessions.
+
+**Structured worker reports.** A worker's idle report carries fields, not prose: branch, sha, tests run and their result, pushed y/n, and decisions it made. The chief's verification becomes a diff of fields, and a report missing a field is visibly incomplete.
+
+**The chief board.** One call (`Board`) that returns sessions with liveness, PRs and CI, pods and spend, approvals waiting, and today's caps. It's the same ledger the UI reads, so the number in the board is the number in activity.
+
+**Removals, learned today:**
+- fake `touches:` paths parsed out of heredocs and `ssh host:path` — the parser, not the agent, states what a command touches
+- silent mode changes — a mode change is an event that says before and after
+- swallowed push errors — a failed push is a failed job with its stderr, never a silent continue
+- monitors waking before their interval — the interval bug from §0, with the fix in build order item 2
+
+**Build order note.** Delegations and these items ride after Beat 1's floor (items 1–5, riding Oct 30 per Cam): digests and liveness events fit Beat 2 alongside the inbox they feed; the merge queue, search, structured reports, the board and delegations are Beat 3 work, with the parser from §8 landing first because everything else checks against it.

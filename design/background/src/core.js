@@ -51,6 +51,7 @@ const GLYPH={
   pr:()=>sv(`<circle cx="4.5" cy="3.8" r="1.7" stroke="${C.m}" stroke-width="1.2"/><circle cx="4.5" cy="12.2" r="1.7" stroke="${C.m}" stroke-width="1.2"/><circle cx="11.5" cy="12.2" r="1.7" stroke="${C.m}" stroke-width="1.2"/><path d="M4.5 5.5v5M11.5 10.5V6.5c0-1.2-.8-2-2-2H7.5M8.8 3.2L7.4 4.5l1.4 1.3" stroke="${C.m}" stroke-width="1.2"/>`),
   ci:()=>sv(`<circle cx="8" cy="8" r="6" stroke="${C.m}" stroke-width="1.3"/><path d="M6.6 5.3v5.4L11 8z" fill="${C.m}"/>`),
   ask:()=>sv(`<path d="M3 3.5h10a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H8l-3 2.5v-2.5H3A1.5 1.5 0 0 1 1.5 10V5A1.5 1.5 0 0 1 3 3.5z" stroke="${C.m}" stroke-width="1.3"/>`),
+  audit:()=>sv(`<path d="M2.5 2.5h11v11h-11z" stroke="${C.m}" stroke-width="1.3"/><path d="M5 5.5h6M5 8h6M5 10.5h3.5" stroke="${C.m}" stroke-width="1.1"/>`),
   key:()=>sv(`<circle cx="5.5" cy="10.5" r="3" stroke="${C.m}" stroke-width="1.3"/><path d="M7.6 8.4L14 2M11.5 4.5l1.6 1.6" stroke="${C.m}" stroke-width="1.3"/>`),
 };
 const g=(name,size)=>`<span class="g"${size?` style="width:${size}px;height:${size}px"`:""}>${GLYPH[name]()}</span>`;

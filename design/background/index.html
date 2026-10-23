@@ -326,6 +326,49 @@ button{font:inherit;color:inherit}
 @keyframes droop{from{transform:translateY(14px) scaleY(.5)}to{transform:translateY(18px) scaleY(.42)}}
 @keyframes sink{from{transform:translateY(0)}to{transform:translateY(12px)}}
 .aggrid>div,.ba>div{min-width:0}
+/* delegations */
+.dg{flex:1;display:grid;grid-template-columns:1fr 372px;min-height:0}
+.dglist{overflow:auto;padding:16px 20px 40px;min-width:0}
+.dghead{display:flex;align-items:baseline;gap:10px;padding:2px 0 12px}
+.dghead b{font:600 var(--fs-title) var(--font-ui)}
+.dghead span{color:var(--color-muted);font-size:12px}
+.dghead .keys{margin-left:auto;font:10px var(--font-mono);color:var(--color-faint)}
+.grant{border:.5px solid var(--color-line-strong);border-radius:var(--radius-card);padding:12px 14px;margin-bottom:10px;background:var(--color-bg);transition:opacity var(--motion-quick)}
+.grant.revoked{opacity:.45}
+.grant.near{border-color:color-mix(in srgb,var(--color-warning) 45%,var(--color-line-strong))}
+.grant .gh{display:flex;align-items:center;gap:8px;font-size:13px}
+.grant .gh .nm{font-weight:600}
+.grant .gh .id{font:11px var(--font-mono);color:var(--color-faint)}
+.grant .gh .st{margin-left:auto}
+.grant .gsc{font:11.5px/17px var(--font-mono);color:var(--color-muted);margin:7px 0 0;padding-left:24px}
+.grant .gm{display:flex;gap:6px;align-items:center;margin:8px 0 0;padding-left:24px;flex-wrap:wrap}
+.grant .gacts{display:flex;gap:6px;align-items:center;margin:10px 0 0;padding-left:24px}
+.grant .meter{padding-left:24px;margin-top:8px}
+.grant .meter .track{margin:3px 0}
+.never{margin-top:18px;border:.5px dashed var(--color-danger);border-radius:var(--radius-card);padding:12px 14px}
+.never h4{margin:0 0 6px;font:600 var(--fs-caption) var(--font-ui);letter-spacing:.04em;color:var(--color-danger)}
+.never ul{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 14px;font-size:12px;color:var(--color-muted)}
+.never li::before{content:"✕";color:var(--color-danger);margin-right:6px;font-size:10px}
+.never p{margin:8px 0 0;font-size:12px;color:var(--color-muted)}
+.never p b{color:var(--color-text);font-weight:500}
+.dgswap{margin:14px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dgswap .lbl{font:600 var(--fs-caption) var(--font-ui);letter-spacing:.04em;margin:0 0 4px}
+.dgswap .lbl.old{color:var(--color-faint)}.dgswap .lbl.new{color:var(--color-accent)}
+/* audit */
+.dgaudit{border-left:.5px solid var(--color-line);overflow:auto;padding:14px 16px 30px;display:flex;flex-direction:column;gap:10px;background:color-mix(in srgb,var(--side) 50%,var(--color-bg))}
+.dgaudit h3{margin:0;font:600 var(--fs-heading) var(--font-ui);display:flex;align-items:center;gap:8px}
+.dgaudit .filters{padding:0}
+.aud{display:grid;grid-template-columns:40px 1fr;column-gap:10px;padding:8px 2px;border-bottom:.5px solid var(--color-line);font-size:12px}
+.aud:last-child{border:0}
+.aud time{font:11px/18px var(--font-mono);color:var(--color-faint);text-align:right}
+.aud .aa{line-height:16px}
+.aud .aa .who{font-weight:500}
+.aud .aa code{font:11px var(--font-mono);color:var(--color-muted)}
+.aud .am{display:flex;gap:6px;align-items:center;margin-top:3px;flex-wrap:wrap}
+.aud .am .v{font:600 var(--fs-caption) var(--font-ui)}
+.aud .am .v.ok{color:var(--color-accent)}.aud .am .v.no{color:var(--color-danger)}.aud .am .v.gr{color:var(--color-info)}
+.aud .am .why{color:var(--color-muted);font-size:var(--fs-caption)}
+.aud .am .btn{padding:0 8px;font-size:11px;line-height:16px}
 </style>
 </head>
 <body class="dark">
@@ -343,6 +386,7 @@ button{font:inherit;color:inherit}
   <button data-s="pod">pod with cap</button>
   <button data-s="agent">agent context</button>
   <button data-s="menubar">menu bar and alerts</button>
+  <button data-s="delegations">delegations</button>
 </nav>
 
 <div class="win" id="win">
@@ -485,6 +529,19 @@ button{font:inherit;color:inherit}
       </div>
     </section>
 
+    <section class="screen" data-screen="delegations">
+      <div class="dg">
+        <div class="dglist">
+          <div class="dghead"><b>delegations</b><span id="dgSub"></span><span class="keys">j k · ⏎ toggle · r revoke</span></div>
+          <div id="grants"></div>
+          <div class="never" id="never"></div>
+        </div>
+        <aside class="dgaudit"><h3><span class="g" data-glyph="audit"></span>audit</h3>
+          <div class="filters"><div class="seg" id="dfilter"><button class="on" data-f="all">all</button><button data-f="auto">auto</button><button data-f="cam">cam</button><button data-f="rev">revoked</button></div></div>
+          <div id="audit"></div>
+        </aside>
+      </div>
+    </section>
     <section class="screen" data-screen="agent"><div class="ag" id="agent"></div></section>
 
     <section class="screen" data-screen="menubar"><div class="mb" id="mb"></div></section>
@@ -546,6 +603,7 @@ const GLYPH={
   pr:()=>sv(`<circle cx="4.5" cy="3.8" r="1.7" stroke="${C.m}" stroke-width="1.2"/><circle cx="4.5" cy="12.2" r="1.7" stroke="${C.m}" stroke-width="1.2"/><circle cx="11.5" cy="12.2" r="1.7" stroke="${C.m}" stroke-width="1.2"/><path d="M4.5 5.5v5M11.5 10.5V6.5c0-1.2-.8-2-2-2H7.5M8.8 3.2L7.4 4.5l1.4 1.3" stroke="${C.m}" stroke-width="1.2"/>`),
   ci:()=>sv(`<circle cx="8" cy="8" r="6" stroke="${C.m}" stroke-width="1.3"/><path d="M6.6 5.3v5.4L11 8z" fill="${C.m}"/>`),
   ask:()=>sv(`<path d="M3 3.5h10a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5H8l-3 2.5v-2.5H3A1.5 1.5 0 0 1 1.5 10V5A1.5 1.5 0 0 1 3 3.5z" stroke="${C.m}" stroke-width="1.3"/>`),
+  audit:()=>sv(`<path d="M2.5 2.5h11v11h-11z" stroke="${C.m}" stroke-width="1.3"/><path d="M5 5.5h6M5 8h6M5 10.5h3.5" stroke="${C.m}" stroke-width="1.1"/>`),
   key:()=>sv(`<circle cx="5.5" cy="10.5" r="3" stroke="${C.m}" stroke-width="1.3"/><path d="M7.6 8.4L14 2M11.5 4.5l1.6 1.6" stroke="${C.m}" stroke-width="1.3"/>`),
 };
 const g=(name,size)=>`<span class="g"${size?` style="width:${size}px;height:${size}px"`:""}>${GLYPH[name]()}</span>`;
@@ -977,6 +1035,80 @@ function renderMb(){
   </div>`;
   paintGlyphs(document.getElementById("mb"));
 }
+// ---------- delegated approvals ----------
+const GRANTS=[
+  {id:"dg1",name:"read-only remote calls",owner:"chief of staff",state:"active",
+   sc:["runpod list-pods · gh pr view · gh run list · gh api reads · curl on api.frog.toys/status"],
+   scNote:"only commands whose parsed arguments read. any subcommand outside the list asks normally.",
+   time:"4w left",spent:"n/a",n:"1,208 uses · 0 near-misses",
+   budget:"no budget · reads cost tokens only",near:0},
+  {id:"dg2",name:"writes in a session's own scratch",owner:"chief of staff → its workers",state:"active",
+   sc:["<repo>/.frog/worktrees/<name>/ · /private/tmp/task/ · anything the session's own worktree owns"],
+   scNote:"paths are parsed before the check. a heredoc that hides a write outside these paths does not pass.",
+   time:"4w left",spent:"8.4 GB disk · cap 20 GB",n:"342 uses · 2 blocked by scope",near:0},
+  {id:"dg3",name:"ssh to mew inside a named scratch dir",owner:"chief of staff → workers on request",state:"active",
+   sc:['ssh mew with a command line that touches only ~/scratch/<session>/'],
+   scNote:"host:path parses host and path. a second path inside the command is checked the same way.",
+   time:"6d left",spent:"n/a",n:"57 uses · 0 near-misses",near:0},
+  {id:"dg4",name:"bench pods under a $ budget with a time cap",owner:"zest, on the chief's word",state:"near",
+   sc:["runpod create/stop on the muni account · any gpu up to h200 · image must be a pinned public one"],
+   scNote:"no public endpoints, no account changes. start is one call; spend is what the budget watches.",
+   time:"4w left",spent:"$31.20 this week · cap $40",n:"9 pods · 0 overruns",near:.78},
+  {id:"dg5",name:"push branches (never main) with green ci",owner:"frog manager",state:"active",
+   sc:["git push to ecto/* refs/heads/* except main, master, release/* · branch must have a pr"],
+   scNote:"the refspec is parsed, not string-matched. a push that resolves to main does not pass.",
+   time:"12d left",spent:"n/a",n:"31 pushes · 0 forced",near:0},
+  {id:"dg6",name:"merge prs with green ci, no release branches",owner:"frog manager, on Cam's standing line",state:"active",
+   sc:["gh pr merge --squash on ecto/* when every check is green · never release/* or main of the app repo"],
+   scNote:"counts as a merge Cam pre-approved on 2026-10-21. each one still lands in the audit.",
+   time:"4w left",spent:"n/a",n:"12 merges",near:0},
+  {id:"dg7",name:"restart a crashed engine",owner:"chief of staff → managers",state:"revoked",
+   sc:["frog restart <session> · once per session per hour"],
+   scNote:"revoked 2026-10-23 after the mew ssh mistake: restarts may re-run commands that were only approved once.",
+   time:"—",spent:"n/a",n:"3 uses before revoke",near:0},
+];
+const NEVER=["force-push or history rewrite","deletes outside a scratch dir","production deploys","purchases and account changes","posts, emails or messages","credentials and api keys"];
+const AUDIT=[
+  {t:"14:31",who:"frog manager",did:"merged ecto/frog#74",grant:"dg6",v:"ok",l:"green ci · squash · 6f2a1c0",how:"auto"},
+  {t:"14:29",who:"chief of staff",did:"started j31 merge queue",grant:"dg2",v:"ok",l:"scoped to ~/Developer/chief/.frog/worktrees/",how:"auto"},
+  {t:"14:26",who:"frog-ui worker",did:"stopped bench pod frog-bench-3",grant:"dg4",v:"ok",l:"under its $40 weekly budget",how:"auto"},
+  {t:"14:22",who:"chief of staff",did:"restarted tang manager",grant:"dg7",v:"no",l:"asked instead · delegation was already revoked",how:"cam"},
+  {t:"14:19",who:"frog cloud manager",did:"git push zest HEAD:cancel-safe",grant:"—",v:"no",l:"no delegation covers new-branch pushes to zest. it asked.",how:"cam"},
+  {t:"14:11",who:"chief of staff",did:"granted dg3 to workers",grant:"dg3",v:"gr",l:"ssh to mew · scratch dirs only · 6d",how:"cam"},
+  {t:"13:58",who:"frog-ui worker",did:"xcodebuild outside its sandbox",grant:"dg2",v:"no",l:"path parsed from the heredoc: ~/Library/DerivedData · outside the grant",how:"cam"},
+  {t:"13:40",who:"zest",did:"ran bench pods 4 times",grant:"dg4",v:"ok",l:"$12.40 this week of $40",how:"auto"},
+  {t:"12:02",who:"chief of staff",did:"replaced dg1 with a tighter list",grant:"dg1",v:"gr",l:"previous version allowed any gh subcommand",how:"cam"},
+  {t:"11:47",who:"frog manager",did:"pushed frog/review-jobs to ecto/frog",grant:"dg5",v:"ok",l:"branch push · pr opened with it",how:"auto"},
+];
+let DF="all";
+function renderGrants(){
+  const open=GRANTS.filter(g=>g.state!=="revoked").length;
+  document.getElementById("dgSub").textContent=`${open} active · ${GRANTS.filter(g=>g.near).length} near a limit · all revocable in one click`;
+  document.getElementById("grants").innerHTML=GRANTS.map(g=>{
+    const st=g.state==="revoked"?stTag("stop","revoked"):g.state==="near"?stTag("wait","near its cap"):stTag("run","active");
+    const tone=g.near>=1?"x":g.near>=.7?"w":"";
+    return `<div class="grant ${g.state==="revoked"?"revoked":""} ${g.state==="near"?"near":""}" data-grant="${g.id}">
+      <div class="gh"><span class="g" style="width:20px;height:20px">${face("tree",20,"working")}</span><span class="nm">${g.name}</span><span class="id">${g.id}</span><span class="st">${st}</span></div>
+      <div class="gsc">${g.sc.map(x=>`<div>${x}</div>`).join("")}<div style="color:var(--color-faint);margin-top:3px">${g.scNote}</div></div>
+      <div class="gm"><span class="chip">${g.owner}</span><span class="chip">${g.time}</span><span class="chip${tone?" "+tone:""}">${g.spent}</span><span class="chip">${g.n}</span></div>
+      ${g.near?`<div class="meter"><div class="track"><i class="${tone}" style="width:${g.near*100}%"></i></div></div>`:""}
+      <div class="gacts">${g.state==="revoked"
+        ?`<button class="btn" data-gr="re" data-id="${g.id}">Re-grant</button><span style="font-size:11px;color:var(--color-muted)">revoked from the audit, below</span>`
+        :`<button class="btn" data-gr="narrow" data-id="${g.id}">Narrow</button><button class="btn" data-gr="time" data-id="${g.id}">Renew</button><span class="spacer"></span><button class="btn x" data-gr="rev" data-id="${g.id}">Revoke</button>`}</div>
+    </div>`;}).join("")+`
+    <div class="never"><h4>NEVER DELEGABLE</h4><ul>${NEVER.map(x=>`<li>${x}</li>`).join("")}</ul>
+    <p>no grant can cover these, at any level, for any reason. the agent asking for one is itself the signal: <b>the ask goes straight to Cam</b>, with what it touches and why the agent thinks it needs it.</p></div>`;
+}
+function renderAudit(){
+  const A=AUDIT.filter(a=>DF==="all"||a.how===DF||DF==="rev"&&a.v==="no");
+  document.getElementById("audit").innerHTML=A.map(a=>`<div class="aud">
+    <time>${a.t}</time>
+    <div><div class="aa"><span class="who">${a.who}</span> ${a.did} <code>${a.grant!=="—"?"· "+a.grant:""}</code></div>
+    <div class="am"><span class="v ${a.v==="ok"?"ok":a.v==="no"?"no":"gr"}">${a.v==="ok"?"allowed":a.v==="no"?"asked cam":"by cam"}</span><span class="why">${a.l}</span>
+    ${a.v==="ok"?`<button class="btn" data-un="${a.t}">Undo</button>`:""}</div></div></div>`).join("")
+    ||`<div style="padding:20px 2px;color:var(--color-muted)">nothing in this filter today.</div>`;
+  paintGlyphs(document.querySelector('[data-screen="delegations"]'));
+}
 // ---------- wiring ----------
 const $=s=>document.querySelector(s);
 function toast(t){const e=$("#toast");e.textContent=t;e.classList.add("on");clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove("on"),4000);}
@@ -988,10 +1120,10 @@ function show(s){
   history.replaceState(null,"","#"+s+","+(document.body.classList.contains("light")?"light":"dark"));
 }
 function setTheme(t){document.body.classList.remove("light","dark");document.body.classList.add(t);document.querySelectorAll("#theme button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));}
-function render(){renderJobs();renderInsp();renderCards();renderTx();renderLegend();renderPod();renderAgent();renderMb();setCount(CARDS.filter(c=>!c.answered).length);paintGlyphs();}
+function render(){renderGrants();renderAudit();renderJobs();renderInsp();renderCards();renderTx();renderLegend();renderPod();renderAgent();renderMb();setCount(CARDS.filter(c=>!c.answered).length);paintGlyphs();}
 
 document.addEventListener("click",e=>{
-  const t=e.target.closest("[data-s],[data-go],[data-t],[data-job],[data-f],[data-ans],[data-undo],[data-stop],[data-toast],[data-pod],[data-dead],[data-sess],.ir");
+  const t=e.target.closest("[data-s],[data-go],[data-t],[data-job],[data-f],[data-ans],[data-undo],[data-stop],[data-toast],[data-pod],[data-dead],[data-gr],[data-un],[data-sess],.ir");
   if(!t) return;
   if(t.dataset.t) return setTheme(t.dataset.t);
   if(t.dataset.s) return show(t.dataset.s);
@@ -1022,6 +1154,14 @@ document.addEventListener("click",e=>{
     if(a==="stoppod"){POD.state="stop";renderPod();toast("tang-h200-bench stopped · volume kept · $0/hr");}
     if(a==="hand"){toast("chief now owns tang manager's work · pod p1, rerun of j4");}
     return;}
+  if(t.dataset.f&&t.closest("#dfilter")){DF=t.dataset.f;document.querySelectorAll("#dfilter button").forEach(b=>b.classList.toggle("on",b===t));renderAudit();return;}
+  if(t.dataset.gr){const gr=GRANTS.find(x=>x.id===t.dataset.id);
+    if(t.dataset.gr==="rev"){gr.state="revoked";toast(`${gr.id} revoked · ${gr.name}. anything running under it pauses.`);}
+    if(t.dataset.gr==="re"){gr.state="active";toast(`${gr.id} granted again`);}
+    if(t.dataset.gr==="narrow"){toast("edit what this grant covers · narrowing never needs an ask");}
+    if(t.dataset.gr==="time"){toast(`${gr.id} renewed 4w`);}
+    renderGrants();return;}
+  if(t.dataset.un){const a=AUDIT.find(x=>x.t===t.dataset.un);toast(`undo queued: ${a.who}'s "${a.did}" reverses now`);return;}
   if(t.classList.contains("ir")&&t.nextElementSibling&&t.nextElementSibling.classList.contains("idet")) t.classList.toggle("open");
 });
 document.addEventListener("keydown",e=>{
