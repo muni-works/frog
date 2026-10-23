@@ -1457,7 +1457,7 @@ mod tests {
         ctx.cancel = Some(token.clone());
         let marker = ws.join("done");
         let _ = std::fs::remove_file(&marker);
-        let cmd = format!("sleep 60; touch '{}'", marker.display());
+        let cmd = format!("sleep 61; touch '{}'", marker.display());
         let input = json!({ "command": cmd, "timeout": 120000 });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
@@ -1478,7 +1478,7 @@ mod tests {
         for _ in 0..20 {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let alive = std::process::Command::new("pgrep")
-                .args(["-f", "sleep 60"])
+                .args(["-f", "sleep 61"])
                 .output()
                 .map(|o| o.stdout.is_empty())
                 .unwrap_or(true);
@@ -1487,11 +1487,11 @@ mod tests {
             }
         }
         let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 60"])
+            .args(["-f", "sleep 61"])
             .output()
             .map(|o| !o.stdout.is_empty())
             .unwrap_or(false);
-        assert!(!alive, "a `sleep 60` from the cancelled group is still running");
+        assert!(!alive, "a `sleep 61` from the cancelled group is still running");
         let _ = std::fs::remove_dir_all(&ws);
     }
 
@@ -1506,7 +1506,7 @@ mod tests {
         ctx.cancel = Some(token.clone());
         let marker = ws.join("bg");
         let _ = std::fs::remove_file(&marker);
-        let cmd = format!("sleep 60 & echo bg > '{}'; wait", marker.display());
+        let cmd = format!("sleep 62 & echo bg > '{}'; wait", marker.display());
         let input = json!({ "command": cmd });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
@@ -1523,7 +1523,7 @@ mod tests {
         for _ in 0..20 {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let alive = std::process::Command::new("pgrep")
-                .args(["-f", "sleep 60"])
+                .args(["-f", "sleep 62"])
                 .output()
                 .map(|o| !o.stdout.is_empty())
                 .unwrap_or(false);
@@ -1532,11 +1532,11 @@ mod tests {
             }
         }
         let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 60"])
+            .args(["-f", "sleep 62"])
             .output()
             .map(|o| !o.stdout.is_empty())
             .unwrap_or(false);
-        assert!(!alive, "a backgrounded `sleep 60` escaped the group kill");
+        assert!(!alive, "a backgrounded `sleep 62` escaped the group kill");
         let _ = std::fs::remove_dir_all(&ws);
     }
 
@@ -1554,7 +1554,7 @@ mod tests {
         ctx.shell_sandbox = Some(ws.canonicalize().unwrap());
         let token = tokio_util::sync::CancellationToken::new();
         ctx.cancel = Some(token.clone());
-        let input = json!({ "command": "sleep 60" });
+        let input = json!({ "command": "sleep 63" });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1568,11 +1568,11 @@ mod tests {
             out.as_ref().map(|o| &o.content)
         );
         let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 60"])
+            .args(["-f", "sleep 63"])
             .output()
             .map(|o| !o.stdout.is_empty())
             .unwrap_or(false);
-        assert!(!alive, "a sandboxed `sleep 60` survived the interrupt");
+        assert!(!alive, "a sandboxed `sleep 63` survived the interrupt");
         let _ = std::fs::remove_dir_all(&ws);
     }
 

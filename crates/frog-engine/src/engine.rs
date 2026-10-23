@@ -2055,6 +2055,12 @@ impl Agent {
                 Batch::Denied => break EndReason::Denied,
                 Batch::Looping => break EndReason::Looping,
             }
+            // Stop landed mid-tool: the tool already recorded "Interrupted by user.", so end
+            // the turn here instead of handing the result back to the model. The outer select
+            // races this future against the token; whichever wins, the turn ends cancelled.
+            if self.shared.cancel.lock().unwrap().is_cancelled() {
+                return Err(Interrupted.into());
+            }
         };
         // Prune now, while the user reads the reply, and warm the result: the next turn then
         // starts from a prefix that's already cached instead of prefilling all of it.
@@ -8872,7 +8878,7 @@ for line in sys.stdin:
     #[tokio::test]
     async fn interrupt_cancels_a_running_bash_tool() {
         let dir = tmp_store();
-        let bash = call("t1", "Bash", json!({ "command": "sleep 60", "timeout": 120000 }));
+        let bash = call("t1", "Bash", json!({ "command": "sleep 64", "timeout": 120000 }));
         let (mut h, _) = engine_early(
             vec![
                 reply(vec![bash], Stop::ToolUse),
@@ -8949,11 +8955,11 @@ for line in sys.stdin:
         // The sleeping child is gone.
         tokio::time::sleep(Duration::from_millis(700)).await;
         let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 60"])
+            .args(["-f", "sleep 64"])
             .output()
             .map(|o| !o.stdout.is_empty())
             .unwrap_or(false);
-        assert!(!alive, "a `sleep 60` from the interrupted turn is still running");
+        assert!(!alive, "a `sleep 64` from the interrupted turn is still running");
         shutdown(h).await;
     }
 
