@@ -356,6 +356,29 @@ final class SessionBroker {
                 ? "No pending approvals."
                 : "\(rows.count) pending approval\(rows.count == 1 ? "" : "s"). Approving is the user's job; don't answer them yourself."
             c.replySession(r.id, result: .object(["approvals": .array(rows), "note": .string(note)]))
+        case "RenameSession":
+            switch resolve(input["id"]?.string ?? "", includeArchived: true) {
+            case .success(let e):
+                let title = input["title"]?.string ?? ""
+                let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    return c.replySession(r.id, error: "`title` is required.")
+                }
+                // An open conversation renames through its engine (Op.setTitle, the sidebar's
+                // own path); a closed one through the CLI, which writes the session's log.
+                if let target = tracked(e.id) {
+                    target.rename(trimmed)
+                    Library.shared.refresh()
+                    c.replySession(r.id, result: .string("Renamed \(e.id) to \"\(trimmed)\"."))
+                } else {
+                    Task { [weak c] in
+                        await Library.shared.rename(e.id, to: trimmed)
+                        c?.replySession(r.id, result: .string("Renamed \(e.id) to \"\(trimmed)\"."))
+                    }
+                }
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
         default:
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
         }

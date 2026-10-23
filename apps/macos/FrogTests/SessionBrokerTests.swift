@@ -583,4 +583,21 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertTrue(b.approvalsForTesting.isEmpty)
         XCTAssertNil(b.waitingSinceForTesting[eng.id])
     }
+
+    /// RenameSession renames an open conversation through its engine (the sidebar's own
+    /// path: Op.setTitle, then the sidebar refreshes).
+    @MainActor
+    func testRenameSessionSetsTheTitle() async throws {
+        let b = broker([chief, eng])
+        b.directoryIncludingArchived = { [self.chief, self.eng] }
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-rename"))
+        b.track(target, as: eng.id)
+        let probe = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-probe"))
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "RenameSession",
+                                input: .object(["id": .string(eng.id), "title": .string("engine room")])), from: probe)
+        XCTAssertEqual(target.title, "engine room")
+        // An empty title is refused.
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "RenameSession",
+                                input: .object(["id": .string(eng.id), "title": .string("  ")])), from: probe)
+    }
 }

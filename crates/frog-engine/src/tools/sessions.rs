@@ -29,6 +29,7 @@ pub const STOP: &str = "StopSession";
 pub const SET_MODE: &str = "SetSessionMode";
 pub const SET_MODEL: &str = "SetSessionModel";
 pub const APPROVALS: &str = "ListApprovals";
+pub const RENAME: &str = "RenameSession";
 
 pub fn is_tool(name: &str) -> bool {
     matches!(
@@ -43,6 +44,7 @@ pub fn is_tool(name: &str) -> bool {
             | SET_MODE
             | SET_MODEL
             | APPROVALS
+            | RENAME
     )
 }
 
@@ -199,6 +201,20 @@ command, why it asks, and how long it's been waiting. Read-only: approving stays
                 .into(),
             schema: json!({ "type": "object", "properties": {} }),
         },
+        ToolSpec {
+            name: RENAME.into(),
+            description: "Rename a session (its sidebar title). Same as renaming in the \
+sidebar: the title lands in the session's log, so it survives restarts."
+                .into(),
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "session id or name" },
+                    "title": { "type": "string" }
+                },
+                "required": ["id", "title"]
+            }),
+        },
     ]
 }
 
@@ -304,6 +320,10 @@ pub fn validate(name: &str, input: &Value) -> Result<()> {
             need("id")?;
             need("model")
         }
+        RENAME => {
+            need("id")?;
+            need("title")
+        }
         _ => Ok(()),
     }
 }
@@ -363,16 +383,19 @@ mod tests {
         assert!(validate(SET_MODEL, &json!({"id": "x", "model": "local/qwen3-4b"})).is_ok());
         // ListApprovals takes no arguments.
         assert!(validate(APPROVALS, &json!({})).is_ok());
+        assert!(validate(RENAME, &json!({"id": "x"})).is_err());
+        assert!(validate(RENAME, &json!({"id": "x", "title": "t"})).is_ok());
     }
 
     #[test]
     fn specs_cover_every_tool_name() {
         let names: Vec<String> = specs().into_iter().map(|s| s.name.into_owned()).collect();
-        for tool in [LIST, SEND, START, ARCHIVE, UNARCHIVE, STATUS, READ, STOP, SET_MODE, SET_MODEL, APPROVALS] {
+        for tool in [LIST, SEND, START, ARCHIVE, UNARCHIVE, STATUS, READ, STOP, SET_MODE, SET_MODEL, APPROVALS, RENAME] {
             assert!(names.contains(&tool.into()), "{tool} missing from specs");
         }
         assert!(is_tool(SET_MODE));
         assert!(is_tool(SET_MODEL));
         assert!(is_tool(APPROVALS));
+        assert!(is_tool(RENAME));
     }
 }
