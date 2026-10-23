@@ -102,6 +102,33 @@ final class Library {
         parents[id] != nil || parents.values.contains(id)
     }
 
+    // MARK: Stored model and mode
+
+    /// Durable per-session overrides, applied by the next engine start (SetSessionModel /
+    /// SetSessionMode while no engine is running).
+    func setStoredModel(_ id: String, _ spec: String) {
+        var stored = UserDefaults.standard.dictionary(forKey: "sessionModels") as? [String: String] ?? [:]
+        stored[id] = spec
+        UserDefaults.standard.set(stored, forKey: "sessionModels")
+    }
+
+    func setStoredMode(_ id: String, _ mode: Mode) {
+        var stored = UserDefaults.standard.dictionary(forKey: "sessionModes") as? [String: String] ?? [:]
+        stored[id] = mode.rawValue
+        UserDefaults.standard.set(stored, forKey: "sessionModes")
+    }
+
+    /// The stored model override for session `id`, if any.
+    func storedModel(_ id: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: "sessionModels") as? [String: String])?[id]
+    }
+
+    /// The stored permission mode override for session `id`, if any.
+    func storedMode(_ id: String) -> Mode? {
+        (UserDefaults.standard.dictionary(forKey: "sessionModes") as? [String: String])?[id]
+            .flatMap(Mode.init(rawValue:))
+    }
+
     // MARK: Renaming
 
     /// Rename through the open conversation if there is one (its engine holds the log), else

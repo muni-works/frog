@@ -425,11 +425,13 @@ final class SessionBroker {
             // parent has), and yolo additionally needs an explicit flag.
             switch resolve(input["id"]?.string ?? "") {
             case .success(let e):
-                guard let target = tracked(e.id) else {
-                    return c.replySession(r.id, error: "\(e.name) (\(e.id)) has no engine running; its mode is picked up when one starts.")
-                }
                 guard let raw = input["mode"]?.string, let wanted = Mode(rawValue: raw) else {
                     return c.replySession(r.id, error: "`mode` must be default, accept-edits, auto or yolo.")
+                }
+                guard let target = tracked(e.id) else {
+                    // No engine running: persist the mode so the next engine start picks it up.
+                    Library.shared.setStoredMode(e.id, wanted)
+                    return c.replySession(r.id, result: .string("\(e.name) (\(e.id)) set to \(wanted.rawValue) mode; persisted (applies next start)."))
                 }
                 let mine = c.status?.mode ?? .default
                 if wanted.rank > mine.rank {
@@ -446,11 +448,13 @@ final class SessionBroker {
         case "SetSessionModel":
             switch resolve(input["id"]?.string ?? "") {
             case .success(let e):
-                guard let target = tracked(e.id) else {
-                    return c.replySession(r.id, error: "\(e.name) (\(e.id)) has no engine running; a restart picks up the session's stored model.")
-                }
                 guard let model = input["model"]?.string, !model.isEmpty else {
                     return c.replySession(r.id, error: "`model` is required (provider/model, e.g. local/qwen3-4b).")
+                }
+                guard let target = tracked(e.id) else {
+                    // No engine running: persist the model so the next engine start picks it up.
+                    Library.shared.setStoredModel(e.id, model)
+                    return c.replySession(r.id, result: .string("\(e.name) (\(e.id)) set to \(model); persisted (applies next start)."))
                 }
                 target.setModel(model)
                 c.replySession(r.id, result: .string("\(e.name) (\(e.id)) moves to \(model) (from its next model call)."))
@@ -828,16 +832,17 @@ final class SessionBroker {
                 return
             }
         }
-        // An engine that died mid-turn (its process gone, no `turn_ended`, a stale `.live`):
-        // its conversation isn't live and its last turn is still open. Restart the engine and
-        // have it pick the turn back up, rather than leaving the session stuck open forever.
-        // The restarted turn runs and settles first; idle notices wait for that. (Before the
-        // busy check: a dead engine's open turn looks busy.)
-        if dead, let c = background[id], c.turns.last.map({ !$0.finished }) == true {
-            background[id] = nil
-            armedBackground.remove(id)
-            _ = conversation(for: id)
-            return
+        // A dead engine (killed mid-turn: no `turn_ended`, a stale `.live`) leaves the
+        // session stuck busy — an open turn never settles and queued messages can never
+        // flush. Reconcile from the log the way the window's own watchdog does: the turn
+        // ends as the log says and the queued count clears, so delivered messages run when
+        // an engine next starts (a user action; no auto-resume here).
+        if let c = Library.shared.conversation(id) ?? background[id], !c.isLive,
+           inbound[id] != 0 || !c.queue.isEmpty || c.turns.last.map({ !$0.finished }) == true {
+            // Cleared here (not inside the async reconcile): callers reading the queued
+            // count right after this report must see it drained.
+            inbound[id] = 0
+            Task { await c.reconcile() }
         }
         // Idle only when nothing is running and nothing is queued: a live engine mid-turn
         // (or one with messages waiting) gets no notice, whatever the last report said.
@@ -876,7 +881,10 @@ final class SessionBroker {
         // An engine that died mid-turn left it open: the fresh engine continues it, ahead of
         // anything new (the user may have stopped the old one; the report says which).
         let unfinished = background[id].map { c in c.turns.last.map { !$0.finished } ?? false } ?? false
-        let c = Conversation(folder: folder, arguments: Self.resumeArguments(id, chat: info.isChat), model: nil)
+        let c = Conversation(folder: folder, arguments: Self.resumeArguments(id, chat: info.isChat),
+                             model: Library.shared.storedModel(id))
+        // A stored mode override applies at the next turn boundary once the engine is up.
+        if let mode = Library.shared.storedMode(id) { c.setMode(mode) }
         background[id] = c
         // A fresh engine isn't armed until it's seen working; nothing scheduled for the old
         // one applies to it.
@@ -1145,7 +1153,7 @@ extension SessionBroker {
         let conv = lib.conversation(id) ?? broker.background[id]
         let entry = lib.sessions.first { $0.id == id }
         guard entry != nil || conv != nil else { return nil }
-        info.cwd = entry?.cwd ?? conv?.folder.path
+        info.cwd = conv?.status?.cwd ?? entry?.cwd ?? conv?.folder.path
         if let c = conv, c.isLive {
             // Live: everything comes from the folded events.
             info.engineAlive = true
@@ -1167,11 +1175,14 @@ extension SessionBroker {
             if let c = conv { info.lastEnd = c.turns.last?.end.map { String(describing: $0) } }
             info.model = entry?.model
             let tail = await Task.detached { Self.logTail(id) }.value
-            if let (model, mode, modelCalls, lastEnd) = tail {
+            if let (model, mode, modelCalls, lastEnd, cwd) = tail {
                 info.model = info.model ?? model
                 info.mode = mode
                 info.modelCalls = modelCalls
                 info.lastEnd = info.lastEnd ?? lastEnd
+                // Where the session actually works now (a `UseFolder` move beats the
+                // start cwd from the header).
+                if let cwd { info.cwd = cwd }
             }
         }
         // Worktrees report their branch, commits ahead of origin/main, and dirty files.
@@ -1184,22 +1195,25 @@ extension SessionBroker {
         return info
     }
 
-    /// The model, mode, model-call count and last turn end from a session's log, without
-    /// folding the whole history: the last `model_changed`/`mode_changed`, the summed
-    /// `turn_ended` usage, and the last `turn_ended` reason. Nil when the log can't be read.
-    nonisolated private static func logTail(_ id: String) -> (String?, String?, Int, String?)? {
+    /// The model, mode, model-call count, last turn end and current working folder from a
+    /// session's log, without folding the whole history: the last `model_changed` /
+    /// `mode_changed` / `folder_changed`, the summed `turn_ended` usage, and the last
+    /// `turn_ended` reason. Nil when the log can't be read.
+    nonisolated private static func logTail(_ id: String) -> (String?, String?, Int, String?, String?)? {
         let file = FrogPaths.sessions.appending(path: "\(id).jsonl")
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
         var model: String?
         var mode: String?
         var calls = 0
         var lastEnd: String?
+        var cwd: String?
         for line in text.split(separator: "\n") {
             guard let v = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
                   let env = v["env"] as? [String: Any] else { continue }
             switch env["event"] as? String {
             case "model_changed": model = env["model"] as? String
             case "mode_changed": mode = env["mode"] as? String
+            case "folder_changed": cwd = env["cwd"] as? String
             case "turn_ended":
                 if let usage = env["usage"] as? [String: Any] {
                     calls += (usage["model_calls"] as? Int) ?? 0
@@ -1210,7 +1224,7 @@ extension SessionBroker {
             default: break
             }
         }
-        return (model, mode, calls, lastEnd)
+        return (model, mode, calls, lastEnd, cwd)
     }
 
     /// `StartSession`: a new conversation (in a worktree if asked), titled, with its first
