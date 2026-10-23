@@ -861,9 +861,7 @@ impl Hub {
             Err(e) if reauthorization_needed(&e) => {
                 // The token died mid-session: refresh once and retry on a fresh
                 // connection. A refresh that fails surfaces by name, not raw transport.
-                if let Err(re) = self.reconnect(server).await {
-                    return Err(re);
-                }
+                self.reconnect(server).await?;
                 let client = self
                     .inner
                     .servers

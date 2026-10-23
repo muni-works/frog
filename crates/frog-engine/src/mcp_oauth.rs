@@ -29,10 +29,12 @@ pub const AUTH_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// Opens a URL in a browser; overridable so tests can skip the real browser.
 pub type Browser = Arc<dyn Fn(String) + Send + Sync>;
 
-/// Whether OAuth should run for a configured server: only HTTP servers without a
+/// Whether OAuth can ever be needed for a configured server: an HTTP server without a
 /// configured `Authorization` header. The header is the escape hatch — a `${VAR}` in it
-/// counts as configured whether or not the variable is set.
-pub fn authorize_url(
+/// counts as configured whether or not the variable is set. (The 401 path decides the
+/// rest; this documents and pins the precedence the connect path relies on.)
+#[cfg(test)]
+pub(crate) fn authorize_url(
     url: Option<&str>,
     headers: &std::collections::BTreeMap<String, String>,
 ) -> Option<String> {
