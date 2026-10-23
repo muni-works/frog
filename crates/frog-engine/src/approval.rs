@@ -488,31 +488,40 @@ mod tests {
             root,
             &created
         ));
-        // Fresh scratch under /private/tmp (a build's own target dir): passes.
-        let fresh = "/private/tmp/skittish-fresh-target";
+        // Fresh scratch under the shared temp dir (a build's own target dir): passes.
+        // std::env::temp_dir() is what `own_scope` itself checks against, so this is
+        // portable (on macOS it's /var/... inside /private/var/tmp; the /private/tmp
+        // alias is covered by own_scope's extra literals).
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        let fresh = temp.join("skittish-fresh-target");
+        let fresh_s = fresh.to_string_lossy().into_owned();
         assert!(own_scope(
-            &format!("CARGO_TARGET_DIR={fresh} cargo test"),
+            &format!("CARGO_TARGET_DIR={fresh_s} cargo test"),
             cwd,
             root,
             &created
         ));
         // An existing scratch tree it didn't create: doesn't pass…
-        std::fs::create_dir_all("/private/tmp/skittish-not-ours").unwrap();
+        let not_ours = temp.join("skittish-not-ours");
+        let not_ours_s = not_ours.to_string_lossy().into_owned();
+        std::fs::create_dir_all(&not_ours).unwrap();
         assert!(!own_scope(
-            "ls /private/tmp/skittish-not-ours && echo hi > /private/tmp/skittish-not-ours/x",
+            &format!("ls {not_ours_s} && echo hi > {not_ours_s}/x"),
             cwd,
             root,
             &created
         ));
         // …and a destructive program there needs provenance even if fresh-ish.
-        assert!(!own_scope("rm -rf /private/tmp/skittish-not-ours", cwd, root, &created));
-        let _ = std::fs::remove_dir_all("/private/tmp/skittish-not-ours");
+        assert!(!own_scope(&format!("rm -rf {not_ours_s}"), cwd, root, &created));
+        let _ = std::fs::remove_dir_all(&not_ours);
         let _ = std::fs::remove_dir_all(own);
         // Write/Edit: a fresh temp file is ours; an existing one we didn't make isn't.
-        assert!(path_in_own_scope(Path::new("/private/tmp/skittish-fresh/f.log"), root, &created));
-        std::fs::create_dir_all("/private/tmp/skittish-theirs").unwrap();
-        assert!(!path_in_own_scope(Path::new("/private/tmp/skittish-theirs"), root, &created));
-        let _ = std::fs::remove_dir_all("/private/tmp/skittish-theirs");
+        let fresh_file = temp.join("skittish-fresh/f.log");
+        assert!(path_in_own_scope(&fresh_file, root, &created));
+        let theirs = temp.join("skittish-theirs");
+        std::fs::create_dir_all(&theirs).unwrap();
+        assert!(!path_in_own_scope(&theirs, root, &created));
+        let _ = std::fs::remove_dir_all(&theirs);
         assert!(!path_in_own_scope(Path::new("/Users/cam/.zshrc"), root, &created));
         // Outside everywhere: never passes.
         assert!(!own_scope("cat > /etc/motd", cwd, root, &created));
