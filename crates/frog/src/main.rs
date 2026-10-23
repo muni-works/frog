@@ -511,6 +511,9 @@ async fn run() -> Result<bool> {
         (_, _, true) => Mode::Auto,
         _ => Mode::Default,
     };
+    // An explicit mode flag wins; without one, a resumed session keeps the mode it last used
+    // (the app restarts engines with no flag, so SetSessionMode persists across restarts).
+    let mode_explicit = cli.yolo || cli.accept_edits || cli.auto;
     if cli.acp {
         acp::serve(cfg.clone(), profile_name, profile, store, cli.sandbox).await?;
         return Ok(true);
@@ -529,6 +532,7 @@ async fn run() -> Result<bool> {
                 profile,
                 cwd: cwd.clone(),
                 mode,
+                keep_mode: !mode_explicit,
                 can_ask: false,
                 resume,
                 store: Some(dir.clone()),
@@ -551,6 +555,7 @@ async fn run() -> Result<bool> {
         profile,
         cwd,
         mode,
+        keep_mode: !mode_explicit,
         can_ask: !cli.print,
         resume,
         store: Some(store),

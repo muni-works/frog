@@ -213,6 +213,9 @@ pub struct Options {
     pub profile: Profile,
     pub cwd: PathBuf,
     pub mode: Mode,
+    /// A resumed session keeps the mode it last used instead of `mode` (the client passed no
+    /// explicit flag; the app restarts engines this way, so SetSessionMode persists).
+    pub keep_mode: bool,
     /// False for headless clients: anything that would ask is denied instead.
     pub can_ask: bool,
     /// Session id to resume from `store`.
@@ -930,7 +933,7 @@ struct Agent {
 }
 
 impl Agent {
-    fn new(o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
+    fn new(mut o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
         // Cached or shipped capability profiles are useful in both persisted and in-memory engines.
         let caps = (!harness::is_hosted(&o.profile))
             .then(|| harness::cached(&o.profile))
@@ -984,6 +987,20 @@ impl Agent {
                     Event::TurnStarted { turn, .. } => Some(Some(*turn)),
                     _ => None,
                 });
+                // A resumed session keeps the mode it last used, when the client passed no
+                // explicit flag (SetSessionMode persists this way).
+                if o.keep_mode
+                    && let Some(mode) = l
+                        .events
+                        .iter()
+                        .rev()
+                        .find_map(|e| match e.event {
+                            Event::ModeChanged { mode } => Some(mode),
+                            _ => None,
+                        })
+                {
+                    o.mode = mode;
+                }
                 (
                     id.clone(),
                     l.messages,
@@ -2776,6 +2793,7 @@ impl Agent {
             cwd: self.root.clone(),
             // Never more than the parent may do: its mode, and only it can ask the user.
             mode: if write { self.mode } else { Mode::Default },
+            keep_mode: false,
             can_ask: write && self.can_ask,
             resume: None,
             store: None,
@@ -4350,6 +4368,7 @@ mod tests {
             profile,
             cwd: std::env::temp_dir(),
             mode: Mode::Default,
+            keep_mode: false,
             can_ask: true,
             resume: None,
             store: None,
@@ -4372,6 +4391,32 @@ mod tests {
         engine_with(script, can_ask, store, resume, None, std::env::temp_dir())
     }
 
+    /// An engine resuming a session the way the app does: no explicit mode flag, so the
+    /// session keeps the mode it last used (see `Options::keep_mode`).
+    fn engine_resuming(script: Vec<Response>, store: PathBuf, resume: String) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            keep_mode: true,
+            can_ask: true,
+            resume: Some(resume),
+            store: Some(store),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
     fn engine_mode(script: Vec<Response>, mode: ToolMode) -> Handle {
         let mut profile = Profile::new(ProviderKind::Ollama, "test");
         profile.tool_mode = mode;
@@ -4384,6 +4429,7 @@ mod tests {
             profile,
             cwd: std::env::temp_dir(),
             mode: Mode::Default,
+            keep_mode: false,
             can_ask: true,
             resume: None,
             store: None,
@@ -4409,6 +4455,7 @@ mod tests {
             profile,
             cwd: std::env::temp_dir(),
             mode: Mode::Default,
+            keep_mode: false,
             can_ask: true,
             resume: None,
             store: None,
@@ -4440,6 +4487,7 @@ mod tests {
             profile,
             cwd,
             mode: Mode::Default,
+            keep_mode: false,
             can_ask,
             resume,
             store,
@@ -4471,6 +4519,7 @@ mod tests {
             profile,
             cwd,
             mode: Mode::AcceptEdits,
+            keep_mode: false,
             can_ask: true,
             resume,
             store,
@@ -4986,6 +5035,7 @@ mod tests {
             profile,
             cwd: chat,
             mode: Mode::Default,
+            keep_mode: false,
             can_ask: true,
             resume: None,
             store: Some(store.clone()),
@@ -5059,6 +5109,7 @@ mod tests {
             profile,
             cwd,
             mode: Mode::Yolo,
+            keep_mode: false,
             can_ask: true,
             resume: None,
             store: None,
@@ -5261,6 +5312,34 @@ mod tests {
             Event::TurnStarted { turn: 2, .. }
         ));
         assert!(second[0].seq > last_seq, "seq continues across restarts");
+        shutdown(h).await;
+    }
+
+    #[tokio::test]
+    async fn a_resumed_session_keeps_the_mode_it_last_used() {
+        // SetSessionMode persists: the client restarted the engine with no explicit mode
+        // flag, so the resumed session comes back in the mode it last used, not Default.
+        let dir = tmp_store();
+        let mut h = engine_at(
+            vec![reply(vec![text("hello")], Stop::End)],
+            true,
+            Some(dir.clone()),
+            None,
+        );
+        let sid = run(&mut h, "hi").await[0].session.clone();
+        h.ops.send(Op::SetMode { mode: Mode::Auto }).unwrap();
+        shutdown(h).await;
+
+        let mut h = engine_resuming(vec![reply(vec![text("again")], Stop::End)], dir, sid);
+        let boot = until_idle(&mut h).await;
+        let status = boot
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::Status(s) => Some(s.clone()),
+                _ => None,
+            })
+            .expect("a status on boot");
+        assert_eq!(status.mode, Mode::Auto, "the resumed mode is kept");
         shutdown(h).await;
     }
 
@@ -6221,6 +6300,7 @@ for line in sys.stdin:
             profile,
             cwd,
             mode: Mode::Default,
+            keep_mode: false,
             can_ask: false,
             resume: None,
             store: Some(store),
@@ -7859,6 +7939,7 @@ for line in sys.stdin:
             profile,
             cwd: dir.to_path_buf(),
             mode: Mode::AcceptEdits,
+            keep_mode: false,
             can_ask: false,
             resume: None,
             store: Some(store.to_path_buf()),

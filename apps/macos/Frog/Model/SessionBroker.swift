@@ -300,6 +300,43 @@ final class SessionBroker {
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
+        case "SetSessionMode":
+            // Never above the caller's own mode (a child can't grant itself more than its
+            // parent has), and yolo additionally needs an explicit flag.
+            switch resolve(input["id"]?.string ?? "") {
+            case .success(let e):
+                guard let target = tracked(e.id) else {
+                    return c.replySession(r.id, error: "\(e.name) (\(e.id)) has no engine running; its mode is picked up when one starts.")
+                }
+                guard let raw = input["mode"]?.string, let wanted = Mode(rawValue: raw) else {
+                    return c.replySession(r.id, error: "`mode` must be default, accept-edits, auto or yolo.")
+                }
+                let mine = c.status?.mode ?? .default
+                if wanted.rank > mine.rank {
+                    return c.replySession(r.id, error: "You're in \(mine.rawValue) mode; you can't raise another session to \(wanted.rawValue).")
+                }
+                if wanted == .yolo, mine != .yolo || input["yolo"]?.bool != true {
+                    return c.replySession(r.id, error: "Setting a session to yolo needs mode: \"yolo\" and an explicit yolo: true.")
+                }
+                target.setMode(wanted)
+                c.replySession(r.id, result: .string("\(e.name) (\(e.id)) is now in \(wanted.rawValue) mode (from its next turn)."))
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
+        case "SetSessionModel":
+            switch resolve(input["id"]?.string ?? "") {
+            case .success(let e):
+                guard let target = tracked(e.id) else {
+                    return c.replySession(r.id, error: "\(e.name) (\(e.id)) has no engine running; a restart picks up the session's stored model.")
+                }
+                guard let model = input["model"]?.string, !model.isEmpty else {
+                    return c.replySession(r.id, error: "`model` is required (provider/model, e.g. local/qwen3-4b).")
+                }
+                target.setModel(model)
+                c.replySession(r.id, result: .string("\(e.name) (\(e.id)) moves to \(model) (from its next model call)."))
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
         default:
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
         }

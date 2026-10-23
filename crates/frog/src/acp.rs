@@ -146,6 +146,7 @@ pub async fn serve(
                         profile: profile.clone(),
                         cwd: req.cwd.clone(),
                         mode: Mode::Default,
+                        keep_mode: false,
                         can_ask: true,
                         resume: None,
                         store: Some(store.clone()),

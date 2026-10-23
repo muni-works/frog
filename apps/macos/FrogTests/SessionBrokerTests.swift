@@ -495,6 +495,41 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(r.tool, "ListSessions")
     }
 
+    /// SetSessionMode can never raise a child above the caller's own mode, and yolo needs
+    /// an explicit flag; SetSessionModel forwards the spec to the target.
+    @MainActor
+    func testSetSessionModeCeilingAndYoloFlag() throws {
+        let b = broker([chief, eng])
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-mode"))
+        b.track(target, as: eng.id)
+        let sender = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-sender"))
+        // Both conversations are booted (a status from the engine).
+        let statusLine = { (session: String, mode: String) in
+            #"{"seq":1,"session":"\#(session)","created":1,"event":"status","model":"m","mode":"\#(mode)","cwd":"/tmp","messages":0,"context_tokens":null,"context_window":1,"tool_mode":"native","tier":"weak","tokens_per_sec":null,"todos":[]}"#
+        }
+        sender.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(statusLine(chief.id, "accept-edits").utf8)))
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(statusLine(eng.id, "default").utf8)))
+
+        // Equal or lower mode is allowed.
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("accept-edits")])), from: sender)
+        XCTAssertEqual(target.status?.mode, .acceptEdits)
+
+        // Raising above the caller's mode is refused: the target stays where it was.
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("auto")])), from: sender)
+        XCTAssertEqual(target.status?.mode, .acceptEdits, "auto refused: the caller is accept-edits")
+
+        // Even a caller in yolo needs the explicit flag to set yolo.
+        sender.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(statusLine(chief.id, "yolo").utf8)))
+        b.handle(SessionRequest(id: "r3", item: "t3", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("yolo")])), from: sender)
+        XCTAssertEqual(target.status?.mode, .acceptEdits, "yolo refused without the flag")
+        b.handle(SessionRequest(id: "r4", item: "t4", tool: "SetSessionMode",
+                                input: .object(["id": .string(eng.id), "mode": .string("yolo"), "yolo": .bool(true)])), from: sender)
+        XCTAssertEqual(target.status?.mode, .yolo)
+    }
+
     /// StopSession interrupts a busy target's running turn (Op.interrupt applies
     /// immediately, unlike SendMessage which only queues); an idle one gets "nothing to
     /// stop", and the caller itself is refused.

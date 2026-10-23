@@ -26,11 +26,21 @@ pub const UNARCHIVE: &str = "UnarchiveSession";
 pub const STATUS: &str = "SessionStatus";
 pub const READ: &str = "ReadSession";
 pub const STOP: &str = "StopSession";
+pub const SET_MODE: &str = "SetSessionMode";
+pub const SET_MODEL: &str = "SetSessionModel";
 
 pub fn is_tool(name: &str) -> bool {
     matches!(
         name,
-        LIST | SEND | START | ARCHIVE | UNARCHIVE | STATUS | READ | STOP
+        LIST | SEND
+            | START
+            | ARCHIVE
+            | UNARCHIVE
+            | STATUS
+            | READ
+            | STOP
+            | SET_MODE
+            | SET_MODEL
     )
 }
 
@@ -147,6 +157,38 @@ runs next as usual."
                 "required": ["id"]
             }),
         },
+        ToolSpec {
+            name: SET_MODE.into(),
+            description: "Change a session's permission mode (default, accept-edits, auto, yolo); \
+the change persists across restarts. Can never raise the session above YOUR OWN mode; raising \
+to yolo additionally needs yolo: true. Applied at the next turn boundary — running turns keep \
+the mode they started with."
+                .into(),
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "session id or name" },
+                    "mode": { "type": "string", "enum": ["default", "accept-edits", "auto", "yolo"] },
+                    "yolo": { "type": "boolean", "description": "explicit confirmation for mode: yolo" }
+                },
+                "required": ["id", "mode"]
+            }),
+        },
+        ToolSpec {
+            name: SET_MODEL.into(),
+            description: "Change a session's model (provider/model spec, e.g. local/qwen3-4b); \
+persists across restarts. Takes effect on its next model call, so a running turn finishes on \
+the model it started with."
+                .into(),
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "session id or name" },
+                    "model": { "type": "string", "description": "provider/model spec" }
+                },
+                "required": ["id", "model"]
+            }),
+        },
     ]
 }
 
@@ -244,6 +286,14 @@ pub fn validate(name: &str, input: &Value) -> Result<()> {
             need("prompt")
         }
         ARCHIVE | UNARCHIVE | STATUS | READ | STOP => need("id"),
+        SET_MODE => {
+            need("id")?;
+            need("mode")
+        }
+        SET_MODEL => {
+            need("id")?;
+            need("model")
+        }
         _ => Ok(()),
     }
 }
@@ -297,14 +347,19 @@ mod tests {
         assert!(validate(READ, &json!({"id": "x", "last_n": 5})).is_ok());
         assert!(validate(STOP, &json!({})).is_err());
         assert!(validate(STOP, &json!({"id": "x"})).is_ok());
+        assert!(validate(SET_MODE, &json!({"id": "x"})).is_err());
+        assert!(validate(SET_MODE, &json!({"id": "x", "mode": "yolo"})).is_ok());
+        assert!(validate(SET_MODEL, &json!({"id": "x"})).is_err());
+        assert!(validate(SET_MODEL, &json!({"id": "x", "model": "local/qwen3-4b"})).is_ok());
     }
 
     #[test]
     fn specs_cover_every_tool_name() {
         let names: Vec<String> = specs().into_iter().map(|s| s.name.into_owned()).collect();
-        for tool in [LIST, SEND, START, ARCHIVE, UNARCHIVE, STATUS, READ, STOP] {
+        for tool in [LIST, SEND, START, ARCHIVE, UNARCHIVE, STATUS, READ, STOP, SET_MODE, SET_MODEL] {
             assert!(names.contains(&tool.into()), "{tool} missing from specs");
         }
-        assert!(is_tool(STOP));
+        assert!(is_tool(SET_MODE));
+        assert!(is_tool(SET_MODEL));
     }
 }

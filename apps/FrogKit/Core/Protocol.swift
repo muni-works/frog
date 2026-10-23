@@ -31,6 +31,17 @@ enum Mode: String, Codable, Sendable, CaseIterable, Identifiable {
         case .yolo: "bolt.fill"
         }
     }
+
+    /// How much the mode allows (`default` asks most, `yolo` never asks). A session's mode
+    /// can never be raised above its caller's: rank comparisons decide.
+    var rank: Int {
+        switch self {
+        case .default: 0
+        case .acceptEdits: 1
+        case .auto: 2
+        case .yolo: 3
+        }
+    }
 }
 
 enum Decision: String, Codable, Sendable {
