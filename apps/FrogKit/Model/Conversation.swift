@@ -724,6 +724,7 @@ final class Conversation {
     static func summary(_ turn: TurnState) -> String {
         switch turn.end {
         case .cancelled: return "Interrupted"
+        case .suspended: return "Suspended for app update"
         case .error(let e): return e.description
         case .looping: return "Stopped: the model kept repeating the same tool call"
         case .stepLimit: return "Stopped at the step limit"

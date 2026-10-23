@@ -240,6 +240,62 @@ impl Registry {
         self.relay.lock().unwrap().clear();
     }
 
+    /// Stop everything still running for an app update, recording each as
+    /// `interrupted_by_update` instead of `stopped`. Returns their ids (for the ack) and
+    /// id/label pairs (for the resumed notice) so the model can decide what to re-run.
+    pub fn stop_for_update(&self) -> (Vec<String>, Vec<(String, String)>) {
+        let pairs: Vec<(String, String)> = self
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, e)| e.running)
+            .map(|(id, e)| (id.clone(), e.label.clone()))
+            .collect();
+        for (id, _) in &pairs {
+            self.finish_for_update(id);
+        }
+        self.relay.lock().unwrap().clear();
+        let ids = pairs.iter().map(|(id, _)| id.clone()).collect();
+        (ids, pairs)
+    }
+
+    /// Like `finish` with the update outcome. The notice says the job was stopped by the
+    /// update and that the model decides whether to re-run it — never auto-restarted.
+    fn finish_for_update(&self, id: &str) {
+        let (kind, was_running) = {
+            let mut entries = self.entries.lock().unwrap();
+            let Some(e) = entries.get_mut(id) else { return };
+            let was = e.running;
+            e.running = false;
+            if was {
+                e.status = "interrupted_by_update".into();
+            }
+            (e.kind, was)
+        };
+        if !was_running {
+            return;
+        }
+        self.cancel_one(id);
+        let notice = format!(
+            "Background job {id} was interrupted by the app update; it will not restart on its own. Re-run it if the work is still needed."
+        );
+        self.emit(Event::BackgroundDone {
+            id: id.to_string(),
+            kind: kind.as_str().into(),
+            status: "interrupted_by_update".into(),
+            summary: notice.clone(),
+        });
+        self.notices.lock().unwrap().push(notice);
+    }
+
+    /// Cancel a job's stop token by id (the `stop` path does this under the lock).
+    fn cancel_one(&self, id: &str) {
+        if let Some(e) = self.entries.lock().unwrap().get(id) {
+            e.stop.cancel();
+        }
+    }
+
     pub fn has_notices(&self) -> bool {
         !self.notices.lock().unwrap().is_empty()
     }
