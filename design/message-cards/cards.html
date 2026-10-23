@@ -1,0 +1,61 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#1b1c1d;--card:#232425;--line:#34363a;--fg:#e8e8e6;--mut:#9a9da2;--green:#5fc595;--amber:#e8b84a;--red:#e5746a;--blue:#6fa8ff}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,system-ui,sans-serif;padding:28px 40px;width:760px}
+h3{font-size:12px;font-weight:600;color:var(--mut);letter-spacing:.06em;text-transform:uppercase;margin:22px 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:0 0 10px;overflow:hidden}
+.head{display:flex;align-items:center;gap:10px;padding:11px 14px}
+.av{width:22px;height:22px;border-radius:7px;background:#16301f;display:grid;place-items:center;font-size:13px}
+.from{font-weight:600}.time{color:var(--mut);font-size:12px;margin-left:auto}
+.badge{font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px;border:1px solid}
+.report{color:var(--green);border-color:#2f5a44}.decision{color:var(--amber);border-color:#5d4a20}.blocker{color:var(--red);border-color:#5e2f2b}.fyi{color:var(--mut);border-color:var(--line)}
+.hl{padding:0 14px 12px 46px;font-size:15px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 12px 46px}
+.chip{font:12px ui-monospace,Menlo,monospace;background:#2c2e31;border:1px solid var(--line);border-radius:7px;padding:3px 8px;color:var(--fg)}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:1px}
+.run{background:var(--green)}.wait{background:var(--amber)}
+.more{padding:8px 14px 10px 46px;color:var(--mut);font-size:12px;border-top:1px solid var(--line)}
+.btns{display:flex;gap:8px;padding:0 14px 14px 46px}.btn{background:#2c2e31;border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px}.btn.rec{border-color:#2f5a44;color:var(--green)}
+.stale{opacity:.45}.stale .hl{text-decoration:line-through;text-decoration-color:#666}
+.fwd{color:var(--blue);font-size:12px;padding:0 14px 10px 46px}
+table{border-collapse:collapse;margin:0 14px 12px 46px;font-size:13px}td,th{border-bottom:1px solid var(--line);padding:5px 12px 5px 0;text-align:left}th{color:var(--mut);font-weight:500}
+</style></head><body>
+
+<h3>after: collapsed by default</h3>
+
+<div class="card stale">
+ <div class="head"><div class="av">🐸</div><span class="from">frog manager</span><span class="badge report">report</span><span class="time">12:31</span></div>
+ <div class="hl">2 workers started (v2)</div>
+ <div class="fwd">↳ replaced by the 12:37 report</div>
+</div>
+
+<div class="card">
+ <div class="head"><div class="av">🐸</div><span class="from">frog manager</span><span class="badge report">report</span><span class="time">12:37</span></div>
+ <div class="hl">2 workers started · both verified inside worktrees</div>
+ <div class="chips">
+  <span class="chip"><span class="dot run"></span>bc88 · stop-interrupts-v3</span>
+  <span class="chip"><span class="dot run"></span>9530 · session-tools-v3</span>
+  <span class="chip">base 14e69df</span><span class="chip">picks fdbb6a6</span>
+ </div>
+ <div class="more">▸ show full report (12 lines)</div>
+</div>
+
+<div class="card">
+ <div class="head"><div class="av">🐸</div><span class="from">frog cloud manager</span><span class="badge decision">needs you</span><span class="time">12:52</span></div>
+ <div class="hl">Swap frog-cloud-10 to the cancel-safe image?</div>
+ <div class="chips"><span class="chip">zest#43</span><span class="chip">~$1–4 overlap</span><span class="chip">digest 1b3c1bdf…</span></div>
+ <div class="btns"><span class="btn rec">Swap now</span><span class="btn">Hold</span><span class="btn">Reply…</span></div>
+</div>
+
+<div class="card">
+ <div class="head"><div class="av">⚙️</div><span class="from">tang manager</span><span class="badge blocker">blocker</span><span class="time">13:05</span></div>
+ <div class="hl">All 9 engines die together ~2 min after each resume</div>
+ <table><tr><th>cycles</th><th>since</th><th>crash reports</th><th>work lost</th></tr><tr><td>3</td><td>12:35Z</td><td>0</td><td>none (all committed)</td></tr></table>
+ <div class="more">▸ show evidence (7 lines)</div>
+</div>
+
+<div class="card">
+ <div class="head"><div class="av">🐸</div><span class="from">frog manager</span><span class="badge fyi">fyi</span><span class="time">13:12</span></div>
+ <div class="hl">#74 merged · bash hang fixed on main</div>
+</div>
+
+</body></html>
