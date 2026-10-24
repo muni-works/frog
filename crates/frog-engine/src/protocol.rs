@@ -103,9 +103,16 @@ pub struct Touch {
 pub const CONTINUE_NOTE: &str =
     "<resumed after the app restarted; your previous turn was interrupted; continue>";
 
+/// What [`Op::Continue`] tells the model when an app update's [`Op::Drain`] suspended the turn
+/// and the relaunched app picks it back up. Its own note, not [`CONTINUE_NOTE`]: the model
+/// knows it wasn't its fault or the user's.
+pub const SUSPENDED_NOTE: &str =
+    "<resumed after the app updated; your previous turn was suspended; continue>";
+
 /// Client → engine.
 ///
-/// `Interrupt`, `Permission`, `Answer`, `Elicit`, `AppCall` and `StopSubagent` take effect immediately. Everything else is queued
+/// `Interrupt`, `Permission`, `Answer`, `Elicit`, `AppCall`, `Drain`, `DrainAbort` and
+/// `StopSubagent` take effect immediately. Everything else is queued
 /// and handled in order; each queued op ends with [`Event::Idle`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -184,6 +191,18 @@ pub enum Op {
     StopSubagent {
         id: String,
     },
+    /// Graceful stop for an app update: finish the current step, then stop at the next safe
+    /// point (a finished model call, a finished tool call) and end the turn [`EndReason::Suspended`].
+    /// Not a cancel — the turn is resumable via [`Op::Continue`]. `Drain` while idle is a no-op
+    /// ack. Immediate, like [`Op::Interrupt`], but cooperative.
+    Drain {
+        /// Unix ms; after this the engine force-stops (cancels the running tool or call) and
+        /// records itself suspended anyway.
+        deadline: i64,
+    },
+    /// The drain was called off (the user cancelled the update). Engines already suspended stay
+    /// that way (the next user message resumes them); a still-running turn keeps going.
+    DrainAbort,
     /// Internal: background work finished and left a notice for the model. Starts a turn
     /// when the engine is idle; never sent by clients.
     #[serde(skip)]
@@ -485,6 +504,24 @@ pub enum Event {
     },
 
     // ---- ephemeral ----
+    /// The engine stopped where [`Op::Drain`] asked: the turn ended [`EndReason::Suspended`] and
+    /// its log is fsynced. The ack the update flow waits for. `jobs` lists the background jobs
+    /// stopped for the update; `inbox` the messages delivered but never run, so the app re-sends
+    /// them (as fresh deliveries) after the restart.
+    Drained {
+        steps_done: u32,
+        /// Background job ids stopped by the drain (their `BackgroundDone` says
+        /// `interrupted_by_update`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        jobs: Vec<String>,
+        /// The ids and one-line labels of those jobs, so the resumed notice can name them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        job_labels: Vec<(String, String)>,
+        /// Delivered messages that never ran as a turn, as `(from, from_name, message)`:
+        /// the app re-delivers them after the restart.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        inbox: Vec<(String, String, String)>,
+    },
     ItemDelta {
         id: String,
         delta: Delta,
@@ -868,6 +905,10 @@ pub enum EndReason {
     Looping,
     /// The turn hit the per-turn step limit.
     StepLimit,
+    /// An app update's [`Op::Drain`] stopped the turn at a safe point (or force-stopped it at
+    /// the deadline). Never a cancel: the turn is resumable via [`Op::Continue`] and the
+    /// relaunched app picks it up automatically.
+    Suspended,
     Cancelled,
     Error {
         error: EngineError,
