@@ -83,7 +83,7 @@ struct SessionList: View {
     }
 
     private var pins: [SessionInfo] {
-        active.filter { library.pinned.contains($0.id) }
+        active.filter { library.pinned.contains($0.id) && $0.id != library.chief }
     }
 
     private var projects: [(folder: URL, items: [SessionInfo])] {
@@ -180,15 +180,18 @@ struct SessionList: View {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if filtering {
                         flat
-                    } else if compactSidebar {
-                        compactTabs
                     } else {
-                        switch grouping {
-                        case .project: tabs
-                        case .date: pinTiles; dated(unpinned)
-                        case .none:
-                            pinTiles
-                            ForEach(unpinned.sorted(by: before)) { row($0, showPlace: true) }
+                        chiefTile
+                        if compactSidebar {
+                            compactTabs
+                        } else {
+                            switch grouping {
+                            case .project: tabs
+                            case .date: pinTiles; dated(unpinned)
+                            case .none:
+                                pinTiles
+                                ForEach(unpinned.sorted(by: before)) { row($0, showPlace: true) }
+                            }
                         }
                     }
                 }
@@ -210,6 +213,39 @@ struct SessionList: View {
         }
         .popover(isPresented: $showTree, arrowEdge: .trailing) {
             SessionTree(workspace: workspace) { showTree = false }
+        }
+    }
+
+    /// The chief of staff, always first: a wide tile with what it's doing or asking, like a
+    /// pinned chat at the top of Messages. Shown in every grouping; hidden while searching.
+    @ViewBuilder
+    private var chiefTile: some View {
+        if let s = library.chiefSession {
+            Button { open(s) } label: {
+                ChiefTile(session: s, selected: s.id == current, live: library.live[s.id], library: library)
+            }
+            .buttonStyle(.plain)
+            .contextMenu {
+                if let openInSplit, paneNumbers[s.id] == nil {
+                    Button("Open in New Pane") { openInSplit(s) }
+                }
+                Button("Rename…") {
+                    newTitle = s.displayTitle
+                    renaming = s
+                }
+                Button("Remove Chief") { library.removeChief() }
+                Divider()
+                if let f = s.folder, !s.isChat {
+                    Button("Reveal Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([f]) }
+                }
+                if s.id == current {
+                    Button("Session Tree…") { showTree = true }
+                }
+            }
+            .paneDraggable(.session(s), title: s.displayTitle)
+            .padding(.horizontal, 4)
+            .padding(.top, 6)
+            .padding(.bottom, 2)
         }
     }
 
@@ -246,7 +282,7 @@ struct SessionList: View {
             compactHeader("Chats")
             ForEach(chats) { compactRow($0, depth: 0) }
         }
-        if projects.isEmpty && chats.isEmpty && pins.isEmpty { empty("No conversations yet") }
+        if projects.isEmpty && chats.isEmpty && pins.isEmpty && library.chiefSession == nil { empty("No conversations yet") }
     }
 
     private var compactPins: some View {
@@ -370,7 +406,7 @@ struct SessionList: View {
             }
             ForEach(chats) { row($0, showPlace: false) }
         }
-        if projects.isEmpty && chats.isEmpty && pins.isEmpty {
+        if projects.isEmpty && chats.isEmpty && pins.isEmpty && library.chiefSession == nil {
             empty("No conversations yet")
         }
     }
@@ -669,6 +705,12 @@ struct SessionList: View {
             renaming = s
         }
         Button(library.pinned.contains(s.id) ? "Unpin" : "Pin") { library.togglePin(s.id) }
+            .disabled(library.chief == s.id)
+        Button("Make Chief") { library.makeChief(s.id) }
+            .disabled(library.chief == s.id)
+        if library.chief == s.id {
+            Button("Remove Chief") { library.removeChief() }
+        }
         if let folder = s.folder, !s.isChat {
             Button("Reveal Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
         }
@@ -686,6 +728,101 @@ struct SessionList: View {
         } else {
             Button("Archive") { library.setArchived(s.id, true) }
         }
+    }
+}
+
+/// The chief of staff as a wide tile at the top of the sidebar: its monogram, title, and the
+/// line every other session reports through — what it's doing now, what it's waiting on, or
+/// where its last word left off. iMessage's pinned chats, but one, and live.
+private struct ChiefTile: View {
+    let session: SessionInfo
+    let selected: Bool
+    let live: Library.Live?
+    @Bindable var library: Library
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Monogram(session: session, size: 30, selected: selected, live: live)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(session.displayTitle).lineLimit(1).fontWeight(.semibold)
+                    if session.isChat {
+                        Image(systemName: "bubble.left").font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+                Text(preview)
+                    .font(.caption)
+                    .foregroundStyle(previewTint)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 0)
+            status
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(background, in: .rect(cornerRadius: 9))
+        .contentShape(.rect)
+        .help(helpText)
+    }
+
+    /// What the chief is saying right now: its question while it waits, the step in hand while
+    /// it works, else the end of its last word. (An idle chief outside a window shows its
+    /// place; there's nothing to say.)
+    private var preview: String {
+        if let c = library.conversation(session.id) {
+            if let q = c.question { return q.question }
+            if c.permission != nil || c.elicitation != nil { return "Waiting on you" }
+            if let line = c.liveActivity { return line }
+            if let last = c.turns.last, let summary = Conversation.summaryIfEnded(last) {
+                return summary
+            }
+            return session.folder.map { "Here: \($0.lastPathComponent)" } ?? "Idle"
+        }
+        switch live {
+        case .running: return "Working…"
+        case .waiting: return "Waiting on you"
+        case .unread: return "Finished — take a look"
+        case nil: return "Here: \(session.folder?.lastPathComponent ?? "")"
+        }
+    }
+
+    private var previewTint: Color {
+        if let c = library.conversation(session.id), c.question != nil || c.permission != nil || c.elicitation != nil {
+            return .orange
+        }
+        return .secondary
+    }
+
+    /// The working indicator, like every session's: a spinner while it runs, a hand while it
+    /// waits, a dot when it finished unseen.
+    @ViewBuilder
+    private var status: some View {
+        switch live {
+        case .running:
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                ProgressView().controlSize(.mini)
+            }
+        case .waiting:
+            Image(systemName: "ellipsis.bubble").foregroundStyle(.orange).symbolEffect(.pulse)
+        case .unread:
+            Circle().fill(.tint).frame(width: 7, height: 7)
+        case nil:
+            EmptyView()
+        }
+    }
+
+    private var background: AnyShapeStyle {
+        if selected { return AnyShapeStyle(.tint.opacity(0.22)) }
+        return AnyShapeStyle(.quaternary.opacity(0.7))
+    }
+
+    private var helpText: String {
+        var parts = [session.displayTitle, "Chief of staff"]
+        if let f = session.folder, !session.isChat { parts.append(f.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
+        parts.append(session.model)
+        return parts.joined(separator: "\n")
     }
 }
 

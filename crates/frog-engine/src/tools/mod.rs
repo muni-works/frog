@@ -340,6 +340,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
             .collect::<Vec<_>>()
             .join(": "),
         "Task" => s("description"),
+        crate::title::TOOL => s("title"),
         "Monitor" => {
             let c = s("command");
             if c.is_empty() {

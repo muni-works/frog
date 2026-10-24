@@ -100,6 +100,18 @@ impl Web {
 
     async fn fetch(&self, url: &Url) -> Result<Page> {
         check_url(url, self.allow_private)?;
+        // arXiv papers have an HTML rendering that's far cheaper to read than the PDF;
+        // try it first and fall back to the PDF when there isn't one.
+        let html = arxiv_html(url);
+        if html.as_str() != url.as_str() {
+            if let Ok(page) = self.fetch_raw(&html).await {
+                return Ok(page);
+            }
+        }
+        self.fetch_raw(url).await
+    }
+
+    async fn fetch_raw(&self, url: &Url) -> Result<Page> {
         let key = url.to_string();
         if let Some((at, page)) = self.cache.lock().unwrap().get(&key)
             && at.elapsed() < CACHE_TTL
@@ -381,10 +393,67 @@ fn convert(ctype: &str, body: &[u8]) -> Result<(Option<String>, String)> {
     if texty && !body[..body.len().min(8192)].contains(&0) {
         return Ok((None, text.into_owned()));
     }
+    if ctype.contains("pdf") {
+        let text = pdf_text(body)?;
+        if !text.trim().is_empty() {
+            return Ok((None, text));
+        }
+        bail!("the PDF has no extractable text (it may be scanned images)");
+    }
     bail!(
-        "the response is {}, not text; WebFetch reads pages and text",
+        "the response is {}, not text; WebFetch reads pages, text and PDFs",
         if ctype.is_empty() { "binary" } else { ctype }
     )
+}
+
+/// arxiv.org/pdf/<id>(vN) -> arxiv.org/html/<id>(vN): the HTML version when one exists.
+/// The fetch still works if it doesn't (a 404 reports the URL it tried).
+fn arxiv_html(url: &Url) -> Url {
+    let mut u = url.clone();
+    let host = u.host_str().unwrap_or_default();
+    let is_arxiv = host == "arxiv.org" || host.ends_with(".arxiv.org");
+    if is_arxiv
+        && let Some(rest) = u.path().strip_prefix("/pdf/")
+        && !rest.is_empty()
+        && !rest.ends_with(".pdf")
+    {
+        u.set_path(&format!("/html/{rest}"));
+    }
+    u
+}
+
+/// Extract the text of a PDF, capped: a paper's worth, not a phone book's.
+const PDF_BUDGET: usize = 20_000;
+
+fn pdf_text(body: &[u8]) -> Result<String> {
+    // pdf-extract unwraps freely on malformed input; a bad PDF off the web is an error, not a
+    // panic in the turn.
+    let out = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(body))
+        .map_err(|_| anyhow!("couldn't extract PDF text: the file is malformed"))?
+        .map_err(|e| anyhow!("couldn't extract PDF text: {e}"))?;
+    // pdf-extract leaves repeated blank lines; collapse them.
+    let collapsed = collapse_blanks(&out);
+    Ok(head(&collapsed, PDF_BUDGET).to_string())
+}
+
+/// Collapse runs of 3+ newlines (pdf-extract pads pages) to one blank line.
+fn collapse_blanks(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut blanks = 0;
+    for line in s.lines() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            blanks += 1;
+            if blanks > 1 {
+                continue;
+            }
+        } else {
+            blanks = 0;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 use markup5ever_rcdom::{Node, NodeData};
@@ -804,6 +873,89 @@ mod tests {
             msg.contains("redirect to http://10.0.0.1/admin refused"),
             "{msg}"
         );
+    }
+
+    #[test]
+    fn arxiv_pdf_urls_try_html_first() {
+        let u = url("https://arxiv.org/pdf/2401.00001v2");
+        assert_eq!(
+            arxiv_html(&u).as_str(),
+            "https://arxiv.org/html/2401.00001v2"
+        );
+        // a bare id gets its .pdf stripped form
+        let u = url("https://arxiv.org/pdf/2401.00001");
+        assert_eq!(arxiv_html(&u).as_str(), "https://arxiv.org/html/2401.00001");
+        // non-arxiv and non-pdf paths are untouched
+        for untouched in [
+            "https://arxiv.org/abs/2401.00001",
+            "https://example.com/pdf/2401.00001",
+            "https://arxiv.org/html/2401.00001",
+        ] {
+            assert_eq!(arxiv_html(&url(untouched)).as_str(), untouched);
+        }
+    }
+
+    /// A minimal one-page PDF with "hello from a pdf" in its text stream,
+    /// built by hand so the test needs no external tools.
+    #[test]
+    fn pdf_text_is_extracted_and_capped() {
+        let stream = b"BT /F1 12 Tf 72 720 Td (hello from a pdf) Tj ET";
+        let objs = [
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+            [
+                format!("<< /Length {} >>\nstream\n", stream.len()).into_bytes(),
+                stream.to_vec(),
+                b"\nendstream".to_vec(),
+            ]
+            .concat(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        ];
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, obj) in objs.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            pdf.extend_from_slice(obj);
+            pdf.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {}\n", objs.len() + 1).as_bytes());
+        pdf.extend_from_slice(b"0000000000 65535 f \n");
+        for off in &offsets {
+            pdf.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF",
+                objs.len() + 1
+            )
+            .as_bytes(),
+        );
+
+        let text = pdf_text(&pdf).unwrap();
+        assert!(
+            text.to_ascii_lowercase().contains("hello from a pdf"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn malformed_pdfs_are_errors_not_panics() {
+        for bad in [
+            &b"%PDF-1.4\n"[..],
+            b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF",
+            b"",
+        ] {
+            assert!(pdf_text(bad).is_err());
+        }
+    }
+
+    #[test]
+    fn collapse_blanks_folds_padding() {
+        let out = collapse_blanks("a\n\n\n\n\nb\n");
+        assert_eq!(out, "a\n\nb\n");
     }
 
     /// Reaches the internet: `cargo test -p frog-engine live_fetch -- --ignored`.

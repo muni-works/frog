@@ -197,6 +197,9 @@ enum Batch {
     Continue,
     Denied,
     Looping,
+    /// A drain (app update) stopped the batch: the calls that hadn't run are recorded
+    /// interrupted-by-update, and the turn ends suspended.
+    Suspended,
 }
 
 const COMPACT_PROMPT: &str = "Your context window is nearly full. Write a detailed summary of this conversation \
@@ -275,6 +278,19 @@ struct Shared {
     /// inbox, the SendMessage contract all the way down. A slot, not a value, because the
     /// client can turn the bus on after the engine started.
     irc: crate::irc::Slot,
+    /// A drain in progress: `Some(...)` from [`Op::Drain`] until the running turn suspends
+    /// (or the work loop acks, when nothing is running). The deadline is unix ms; past it
+    /// the loop force-stops. The jobs it stopped ride along for the ack and the resumed
+    /// notice; `acked` keeps a second drain (and the work loop's deadline) from re-acking.
+    draining: Mutex<Option<DrainState>>,
+}
+
+/// What a running [`Op::Drain`] needs, kept in `Shared::draining`.
+struct DrainState {
+    deadline: i64,
+    jobs: Vec<String>,
+    job_labels: Vec<(String, String)>,
+    acked: bool,
 }
 
 /// Event numbering and the session log. Shared, so events raised outside the agent loop (MCP
@@ -459,6 +475,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             let j = journal.clone();
             crate::background::Registry::new(move |e| j.emit(e))
         },
+        draining: Default::default(),
         journal,
         panes,
         irc: crate::irc::slot(),
@@ -507,6 +524,49 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Op::Interrupt => {
                     router.cancel.lock().unwrap().cancel();
                     router.bg.stop_all();
+                }
+                // An update is coming: set the flag the work loop checks between calls and
+                // after the one in flight. Nothing running: ack now, a no-op.
+                Op::Drain { deadline } => {
+                    let working = router.working.load(Ordering::Relaxed);
+                    {
+                        let mut d = router.draining.lock().unwrap();
+                        // A second Drain (a retry) moves the deadline later but never back.
+                        let state = d.get_or_insert(DrainState {
+                            deadline: i64::MIN,
+                            jobs: Vec::new(),
+                            job_labels: Vec::new(),
+                            acked: false,
+                        });
+                        state.deadline = state.deadline.max(deadline);
+                    }
+                    // Background jobs are stopped now (each records `BackgroundDone` with
+                    // `interrupted_by_update`); they're listed in the ack so the resumed
+                    // notice can name them.
+                    let jobs = router.bg.stop_for_update();
+                    if working {
+                        let mut d = router.draining.lock().unwrap();
+                        if let Some(s) = d.as_mut() {
+                            s.jobs = jobs.0;
+                            s.job_labels = jobs.1;
+                        }
+                    } else {
+                        let mut d = router.draining.lock().unwrap();
+                        if let Some(s) = d.as_mut() {
+                            s.acked = true;
+                        }
+                        router.journal.emit(Event::Drained {
+                            steps_done: 0,
+                            jobs: jobs.0,
+                            job_labels: jobs.1,
+                            inbox: Vec::new(),
+                        });
+                    }
+                }
+                // The update was called off. A turn already suspended stays that way (the
+                // next message continues it); a still-running one just keeps going.
+                Op::DrainAbort => {
+                    *router.draining.lock().unwrap() = None;
                 }
                 // Mid-turn the server is busy with the turn itself, which leaves it warm.
                 Op::Warm { .. } if router.working.load(Ordering::Relaxed) => {}
@@ -667,6 +727,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     }
                 } => r,
                 _ = token.cancelled() => Err(Interrupted.into()),
+                _ = drain_deadline(shared.clone()) => Err(Interrupted.into()),
             };
             shared.pending.lock().unwrap().clear();
             // A question still open when the turn ends (interrupted) was dismissed; say so,
@@ -685,6 +746,28 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 });
             }
             shared.panes.set_in_turn(false);
+            // A drain (app update) ends the turn suspended, never cancelled: the ack tells
+            // the client the engine stopped at a safe point and the jobs it stopped. A turn
+            // this boundary was about to start (a delivered batch, `delivered` here) never
+            // runs: the app re-sends it after the restart.
+            if let Some((jobs, labels)) = take_drain(&shared) {
+                let _ = &r;
+                match agent.active_turn.take() {
+                    Some(turn) => agent.end_turn(turn, EndReason::Suspended),
+                    None => agent.notice(Level::Warn, "drained with no turn running"),
+                }
+                shared.journal.emit(Event::Drained {
+                    steps_done: agent.turn_usage.model_calls,
+                    jobs,
+                    job_labels: labels,
+                    inbox: Vec::new(),
+                });
+                shared.working.store(false, Ordering::Relaxed);
+                agent.emit_status();
+                agent.emit(Event::Idle);
+                agent.meter_busy(false);
+                continue;
+            }
             if let Err(e) = r {
                 agent.repair();
                 let reason = if e.is::<Interrupted>() {
@@ -719,6 +802,61 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         events: ev_rx,
         bus,
     })
+}
+
+/// Waits until `Op::Drain`'s deadline has passed — the step in flight is then killed (the
+/// turn records itself suspended, the same shape a crash would leave). Re-checks the state
+/// periodically rather than reading it once, because a drain can be delivered (and the router
+/// task only runs) while the step is already in flight. Resolves only for a pending,
+/// un-acked drain past its deadline; otherwise keeps waiting, so the `select!` it arms sits
+/// quietly (its drop cancels it) when no drain ever comes.
+async fn drain_deadline(shared: Arc<Shared>) {
+    loop {
+        let left = {
+            let d = shared.draining.lock().unwrap();
+            match d.as_ref() {
+                Some(s) if !s.acked => s.deadline.saturating_sub(now_ms()),
+                _ => i64::MAX,
+            }
+        };
+        if left <= 0 {
+            return;
+        }
+        // Poll coarse: a late drain is caught within ~200 ms, near deadlines within ~50.
+        let pause = left.min(50).max(0);
+        tokio::time::sleep(Duration::from_millis(pause as u64)).await;
+    }
+}
+
+/// Take the drain, if one is pending and un-acked: the jobs it stopped and their labels.
+/// Marks it acked so a second take (and the work loop's deadline) is a no-op.
+fn take_drain(shared: &Arc<Shared>) -> Option<(Vec<String>, Vec<(String, String)>)> {
+    let mut d = shared.draining.lock().unwrap();
+    let s = d.as_mut().filter(|s| !s.acked)?;
+    s.acked = true;
+    Some((
+        std::mem::take(&mut s.jobs),
+        std::mem::take(&mut s.job_labels),
+    ))
+}
+
+/// A drain is waiting to suspend the turn at its next safe point.
+fn draining(shared: &Shared) -> bool {
+    shared
+        .draining
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|s| !s.acked)
+}
+
+/// Like [`draining`], but yields first so the router task (which may be holding a freshly
+/// delivered `Op::Drain` it hasn't recorded yet) gets to run — the safe points sit right
+/// after awaits that can resolve without yielding (an instant tool, a cached reply), and
+/// without this a drain delivered in that window would be missed until the next real await.
+async fn drain_pending(shared: &Shared) -> bool {
+    tokio::task::yield_now().await;
+    draining(shared)
 }
 
 /// Map any failure onto the closed [`EngineError`] set.
@@ -941,6 +1079,9 @@ struct Agent {
     map_logged: bool,
     /// Files edited this session, relative to the root, for ranking the map.
     edited: Vec<String>,
+    /// The session has a title (from the model's `SetTitle`, a client, or a resumed log), so
+    /// the headless fallback shouldn't add one.
+    titled: bool,
     /// The model can see images (probed, or `vision` in the profile).
     vision: bool,
     /// The server takes a per-call reasoning budget (probed).
@@ -991,6 +1132,7 @@ impl Agent {
         // it, rather than silently reverting to whatever the flags say — the picker and the
         // engine must agree on the effective mode.
         let mut resumed_mode = None;
+        let mut resumed_titled = false;
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
@@ -1008,6 +1150,9 @@ impl Agent {
                     .collect();
                 let mut used = Vec::new();
                 for e in &l.events {
+                    if matches!(e.event, Event::Titled { .. }) {
+                        resumed_titled = true;
+                    }
                     match &e.event {
                         Event::PaneOpened { id, .. } => {
                             used.push(id.clone());
@@ -1150,6 +1295,7 @@ impl Agent {
             map_building: false,
             map_logged: false,
             edited: Vec::new(),
+            titled: resumed_titled,
             classifier: None,
             classifier_failed: false,
             created: HashSet::new(),
@@ -1346,7 +1492,23 @@ impl Agent {
         });
     }
 
-    fn end_turn(&self, turn: u64, reason: EndReason) {
+    /// A title for sessions nobody else will name. The Mac app names its own conversations
+    /// (rich), the model may call `SetTitle`, and a user may; when none of that happened by
+    /// the end of the first turn, the first input stands in, with wrapper boilerplate stripped.
+    fn auto_title(&mut self, turn: u64) {
+        if self.titled || self.rich || turn != 1 {
+            return;
+        }
+        if let Some(input) = self.inputs.first() {
+            let title = crate::title::derive(input);
+            if !title.is_empty() {
+                self.set_title(title);
+            }
+        }
+    }
+
+    fn end_turn(&mut self, turn: u64, reason: EndReason) {
+        self.auto_title(turn);
         let timing = self.turn_clock.map(|start| {
             let mut t = self.timing.clone();
             t.wall_ms = ms(start.elapsed());
@@ -1392,6 +1554,16 @@ impl Agent {
         }
         self.sync_log();
         self.write_summary();
+    }
+
+    /// Record the session's title and remember it's named. A client's `Op::SetTitle` and the
+    /// model's `SetTitle` tool both land here.
+    fn set_title(&mut self, title: String) {
+        self.titled = true;
+        if let Some(bus) = self.irc() {
+            bus.set_session(&self.session_id, &title);
+        }
+        self.emit(Event::Titled { title });
     }
 
     fn meter_busy(&self, busy: bool) {
@@ -1519,6 +1691,7 @@ impl Agent {
                 self.skills_loaded.clear();
                 self.rules_seen.clear();
                 self.edited.clear();
+                self.titled = false;
                 let sandbox = self.ctx.sandbox.take();
                 let shell_sandbox = self.ctx.shell_sandbox.take();
                 let web = self.ctx.web.clone();
@@ -1544,12 +1717,9 @@ impl Agent {
                 self.notice(Level::Info, "started a new conversation");
             }
             Op::SetTitle { title } => {
-                let title: String = title.trim().chars().take(80).collect();
+                let title = crate::title::clean(&title);
                 if !title.is_empty() {
-                    if let Some(bus) = self.irc() {
-                        bus.set_session(&self.session_id, &title);
-                    }
-                    self.emit(Event::Titled { title });
+                    self.set_title(title);
                 }
             }
             Op::Deliver {
@@ -1591,6 +1761,8 @@ impl Agent {
             | Op::SessionReply { .. }
             | Op::Elicit { .. }
             | Op::AppCall { .. }
+            | Op::Drain { .. }
+            | Op::DrainAbort
             | Op::StopSubagent { .. }
             | Op::PaneOpen { .. }
             | Op::PaneInput { .. }
@@ -2047,6 +2219,24 @@ impl Agent {
 
             let uses = msg.tool_uses();
             self.push_msg(msg);
+            // Safe point (the model's message closed and is in the log): an app update's
+            // drain suspends the turn here, before any tool of this step runs, marking the
+            // calls it never got to — never "[Request interrupted by user]".
+            if drain_pending(&self.shared).await {
+                let missing: Vec<Block> = uses
+                    .iter()
+                    .map(|(id, name, _)| Block::ToolResult {
+                        id: id.clone(),
+                        name: name.clone(),
+                        content: "Interrupted by app update; will be re-run or resumed.".into(),
+                        is_error: true,
+                    })
+                    .collect();
+                if !missing.is_empty() {
+                    self.extend_last(missing);
+                }
+                break EndReason::Suspended;
+            }
             if let (true, Some(nudge)) = (uses.is_empty(), nudge) {
                 nudged = true;
                 self.notice(
@@ -2057,6 +2247,10 @@ impl Agent {
                 continue;
             }
             if uses.is_empty() {
+                // An update's drain takes the turn here, finished answer and all.
+                if drain_pending(&self.shared).await {
+                    break EndReason::Suspended;
+                }
                 // Ran out of output room mid-reply (long thinking, usually): carry on rather
                 // than end the turn, a few times, so long work doesn't stop on a token cap.
                 if resp.stop == Stop::Length && continued < MAX_CONTINUES {
@@ -2079,6 +2273,12 @@ impl Agent {
                 Batch::Continue => {}
                 Batch::Denied => break EndReason::Denied,
                 Batch::Looping => break EndReason::Looping,
+                Batch::Suspended => break EndReason::Suspended,
+            }
+            // Safe point (a tool call finished, its result recorded): an app update's drain
+            // suspends the turn here.
+            if drain_pending(&self.shared).await {
+                break EndReason::Suspended;
             }
             // Stop landed mid-tool: the tool already recorded "Interrupted by user.", so end
             // the turn here instead of handing the result back to the model. The outer select
@@ -2087,6 +2287,19 @@ impl Agent {
                 return Err(Interrupted.into());
             }
         };
+        // A suspended turn ends exactly here, before any warm-up (there's no next turn to
+        // warm) and after everything the log needs: history, events, the fsync below.
+        if reason == EndReason::Suspended {
+            if let Some((id, _)) = self.shared.journal.live.lock().unwrap().take() {
+                if let Some(dir) = &self.store {
+                    let _ = std::fs::remove_file(session::live_path(dir, &id));
+                }
+            }
+            self.active_turn = None;
+            self.shared.panes.set_in_turn(false);
+            self.end_turn(turn, reason);
+            return Ok(());
+        }
         // Prune now, while the user reads the reply, and warm the result: the next turn then
         // starts from a prefix that's already cached instead of prefilling all of it.
         if self.prune(context::PRUNE_AT) {
@@ -2785,6 +2998,7 @@ impl Agent {
             }
             if !self.chat {
                 specs.extend(crate::background::specs());
+                specs.push(crate::title::spec());
             }
             if !self.skills.is_empty() {
                 specs.push(crate::skills::spec());
@@ -2988,6 +3202,23 @@ impl Agent {
             .unwrap()
             .insert(id.to_string(), stop.clone());
         let forward = crate::background::forward(self.shared.bg.clone(), id.to_string(), false);
+        // A drain cascades to a live subagent: it suspends its own turn (its engine ends it
+        // `Suspended`), and the parent's drain deadline bounds its wait.
+        let cascade = {
+            let d = self.shared.draining.lock().unwrap();
+            d.as_ref()
+                .filter(|s| !s.acked)
+                .map(|s| (s.deadline, stop.clone()))
+        };
+        if let Some((deadline, token)) = cascade {
+            tokio::spawn(async move {
+                let left = deadline.saturating_sub(now_ms());
+                if left > 0 {
+                    tokio::time::sleep(Duration::from_millis(left as u64)).await;
+                }
+                token.cancel();
+            });
+        }
         let out = crate::subagent::run(opts, input, stop, forward).await;
         self.shared.subagents.lock().unwrap().remove(id);
         out
@@ -3077,6 +3308,11 @@ impl Agent {
         if name == crate::folder::TOOL && !self.subagent {
             return self.use_folder(input).await;
         }
+        if name == crate::title::TOOL {
+            let title = crate::title::parse(input)?;
+            self.set_title(title.clone());
+            return Ok(tools::Output::text(format!("Session titled \"{title}\".")));
+        }
         if name == crate::panes::TERMINAL {
             return self.shared.panes.terminal(input, self.subagent).await;
         }
@@ -3149,8 +3385,7 @@ impl Agent {
         out
     }
 
-    /// Run one batch of tool calls. Returns true if the user denied one.
-    /// Whether the model may call `name` now: it's in the tool list this step was offered, or
+    /// Run one batch of tool calls. Returns true if the user denied one.    /// Whether the model may call `name` now: it's in the tool list this step was offered, or
     /// it's a connected MCP server's tool (with many, only some are listed up front and the
     /// rest load on demand; that saves context, it isn't a permission).
     fn offers(&self, name: &str) -> bool {
@@ -3214,7 +3449,16 @@ impl Agent {
         let mut denied = false;
         let mut looping = false;
         let mut replan: Option<String> = None;
-        for (index, (id, name, input)) in uses.into_iter().enumerate() {
+        let uses_len = uses.len();
+        for index in 0..uses_len {
+            // Safe point between tool calls (the previous call's result is recorded): an
+            // update's drain records the rest of the batch as interrupted-by-update and
+            // suspends the turn here, before anything more runs.
+            if drain_pending(&self.shared).await {
+                self.mark_suspended(&uses, index);
+                return Ok(Batch::Suspended);
+            }
+            let (id, name, input) = uses[index].clone();
             // Taken for every call, so a mismatch drops all the early runs after it.
             let started_early = early.take(index, &name, &input);
             let key = format!("{name}\u{0}{input}");
@@ -3346,9 +3590,23 @@ Don't repeat it. Change the arguments or try a different approach.",
                     None => None,
                 };
                 let early = ran.as_ref().map(|(_, overlap)| ms(*overlap));
+                // A drain past its deadline kills the tool in flight (the same token
+                // `Interrupt` uses) and records it interrupted-by-update.
                 let r = match ran {
                     Some((r, _)) => r,
-                    None => self.run_tool(&id, &name, &input).await,
+                    None => {
+                        // A tool in flight gets the rest of the drain deadline; past it, the
+                        // tool is killed (dropping its future kills its process group) and
+                        // recorded interrupted-by-update, here and for the rest of the batch.
+                        let deadline = drain_deadline(self.shared.clone());
+                        tokio::select! {
+                            r = self.run_tool(&id, &name, &input) => r,
+                            _ = deadline => {
+                                self.mark_suspended(&uses, index);
+                                return Ok(Batch::Suspended);
+                            }
+                        }
+                    }
                 };
                 self.created
                     .extend(before.into_iter().filter(|p| p.exists()));
@@ -3466,6 +3724,25 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         } else {
             Batch::Continue
         })
+    }
+
+    /// Every call in the batch from `from` on never ran (an update's drain stopped it):
+    /// record each as interrupted-by-update in the batch's results message, so the history
+    /// is whole and `repair()` has nothing dangling on resume.
+    fn mark_suspended(&mut self, uses: &[(String, String, Value)], from: usize) {
+        let missing: Vec<Block> = uses[from..]
+            .iter()
+            .map(|(id, name, _)| Block::ToolResult {
+                id: id.clone(),
+                name: name.clone(),
+                content: "Interrupted by app update; will be re-run or resumed.".into(),
+                is_error: true,
+            })
+            .collect();
+        if !missing.is_empty() {
+            self.extend_last(missing);
+        }
+        self.sync_log();
     }
 
     /// What a model call sends for `messages` in the current tool mode.
@@ -5135,11 +5412,17 @@ mod tests {
                 "item_started",
                 "item_delta",
                 "item_completed",
+                // The first turn's end names the session (headless title fallback).
+                "titled",
                 "turn_ended",
                 "status",
                 "idle"
             ]
         );
+        assert!(matches!(
+            &evs[5].event,
+            Event::Titled { title } if title == "hi"
+        ));
         let seqs: Vec<u64> = evs.iter().map(|e| e.seq).collect();
         assert!(
             seqs.windows(2).all(|w| w[1] == w[0] + 1),
@@ -5149,7 +5432,7 @@ mod tests {
             matches!(&evs[4].event, Event::ItemCompleted { item: Item::Message { text }, .. } if text == "hello")
         );
         assert!(matches!(
-            &evs[5].event,
+            &evs[6].event,
             Event::TurnEnded {
                 reason: EndReason::Complete,
                 ..
@@ -5166,6 +5449,296 @@ mod tests {
             })
             .collect();
         assert!(ids.iter().all(|i| *i == ids[0]));
+    }
+
+    /// An engine with a store, scripted replies, running in `cwd`.
+    fn drain_engine(script: Vec<Response>, dir: PathBuf, cwd: PathBuf) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd,
+            mode: Mode::AcceptEdits,
+            can_ask: true,
+            resume: None,
+            store: Some(dir),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// `drain_between_tools`: `Drain` mid-turn, with the first tool call's result recorded,
+    /// ends the turn `Suspended` — never `Cancelled` — with the ack after it, and no interrupt
+    /// marker in the log.
+    #[tokio::test]
+    async fn drain_between_tools_suspends() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("a.rs"), "fn a() {}\n").unwrap();
+        let script = vec![
+            reply(
+                vec![call("t1", "Read", json!({ "file_path": "a.rs" }))],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("never")], Stop::End),
+        ];
+        let mut h = drain_engine(script, dir.clone(), project);
+        // Skip startup events, then start the turn.
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut sid = String::new();
+        // Drain once the first tool call's result is recorded.
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            match &env.event {
+                Event::TurnStarted { .. } => sid = env.session.clone(),
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, outcome: ToolOutcome::Ok, .. },
+                    ..
+                } if name == "Read" => {
+                    h.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() + 30_000,
+                        })
+                        .unwrap();
+                }
+                _ => {}
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(
+            evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })),
+            "suspended, not cancelled"
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Cancelled, .. })),
+            "never cancelled: {:?}",
+            names(&evs)
+        );
+        shutdown(h).await;
+        // The log is whole: the tool result is (only) where it should be, and no interrupt
+        // marker anywhere.
+        let blocks = logged_blocks(&dir, &sid);
+        assert!(
+            !blocks.iter().any(|(_, b)| matches!(b, Block::Text { text } if text.contains("[Request interrupted by user]"))),
+            "no interrupt marker"
+        );
+        assert!(
+            blocks
+                .iter()
+                .any(|(_, b)| matches!(b, Block::ToolResult { id, .. } if id == "t1")),
+            "the finished tool call's result is recorded"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+
+    /// `DrainAbort` calls a drain off: the turn keeps going normally — no suspend, the
+    /// remaining steps run to a `Complete`. Then a second drain (no abort this time) still
+    /// suspends, so both paths hold in one session.
+    #[tokio::test]
+    async fn drain_abort_lets_the_turn_continue() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("a.rs"), "fn a() {}\n").unwrap();
+        let script = vec![
+            reply(
+                vec![call("t1", "Read", json!({ "file_path": "a.rs" }))],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("kept going")], Stop::End),
+        ];
+        let mut h = drain_engine(script, dir.clone(), project);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut sid = String::new();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::TurnEnded { .. });
+            match &env.event {
+                Event::TurnStarted { .. } => sid = env.session.clone(),
+                // Drain on the first tool result, then abort it at once: the update was
+                // called off before the deadline.
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, outcome: ToolOutcome::Ok, .. },
+                    ..
+                } if name == "Read" => {
+                    h.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() + 30_000,
+                        })
+                        .unwrap();
+                    h.ops.send(Op::DrainAbort).unwrap();
+                }
+                _ => {}
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(
+            evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Complete, .. })),
+            "the turn carried on: {:?}",
+            names(&evs)
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })),
+            "never suspended after an abort"
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(&e.event, Event::Drained { .. })),
+            "the aborted drain never acks"
+        );
+        shutdown(h).await;
+        // The log is a plain finished turn: no interrupted-by-update marker anywhere.
+        assert!(
+            !logged_blocks(&dir, &sid)
+                .iter()
+                .any(|(_, b)| matches!(b, Block::ToolResult { content, is_error: true, .. }
+                    if content.contains("Interrupted by app update"))),
+            "no drain markers in the log"
+        );
+
+        // A second drain, no abort, still suspends: the abort didn't wedge the engine.
+        let script = vec![
+            reply(
+                vec![call("t2", "Read", json!({ "file_path": "a.rs" }))],
+                Stop::ToolUse,
+            ),
+            // Unused if the drain lands; present so the turn would carry on if it didn't.
+            reply(vec![text("unused")], Stop::End),
+        ];
+        let mut h2 = drain_engine(script, dir.clone(), dir.join("repo"));
+        while !matches!(h2.events.recv().await.unwrap().event, Event::Idle) {}
+        h2.ops
+            .send(Op::Submit {
+                text: "again".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut evs2 = Vec::new();
+        loop {
+            let env = h2.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            match &env.event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, outcome: ToolOutcome::Ok, .. },
+                    ..
+                } if name == "Read" => {
+                    h2.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() + 30_000,
+                        })
+                        .unwrap();
+                }
+                _ => {}
+            }
+            evs2.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(
+            evs2.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })),
+            "a later drain still suspends"
+        );
+        shutdown(h2).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `drain_kills_long_tool`: a drain whose deadline has passed records the tool in flight
+    /// as interrupted-by-update (it never even starts), and the turn suspends.
+    #[tokio::test]
+    async fn drain_kills_long_tool() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        let script = vec![reply(
+            vec![call(
+                "t1",
+                "Bash",
+                json!({ "command": "sleep 30", "timeout": 30_000 }),
+            )],
+            Stop::ToolUse,
+        )];
+        let mut h = drain_engine(script, dir.clone(), project);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        // Drain with a deadline already in the past, as soon as the turn starts.
+        let mut sid = String::new();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            match &env.event {
+                Event::Status(_) if sid.is_empty() => sid = env.session.clone(),
+                Event::TurnStarted { .. } => {
+                    sid = env.session.clone();
+                    h.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() - 1,
+                        })
+                        .unwrap();
+                }
+                _ => {}
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(
+            evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })),
+            "suspended after the kill: {:?}",
+            names(&evs)
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(&e.event, Event::ItemStarted { kind: ItemKind::ToolCall { .. }, .. } )),
+            "the long tool never started"
+        );
+        let blocks = logged_blocks(&dir, &sid);
+        assert!(
+            blocks.iter().any(|(_, b)| matches!(b, Block::ToolResult { id, content, is_error: true, .. }
+                if id == "t1" && content.contains("Interrupted by app update"))),
+            "the interrupted-by-update marker is recorded: {blocks:?}",
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -5430,8 +6003,88 @@ mod tests {
                 "turn_started",
                 "item_started",
                 "item_completed",
+                "titled",
                 "turn_ended"
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn set_title_tool_names_the_session_and_disables_the_fallback() {
+        let call = Block::ToolUse {
+            id: "t1".into(),
+            name: crate::title::TOOL.into(),
+            input: json!({ "title": "\"fix login timeout\"" }),
+        };
+        let mut h = engine(
+            vec![
+                reply(vec![call], Stop::ToolUse),
+                reply(vec![text("done")], Stop::End),
+            ],
+            true,
+        );
+        let evs = run(&mut h, "RULES: stay inside /tmp\n\nfix the login timeout in auth.rs").await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::ItemCompleted {
+                item: Item::ToolCall { outcome: ToolOutcome::Ok, .. },
+                ..
+            }
+        )));
+        // The model's title wins over the derived one, exactly once.
+        let titles: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Titled { title } => Some(title.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles, ["fix login timeout"]);
+    }
+
+    #[tokio::test]
+    async fn headless_first_turn_falls_back_to_a_derived_title() {
+        let mut h = engine(vec![reply(vec![text("ok")], Stop::End)], false);
+        let evs = run(
+            &mut h,
+            "RULES: work only inside the worktree.\n\nContinue this branch: finish the SetTitle \
+tool, strip prefixes like RULES:, and add tests.",
+        )
+        .await;
+        let titles: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Titled { title } => Some(title.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles.len(), 1);
+        assert!(titles[0].starts_with("finish the SetTitle tool"), "{:?}", titles);
+    }
+
+    #[tokio::test]
+    async fn titled_sessions_are_not_renamed_by_the_fallback() {
+        // The fallback only fires for turn 1: a second turn never adds a title.
+        let dir = tmp_store();
+        let mut h = engine_at(
+            vec![
+                reply(vec![text("one")], Stop::End),
+                reply(vec![text("two")], Stop::End),
+            ],
+            false,
+            Some(dir.clone()),
+            None,
+        );
+        let sid = run(&mut h, "first real request").await[0].session.clone();
+        shutdown(h).await;
+        let loaded = session::load(&dir, &sid).unwrap();
+        assert_eq!(
+            loaded
+                .events
+                .iter()
+                .filter(|e| matches!(e.event, Event::Titled { .. }))
+                .count(),
+            1
         );
     }
 
@@ -5809,8 +6462,8 @@ mod tests {
             .take_while(|e| !matches!(e.event, Event::Synced { .. }))
             .count();
         assert_eq!(
-            durable, 4,
-            "turn_started, item_started, item_completed, turn_ended"
+            durable, 5,
+            "turn_started, item_started, item_completed, titled, turn_ended"
         );
         assert!(matches!(&replay[0].event, Event::TurnStarted { input, .. } if input == "hi"));
         assert!(replay.iter().all(|e| e.session == sid));
@@ -5867,8 +6520,8 @@ mod tests {
             .collect();
         assert_eq!(
             replayed.len(),
-            4,
-            "turn_started, item_started, item_completed, turn_ended"
+            5,
+            "turn_started, item_started, item_completed, titled, turn_ended"
         );
         assert!(matches!(&replayed[0].event, Event::TurnStarted { input, .. } if input == "hi"));
 
@@ -6031,6 +6684,142 @@ mod tests {
             "the repaired tool call is still in the history"
         );
         shutdown(h).await;
+    }
+
+
+    /// `drain_resume_continues`: after a drain suspends a turn, a resumed engine continues
+    /// it with the update note (the app's job to send, as it will after a real update), on
+    /// the session's stored model, and the work carries on from the repaired history —
+    /// including the tool call the drain marked interrupted-by-update.
+    #[tokio::test]
+    async fn drain_resume_continues_on_the_stored_model_with_the_note() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("a.rs"), "fn a() {}\n").unwrap();
+        // Step 1 streams a tool call; the drain lands during it, so the call is marked
+        // interrupted-by-update and the turn suspends at the model-message safe point.
+        let script = vec![
+            reply(
+                vec![call("t1", "Read", json!({ "file_path": "a.rs" }))],
+                Stop::ToolUse,
+            ),
+        ];
+        let mut h = drain_engine(script, dir.clone(), project.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        // Drain the moment the turn starts, so the message safe point takes it.
+        let mut sid = String::new();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            if matches!(env.event, Event::TurnStarted { .. }) {
+                sid = env.session.clone();
+                h.ops
+                    .send(Op::Drain {
+                        deadline: now_ms() + 30_000,
+                    })
+                    .unwrap();
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })));
+        shutdown(h).await;
+        assert!(
+            logged_blocks(&dir, &sid)
+                .iter()
+                .any(|(_, b)| matches!(b, Block::ToolResult { id, content, .. } if id == "t1" && content.contains("Interrupted by app update"))),
+            "the never-run call is marked interrupted-by-update"
+        );
+
+        // The relaunched app: spawn with `resume`, then `Continue` with the update note.
+        let (mut h2, sent) = engine_sent(
+            vec![reply(vec![text("done")], Stop::End)],
+            Some(dir.clone()),
+            Some(sid),
+            None,
+            project,
+        );
+        while !matches!(h2.events.recv().await.unwrap().event, Event::Idle) {}
+        h2.ops
+            .send(Op::Continue {
+                note: Some(crate::protocol::SUSPENDED_NOTE.into()),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h2).await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnStarted { input, .. } if input == crate::protocol::SUSPENDED_NOTE
+        )));
+        assert!(evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Complete, .. })));
+        let req = sent.lock().unwrap().last().cloned().unwrap();
+        assert!(req.contains("resumed after the app updated"), "the update note, not the crash note");
+        assert!(
+            !req.contains("resumed after the app restarted"),
+            "never the crash note"
+        );
+        assert!(req.contains("t1"), "the marked call is in the history the model continues from");
+        shutdown(h2).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `drain_during_model_stream`: a drain while the reply still streams keeps the partial
+    /// text and suspends at the stream's end (the safe point fires once the message closes).
+    #[tokio::test]
+    async fn drain_during_model_stream_keeps_the_partial_text() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        let script = vec![reply(vec![text("partial answer")], Stop::End)];
+        let mut h = drain_engine(script, dir.clone(), project);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        // Drain while the message item is streaming.
+        let mut sid = String::new();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            match &env.event {
+                Event::TurnStarted { .. } => sid = env.session.clone(),
+                Event::ItemDelta { .. } => {
+                    h.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() + 30_000,
+                        })
+                        .unwrap();
+                }
+                _ => {}
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })));
+        shutdown(h).await;
+        let blocks = logged_blocks(&dir, &sid);
+        assert!(
+            blocks.iter().any(|(_, b)| matches!(b, Block::Text { text } if text.contains("partial answer"))),
+            "the streamed partial text is kept in the history"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -9310,17 +10099,11 @@ for line in sys.stdin:
         let mut h = engine_with(script, true, None, None, None, dir.clone());
         drive(&mut h, |e| matches!(e, Event::Idle)).await;
         submit(&h, "find the parser in the background");
-        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
-        let result = evs.iter().find_map(|e| match &e.event {
-            Event::ItemCompleted {
-                item: Item::ToolCall { output, .. },
-                ..
-            } => Some(output.clone()),
-            _ => None,
-        });
-        assert!(result.unwrap().contains("task-1"));
-        // With nothing else queued, the report starts a turn of its own.
-        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        // Everything through the report turn's end (the task's done event may arrive
+        // before, during or after the notice turn — ordering is the registry's, not ours).
+        let mut evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { turn: 2, .. })).await;
+        let mut more = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        evs.append(&mut more);
         let input = woke_with(&evs).expect("a turn started by the notice");
         assert!(input.starts_with("<task-done id=task-1>"), "{input}");
         assert!(input.contains("src/parse.rs:12"), "{input}");
@@ -9429,6 +10212,61 @@ for line in sys.stdin:
         shutdown(h).await;
     }
 
+
+    /// Integration: a parent drains while its `Task` subagent is mid-turn — the cascade
+    /// stops the child at its own safe point (its turn records `Suspended` too), the parent
+    /// reports the child's partial result as interrupted-by-update, and the resumed turn
+    /// can re-run the `Task`.
+    #[tokio::test]
+    async fn draining_the_parent_suspends_its_subagent_mid_turn_and_resume_reruns() {
+        let dir = tmp_store();
+        // The child is mid-turn when the parent's drain lands: a tool call in flight.
+        script_child(
+            &dir,
+            vec![
+                reply(vec![call("c1", "Bash", json!({"command": "sleep 30"}))], Stop::ToolUse),
+            ],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "long subagent", "prompt": "work on it", "mode": "write"}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("done anyway")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, Some(dir.clone()), None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "start the subagent");
+        // Drain the parent as soon as the child's tool call starts (the child's events
+        // stream through the parent's subagent item as `item_delta`s).
+        let mut parent_suspended = false;
+        let mut saw_ack = false;
+        let mut events = 0;
+        while !parent_suspended || !saw_ack {
+            let env = h.events.recv().await.unwrap();
+            match &env.event {
+                Event::Subagent { item, inner } if item == "t" => {
+                    events += 1;
+                    if matches!(&**inner, Event::ItemStarted { kind: crate::protocol::ItemKind::ToolCall { .. }, .. }) {
+                        h.ops
+                            .send(Op::Drain {
+                                deadline: now_ms() + 2_000,
+                            })
+                            .unwrap();
+                    }
+                }
+                Event::TurnEnded { reason: EndReason::Suspended, .. } => parent_suspended = true,
+                Event::Drained { .. } => saw_ack = true,
+                _ => {}
+            }
+            events += 0;
+            if events > 400 { panic!("the drain never landed; events exhausted"); }
+        }
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
     #[tokio::test]
     async fn a_finished_bash_job_reports_its_exit_and_output() {
         let dir = tmp_store();

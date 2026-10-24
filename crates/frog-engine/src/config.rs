@@ -333,7 +333,10 @@ fn irc_url() -> String {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct SandboxConfig {
     /// Paths (`~/` allowed) a sandboxed command may read even though they're credentials,
-    /// e.g. `~/.config/gh`.
+    /// e.g. `~/.config/gh`. Agent sessions that need `ssh` to user hosts set
+    /// `allow_read = ["~/.ssh/known_hosts"]` (read-only; keys stay unreadable; the no-sudo and
+    /// no-writes-outside-scratch rules still bind). `~` is expanded when the sandbox is built,
+    /// not when the config is parsed.
     #[serde(default)]
     pub allow_read: Vec<String>,
     /// Paths (`~/` allowed) a sandboxed command may write in addition to the project, temp
@@ -551,6 +554,19 @@ mod tests {
         assert_eq!(cfg.irc.channel.as_deref(), Some("#frog"));
         assert_eq!(cfg.irc.account.as_deref(), Some("cam-mac"));
         assert_eq!(cfg.irc.url, "wss://example.invalid/bus");
+    }
+
+    #[test]
+    fn sandbox_allow_read_parses_with_tildes_intact() {
+        // `~` is expanded when the sandbox is built (bash.rs `expand_home`), not here.
+        let cfg: Config = toml::from_str(
+            r#"
+            [sandbox]
+            allow_read = ["~/.ssh/known_hosts"]
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.sandbox.allow_read, ["~/.ssh/known_hosts"]);
     }
 
     #[test]

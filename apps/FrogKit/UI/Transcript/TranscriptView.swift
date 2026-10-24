@@ -378,6 +378,8 @@ struct EndView: View {
             }
         case .cancelled:
             banner("Interrupted", symbol: "stop.circle", color: .secondary)
+        case .suspended:
+            banner("Suspended for app update", symbol: "pause.circle", color: .secondary)
         case .maxTokens:
             banner("Hit the output token limit", symbol: "text.append", color: .orange)
         case .looping:

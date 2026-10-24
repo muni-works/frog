@@ -181,8 +181,10 @@ final class SessionBroker {
     var lastReport: (_ id: String) -> String? = { _ in nil }
     /// Inbound session messages waiting in a target engine's inbox, by session id. Counted
     /// here because the engine holds them; bumped on send, cleared when the target runs
-    /// them (its turn starts) or is restarted dead.
+    /// them (its turn starts) or is restarted dead. The messages themselves ride along, so
+    /// an update's restart can re-send the ones its engine never ran.
     private var inbound: [String: Int] = [:]
+    private var pendingInbox: [String: [(String, String, String)]] = [:]
     /// When each session's current permission card arrived (ListApprovals reports its age).
     private var waitingSince: [String: Date] = [:]
     /// The session that started session `id`, if one did (pending approvals escalate to it).
@@ -760,6 +762,7 @@ final class SessionBroker {
         // The message sits in the target's inbox until its next turn boundary: a queued
         // message keeps it "running" in the status truth (bug 2d).
         inbound[target.id, default: 0] += 1
+        pendingInbox[target.id, default: []].append((sender, name, message))
         Library.shared.reportQueued(target.id)
         if notifyWhenIdle {
             watches[target.id, default: []].append(Watch(sender: sender, armed: false))
@@ -801,6 +804,13 @@ final class SessionBroker {
             // The engine is working a turn: what it hasn't taken from its inbox yet is what's
             // still queued (messages delivered mid-turn wait for the next one).
             inbound[id] = (Library.shared.conversation(id) ?? background[id])?.pendingDeliveries ?? 0
+            // What it HAS taken is off the re-send list: an update restart must not replay
+            // messages the engine already ran.
+            let taken = inbound[id] ?? 0
+            if var list = pendingInbox[id] {
+                list.removeFirst(min(taken, list.count))
+                pendingInbox[id] = list.isEmpty ? nil : list
+            }
             if var list = watches[id] {
                 let input = currentInput(id)
                 for i in list.indices where input == nil || list[i].anyTurn || input!.hasPrefix("<session-message from=\"\(list[i].sender)\"") {
@@ -899,6 +909,24 @@ final class SessionBroker {
         touch(id)
         // A fresh engine has an empty inbox; its session's queued count starts over.
         inbound[id] = 0
+        // An update's restart is here: this session's engine never ran what was delivered
+        // to the old one — re-send it (the manifest said the turn was suspended; this is
+        // the inbox half). Anything queued before a plain restart was already re-sent by
+        // the registry's `queued`; this list only fills between a send and a drain.
+        if let unsent = pendingInbox[id], !unsent.isEmpty, SessionRegistry.shared.current.afterUpdate {
+            pendingInbox[id] = nil
+            inbound[id] = 0
+            Task { @MainActor in
+                // Give the fresh engine a beat to subscribe before the re-sends go.
+                try? await Task.sleep(for: .milliseconds(600))
+                for (from, name, message) in unsent {
+                    guard let c = self.conversation(for: id) else { return }
+                    c.deliver(from: from, name: name, message: message)
+                }
+            }
+        } else {
+            pendingInbox[id] = nil
+        }
         if unfinished, continueOpen { c.continueInterrupted() }
         return c
     }

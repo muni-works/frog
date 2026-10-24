@@ -397,6 +397,7 @@ impl Renderer {
                 self.idle();
                 match reason {
                     EndReason::Cancelled => info("  ⎿  interrupted"),
+                    EndReason::Suspended => info("  ⎿  suspended for app update"),
                     EndReason::MaxTokens => warn("\n  ⎿  hit the output token limit"),
                     EndReason::Looping => {
                         warn("\n  ⎿  stopped: the model kept repeating the same tool call")
