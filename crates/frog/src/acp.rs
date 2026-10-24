@@ -483,6 +483,9 @@ async fn pump(
             }
             Event::TurnEnded { reason, .. } => finish(match reason {
                 EndReason::Complete | EndReason::Denied => StopReason::EndTurn,
+                // An app update suspended the turn; it carries on when the host resumes
+                // this session, so from the outside it looks like it just stopped.
+                EndReason::Suspended => StopReason::Cancelled,
                 EndReason::Cancelled => StopReason::Cancelled,
                 EndReason::MaxTokens => StopReason::MaxTokens,
                 EndReason::Looping | EndReason::StepLimit => StopReason::MaxTurnRequests,

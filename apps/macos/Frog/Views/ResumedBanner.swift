@@ -9,8 +9,8 @@ struct ResumedBanner: View {
     var body: some View {
         if conversation.resumedAfterRestart, let id = conversation.sessionID {
             HStack(spacing: 8) {
-                Image(systemName: "arrow.clockwise.circle")
-                Text("Resumed after restart")
+                Image(systemName: conversation.suspendedByUpdate ? "arrow.down.circle" : "arrow.clockwise.circle")
+                Text(conversation.suspendedByUpdate ? "Resumed after app update" : "Resumed after restart")
                 Spacer(minLength: 8)
                 Toggle("Resume automatically", isOn: $autoContinue)
                     .toggleStyle(.checkbox)
