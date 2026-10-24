@@ -351,6 +351,9 @@ impl EndState {
             EndReason::Denied | EndReason::MaxTokens | EndReason::StepLimit | EndReason::Looping => {
                 Self::Stopped
             }
+            // Suspended for an app update: the session carries on at restart, so it isn't
+            // "stopped" — but it isn't complete either; no glyph until it resumes.
+            EndReason::Suspended => return None,
             EndReason::Cancelled => return None,
         })
     }
