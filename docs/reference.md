@@ -142,6 +142,17 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
 - **The classifier:** a small local model (Apple's on-device model when available, otherwise the session's model; set `auto_classifier` to choose) judges the rest against your recent messages. It answers allow or ask, with a reason, in grammar-constrained JSON. The call's arguments are marked untrusted, so text in them aimed at the classifier doesn't count.
 - **Fails closed:** a timeout, error or unreadable answer means ask.
 - **Visible:** approved calls show "Auto: <reason>" on the tool card. When it asks, the permission card says why.
+- **Own scratch:** a Write or Edit of a fresh file under the shared temp dir (`/private/tmp/…`), or of a file this session created, runs without asking. Overwriting someone else's temp file still asks.
+
+**MCP tools.** In every mode, an MCP tool whose own name opens with a read verb (`list_`, `get-`, `read_`, `search-`, `describe_`, `stream-`; a repeated server name like `planetscale_list_databases` is skipped) runs without asking, as do vcad's `see`/`inspect`/`measure`/`describe`/`render` tools. A name with a write, run, start/stop or secret word in it (`get_or_create`, `get_branch_password`) still asks, and so does anything not clearly a read. To let one server's writes through, grant it a write tier in `config.toml`:
+```toml
+[mcp_trust]
+planetscale = "write"   # execute_write_query and its create/delete/drop/alter/apply/insert/update tools
+# runpod = "write"      # create-pod, delete-pod, pod-action
+```
+No server is trusted by default. Each granted write runs without a card and is logged: a notice with the server, tool and arguments, a `trust` permission decision in the session log, and a line in the engine log.
+
+**Never asks twice.** A call (same tool, same arguments) that was denied on a card isn't asked about again in that turn: the turn ends `blocked_on_approval` with the denial, so the agent (or whoever wakes it) routes around it. Denied twice in a session, it's denied at once for the rest of the session, with a notice, and the agent carries on.
 
 **Sandbox.** Shell commands run in a sandbox by default: seatbelt on macOS, bubblewrap (`bwrap`) on Linux. Without a working `bwrap` (not installed, or unprivileged user namespaces are off), Linux commands ask instead.
 - **What it limits:** a command can write only inside the project, temp folders and toolchain caches (`~/.cargo`, `~/.npm`, …). It can't read credentials (`~/.ssh`, `~/.aws`, `~/.gnupg`, keychains, …), so a prompt-injected command can't send them anywhere. Network access works.
@@ -171,6 +182,8 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
   allow_read = ["~/.ssh/known_hosts"]  # read-only; private keys stay unreadable
   ```
   `~` is expanded when the sandbox is built, not when the config is parsed. The no-sudo and no-writes-outside-scratch rules still bind. (For git over GitHub, `git_https = true` avoids `~/.ssh` entirely.)
+
+  **Manager briefs:** the default brief for a manager (or any long-running agent session) should say to run with `allow_read = ["~/.ssh/known_hosts"]` under `[sandbox]`, so its ssh runs sandboxed instead of escaping with `unsandboxed: true` and carding.
 - **gh, minimal setup:** hand gh its token through the environment and let it read its config directory (gh refuses to start if it can't read `config.yml`):
   ```toml
   [sandbox]

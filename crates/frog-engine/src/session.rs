@@ -348,7 +348,11 @@ impl EndState {
         Some(match reason {
             EndReason::Complete => Self::Complete,
             EndReason::Error { .. } => Self::Failed,
-            EndReason::Denied | EndReason::MaxTokens | EndReason::StepLimit | EndReason::Looping => {
+            EndReason::Denied
+            | EndReason::BlockedOnApproval { .. }
+            | EndReason::MaxTokens
+            | EndReason::StepLimit
+            | EndReason::Looping => {
                 Self::Stopped
             }
             // Suspended for an app update: the session carries on at restart, so it isn't

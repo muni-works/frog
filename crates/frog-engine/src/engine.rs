@@ -191,12 +191,28 @@ const CLOUD_MAX_OUTPUT: u32 = 16_384;
 /// The smallest useful tool-result cap: windows below this keep results whole.
 const MIN_RESULT_CAP: usize = 40_000;
 
+/// Denials of one identical carded call (same tool and arguments) after which it never asks
+/// again this session.
+const DENIED_LIMIT: u32 = 2;
+
+/// One tool call's identity for the repeat-denial checks: its tool and its exact arguments.
+fn call_hash(name: &str, input: &Value) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    name.hash(&mut h);
+    input.to_string().hash(&mut h);
+    h.finish()
+}
+
 /// How a batch of tool calls ended.
 #[derive(PartialEq)]
 enum Batch {
     Continue,
     Denied,
     Looping,
+    /// The agent retried a call already denied this turn: frog didn't ask again, and the
+    /// turn ends with the denial (`EndReason::BlockedOnApproval`).
+    Blocked(String),
     /// A drain (app update) stopped the batch: the calls that hadn't run are recorded
     /// interrupted-by-update, and the turn ends suspended.
     Suspended,
@@ -1106,6 +1122,15 @@ struct Agent {
     /// note when a prompt timed out), for the tool result.
     last_note: Option<String>,
     session_allow: HashSet<String>,
+    /// Calls denied on a card this turn (hash of tool + arguments → what the denial said):
+    /// an identical retry this turn doesn't ask again, it ends the turn (`BlockedOnApproval`).
+    turn_denied: HashMap<u64, String>,
+    /// How many times each carded call (hash of tool + arguments) was denied this session;
+    /// at `DENIED_LIMIT` it's auto-denied without a card for the rest of the session.
+    session_denied: HashMap<u64, u32>,
+    /// Set by `permit` when it refused a repeat of a call denied this turn: the batch stops
+    /// and the turn ends with this denial.
+    blocked: Option<String>,
     /// Context from `Op::Shell`, attached to the next message.
     pending: Vec<String>,
     shared: Arc<Shared>,
@@ -1301,6 +1326,9 @@ impl Agent {
             created: HashSet::new(),
             prefix_allow: Vec::new(),
             last_note: None,
+            turn_denied: HashMap::new(),
+            session_denied: HashMap::new(),
+            blocked: None,
             vision: false,
             budget_ok: false,
             cache_key_ok: false,
@@ -1538,6 +1566,10 @@ impl Agent {
                 EndReason::Denied => Some((
                     NoticeKind::WaitingOnUser,
                     "turn ended: a tool call was denied, waiting on user".to_string(),
+                )),
+                EndReason::BlockedOnApproval { denial } => Some((
+                    NoticeKind::WaitingOnUser,
+                    format!("turn ended: blocked on an approval that was already denied ({denial})"),
                 )),
                 EndReason::Error { error } => {
                     Some((NoticeKind::Errored, format!("turn errored: {error:?}")))
@@ -1970,6 +2002,9 @@ impl Agent {
         self.quiet = 0;
         self.checkpoint(turn);
         self.turn_usage = TurnUsage::default();
+        // A new turn may ask again what the last one was denied (the session's breaker still holds).
+        self.turn_denied.clear();
+        self.blocked = None;
 
         let mut text = std::mem::take(&mut self.pending).join("\n");
         // Background work that finished while this turn was queued.
@@ -2273,6 +2308,7 @@ impl Agent {
                 Batch::Continue => {}
                 Batch::Denied => break EndReason::Denied,
                 Batch::Looping => break EndReason::Looping,
+                Batch::Blocked(denial) => break EndReason::BlockedOnApproval { denial },
                 Batch::Suspended => break EndReason::Suspended,
             }
             // Safe point (a tool call finished, its result recorded): an app update's drain
@@ -3447,6 +3483,7 @@ impl Agent {
             content: Vec::new(),
         });
         let mut denied = false;
+        let mut blocked: Option<String> = None;
         let mut looping = false;
         let mut replan: Option<String> = None;
         let uses_len = uses.len();
@@ -3534,6 +3571,12 @@ Don't repeat it. Change the arguments or try a different approach.",
                     msg,
                     Some("refused: repeated identical call"),
                 )
+            } else if blocked.is_some() {
+                text(
+                    ToolOutcome::Skipped,
+                    "Skipped: the turn ended on a call that was already denied.".to_string(),
+                    None,
+                )
             } else if denied {
                 text(
                     ToolOutcome::Skipped,
@@ -3549,7 +3592,20 @@ Don't repeat it. Change the arguments or try a different approach.",
                     ),
                     Some("refused: not an available tool"),
                 )
-            } else if self.timed_permit(&id, &name, &arg, &input).await == Decision::Deny {
+            } else if let Decision::Deny = self.timed_permit(&id, &name, &arg, &input).await {
+                if let Some(denial) = self.blocked.clone() {
+                    // A retry of a call already denied this turn: no second card. The turn
+                    // ends with the denial, so whoever wakes the agent next sees why.
+                    self.last_note = None;
+                    blocked = Some(denial.clone());
+                    text(
+                        ToolOutcome::Denied,
+                        format!(
+                            "Not run: this exact call was already denied this turn ({denial}). frog didn't ask again and ended the turn. Don't retry it: find another way, or leave it for the user."
+                        ),
+                        None,
+                    )
+                } else {
                 // A deny with a note (the user's, or frog's own when the prompt timed
                 // out) is direction, not a stop: the agent adjusts and carries on.
                 let (msg, stop) = match self.last_note.take() {
@@ -3568,6 +3624,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                 };
                 denied = stop;
                 text(ToolOutcome::Denied, msg, None)
+                }
             } else {
                 let started = Instant::now();
                 self.snapshot(&name, &input);
@@ -3717,7 +3774,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         } else if let Some(r) = replan {
             self.extend_last(vec![Block::Text { text: r }]);
         }
-        Ok(if denied {
+        Ok(if let Some(denial) = blocked {
+            Batch::Blocked(denial)
+        } else if denied {
             Batch::Denied
         } else if looping {
             Batch::Looping
@@ -4244,12 +4303,34 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.decision(item, "rule", "allow", "read-only web call", 0);
             return Decision::Allow;
         }
-        // MCP read verbs stay an auto-mode rule; other modes see them on cards as before.
-        if name.starts_with("mcp__") && self.mode == Mode::Auto && crate::auto::read_tool(name, input)
+        // MCP tools that only read (`list_*`, `get-*`, vcad's `inspect_*`, …) run without a
+        // card in every mode: a manager in default mode stalled ten minutes on each one. Auto
+        // mode keeps its slightly wider verb list on top.
+        if name.starts_with("mcp__")
+            && (crate::auto::mcp_read(name)
+                || (self.mode == Mode::Auto && crate::auto::read_tool(name, input)))
         {
             self.decision(item, "rule", "allow", "read-only tool call", 0);
             return Decision::Allow;
         }
+        // A write the user granted this server in `[mcp_trust]` (`planetscale = "write"`):
+        // no card, but every one is on the record (engine log, a notice, the decision event).
+        if let Some(server) =
+            crate::auto::mcp_write(name).filter(|s| self.cfg.mcp_write_trusted(s))
+        {
+            let tool = crate::auto::mcp_parts(name).map_or(name, |(_, t)| t);
+            let args = tools::truncate_middle(&input.to_string(), 400);
+            let line = format!(
+                "mcp_trust: ran {server} › {tool} without a card ([mcp_trust] {server} = \"write\"); args: {args}"
+            );
+            if self.cfg.log_calls {
+                eprintln!("{line}");
+            }
+            self.notice(Level::Info, line);
+            self.decision(item, "trust", "allow", &format!("write grant for {server}"), 0);
+            return Decision::Allow;
+        }
+        let call = call_hash(name, input);
         if name == crate::folder::TOOL {
             return self.ask_folder(item, name, arg).await;
         }
@@ -4341,6 +4422,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             if !self.can_ask {
                 return Decision::Deny;
             }
+            if let Some(d) = self.repeat_refusal(item, name, arg, call) {
+                return d;
+            }
             let id = new_id();
             let (tx, rx) = oneshot::channel();
             self.shared.pending.lock().unwrap().insert(id.clone(), tx);
@@ -4363,8 +4447,27 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.emit(Event::PermissionResolved { id, decision });
             if decision != Decision::Deny {
                 self.ctx.permitted.insert(path);
+            } else {
+                self.record_denial(call, "the user denied it".into());
             }
             return decision;
+        }
+        // Auto mode: a Write/Edit of the session's own scratch (a fresh path under the shared
+        // temp dir, or one this session made) is as much its own as the project. `ctx.outside`
+        // already counts temp dirs as scratch, so the hard rule's "outside the project" (which
+        // knows only the project root) mustn't card it.
+        if self.mode == Mode::Auto
+            && matches!(name, "Write" | "Edit")
+            && let Some(p) = input["file_path"].as_str()
+            && crate::auto::hard_rule(name, input, &self.ctx.root).is_some()
+            && crate::approval::path_in_own_scope(
+                &crate::approval::normalize(&self.ctx.resolve(p)),
+                &self.ctx.root,
+                &self.created,
+            )
+        {
+            self.decision(item, "provenance", "allow", "writes only its own scratch", 0);
+            return Decision::Allow;
         }
         let auto = match kind {
             Kind::Edit => {
@@ -4437,6 +4540,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         if !self.can_ask {
             self.decision(item, "ask", "ask", "not interactive: denied", 0);
             return Decision::Deny;
+        }
+        if let Some(d) = self.repeat_refusal(item, name, arg, call) {
+            return d;
         }
         let always = match kind {
             Kind::Edit => "allow all edits this session".to_string(),
@@ -4553,6 +4659,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         if let (Some(note), Decision::Deny) = (note, decision) {
             self.last_note = Some(format!("\"{note}\""));
         }
+        if decision == Decision::Deny {
+            let why = match &self.last_note {
+                Some(n) => format!("denied: {n}"),
+                None => "the user denied it".into(),
+            };
+            self.record_denial(call, why);
+        }
         self.emit(Event::PermissionResolved { id, decision });
         match decision {
             Decision::AllowAlways | Decision::AllowPrefix if name == "Bash" => {
@@ -4582,6 +4695,43 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             .text();
         let text = text.trim();
         (!text.is_empty()).then(|| tools::truncate_middle(text, 300))
+    }
+
+    /// Remember a card's deny: this turn's retries of the identical call don't ask again, and
+    /// the session's count moves toward its breaker.
+    fn record_denial(&mut self, call: u64, why: String) {
+        self.turn_denied.insert(call, why);
+        *self.session_denied.entry(call).or_insert(0) += 1;
+    }
+
+    /// Just before a card would go up: never burn an approval window on a call already
+    /// refused. Retried in the same turn, it's denied at once and the turn ends
+    /// (`BlockedOnApproval`); denied `DENIED_LIMIT` times this session, it's denied at once
+    /// with a notice and the agent carries on. `None`: ask as usual.
+    fn repeat_refusal(&mut self, item: &str, name: &str, arg: &str, call: u64) -> Option<Decision> {
+        if let Some(denial) = self.turn_denied.get(&call).cloned() {
+            self.decision(item, "repeat", "deny", &format!("already denied this turn: {denial}"), 0);
+            self.notice(
+                Level::Warn,
+                format!(
+                    "Blocked on approval: `{name} {arg}` was already denied this turn ({denial}). frog didn't ask again and ended the turn."
+                ),
+            );
+            self.blocked = Some(denial);
+            return Some(Decision::Deny);
+        }
+        if self.session_denied.get(&call).copied().unwrap_or(0) >= DENIED_LIMIT {
+            let why = "this call was denied twice and won't ask again this session";
+            self.decision(item, "breaker", "deny", why, 0);
+            self.notice(Level::Warn, format!("`{name} {arg}`: {why}."));
+            self.last_note = Some(format!(
+                "{why}; don't retry it, find another way or leave it for the user"
+            ));
+            // A retry later this turn ends the turn instead of repeating this.
+            self.turn_denied.insert(call, why.to_string());
+            return Some(Decision::Deny);
+        }
+        None
     }
 
     /// Record how one permission check was decided, so the ask rate can be
@@ -10397,13 +10547,17 @@ for line in sys.stdin:
     }
 
     fn engine_perm_cfg(script: Vec<Response>, mode: Mode, cfg: Config) -> Handle {
+        engine_perm_at(script, mode, cfg, std::env::temp_dir())
+    }
+
+    fn engine_perm_at(script: Vec<Response>, mode: Mode, cfg: Config, cwd: PathBuf) -> Handle {
         let mut profile = Profile::new(ProviderKind::Ollama, "test");
         profile.tool_mode = ToolMode::Native;
         let opts = Options {
             cfg,
             profile_name: "test".into(),
             profile,
-            cwd: std::env::temp_dir(),
+            cwd,
             mode,
             can_ask: true,
             resume: None,
@@ -11081,4 +11235,361 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
         assert!(!made.exists(), "the allowed rm ran");
         let _ = std::fs::remove_dir_all(dir);
        }
+
+    // ---- approvals never stall (read verbs in every mode, mcp_trust, repeat denials) ----
+
+    /// A stdio MCP stand-in named `server` (the `.mcp.json` key, so tools are
+    /// `mcp__{server}__{tool}`) whose `initialize` waits for `gate`, and whose `tools/call`
+    /// answers `ran {tool}`.
+    fn named_mcp_server(dir: &Path, server: &str, tools: &[&str], gate: &Path) {
+        let tools = json!(
+            tools
+                .iter()
+                .map(|t| json!({"name": t, "description": "Test tool.",
+                    "inputSchema": {"type": "object", "properties": {}}}))
+                .collect::<Vec<_>>()
+        );
+        let script = format!(
+            r#"import json, os, sys, time
+GATE = {gate:?}
+for line in sys.stdin:
+    m = json.loads(line)
+    if "id" not in m:
+        continue
+    if m["method"] == "initialize":
+        while not os.path.exists(GATE):
+            time.sleep(0.01)
+        r = {{"protocolVersion": m["params"]["protocolVersion"], "capabilities": {{"tools": {{}}}},
+             "serverInfo": {{"name": "{server}", "version": "1"}}}}
+    elif m["method"] == "tools/list":
+        r = {{"tools": json.loads('{tools}')}}
+    elif m["method"] == "tools/call":
+        r = {{"content": [{{"type": "text", "text": "ran " + m["params"]["name"]}}]}}
+    else:
+        r = {{}}
+    print(json.dumps({{"jsonrpc": "2.0", "id": m["id"], "result": r}}), flush=True)
+"#,
+            gate = gate.display().to_string()
+        );
+        std::fs::write(dir.join(format!("{server}_mcp.py")), script).unwrap();
+        let cfg = json!({"mcpServers": {server: {
+            "command": "python3",
+            "args": [dir.join(format!("{server}_mcp.py")).display().to_string()],
+        }}});
+        std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+    }
+
+    fn mcp_call(id: &str, name: &str) -> Response {
+        reply(
+            vec![Block::ToolUse {
+                id: id.into(),
+                name: name.into(),
+                input: json!({}),
+            }],
+            Stop::ToolUse,
+        )
+    }
+
+    /// Submit `prompt` (the engine is already idle) and collect through the next `Idle`,
+    /// answering each permission prompt with `answer`.
+    async fn next_turn(
+        h: &mut Handle,
+        prompt: &str,
+        mut answer: impl FnMut(&Event) -> Option<(Decision, Option<String>)>,
+    ) -> Vec<Envelope> {
+        h.ops
+            .send(Op::Submit {
+                text: prompt.into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event
+                && let Some((decision, note)) = answer(&env.event)
+            {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision,
+                        note,
+                    })
+                    .unwrap();
+            }
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle {
+                return evs;
+            }
+        }
+    }
+
+    /// An engine in `mode` with `cfg`, in a fresh folder whose `.mcp.json` names a
+    /// `planetscale` server with `tools`, connected: a first turn runs before the server may
+    /// come up, then it joins (the `Status` the idle engine emits).
+    async fn engine_with_mcp(
+        mode: Mode,
+        cfg: Config,
+        tools: &[&str],
+        calls: Vec<Response>,
+    ) -> (Handle, PathBuf) {
+        let dir = tmp_store();
+        let gate = dir.join("mcp.gate");
+        named_mcp_server(&dir, "planetscale", tools, &gate);
+        let mut script = vec![reply(vec![text("warm")], Stop::End)];
+        script.extend(calls);
+        let mut h = engine_perm_at(script, mode, cfg, dir.clone());
+        run(&mut h, "warm up").await;
+        std::fs::write(&gate, "").unwrap();
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if matches!(h.events.recv().await.unwrap().event, Event::Status(_)) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("MCP server never connected");
+        (h, dir)
+    }
+
+    fn perm_cfg() -> Config {
+        Config {
+            hermetic: true,
+            sandbox_shell: false,
+            ..Config::default()
+        }
+    }
+
+    fn asked(evs: &[Envelope]) -> usize {
+        evs.iter()
+            .filter(|e| matches!(e.event, Event::PermissionRequest { .. }))
+            .count()
+    }
+
+    fn outcome_of(evs: &[Envelope], call: &str) -> Option<ToolOutcome> {
+        evs.iter().find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                id,
+                item: Item::ToolCall { outcome, .. },
+            } if id == call => Some(*outcome),
+            _ => None,
+        })
+    }
+
+    fn ended(evs: &[Envelope]) -> Option<EndReason> {
+        evs.iter().find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+    }
+
+    /// (1) A read-verb MCP tool runs without a card in DEFAULT mode, not just auto. The
+    /// server's repeated name (`planetscale_list_databases`) doesn't hide the verb.
+    #[tokio::test]
+    async fn read_verb_mcp_tools_never_card_in_default_mode() {
+        let (mut h, dir) = engine_with_mcp(
+            Mode::Default,
+            perm_cfg(),
+            &["planetscale_list_databases", "planetscale_list_organizations"],
+            vec![
+                mcp_call("r1", "mcp__planetscale__planetscale_list_databases"),
+                mcp_call("r2", "mcp__planetscale__planetscale_list_organizations"),
+                reply(vec![text("done")], Stop::End),
+            ],
+        )
+        .await;
+        let evs = next_turn(&mut h, "list them", |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(asked(&evs), 0, "a read-only MCP tool carded: {:?}", names(&evs));
+        assert_eq!(outcome_of(&evs, "r1"), Some(ToolOutcome::Ok));
+        assert_eq!(outcome_of(&evs, "r2"), Some(ToolOutcome::Ok));
+        assert_eq!(tool_output(&evs, "r1"), Some("ran planetscale_list_databases"));
+        assert_eq!(ended(&evs), Some(EndReason::Complete));
+    }
+
+    /// (2) A non-read MCP tool still cards without a trust grant, in default mode.
+    #[tokio::test]
+    async fn non_read_mcp_tools_still_card_without_a_grant() {
+        let (mut h, dir) = engine_with_mcp(
+            Mode::Default,
+            perm_cfg(),
+            &["planetscale_execute_read_query"],
+            vec![
+                mcp_call("q", "mcp__planetscale__planetscale_execute_read_query"),
+                reply(vec![text("done")], Stop::End),
+            ],
+        )
+        .await;
+        let evs = next_turn(&mut h, "query", |_| Some((Decision::Allow, None))).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(asked(&evs), 1, "a non-read MCP tool must card");
+        assert_eq!(outcome_of(&evs, "q"), Some(ToolOutcome::Ok));
+    }
+
+    /// (3) A write tool runs without a card WITH the server's write grant, and the run is on
+    /// the record (a notice naming server, tool and args, and a `trust` decision); WITHOUT the
+    /// grant the same call cards exactly as before.
+    #[tokio::test]
+    async fn a_write_grant_runs_writes_cardless_and_logged_and_cards_without_it() {
+        let tools = ["planetscale_execute_write_query"];
+        let write = "mcp__planetscale__planetscale_execute_write_query";
+        let mut cfg = perm_cfg();
+        cfg.mcp_trust
+            .insert("planetscale".into(), crate::config::McpTrust::Write);
+        let (mut h, dir) = engine_with_mcp(
+            Mode::Default,
+            cfg,
+            &tools,
+            vec![mcp_call("w", write), reply(vec![text("done")], Stop::End)],
+        )
+        .await;
+        let evs = next_turn(&mut h, "write it", |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(asked(&evs), 0, "a granted write carded");
+        assert_eq!(outcome_of(&evs, "w"), Some(ToolOutcome::Ok));
+        let audit = notices(&evs);
+        assert!(
+            audit.iter().any(|n| n.contains("mcp_trust")
+                && n.contains("planetscale")
+                && n.contains("execute_write_query")
+                && n.contains("args:")),
+            "no audit notice: {audit:?}"
+        );
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::PermissionDecision { item, layer, outcome, .. }
+                if item == "w" && layer == "trust" && outcome == "allow"
+        )));
+
+        // No grant: the same write cards (denied here, so it never runs).
+        let (mut h, dir) = engine_with_mcp(
+            Mode::Default,
+            perm_cfg(),
+            &tools,
+            vec![mcp_call("w", write), reply(vec![text("done")], Stop::End)],
+        )
+        .await;
+        let evs = next_turn(&mut h, "write it", |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(asked(&evs), 1, "an ungranted write must card");
+        assert_eq!(outcome_of(&evs, "w"), Some(ToolOutcome::Denied));
+        assert!(!notices(&evs).iter().any(|n| n.contains("mcp_trust")));
+    }
+
+    /// (4) An identical call already denied this turn doesn't ask again: the turn ends
+    /// `BlockedOnApproval`, carrying the denial text, with a notice saying so.
+    #[tokio::test]
+    async fn a_denied_call_retried_in_the_same_turn_ends_it_blocked() {
+        let cmd = "touch frog-blocked-retry.txt";
+        let script = vec![
+            bash_call("a", cmd),
+            bash_call("b", cmd),
+            reply(vec![text("unreachable")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let evs = turn_answering(&mut h, |_| {
+            Some((Decision::Deny, Some("not that file".into())))
+        })
+        .await;
+        shutdown(h).await;
+        assert_eq!(asked(&evs), 1, "the retry re-asked: {:?}", names(&evs));
+        assert_eq!(outcome_of(&evs, "a"), Some(ToolOutcome::Denied));
+        assert_eq!(outcome_of(&evs, "b"), Some(ToolOutcome::Denied));
+        match ended(&evs) {
+            Some(EndReason::BlockedOnApproval { denial }) => {
+                assert!(denial.contains("not that file"), "{denial}")
+            }
+            other => panic!("turn should end blocked on approval, got {other:?}"),
+        }
+        assert!(
+            notices(&evs)
+                .iter()
+                .any(|n| n.contains("Blocked on approval") && n.contains("not that file")),
+            "{:?}",
+            notices(&evs)
+        );
+        let out = tool_output(&evs, "b").unwrap();
+        assert!(out.contains("already denied"), "{out}");
+        // It round-trips as a tagged reason.
+        let v = serde_json::to_value(EndReason::BlockedOnApproval { denial: "x".into() }).unwrap();
+        assert_eq!(v, json!({"type": "blocked_on_approval", "denial": "x"}));
+    }
+
+    /// (5) An identical carded call denied twice in a session never asks again: the third
+    /// attempt (a later turn) is denied at once with the notice, and the agent carries on.
+    #[tokio::test]
+    async fn a_call_denied_twice_in_a_session_is_auto_denied_after() {
+        let cmd = "touch frog-denied-twice.txt";
+        let script = vec![
+            bash_call("t1", cmd),
+            bash_call("t2", cmd),
+            bash_call("t3", cmd),
+            reply(vec![text("routed around it")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let deny = |_: &Event| Some((Decision::Deny, None));
+        let first = turn_answering(&mut h, deny).await;
+        let second = next_turn(&mut h, "again", deny).await;
+        let third = next_turn(&mut h, "once more", deny).await;
+        shutdown(h).await;
+        assert_eq!(asked(&first), 1);
+        assert_eq!(ended(&first), Some(EndReason::Denied));
+        assert_eq!(asked(&second), 1, "a new turn may ask once more");
+        assert_eq!(asked(&third), 0, "denied twice: it must not ask again");
+        assert_eq!(outcome_of(&third, "t3"), Some(ToolOutcome::Denied));
+        assert!(
+            notices(&third)
+                .iter()
+                .any(|n| n.contains("denied twice and won't ask again this session")),
+            "{:?}",
+            notices(&third)
+        );
+        // A breaker deny is direction, not a stop: the turn carries on to an answer.
+        assert_eq!(ended(&third), Some(EndReason::Complete));
+        assert!(tool_output(&third, "t3").unwrap().contains("denied twice"));
+    }
+
+    /// (6) Auto mode: a Write to a fresh file under the shared temp dir is the session's own
+    /// scratch and runs without a card (it used to card as "writes outside the project");
+    /// overwriting a temp file someone else made still asks.
+    #[tokio::test]
+    async fn auto_mode_writes_its_own_fresh_temp_scratch_without_a_card() {
+        let fresh = std::path::Path::new("/private/tmp").join(format!("frog-scratch-{}.rs", new_id()));
+        let theirs = std::path::Path::new("/private/tmp").join(format!("frog-theirs-{}.rs", new_id()));
+        std::fs::write(&theirs, "someone else's\n").unwrap();
+        let write = |id: &str, p: &std::path::Path| {
+            reply(
+                vec![Block::ToolUse {
+                    id: id.into(),
+                    name: "Write".into(),
+                    input: json!({ "file_path": p.display().to_string(), "content": "mine\n" }),
+                }],
+                Stop::ToolUse,
+            )
+        };
+        let script = vec![
+            write("fresh", &fresh),
+            write("theirs", &theirs),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Auto, None);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, Some("no".into())))).await;
+        shutdown(h).await;
+        let fresh_ok = std::fs::read_to_string(&fresh).ok();
+        let theirs_now = std::fs::read_to_string(&theirs).ok();
+        let _ = std::fs::remove_file(&fresh);
+        let _ = std::fs::remove_file(&theirs);
+        assert_eq!(outcome_of(&evs, "fresh"), Some(ToolOutcome::Ok), "{:?}", names(&evs));
+        assert_eq!(fresh_ok.as_deref(), Some("mine\n"));
+        assert_eq!(asked(&evs), 1, "only the existing temp file should ask");
+        assert_eq!(outcome_of(&evs, "theirs"), Some(ToolOutcome::Denied));
+        assert_eq!(theirs_now.as_deref(), Some("someone else's\n"));
+    }
 }

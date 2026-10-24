@@ -835,6 +835,7 @@ final class Conversation {
         case .error(let e): return e.description
         case .looping: return "Stopped: the model kept repeating the same tool call"
         case .stepLimit: return "Stopped at the step limit"
+        case .blockedOnApproval(let denial): return "Stopped: retried a call that was already denied (\(denial))"
         default:
             let answer = turn.items.last { $0.kind == .message }?.text ?? ""
             let line = answer.split(separator: "\n").first.map(String.init) ?? "Done"

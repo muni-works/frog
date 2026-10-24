@@ -372,9 +372,11 @@ struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
 
 enum EndReason: Decodable, Sendable, Equatable {
     case complete, maxTokens, denied, looping, stepLimit, cancelled, suspended
+    /// A retry of a call already denied: frog didn't ask again and ended the turn with the denial.
+    case blockedOnApproval(String)
     case error(EngineError)
 
-    private enum Key: String, CodingKey { case type, error }
+    private enum Key: String, CodingKey { case type, error, denial }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
@@ -386,6 +388,7 @@ enum EndReason: Decodable, Sendable, Equatable {
         case "step_limit": self = .stepLimit
         case "cancelled": self = .cancelled
         case "suspended": self = .suspended
+        case "blocked_on_approval": self = .blockedOnApproval((try? c.decode(String.self, forKey: .denial)) ?? "")
         default: self = .error(try c.decode(EngineError.self, forKey: .error))
         }
     }

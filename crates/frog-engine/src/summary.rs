@@ -159,6 +159,7 @@ fn reason_label(r: &EndReason) -> &'static str {
         EndReason::Complete => "complete",
         EndReason::MaxTokens => "cut off at max tokens",
         EndReason::Denied => "stopped: tool call denied",
+        EndReason::BlockedOnApproval { .. } => "stopped: blocked on an approval already denied",
         EndReason::Looping => "stopped: looping",
         EndReason::StepLimit => "stopped: step limit",
         EndReason::Suspended => "suspended for app update",
