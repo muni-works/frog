@@ -155,6 +155,7 @@ fn reason_label(r: &EndReason) -> &'static str {
         EndReason::Denied => "stopped: tool call denied",
         EndReason::Looping => "stopped: looping",
         EndReason::StepLimit => "stopped: step limit",
+        EndReason::Suspended => "suspended for app update",
         EndReason::Cancelled => "cancelled",
         EndReason::Error { .. } => "error",
     }

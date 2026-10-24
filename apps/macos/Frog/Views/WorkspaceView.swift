@@ -73,6 +73,36 @@ struct WorkspaceView: View {
     static let headerClearance: CGFloat = PaneView.headerHeight + 8
 
     private var focused: Pane { panes.focused }
+
+    /// The sidebar's conversations as its top-level rows, in the order its groups show them:
+    /// pins, then one group per project folder (newest activity first), then chats — the
+    /// started-by children are nested under their parents and don't count. What the
+    /// quick-switch shortcuts (⌘1…9, ⇧⌘]/⇧⌘[) step through.
+    private var sidebarOrder: [SessionInfo] {
+        let library = Library.shared
+        let active = library.sessions.filter { !library.archived.contains($0.id) }
+        let pins = active.filter { library.pinned.contains($0.id) }
+        let unpinned = active.filter { !$0.isChat && !library.pinned.contains($0.id) && $0.folder != nil }
+        let byPath = Dictionary(grouping: unpinned) { home(of: $0).standardizedFileURL.path }
+        let projects = byPath.values
+            .map { items in items.sorted { $0.modified > $1.modified } }
+            .sorted { ($0.first?.modified ?? 0) > ($1.first?.modified ?? 0) }
+        let chats = active.filter { $0.isChat && !library.pinned.contains($0.id) }
+        return pins + projects.flatMap(\.self) + chats.sorted { $0.modified > $1.modified }
+    }
+
+    /// The folder a session is filed under: its own, or (for one started by another session,
+    /// say in a worktree) its topmost parent's repo (the sidebar's `home`).
+    private func home(of s: SessionInfo) -> URL {
+        var current = s
+        var seen: Set<String> = [s.id]
+        while let p = Library.shared.parents[current.id], !seen.contains(p),
+              let parent = Library.shared.sessions.first(where: { $0.id == p }), parent.folder != nil, !parent.isChat {
+            seen.insert(p)
+            current = parent
+        }
+        return SessionList.repoRoot(current.folder ?? s.folder!)
+    }
     private var workspace: Workspace { focused.workspace }
     private var minColumn: CGFloat { panes.isSplit ? Self.minSplitColumn : Self.minColumn }
 
@@ -443,7 +473,9 @@ struct WorkspaceView: View {
             },
             split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
             closePane: panes.isSplit ? { panes.close(focused) } : nil,
-            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil
+            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
+            sidebarOrder: sidebarOrder,
+            openSidebarSession: { openInFocused($0) }
         ))
         // The phone asked for a conversation: here if this pane is a blank chat, else beside it,
         // so nothing on screen is replaced.

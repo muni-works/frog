@@ -52,6 +52,11 @@ enum Decision: String, Codable, Sendable {
     case deny
 }
 
+/// What `Op.continue` tells the model when an app update's drain suspended the turn and the
+/// relaunched app picks it back up (the engine's own default when `note` is nil).
+let SUSPENDED_NOTE =
+    "<resumed after the app updated; your previous turn was suspended; continue>"
+
 enum Op: Encodable, Sendable {
     /// `more`: further messages sent with this one (queued follow-ups), run as the same turn.
     case submit(String, images: [ToolImage] = [], more: [MessagePart] = [])
@@ -99,6 +104,11 @@ enum Op: Encodable, Sendable {
     /// Have the model server prefill the conversation now (plus `draft`, the message being
     /// typed), so the next turn starts warm. Fire and forget: nothing comes back.
     case warm(draft: String?)
+    /// Graceful stop for an app update: the engine finishes the current step, ends the turn
+    /// suspended at the next safe point and acks with `drained`. `deadline` is unix ms.
+    case drain(deadline: Int64)
+    /// The update was called off; engines already suspended stay that way.
+    case drainAbort
     case shutdown
 
     private enum Key: String, CodingKey {
@@ -106,6 +116,7 @@ enum Op: Encodable, Sendable {
         case action, content, server, tool, arguments, images
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
         case ask, choices, other, label, send, note, sessions, from, fromName = "from_name", more
+        case deadline
     }
 
     func encode(to encoder: Encoder) throws {
@@ -224,6 +235,11 @@ enum Op: Encodable, Sendable {
         case .warm(let draft):
             try c.encode("warm", forKey: .op)
             try c.encodeIfPresent(draft, forKey: .draft)
+        case .drain(let deadline):
+            try c.encode("drain", forKey: .op)
+            try c.encode(deadline, forKey: .deadline)
+        case .drainAbort:
+            try c.encode("drain_abort", forKey: .op)
         case .shutdown:
             try c.encode("shutdown", forKey: .op)
         }
@@ -339,7 +355,7 @@ struct TurnEnergy: Decodable, Sendable {
     var estimated: Bool { remoteWh != nil }
 }
 
-struct EngineError: Decodable, Sendable, CustomStringConvertible {
+struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
     var type: String
     var status: Int?
     var message: String?
@@ -354,8 +370,8 @@ struct EngineError: Decodable, Sendable, CustomStringConvertible {
     }
 }
 
-enum EndReason: Decodable, Sendable {
-    case complete, maxTokens, denied, looping, stepLimit, cancelled
+enum EndReason: Decodable, Sendable, Equatable {
+    case complete, maxTokens, denied, looping, stepLimit, cancelled, suspended
     case error(EngineError)
 
     private enum Key: String, CodingKey { case type, error }
@@ -369,6 +385,7 @@ enum EndReason: Decodable, Sendable {
         case "looping": self = .looping
         case "step_limit": self = .stepLimit
         case "cancelled": self = .cancelled
+        case "suspended": self = .suspended
         default: self = .error(try c.decode(EngineError.self, forKey: .error))
         }
     }
@@ -636,6 +653,9 @@ enum Event: Decodable, Sendable {
     case notice(level: String, message: String)
     case error(EngineError)
     case status(Status)
+    /// How many background pieces (Monitors, jobs, Tasks) run in the engine now; sent on
+    /// every start and end. Live only, never in a log.
+    case background(running: Int)
     case synced(upto: UInt64)
     case idle
     case paneOpened(id: String, kind: PaneKind, title: String, cwd: String?, url: String?)
@@ -647,6 +667,10 @@ enum Event: Decodable, Sendable {
     /// A screenshot of the preview the engine kept for a turn (`panes/turn-N.png` in the session
     /// folder), for before/after. Recognized by shape, since its event name isn't fixed yet.
     case paneCheckpoint(turn: UInt64, path: String)
+    /// The engine stopped where `drain` asked: it's safe to relaunch. The stopped background
+    /// jobs (id, label) are listed for the resumed notice; `inbox` holds delivered messages
+    /// that never ran as a turn — re-send them after the restart.
+    case drained(stepsDone: Int, jobs: [String], jobLabels: [(String, String)], inbox: [(String, String, String)])
     case unknown(String)
 }
 
@@ -675,7 +699,9 @@ extension Event {
         case progress, total, result, inner, present
         case layer, outcome, ms
         case images, more
+        case stepsDone = "steps_done", jobs, jobLabels = "job_labels", inbox
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
+        case running
     }
 
     init(from decoder: Decoder) throws {
@@ -763,6 +789,8 @@ extension Event {
             self = .error(try c.decode(EngineError.self, forKey: .error))
         case "status":
             self = .status(try Status(from: decoder))
+        case "background":
+            self = .background(running: try c.decode(Int.self, forKey: .running))
         case "synced":
             self = .synced(upto: try c.decode(UInt64.self, forKey: .upto))
         case "idle":
@@ -801,6 +829,33 @@ extension Event {
                 id: try c.decodeIfPresent(String.self, forKey: .id) ?? "",
                 level: try c.decodeIfPresent(String.self, forKey: .level) ?? "info",
                 message: try c.decode(String.self, forKey: .message))
+        case "drained":
+            func triples(_ raw: [JSONValue]) -> [(String, String, String)] {
+                raw.compactMap { v in
+                    if case .array(let parts) = v, parts.count >= 3,
+                       case .string(let a) = parts[0], case .string(let b) = parts[1], case .string(let c) = parts[2] {
+                        return (a, b, c)
+                    }
+                    return nil
+                }
+            }
+            func pairs(_ raw: [JSONValue]) -> [(String, String)] {
+                raw.compactMap { v in
+                    if case .array(let parts) = v, parts.count >= 2,
+                       case .string(let a) = parts[0], case .string(let b) = parts[1] {
+                        return (a, b)
+                    }
+                    return nil
+                }
+            }
+            func strings(_ raw: [JSONValue]) -> [String] {
+                raw.compactMap { v in if case .string(let s) = v { return s } else { return nil } }
+            }
+            self = .drained(
+                stepsDone: try c.decodeIfPresent(Int.self, forKey: .stepsDone) ?? 0,
+                jobs: (try? c.decodeIfPresent([JSONValue].self, forKey: .jobs)).flatMap(strings) ?? [],
+                jobLabels: (try? c.decodeIfPresent([JSONValue].self, forKey: .jobLabels)).flatMap(pairs) ?? [],
+                inbox: (try? c.decodeIfPresent([JSONValue].self, forKey: .inbox)).flatMap(triples) ?? [])
         default:
             // A checkpoint screenshot record, whatever it's called: a turn and a PNG path.
             if let turn = try? c.decodeIfPresent(UInt64.self, forKey: .turn),
