@@ -16,6 +16,9 @@ struct OpenSession: Codable, Equatable, Sendable {
     var userStopped = false
     /// Messages typed while a turn ran, not yet sent; they're sent after the restore.
     var queued: [String] = []
+    /// The turn was suspended by an app update's drain (`Op::Drain`), so it carries on at
+    /// relaunch on this session's stored model — with the update notice, not the crash one.
+    var suspendedByUpdate = false
 }
 
 /// Everything open, written on every change to
@@ -27,6 +30,9 @@ struct OpenSessions: Codable, Equatable, Sendable {
     var quit: Quit?
     /// Sessions the user said not to pick back up on their own after a restart.
     var noAutoContinue: [String] = []
+    /// The relaunch was an update whose drains the app waited for: suspended turns resume
+    /// with the update notice.
+    var afterUpdate = false
 
     enum Quit: String, Codable, Sendable {
         /// Quit, keeping running turns to carry on next launch.
@@ -105,6 +111,28 @@ final class SessionRegistry {
         guard let data = try? enc.encode(s) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
+    }
+
+    /// The resume manifest for an update: how every session stands right now, marked
+    /// `quit = .resume` (so every restore action is `.continue`) and `afterUpdate` (so
+    /// suspended turns get the update notice). Written after the drains finish, before
+    /// Sparkle terminates the app; the new app reads it at launch.
+    func manifestForUpdate() {
+        var next = OpenSessions()
+        next.sessions = snapshot()
+        for i in next.sessions.indices {
+            // The turn the drain suspended: its engine ended it `suspended` and closed its
+            // turn, so `turnRunning` is false again — `suspendedByUpdate` is what says "carry
+            // this one on".
+            let c = Library.shared.conversation(next.sessions[i].id)
+            next.sessions[i].suspendedByUpdate = c.map { $0.turns.last?.end == .suspended } ?? false
+            next.sessions[i].turnRunning = next.sessions[i].suspendedByUpdate || next.sessions[i].turnRunning
+        }
+        next.quit = .resume
+        next.afterUpdate = true
+        guard enabled else { return }
+        Self.save(next, to: url)
+        frozen = true
     }
 
     /// Whether windows opening now will be handed sessions to restore.
@@ -195,7 +223,15 @@ final class SessionRegistry {
                 panes.add(workspace)
             }
             guard let c = workspace.conversation else { continue }
-            if previous.action(for: s) == .continue { c.continueInterrupted() }
+            switch (previous.afterUpdate, previous.action(for: s)) {
+            case (true, true == s.suspendedByUpdate ? .continue : .reopen):
+                // An update drained this session: carry it on with the update notice (the
+                // engine runs on the session's stored model from the log header, never the
+                // default or a sender's).
+                if s.suspendedByUpdate { c.continueAfterUpdate() }
+            case (_, .continue): c.continueInterrupted()
+            case (_, .reopen): break
+            }
             for text in s.queued { c.submit(text) }
         }
     }

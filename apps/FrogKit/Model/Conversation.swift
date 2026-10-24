@@ -23,6 +23,9 @@ protocol ConversationLink: AnyObject {
 extension ConversationLink {
     var isAlive: Bool { true }
     func stop(reason: String) { stop() }
+    /// No-op for links without a process of their own (the phone bridge); the Mac's engine
+    /// process overrides it.
+    func forceKill(reason: String) {}
 }
 
 /// What a platform does when things happen in a conversation: sounds, the Mac's sidebar and
@@ -107,8 +110,13 @@ final class Conversation {
     @ObservationIgnored private var watchdog: Task<Void, Never>?
     /// Reopened after the app restarted, with the interrupted turn picked back up.
     var resumedAfterRestart = false
+    /// The turn was suspended by an app update's drain, and this relaunch carries it on
+    /// (with the update notice, not the crash one).
+    var suspendedByUpdate = false
     /// `continueInterrupted` called before the engine could take it: it goes first.
     @ObservationIgnored private var continuePending = false
+    /// The note a pending continue carries (the update note, or none for a crash resume).
+    @ObservationIgnored private var continueNote: String?
     /// Messages from other sessions sent to the engine (`deliver`) that no turn has taken yet.
     /// The engine queues them behind whatever it's doing; between a turn's `idle` and the
     /// next delivered turn's `turn_started`, this is the only sign the engine has work.
@@ -294,6 +302,59 @@ final class Conversation {
         link?.send(.interrupt)
     }
 
+    /// What an update drain saw: the engine stopped suspended, it had nothing running, or it
+    /// never answered inside the budget (the app force-kills it and the turn resumes as a
+    /// crash would).
+    enum DrainOutcome: Equatable {
+        case suspended
+        case idle
+        case timeout
+    }
+
+    /// Ask the engine to stop at a safe point for an app update. The op is sent, not
+    /// awaited — every engine drains in parallel. Follow with `awaitDrain`.
+    func sendDrain(deadline: Int64) {
+        link?.send(.drain(deadline: deadline))
+    }
+
+    /// Wait for a `sendDrain` to land: once the turn ended suspended (`TurnEnded` with
+    /// `suspended`, then `Idle`), the engine was already idle, or `seconds` passed. A drain
+    /// never looks like a stop: `userStopped` stays false, and the turn ends `suspended`,
+    /// never `cancelled`.
+    func awaitDrain(within seconds: Double) async -> DrainOutcome {
+        guard isLive else { return .timeout }
+        if !busy { return .idle }
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline, link?.isAlive == true {
+            try? await Task.sleep(for: .milliseconds(50))
+            // The suspended turn's end lands in `turns` like any end; `busy` goes false at
+            // the `Idle` after it.
+            if !busy { return turns.last?.end == .suspended ? .suspended : .idle }
+        }
+        return .timeout
+    }
+
+    /// Send the drain and wait for it (the one-conversation form; the update flow sends
+    /// first to all, then waits on all).
+    func drain(within seconds: Double) async -> DrainOutcome {
+        sendDrain(deadline: Int64(Date().addingTimeInterval(seconds).timeIntervalSince1970 * 1000))
+        return await awaitDrain(within: seconds)
+    }
+
+    /// Carry on the turn an app update suspended: its own note, so the model knows it wasn't
+    /// its fault or the user's. Same shape as a crash-continue otherwise.
+    func continueAfterUpdate() {
+        resumedAfterRestart = true
+        suspendedByUpdate = true
+        if busy || replaying {
+            continuePending = true
+            continueNote = SUSPENDED_NOTE
+            return
+        }
+        busy = true
+        link?.send(.continue(note: SUSPENDED_NOTE))
+    }
+
     /// Have the engine carry on with the turn a restart interrupted, ahead of anything queued.
     func continueInterrupted() {
         resumedAfterRestart = true
@@ -310,7 +371,8 @@ final class Conversation {
         guard continuePending else { return false }
         continuePending = false
         busy = true
-        link?.send(.continue())
+        link?.send(.continue(note: continueNote))
+        continueNote = nil
         return true
     }
 
@@ -421,6 +483,13 @@ final class Conversation {
     /// Send the engine an op directly (a title from the Mac's on-device model, say).
     func send(_ op: Op) {
         link?.send(op)
+    }
+
+    /// Force-kill the engine: an app update's drain deadline passed without an ack. Its turn
+    /// stays open in the log — the crash shape the resume path picks up. `reason` lands in
+    /// the engine log's `exit:` line.
+    func forceKillEngine(reason: String) {
+        link?.forceKill(reason: reason)
     }
 
     /// Returns once a reopened session's history is in, or after `limit` if that's slow.
@@ -616,6 +685,10 @@ final class Conversation {
             note("Summarized the conversation to save context (\(before.tokens) → \(after.tokens) tokens)", warning: false)
         case .contextPruned(let n, let before, let after):
             note("Trimmed \(n) old tool result\(n == 1 ? "" : "s") to save context (\(before.tokens) → \(after.tokens) tokens)", warning: false)
+        case .drained:
+            // The engine's ack for an update drain (steps done, jobs stopped); the update
+            // coordinator reads it through the drain's wait below, nothing to fold here.
+            break
         case .status(let s):
             status = s
         case .background(let running):
@@ -758,6 +831,7 @@ final class Conversation {
     static func summary(_ turn: TurnState) -> String {
         switch turn.end {
         case .cancelled: return "Interrupted"
+        case .suspended: return "Suspended for app update"
         case .error(let e): return e.description
         case .looping: return "Stopped: the model kept repeating the same tool call"
         case .stepLimit: return "Stopped at the step limit"

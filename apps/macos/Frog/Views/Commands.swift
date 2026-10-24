@@ -61,6 +61,20 @@ struct FrogCommands: Commands {
                     .disabled(!Updates.shared.canCheck)
             }
         }
+        #if DEBUG
+        // Debug builds have no updater: the drain → manifest → (simulated) relaunch loop
+        // still has to be reachable, so an update can be tested end to end.
+        CommandGroup(after: .appInfo) {
+            Button("Simulate Update…") {
+                Updates.shared.drainThenInstall {
+                    // What Sparkle's relaunch does: quit; the manifest says .resume, so the
+                    // next launch picks every session back up (relaunch it by hand to see
+                    // the resume half).
+                    NSApp.terminate(nil)
+                }
+            }
+        }
+        #endif
 
         // ⌘N starts a chat where you are; windows and tabs are ⌘T and ⌥⌘N.
         CommandGroup(replacing: .newItem) {

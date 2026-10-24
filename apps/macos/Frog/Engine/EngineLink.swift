@@ -10,6 +10,9 @@ extension EngineProcess: ConversationLink {
     /// The process is there to send events. False once it has exited (the pipe's `nil` may
     /// still be on its way), which is what a stale busy conversation checks.
     var isAlive: Bool { isRunning }
+
+    /// The drain deadline passed without the engine stopping: kill it, and say why in the log.
+    func forceKill(reason: String) { kill(reason: reason) }
 }
 
 extension Conversation {
