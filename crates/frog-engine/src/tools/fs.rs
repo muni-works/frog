@@ -11,7 +11,8 @@ pub fn read_spec() -> ToolSpec {
     ToolSpec {
         name: "Read".into(),
         description: "Read a text file. Returns lines prefixed with 1-based line numbers (cat -n style). \
-Reads up to 2000 lines by default; use offset/limit for large files. You must Read a file before editing it.".into(),
+Reads up to 2000 lines by default; use offset/limit for large files. On a directory, lists its entries \
+(like `ls`, capped at 200). You must Read a file before editing it.".into(),
         schema: json!({
             "type": "object",
             "properties": {
@@ -65,10 +66,7 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .await
         .with_context(|| format!("cannot read {}", path.display()))?;
     if meta.is_dir() {
-        bail!(
-            "{} is a directory. Use Glob or `ls` via Bash.",
-            path.display()
-        );
+        return list_dir(&path, ctx);
     }
     let bytes = tokio::fs::read(&path).await?;
     if bytes[..bytes.len().min(8192)].contains(&0) {
@@ -116,6 +114,47 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     Ok(Output {
         content: out,
         display: Some(format!("Read {shown} lines")),
+        diff: None,
+        diagram: None,
+        present: None,
+        ..Default::default()
+    })
+}
+
+/// List a directory's entries (like `ls`), capped at 200.
+fn list_dir(path: &Path, ctx: &Ctx) -> Result<Output> {
+    let mut entries: Vec<_> = std::fs::read_dir(path)?
+        .filter_map(|e| e.ok())
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            (name, is_dir)
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let total = entries.len();
+    let mut out = String::new();
+    for (name, is_dir) in entries.iter().take(200) {
+        let _ = writeln!(out, "{}{}", name, if *is_dir { "/" } else { "" });
+    }
+    if total > 200 {
+        let _ = writeln!(
+            out,
+            "… {} more (use Glob with a narrower pattern)",
+            total - 200
+        );
+    }
+    if total == 0 {
+        out = "(empty directory)".to_string();
+    }
+    Ok(Output {
+        content: out,
+        display: Some(format!(
+            "Listed {} entr{} in {}",
+            total.min(200),
+            if total.min(200) == 1 { "y" } else { "ies" },
+            ctx.display(path)
+        )),
         diff: None,
         diagram: None,
         present: None,
@@ -327,4 +366,54 @@ pub fn diff(old: &str, new: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Runtime::new().unwrap().block_on(f)
+    }
+
+    #[test]
+    fn read_on_a_directory_lists_it() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "hi").unwrap();
+        std::fs::write(tmp.path().join("z.txt"), "yo").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+
+        let input = json!({ "file_path": tmp.path().to_str() });
+        let out = block_on(read(&input, &mut ctx)).unwrap();
+        // entries are sorted, directories get a trailing slash
+        assert_eq!(out.content, "a.txt\nsub/\nz.txt\n");
+        assert!(out.display.unwrap().contains("3 entries"),);
+    }
+
+    #[test]
+    fn read_on_an_empty_directory_says_so() {
+        let tmp = TempDir::new().unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let input = json!({ "file_path": tmp.path().to_str() });
+        let out = block_on(read(&input, &mut ctx)).unwrap();
+        assert_eq!(out.content, "(empty directory)");
+    }
+
+    #[test]
+    fn read_on_a_directory_caps_at_200_entries() {
+        let tmp = TempDir::new().unwrap();
+        for i in 0..205 {
+            std::fs::write(tmp.path().join(format!("f{:03}.txt", i)), "x").unwrap();
+        }
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let input = json!({ "file_path": tmp.path().to_str() });
+        let out = block_on(read(&input, &mut ctx)).unwrap();
+        let lines: Vec<&str> = out.content.lines().collect();
+        assert_eq!(lines.len(), 201); // 200 entries + hint
+        assert!(out.content.contains("… 5 more"));
+        assert!(out.display.unwrap().contains("200 entries"));
+    }
 }
