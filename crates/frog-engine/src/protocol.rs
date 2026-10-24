@@ -564,6 +564,12 @@ pub enum Event {
         status: String,
         summary: String,
     },
+    /// How many background pieces (tasks, jobs, monitors, timers) are running now. Sent
+    /// whenever one starts or ends, so a client knows an engine with no turn open still has
+    /// work in flight and mustn't be let go. Live only: a new engine starts with none.
+    Background {
+        running: usize,
+    },
     /// Progress reported by a running MCP tool.
     ToolProgress {
         id: String,
