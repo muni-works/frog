@@ -369,9 +369,13 @@ final class Workspace {
         let startupModel = pendingDownload == nil ? preferredModel : conversation?.status?.model
         // A session already running in the background (another session messaged it) is
         // picked up as is; a second engine can't open its log.
-        let adopted = arguments.first == "-r" && arguments.count > 1 ? SessionBroker.shared.adopt(arguments[1]) : nil
-        let launch = Self.launch(arguments, chat: isChat, model: startupModel)
+        let resumed = arguments.first == "-r" && arguments.count > 1 ? arguments[1] : nil
+        let adopted = resumed.flatMap { SessionBroker.shared.adopt($0) }
+        // A model or mode another session set while this one was stopped applies now, once.
+        let stored = adopted == nil ? resumed.map { Library.shared.takeStored($0) } : nil
+        let launch = Self.launch(arguments, chat: isChat, model: stored?.model ?? startupModel)
         let c = adopted ?? Conversation(folder: folder, arguments: launch.arguments, model: launch.model)
+        if let stored, adopted == nil { SessionBroker.apply(stored, to: c) }
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID

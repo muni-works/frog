@@ -868,6 +868,10 @@ struct Agent {
     messages: Vec<Message>,
     ctx: Ctx,
     mode: Mode,
+    /// The mode the session log has on record (its last `mode_changed`; none means Default).
+    /// Whenever the effective mode differs, the next chance to write logs it (see
+    /// `log_mode`), so a restarted engine resumes in it and no change is ever silent.
+    mode_logged: Option<Mode>,
     can_ask: bool,
     rich: bool,
     subagent: bool,
@@ -1101,6 +1105,7 @@ impl Agent {
                 ctx
             },
             mode: resumed_mode.unwrap_or(o.mode),
+            mode_logged: resumed_mode,
             can_ask: o.can_ask,
             rich: o.rich,
             subagent: o.subagent,
@@ -1166,6 +1171,9 @@ impl Agent {
             if let Some(turn) = unfinished {
                 agent.end_turn(turn, EndReason::Cancelled);
             }
+            // A session last run from a flag (`--auto` from StartSession or Settings) never
+            // logged its mode: record what this engine runs in, so the next restart keeps it.
+            agent.log_mode();
         }
         agent.sync_specs();
         // A resumed session keeps the map it last sent: one rebuilt from the files as they are
@@ -1273,6 +1281,20 @@ impl Agent {
     /// The IRC bus, when it's on. Clones the Arc out from under the slot.
     fn irc(&self) -> Option<Arc<crate::irc::Bus>> {
         self.shared.irc.lock().unwrap().clone()
+    }
+
+    /// Log the effective mode if the session's log doesn't already say it (an unlogged
+    /// session counts as Default). Persisted sessions only: an in-memory engine or a
+    /// subagent has no log to resume from.
+    fn log_mode(&mut self) {
+        if self.store.is_none() || self.subagent {
+            return;
+        }
+        if self.mode_logged.unwrap_or(Mode::Default) == self.mode {
+            return;
+        }
+        self.mode_logged = Some(self.mode);
+        self.emit(Event::ModeChanged { mode: self.mode });
     }
 
     fn emit_status(&self) {
@@ -1468,6 +1490,7 @@ impl Agent {
             }
             Op::SetMode { mode } => {
                 self.mode = mode;
+                self.mode_logged = Some(mode);
                 self.emit(Event::ModeChanged { mode });
             }
             Op::SetModel { spec } => self.set_model(&spec).await?,
@@ -1752,6 +1775,8 @@ impl Agent {
             .collect();
         self.turn += 1;
         let turn = self.turn;
+        // The first turn creates a new session's log: its starting mode goes in first.
+        self.log_mode();
         self.emit(Event::TurnStarted {
             turn,
             input: input.to_string(),
@@ -3076,6 +3101,7 @@ impl Agent {
                 });
             }
         };
+        let cwd_before = self.ctx.cwd.clone();
         let mut out = {
             // Stop cancels a long tool in flight (Bash kills its process group), not just
             // between tools: watch the turn's token alongside the tool future.
@@ -3108,6 +3134,16 @@ impl Agent {
             out = Ok(tools::Output {
                 content: "Interrupted by user.".into(),
                 ..Default::default()
+            });
+        }
+        // A `cd` that stuck: say where the shell works now, durably (SessionStatus on a dead
+        // session reads it from the log).
+        // (Compared canonically: the shell reports `pwd -P`, so `/var` comes back as
+        // `/private/var` without having moved.)
+        let canon = |p: &PathBuf| p.canonicalize().unwrap_or_else(|_| p.clone());
+        if self.ctx.cwd != cwd_before && canon(&self.ctx.cwd) != canon(&cwd_before) {
+            self.shared.journal.emit(Event::ShellCwd {
+                cwd: self.ctx.cwd.clone(),
             });
         }
         out
@@ -3921,17 +3957,28 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // terms.
         let terminal_run = name == crate::panes::TERMINAL && pane_action == "run";
         let pane = !terminal_run && matches!(name, crate::panes::TERMINAL | crate::panes::PREVIEW);
-        // Web reads change nothing and show on their tool card, like reads. Auto mode runs
-        // unwatched, so there the classifier sees the URL first (a query string can carry data).
-        if kind == Kind::Net && self.mode != Mode::Auto {
+        // Web reads change nothing and show on their tool card, like reads — in every
+        // mode (Cam's decision 2026-10-23): WebSearch always, WebFetch when the host is
+        // a plain public domain (the fetch itself still re-checks every resolved IP
+        // against private ranges, and a non-public host keeps asking as before). A
+        // public-host GET sends nothing the request itself doesn't show.
+        if kind == Kind::Net && (name == "WebSearch" || crate::tools::web::public_host(input["url"].as_str().unwrap_or("")))
+        {
+            self.decision(item, "rule", "allow", "read-only web call", 0);
+            return Decision::Allow;
+        }
+        // MCP read verbs stay an auto-mode rule; other modes see them on cards as before.
+        if name.starts_with("mcp__") && self.mode == Mode::Auto && crate::auto::read_tool(name, input)
+        {
+            self.decision(item, "rule", "allow", "read-only tool call", 0);
             return Decision::Allow;
         }
         if name == crate::folder::TOOL {
             return self.ask_folder(item, name, arg).await;
         }
+        let mcp = name.starts_with("mcp__");
         let cmd = input["command"].as_str().unwrap_or("").trim();
         let prefix = cmd.split_whitespace().next().unwrap_or("").to_string();
-        let mcp = name.starts_with("mcp__");
         let leaves_sandbox = name == "Bash" && input["unsandboxed"].as_bool() == Some(true);
         // Layer 1, built-in rules, no model call. A command the parser proves
         // read-only (no writes, no subshells, no credential paths) runs without
@@ -3951,12 +3998,39 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.decision(item, "sandbox", "allow", "sandboxed", 0);
             return Decision::Allow;
         }
+        // A screenshot of a session-local file (the tool itself refuses anything outside the
+        // workspace) or of localhost: a local capture and a localhost URL can only show the
+        // session's own work. Anything else keeps asking. (Allow-by-default in every mode
+        // would hand out the whole web; the chief's list scopes this to auto at minimum.)
+        if name == "Screenshot"
+            && self.mode == Mode::Auto
+            && crate::auto::local_capture(input)
+        {
+            self.decision(item, "rule", "allow", "captures only the session's own work", 0);
+            return Decision::Allow;
+        }
         // A path prefix the user allowed for this program earlier this session.
         if name == "Bash"
             && !crate::shell::touches_credentials(cmd)
             && crate::approval::prefix_allows(cmd, &self.ctx.cwd, &self.prefix_allow)
         {
             self.decision(item, "session", "allow", "under a path prefix allowed this session", 0);
+            return Decision::Allow;
+        }
+        // Provenance (auto mode): a routine build/test step (known build tools,
+        // plain file ops, parser-proven reads; no interpreters, network or
+        // substitutions) acting only on in-project paths or the session's own
+        // scratch (paths it created, fresh dirs under the shared temp dir)
+        // doesn't need the classifier or a prompt. Destructive programs there
+        // need provenance; anything outside this scope still asks.
+        if name == "Bash"
+            && self.mode == Mode::Auto
+            && !crate::shell::touches_credentials(cmd)
+            && crate::auto::hard_rule(name, input, &self.ctx.root).is_none()
+            && crate::approval::routine(cmd)
+            && crate::approval::own_scope(cmd, &self.ctx.cwd, &self.ctx.root, &self.created)
+        {
+            self.decision(item, "provenance", "allow", "touches only the project or its own scratch", 0);
             return Decision::Allow;
         }
         let key = match kind {
@@ -3976,6 +4050,17 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             .flatten();
         let outside = target.as_ref().is_some_and(|p| self.ctx.outside(p));
         if let Some(path) = target.filter(|_| outside) {
+            // Provenance (auto mode): writing into a path this session created,
+            // or a fresh file in the shared temp dir, is the session's own
+            // scratch — as in-project as its own checkout. Anything else
+            // outside still asks (and is denied headless).
+            if self.mode == Mode::Auto
+                && crate::approval::path_in_own_scope(&path, &self.ctx.root, &self.created)
+            {
+                self.decision(item, "provenance", "allow", "writes only its own scratch", 0);
+                self.ctx.permitted.insert(path);
+                return Decision::Allow;
+            }
             if !self.can_ask {
                 return Decision::Deny;
             }
@@ -5490,6 +5575,68 @@ mod tests {
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
     }
 
+    /// A `cd` that sticks (into a worktree, say) is logged as a durable `ShellCwd`, so a
+    /// dead session's log still says where it was working; a command that stays put isn't.
+    #[tokio::test]
+    async fn a_bash_cd_logs_the_shell_cwd() {
+        let base = std::env::temp_dir().join(format!("frog-shell-cwd-{}", new_id()));
+        let (root, store) = (base.join("repo"), base.join("store"));
+        let tree = root.join(".frog/worktrees/w");
+        for d in [&tree, &store] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let tree = tree.canonicalize().unwrap();
+        let bash = |id: &str, cmd: String| Block::ToolUse {
+            id: id.into(),
+            name: "Bash".into(),
+            input: json!({ "command": cmd }),
+        };
+        let script = vec![
+            reply(vec![bash("a", "true".into())], Stop::ToolUse),
+            reply(vec![bash("b", format!("cd {}", tree.display()))], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let (mut h, _) = engine_sent(script, Some(store.clone()), None, None, root.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "work in the worktree".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut sid = String::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            sid = env.session.clone();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                        note: None,
+                    })
+                    .unwrap();
+            }
+            if matches!(env.event, Event::Idle) {
+                break;
+            }
+        }
+        shutdown(h).await;
+        let logged: Vec<PathBuf> = session::load(&store, &sid)
+            .unwrap()
+            .events
+            .into_iter()
+            .filter_map(|e| match e.event {
+                Event::ShellCwd { cwd } => Some(cwd),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(logged.len(), 1, "only the cd is logged: {logged:?}");
+        assert_eq!(logged[0].canonicalize().unwrap(), tree);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
     /// A chat isn't offered Bash, so a model that calls it anyway gets an error, and nothing
     /// runs, even in yolo mode.
     #[tokio::test]
@@ -6338,6 +6485,141 @@ mod tests {
         }
         assert_eq!(status, Some(Mode::Yolo), "the engine resumed in the session's mode");
         shutdown(h).await;
+    }
+
+    /// A persisted engine started in `mode` (the `--auto`-style flag), in `dir`.
+    fn engine_in_mode(
+        script: Vec<Response>,
+        mode: Mode,
+        dir: &Path,
+        resume: Option<String>,
+    ) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                sandbox_shell: false,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: dir.to_path_buf(),
+            mode,
+            can_ask: true,
+            resume,
+            store: Some(dir.to_path_buf()),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// The mode the engine reports at startup (its first `Status`).
+    async fn startup_mode(h: &mut Handle) -> Mode {
+        loop {
+            if let Event::Status(s) = h.events.recv().await.unwrap().event {
+                return s.mode;
+            }
+        }
+    }
+
+    fn logged_modes(dir: &Path, sid: &str) -> Vec<Mode> {
+        session::load(dir, sid)
+            .unwrap()
+            .events
+            .iter()
+            .filter_map(|e| match e.event {
+                Event::ModeChanged { mode } => Some(mode),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The okc manager's bug: a session StartSession began with `--auto` never logged its
+    /// mode, so when the app restarted its engine (resume, no mode flag) it ran in Default
+    /// and its next in-project Write asked. The starting mode is now logged with the first
+    /// turn, and the resumed engine keeps it.
+    #[tokio::test]
+    async fn a_flag_started_mode_survives_an_engine_restart() {
+        let dir = tmp_store();
+        let write = |id: &str, path: &str| Block::ToolUse {
+            id: id.into(),
+            name: "Write".into(),
+            input: json!({ "file_path": path, "content": "x\n" }),
+        };
+        let script = vec![
+            reply(vec![write("w1", "one.py")], Stop::ToolUse),
+            reply(vec![text("wrote it")], Stop::End),
+        ];
+        let mut h = engine_in_mode(script, Mode::Auto, &dir, None);
+        let evs = run(&mut h, "write one.py").await;
+        let sid = evs[0].session.clone();
+        let logged = evs
+            .iter()
+            .position(|e| matches!(e.event, Event::ModeChanged { mode: Mode::Auto }));
+        let turn = evs
+            .iter()
+            .position(|e| matches!(e.event, Event::TurnStarted { .. }));
+        assert!(
+            logged.is_some() && logged < turn,
+            "the starting mode is logged before turn 1"
+        );
+        shutdown(h).await;
+        assert_eq!(logged_modes(&dir, &sid), [Mode::Auto]);
+
+        // The app restarts the engine the way it resumes any session: no mode flag (Default).
+        let script = vec![
+            reply(vec![write("w2", "two.py")], Stop::ToolUse),
+            reply(vec![text("wrote it again")], Stop::End),
+        ];
+        let mut h = engine_in_mode(script, Mode::Default, &dir, Some(sid.clone()));
+        assert_eq!(startup_mode(&mut h).await, Mode::Auto, "resumed in auto");
+        let evs = tokio::time::timeout(Duration::from_secs(20), run(&mut h, "write two.py"))
+            .await
+            .expect("the in-project Write asked: the mode reverted");
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. }))
+        );
+        assert!(dir.join("two.py").exists());
+        shutdown(h).await;
+        // Nothing changed, so nothing more to log.
+        assert_eq!(logged_modes(&dir, &sid), [Mode::Auto]);
+    }
+
+    /// A log with no mode on record (written before modes were logged at start) resumed by
+    /// an engine with a mode flag: that start is a change from the log's implicit Default,
+    /// so it's logged, and the next flagless restart keeps it.
+    #[tokio::test]
+    async fn an_engine_start_that_differs_from_the_log_is_logged() {
+        let dir = tmp_store();
+        let script = vec![reply(vec![text("ok")], Stop::End)];
+        let mut h = engine_in_mode(script, Mode::Default, &dir, None);
+        let sid = run(&mut h, "hi").await[0].session.clone();
+        shutdown(h).await;
+        // A Default session logs no mode at all: no noise for the common case.
+        assert!(logged_modes(&dir, &sid).is_empty());
+
+        let mut h = engine_in_mode(Vec::new(), Mode::Auto, &dir, Some(sid.clone()));
+        assert_eq!(startup_mode(&mut h).await, Mode::Auto);
+        shutdown(h).await;
+        assert_eq!(
+            logged_modes(&dir, &sid),
+            [Mode::Auto],
+            "the auto start is logged"
+        );
+
+        let mut h = engine_in_mode(Vec::new(), Mode::Default, &dir, Some(sid.clone()));
+        assert_eq!(
+            startup_mode(&mut h).await,
+            Mode::Auto,
+            "a flagless restart keeps auto"
+        );
+        shutdown(h).await;
+        assert_eq!(logged_modes(&dir, &sid), [Mode::Auto]);
     }
 
     /// Every block the session log holds, in order.
@@ -9607,7 +9889,9 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
                 vec![Block::ToolUse {
                     id: "w".into(),
                     name: "Bash".into(),
-                    input: json!({ "command": "touch made-up-file" }),
+                    // Not a routine build step: provenance can't pass it, so
+                    // with the classifier down it asks.
+                    input: json!({ "command": "python3 -c 'print(1)' > made-up-file" }),
                 }],
                 Stop::ToolUse,
             ),
@@ -9668,6 +9952,116 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
             }],
             Stop::ToolUse,
         )
+    }
+
+    #[tokio::test]
+    async fn web_reads_run_without_asking_in_every_mode() {
+        // Cam's decision 2026-10-23: WebSearch always; WebFetch of a public host —
+        // in default, accept-edits and auto alike, classifier or not.
+        for (name, input) in [
+            ("WebSearch", json!({ "query": "qwen3 coder next pricing" })),
+            ("WebFetch", json!({ "url": "https://example.com/docs" })),
+        ] {
+            for mode in [Mode::Default, Mode::AcceptEdits, Mode::Auto] {
+                let script = vec![
+                    reply(
+                        vec![Block::ToolUse { id: "web".into(), name: name.into(), input: input.clone() }],
+                        Stop::ToolUse,
+                    ),
+                    reply(vec![text("done")], Stop::End),
+                ];
+                let mut h = engine_perm(script, mode, Some("nonexistent/no-classifier"));
+                let evs = run(&mut h, "look it up").await;
+                assert!(
+                    !evs.iter().any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+                    "{mode:?} asked for {name}"
+                );
+                // The scripted provider can't actually fetch, so the call may end in a
+                // tool error — what matters is that it never surfaced a permission card.
+                assert!(
+                    evs.iter().any(|e| matches!(
+                        e.event,
+                        Event::ItemCompleted { ref id, item: Item::ToolCall { .. }, .. } if id == "web"
+                    )),
+                    "{name} ran in {mode:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_non_public_webfetch_still_asks_in_default_mode() {
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "web".into(),
+                    name: "WebFetch".into(),
+                    input: json!({ "url": "http://localhost:8080/admin" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let mut asked = false;
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit { text: "go".into(), images: Vec::new(), more: Vec::new() })
+            .unwrap();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                asked = true;
+                h.ops
+                    .send(Op::Permission { id: id.clone(), decision: Decision::Deny, note: None })
+                    .unwrap();
+            }
+            if matches!(env.event, Event::Idle) {
+                break;
+            }
+        }
+        shutdown(h).await;
+        assert!(asked, "a localhost WebFetch didn't ask in default mode");
+    }
+
+    /// Auto mode: a build writing its own scratch under /private/tmp runs without
+    /// asking (the provenance layer), an outside-project command still asks.
+    #[tokio::test]
+    async fn auto_mode_lets_a_build_touch_only_its_own_scratch() {
+        let script = vec![
+            // Its own fresh build dir under /private/tmp.
+            bash_call("build", "mkdir -p /private/tmp/skittish-test-target/debug"),
+            // Another user path: still asks (answered deny below).
+            bash_call("outside", "touch /Users/frog-test-nobody/not-mine.txt"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Auto, Some("nonexistent/no-classifier"));
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        // The scratch build ran…
+        assert!(
+            evs.iter().any(|e| matches!(
+                e.event,
+                Event::ItemCompleted { ref id, item: Item::ToolCall { outcome: ToolOutcome::Ok, .. }, .. } if id == "build"
+            )),
+            "the scratch build ran without asking"
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(
+                e.event,
+                Event::PermissionRequest { ref item, .. } if item == "build"
+            )),
+            "the scratch build never asked"
+        );
+        // …and nothing else was permitted to run outside.
+        assert!(
+            evs.iter().any(|e| matches!(
+                e.event,
+                Event::PermissionRequest { ref item, .. } if item == "outside"
+            )),
+            "the outside command asked"
+        );
+        let _ = std::fs::remove_dir_all("/private/tmp/skittish-test-target");
     }
 
     /// Run one turn, answering each permission prompt with `answer` (None: leave it

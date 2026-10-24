@@ -102,6 +102,46 @@ final class Library {
         parents[id] != nil || parents.values.contains(id)
     }
 
+    // MARK: Stored model and mode
+
+    /// Durable per-session overrides, applied by the next engine start (SetSessionModel /
+    /// SetSessionMode while no engine is running).
+    func setStoredModel(_ id: String, _ spec: String) {
+        var stored = UserDefaults.standard.dictionary(forKey: "sessionModels") as? [String: String] ?? [:]
+        stored[id] = spec
+        UserDefaults.standard.set(stored, forKey: "sessionModels")
+    }
+
+    func setStoredMode(_ id: String, _ mode: Mode) {
+        var stored = UserDefaults.standard.dictionary(forKey: "sessionModes") as? [String: String] ?? [:]
+        stored[id] = mode.rawValue
+        UserDefaults.standard.set(stored, forKey: "sessionModes")
+    }
+
+    /// The stored model override for session `id`, if any.
+    func storedModel(_ id: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: "sessionModels") as? [String: String])?[id]
+    }
+
+    /// The stored permission mode override for session `id`, if any.
+    func storedMode(_ id: String) -> Mode? {
+        (UserDefaults.standard.dictionary(forKey: "sessionModes") as? [String: String])?[id]
+            .flatMap(Mode.init(rawValue:))
+    }
+
+    /// Session `id`'s stored overrides, cleared as they're taken: the engine starting now
+    /// applies them, and after that its log remembers them (`model_changed`/`mode_changed`),
+    /// so a later change made in the session isn't overridden at every restart.
+    func takeStored(_ id: String) -> (model: String?, mode: Mode?) {
+        let taken = (storedModel(id), storedMode(id))
+        for key in ["sessionModels", "sessionModes"] {
+            guard var stored = UserDefaults.standard.dictionary(forKey: key) as? [String: String],
+                  stored.removeValue(forKey: id) != nil else { continue }
+            UserDefaults.standard.set(stored, forKey: key)
+        }
+        return taken
+    }
+
     // MARK: Renaming
 
     /// Rename through the open conversation if there is one (its engine holds the log), else

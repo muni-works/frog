@@ -451,6 +451,11 @@ pub enum Event {
     FolderChanged {
         cwd: PathBuf,
     },
+    /// A `Bash` call `cd`'d the shell somewhere else: where commands run now (a worktree,
+    /// say). Logged so a reader of a dead session's log knows where it was working.
+    ShellCwd {
+        cwd: PathBuf,
+    },
     ModeChanged {
         mode: Mode,
     },
@@ -668,6 +673,7 @@ impl Event {
                 | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }
                 | Self::FolderChanged { .. }
+                | Self::ShellCwd { .. }
                 | Self::ModeChanged { .. }
                 | Self::Titled { .. }
                 | Self::PaneOpened { .. }
