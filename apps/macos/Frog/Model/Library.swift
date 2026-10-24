@@ -165,6 +165,11 @@ final class Library {
         conversations[id]?.value
     }
 
+    /// Every conversation open on this Mac right now.
+    var open: [Conversation] {
+        conversations.values.compactMap(\.value)
+    }
+
     /// An open conversation's state; called as its events arrive. The one truth for the
     /// sidebar's dot and every list: a session is running when a turn is open OR messages
     /// are still queued in its engine's inbox (bug 2d — a queued-only session used to read
