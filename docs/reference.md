@@ -165,6 +165,12 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
   macOS only (Linux stays open). Seatbelt can't match remote hosts, so it blocks all outbound except localhost, and frog runs a small local CONNECT proxy that only tunnels https (port 443) to those hosts; `HTTPS_PROXY`/`ALL_PROXY` point at it for sandboxed commands. Tools that ignore proxy variables, plain http and ssh get no network.
 
   The trade-off: anything you open is readable by every sandboxed command, including one a prompt injection wrote, and the network is open. `allow_keychain` is the broad one: it exposes every Keychain item that doesn't prompt, not just gh's.
+- **ssh to user hosts:** ssh can't verify host keys sandboxed (it can't read `~/.ssh/known_hosts`), so connections fail with `hostkeys_find_by_key_hostfile`. Agent sessions that need ssh to your hosts add just that file:
+  ```toml
+  [sandbox]
+  allow_read = ["~/.ssh/known_hosts"]  # read-only; private keys stay unreadable
+  ```
+  `~` is expanded when the sandbox is built, not when the config is parsed. The no-sudo and no-writes-outside-scratch rules still bind. (For git over GitHub, `git_https = true` avoids `~/.ssh` entirely.)
 - **gh, minimal setup:** hand gh its token through the environment and let it read its config directory (gh refuses to start if it can't read `config.yml`):
   ```toml
   [sandbox]
