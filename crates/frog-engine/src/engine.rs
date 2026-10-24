@@ -1079,6 +1079,9 @@ struct Agent {
     map_logged: bool,
     /// Files edited this session, relative to the root, for ranking the map.
     edited: Vec<String>,
+    /// The session has a title (from the model's `SetTitle`, a client, or a resumed log), so
+    /// the headless fallback shouldn't add one.
+    titled: bool,
     /// The model can see images (probed, or `vision` in the profile).
     vision: bool,
     /// The server takes a per-call reasoning budget (probed).
@@ -1129,6 +1132,7 @@ impl Agent {
         // it, rather than silently reverting to whatever the flags say — the picker and the
         // engine must agree on the effective mode.
         let mut resumed_mode = None;
+        let mut resumed_titled = false;
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
@@ -1146,6 +1150,9 @@ impl Agent {
                     .collect();
                 let mut used = Vec::new();
                 for e in &l.events {
+                    if matches!(e.event, Event::Titled { .. }) {
+                        resumed_titled = true;
+                    }
                     match &e.event {
                         Event::PaneOpened { id, .. } => {
                             used.push(id.clone());
@@ -1288,6 +1295,7 @@ impl Agent {
             map_building: false,
             map_logged: false,
             edited: Vec::new(),
+            titled: resumed_titled,
             classifier: None,
             classifier_failed: false,
             created: HashSet::new(),
@@ -1484,7 +1492,23 @@ impl Agent {
         });
     }
 
-    fn end_turn(&self, turn: u64, reason: EndReason) {
+    /// A title for sessions nobody else will name. The Mac app names its own conversations
+    /// (rich), the model may call `SetTitle`, and a user may; when none of that happened by
+    /// the end of the first turn, the first input stands in, with wrapper boilerplate stripped.
+    fn auto_title(&mut self, turn: u64) {
+        if self.titled || self.rich || turn != 1 {
+            return;
+        }
+        if let Some(input) = self.inputs.first() {
+            let title = crate::title::derive(input);
+            if !title.is_empty() {
+                self.set_title(title);
+            }
+        }
+    }
+
+    fn end_turn(&mut self, turn: u64, reason: EndReason) {
+        self.auto_title(turn);
         let timing = self.turn_clock.map(|start| {
             let mut t = self.timing.clone();
             t.wall_ms = ms(start.elapsed());
@@ -1530,6 +1554,16 @@ impl Agent {
         }
         self.sync_log();
         self.write_summary();
+    }
+
+    /// Record the session's title and remember it's named. A client's `Op::SetTitle` and the
+    /// model's `SetTitle` tool both land here.
+    fn set_title(&mut self, title: String) {
+        self.titled = true;
+        if let Some(bus) = self.irc() {
+            bus.set_session(&self.session_id, &title);
+        }
+        self.emit(Event::Titled { title });
     }
 
     fn meter_busy(&self, busy: bool) {
@@ -1657,6 +1691,7 @@ impl Agent {
                 self.skills_loaded.clear();
                 self.rules_seen.clear();
                 self.edited.clear();
+                self.titled = false;
                 let sandbox = self.ctx.sandbox.take();
                 let shell_sandbox = self.ctx.shell_sandbox.take();
                 let web = self.ctx.web.clone();
@@ -1682,12 +1717,9 @@ impl Agent {
                 self.notice(Level::Info, "started a new conversation");
             }
             Op::SetTitle { title } => {
-                let title: String = title.trim().chars().take(80).collect();
+                let title = crate::title::clean(&title);
                 if !title.is_empty() {
-                    if let Some(bus) = self.irc() {
-                        bus.set_session(&self.session_id, &title);
-                    }
-                    self.emit(Event::Titled { title });
+                    self.set_title(title);
                 }
             }
             Op::Deliver {
@@ -2966,6 +2998,7 @@ impl Agent {
             }
             if !self.chat {
                 specs.extend(crate::background::specs());
+                specs.push(crate::title::spec());
             }
             if !self.skills.is_empty() {
                 specs.push(crate::skills::spec());
@@ -3274,6 +3307,11 @@ impl Agent {
         }
         if name == crate::folder::TOOL && !self.subagent {
             return self.use_folder(input).await;
+        }
+        if name == crate::title::TOOL {
+            let title = crate::title::parse(input)?;
+            self.set_title(title.clone());
+            return Ok(tools::Output::text(format!("Session titled \"{title}\".")));
         }
         if name == crate::panes::TERMINAL {
             return self.shared.panes.terminal(input, self.subagent).await;
@@ -5374,11 +5412,17 @@ mod tests {
                 "item_started",
                 "item_delta",
                 "item_completed",
+                // The first turn's end names the session (headless title fallback).
+                "titled",
                 "turn_ended",
                 "status",
                 "idle"
             ]
         );
+        assert!(matches!(
+            &evs[5].event,
+            Event::Titled { title } if title == "hi"
+        ));
         let seqs: Vec<u64> = evs.iter().map(|e| e.seq).collect();
         assert!(
             seqs.windows(2).all(|w| w[1] == w[0] + 1),
@@ -5388,7 +5432,7 @@ mod tests {
             matches!(&evs[4].event, Event::ItemCompleted { item: Item::Message { text }, .. } if text == "hello")
         );
         assert!(matches!(
-            &evs[5].event,
+            &evs[6].event,
             Event::TurnEnded {
                 reason: EndReason::Complete,
                 ..
@@ -5959,8 +6003,88 @@ mod tests {
                 "turn_started",
                 "item_started",
                 "item_completed",
+                "titled",
                 "turn_ended"
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn set_title_tool_names_the_session_and_disables_the_fallback() {
+        let call = Block::ToolUse {
+            id: "t1".into(),
+            name: crate::title::TOOL.into(),
+            input: json!({ "title": "\"fix login timeout\"" }),
+        };
+        let mut h = engine(
+            vec![
+                reply(vec![call], Stop::ToolUse),
+                reply(vec![text("done")], Stop::End),
+            ],
+            true,
+        );
+        let evs = run(&mut h, "RULES: stay inside /tmp\n\nfix the login timeout in auth.rs").await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::ItemCompleted {
+                item: Item::ToolCall { outcome: ToolOutcome::Ok, .. },
+                ..
+            }
+        )));
+        // The model's title wins over the derived one, exactly once.
+        let titles: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Titled { title } => Some(title.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles, ["fix login timeout"]);
+    }
+
+    #[tokio::test]
+    async fn headless_first_turn_falls_back_to_a_derived_title() {
+        let mut h = engine(vec![reply(vec![text("ok")], Stop::End)], false);
+        let evs = run(
+            &mut h,
+            "RULES: work only inside the worktree.\n\nContinue this branch: finish the SetTitle \
+tool, strip prefixes like RULES:, and add tests.",
+        )
+        .await;
+        let titles: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Titled { title } => Some(title.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles.len(), 1);
+        assert!(titles[0].starts_with("finish the SetTitle tool"), "{:?}", titles);
+    }
+
+    #[tokio::test]
+    async fn titled_sessions_are_not_renamed_by_the_fallback() {
+        // The fallback only fires for turn 1: a second turn never adds a title.
+        let dir = tmp_store();
+        let mut h = engine_at(
+            vec![
+                reply(vec![text("one")], Stop::End),
+                reply(vec![text("two")], Stop::End),
+            ],
+            false,
+            Some(dir.clone()),
+            None,
+        );
+        let sid = run(&mut h, "first real request").await[0].session.clone();
+        shutdown(h).await;
+        let loaded = session::load(&dir, &sid).unwrap();
+        assert_eq!(
+            loaded
+                .events
+                .iter()
+                .filter(|e| matches!(e.event, Event::Titled { .. }))
+                .count(),
+            1
         );
     }
 
@@ -6338,8 +6462,8 @@ mod tests {
             .take_while(|e| !matches!(e.event, Event::Synced { .. }))
             .count();
         assert_eq!(
-            durable, 4,
-            "turn_started, item_started, item_completed, turn_ended"
+            durable, 5,
+            "turn_started, item_started, item_completed, titled, turn_ended"
         );
         assert!(matches!(&replay[0].event, Event::TurnStarted { input, .. } if input == "hi"));
         assert!(replay.iter().all(|e| e.session == sid));
@@ -6396,8 +6520,8 @@ mod tests {
             .collect();
         assert_eq!(
             replayed.len(),
-            4,
-            "turn_started, item_started, item_completed, turn_ended"
+            5,
+            "turn_started, item_started, item_completed, titled, turn_ended"
         );
         assert!(matches!(&replayed[0].event, Event::TurnStarted { input, .. } if input == "hi"));
 
