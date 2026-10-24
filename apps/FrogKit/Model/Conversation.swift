@@ -757,6 +757,32 @@ final class Conversation {
         if busy { startWatchdog() } else { stopWatchdog() }
     }
 
+    /// The step in hand, in the transcript's words ("Reading Sidebar.swift…"), while the last
+    /// turn runs; nil when it isn't running or it's waiting on the user. For lists that watch
+    /// this conversation without showing it (the sidebar's chief tile, the phone).
+    var liveActivity: String? {
+        guard busy, let last = turns.last, !last.finished else { return nil }
+        guard permission == nil, elicitation == nil, question == nil else { return nil }
+        if let current = last.items.last(where: { !$0.done && $0.kind != .message }) {
+            if current.needsPermission { return nil }
+            if case .tool(let name, _) = current.kind, name == "Task" || name == "Diagram" { return nil }
+            return ActivityWords.now(current)
+        }
+        if let m = last.items.last, m.kind == .message, !m.done, !m.text.isEmpty { return "Writing…" }
+        if let p = progress, p.label != "thinking", !p.label.isEmpty {
+            let s = p.label.prefix(1).uppercased() + p.label.dropFirst()
+            return s.hasSuffix("…") ? String(s) : s + "…"
+        }
+        return "Thinking…"
+    }
+
+    /// `summary` for a turn that finished; nil while one runs, for lists that only speak when
+    /// there's something to read.
+    static func summaryIfEnded(_ turn: TurnState) -> String? {
+        guard turn.finished else { return nil }
+        return summary(turn)
+    }
+
     /// Starts the reconciliation watch, if it isn't running.
     private func startWatchdog() {
         guard watchdog == nil else { return }

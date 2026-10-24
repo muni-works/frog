@@ -16,6 +16,8 @@ final class Library {
     private(set) var pinned: Set<String>
     private(set) var archived: Set<String>
     private(set) var live: [String: Live] = [:]
+    /// The chief of staff: one session, as a tile above the pins. It keeps its pin.
+    private(set) var chief: String?
     /// Sessions started by another session (`StartSession`): child id → parent id.
     private(set) var parents: [String: String]
     /// The session shown in the key window: finishing there doesn't count as unread.
@@ -27,6 +29,7 @@ final class Library {
     private init() {
         pinned = Set(UserDefaults.standard.stringArray(forKey: "pinnedSessions") ?? [])
         archived = Set(UserDefaults.standard.stringArray(forKey: "archivedSessions") ?? [])
+        chief = UserDefaults.standard.string(forKey: "chiefSession")
         parents = UserDefaults.standard.dictionary(forKey: "sessionParents") as? [String: String] ?? [:]
         _ = SessionDirectoryWatcher.shared
         refresh()
@@ -60,12 +63,38 @@ final class Library {
     // MARK: Pins and archive
 
     func togglePin(_ id: String) {
+        // The chief keeps its pin (the folded strip and the phone show it as one); Remove
+        // Chief first to unpin it.
+        if id == chief { return }
         if pinned.remove(id) == nil { pinned.insert(id) }
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
     }
 
+    // MARK: Chief
+
+    /// The chief of staff's session, as the sidebar shows it.
+    var chiefSession: SessionInfo? { chief.flatMap { id in sessions.first { $0.id == id } } }
+
+    /// Make session `id` the chief: pinned if it isn't already, never archived.
+    func makeChief(_ id: String) {
+        archived.remove(id)
+        pinned.insert(id)
+        UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
+        UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
+        let was = chief
+        chief = id
+        if was != id { UserDefaults.standard.set(id, forKey: "chiefSession") }
+    }
+
+    /// No chief, until one is made again.
+    func removeChief() {
+        chief = nil
+        UserDefaults.standard.removeObject(forKey: "chiefSession")
+    }
+
     func setArchived(_ id: String, _ on: Bool) {
         if on { archived.insert(id); pinned.remove(id) } else { archived.remove(id) }
+        if on, chief == id { chief = nil; UserDefaults.standard.removeObject(forKey: "chiefSession") }
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
     }
