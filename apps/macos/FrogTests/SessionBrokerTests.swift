@@ -154,6 +154,38 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertTrue(scheduled.isEmpty, "nothing scheduled while work is on its way")
     }
 
+    /// A manager arms a Monitor and ends its turn: the monitor lives in the engine, so the
+    /// engine must outlast the grace (it was stopped 30 s later, the monitor with it, and its
+    /// result went unread). Once the monitor ends, the engine lets go after the grace as usual.
+    @MainActor
+    func testAnEngineWithALiveMonitorIsNotStoppedUntilItEnds() throws {
+        let b = broker([chief, eng])
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-monitor"))
+        b.track(c, as: eng.id)
+        try c.ingest(env(#"{"seq":1,"session":"eng-0002","created":1,"event":"idle"}"#))
+        try c.ingest(env(#"{"seq":2,"session":"eng-0002","created":2,"event":"turn_started","turn":1,"input":"watch the pod"}"#))
+        b.observe(eng.id, running: true, waiting: false)
+        try c.ingest(env(#"{"seq":3,"session":"eng-0002","created":3,"event":"background_started","id":"mon-1","kind":"monitor","label":"pod status"}"#))
+        try c.ingest(env(#"{"seq":4,"session":"eng-0002","created":4,"event":"background","running":1}"#))
+        try c.ingest(env(#"{"seq":5,"session":"eng-0002","created":5,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#))
+        try c.ingest(env(#"{"seq":6,"session":"eng-0002","created":6,"event":"idle"}"#))
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertEqual(c.backgroundRunning, 1)
+        XCTAssertFalse(c.settled, "a live monitor is work in flight")
+        XCTAssertTrue(scheduled.isEmpty, "no idle stop while the monitor runs")
+        elapse()
+        XCTAssertFalse(c.stopping, "the monitor would die with the engine")
+        // Minutes later, with no turn open, the monitor ends on its own.
+        try c.ingest(env(#"{"seq":7,"session":"eng-0002","created":7,"event":"background_done","id":"mon-1","kind":"monitor","status":"matched","summary":""}"#))
+        try c.ingest(env(#"{"seq":8,"session":"eng-0002","created":8,"event":"background","running":0}"#))
+        b.observe(eng.id, running: false, waiting: false)
+        XCTAssertTrue(c.settled)
+        XCTAssertFalse(c.stopping, "not at once: only after the grace")
+        XCTAssertEqual(scheduled.count, 1)
+        elapse()
+        XCTAssertTrue(c.stopping, "nothing left running: let go after the grace")
+    }
+
     /// Mid-turn, a queued `set_title` (RenameSession) or `set_mode` is answered with an `idle`
     /// once the turn ends, and the app may see an `idle` while the turn's still open. Neither
     /// stops the engine; and a stop scheduled before the turn started never fires.

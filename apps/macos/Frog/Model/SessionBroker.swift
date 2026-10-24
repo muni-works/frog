@@ -928,8 +928,10 @@ final class SessionBroker {
     /// a group of sessions, rather than stopping it mid-task. True if kept.
     func keep(_ c: Conversation) -> Bool {
         // Busy includes a delivered message the engine hasn't started yet (between one turn's
-        // `idle` and the next's start): stopping then would cancel it.
-        let working = c.busy || c.pendingDeliveries > 0 || c.turns.last.map { !$0.finished } == true
+        // `idle` and the next's start): stopping then would cancel it. Live background work
+        // (a Monitor, a job, a Task) would die with the engine.
+        let working = c.busy || c.pendingDeliveries > 0 || c.backgroundRunning > 0
+            || c.turns.last.map { !$0.finished } == true
         guard working, c.isLive, let id = c.sessionID, Library.shared.isAgentSession(id) else { return false }
         background[id] = c
         armedBackground.insert(id)

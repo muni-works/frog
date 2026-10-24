@@ -143,7 +143,17 @@ impl Registry {
             kind: kind.as_str().into(),
             label: label.to_string(),
         });
+        self.announce();
         stop
+    }
+
+    /// Tell clients how many pieces are running now ([`Event::Background`]), after every start
+    /// and end. Counted and sent under the lock, so when pieces end at once the counts go out
+    /// in order and the last one sent is always the true count (never stuck above zero).
+    fn announce(&self) {
+        let entries = self.entries.lock().unwrap();
+        let running = entries.values().filter(|e| e.running).count();
+        self.emit(Event::Background { running });
     }
 
     /// Running pieces of this kind.
@@ -195,6 +205,7 @@ impl Registry {
             status: status.to_string(),
             summary: notice.clone(),
         });
+        self.announce();
         self.notices.lock().unwrap().push(notice);
         let wake = self.wake.lock().unwrap().as_ref().and_then(|w| w.upgrade());
         if let Some(tx) = wake {
@@ -221,6 +232,7 @@ impl Registry {
             status: "stopped".into(),
             summary: String::new(),
         });
+        self.announce();
         true
     }
 
@@ -807,6 +819,41 @@ mod tests {
             n.starts_with("<wakeup id=mon-2") && n.contains("check the deploy"),
             "{n}"
         );
+    }
+
+    /// The last `Background` count sent, if any.
+    fn last_count(seen: &Mutex<Vec<Event>>) -> Option<usize> {
+        seen.lock().unwrap().iter().rev().find_map(|e| match e {
+            Event::Background { running } => Some(*running),
+            _ => None,
+        })
+    }
+
+    /// A client must see live background work so it doesn't let the engine go: every start and
+    /// end sends the running count, and it's back to 0 once everything has ended or stopped.
+    #[tokio::test]
+    async fn the_running_count_goes_out_on_every_start_and_end() {
+        let (reg, seen) = registry();
+        let ctx = Ctx::new(tmp());
+        let input = json!({"command": "echo tick >> n; [ $(wc -l < n) -ge 2 ] && echo READY",
+            "until_regex": "READY", "interval_s": 1, "timeout_s": 30});
+        start_monitor(&reg, &input, &ctx).unwrap();
+        assert_eq!(last_count(&seen), Some(1), "a live monitor counts");
+        start_monitor(&reg, &json!({"after_s": 3_600}), &ctx).unwrap();
+        assert_eq!(last_count(&seen), Some(2));
+        // The monitor matches on its own, long after it started: the count drops.
+        assert!(wait_notice(&reg).await.contains("status=matched"));
+        assert_eq!(last_count(&seen), Some(1), "the timer is still running");
+        assert!(reg.stop("mon-2"));
+        assert_eq!(last_count(&seen), Some(0), "nothing left running");
+        assert!(!reg.any_running());
+        let counts = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, Event::Background { .. }))
+            .count();
+        assert_eq!(counts, 4, "two starts, two ends");
     }
 
     #[tokio::test]

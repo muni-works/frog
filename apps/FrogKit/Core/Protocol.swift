@@ -636,6 +636,9 @@ enum Event: Decodable, Sendable {
     case notice(level: String, message: String)
     case error(EngineError)
     case status(Status)
+    /// How many background pieces (Monitors, jobs, Tasks) run in the engine now; sent on
+    /// every start and end. Live only, never in a log.
+    case background(running: Int)
     case synced(upto: UInt64)
     case idle
     case paneOpened(id: String, kind: PaneKind, title: String, cwd: String?, url: String?)
@@ -676,6 +679,7 @@ extension Event {
         case layer, outcome, ms
         case images, more
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
+        case running
     }
 
     init(from decoder: Decoder) throws {
@@ -763,6 +767,8 @@ extension Event {
             self = .error(try c.decode(EngineError.self, forKey: .error))
         case "status":
             self = .status(try Status(from: decoder))
+        case "background":
+            self = .background(running: try c.decode(Int.self, forKey: .running))
         case "synced":
             self = .synced(upto: try c.decode(UInt64.self, forKey: .upto))
         case "idle":
