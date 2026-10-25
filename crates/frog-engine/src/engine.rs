@@ -11962,7 +11962,7 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
         assert_eq!(d.len(), 1, "{d:?}");
         assert_eq!(d[0].kind, crate::protocol::DegradedKind::TextTools);
         assert_eq!(d[0].what, "text tool calls");
-        assert!(d[0].why.contains("failed twice"), "{}", d[0].why);
+        assert!(d[0].why.contains("instead of calling them"), "{}", d[0].why);
         shutdown(h).await;
         // A profile that asks for text calls isn't degraded.
         let mut h = engine_mode(vec![reply(vec![text("hi")], Stop::End)], ToolMode::Text);
