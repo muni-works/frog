@@ -244,9 +244,10 @@ pub struct Config {
     /// Empty by default: nothing widens unless configured.
     #[serde(default)]
     pub sandbox: SandboxConfig,
-    /// Start read-only tool calls (Read, Grep, Glob) as soon as their arguments arrive, while
-    /// the model is still writing the rest of its reply. Results, history and events are the
-    /// same as without it; only the waiting overlaps.
+    /// Start read-only tool calls (Read, Grep, Glob, public web reads, read-only shell
+    /// commands) as soon as their arguments arrive, while the model is still writing the rest
+    /// of its reply, and run a reply's leading reads side by side. Results, history and events
+    /// are the same as without it; only the waiting overlaps.
     #[serde(default = "default_true")]
     pub early_tools: bool,
     /// The model auto mode's classifier uses (a profile or provider/model). Default:

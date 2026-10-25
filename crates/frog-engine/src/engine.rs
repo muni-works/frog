@@ -3656,12 +3656,12 @@ impl Agent {
             || (name.starts_with("mcp__") && self.mcp.handles(name))
     }
 
-    /// A context to run `name` in while its reply is still streaming, if it may: one of the
-    /// read-only tools (`early::TOOLS`) that this step offers and that never asks. Its own
+    /// A context to run `name` in on the side (while its reply is still streaming, or beside
+    /// the reply's other reads), if it may: a call that changes nothing and that the permission
+    /// layers never ask about ([`crate::auto::parallel_read`]), which this step offers. Its own
     /// context, so nothing it records reaches `self.ctx` unless its result is used.
     fn early_ctx(&self, name: &str, input: &Value) -> Option<Ctx> {
-        let ok = crate::early::TOOLS.contains(&name)
-            && tools::kind(name) == Kind::Read
+        let ok = crate::auto::parallel_read(name, input)
             && self.offers(name)
             && !self.mcp.handles(name)
             && input.get("_invalid_json").is_none();
@@ -3714,6 +3714,16 @@ impl Agent {
         let mut looping = false;
         let mut replan: Option<String> = None;
         let uses_len = uses.len();
+        // Parallel reads: the reply's leading run of calls that change nothing all start now,
+        // side by side (those its stream already started keep running), and the loop below
+        // takes their results in order. The first call that could change something closes the
+        // run, so it and everything after it run one at a time, after every read before it.
+        if self.cfg.early_tools {
+            for (index, (_, name, input)) in uses.iter().enumerate() {
+                let ctx = self.early_ctx(name, input);
+                early.ready(index, name.clone(), input.clone(), ctx);
+            }
+        }
         for index in 0..uses_len {
             // Safe point between tool calls (the previous call's result is recorded): an
             // update's drain records the rest of the batch as interrupted-by-update and
@@ -10490,6 +10500,145 @@ for line in sys.stdin:
             .collect();
         assert_eq!(results.len(), 1, "{results:?}");
         assert!(results[0].1.contains("must Read"), "{}", results[0].1);
+    }
+
+    /// An engine for parallel-read tests: no streamed `ToolReady` (so nothing starts while the
+    /// reply streams; only the batch's own parallel start can overlap calls), no shell sandbox.
+    fn engine_batch(script: Vec<Response>, dir: &Path) -> Handle {
+        let profile = Profile::new(ProviderKind::Ollama, "test");
+        let mut cfg = Config::default();
+        cfg.sandbox_shell = false;
+        let opts = Options {
+            cfg,
+            profile_name: "test".into(),
+            profile,
+            cwd: dir.to_path_buf(),
+            mode: Mode::AcceptEdits,
+            can_ask: false,
+            resume: None,
+            store: Some(dir.to_path_buf()),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// FIFOs whose readers each wait `hold` after opening before they get a byte: read one
+    /// at a time, `n` of them take `n * hold`; side by side, about one `hold`.
+    fn slow_fifos(dir: &Path, n: usize, hold: Duration) -> Vec<PathBuf> {
+        (0..n)
+            .map(|i| {
+                let p = dir.join(format!("fifo-{i}"));
+                let made = std::process::Command::new("mkfifo").arg(&p).status().unwrap();
+                assert!(made.success());
+                let q = p.clone();
+                std::thread::spawn(move || {
+                    use std::io::Write;
+                    // Blocks until the reader opens its end.
+                    let mut w = std::fs::OpenOptions::new().write(true).open(&q).unwrap();
+                    std::thread::sleep(hold);
+                    let _ = w.write_all(format!("fifo {i}\n").as_bytes());
+                });
+                p
+            })
+            .collect()
+    }
+
+    /// Parallel reads: four read-only calls in one reply run side by side, measurably faster
+    /// than one after another, and their results come back in the reply's order.
+    #[tokio::test]
+    async fn a_replys_read_only_calls_run_concurrently() {
+        let dir = tmp_store();
+        let hold = Duration::from_millis(1_000);
+        let fifos = slow_fifos(&dir, 4, hold);
+        let calls = fifos
+            .iter()
+            .enumerate()
+            .map(|(i, p)| call(&format!("c{i}"), "Bash", json!({"command": format!("cat {}", p.display())})))
+            .collect();
+        let script = vec![
+            reply(calls, Stop::ToolUse),
+            reply(vec![text("read all four")], Stop::End),
+        ];
+        let mut h = engine_batch(script, &dir);
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        let t0 = Instant::now();
+        submit(&h, "read them");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let took = t0.elapsed();
+        for i in 0..4 {
+            let out = tool_output(&evs, &format!("c{i}")).unwrap();
+            assert!(out.contains(&format!("fifo {i}")), "c{i}: {out}");
+        }
+        // One at a time would be >= 4s.
+        assert!(took < hold * 5 / 2, "the reads ran one at a time: {took:?}");
+        let order: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::ItemCompleted { id, item: Item::ToolCall { .. } } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(order, ["c0", "c1", "c2", "c3"]);
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A write closes the parallel run: the read before it finishes before the write starts,
+    /// and the read after it runs after the write (it sees the written file).
+    #[tokio::test]
+    async fn a_write_waits_for_the_reads_before_it_and_reads_after_wait_for_it() {
+        let dir = tmp_store();
+        let fifo = slow_fifos(&dir, 1, Duration::from_millis(700)).remove(0);
+        let out = dir.join("written.txt");
+        let script = vec![
+            reply(
+                vec![
+                    call("r", "Bash", json!({"command": format!("cat {}", fifo.display())})),
+                    call("w", "Write", json!({"file_path": out.display().to_string(), "content": "new\n"})),
+                    call("after", "Bash", json!({"command": format!("cat {}", out.display())})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine_batch(script, &dir);
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "read, write, read");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let at = |want: &str, started: bool| {
+            evs.iter()
+                .position(|e| match &e.event {
+                    Event::ItemStarted { id, .. } if started => id == want,
+                    Event::ItemCompleted { id, .. } if !started => id == want,
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("{want}"))
+        };
+        assert!(at("r", false) < at("w", true), "the read completes before the write starts");
+        assert!(at("w", false) < at("after", true), "the later read waits for the write");
+        assert!(tool_output(&evs, "after").unwrap().contains("new"));
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn parallel_read_follows_the_permission_layers() {
+        use crate::auto::parallel_read;
+        assert!(parallel_read("Read", &json!({"file_path": "a"})));
+        assert!(parallel_read("Grep", &json!({"pattern": "x"})));
+        assert!(parallel_read("WebSearch", &json!({"query": "x"})));
+        assert!(parallel_read("WebFetch", &json!({"url": "https://example.com/a"})));
+        assert!(!parallel_read("WebFetch", &json!({"url": "http://localhost:3000"})));
+        assert!(parallel_read("Bash", &json!({"command": "git status && wc -l src/*.rs"})));
+        assert!(!parallel_read("Bash", &json!({"command": "cd src && ls"})), "cd moves the session");
+        assert!(!parallel_read("Bash", &json!({"command": "cargo build"})));
+        assert!(!parallel_read("Bash", &json!({"command": "ls", "unsandboxed": true})));
+        assert!(!parallel_read("Bash", &json!({"command": "cat ~/.ssh/id_rsa"})));
+        assert!(!parallel_read("Write", &json!({"file_path": "a", "content": ""})));
+        assert!(!parallel_read("mcp__runpod__list-pods", &json!({})));
     }
 
     #[tokio::test]

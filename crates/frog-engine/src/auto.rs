@@ -187,6 +187,34 @@ pub fn rules_fallback(name: &str, input: &Value) -> Option<&'static str> {
     }
 }
 
+/// Whether a call may run concurrently with the reply's other reads (and before its own
+/// permission check, speculatively): it changes nothing, and the permission layers allow it
+/// without a card in every mode, so running it early can't run something the user would be
+/// asked about. The same rules the engine's `permit` applies: the read tools, WebSearch,
+/// WebFetch of a public host, and a shell command the parser proves read-only (sandboxed, no
+/// credential paths, not a long wait). MCP reads aren't here: they go through the session's
+/// MCP connections, which run one call at a time.
+pub fn parallel_read(name: &str, input: &Value) -> bool {
+    match name {
+        "Read" | "Grep" | "Glob" | "WebSearch" => true,
+        "WebFetch" => crate::tools::web::public_host(input["url"].as_str().unwrap_or("")),
+        "Bash" => {
+            let cmd = input["command"].as_str().unwrap_or("").trim();
+            input["unsandboxed"].as_bool() != Some(true)
+                && !crate::tools::bool_arg(input, "run_in_background")
+                && !crate::shell::touches_credentials(cmd)
+                && crate::shell::read_only(cmd)
+                && long_wait(cmd).is_none()
+                // A `cd` moves the session's directory, which a call run on the side can't.
+                && !crate::shell::segments(cmd)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|s| s.split_whitespace().next() == Some("cd"))
+        }
+        _ => false,
+    }
+}
+
 /// The shortest `sleep` that [`long_wait`] moves to the background, in seconds.
 pub const LONG_WAIT_S: f64 = 60.0;
 
