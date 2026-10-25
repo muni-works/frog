@@ -703,6 +703,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         }
         agent.connect_mcp();
         agent.resolve_window().await;
+        agent.note_text_mode_from_probe();
         agent.emit_status();
         {
             let mut ready = shared.ready.lock().unwrap();
@@ -2866,15 +2867,39 @@ impl Agent {
         self.text_why = Some(why.to_string());
         self.text_fallback = Some(why.to_string());
         // never persist the downgrade to the capability cache
+        let from = format!("{from:?}").to_lowercase();
+        self.warn_text_mode(format!(
+            "{from} tool calls failed twice ({why}); switching this session to text tool calls. \
+Not saved: the next session starts on {from} again"
+        ));
+    }
 
-        self.notice(
-            Level::Warn,
-            format!(
-                "{:?} tool calls keep failing; switching to text tool calls",
-                from
-            )
-            .to_lowercase(),
-        );
+    /// Say so whenever a session runs on text tool calls it didn't ask for, naming the model and
+    /// why: in the transcript, and in the engine log (stderr), so a demoted model can't go
+    /// unnoticed.
+    fn warn_text_mode(&self, why: String) {
+        let message = format!("{} ({}): {why}", self.profile_name, self.profile.model);
+        eprintln!("frog: text tool calls: {message}");
+        self.notice(Level::Warn, message);
+    }
+
+    /// At session start or a model switch: a cached probe that put `auto` on text tool calls.
+    fn note_text_mode_from_probe(&self) {
+        if self.profile.tool_mode != ToolMode::Auto || self.tool_mode != ToolMode::Text {
+            return;
+        }
+        let when = self
+            .caps
+            .as_ref()
+            .filter(|c| c.probed > 0)
+            .and_then(|c| chrono::DateTime::from_timestamp_millis(c.probed))
+            .map(|t| format!(" on {}", t.format("%Y-%m-%d")))
+            .unwrap_or_default();
+        self.warn_text_mode(format!(
+            "using text tool calls: its capability probe{when} found native tool calls not working. \
+`frog --probe -m <model>` measures again"
+        ));
+
     }
 
     /// Settle the context window: configured value, bounded by what the server reports.
@@ -4135,6 +4160,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         self.model_ready = false;
         self.apply_harness();
         self.resolve_window().await;
+        self.note_text_mode_from_probe();
         self.emit(Event::ModelChanged {
             model: self.profile_name.clone(),
         });
@@ -8518,7 +8544,7 @@ for line in sys.stdin:
         assert!(
             notices
                 .iter()
-                .any(|n| n.contains("switching to text tool calls")),
+                .any(|n| n.contains("switching this session to text tool calls")),
             "{notices:?}"
         );
         let status = evs.iter().rev().find_map(|e| match &e.event {
@@ -8549,6 +8575,14 @@ for line in sys.stdin:
         let mut h = engine_mode(script, ToolMode::Auto);
         let evs = run(&mut h, "find .nothing files").await;
         assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
+        // The notice names the model and says why, and that it isn't saved.
+        let warned = notices(&evs);
+        assert!(
+            warned.iter().any(|n| n.starts_with("test (test): native tool calls failed twice")
+                && n.contains("wrote tool calls as text")
+                && n.contains("Not saved")),
+            "{warned:?}"
+        );
         let evs = turn_again(&mut h, "and now?").await;
         assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
     }
