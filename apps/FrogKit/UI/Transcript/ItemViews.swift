@@ -121,6 +121,12 @@ struct ToolCallView: View {
 
     private var result: Item.ToolResult? { item.result }
     private var failed: Bool { result.map { $0.outcome != .ok } ?? false }
+    /// A shell row: its preview is the gist when one arrived (see `CommandGists`), else the
+    /// command elided against the session root so a worktree path can't eat the line.
+    private var isShell: Bool { name == "Bash" || name == "!" }
+    private var root: String { conversation.folder.path }
+    private var elided: String { CommandElision.elide(arg, from: root) }
+    private var gist: String? { isShell ? CommandGists.shared.gist(for: arg) : nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -134,11 +140,20 @@ struct ToolCallView: View {
                     Text(ToolIcon.title(name))
                         .fontWeight(.medium)
                         .font(.callout)
-                    Text(arg)
-                        .font(.system(.callout, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    if let gist {
+                        // The gist reads like a sentence: plain, not monospaced.
+                        Text(gist)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } else {
+                        Text(isShell ? elided : arg)
+                            .font(.system(.callout, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                     Spacer(minLength: 8)
                     summary
                     status
@@ -152,7 +167,7 @@ struct ToolCallView: View {
             .buttonStyle(.plain)
 
             if expanded || !item.done {
-                ToolDetail(name: name, item: item, expanded: expanded)
+                ToolDetail(name: name, item: item, expanded: expanded, root: root)
             }
 
             if let why = item.autoReason {
@@ -212,6 +227,8 @@ struct ToolDetail: View {
     let item: ItemState
     /// Opened: show the finished result.
     var expanded = true
+    /// The session root, for eliding paths in a shell row's command block.
+    var root = "/"
 
     var body: some View {
         if expanded, let result = item.result {
@@ -223,6 +240,9 @@ struct ToolDetail: View {
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
+            } else if name == "Bash" || name == "!" {
+                CommandDetail(command: item.arg, output: result.display ?? result.output,
+                              outcome: result.outcome, root: root)
             } else {
                 TerminalView(text: result.display ?? result.output)
             }
@@ -243,6 +263,75 @@ struct ToolDetail: View {
             // Live tail of a running command.
             TerminalView(text: String(item.output.suffix(6000)), live: true, maxHeight: 150)
                 .transition(.opacity)
+        }
+    }
+}
+
+/// A shell command opened: the full command in a monospace block with paths elided
+/// root-relative ("cd worktrees/foo"), and its output styled like `DiffView` (the same
+/// chrome), collapsed past `collapsedLines` with the same "N more lines" treatment.
+struct CommandDetail: View {
+    let command: String
+    let output: String
+    var outcome: ToolOutcome = .ok
+    var root = "/"
+    /// How many output lines show before the fold. DiffView's default cut for a long diff.
+    @State private var showingAll = false
+
+    private static let collapsedLines = 24
+
+    private var lines: [String] {
+        output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // The command, verbatim but with paths elided against the session root.
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(CommandElision.elide(command, from: root))
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            }
+            if !output.isEmpty {
+                Divider().opacity(0.5)
+                outputBlock
+            }
+        }
+        .background(.background.opacity(0.6))
+        .clipShape(.rect(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary, lineWidth: 0.5))
+    }
+
+    @ViewBuilder
+    private var outputBlock: some View {
+        let all = lines
+        let shown = showingAll ? all : Array(all.prefix(Self.collapsedLines))
+        VStack(alignment: .leading, spacing: 0) {
+            // The output, ANSI-styled like any terminal, without its own chrome: this
+            // block's frame is the chrome.
+            ScrollView {
+                Text(ANSI.attributed(output.isEmpty ? "(no output)" : shown.joined(separator: "\n")))
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+            }
+            .frame(maxHeight: 280)
+            if all.count > shown.count {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) { showingAll.toggle() }
+                } label: {
+                    Text(showingAll ? "Collapse" : "\(all.count - shown.count) more lines")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 4)
+            }
         }
     }
 }
