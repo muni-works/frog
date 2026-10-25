@@ -86,7 +86,23 @@ the rule: **provenance required, and the judge's output is the only score.** eve
 
 ## 4. build vs exists
 
-_tbd_
+| piece | state | work left |
+|---|---|---|
+| PR-replay harvest (737), materialize.sh, per-task verify | **exists** (blaze/gym) | fail-to-pass filter, public-repo filter, sprint-20 pick |
+| per-task test containers with warm cargo caches | new | image per repo@base, built once |
+| cad-part T1 (4 families, gen_tasks.py, verify.py, blaze-veval) | **exists** | none for T1 |
+| vcad fea / dfm / tolerance / receipt / slicer-bambu | **exists** (kernel crates) | judge glue, T2–T3 generators |
+| phyz rigid/contact | **exists** (engine) | T4 worlds + success criteria |
+| share endpoint `frog.toys/s/<token>`, bundle, redaction | **specced** (pr-viral §2.2, owned by zest) | a `challenge` block in the bundle (task, set, timings) |
+| per-turn tok/s, decode/tool/user ms, energy meter | **exists** (engine) | carry it in the bundle |
+| gateway response hashes per session | new (zest) | write-only log + lookup |
+| accounts, credits | **specced** (better auth, neon, durable objects) | a "challenge credit" grant type |
+| `frog challenge` CLI | new | wraps materialize + session + upload |
+| judge queue + workers | new | CPU only, one queue for both challenges |
+| boards, score card PNG | new | static pages over `entries`, svg→png on a worker |
+| prize fulfillment | new (ops) | printing, shipping, hardware allocation |
+
+reused: tasks, verifiers, kernels, the share format, accounts. new: the judge service, the CLI, the boards, response hashes, and task generators T2–T4.
 
 ## 5. timeline
 
