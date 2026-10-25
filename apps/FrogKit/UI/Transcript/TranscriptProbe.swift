@@ -14,6 +14,11 @@ enum TranscriptProbe {
     /// InkReveal restyles, and the characters they touched.
     static var inkStyles = 0
     static var inkStyledChars = 0
+    /// Rows on screen now (appeared and not yet disappeared), and the most there ever were:
+    /// a virtualized transcript keeps these to the visible set, whatever the session's length.
+    static var mountedRows: Int { mounted.count }
+    static var peakMountedRows = 0
+    private static var mounted: Set<String> = []
 
     static func reset() {
         rowBodies = 0
@@ -21,6 +26,14 @@ enum TranscriptProbe {
         follows = 0
         inkStyles = 0
         inkStyledChars = 0
+        mounted = []
+        peakMountedRows = 0
+    }
+
+    /// A row (by a key unique across conversations) appeared or disappeared.
+    static func mounted(_ key: String, _ on: Bool) {
+        if on { mounted.insert(key) } else { mounted.remove(key) }
+        peakMountedRows = max(peakMountedRows, mounted.count)
     }
 
     /// For `let _ = TranscriptProbe.row()` inside a view builder.
