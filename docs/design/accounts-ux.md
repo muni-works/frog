@@ -295,3 +295,40 @@ the line becomes (exact, once per period):
 The card's meter is empty and orange; caption `out of credit · resets nov 1` (pro/max) or
 `out of credit` (beta/api). If this Mac has no usable model, the turn stops with the same line
 and the existing "pick a model" path, so no loop of failed requests.
+
+### State 5: signed out, but a key exists (beta invite users)
+
+Who: people who redeemed an invite and pasted a `frog_` key into the Keychain before sign-in
+existed. `/me` answers for the key with `email: null`. Their key keeps working, forever, whether
+or not they sign in. Signing in only attaches it to an account, so it shows on the web, survives
+a new Mac, and can be upgraded.
+
+face `.idle` · badge `beta` · primary **sign in with GitHub** (`.bordered`, not prominent: it's
+an offer, not a fix) · ⋯ menu: "sign in with email", "change key…", "remove key".
+
+> **frog cloud** `beta`
+> invite key · Keychain. sign in to keep its credit with your account.
+> ████████░░░░░░  $4.10 beta credit left
+
+The meter and week row show as in state 3 (the key can read `/me` and usage); there's no
+identity line.
+
+**Migration, when they sign in.** The same flow as state 2, plus a claim. The user sees no
+extra step:
+1. GitHub sheet or email link, as usual. During 2b the line reads `setting up this Mac and
+   moving your beta credit…`.
+2. The engine exchanges the code for a new key, then calls the claim with the old key inside
+   the new session. The edge moves the credit and usage history to the account and retires the
+   old key.
+3. Only when the claim succeeds and `/me` answers with the new key does the engine swap the
+   Keychain item. Until then, every request still uses the old key. No turn ever runs without a
+   working key.
+4. Success line (4 s): **signed in · your beta credit came with you**. Then state 3.
+
+If the claim fails, nothing changes: the old key stays in the Keychain and active, the new key
+is revoked (best effort) and never stored, and the card stays in state 5 with
+`couldn't move your beta credit just now · try again` (face `.sad` for that beat, then `.idle`).
+
+**No nagging.** Legacy users get no line above the composer, no badge and no prompt. The offer
+lives on the card, and in `frog --status` in the CLI. They lose nothing by ignoring it.
+An env-only `FROG_API_KEY` user is never offered migration from the app (it's the shell's key).
