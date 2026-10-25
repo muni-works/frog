@@ -313,6 +313,10 @@ struct Shared {
     /// Counting works because the router forwards them in the order the loop takes them.
     inbox_sent: AtomicU64,
     inbox_void: AtomicU64,
+    /// The user stopped a running turn: background wakes already waiting don't start a turn
+    /// of their own (a stop stays stopped); they go along with the next turn instead, which
+    /// clears this.
+    wake_hold: AtomicBool,
 }
 
 /// What a running [`Op::Drain`] needs, kept in `Shared::draining`.
@@ -508,6 +512,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         draining: Default::default(),
         inbox_sent: Default::default(),
         inbox_void: Default::default(),
+        wake_hold: Default::default(),
         journal,
         panes,
         irc: crate::irc::slot(),
@@ -567,6 +572,9 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     journal.emit(Event::Synced { upto });
                 }
                 Op::Interrupt => {
+                    if router.working.load(Ordering::Relaxed) {
+                        router.wake_hold.store(true, Ordering::SeqCst);
+                    }
                     router.cancel.lock().unwrap().cancel();
                     router.bg.stop_all();
                 }
@@ -738,8 +746,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             if let Op::Shutdown = op {
                 break;
             }
-            // A wake whose notices an earlier turn already took.
-            if matches!(op, Op::Wake) && !shared.bg.has_notices() {
+            // A wake whose notices an earlier turn already took, or one the user's stop holds
+            // for the next turn.
+            if matches!(op, Op::Wake)
+                && (!shared.bg.has_notices() || shared.wake_hold.load(Ordering::SeqCst))
+            {
                 continue;
             }
             // Messages from other sessions never interrupt a turn: they queue behind it like
@@ -747,16 +758,23 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             // turn (the first as its input, the rest as `more`, as composer sends follow-ups).
             let mut delivered = Vec::new();
             let mut dropped = 0;
+            // A wake takes the session messages queued behind it too: what waits at a turn
+            // boundary goes as one batch.
+            let woke = matches!(op, Op::Wake);
             let op = match op {
-                Op::Deliver {
-                    from,
-                    from_name,
-                    message,
-                } => {
-                    if voided(&mut inbox_taken) {
-                        dropped += 1;
-                    } else {
-                        delivered.push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                op @ (Op::Deliver { .. } | Op::Wake) => {
+                    if let Op::Deliver {
+                        from,
+                        from_name,
+                        message,
+                    } = op
+                    {
+                        if voided(&mut inbox_taken) {
+                            dropped += 1;
+                        } else {
+                            delivered
+                                .push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                        }
                     }
                     while let Ok(next) = work_rx.try_recv() {
                         match next {
@@ -773,6 +791,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                                     ))
                                 }
                             }
+                            // Another wake: this batch's turn takes every parked notice.
+                            Op::Wake => {}
                             other => {
                                 held = Some(other);
                                 break;
@@ -793,12 +813,22 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 );
             }
             // Every message in the batch was voided: there's no turn to run.
-            if op.is_none() && delivered.is_empty() {
+            if op.is_none() && delivered.is_empty() && !woke {
                 continue;
             }
             // In the background, and not an op the client waits on: no `Idle` after it.
             if let Some(Op::Warm { draft }) = &op {
                 agent.warm(draft.as_deref());
+                continue;
+            }
+            // Pure status from another session: read, recorded, no reply turn, no `Idle`.
+            if let Some(Op::Inform {
+                from,
+                from_name,
+                message,
+            }) = &op
+            {
+                agent.inform(from, from_name, message);
                 continue;
             }
             shared.working.store(true, Ordering::Relaxed);
@@ -809,6 +839,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 r = async {
                     match op {
                         Some(op) => agent.handle(op).await,
+                        None if woke => agent.wake(delivered).await,
                         None => agent.deliver(delivered).await,
                     }
                 } => r,
@@ -871,6 +902,16 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             }
             shared.working.store(false, Ordering::Relaxed);
             agent.emit_status();
+            // Background work that finished during the turn was parked (never injected into
+            // it): it runs now, as the next turn, before the engine goes idle, so nobody sees
+            // an idle session that is about to wake. A stop holds it instead.
+            if held.is_none()
+                && shared.bg.has_notices()
+                && !shared.wake_hold.load(Ordering::SeqCst)
+            {
+                held = Some(Op::Wake);
+                continue;
+            }
             agent.emit(Event::Idle);
             agent.meter_busy(false);
         }
@@ -1846,12 +1887,7 @@ impl Agent {
                 self.turn(&note, Vec::new()).await?
             }
             Op::Shell { command } => self.shell(&command).await,
-            Op::Wake => {
-                let notices = self.shared.bg.take_notices();
-                if !notices.is_empty() {
-                    self.turn(&notices.join("\n\n"), Vec::new()).await?
-                }
-            }
+            Op::Wake => self.wake(Vec::new()).await?,
             Op::SetMode { mode } => {
                 self.mode = mode;
                 self.mode_logged = Some(mode);
@@ -1930,6 +1966,11 @@ impl Agent {
                 let text = crate::tools::sessions::wrap(&from, &from_name, &message);
                 self.deliver(vec![text]).await?
             }
+            Op::Inform {
+                from,
+                from_name,
+                message,
+            } => self.inform(&from, &from_name, &message),
             Op::SetClientCaps {
                 panes,
                 ask,
@@ -2119,6 +2160,36 @@ impl Agent {
         self.turn_with(&first, Vec::new(), more).await
     }
 
+    /// An informational message from another session ([`Op::Inform`]): logged as read, and
+    /// kept to go along with the next turn as context. No turn, no wake.
+    fn inform(&mut self, from: &str, from_name: &str, message: &str) {
+        self.emit(Event::MessageRead {
+            from: from.to_string(),
+            from_name: from_name.to_string(),
+            message: message.to_string(),
+        });
+        self.pending
+            .push(crate::tools::sessions::wrap(from, from_name, message));
+    }
+
+    /// A turn on what's waiting at the boundary, all at once: the background wakes (in the
+    /// order they came in) as its input, and the session messages queued behind them
+    /// (`delivered`, each already wrapped) as `more`.
+    async fn wake(&mut self, delivered: Vec<String>) -> Result<()> {
+        let notices = self.shared.bg.take_notices();
+        if notices.is_empty() {
+            return self.deliver(delivered).await;
+        }
+        let more = delivered
+            .into_iter()
+            .map(|text| Part {
+                text,
+                images: Vec::new(),
+            })
+            .collect();
+        self.turn_with(&notices.join("\n\n"), Vec::new(), more).await
+    }
+
     async fn turn(&mut self, input: &str, images: Vec<crate::protocol::Image>) -> Result<()> {
         self.turn_with(input, images, Vec::new()).await
     }
@@ -2150,12 +2221,21 @@ impl Agent {
         let turn = self.turn;
         // The first turn creates a new session's log: its starting mode goes in first.
         self.log_mode();
+        // Background work that finished while this turn was queued: delivered with it, as one
+        // batch at its start (and shown with it, ahead of its input).
+        let wakes = self.shared.bg.take_notices();
         self.emit(Event::TurnStarted {
             turn,
             input: input.to_string(),
             images: images.clone(),
             more: more.clone(),
         });
+        if !wakes.is_empty() {
+            self.emit(Event::WakesDelivered {
+                turn,
+                wakes: wakes.clone(),
+            });
+        }
         self.active_turn = Some(turn);
         // A draft still waiting to warm is stale now; the turn itself leaves the cache warm.
         self.warming.lock().unwrap().1 = None;
@@ -2174,10 +2254,11 @@ impl Agent {
         // A new turn may ask again what the last one was denied (the session's breaker still holds).
         self.turn_denied.clear();
         self.blocked = None;
+        // Wakes a stop held go along with this turn (below); later ones start turns again.
+        self.shared.wake_hold.store(false, Ordering::SeqCst);
 
         let mut text = std::mem::take(&mut self.pending).join("\n");
-        // Background work that finished while this turn was queued.
-        for notice in self.shared.bg.take_notices() {
+        for notice in wakes {
             if !text.is_empty() {
                 text.push('\n');
             }
@@ -3441,6 +3522,28 @@ impl Agent {
         }
     }
 
+    /// A long bare wait ([`crate::auto::long_wait`]) run as a background job (the same path as
+    /// `Bash { run_in_background }`, already permitted): the tool returns at once, telling the
+    /// model what happened, and the job's `<job-done>` wake brings the output when it ends.
+    fn background_wait(&self, input: &Value, secs: u64) -> Result<tools::Output> {
+        let started =
+            crate::background::start_job(&self.shared.bg, input, &self.ctx, &self.jobs_dir())?;
+        let id = started
+            .content
+            .split_whitespace()
+            .find(|w| w.starts_with("job-"))
+            .map(|w| w.trim_end_matches([',', '.']).to_string())
+            .unwrap_or_else(|| "a background job".into());
+        self.notice(
+            Level::Warn,
+            format!("a {secs}s sleep moved to background job {id}; the turn goes on"),
+        );
+        Ok(tools::Output::text(format!(
+            "That wait is now a background job ({id}, {secs}s); continuing. Don't sleep to wait: do other work now or end your turn; the <job-done id={id}> wake, with the output of the commands after the sleep, starts your next turn.\n\n{}",
+            started.content
+        )))
+    }
+
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
     async fn run_tool(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
         // A working directory that was deleted out from under the session (a worktree cleaned
@@ -3480,6 +3583,15 @@ impl Agent {
         }
         if name == crate::subagent::TOOL {
             return self.run_task(id, input).await;
+        }
+        // The sleep guard: a long bare wait would hold the turn (and every event and message
+        // behind it) for minutes, so it runs as a background job and the turn goes on.
+        if name == "Bash"
+            && !self.subagent
+            && !tools::bool_arg(input, "run_in_background")
+            && let Some(secs) = crate::auto::long_wait(input["command"].as_str().unwrap_or(""))
+        {
+            return self.background_wait(input, secs);
         }
         if crate::background::handles(name)
             || (name == "Bash" && tools::bool_arg(input, "run_in_background"))
@@ -3602,15 +3714,18 @@ impl Agent {
             || (name.starts_with("mcp__") && self.mcp.handles(name))
     }
 
-    /// A context to run `name` in while its reply is still streaming, if it may: one of the
-    /// read-only tools (`early::TOOLS`) that this step offers and that never asks. Its own
+    /// A context to run `name` in on the side (while its reply is still streaming, or beside
+    /// the reply's other reads), if it may: a call that changes nothing and that the permission
+    /// layers never ask about ([`crate::auto::parallel_read`]), which this step offers. Its own
     /// context, so nothing it records reaches `self.ctx` unless its result is used.
     fn early_ctx(&self, name: &str, input: &Value) -> Option<Ctx> {
-        let ok = crate::early::TOOLS.contains(&name)
-            && tools::kind(name) == Kind::Read
+        let ok = crate::auto::parallel_read(name, input)
             && self.offers(name)
             && !self.mcp.handles(name)
-            && input.get("_invalid_json").is_none();
+            && input.get("_invalid_json").is_none()
+            // A working directory deleted out from under the session: `run_tool` falls back
+            // to the root and says so, which a call run on the side can't.
+            && self.ctx.cwd.is_dir();
         ok.then(|| Ctx {
             root: self.ctx.root.clone(),
             cwd: self.ctx.cwd.clone(),
@@ -3660,6 +3775,16 @@ impl Agent {
         let mut looping = false;
         let mut replan: Option<String> = None;
         let uses_len = uses.len();
+        // Parallel reads: the reply's leading run of calls that change nothing all start now,
+        // side by side (those its stream already started keep running), and the loop below
+        // takes their results in order. The first call that could change something closes the
+        // run, so it and everything after it run one at a time, after every read before it.
+        if self.cfg.early_tools {
+            for (index, (_, name, input)) in uses.iter().enumerate() {
+                let ctx = self.early_ctx(name, input);
+                early.ready(index, name.clone(), input.clone(), ctx);
+            }
+        }
         for index in 0..uses_len {
             // Safe point between tool calls (the previous call's result is recorded): an
             // update's drain records the rest of the batch as interrupted-by-update and
@@ -10438,6 +10563,145 @@ for line in sys.stdin:
         assert!(results[0].1.contains("must Read"), "{}", results[0].1);
     }
 
+    /// An engine for parallel-read tests: no streamed `ToolReady` (so nothing starts while the
+    /// reply streams; only the batch's own parallel start can overlap calls), no shell sandbox.
+    fn engine_batch(script: Vec<Response>, dir: &Path) -> Handle {
+        let profile = Profile::new(ProviderKind::Ollama, "test");
+        let mut cfg = Config::default();
+        cfg.sandbox_shell = false;
+        let opts = Options {
+            cfg,
+            profile_name: "test".into(),
+            profile,
+            cwd: dir.to_path_buf(),
+            mode: Mode::AcceptEdits,
+            can_ask: false,
+            resume: None,
+            store: Some(dir.to_path_buf()),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// FIFOs whose readers each wait `hold` after opening before they get a byte: read one
+    /// at a time, `n` of them take `n * hold`; side by side, about one `hold`.
+    fn slow_fifos(dir: &Path, n: usize, hold: Duration) -> Vec<PathBuf> {
+        (0..n)
+            .map(|i| {
+                let p = dir.join(format!("fifo-{i}"));
+                let made = std::process::Command::new("mkfifo").arg(&p).status().unwrap();
+                assert!(made.success());
+                let q = p.clone();
+                std::thread::spawn(move || {
+                    use std::io::Write;
+                    // Blocks until the reader opens its end.
+                    let mut w = std::fs::OpenOptions::new().write(true).open(&q).unwrap();
+                    std::thread::sleep(hold);
+                    let _ = w.write_all(format!("fifo {i}\n").as_bytes());
+                });
+                p
+            })
+            .collect()
+    }
+
+    /// Parallel reads: four read-only calls in one reply run side by side, measurably faster
+    /// than one after another, and their results come back in the reply's order.
+    #[tokio::test]
+    async fn a_replys_read_only_calls_run_concurrently() {
+        let dir = tmp_store();
+        let hold = Duration::from_millis(1_000);
+        let fifos = slow_fifos(&dir, 4, hold);
+        let calls = fifos
+            .iter()
+            .enumerate()
+            .map(|(i, p)| call(&format!("c{i}"), "Bash", json!({"command": format!("cat {}", p.display())})))
+            .collect();
+        let script = vec![
+            reply(calls, Stop::ToolUse),
+            reply(vec![text("read all four")], Stop::End),
+        ];
+        let mut h = engine_batch(script, &dir);
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        let t0 = Instant::now();
+        submit(&h, "read them");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let took = t0.elapsed();
+        for i in 0..4 {
+            let out = tool_output(&evs, &format!("c{i}")).unwrap();
+            assert!(out.contains(&format!("fifo {i}")), "c{i}: {out}");
+        }
+        // One at a time would be >= 4s.
+        assert!(took < hold * 5 / 2, "the reads ran one at a time: {took:?}");
+        let order: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::ItemCompleted { id, item: Item::ToolCall { .. } } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(order, ["c0", "c1", "c2", "c3"]);
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A write closes the parallel run: the read before it finishes before the write starts,
+    /// and the read after it runs after the write (it sees the written file).
+    #[tokio::test]
+    async fn a_write_waits_for_the_reads_before_it_and_reads_after_wait_for_it() {
+        let dir = tmp_store();
+        let fifo = slow_fifos(&dir, 1, Duration::from_millis(700)).remove(0);
+        let out = dir.join("written.txt");
+        let script = vec![
+            reply(
+                vec![
+                    call("r", "Bash", json!({"command": format!("cat {}", fifo.display())})),
+                    call("w", "Write", json!({"file_path": out.display().to_string(), "content": "new\n"})),
+                    call("after", "Bash", json!({"command": format!("cat {}", out.display())})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine_batch(script, &dir);
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "read, write, read");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let at = |want: &str, started: bool| {
+            evs.iter()
+                .position(|e| match &e.event {
+                    Event::ItemStarted { id, .. } if started => id == want,
+                    Event::ItemCompleted { id, .. } if !started => id == want,
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("{want}"))
+        };
+        assert!(at("r", false) < at("w", true), "the read completes before the write starts");
+        assert!(at("w", false) < at("after", true), "the later read waits for the write");
+        assert!(tool_output(&evs, "after").unwrap().contains("new"));
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn parallel_read_follows_the_permission_layers() {
+        use crate::auto::parallel_read;
+        assert!(parallel_read("Read", &json!({"file_path": "a"})));
+        assert!(parallel_read("Grep", &json!({"pattern": "x"})));
+        assert!(parallel_read("WebSearch", &json!({"query": "x"})));
+        assert!(parallel_read("WebFetch", &json!({"url": "https://example.com/a"})));
+        assert!(!parallel_read("WebFetch", &json!({"url": "http://localhost:3000"})));
+        assert!(parallel_read("Bash", &json!({"command": "git status && wc -l src/*.rs"})));
+        assert!(!parallel_read("Bash", &json!({"command": "cd src && ls"})), "cd moves the session");
+        assert!(!parallel_read("Bash", &json!({"command": "cargo build"})));
+        assert!(!parallel_read("Bash", &json!({"command": "ls", "unsandboxed": true})));
+        assert!(!parallel_read("Bash", &json!({"command": "cat ~/.ssh/id_rsa"})));
+        assert!(!parallel_read("Write", &json!({"file_path": "a", "content": ""})));
+        assert!(!parallel_read("mcp__runpod__list-pods", &json!({})));
+    }
+
     #[tokio::test]
     async fn interrupting_cancels_early_tools() {
         let dir = tmp_store();
@@ -10511,7 +10775,12 @@ for line in sys.stdin:
     #[tokio::test]
     async fn interrupt_cancels_a_running_bash_tool() {
         let dir = tmp_store();
-        let bash = call("t1", "Bash", json!({ "command": "sleep 64", "timeout": 120000 }));
+        // Real work after the sleep keeps it inline (a bare long sleep becomes a job).
+        let bash = call(
+            "t1",
+            "Bash",
+            json!({ "command": "sleep 64 && touch /tmp/frog-never", "timeout": 120000 }),
+        );
         let (mut h, _) = engine_early(
             vec![
                 reply(vec![bash], Stop::ToolUse),
@@ -10866,6 +11135,308 @@ for line in sys.stdin:
                 .iter()
                 .any(|e| matches!(e.event, Event::BackgroundDone { .. }))
         );
+    }
+
+    /// The sleep guard: a long bare wait (the specimen: `sleep 570; wc -l …; tail …`, a
+    /// 9.5-minute blocking turn) runs as a background job. The tool returns at once with a note
+    /// saying so, a Warn notice tells the user, and the turn's next step runs right away.
+    #[tokio::test]
+    async fn a_long_bare_sleep_becomes_a_background_job() {
+        let dir = tmp_store();
+        let wait = call(
+            "w",
+            "Bash",
+            json!({"command": "sleep 570; wc -l /dev/null; tail -1 /dev/null", "timeout": 590000}),
+        );
+        let script = vec![
+            reply(vec![wait], Stop::ToolUse),
+            reply(vec![text("doing other work meanwhile")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        let t0 = Instant::now();
+        submit(&h, "wait for the run, then count");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        assert!(
+            t0.elapsed() < Duration::from_secs(20),
+            "the turn must not block on the sleep"
+        );
+        assert!(matches!(
+            evs.iter().find_map(|e| match &e.event {
+                Event::TurnEnded { reason, .. } => Some(reason.clone()),
+                _ => None,
+            }),
+            Some(EndReason::Complete)
+        ));
+        assert!(
+            evs.iter().any(|e| matches!(&e.event,
+                Event::BackgroundStarted { id, kind, label, log } if id == "job-1" && log.as_deref().is_some_and(|l| l.ends_with("job-1.log")) && kind == "job" && label.starts_with("sleep 570"))),
+            "the wait runs as job-1"
+        );
+        let out = tool_output(&evs, "w").expect("the wait's result");
+        assert!(
+            out.contains("That wait is now a background job (job-1, 570s); continuing"),
+            "{out}"
+        );
+        assert!(out.contains("<job-done id=job-1>"), "{out}");
+        assert!(
+            notices(&evs)
+                .iter()
+                .any(|n| n.contains("570s sleep moved to background job job-1")),
+            "{:?}",
+            notices(&evs)
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Events never interrupt a turn: two timers that fire while a turn is busy (a 3s command)
+    /// are parked, the turn completes normally, and they run as the next turn, in the order
+    /// they fired, before the engine goes idle (no `Idle` between the two turns).
+    #[tokio::test]
+    async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m1", "Monitor", json!({"after_s": 1, "note": "first"})),
+                    call("m2", "Monitor", json!({"after_s": 2, "note": "second"})),
+                    call("b", "Bash", json!({"command": "sleep 3; echo slept"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("turn one done")], Stop::End),
+            reply(vec![text("both timers seen")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "set two timers and work");
+        let first = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        // Both fired during the turn; the turn still ran to its end.
+        let done = first
+            .iter()
+            .filter(|e| matches!(&e.event, Event::BackgroundDone { status, .. } if status == "done"))
+            .count();
+        assert_eq!(done, 2, "both timers fired mid-turn");
+        assert!(first.iter().any(|e| matches!(&e.event,
+            Event::TurnEnded { reason: EndReason::Complete, .. })));
+        assert!(tool_output(&first, "b").unwrap().contains("slept"));
+        assert_eq!(
+            first.iter().filter(|e| matches!(e.event, Event::TurnStarted { .. })).count(),
+            1,
+            "nothing started mid-turn"
+        );
+        let next = drive(&mut h, |e| matches!(e, Event::TurnStarted { .. })).await;
+        assert!(
+            !next.iter().any(|e| matches!(e.event, Event::Idle)),
+            "the wake runs before the engine goes idle"
+        );
+        let input = next
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let (a, b) = (input.find("first").unwrap(), input.find("second").unwrap());
+        assert!(input.starts_with("<wakeup id=mon-1") && a < b, "{input}");
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The no-response opt: an informational session message is logged as read and starts no
+    /// turn (and wakes nothing); the next turn carries it as context. A plain delivered message
+    /// still starts a turn.
+    #[tokio::test]
+    async fn an_informational_message_is_read_without_a_turn() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(vec![text("noted the status")], Stop::End),
+            reply(vec![text("answered")], Stop::End),
+        ];
+        let (mut h, sent) = engine_early(script, true, ToolMode::Native, Duration::ZERO, &dir, &dir);
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        h.ops
+            .send(Op::Inform {
+                from: "s9".into(),
+                from_name: "okc manager".into(),
+                message: "received, going idle".into(),
+            })
+            .unwrap();
+        let read = drive(&mut h, |e| matches!(e, Event::MessageRead { .. })).await;
+        let sid = read[0].session.clone();
+        let quiet = tokio::time::timeout(Duration::from_millis(800), async {
+            loop {
+                let env = h.events.recv().await.unwrap();
+                if matches!(env.event, Event::TurnStarted { .. }) {
+                    break;
+                }
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "an informational message started a turn");
+        assert!(sent.lock().unwrap().is_empty(), "no model call for it");
+        // Logged as read.
+        let logged = session::events_after(&dir, &sid, 0).unwrap();
+        assert!(logged.iter().any(|e| matches!(&e.event,
+            Event::MessageRead { from, message, .. } if from == "s9" && message == "received, going idle")));
+        // The next turn (a question) runs as usual and carries the status along.
+        h.ops
+            .send(Op::Deliver {
+                from: "s9".into(),
+                from_name: "okc manager".into(),
+                message: "is the pod up?".into(),
+            })
+            .unwrap();
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::TurnStarted { input, .. } if input.contains("is the pod up?"))));
+        let to_model = sent.lock().unwrap().join("\n");
+        assert!(to_model.contains("received, going idle"), "the status rides along as context");
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Everything waiting at a boundary goes as one batch: a wake that fired mid-turn and a
+    /// session message that arrived mid-turn open one turn together (wake as its input, the
+    /// message as `more`), and clients see the queue while it waits.
+    #[tokio::test]
+    async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m", "Monitor", json!({"after_s": 1, "note": "pod check"})),
+                    call("b", "Bash", json!({"command": "sleep 3; echo slept"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("turn one")], Stop::End),
+            reply(vec![text("saw both")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "work");
+        let parked = drive(&mut h, |e| matches!(e, Event::QueuedEvents { items } if !items.is_empty())).await;
+        assert!(!parked.iter().any(|e| matches!(e.event, Event::TurnEnded { .. })), "parked mid-turn");
+        h.ops
+            .send(Op::Deliver {
+                from: "s9".into(),
+                from_name: "okc manager".into(),
+                message: "serving:true".into(),
+            })
+            .unwrap();
+        drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let next = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let (input, more) = next
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnStarted { input, more, .. } => Some((input.clone(), more.clone())),
+                _ => None,
+            })
+            .unwrap();
+        assert!(input.starts_with("<wakeup id=mon-1") && input.contains("pod check"), "{input}");
+        assert_eq!(more.len(), 1, "{more:?}");
+        assert!(more[0].text.starts_with("<session-message from=\"s9\"") && more[0].text.contains("serving:true"));
+        assert!(
+            next.iter().any(|e| matches!(&e.event, Event::QueuedEvents { items } if items.is_empty())),
+            "the flush empties the queue clients see"
+        );
+        let turns = next.iter().filter(|e| matches!(e.event, Event::TurnStarted { .. })).count();
+        assert_eq!(turns, 1, "one batch, one turn");
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A stop stays stopped: a wake that came in during the turn the user stopped doesn't
+    /// start a turn of its own; it goes along with the user's next message.
+    #[tokio::test]
+    async fn a_stop_holds_wakes_for_the_next_turn() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m", "Monitor", json!({"after_s": 1, "note": "check"})),
+                    call("b", "Bash", json!({"command": "sleep 30"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "wait");
+        drive(&mut h, |e| matches!(e, Event::BackgroundDone { status, .. } if status == "done")).await;
+        h.ops.send(Op::Interrupt).unwrap();
+        let stopped = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        assert!(stopped.iter().any(|e| matches!(&e.event,
+            Event::TurnEnded { reason: EndReason::Cancelled, .. })));
+        // Nothing starts on its own.
+        let quiet = tokio::time::timeout(Duration::from_millis(1_500), async {
+            loop {
+                let env = h.events.recv().await.unwrap();
+                if matches!(env.event, Event::TurnStarted { .. }) {
+                    break env;
+                }
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "a held wake started a turn");
+        submit(&h, "next");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let input = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(input, "next", "the user's message starts the turn; the wake rides along");
+        let rode = evs.iter().find_map(|e| match &e.event {
+            Event::WakesDelivered { wakes, .. } => Some(wakes.clone()),
+            _ => None,
+        });
+        assert!(
+            rode.is_some_and(|w| w.len() == 1 && w[0].starts_with("<wakeup id=mon-1")),
+            "the held wake is delivered with the turn, and says so"
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Short sleeps and sleeps with real work after them still run inline, as written.
+    #[tokio::test]
+    async fn a_short_sleep_or_real_work_runs_inline() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("s", "Bash", json!({"command": "sleep 1; echo short"})),
+                    call(
+                        "r",
+                        "Bash",
+                        json!({"command": "sleep 0 && echo real > /dev/null; echo real"}),
+                    ),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "go");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let s = tool_output(&evs, "s").unwrap();
+        assert!(s.contains("short"), "{s}");
+        assert!(tool_output(&evs, "r").unwrap().contains("real"));
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::BackgroundStarted { .. }))
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

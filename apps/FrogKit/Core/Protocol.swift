@@ -101,6 +101,8 @@ enum Op: Encodable, Sendable {
     case sessionReply(id: String, result: JSONValue?, error: String?)
     /// A message from another session (`from` is its id, or "system"), queued like a submit.
     case deliver(from: String, fromName: String, message: String)
+    /// A status-only message from another session: read and logged, no turn starts for it.
+    case inform(from: String, fromName: String, message: String)
     /// Answer a `question`: the picked labels, or the user's own words. Neither dismisses it.
     case answer(id: String, choices: [String], other: String?)
     /// Have the model server prefill the conversation now (plus `draft`, the message being
@@ -228,6 +230,11 @@ enum Op: Encodable, Sendable {
             try c.encodeIfPresent(error, forKey: .error)
         case .deliver(let from, let fromName, let message):
             try c.encode("deliver", forKey: .op)
+            try c.encode(from, forKey: .from)
+            try c.encode(fromName, forKey: .fromName)
+            try c.encode(message, forKey: .message)
+        case .inform(let from, let fromName, let message):
+            try c.encode("inform", forKey: .op)
             try c.encode(from, forKey: .from)
             try c.encode(fromName, forKey: .fromName)
             try c.encode(message, forKey: .message)
@@ -687,6 +694,19 @@ enum Event: Decodable, Sendable {
     /// How many background pieces (Monitors, jobs, Tasks) run in the engine now; sent on
     /// every start and end. Live only, never in a log.
     case background(running: Int)
+    /// A background piece started: a Task, a shell job (`log` is its output file), a Monitor
+    /// or a timer. Durable (logged), like `backgroundDone`.
+    case backgroundStarted(id: String, kind: String, label: String, log: String?)
+    /// Live output from one (a job's last line, a monitor's poll). Live only.
+    case backgroundProgress(id: String, text: String)
+    /// One ended: `status` is done, failed, stopped, matched, timeout or
+    /// interrupted_by_update; `summary` is the wake the model was given (empty when stopped).
+    case backgroundDone(id: String, kind: String, status: String, summary: String)
+    /// The wakes waiting for the next turn boundary, in order (each as the model will get
+    /// it). Sent when one is parked and when a turn takes them (then empty). Live only.
+    case queuedEvents(items: [String])
+    /// The wakes turn `turn` opened with, delivered with its input as one batch.
+    case wakesDelivered(turn: UInt64, wakes: [String])
     case synced(upto: UInt64)
     case idle
     case paneOpened(id: String, kind: PaneKind, title: String, cwd: String?, url: String?)
@@ -733,6 +753,7 @@ extension Event {
         case stepsDone = "steps_done", jobs, jobLabels = "job_labels", inbox
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
         case running
+        case status, summary, text, log, items, wakes
     }
 
     init(from decoder: Decoder) throws {
@@ -822,6 +843,28 @@ extension Event {
             self = .status(try Status(from: decoder))
         case "background":
             self = .background(running: try c.decode(Int.self, forKey: .running))
+        case "background_started":
+            self = .backgroundStarted(
+                id: try c.decode(String.self, forKey: .id),
+                kind: try c.decode(String.self, forKey: .kind),
+                label: try c.decodeIfPresent(String.self, forKey: .label) ?? "",
+                log: try c.decodeIfPresent(String.self, forKey: .log))
+        case "background_progress":
+            self = .backgroundProgress(
+                id: try c.decode(String.self, forKey: .id),
+                text: try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+        case "queued_events":
+            self = .queuedEvents(items: try c.decodeIfPresent([String].self, forKey: .items) ?? [])
+        case "wakes_delivered":
+            self = .wakesDelivered(
+                turn: try c.decode(UInt64.self, forKey: .turn),
+                wakes: try c.decodeIfPresent([String].self, forKey: .wakes) ?? [])
+        case "background_done":
+            self = .backgroundDone(
+                id: try c.decode(String.self, forKey: .id),
+                kind: try c.decode(String.self, forKey: .kind),
+                status: try c.decode(String.self, forKey: .status),
+                summary: try c.decodeIfPresent(String.self, forKey: .summary) ?? "")
         case "synced":
             self = .synced(upto: try c.decode(UInt64.self, forKey: .upto))
         case "idle":

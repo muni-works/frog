@@ -104,11 +104,9 @@ struct NoticeView: View {
     let text: String
     let warning: Bool
 
+    /// Collapsed to its first line, like the other system rows; a longer one expands.
     var body: some View {
-        Label(text, systemImage: warning ? "exclamationmark.triangle" : "info.circle")
-            .font(.caption)
-            .foregroundStyle(warning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-            .frame(maxWidth: .infinity, alignment: .center)
+        EventLineView(event: EventLine(notice: text, warning: warning))
             .padding(.vertical, 2)
     }
 }
