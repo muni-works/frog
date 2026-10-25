@@ -208,3 +208,48 @@ Target under 1 s. Don't add a spinner: the thinking frog is the spinner.
 
 The email path joins at 2b when the poll succeeds (with the app in the background, a
 notification "signed in to frog cloud" if notifications are on; nothing otherwise).
+
+### State 3: signed in (the account card)
+
+face `.idle` · badge = plan (`beta`, `pro`, `max`, `api`) · no primary button (a signed-in
+card has nothing to ask) · ⋯ menu: "manage on frog.toys" (opens frog.toys/account), "sign out".
+
+```
+[face] frog cloud [pro]                                          [⋯]
+       @campedersen · cam@muni.works
+       ████████████████████░░░░░░░   $14.20 left · resets nov 1
+       ▁▃▂▅▇▂▁   this week · 212 tasks · $5.80
+```
+
+- **identity line**: `@handle · email` (GitHub sign-in), or just the email (email sign-in).
+  Caption, secondary.
+- **credit meter**: a 6 pt capsule, 180 pt wide, track `.quaternary`, fill green
+  (`FrogMark.skin` at 0.85, so it reads as frog's, not the system's). Its fraction is
+  `credit_usd / credit_limit_usd`. To its right, monospaced-digit caption:
+  - pro / max: `$14.20 left · resets nov 1`
+  - beta: `$4.10 beta credit left` (no reset)
+  - api: `$31.00 left` (pay as you go; no limit, so no meter. Just the text.)
+- **this week**: seven bars (Swift Charts `BarMark`, 56×16 pt, one per day, today last, fill
+  `.secondary`; today's bar in green), then caption `this week · 212 tasks · $5.80`. "tasks" =
+  finished turns on frog cloud, matching the pricing unit. Hover on a bar: `.help` with
+  `tue · 41 tasks · $1.10`.
+- **Fresh, not chatty.** `/me` and usage load when Settings opens (at most every 10 min, 3 s
+  timeout, from the account plan) and after each frog cloud turn ends (debounced 30 s). A
+  failed fetch keeps the last values dimmed (`.tertiary`) with `updated 2 h ago`. Never "signed
+  out" because of a network error.
+- The existing "Spent this week / this month" rows under the section count frog cloud only for
+  `api` and `beta`. For `pro`/`max` they show `included`.
+
+**Variants.**
+- **`FROG_API_KEY` set in the environment** (it wins, per the account plan): identity line
+  becomes `using FROG_API_KEY from your shell · your sign-in is ignored here`. The meter shows
+  that key's account, if `/me` answers for it. ⋯ keeps "sign out" (it clears the saved sign-in,
+  not the shell's key).
+- **Pasted API key, no sign-in** (the `api` plan, CI users): badge `api`, identity line `API
+  key · Keychain`. ⋯: "change key…", "remove key", "sign in with GitHub instead". This is
+  today's card, restyled; it stays.
+
+**Sign out.** ⋯ → "sign out": no dialog. The card animates back to state 1 (`Motion.panel`),
+face goes `.idle`. The engine revokes the key (best effort), deletes the Keychain item, and
+conversations on `cloud/…` show the existing "pick a model" path on their next turn. A
+conversation mid-turn finishes that turn first.
