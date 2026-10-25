@@ -232,51 +232,79 @@ fn hard_mcp(name: &str) -> Option<&'static str> {
 }
 
 /// The soft class of a still-flagged call — which shape of harm it is, from the
-/// grant vocabulary (`config::grant`). Only soft classes route to the chief;
-/// a call with no class here cards the user. The second pass's context, not
-/// parsing, says whether the shape fits this session (its scratch, its pods).
-pub fn soft_class(name: &str, input: &Value, cwd: &Path, root: &Path) -> Option<&'static str> {
+/// grant vocabulary (`config::grant`). Only soft classes route to the chief, and
+/// only when `[delegation] chief_classes` grants them; a call with no class here
+/// cards the user. The second pass's context, not parsing, says whether the shape
+/// fits this session (its scratch, its pods). Callers check [`hard_class`] first.
+pub fn soft_class(
+    name: &str,
+    input: &Value,
+    cwd: &Path,
+    root: &Path,
+    created: &HashSet<PathBuf>,
+    cfg: &crate::config::Config,
+) -> Option<&'static str> {
+    use crate::config::grant;
     if name.starts_with("mcp__") {
-        return Some(crate::config::grant::MCP_WRITE_GRANTED);
+        // Only a server already granted writes in `[mcp_trust]`.
+        let (server, _) = crate::auto::mcp_parts(name)?;
+        return cfg.mcp_write_trusted(server).then_some(grant::MCP_WRITE_GRANTED);
     }
     match name {
         "Bash" | crate::panes::TERMINAL => {
-            soft_command(input["command"].as_str().unwrap_or(""), cwd, root)
+            soft_command(input["command"].as_str().unwrap_or(""), cwd, root, created)
+        }
+        "Write" | "Edit" => {
+            let p = normalize(&expand(input["file_path"].as_str()?, cwd));
+            in_scratch(&p, root, created).then_some(grant::OWN_SCOPE_WRITES)
         }
         _ => None,
     }
 }
 
-fn soft_command(cmd: &str, cwd: &Path, root: &Path) -> Option<&'static str> {
+fn soft_command(
+    cmd: &str,
+    cwd: &Path,
+    root: &Path,
+    created: &HashSet<PathBuf>,
+) -> Option<&'static str> {
+    use crate::config::grant;
     let segments = crate::shell::segments(cmd)?;
-    let first = crate::approval::program(cmd);
-    if first == "ssh" || first == "scp" || first == "sftp" {
-        return Some(crate::config::grant::SSH_SCRATCH);
+    let programs: Vec<String> = segments.iter().map(|s| crate::approval::program(s)).collect();
+    if matches!(programs.first().map(String::as_str), Some("ssh" | "scp" | "sftp")) {
+        return Some(grant::SSH_SCRATCH);
+    }
+    // Deletes, every target inside the session's scratch (anything else is hard).
+    let deletes: Vec<Targets> = segments.iter().map(|s| delete_targets(s, cwd)).collect();
+    if deletes.iter().any(|t| !matches!(t, Targets::None)) {
+        let all_scratch = deletes.iter().all(|t| match t {
+            Targets::None => true,
+            Targets::Unknown => false,
+            Targets::Paths(ps) => ps.iter().all(|p| in_scratch(p, root, created)),
+        });
+        return all_scratch.then_some(grant::SCRATCH_DELETES);
     }
     // Compute spend: containers, clusters and pods the org pays for.
-    if segments.iter().any(|seg| {
-        matches!(
-            crate::approval::program(seg).as_str(),
-            "docker" | "kubectl" | "helm" | "runpod" | "flyctl"
-        )
-    }) {
-        return Some(crate::config::grant::POD_SPEND);
+    if programs
+        .iter()
+        .any(|p| matches!(p.as_str(), "docker" | "kubectl" | "helm" | "runpod" | "runpodctl" | "flyctl"))
+    {
+        return Some(grant::POD_SPEND);
     }
     // A push to a remote (a force push is a hard class, already checked).
     if segments
         .iter()
         .any(|seg| crate::approval::program(seg) == "git" && seg.contains("push"))
     {
-        return Some(crate::config::grant::NETWORK_READ_WRITES);
+        return Some(grant::NETWORK_READ_WRITES);
     }
-    // Writes inside the project or the session's own scratch (provenance is
-    // the second pass's job; here the shape is what matters).
-    if crate::approval::own_scope(cmd, cwd, root, &HashSet::new()) {
-        return Some(crate::config::grant::OWN_SCOPE_WRITES);
+    // Writes inside the project or the session's own scratch.
+    if crate::approval::own_scope(cmd, cwd, root, created) {
+        return Some(grant::OWN_SCOPE_WRITES);
     }
     // A long multi-step command whose segments are individually ordinary.
     if segments.len() >= 4 && segments.iter().all(|s| crate::approval::routine(s)) {
-        return Some(crate::config::grant::LONG_COMMANDS);
+        return Some(grant::LONG_COMMANDS);
     }
     None
 }
@@ -352,6 +380,30 @@ mod tests {
         for cmd in ["git push origin frog/x", "wrangler deploy --dry-run", "cargo build", "ssh pod uptime"] {
             assert_eq!(bash(cmd, root, &none), None, "{cmd}");
         }
+    }
+
+    #[test]
+    fn soft_classes_follow_the_shape_and_the_config() {
+        use crate::config::{Config, McpTrust};
+        let root = std::env::temp_dir().join(format!("deleg-soft-root-{}", crate::session::new_id()));
+        let mine = std::env::temp_dir().join(format!("deleg-soft-mine-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&mine).unwrap();
+        let created: HashSet<PathBuf> = [normalize(&mine)].into_iter().collect();
+        let mut cfg = Config::default();
+        let soft = |cmd: &str, cfg: &Config| {
+            soft_class("Bash", &json!({ "command": cmd }), &root, &root, &created, cfg)
+        };
+        assert_eq!(soft("ssh root@pod-1 uptime", &cfg), Some("ssh-scratch"));
+        assert_eq!(soft(&format!("rm -rf {}", mine.display()), &cfg), Some("scratch-deletes"));
+        assert_eq!(soft("rm -rf $X", &cfg), None);
+        assert_eq!(soft("runpodctl create pod --gpu h200", &cfg), Some("pod-spend"));
+        assert_eq!(soft("git push origin frog/x", &cfg), Some("network-read-writes"));
+        // MCP writes only on a server granted in `[mcp_trust]`.
+        let mcp = |cfg: &Config| soft_class("mcp__runpod__pod-action", &json!({}), &root, &root, &created, cfg);
+        assert_eq!(mcp(&cfg), None);
+        cfg.mcp_trust.insert("runpod".into(), McpTrust::Write);
+        assert_eq!(mcp(&cfg), Some("mcp-write-granted"));
+        let _ = std::fs::remove_dir_all(&mine);
     }
 
     #[test]

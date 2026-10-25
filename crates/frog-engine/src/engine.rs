@@ -713,6 +713,13 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             agent.notice(Level::Warn, format!("{e:#}"));
             agent.emit_status();
         }
+        let unknown = agent.cfg.delegation.unknown_classes().join(", ");
+        if !unknown.is_empty() {
+            agent.notice(
+                Level::Warn,
+                format!("[delegation] chief_classes: ignoring unknown class(es) {unknown}"),
+            );
+        }
         agent.connect_mcp();
         agent.resolve_window().await;
         agent.emit_status();
@@ -5088,8 +5095,14 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         let Some(chief) = self.cfg.delegation.chief.first().cloned() else {
             return Chief::NoRoute;
         };
-        let Some(class) = crate::delegation::soft_class(name, input, &self.ctx.cwd, &self.ctx.root)
-        else {
+        let Some(class) = crate::delegation::soft_class(
+            name,
+            input,
+            &self.ctx.cwd,
+            &self.ctx.root,
+            &self.created,
+            &self.cfg,
+        ) else {
             return Chief::NoRoute;
         };
         if !self.cfg.delegation.grants(class) {

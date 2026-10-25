@@ -80,4 +80,4 @@ max_tokens = 32000
 #   "network-read-writes", "mcp-write-granted", "long-commands",
 # ]
 # chief_timeout_secs = 300              # then the card falls back to you
-# digest = true                         # one delegation roll-up notice per day, at most
+# rollup = true                         # one approvals roll-up notice per day, at most

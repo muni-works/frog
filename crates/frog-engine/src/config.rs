@@ -319,8 +319,9 @@ pub struct Delegation {
     /// Seconds the chief has to answer before the card falls back to the user.
     #[serde(default = "default_chief_timeout")]
     pub chief_timeout_secs: u64,
-    /// One digest notice per day, at most.
-    #[serde(default = "default_true")]
+    /// One approvals roll-up notice per day, at most (`rollup`; `digest` is the
+    /// older name).
+    #[serde(default = "default_true", alias = "rollup")]
     pub digest: bool,
 }
 
@@ -333,6 +334,16 @@ impl Delegation {
     /// vocabulary never grants (a typo can't widen the list silently).
     pub fn grants(&self, class: &str) -> bool {
         grant::ALL.contains(&class) && self.chief_classes.iter().any(|c| c == class)
+    }
+
+    /// Classes in `chief_classes` outside the vocabulary: ignored, warned about
+    /// once at startup.
+    pub fn unknown_classes(&self) -> Vec<&str> {
+        self.chief_classes
+            .iter()
+            .map(String::as_str)
+            .filter(|c| !grant::ALL.contains(c))
+            .collect()
     }
 }
 
@@ -733,12 +744,16 @@ mod delegation_tests {
         assert!(cfg.delegation.grants("ssh-scratch"));
         assert!(!cfg.delegation.grants("scratch-deletes"), "not granted");
         assert!(!cfg.delegation.grants("not-a-class"), "unknown classes never grant");
+        assert_eq!(cfg.delegation.unknown_classes(), vec!["not-a-class"]);
         assert_eq!(cfg.delegation.chief_timeout_secs, 60);
         assert!(!cfg.delegation.digest);
         // Defaults: 300s, digest on.
         let cfg: Config = toml::from_str("[delegation]\nchief = [\"x\"]").unwrap();
         assert_eq!(cfg.delegation.chief_timeout_secs, 300);
         assert!(cfg.delegation.digest);
+        // The spec's key name.
+        let cfg: Config = toml::from_str("[delegation]\nrollup = false").unwrap();
+        assert!(!cfg.delegation.digest);
     }
 
     #[test]
