@@ -313,6 +313,10 @@ struct Shared {
     /// Counting works because the router forwards them in the order the loop takes them.
     inbox_sent: AtomicU64,
     inbox_void: AtomicU64,
+    /// The user stopped a running turn: background wakes already waiting don't start a turn
+    /// of their own (a stop stays stopped); they go along with the next turn instead, which
+    /// clears this.
+    wake_hold: AtomicBool,
 }
 
 /// What a running [`Op::Drain`] needs, kept in `Shared::draining`.
@@ -508,6 +512,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         draining: Default::default(),
         inbox_sent: Default::default(),
         inbox_void: Default::default(),
+        wake_hold: Default::default(),
         journal,
         panes,
         irc: crate::irc::slot(),
@@ -567,6 +572,9 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     journal.emit(Event::Synced { upto });
                 }
                 Op::Interrupt => {
+                    if router.working.load(Ordering::Relaxed) {
+                        router.wake_hold.store(true, Ordering::SeqCst);
+                    }
                     router.cancel.lock().unwrap().cancel();
                     router.bg.stop_all();
                 }
@@ -738,8 +746,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             if let Op::Shutdown = op {
                 break;
             }
-            // A wake whose notices an earlier turn already took.
-            if matches!(op, Op::Wake) && !shared.bg.has_notices() {
+            // A wake whose notices an earlier turn already took, or one the user's stop holds
+            // for the next turn.
+            if matches!(op, Op::Wake)
+                && (!shared.bg.has_notices() || shared.wake_hold.load(Ordering::SeqCst))
+            {
                 continue;
             }
             // Messages from other sessions never interrupt a turn: they queue behind it like
@@ -871,6 +882,16 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             }
             shared.working.store(false, Ordering::Relaxed);
             agent.emit_status();
+            // Background work that finished during the turn was parked (never injected into
+            // it): it runs now, as the next turn, before the engine goes idle, so nobody sees
+            // an idle session that is about to wake. A stop holds it instead.
+            if held.is_none()
+                && shared.bg.has_notices()
+                && !shared.wake_hold.load(Ordering::SeqCst)
+            {
+                held = Some(Op::Wake);
+                continue;
+            }
             agent.emit(Event::Idle);
             agent.meter_busy(false);
         }
@@ -2174,6 +2195,8 @@ impl Agent {
         // A new turn may ask again what the last one was denied (the session's breaker still holds).
         self.turn_denied.clear();
         self.blocked = None;
+        // Wakes a stop held go along with this turn (below); later ones start turns again.
+        self.shared.wake_hold.store(false, Ordering::SeqCst);
 
         let mut text = std::mem::take(&mut self.pending).join("\n");
         // Background work that finished while this turn was queued.
@@ -10542,7 +10565,12 @@ for line in sys.stdin:
     #[tokio::test]
     async fn interrupt_cancels_a_running_bash_tool() {
         let dir = tmp_store();
-        let bash = call("t1", "Bash", json!({ "command": "sleep 64", "timeout": 120000 }));
+        // Real work after the sleep keeps it inline (a bare long sleep becomes a job).
+        let bash = call(
+            "t1",
+            "Bash",
+            json!({ "command": "sleep 64 && touch /tmp/frog-never", "timeout": 120000 }),
+        );
         let (mut h, _) = engine_early(
             vec![
                 reply(vec![bash], Stop::ToolUse),
@@ -10948,6 +10976,109 @@ for line in sys.stdin:
             "{:?}",
             notices(&evs)
         );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Events never interrupt a turn: two timers that fire while a turn is busy (a 3s command)
+    /// are parked, the turn completes normally, and they run as the next turn, in the order
+    /// they fired, before the engine goes idle (no `Idle` between the two turns).
+    #[tokio::test]
+    async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m1", "Monitor", json!({"after_s": 1, "note": "first"})),
+                    call("m2", "Monitor", json!({"after_s": 2, "note": "second"})),
+                    call("b", "Bash", json!({"command": "sleep 3; echo slept"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("turn one done")], Stop::End),
+            reply(vec![text("both timers seen")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "set two timers and work");
+        let first = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        // Both fired during the turn; the turn still ran to its end.
+        let done = first
+            .iter()
+            .filter(|e| matches!(&e.event, Event::BackgroundDone { status, .. } if status == "done"))
+            .count();
+        assert_eq!(done, 2, "both timers fired mid-turn");
+        assert!(first.iter().any(|e| matches!(&e.event,
+            Event::TurnEnded { reason: EndReason::Complete, .. })));
+        assert!(tool_output(&first, "b").unwrap().contains("slept"));
+        assert_eq!(
+            first.iter().filter(|e| matches!(e.event, Event::TurnStarted { .. })).count(),
+            1,
+            "nothing started mid-turn"
+        );
+        let next = drive(&mut h, |e| matches!(e, Event::TurnStarted { .. })).await;
+        assert!(
+            !next.iter().any(|e| matches!(e.event, Event::Idle)),
+            "the wake runs before the engine goes idle"
+        );
+        let input = next
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let (a, b) = (input.find("first").unwrap(), input.find("second").unwrap());
+        assert!(input.starts_with("<wakeup id=mon-1") && a < b, "{input}");
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A stop stays stopped: a wake that came in during the turn the user stopped doesn't
+    /// start a turn of its own; it goes along with the user's next message.
+    #[tokio::test]
+    async fn a_stop_holds_wakes_for_the_next_turn() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m", "Monitor", json!({"after_s": 1, "note": "check"})),
+                    call("b", "Bash", json!({"command": "sleep 30"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "wait");
+        drive(&mut h, |e| matches!(e, Event::BackgroundDone { status, .. } if status == "done")).await;
+        h.ops.send(Op::Interrupt).unwrap();
+        let stopped = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        assert!(stopped.iter().any(|e| matches!(&e.event,
+            Event::TurnEnded { reason: EndReason::Cancelled, .. })));
+        // Nothing starts on its own.
+        let quiet = tokio::time::timeout(Duration::from_millis(1_500), async {
+            loop {
+                let env = h.events.recv().await.unwrap();
+                if matches!(env.event, Event::TurnStarted { .. }) {
+                    break env;
+                }
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "a held wake started a turn");
+        submit(&h, "next");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let input = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(input, "next", "the user's message starts the turn; the wake rides along");
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(dir);
     }
