@@ -144,6 +144,10 @@ pub enum Op {
     Shell {
         command: String,
     },
+    /// Today's delegation roll-up (docs/design/delegation.md) as text, answered with
+    /// [`Event::Digest`]: what the second pass allowed, what the chief decided,
+    /// what carded the user.
+    Digest,
     Interrupt,
     Permission {
         id: String,
@@ -643,6 +647,10 @@ pub enum Event {
     Notice {
         level: Level,
         message: String,
+    },
+    /// The answer to [`Op::Digest`]: today's delegation roll-up.
+    Digest {
+        summary: String,
     },
     /// A terminal pane's grid after processing output. Coalesced to at most ~30/s per pane.
     /// Plain text for now (no attributes).

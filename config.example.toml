@@ -66,3 +66,18 @@ max_tokens = 32000
 # model = "z-image-turbo"
 # api_key_env = "IMAGE_API_KEY" # optional; environment variable containing a bearer token
 # For offline UI testing, use backend = "stub" (PNG checkerboard placeholders).
+
+# Delegated approvals (docs/design/delegation.md): a call the auto-mode
+# classifier still flags after a context-rich second pass can be decided by
+# the chief of staff's session instead of carding you — for the grant classes
+# you list. rm -rf outside scratch, force-pushes, production deploys,
+# purchases, public posts, credentials and deletes outside scratch are NEVER
+# delegated; they always card you, whatever the config says.
+# [delegation]
+# chief = ["chief of staff"]            # session name(s) or id(s), SendMessage-style
+# chief_classes = [                     # the vocabulary in docs/design/delegation.md
+#   "ssh-scratch", "pod-spend", "own-scope-writes", "scratch-deletes",
+#   "network-read-writes", "mcp-write-granted", "long-commands",
+# ]
+# chief_timeout_secs = 300              # then the card falls back to you
+# digest = true                         # one delegation roll-up notice per day, at most

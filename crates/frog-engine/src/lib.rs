@@ -9,6 +9,8 @@ pub mod checkpoint;
 pub mod codemap;
 pub mod config;
 pub mod context;
+pub mod delegation;
+pub mod digest;
 pub mod diagram;
 pub mod early;
 pub mod energy;

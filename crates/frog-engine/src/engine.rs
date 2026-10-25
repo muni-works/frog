@@ -195,6 +195,47 @@ const MIN_RESULT_CAP: usize = 40_000;
 /// again this session.
 const DENIED_LIMIT: u32 = 2;
 
+/// The hosts a command opens a remote shell or copy to (`ssh`, `scp`, `rsync`,
+/// `mosh`): `user@host` stripped to the host, `host:path` to the host.
+fn remote_hosts(cmd: &str) -> Vec<String> {
+    let segments = crate::shell::segments(cmd).unwrap_or_else(|| vec![cmd.to_string()]);
+    let mut out = Vec::new();
+    for seg in segments {
+        let ws = crate::approval::words(&seg);
+        let Some(prog) = ws.first() else { continue };
+        let prog = prog.rsplit('/').next().unwrap_or(prog);
+        if !matches!(prog, "ssh" | "scp" | "rsync" | "mosh" | "sftp") {
+            continue;
+        }
+        let mut skip = false;
+        for w in &ws[1..] {
+            if skip {
+                skip = false;
+                continue;
+            }
+            if w.starts_with('-') {
+                // ssh options that take a value.
+                skip = prog == "ssh" && matches!(w.as_str(), "-p" | "-i" | "-l" | "-o" | "-F" | "-J" | "-L" | "-R" | "-D");
+                continue;
+            }
+            let host = w.split_once('@').map_or(w.as_str(), |(_, h)| h);
+            let remote = prog == "ssh" || prog == "mosh" || prog == "sftp" || host.contains(':') || w.contains('@');
+            if !remote {
+                continue;
+            }
+            let host = host.split(':').next().unwrap_or(host);
+            if !host.is_empty() && !out.iter().any(|h: &String| h == host) {
+                out.push(host.to_string());
+            }
+            // ssh's first operand is the host; the rest is the remote command.
+            if prog == "ssh" || prog == "mosh" {
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// One tool call's identity for the repeat-denial checks: its tool and its exact arguments.
 fn call_hash(name: &str, input: &Value) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -1113,6 +1154,10 @@ struct Agent {
     /// The classifier already failed once this session and the user was told:
     /// later failures fall back quietly instead of repeating the notice.
     classifier_failed: bool,
+    /// Today's delegation roll-up (docs/design/delegation.md): what the second
+    /// pass allowed, what the chief decided, what carded the user. Date-keyed,
+    /// midnight rollover; advisory (lost on crash, next session starts at 0).
+    digest: crate::digest::Digest,
     /// Paths this session created (files it wrote that didn't exist, directories a
     /// command made), so an approval card can say "this session made it".
     created: HashSet<PathBuf>,
@@ -1323,6 +1368,7 @@ impl Agent {
             titled: resumed_titled,
             classifier: None,
             classifier_failed: false,
+            digest: crate::digest::Digest::default(),
             created: HashSet::new(),
             prefix_allow: Vec::new(),
             last_note: None,
@@ -1686,6 +1732,10 @@ impl Agent {
                 self.turn(&note, Vec::new()).await?
             }
             Op::Shell { command } => self.shell(&command).await,
+            Op::Digest => {
+                let summary = self.digest.summary();
+                self.emit(Event::Digest { summary });
+            }
             Op::Wake => {
                 let notices = self.shared.bg.take_notices();
                 if !notices.is_empty() {
@@ -3665,8 +3715,28 @@ Don't repeat it. Change the arguments or try a different approach.",
                         }
                     }
                 };
-                self.created
-                    .extend(before.into_iter().filter(|p| p.exists()));
+                // A command that creates nested paths (`mkdir -p a/b`) made the
+                // parents too: they're provenance for later deletes the same as
+                // the leaf. Ancestors under the shared temp dir count; ones
+                // above it (the temp dir itself, /private) don't.
+                let mut made: HashSet<PathBuf> =
+                    before.into_iter().filter(|p| p.exists()).collect();
+                let temp = crate::approval::normalize(&std::env::temp_dir());
+                let temp_alts = [temp.clone(), PathBuf::from("/tmp"), PathBuf::from("/private/tmp")];
+                for p in made.clone() {
+                    // All ancestors of a made path under the shared temp dir
+                    // were made too (`mkdir -p a/b` creates both) — but stop
+                    // at the temp dir itself, which belongs to nobody.
+                    for dir in p.ancestors().skip(1) {
+                        if !temp_alts.iter().any(|t| dir.starts_with(t)) {
+                            break;
+                        }
+                        if !temp_alts.contains(&dir.to_path_buf()) {
+                            made.insert(dir.to_path_buf());
+                        }
+                    }
+                }
+                self.created.extend(made);
                 let took = ms(started.elapsed());
                 self.timing.tool_ms += took;
                 self.timing.early_ms += early.unwrap_or(0);
@@ -4515,26 +4585,38 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 (false, false) => crate::auto::Sandbox::Off,
             };
             let started = Instant::now();
-            let verdict = self.auto_judge(item, name, input, sandbox).await;
+            let verdict = self.auto_judge(item, name, arg, input, sandbox).await;
             let took = ms(started.elapsed());
             self.timing.classifier_ms += took;
             match verdict {
-                Ok(()) => {
-                    self.decision(item, "classifier", "allow", "the classifier approved it", took);
+                Ok((layer, why)) => {
+                    self.digest.count(match layer {
+                        "classifier" => crate::digest::Which::AutoAllowed,
+                        _ => crate::digest::Which::SecondPass,
+                    });
+                    self.decision(item, layer, "allow", &why, took);
                     return Decision::Allow;
                 }
-                Err(why) => {
-                    let layer = if why.contains("classifier is unavailable") {
-                        "fallback"
-                    } else {
-                        "classifier"
-                    };
+                Err((layer, why)) => {
+                    self.digest.count(crate::digest::Which::Blocked);
+                    self.daily_digest_notice();
                     self.decision(item, layer, "ask", &why, took);
                     reason = Some(format!(
                         "Auto mode asked because {}.",
                         why.trim_end_matches('.')
                     ))
                 }
+            }
+            // Still flagged after the second pass: the chief decides what the
+            // user shouldn't have to, when its grant list covers the class
+            // (docs/design/delegation.md). Never-delegable calls never come
+            // back here — `auto_judge` errored with `never-delegable` for
+            // those, and only `second-pass` reaches this point.
+            if let Some(decision) = self
+                .delegate_flagged(item, name, arg, input, reason.clone().unwrap_or_default())
+                .await
+            {
+                return decision;
             }
         }
         if !self.can_ask {
@@ -4834,25 +4916,42 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         decision
     }
 
-    /// Auto mode: hard rules, then the classifier. `Ok` runs the call (and records why);
-    /// `Err` says why the user should decide.
+    /// Auto mode (docs/design/delegation.md): never-delegable classes, hard rules, the
+    /// classifier, then the context-rich second pass. `Ok((layer, why))` runs the call;
+    /// `Err((layer, why))` says why the user should decide. The caller records either.
     async fn auto_judge(
         &mut self,
         item: &str,
         name: &str,
+        arg: &str,
         input: &Value,
         sandbox: crate::auto::Sandbox,
-    ) -> std::result::Result<(), String> {
-        if let Some(why) = crate::auto::hard_rule(name, input, &self.ctx.root) {
-            return Err(format!("it {why}"));
+    ) -> std::result::Result<(&'static str, String), (&'static str, String)> {
+        // Hard classes override every allow and always reach the user: no classifier,
+        // no second pass, no chief.
+        if let Some(why) = crate::delegation::hard_class(
+            name,
+            input,
+            &self.ctx.cwd,
+            &self.ctx.root,
+            &self.created,
+        ) {
+            return Err(("never-delegable", format!("it {why} (never delegated)")));
         }
+        let hard = crate::auto::hard_rule(name, input, &self.ctx.root);
         if self.classifier.is_none() {
             match crate::auto::Classifier::new(&self.cfg, &self.ctx.root) {
                 Ok(c) => self.classifier = Some(c),
-                Err(e) => {
+                // A hard rule asks without the classifier anyway; only note an outage
+                // when the classifier was the one that had to answer.
+                Err(e) if hard.is_none() => {
                     self.classifier_unavailable(format!("couldn't start ({e:#})"));
                 }
+                Err(_) => {}
             }
+        }
+        if let (Some(why), None) = (hard, self.classifier.as_ref()) {
+            return Err(("classifier", format!("it {why}")));
         }
         let model = self
             .classifier
@@ -4866,9 +4965,15 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         });
         let preview = tools::fs::preview(name, input, &self.ctx);
         let action = crate::auto::describe(name, input, preview.as_ref(), sandbox);
+        // A hard rule is a flag without asking the first pass: it goes straight to the
+        // second, which can only clear it with context (rm and ssh are always
+        // double-checked, never single-checked).
+        if let Some(why) = hard {
+            return self.second_pass(item, name, arg, input, &action, format!("it {why}")).await;
+        }
         let inputs = self.inputs.clone();
         let Some(classifier) = self.classifier.as_mut() else {
-            return Err("the classifier is unavailable".into());
+            return Err(("fallback", "the classifier is unavailable".into()));
         };
         match classifier.judge(&inputs, &action).await {
             crate::auto::Verdict::Allow(reason) => {
@@ -4876,9 +4981,14 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     item: item.to_string(),
                     reason,
                 });
-                Ok(())
+                Ok(("classifier", "the classifier approved it".into()))
             }
-            crate::auto::Verdict::Ask(reason) => Err(format!("the classifier said: {reason}")),
+            // The first pass flagged it: the flag is usually missing context, and
+            // context is cheap. (The first pass never names Cam; it's a flag too.)
+            crate::auto::Verdict::Ask(why) | crate::auto::Verdict::Cam(why) => {
+                self.second_pass(item, name, arg, input, &action, format!("the classifier said: {why}"))
+                    .await
+            }
             // The classifier is down, not cautious: read-only commands still run
             // (the fast path needs no model), everything else asks.
             crate::auto::Verdict::Failed(why) => {
@@ -4889,12 +4999,285 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                         item: item.to_string(),
                         reason: "read-only command; the classifier is down".into(),
                     });
-                    Ok(())
+                    Ok(("fallback", "read-only command; the classifier is down".into()))
                 } else {
-                    Err("the classifier is unavailable".into())
+                    Err(("fallback", "the classifier is unavailable".into()))
                 }
             }
         }
+    }
+
+    /// The second, context-rich classifier pass over a flagged call: the session's
+    /// brief, recent actions, who owns the targets, what the user asked for. It can
+    /// only upgrade the flag (to an allow with a reason, audited) or confirm it; a
+    /// `cam` answer or any failure keeps the card. `flag` is why it was flagged.
+    async fn second_pass(
+        &mut self,
+        item: &str,
+        name: &str,
+        arg: &str,
+        input: &Value,
+        action: &str,
+        flag: String,
+    ) -> std::result::Result<(&'static str, String), (&'static str, String)> {
+        let ctx = crate::auto::Context {
+            brief: self.agent_reason(),
+            actions: self.history_tail(),
+            ownership: self.ownership_lines(name, input),
+            need: self.inputs.clone(),
+        };
+        let verdict = match self.classifier.as_mut() {
+            Some(c) => c.rejudge(action, &ctx).await,
+            None => crate::auto::Verdict::Failed("the classifier is unavailable".into()),
+        };
+        match verdict {
+            crate::auto::Verdict::Allow(why) => {
+                self.notice(
+                    Level::Info,
+                    format!("second pass: `{name} {arg}` allowed with context ({why})"),
+                );
+                #[cfg(test)]
+                self.emit(Event::AutoApproved {
+                    item: item.to_string(),
+                    reason: format!("second pass: {why}"),
+                });
+                Ok(("second-pass", why))
+            }
+            crate::auto::Verdict::Ask(why) => {
+                Err(("second-pass", format!("{flag}; with context: {why}")))
+            }
+            crate::auto::Verdict::Cam(why) => {
+                Err(("never-delegable", format!("{flag}; with context: {why} (never delegated)")))
+            }
+            // Fail closed: the flag stands, the card goes up.
+            crate::auto::Verdict::Failed(why) => {
+                Err(("second-pass", format!("{flag}; the second pass couldn't finish ({why})")))
+            }
+        }
+    }
+
+    /// A call still flagged after the second pass: offer it to the chief before
+    /// it cards the user (docs/design/delegation.md). `Some(decision)` when the
+    /// chief route produced the final answer; `None` when there's no chief
+    /// route (no config, no grant class) and the card proceeds as usual.
+    /// The chief answers over the session wire (`SessionRequest`/`SessionReply`),
+    /// so any client — the Mac app's broker chief-most — can decide; one that
+    /// doesn't know `DelegateApproval` never answers and the card falls back.
+    async fn delegate_flagged(
+        &mut self,
+        item: &str,
+        name: &str,
+        arg: &str,
+        input: &Value,
+        reason: String,
+    ) -> Option<Decision> {
+        let chief = self.cfg.delegation.chief.first()?.clone();
+        let class = crate::delegation::soft_class(name, input, &self.ctx.cwd, &self.ctx.root)?;
+        if !self.cfg.delegation.grants(class) {
+            return None;
+        }
+        if !self.shared.sessions.enabled() {
+            self.notice(
+                Level::Warn,
+                format!("delegated:chief: no session broker to reach {chief}; asking you instead"),
+            );
+            self.digest.count(crate::digest::Which::ChiefFallback);
+            return None;
+        }
+        let (id, rx) = self.shared.sessions.open();
+        let request = serde_json::json!({
+            "chief": chief,
+            "approval_id": id,
+            "tool": name,
+            "command": arg,
+            "class": class,
+            "reason": reason,
+        });
+        self.notice(
+            Level::Info,
+            format!("delegated:chief: asking {chief} about `{name} {arg}` ({class})"),
+        );
+        self.emit(Event::SessionRequest {
+            id: id.clone(),
+            item: item.into(),
+            tool: "DelegateApproval".into(),
+            input: request,
+        });
+        let timeout = self.cfg.delegation.chief_timeout_secs;
+        let waited = Instant::now();
+        // `rx` resolves to `Result<Value, String>` (the chief's reply or the
+        // broker's error); the wait itself can time out or be dropped.
+        let answer = if timeout == 0 {
+            Ok(rx.await)
+        } else {
+            tokio::time::timeout(Duration::from_secs(timeout), rx).await
+        };
+        let reply = match answer {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                self.notice(
+                    Level::Warn,
+                    format!("delegated:chief: {chief} errored ({e}); asking you instead"),
+                );
+                self.digest.count(crate::digest::Which::ChiefFallback);
+                self.decision(item, "delegated", "ask", "the chief errored", 0);
+                return None;
+            }
+            Err(_) => {
+                self.notice(
+                    Level::Warn,
+                    format!("delegated:chief: {chief} didn't answer in {timeout}s; asking you instead"),
+                );
+                self.digest.count(crate::digest::Which::ChiefFallback);
+                self.decision(item, "delegated", "ask", "the chief didn't answer", 0);
+                return None;
+            }
+        };
+        let parsed = crate::delegation::parse_reply(&reply.unwrap_or(Value::Null));
+        let Some((allowed, note)) = parsed else {
+            self.notice(
+                Level::Warn,
+                format!("delegated:chief: {chief}'s answer was unreadable; asking you instead"),
+            );
+            self.digest.count(crate::digest::Which::ChiefFallback);
+            self.decision(item, "delegated", "ask", "the chief's answer was unreadable", 0);
+            return None;
+        };
+        self.timing.user_ms += ms(waited.elapsed());
+        if allowed {
+            self.digest.count(crate::digest::Which::DelegatedChief);
+            let why = match &note {
+                Some(n) => format!("{chief} approved it ({n})"),
+                None => format!("{chief} approved it"),
+            };
+            self.notice(Level::Info, format!("delegated:chief: {why} — `{name} {arg}`"));
+            self.decision(item, "delegated", "allow", &why, 0);
+            Some(Decision::Allow)
+        } else {
+            self.digest.count(crate::digest::Which::Blocked);
+            let why = match &note {
+                Some(n) => format!("{chief} declined it ({n})"),
+                None => format!("{chief} declined it"),
+            };
+            self.notice(Level::Warn, format!("delegated:chief: {why} — `{name} {arg}`"));
+            self.record_denial(
+                call_hash(name, input),
+                format!("the chief declined: {why}"),
+            );
+            self.last_note = Some(why);
+            Some(Decision::Deny)
+        }
+    }
+
+    /// The day's single digest notice, at the first card after midnight.
+    fn daily_digest_notice(&mut self) {
+        if !self.cfg.delegation.digest {
+            return;
+        }
+        if self.digest.needs_daily_notice() {
+            let summary = self.digest.summary();
+            self.digest.mark_noticed();
+            self.notice(Level::Info, summary);
+        }
+    }
+
+    /// The session's last few steps, short, for the second pass's context: what the
+    /// agent said and which tools it ran, oldest first.
+    fn history_tail(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for m in self.messages.iter().rev().filter(|m| m.role == Role::Assistant) {
+            for b in m.content.iter().rev() {
+                let line = match b {
+                    Block::Text { text } if !text.trim().is_empty() => {
+                        format!("said: {}", text.trim())
+                    }
+                    Block::ToolUse { name, input, .. } => {
+                        let what = input["command"]
+                            .as_str()
+                            .or(input["file_path"].as_str())
+                            .map(String::from)
+                            .unwrap_or_else(|| input.to_string());
+                        format!("ran {name}: {what}")
+                    }
+                    _ => continue,
+                };
+                out.push(tools::truncate_middle(&line, 200));
+            }
+            if out.len() >= 6 {
+                break;
+            }
+        }
+        out.truncate(6);
+        out.reverse();
+        out
+    }
+
+    /// Who owns what this call touches, one line per path, for the second pass.
+    fn ownership_lines(&self, name: &str, input: &Value) -> Vec<String> {
+        let cmd = input["command"].as_str().unwrap_or("");
+        let paths: Vec<PathBuf> = if name == "Bash" && !cmd.is_empty() {
+            crate::approval::paths(cmd, &self.ctx.cwd)
+        } else if let Some(p) = input["file_path"].as_str() {
+            vec![crate::approval::normalize(&self.ctx.resolve(p))]
+        } else if let Some(p) = input["url"].as_str().filter(|_| name == "Screenshot") {
+            vec![crate::approval::normalize(&self.ctx.resolve(p))]
+        } else {
+            Vec::new()
+        };
+        let root = crate::approval::normalize(&self.ctx.root);
+        let temp = crate::approval::normalize(&std::env::temp_dir());
+        let mut out: Vec<String> = paths
+            .into_iter()
+            // A remote `host:path` operand is a host, below, not a local path.
+            .filter(|p| !p.to_string_lossy().contains(':'))
+            .map(|p| {
+                let note = if p.starts_with(&root) {
+                    "in this session's project"
+                } else if crate::approval::created_here(&p, &self.created) {
+                    "created by this session"
+                } else if p.starts_with(&temp) || p.starts_with("/private/tmp") || p.starts_with("/tmp")
+                {
+                    if p.exists() {
+                        "under the shared temp dir (may predate this session)"
+                    } else {
+                        "fresh scratch under the shared temp dir"
+                    }
+                } else {
+                    "outside the project and not created by this session"
+                };
+                format!("{} — {}", p.display(), note)
+            })
+            .collect();
+        // Remote shells: is the host something this session brought up or already used?
+        if name == "Bash" {
+            for host in remote_hosts(cmd) {
+                let note = if self.seen_in_session(&host) {
+                    "remote host seen earlier in this session (it created or used it)"
+                } else {
+                    "remote host not seen earlier in this session (foreign)"
+                };
+                out.push(format!("{host} — {note}"));
+            }
+        }
+        out
+    }
+
+    /// Whether `needle` appears in an earlier tool call or result this session (a pod
+    /// it created, a host it printed). Only the session's own history counts.
+    fn seen_in_session(&self, needle: &str) -> bool {
+        // The newest assistant message is the call being judged; it doesn't count.
+        let upto = self
+            .messages
+            .iter()
+            .rposition(|m| m.role == Role::Assistant)
+            .unwrap_or(self.messages.len());
+        self.messages[..upto].iter().any(|m| {
+            m.content.iter().any(|b| match b {
+                Block::ToolResult { content, .. } => content.contains(needle),
+                Block::ToolUse { input, .. } => input.to_string().contains(needle),
+                _ => false,
+            })
+        })
     }
 
     /// The auto-mode classifier failed: note it once per session.
@@ -10935,7 +11318,7 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
         assert_eq!(notices, 1, "one classifier-failure notice");
     }
 
-    fn bash_call(id: &str, cmd: &str) -> Response {
+    fn deleg_call(id: &str, cmd: &str) -> Response {
         reply(
             vec![Block::ToolUse {
                 id: id.into(),
@@ -11022,9 +11405,9 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
     async fn auto_mode_lets_a_build_touch_only_its_own_scratch() {
         let script = vec![
             // Its own fresh build dir under /private/tmp.
-            bash_call("build", "mkdir -p /private/tmp/skittish-test-target/debug"),
+            deleg_call("build", "mkdir -p /private/tmp/skittish-test-target/debug"),
             // Another user path: still asks (answered deny below).
-            bash_call("outside", "touch /Users/frog-test-nobody/not-mine.txt"),
+            deleg_call("outside", "touch /Users/frog-test-nobody/not-mine.txt"),
             reply(vec![text("done")], Stop::End),
         ];
         let mut h = engine_perm(script, Mode::Auto, Some("nonexistent/no-classifier"));
@@ -11102,7 +11485,7 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
         })
     }
 
-    fn scratch(tag: &str) -> PathBuf {
+    fn deleg_scratch(tag: &str) -> PathBuf {
         let d = std::env::temp_dir()
             .canonicalize()
             .unwrap()
@@ -11114,8 +11497,8 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
     #[tokio::test]
     async fn deny_with_a_note_goes_back_to_the_agent_and_the_turn_continues() {
         let script = vec![
-            bash_call("w", "touch /usr/local/frog-not-here"),
-            bash_call("r", "ls"),
+            deleg_call("w", "touch /usr/local/frog-not-here"),
+            deleg_call("r", "ls"),
             reply(vec![text("done")], Stop::End),
         ];
         let mut h = engine_perm(script, Mode::Default, None);
@@ -11133,7 +11516,7 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
     #[tokio::test]
     async fn an_unanswered_prompt_times_out_to_deny_and_the_agent_carries_on() {
         let script = vec![
-            bash_call("w", "touch /usr/local/frog-not-here"),
+            deleg_call("w", "touch /usr/local/frog-not-here"),
             reply(vec![text("done")], Stop::End),
         ];
         let cfg = Config {
@@ -11167,9 +11550,9 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
     async fn prefix_allow_case(base: &str, real: &Path) {
         let (a, b, c) = (format!("{base}/a"), format!("{base}/b"), format!("{base}/c"));
         let script = vec![
-            bash_call("1", &format!("rm -rf {a} {b}")),
-            bash_call("2", &format!("rm -rf {c}")),
-            bash_call("3", &format!("mv {a} {c}")),
+            deleg_call("1", &format!("rm -rf {a} {b}")),
+            deleg_call("2", &format!("rm -rf {c}")),
+            deleg_call("3", &format!("mv {a} {c}")),
             reply(vec![text("done")], Stop::End),
         ];
         let mut h = engine_perm(script, Mode::Default, None);
@@ -11195,7 +11578,7 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
 
     #[tokio::test]
     async fn a_prefix_allow_covers_the_same_program_under_that_prefix_only() {
-        let dir = scratch("prefix");
+        let dir = deleg_scratch("prefix");
         prefix_allow_case(dir.to_str().unwrap(), &dir).await;
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -11212,11 +11595,11 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
 
     #[tokio::test]
     async fn the_card_knows_what_this_session_created() {
-        let dir = scratch("prov");
+        let dir = deleg_scratch("prov");
         let made = dir.join("build-out");
         let script = vec![
-            bash_call("mk", &format!("mkdir -p {}", made.display())),
-            bash_call("rm", &format!("rm -rf {}", made.display())),
+            deleg_call("mk", &format!("mkdir -p {}", made.display())),
+            deleg_call("rm", &format!("rm -rf {}", made.display())),
             reply(vec![text("done")], Stop::End),
         ];
         let mut h = engine_perm(script, Mode::Default, None);
@@ -11489,8 +11872,8 @@ for line in sys.stdin:
     async fn a_denied_call_retried_in_the_same_turn_ends_it_blocked() {
         let cmd = "touch frog-blocked-retry.txt";
         let script = vec![
-            bash_call("a", cmd),
-            bash_call("b", cmd),
+            deleg_call("a", cmd),
+            deleg_call("b", cmd),
             reply(vec![text("unreachable")], Stop::End),
         ];
         let mut h = engine_perm(script, Mode::Default, None);
@@ -11528,9 +11911,9 @@ for line in sys.stdin:
     async fn a_call_denied_twice_in_a_session_is_auto_denied_after() {
         let cmd = "touch frog-denied-twice.txt";
         let script = vec![
-            bash_call("t1", cmd),
-            bash_call("t2", cmd),
-            bash_call("t3", cmd),
+            deleg_call("t1", cmd),
+            deleg_call("t2", cmd),
+            deleg_call("t3", cmd),
             reply(vec![text("routed around it")], Stop::End),
         ];
         let mut h = engine_perm(script, Mode::Default, None);
@@ -11591,5 +11974,333 @@ for line in sys.stdin:
         assert_eq!(asked(&evs), 1, "only the existing temp file should ask");
         assert_eq!(outcome_of(&evs, "theirs"), Some(ToolOutcome::Denied));
         assert_eq!(theirs_now.as_deref(), Some("someone else's\n"));
+    }
+
+    // ---- delegated approvals: the second pass (docs/design/delegation.md) ----
+
+    /// An auto-mode engine whose classifier is scripted (`auto::script_judge` /
+    /// `auto::script_rejudge`); the spec only has to resolve, never answer.
+    fn engine_deleg(script: Vec<Response>, cfg: Option<Config>) -> Handle {
+        let mut cfg = cfg.unwrap_or_else(|| Config {
+            hermetic: true,
+            sandbox_shell: false,
+            ..Config::default()
+        });
+        cfg.auto_classifier = Some("ollama/deleg-test-classifier".into());
+        engine_perm_cfg(script, Mode::Auto, cfg)
+    }
+
+    fn layers(evs: &[Envelope], call: &str) -> Vec<(String, String)> {
+        evs.iter()
+            .filter_map(|e| match &e.event {
+                Event::PermissionDecision { item, layer, outcome, .. } if item == call => {
+                    Some((layer.clone(), outcome.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A fresh scratch dir under /private/tmp, not yet created.
+    fn scratch_path(tag: &str) -> PathBuf {
+        crate::approval::normalize(&std::path::Path::new("/private/tmp").join(format!("deleg-{tag}-{}", new_id())))
+    }
+
+    fn bash_call(id: &str, cmd: &str) -> Response {
+        reply(
+            vec![Block::ToolUse {
+                id: id.into(),
+                name: "Bash".into(),
+                input: json!({ "command": cmd }),
+            }],
+            Stop::ToolUse,
+        )
+    }
+
+    /// Run one turn; for each `SessionRequest`, call `on(id, tool, evs)` (the
+    /// test may reply via `Op::SessionReply`). Collects events until `Idle`.
+    async fn loop_collect(
+        h: &mut Handle,
+        mut on: impl FnMut(&str, &str),
+    ) -> Vec<Envelope> {
+        let mut evs: Vec<Envelope> = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::SessionRequest { id, tool, .. } = &env.event {
+                let (id, tool) = (id.clone(), tool.clone());
+                on(&id, &tool);
+            }
+            if matches!(env.event, Event::Idle) {
+                return evs;
+            }
+            evs.push(env);
+        }
+    }
+
+    /// `rm -rf` of a scratch dir this session made trips the hard rule (an absolute
+    /// path), so provenance can't pass it — the second pass, seeing "created by this
+    /// session", lets it run without a card.
+    #[tokio::test]
+    async fn second_pass_allows_deleting_the_sessions_own_scratch() {
+        let dir = scratch_path("own");
+        crate::auto::script_rejudge(
+            "created by this session",
+            crate::auto::Verdict::Allow("cleanup of its own scratch".into()),
+        );
+        crate::auto::script_rejudge(
+            &format!("{}/a", dir.display()),
+            crate::auto::Verdict::Allow("cleanup of its own scratch".into()),
+        );
+        let script = vec![
+            deleg_call("mk", &format!("mkdir -p {}/a", dir.display())),
+            deleg_call("rm", &format!("rm -rf {}", dir.display())),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_deleg(script, None);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let gone = !dir.exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(asked(&evs), 0, "{:?} layers={:?}", names(&evs), layers(&evs, "rm"));
+        assert_eq!(outcome_of(&evs, "rm"), Some(ToolOutcome::Ok));
+        assert!(gone, "the scratch dir was deleted");
+        assert_eq!(layers(&evs, "rm"), vec![("second-pass".into(), "allow".into())]);
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::Notice { message, .. } if message.starts_with("second pass:"))));
+    }
+
+    /// `rm -rf` of a tree the session didn't make is never delegable: it cards the
+    /// user even when the second pass (and a chief grant) would have allowed it.
+    #[tokio::test]
+    async fn rm_rf_outside_scratch_is_never_delegated() {
+        let dir = scratch_path("theirs");
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::auto::script_judge(
+            &dir.display().to_string(),
+            crate::auto::Verdict::Allow("looks like cleanup".into()),
+        );
+        crate::auto::script_rejudge(
+            &dir.display().to_string(),
+            crate::auto::Verdict::Allow("looks like cleanup".into()),
+        );
+        let script = vec![
+            deleg_call("rm", &format!("rm -rf {}", dir.display())),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_deleg(script, None);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let kept = dir.exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(asked(&evs), 1);
+        assert!(kept, "nothing was deleted");
+        assert_eq!(outcome_of(&evs, "rm"), Some(ToolOutcome::Denied));
+        let l = layers(&evs, "rm");
+        assert_eq!(l.first(), Some(&("never-delegable".to_string(), "ask".to_string())), "{l:?}");
+    }
+
+    /// `ssh` into a host the session brought up (it's in an earlier tool result) is
+    /// cleared by the second pass; `ssh` into a host it never saw keeps the card.
+    #[tokio::test]
+    async fn ssh_into_its_own_scratch_runs_and_ssh_elsewhere_cards() {
+        let id = new_id();
+        let mine = format!("pod-{id}-mine");
+        let other = format!("box-{id}-other");
+        crate::auto::script_judge(&mine, crate::auto::Verdict::Ask("remote shell".into()));
+        crate::auto::script_judge(&other, crate::auto::Verdict::Ask("remote shell".into()));
+        crate::auto::script_rejudge(
+            &format!("{mine} — remote host seen earlier in this session"),
+            crate::auto::Verdict::Allow("the pod it just created".into()),
+        );
+        crate::auto::script_rejudge(
+            &format!("{other} — remote host not seen earlier"),
+            crate::auto::Verdict::Ask("a host this session didn't create".into()),
+        );
+        // `ssh` exits non-zero on these made-up hosts; only the permission path matters.
+        let script = vec![
+            deleg_call("made", &format!("echo created {mine}")),
+            deleg_call("mine", &format!("ssh -o ConnectTimeout=1 root@{mine} true")),
+            deleg_call("other", &format!("ssh -o ConnectTimeout=1 root@{other} true")),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_deleg(script, None);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        assert_eq!(layers(&evs, "mine"), vec![("second-pass".into(), "allow".into())]);
+        assert_ne!(outcome_of(&evs, "mine"), Some(ToolOutcome::Denied));
+        assert_eq!(asked(&evs), 1, "only the foreign host asked");
+        assert_eq!(outcome_of(&evs, "other"), Some(ToolOutcome::Denied));
+        assert_eq!(layers(&evs, "other").first(), Some(&("second-pass".to_string(), "ask".to_string())));
+    }
+
+    /// A second pass that errors keeps the flag: the card goes up (never fail-open).
+    #[tokio::test]
+    async fn a_failed_second_pass_cards() {
+        let dir = scratch_path("err");
+        crate::auto::script_rejudge(
+            &dir.display().to_string(),
+            crate::auto::Verdict::Failed("timed out".into()),
+        );
+        let script = vec![
+            deleg_call("mk", &format!("mkdir -p {}", dir.display())),
+            deleg_call("rm", &format!("rm -rf {}", dir.display())),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_deleg(script, None);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let kept = dir.exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(asked(&evs), 1);
+        assert!(kept);
+        let reason = evs.iter().find_map(|e| match &e.event {
+            Event::PermissionDecision { item, layer, reason, .. } if item == "rm" && layer == "second-pass" => Some(reason.clone()),
+            _ => None,
+        });
+        assert!(reason.as_deref().is_some_and(|r| r.contains("couldn't finish")), "{reason:?}");
+    }
+
+    /// Still flagged and in the chief's grant list: the engine asks the client to
+    /// delegate (`DelegateApproval` session request). The chief approves, so the
+    /// call runs and the audit trail says `delegated`.
+    #[tokio::test]
+    async fn chief_approval_delegates_the_flagged_call() {
+        crate::auto::clear_scripts();
+        let dir = scratch_path("chief-ok");
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
+        crate::auto::script_rejudge(
+            &dir.display().to_string(),
+            crate::auto::Verdict::Ask("still flagged".into()),
+        );
+        let script = vec![
+            bash_call("mk", &format!("mkdir -p {}", dir.display())),
+            bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+        cfg.delegation.chief = vec!["chief".into()];
+        cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+        let mut h = engine_deleg(script, Some(cfg));
+        caps(&h, true);
+        let ops = h.ops.clone();
+        let evs = loop_collect(&mut h, |id, tool| {
+            if tool == "DelegateApproval" {
+                ops.send(Op::SessionReply { id: id.to_string(), result: Some(json!("approve — session infra")), error: None }).unwrap();
+            }
+        }).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::Notice { message, .. } if message.contains("delegated:chief") && message.contains("approved"))));
+        assert!(layers(&evs, "ssh").contains(&("delegated".into(), "allow".into())));
+        assert_eq!(asked(&evs), 0, "{:?}", names(&evs));
+    }
+
+    /// Chief unreachable (the broker errors): the card falls back to the user.
+    #[tokio::test]
+    async fn unreachable_chief_falls_back_to_a_card() {
+        crate::auto::clear_scripts();
+        let dir = scratch_path("chief-dead");
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
+        crate::auto::script_rejudge(&dir.display().to_string(), crate::auto::Verdict::Ask("still flagged".into()));
+        let script = vec![
+            bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+        cfg.delegation.chief = vec!["chief".into()];
+        cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+        let mut h = engine_deleg(script, Some(cfg));
+        caps(&h, true);
+        let ops = h.ops.clone();
+        let evs = loop_collect(&mut h, |id, tool| {
+            if tool == "DelegateApproval" {
+                ops.send(Op::SessionReply { id: id.to_string(), result: None, error: Some("chief folder is gone".into()) }).unwrap();
+            }
+        }).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::Notice { message, .. } if message.contains("delegated:chief") && message.contains("asking you instead"))));
+        assert!(layers(&evs, "ssh").contains(&("delegated".into(), "ask".into())));
+    }
+
+    /// Chief declines: the call is denied without ever reaching the user's card queue.
+    #[tokio::test]
+    async fn chief_decline_denies_without_a_card() {
+        crate::auto::clear_scripts();
+        let dir = scratch_path("chief-no");
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
+        crate::auto::script_rejudge(&dir.display().to_string(), crate::auto::Verdict::Ask("still flagged".into()));
+        let script = vec![
+            bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+        cfg.delegation.chief = vec!["chief".into()];
+        cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+        let mut h = engine_deleg(script, Some(cfg));
+        caps(&h, true);
+        let ops = h.ops.clone();
+        let evs = loop_collect(&mut h, |id, tool| {
+            if tool == "DelegateApproval" {
+                ops.send(Op::SessionReply { id: id.to_string(), result: Some(json!("deny — not ours")), error: None }).unwrap();
+            }
+        }).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(asked(&evs), 0);
+        assert_eq!(outcome_of(&evs, "ssh"), Some(ToolOutcome::Denied));
+        assert!(layers(&evs, "ssh").contains(&("delegated".into(), "ask".into())));
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::Notice { message, .. } if message.contains("declined"))));
+    }
+
+    /// The digest roll-up reflects every path: an Op::Digest reply arrives with
+    /// today's counts.
+    #[tokio::test]
+    async fn digest_counts_each_path() {
+        crate::auto::clear_scripts();
+        *crate::digest::TEST_DAY.lock().unwrap() = Some("30000".into());
+        let dir = scratch_path("digest");
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::auto::script_judge("echo plain", crate::auto::Verdict::Allow("ordinary".into()));
+        crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("flagged".into()));
+        crate::auto::script_rejudge(&dir.display().to_string(), crate::auto::Verdict::Ask("still".into()));
+        let script = vec![
+            bash_call("a", "echo plain"),
+            bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+        cfg.delegation.chief = vec!["chief".into()];
+        cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+        cfg.delegation.digest = true;
+        let mut h = engine_deleg(script, Some(cfg));
+        caps(&h, true);
+        let ops = h.ops.clone();
+        let _evs = loop_collect(&mut h, |id, tool| {
+            if tool == "DelegateApproval" {
+                ops.send(Op::SessionReply { id: id.to_string(), result: Some(json!("approve")), error: None }).unwrap();
+            }
+        }).await;
+        // Ask for the roll-up.
+        h.ops.send(Op::Digest).unwrap();
+        let summary = loop {
+            match h.events.recv().await.unwrap().event {
+                Event::Digest { summary } => break summary,
+                _ => {}
+            }
+        };
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        *crate::digest::TEST_DAY.lock().unwrap() = None;
+        assert!(summary.contains("1 auto-allowed"), "{summary}");
+        assert!(summary.contains("1 chief-approved"), "{summary}");
+        assert!(summary.contains("1 carded"), "{summary}");
     }
 }

@@ -297,6 +297,73 @@ pub struct Config {
     /// unless configured; read-only tools never card anyway.
     #[serde(default)]
     pub mcp_trust: BTreeMap<String, McpTrust>,
+    /// `[delegation]`: where a flagged call goes after the second classifier pass
+    /// still says ask (docs/design/delegation.md). `chief` names the session(s)
+    /// that decide calls in `chief_classes`; everything else — and the fixed
+    /// never-delegable set, always — cards the user. Absent: today's behavior.
+    #[serde(default)]
+    pub delegation: Delegation,
+}
+
+/// `[delegation]`: who a still-flagged call is offered to before the user.
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct Delegation {
+    /// The delegating approver, the chief of staff: a session name or id the
+    /// client resolves like `SendMessage`'s `to`. Empty: no delegation.
+    #[serde(default)]
+    pub chief: Vec<String>,
+    /// The grant classes the chief may decide (the delegation.md vocabulary).
+    /// Anything not here — and the fixed never-delegable set — cards the user.
+    #[serde(default)]
+    pub chief_classes: Vec<String>,
+    /// Seconds the chief has to answer before the card falls back to the user.
+    #[serde(default = "default_chief_timeout")]
+    pub chief_timeout_secs: u64,
+    /// One digest notice per day, at most.
+    #[serde(default = "default_true")]
+    pub digest: bool,
+}
+
+fn default_chief_timeout() -> u64 {
+    300
+}
+
+impl Delegation {
+    /// Whether `class` is in the chief's grant list. A name outside the
+    /// vocabulary never grants (a typo can't widen the list silently).
+    pub fn grants(&self, class: &str) -> bool {
+        grant::ALL.contains(&class) && self.chief_classes.iter().any(|c| c == class)
+    }
+}
+
+/// The grant-class vocabulary (docs/design/delegation.md). Shapes of harm, not
+/// tool names; the classifier's context and the config share these strings.
+pub mod grant {
+    /// A remote shell into ephemeral infra this session spun up.
+    pub const SSH_SCRATCH: &str = "ssh-scratch";
+    /// Creates or bills compute the org pays for.
+    pub const POD_SPEND: &str = "pod-spend";
+    /// Writes inside the project or the session's own scratch.
+    pub const OWN_SCOPE_WRITES: &str = "own-scope-writes";
+    /// Deletes inside the session's own scratch only.
+    pub const SCRATCH_DELETES: &str = "scratch-deletes";
+    /// Sends the session's own data out to a first-party endpoint.
+    pub const NETWORK_READ_WRITES: &str = "network-read-writes";
+    /// MCP writes on a server already granted in `[mcp_trust]`.
+    pub const MCP_WRITE_GRANTED: &str = "mcp-write-granted";
+    /// Long multi-step commands whose segments are individually ordinary.
+    pub const LONG_COMMANDS: &str = "long-commands";
+
+    /// Every class the vocabulary defines, for config validation.
+    pub const ALL: &[&str] = &[
+        SSH_SCRATCH,
+        POD_SPEND,
+        OWN_SCOPE_WRITES,
+        SCRATCH_DELETES,
+        NETWORK_READ_WRITES,
+        MCP_WRITE_GRANTED,
+        LONG_COMMANDS,
+    ];
 }
 
 /// How far a `[mcp_trust]` grant goes for one MCP server.
@@ -641,5 +708,45 @@ mod tests {
         assert_eq!(p.provider, ProviderKind::Codex);
         let e = cfg.resolve(Some("nope")).unwrap_err().to_string();
         assert!(e.contains("local/, cloud/, codex/"), "{e}");
+    }
+}
+
+#[cfg(test)]
+mod delegation_tests {
+    use super::*;
+
+    #[test]
+    fn delegation_is_off_until_config_turns_it_on() {
+        let cfg = Config::default();
+        assert!(cfg.delegation.chief.is_empty());
+        assert!(!cfg.delegation.grants("pod-spend"));
+        let text = r##"
+            [delegation]
+            chief = ["chief of staff"]
+            chief_classes = ["pod-spend", "ssh-scratch", "not-a-class"]
+            chief_timeout_secs = 60
+            digest = false
+        "##;
+        let cfg: Config = toml::from_str(text).unwrap();
+        assert_eq!(cfg.delegation.chief, vec!["chief of staff"]);
+        assert!(cfg.delegation.grants("pod-spend"));
+        assert!(cfg.delegation.grants("ssh-scratch"));
+        assert!(!cfg.delegation.grants("scratch-deletes"), "not granted");
+        assert!(!cfg.delegation.grants("not-a-class"), "unknown classes never grant");
+        assert_eq!(cfg.delegation.chief_timeout_secs, 60);
+        assert!(!cfg.delegation.digest);
+        // Defaults: 300s, digest on.
+        let cfg: Config = toml::from_str("[delegation]\nchief = [\"x\"]").unwrap();
+        assert_eq!(cfg.delegation.chief_timeout_secs, 300);
+        assert!(cfg.delegation.digest);
+    }
+
+    #[test]
+    fn every_vocabulary_class_is_a_known_string() {
+        // The config's grant check keys off these strings; a typo here would
+        // silently never grant.
+        for c in crate::config::grant::ALL {
+            assert!(c.chars().all(|ch| ch.is_ascii_lowercase() || ch == '-'), "{c}");
+        }
     }
 }
