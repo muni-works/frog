@@ -7,6 +7,9 @@ struct ItemView: View {
     var showsApp = true
 
     var body: some View {
+        #if DEBUG
+        let _ = TranscriptProbe.row()
+        #endif
         switch item.kind {
         case .message:
             MarkdownView(text: item.text, streaming: !item.done)
