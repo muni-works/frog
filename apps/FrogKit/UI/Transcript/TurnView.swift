@@ -27,6 +27,7 @@ struct TurnView: View {
     @Environment(\.turnSpace) private var space
 
     @Environment(\.models) private var models
+    @Environment(\.transcriptTrack) private var track
 
     init(turn: TurnState, conversation: Conversation, actions: TurnActions, pinsFooter: Bool = true) {
         self.turn = turn
@@ -39,6 +40,12 @@ struct TurnView: View {
     }
 
     private var running: Bool { !turn.finished && conversation.busy }
+
+    /// The message being written, when it's the turn's last item.
+    private var liveAnswerID: String? {
+        guard let last = turn.items.last, last.kind == .message, !last.done else { return nil }
+        return last.id
+    }
 
     /// The model that answered (or is answering): the prompt takes its place's color.
     private var promptTint: Color {
@@ -60,6 +67,9 @@ struct TurnView: View {
     var body: some View {
         let parts = TurnParts(turn)
         let flow = TurnFlow(turn.items, showThinking: verbosity.showsThinking)
+        #if DEBUG
+        let _ = TranscriptProbe.turn()
+        #endif
         VStack(alignment: .leading, spacing: space.inTurn) {
             if let delivered = SessionMessage.parse(turn.input) {
                 SessionMessageCard(message: delivered)
@@ -98,13 +108,18 @@ struct TurnView: View {
                 .onHover { hoveringPrompt = $0 }
             }
             ForEach(flow.segments) { segment in
-                switch segment {
-                case .activity(let group):
-                    ActivityLine(group: group, conversation: conversation, live: running, verbosity: verbosity)
-                case .text(let item), .visual(let item), .notice(let item):
-                    ItemView(item: item, conversation: conversation)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
+                SegmentRow(segment: segment, conversation: conversation, live: running, verbosity: verbosity)
+                    .equatable()
+                    .modifier(FadeIn(enabled: running))
+                    .id(segment.id)
+                    .background {
+                        // The answer being written: where it starts, so a long one stops there.
+                        if running, segment.id == liveAnswerID, let track {
+                            Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(TranscriptView.content)).minY }) {
+                                track.answer = (segment.id, $0)
+                            }
+                        }
+                    }
             }
             if running, !parts.plan.isEmpty {
                 PlanView(todos: parts.plan)
@@ -118,6 +133,7 @@ struct TurnView: View {
             }
             if !parts.changes.isEmpty {
                 ChangesStrip(changes: parts.changes)
+                    .equatable()
             }
             if let end = turn.end {
                 // An unpinned footer keeps its place and fades in on hover, so it neither
@@ -130,7 +146,11 @@ struct TurnView: View {
                     .allowsHitTesting(pinsFooter || hovering)
             }
         }
-        .animation(.snappy(duration: 0.25), value: flow.segments.count)
+        // Rows settle into place when they come and go in a finished turn (verbosity, a rewind).
+        // Not while it streams: an implicit animation here animates the whole turn's layout on
+        // every row (each row moves, the transcript's height eases, the follow scroll chases it
+        // for a quarter second), at stream speed. New rows fade in on their own instead.
+        .animation(running ? nil : .snappy(duration: 0.25), value: flow.segments.count)
         .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hovering = h } }
         .confirmationDialog(
             "Rewind to before this turn?",
@@ -209,6 +229,48 @@ struct TurnView: View {
 
     private func copy() {
         Clipboard.copy(turn.request)
+    }
+}
+
+/// One row of a turn. Rebuilt only when what it shows changed (see `ItemStamp`): a finished
+/// row is left alone as rows stream in below it, so a new row costs one row, not the turn.
+/// What a row reads from the conversation (a permission card, gists) still updates it.
+private struct SegmentRow: View, Equatable {
+    let segment: TurnFlow.Segment
+    let conversation: Conversation
+    let live: Bool
+    let verbosity: Verbosity
+
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        guard a.live == b.live, a.verbosity == b.verbosity, a.conversation === b.conversation,
+              a.segment.id == b.segment.id, let x = a.segment.stamp, let y = b.segment.stamp else { return false }
+        return x == y
+    }
+
+    var body: some View {
+        switch segment {
+        case .activity(let group):
+            ActivityLine(group: group, conversation: conversation, live: live, verbosity: verbosity)
+        case .text(let item), .visual(let item), .notice(let item):
+            ItemView(item: item, conversation: conversation)
+        }
+    }
+}
+
+/// A row that arrives while the turn streams fades in where it lands: opacity only, so it
+/// doesn't move the rows above it or ease the transcript's height.
+private struct FadeIn: ViewModifier {
+    let enabled: Bool
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(!enabled || shown || reduceMotion ? 1 : 0)
+            .onAppear {
+                guard enabled, !shown else { return }
+                withAnimation(.easeOut(duration: 0.18)) { shown = true }
+            }
     }
 }
 
@@ -319,9 +381,16 @@ struct PlanView: View {
 
 // MARK: - Changes
 
-struct ChangesStrip: View {
+struct ChangesStrip: View, Equatable {
     let changes: [FileChange]
     @State private var open: String?
+
+    /// A file's edits only ever append: the same files with as many edits each is the same
+    /// strip, without comparing every hunk of every diff on every chunk.
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        a.changes.count == b.changes.count
+            && zip(a.changes, b.changes).allSatisfy { $0.path == $1.path && $0.diffs.count == $1.diffs.count }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

@@ -17,21 +17,10 @@ struct TranscriptView: View {
     @State private var topInset: CGFloat = 0
     /// The view keeps to the bottom as content grows (see `onScrollGeometryChange`).
     @State private var following = true
-    @State private var userScrolling = false
-    /// A follow scroll is queued for the next run-loop turn; coalesces bursts of growth.
-    @State private var followPending = false
-    /// Where the last turn starts, in the content: a long answer stops following once its
-    /// prompt would pass the top of the view, so you read it from the beginning.
-    @State private var lastTurnTop: CGFloat = .infinity
-    /// Stopped short of the end, with more below (stopped at a long answer's start, or you
-    /// scrolled up while it wrote): the pill offers the way down.
-    @State private var parked = false
-    /// Content below the view, in points.
-    @State private var below: CGFloat = 0
-    /// How tall the content was when the view stopped following: the pill only shows once
-    /// something new has come in past it, not for what was already there.
-    @State private var parkedHeight: CGFloat?
-    @State private var height: CGFloat = 0
+    /// Where the view is and what's below it. Written on every scroll and every bit of growth,
+    /// so it isn't view state: only the pill and the bottom fade read it, and the transcript's
+    /// body (every turn in it) doesn't rebuild each time the content grows a line.
+    @State private var track = ScrollTrack()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -51,84 +40,95 @@ struct TranscriptView: View {
                 // content: a blank transcript until you scroll. Scrolling to a row at the end lays
                 // the new rows out for real, and following keeps the view there as it grows.
                 .onChange(of: conversation.turns.last?.id) { _, id in
-                    guard let id else { return }
+                    guard id != nil else { return }
                     following = true
-                    parked = false
+                    track.unpark()
                     proxy.scrollTo(Self.end, anchor: .bottom)
                 }
                 // Follow the answer as it streams: while following, content that grows takes the
                 // view back to the bottom. The size-change anchor alone loses the bottom once the
                 // lazy stack re-estimates rows it hasn't laid out.
                 .onScrollGeometryChange(for: ScrollEnd.self, of: ScrollEnd.init) { old, new in
-                    below = new.below
-                    height = new.contentHeight
+                    defer { track.measured(below: new.below, height: new.contentHeight) }
                     let growth = new.contentHeight - old.contentHeight
-                    if userScrolling {
+                    if track.userScrolling {
                         // Only your own scrolling ends a stop: back at the end, it follows again.
                         following = new.atBottom
-                        if !new.atBottom, parked || conversation.busy {
-                            park(at: new.contentHeight)
+                        if !new.atBottom, track.parked || conversation.busy {
+                            track.park(at: new.contentHeight)
                         } else {
-                            parked = false
+                            track.unpark()
                         }
                         return
                     }
-                    if following, conversation.busy, growth > 0,
-                       lastTurnTop < new.visibleTop + growth + topInset + 4,
-                       let id = conversation.turns.last?.id {
+                    // Past the end of what's laid out: nothing to draw (the lazy stack's estimate
+                    // of rows above shrank under a still offset). Back to the end, and follow.
+                    if new.pastEnd {
+                        following = true
+                        track.unpark()
+                        return follow(proxy)
+                    }
+                    if following, conversation.busy, growth > 0, let live = liveAnswer,
+                       let top = live.first ? track.lastTurnTop : track.answerTop(live.item),
+                       top < new.visibleTop + growth + topInset + 4 {
                         // Keeping to the bottom would push the answer's start above the top:
-                        // stop with the prompt at the top instead, and read from there.
+                        // stop at its start instead (the prompt, when it's the turn's first
+                        // words), and read from there. Only for an answer: a turn of tool calls
+                        // and short notes keeps following, however long it gets. Not animated, and
+                        // after this update: an animated scroll on the lazy stack aims at where it
+                        // estimated the row while the content keeps growing under it, and can
+                        // stop past the laid-out end, a blank transcript until you scroll.
                         following = false
-                        park(at: old.contentHeight)
-                        withAnimation(Motion.quick(reduced: reduceMotion)) { proxy.scrollTo(id, anchor: .top) }
+                        track.park(at: old.contentHeight)
+                        let target: AnyHashable = live.first ? AnyHashable(live.turn) : AnyHashable(live.item)
+                        DispatchQueue.main.async { proxy.scrollTo(target, anchor: .top) }
                         return
                     }
-                    // Only growth needs chasing (shrinking clamps to the bottom anyway), and the
-                    // scroll waits for the next turn of the run loop: scrolling inside the scroll
-                    // view's own update re-estimates the lazy rows, which changes the geometry
-                    // again, and AppKit aborts on the constraint loop.
-                    guard following, !new.atBottom, new.contentHeight > old.contentHeight, !followPending else { return }
-                    followPending = true
-                    DispatchQueue.main.async {
-                        followPending = false
-                        guard following, !userScrolling else { return }
-                        #if DEBUG
-                        // Perf task: the follow fires at most once per run-loop turn.
-                        os_signpost(.event, log: Self.followLog, name: "transcript.follow")
-                        #endif
-                        proxy.scrollTo(Self.end, anchor: .bottom)
-                    }
+                    // Only growth needs chasing (shrinking clamps to the bottom anyway).
+                    guard following, !new.atBottom, new.contentHeight > old.contentHeight else { return }
+                    follow(proxy)
                 }
                 // Only your own scrolling stops (or restarts) following: the lazy stack also
                 // moves the offset as it measures rows, and that mustn't count.
                 .onScrollPhaseChange { _, phase in
-                    userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
+                    track.userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 }
                 .overlay(alignment: .bottom) {
-                    if unseen {
-                        NewBelow(writing: conversation.busy) {
-                            parked = false
-                            following = true
-                            withAnimation(Motion.panel(reduced: reduceMotion)) { proxy.scrollTo(Self.end, anchor: .bottom) }
-                        }
-                        .padding(.bottom, 14)
-                        .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottom)))
+                    NewBelowPill(track: track, writing: conversation.busy) {
+                        track.unpark()
+                        following = true
+                        withAnimation(Motion.panel(reduced: reduceMotion)) { proxy.scrollTo(Self.end, anchor: .bottom) }
                     }
                 }
-                .animation(Motion.quick(reduced: reduceMotion), value: unseen)
+        }
+        .environment(\.transcriptTrack, track)
+    }
+
+    /// Back to the end. The scroll waits for the next turn of the run loop, once per turn:
+    /// scrolling inside the scroll view's own update re-estimates the lazy rows, which changes
+    /// the geometry again, and AppKit aborts on the constraint loop.
+    private func follow(_ proxy: ScrollViewProxy) {
+        guard !track.followPending else { return }
+        track.followPending = true
+        DispatchQueue.main.async {
+            track.followPending = false
+            guard following, !track.userScrolling else { return }
+            #if DEBUG
+            // Perf task: the follow fires at most once per run-loop turn.
+            os_signpost(.event, log: Self.followLog, name: "transcript.follow")
+            TranscriptProbe.follows += 1
+            #endif
+            proxy.scrollTo(Self.end, anchor: .bottom)
         }
     }
 
-    private func park(at contentHeight: CGFloat) {
-        if !parked { parkedHeight = contentHeight }
-        parked = true
-    }
-
-    /// Something new came in below where you stopped (more than a line: the thinking row
-    /// changing size doesn't count), and it's still out of view.
-    private var unseen: Bool {
-        guard parked, below > 30, let parkedHeight else { return false }
-        return height - parkedHeight > 40
+    /// The answer being written now, when it's the last thing in the transcript: whether it's
+    /// the turn's first words (nothing ran before it), for where a long one stops.
+    private var liveAnswer: (turn: TurnState.ID, item: String, first: Bool)? {
+        guard let turn = conversation.turns.last, let last = turn.items.last,
+              last.kind == .message, !last.done else { return nil }
+        let first = !turn.items.dropLast().contains { if case .tool = $0.kind { true } else { false } }
+        return (turn.id, last.id, first)
     }
 
     /// Where the view is against the end of the content.
@@ -139,8 +139,11 @@ struct TranscriptView: View {
         let below: CGFloat
         /// The top of the visible area, in content coordinates.
         let visibleTop: CGFloat
+        /// The whole visible area is below the end of the content.
+        let pastEnd: Bool
 
         init(_ g: ScrollGeometry) {
+            pastEnd = g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height - 1
             contentHeight = g.contentSize.height
             // Against what's actually visible above the composer. The offset alone misses the top
             // inset, which is large while the content is shorter than the view (it's anchored to
@@ -152,8 +155,8 @@ struct TranscriptView: View {
         }
     }
 
-    /// The transcript's content, for measuring where a turn starts in it.
-    private static let content = "transcript-content"
+    /// The transcript's content, for measuring where a turn (or an answer) starts in it.
+    static let content = "transcript-content"
 
     #if DEBUG
     /// For the perf task: the deferred, coalesced follow-scroll signpost. Instruments' "Points
@@ -173,7 +176,7 @@ struct TranscriptView: View {
                         .background {
                             if turn.id == conversation.turns.last?.id {
                                 Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.content)).minY }) {
-                                    lastTurnTop = $0
+                                    track.lastTurnTop = $0
                                 }
                             }
                         }
@@ -227,18 +230,7 @@ struct TranscriptView: View {
         // The system's scroll-edge blur is hidden (see ScrollBackdropClear), so fade the
         // content out under the toolbar instead of letting it run into the title.
         .onGeometryChange(for: CGFloat.self, of: { $0.safeAreaInsets.top }) { topInset = $0 }
-        .mask {
-            VStack(spacing: 0) {
-                Color.clear.frame(height: max(0, topInset - 12))
-                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 28)
-                Color.black
-                // A soft edge where the text carries on below the view.
-                LinearGradient(colors: [.black, .black.opacity(below > 8 ? 0.05 : 1)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 44)
-            }
-            .ignoresSafeArea()
-        }
+        .mask { TranscriptMask(topInset: topInset, track: track) }
         .onScrollTargetVisibilityChange(idType: TurnState.ID.self, threshold: 0.05) { onVisibleTurns($0) }
         // Start at the bottom, and keep short content there. While following (above), growth
         // keeps the view at the bottom too; once a long answer has stopped at its start, it
@@ -671,6 +663,105 @@ struct ScrollBackdropClear: View {
     var body: some View { EmptyView() }
 }
 #endif
+
+/// Where the transcript is against its end, kept off the view's own state: geometry callbacks
+/// write it on every scroll and every line of growth, and only what reads `unseen` or
+/// `moreBelow` (the pill and the bottom fade) updates when those flip.
+@MainActor @Observable
+final class ScrollTrack {
+    /// Something new came in below where you stopped, and it's still out of view.
+    private(set) var unseen = false
+    /// Text carries on below the view (the soft bottom edge).
+    private(set) var moreBelow = false
+
+    /// Stopped short of the end, with more below (stopped at a long answer's start, or you
+    /// scrolled up while it wrote): the pill offers the way down.
+    @ObservationIgnored private(set) var parked = false
+    /// How tall the content was when the view stopped following: the pill only shows once
+    /// something new has come in past it, not for what was already there.
+    @ObservationIgnored private var parkedHeight: CGFloat?
+    @ObservationIgnored private var below: CGFloat = 0
+    @ObservationIgnored private var height: CGFloat = 0
+    @ObservationIgnored var userScrolling = false
+    /// A follow scroll is queued for the next run-loop turn; coalesces bursts of growth.
+    @ObservationIgnored var followPending = false
+    /// Where the last turn starts, in the content.
+    @ObservationIgnored var lastTurnTop: CGFloat = .infinity
+    /// Where the answer being written starts, in the content (reported by its row).
+    @ObservationIgnored var answer: (item: String, top: CGFloat)?
+
+    func answerTop(_ item: String) -> CGFloat? {
+        answer?.item == item ? answer?.top : nil
+    }
+
+    func park(at contentHeight: CGFloat) {
+        if !parked { parkedHeight = contentHeight }
+        parked = true
+        refresh()
+    }
+
+    func unpark() {
+        parked = false
+        refresh()
+    }
+
+    func measured(below: CGFloat, height: CGFloat) {
+        self.below = below
+        self.height = height
+        refresh()
+    }
+
+    /// Observed values are written only when they change: each write would update their readers.
+    private func refresh() {
+        // More than a line: the thinking row changing size doesn't count.
+        let unseen = parked && below > 30 && parkedHeight.map { height - $0 > 40 } == true
+        if unseen != self.unseen { self.unseen = unseen }
+        let more = below > 8
+        if more != moreBelow { moreBelow = more }
+    }
+}
+
+extension EnvironmentValues {
+    /// The transcript's scroll tracking, for rows that report where they are (the live answer).
+    @Entry var transcriptTrack: ScrollTrack? = nil
+}
+
+/// The toolbar fade at the top and, where the text carries on below the view, a soft edge.
+private struct TranscriptMask: View {
+    let topInset: CGFloat
+    let track: ScrollTrack
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: max(0, topInset - 12))
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: 28)
+            Color.black
+            LinearGradient(colors: [.black, .black.opacity(track.moreBelow ? 0.05 : 1)], startPoint: .top, endPoint: .bottom)
+                .frame(height: 44)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// The pill, when something new came in below where you're reading.
+private struct NewBelowPill: View {
+    let track: ScrollTrack
+    let writing: Bool
+    let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            if track.unseen {
+                NewBelow(writing: writing, action: action)
+                    .padding(.bottom, 14)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottom)))
+            }
+        }
+        .animation(Motion.quick(reduced: reduceMotion), value: track.unseen)
+    }
+}
 
 /// The way down to a message that came in below where you're reading.
 private struct NewBelow: View {
