@@ -154,4 +154,12 @@ these are estimates. the prize budget is cam's money: this section sizes it and 
 
 ## 8. decisions for cam
 
-_tbd_
+the recommended option is listed first in each.
+
+1. **launch order.** (a) **A at beat 2, C at beat 3**: A rides the H200 story and C rides the app GA, one beat each. (b) both at beat 3: one big beat, but it piles risk onto GA day. (c) C first at beat 2: T1 exists, but T1 alone is a quiz, not a trial.
+2. **prize ladder shape.** (a) **ladder by rank. hardware only on the cloud board (hash-verified) and C's T3/T4. the lymb is the season grand prize, "ships when the first lymb ships"**. (b) credits and pro only until the hardware exists. (c) cash prizes: simplest to understand, but they draw farmers.
+3. **entry gating.** (a) **a frog account (github sign-in) for credits and prizes. anonymous local entries rank but can't win.** (b) an account for everything. (c) fully anonymous: more reach, no prizes possible.
+4. **board 1 timing.** (a) **self-run and gateway-timed, with tool time counting.** zero runner infra. (b) hosted runners on equal hardware: fairer, but ~1 week more build plus runner cost.
+5. **dashboards before launch.** (a) **minimal: one static page per board, rows link to replays, no profiles or charts.** (b) full dashboards (profiles, history, live feed) first, which slips A to beat 3.
+6. **C divisions.** (a) **agent and hand, both ranked.** the CAD crowd writes by hand and the agent crowd races them. (b) agent only.
+7. **phase 2.** (a) **the live set needs any paid frog cloud plan (pro $20), with bigger prizes.** (b) phase 2 stays free.
