@@ -195,6 +195,15 @@ const MIN_RESULT_CAP: usize = 40_000;
 /// again this session.
 const DENIED_LIMIT: u32 = 2;
 
+/// How long a classifier that couldn't answer is skipped before frog tries it again: a
+/// stopped server costs one timeout per minute, not one per call.
+const CLASSIFIER_RETRY: Duration = Duration::from_secs(60);
+
+/// Why auto mode asks when no classifier could answer and no rule covers the call. The card
+/// names the rule gap, not the outage: a down classifier never cards a call by itself.
+const CLASSIFIER_DOWN_ASK: &str =
+    "no built-in rule covers it (the classifier is down, so rules decide alone)";
+
 /// One tool call's identity for the repeat-denial checks: its tool and its exact arguments.
 fn call_hash(name: &str, input: &Value) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -299,6 +308,11 @@ struct Shared {
     /// the loop force-stops. The jobs it stopped ride along for the ack and the resumed
     /// notice; `acked` keeps a second drain (and the work loop's deadline) from re-acking.
     draining: Mutex<Option<DrainState>>,
+    /// `Op::Deliver`s the router has passed to the work loop, and how many of the first of
+    /// them `Op::ClearInbox` voided: the work loop drops a voided one instead of running it.
+    /// Counting works because the router forwards them in the order the loop takes them.
+    inbox_sent: AtomicU64,
+    inbox_void: AtomicU64,
 }
 
 /// What a running [`Op::Drain`] needs, kept in `Shared::draining`.
@@ -492,12 +506,27 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             crate::background::Registry::new(move |e| j.emit(e))
         },
         draining: Default::default(),
+        inbox_sent: Default::default(),
+        inbox_void: Default::default(),
         journal,
         panes,
         irc: crate::irc::slot(),
     });
     shared.bg.set_wake(&work_tx);
+    // One engine per linked worktree (see `worktree`): taken before the session opens, so a
+    // refused engine leaves nothing behind. Subagents share their parent's engine's tree.
+    let worktree_lock = if opts.subagent || opts.store.is_none() {
+        None
+    } else {
+        let me = opts.resume.clone().unwrap_or_default();
+        crate::worktree::acquire(&opts.cwd, &me, Duration::from_secs(5))
+            .map_err(|e| ConfigError(format!("{e:#}")))?
+    };
     let mut agent = Agent::new(opts, provider, shared.clone())?;
+    if let Some(mut lock) = worktree_lock {
+        lock.set_owner(&agent.session_id);
+        agent.worktree_lock = Some(lock);
+    }
     // What's running, before anything slow (MCP servers, a local model loading, probing the
     // provider), so a client can name the model as soon as a conversation opens.
     agent.emit_status();
@@ -540,6 +569,16 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Op::Interrupt => {
                     router.cancel.lock().unwrap().cancel();
                     router.bg.stop_all();
+                }
+                Op::ClearInbox => {
+                    let sent = router.inbox_sent.load(Ordering::SeqCst);
+                    router.inbox_void.store(sent, Ordering::SeqCst);
+                }
+                op @ Op::Deliver { .. } => {
+                    router.inbox_sent.fetch_add(1, Ordering::SeqCst);
+                    if work_tx.send(op).is_err() {
+                        break;
+                    }
                 }
                 // An update is coming: set the flag the work loop checks between calls and
                 // after the one in flight. Nothing running: ack now, a no-op.
@@ -675,6 +714,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         agent.meter_busy(false);
         // An op taken off the queue while gathering delivered messages, handled next.
         let mut held: Option<Op> = None;
+        // `Op::Deliver`s taken off the queue so far, to tell the ones `ClearInbox` voided.
+        let mut inbox_taken: u64 = 0;
+        let voided = |taken: &mut u64| {
+            *taken += 1;
+            *taken <= shared.inbox_void.load(Ordering::SeqCst)
+        };
         loop {
             let op = if let Some(op) = held.take() { Some(op) } else { tokio::select! {
                 op = work_rx.recv() => op,
@@ -701,21 +746,33 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             // any op. Those already waiting when one comes up run with it, in order, as one
             // turn (the first as its input, the rest as `more`, as composer sends follow-ups).
             let mut delivered = Vec::new();
+            let mut dropped = 0;
             let op = match op {
                 Op::Deliver {
                     from,
                     from_name,
                     message,
                 } => {
-                    delivered.push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                    if voided(&mut inbox_taken) {
+                        dropped += 1;
+                    } else {
+                        delivered.push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                    }
                     while let Ok(next) = work_rx.try_recv() {
                         match next {
                             Op::Deliver {
                                 from,
                                 from_name,
                                 message,
-                            } => delivered
-                                .push(crate::tools::sessions::wrap(&from, &from_name, &message)),
+                            } => {
+                                if voided(&mut inbox_taken) {
+                                    dropped += 1;
+                                } else {
+                                    delivered.push(crate::tools::sessions::wrap(
+                                        &from, &from_name, &message,
+                                    ))
+                                }
+                            }
                             other => {
                                 held = Some(other);
                                 break;
@@ -726,6 +783,19 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 }
                 op => Some(op),
             };
+            if dropped > 0 {
+                agent.notice(
+                    Level::Info,
+                    format!(
+                        "dropped {dropped} queued session message{}: the inbox was cleared",
+                        if dropped == 1 { "" } else { "s" }
+                    ),
+                );
+            }
+            // Every message in the batch was voided: there's no turn to run.
+            if op.is_none() && delivered.is_empty() {
+                continue;
+            }
             // In the background, and not an op the client waits on: no `Idle` after it.
             if let Some(Op::Warm { draft }) = &op {
                 agent.warm(draft.as_deref());
@@ -810,6 +880,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         shared.panes.shutdown();
         agent.sync_log();
         agent.write_summary();
+        // The worktree is free before the client hears the engine is gone.
+        agent.worktree_lock.take();
         shared.journal.close();
     });
 
@@ -1110,9 +1182,28 @@ struct Agent {
     warming: Arc<Mutex<(bool, Option<Warming>)>>,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
-    /// The classifier already failed once this session and the user was told:
-    /// later failures fall back quietly instead of repeating the notice.
-    classifier_failed: bool,
+    /// Why the session moved to text tool calls at run time, for the degraded status.
+    text_why: Option<String>,
+    /// The model this session was started on or last set to on purpose (`Op::SetModel`):
+    /// running on another one (a resume that picked up a different default, a fallback) is
+    /// shown as degraded. Empty: unknown.
+    intended_model: String,
+    /// Why the engine itself moved off `intended_model` (the frog api fallback), if it did.
+    model_flip_why: Option<String>,
+    /// This engine's hold on the linked worktree it runs in (see `worktree`), for its life.
+    worktree_lock: Option<crate::worktree::Lock>,
+    /// `auto_classifier_fallback`, started the first time the classifier can't answer.
+    classifier_fallback: Option<crate::auto::Classifier>,
+    /// When (and why) the classifier and the fallback model last failed: inside
+    /// `CLASSIFIER_RETRY` it's skipped instead of costing every call a timeout.
+    classifier_down: Option<(Instant, String)>,
+    classifier_fallback_down: Option<(Instant, String)>,
+    /// While the classifier is down: what judges instead and why, one line for the
+    /// status (`None` while the classifier answers).
+    classifier_degraded: Option<String>,
+    /// The fallbacks the user was already told about: one notice per session for each,
+    /// never one per call.
+    classifier_told: HashSet<String>,
     /// Paths this session created (files it wrote that didn't exist, directories a
     /// command made), so an approval card can say "this session made it".
     created: HashSet<PathBuf>,
@@ -1158,6 +1249,7 @@ impl Agent {
         // engine must agree on the effective mode.
         let mut resumed_mode = None;
         let mut resumed_titled = false;
+        let mut resumed_model: Option<String> = None;
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
@@ -1188,6 +1280,18 @@ impl Agent {
                         _ => {}
                     }
                 }
+                // The model it ran on as far as anyone chose: its last switch, else the one
+                // it started on.
+                resumed_model = Some(
+                    l.events
+                        .iter()
+                        .rev()
+                        .find_map(|e| match &e.event {
+                            Event::ModelChanged { model } => Some(model.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| l.header.model.clone()),
+                );
                 shared.panes.seed_ids(used);
                 // A turn that started and never ended: the engine died or was killed mid-turn.
                 let unfinished = l.events.iter().rev().find_map(|e| match &e.event {
@@ -1210,6 +1314,7 @@ impl Agent {
             }
             (None, _) => (session::new_id(), Vec::new(), 0, 0, None, Vec::new(), None),
         };
+        let intended_model = resumed_model.unwrap_or_else(|| o.profile_name.clone());
         *shared.journal.header.lock().unwrap() = (o.cwd.clone(), o.profile_name.clone());
         shared.journal.start_session(session_id.clone(), seq, log);
         for id in stale_panes {
@@ -1321,8 +1426,16 @@ impl Agent {
             map_logged: false,
             edited: Vec::new(),
             titled: resumed_titled,
+            text_why: None,
+            intended_model,
+            model_flip_why: None,
+            worktree_lock: None,
             classifier: None,
-            classifier_failed: false,
+            classifier_fallback: None,
+            classifier_down: None,
+            classifier_fallback_down: None,
+            classifier_degraded: None,
+            classifier_told: HashSet::new(),
             created: HashSet::new(),
             prefix_allow: Vec::new(),
             last_note: None,
@@ -1484,7 +1597,54 @@ impl Agent {
             tokens_per_sec: self.tokens_per_sec(),
             todos: self.ctx.todos.clone(),
             vision: self.vision,
+            degraded: self.degraded(),
         }));
+    }
+
+    /// What this session runs degraded on now, each with why: text tool calls it didn't ask
+    /// for, a model other than the one it was started or set to, auto mode's classifier down.
+    fn degraded(&self) -> Vec<crate::protocol::Degraded> {
+        use crate::protocol::{Degraded, DegradedKind};
+        let mut out = Vec::new();
+        if self.tool_mode == ToolMode::Text && self.profile.tool_mode != ToolMode::Text {
+            out.push(Degraded {
+                kind: DegradedKind::TextTools,
+                what: "text tool calls".into(),
+                why: self.text_mode_why(),
+            });
+        }
+        let norm = |m: &str| crate::providers::normalize(m);
+        if !self.intended_model.is_empty() && norm(&self.intended_model) != norm(&self.profile_name) {
+            out.push(Degraded {
+                kind: DegradedKind::Model,
+                what: format!("on {}", self.profile_name),
+                why: match &self.model_flip_why {
+                    Some(why) => format!("this session is on {}; {why}", self.intended_model),
+                    None => format!(
+                        "this session was on {}; it came back on another model nobody picked (a resume without -m takes the default)",
+                        self.intended_model
+                    ),
+                },
+            });
+        }
+        if self.mode == Mode::Auto
+            && let Some(line) = &self.classifier_degraded
+        {
+            out.push(Degraded {
+                kind: DegradedKind::Classifier,
+                what: "auto mode on fallback".into(),
+                why: line.clone(),
+            });
+        }
+        out
+    }
+
+    /// Why this session runs on text tool calls: its own two failed native/JSON replies this
+    /// session, else the capability probe that put `auto` there.
+    fn text_mode_why(&self) -> String {
+        self.text_why.clone().unwrap_or_else(|| {
+            "its capability probe found native tool calls not working".into()
+        })
     }
 
     fn count_call(&mut self, u: Usage, streamed: &Streamed, compact: bool) {
@@ -1697,7 +1857,12 @@ impl Agent {
                 self.mode_logged = Some(mode);
                 self.emit(Event::ModeChanged { mode });
             }
-            Op::SetModel { spec } => self.set_model(&spec).await?,
+            Op::SetModel { spec } => {
+                self.set_model(&spec).await?;
+                // Switched on purpose: this is the model the session is meant to be on.
+                self.intended_model = self.profile_name.clone();
+                self.model_flip_why = None;
+            }
             Op::Compact { focus } => self.compact(focus.as_deref()).await?,
             Op::Subscribe { after } => {
                 let replay = match &self.store {
@@ -1742,6 +1907,9 @@ impl Agent {
                 self.shared
                     .journal
                     .start_session(self.session_id.clone(), 0, None);
+                if let Some(lock) = self.worktree_lock.as_mut() {
+                    lock.set_owner(&self.session_id);
+                }
                 self.turn = 0;
                 self.notes = self.memory.as_ref().map(|m| m.load()).unwrap_or_default();
                 self.refresh_repo_map(&[]);
@@ -1788,6 +1956,7 @@ impl Agent {
             }
             // Handled by the router, never queued.
             Op::Interrupt
+            | Op::ClearInbox
             | Op::Permission { .. }
             | Op::Answer { .. }
             | Op::SessionReply { .. }
@@ -2180,6 +2349,7 @@ impl Agent {
                         format!("frog api unavailable ({e:#}) — continuing on {local}"),
                     );
                     self.set_model(&local).await?;
+                    self.model_flip_why = Some("frog api was unavailable, so it fell back".into());
                     continue;
                 }
             };
@@ -2632,6 +2802,9 @@ impl Agent {
         let from = self.tool_mode;
         self.tool_mode = ToolMode::Text;
         self.mode_failures = 0;
+        self.text_why = Some(
+            format!("{from:?} tool calls failed twice this session").to_lowercase(),
+        );
         if let Some(c) = self.caps.as_mut() {
             match from {
                 ToolMode::Native => c.native_tools = false,
@@ -3905,6 +4078,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             .then(|| harness::cached(&self.profile))
             .flatten();
         self.mode_failures = 0;
+        self.text_why = None;
         self.model_ready = false;
         self.apply_harness();
         self.resolve_window().await;
@@ -4524,7 +4698,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     return Decision::Allow;
                 }
                 Err(why) => {
-                    let layer = if why.contains("classifier is unavailable") {
+                    let layer = if why == CLASSIFIER_DOWN_ASK {
                         "fallback"
                     } else {
                         "classifier"
@@ -4834,8 +5008,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         decision
     }
 
-    /// Auto mode: hard rules, then the classifier. `Ok` runs the call (and records why);
-    /// `Err` says why the user should decide.
+    /// Auto mode: hard rules, then the classifier, then `auto_classifier_fallback`, then the
+    /// built-in rules alone. `Ok` runs the call (and records why); `Err` says why the user
+    /// should decide.
     async fn auto_judge(
         &mut self,
         item: &str,
@@ -4846,65 +5021,169 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         if let Some(why) = crate::auto::hard_rule(name, input, &self.ctx.root) {
             return Err(format!("it {why}"));
         }
-        if self.classifier.is_none() {
-            match crate::auto::Classifier::new(&self.cfg, &self.ctx.root) {
-                Ok(c) => self.classifier = Some(c),
-                Err(e) => {
-                    self.classifier_unavailable(format!("couldn't start ({e:#})"));
-                }
-            }
-        }
-        let model = self
-            .classifier
-            .as_ref()
-            .map(|c| c.profile_name.clone())
-            .unwrap_or_default();
-        self.emit(Event::Progress {
-            label: format!("checking with auto mode ({model})"),
-            completed: None,
-            total: None,
-        });
         let preview = tools::fs::preview(name, input, &self.ctx);
         let action = crate::auto::describe(name, input, preview.as_ref(), sandbox);
-        let inputs = self.inputs.clone();
-        let Some(classifier) = self.classifier.as_mut() else {
-            return Err("the classifier is unavailable".into());
+        let verdict = match self.classifier_verdict(false, &action).await {
+            Ok(v) => {
+                self.classifier_back();
+                Some(v)
+            }
+            Err(down) => match self.classifier_verdict(true, &action).await {
+                Ok(v) => {
+                    let model = self
+                        .classifier_fallback
+                        .as_ref()
+                        .map(|c| c.profile_name.clone())
+                        .unwrap_or_default();
+                    self.classifier_degraded(&format!("the fallback classifier ({model})"), &down);
+                    Some(v)
+                }
+                Err(_) => {
+                    self.classifier_degraded("frog's built-in rules", &down);
+                    None
+                }
+            },
         };
-        match classifier.judge(&inputs, &action).await {
-            crate::auto::Verdict::Allow(reason) => {
+        match verdict {
+            Some(crate::auto::Verdict::Allow(reason)) => {
                 self.emit(Event::AutoApproved {
                     item: item.to_string(),
                     reason,
                 });
                 Ok(())
             }
-            crate::auto::Verdict::Ask(reason) => Err(format!("the classifier said: {reason}")),
-            // The classifier is down, not cautious: read-only commands still run
-            // (the fast path needs no model), everything else asks.
-            crate::auto::Verdict::Failed(why) => {
-                self.classifier_unavailable(why);
-                if name == "Bash" && crate::shell::read_only(input["command"].as_str().unwrap_or(""))
-                {
+            Some(crate::auto::Verdict::Ask(reason)) => Err(format!("the classifier said: {reason}")),
+            Some(crate::auto::Verdict::Failed(why)) => Err(why),
+            // Nothing could judge: the built-in rules decide alone. A down classifier never
+            // cards a call by itself; only a call no rule can prove harmless asks.
+            None => match crate::auto::rules_fallback(name, input) {
+                Some(rule) => {
                     self.emit(Event::AutoApproved {
                         item: item.to_string(),
-                        reason: "read-only command; the classifier is down".into(),
+                        reason: format!("{rule}; the classifier is down, rules decided"),
                     });
                     Ok(())
-                } else {
-                    Err("the classifier is unavailable".into())
                 }
+                None => Err(CLASSIFIER_DOWN_ASK.into()),
+            },
+        }
+    }
+
+    /// One classifier's verdict (`fallback`: `auto_classifier_fallback`'s), started on first
+    /// use. `Err` says why it couldn't answer: it isn't configured, wouldn't start, failed, or
+    /// failed less than `CLASSIFIER_RETRY` ago (skipped, so a stopped server costs one
+    /// timeout, not one per call). Never `Ok(Verdict::Failed)`.
+    async fn classifier_verdict(
+        &mut self,
+        fallback: bool,
+        action: &str,
+    ) -> std::result::Result<crate::auto::Verdict, String> {
+        let down = if fallback {
+            &self.classifier_fallback_down
+        } else {
+            &self.classifier_down
+        };
+        if let Some((at, why)) = down
+            && at.elapsed() < CLASSIFIER_RETRY
+        {
+            return Err(why.clone());
+        }
+        let started = if fallback {
+            self.classifier_fallback.is_some()
+        } else {
+            self.classifier.is_some()
+        };
+        if !started {
+            let built = if fallback {
+                match crate::auto::Classifier::fallback(&self.cfg, &self.ctx.root) {
+                    Some(b) => b,
+                    None => return Err("no fallback classifier is configured".into()),
+                }
+            } else {
+                crate::auto::Classifier::new(&self.cfg, &self.ctx.root)
+            };
+            match built {
+                Ok(c) if fallback => self.classifier_fallback = Some(c),
+                Ok(c) => self.classifier = Some(c),
+                Err(e) => return Err(self.classifier_failed(fallback, format!("it couldn't start ({e:#})"))),
+            }
+        }
+        let slot = if fallback {
+            &self.classifier_fallback
+        } else {
+            &self.classifier
+        };
+        let model = slot.as_ref().map(|c| c.profile_name.clone()).unwrap_or_default();
+        self.emit(Event::Progress {
+            label: format!("checking with auto mode ({model})"),
+            completed: None,
+            total: None,
+        });
+        let inputs = self.inputs.clone();
+        let slot = if fallback {
+            &mut self.classifier_fallback
+        } else {
+            &mut self.classifier
+        };
+        let Some(classifier) = slot.as_mut() else {
+            return Err("it isn't running".into());
+        };
+        match classifier.judge(&inputs, action).await {
+            crate::auto::Verdict::Failed(why) => Err(self.classifier_failed(fallback, why)),
+            v => {
+                if fallback {
+                    self.classifier_fallback_down = None;
+                }
+                Ok(v)
             }
         }
     }
 
-    /// The auto-mode classifier failed: note it once per session.
-    fn classifier_unavailable(&mut self, why: String) {
-        if !self.classifier_failed {
-            self.classifier_failed = true;
+    /// A classifier couldn't answer: skip it until `CLASSIFIER_RETRY` passes. Returns `why`.
+    fn classifier_failed(&mut self, fallback: bool, why: String) -> String {
+        let down = Some((Instant::now(), why.clone()));
+        if fallback {
+            self.classifier_fallback_down = down;
+        } else {
+            self.classifier_down = down;
+        }
+        why
+    }
+
+    /// The classifier is down and `using` judges instead: the status carries one line that
+    /// says so while it lasts, and a notice says it once per session for each fallback,
+    /// never once per call.
+    fn classifier_degraded(&mut self, using: &str, why: &str) {
+        let primary = self
+            .classifier
+            .as_ref()
+            .map(|c| c.profile_name.clone())
+            .unwrap_or_else(|| crate::auto::Classifier::primary_spec(&self.cfg));
+        let why = why.trim_start_matches("it ").trim_end_matches('.');
+        let line = format!("classifier {primary} is down ({why}); {using} decide");
+        let changed = self.classifier_degraded.as_deref() != Some(line.as_str());
+        self.classifier_degraded = Some(line);
+        if self.classifier_told.insert(using.to_string()) {
+            let rest = if using.starts_with("frog's") {
+                "reads and the session's own work still run without asking; only calls no rule covers ask"
+            } else {
+                "it judges each call until the classifier is back"
+            };
             self.notice(
                 Level::Warn,
-                format!("auto mode's classifier failed ({why}); read-only commands still run without asking, the rest ask"),
+                format!("auto mode's classifier ({primary}) is down ({why}); using {using}: {rest}."),
             );
+        }
+        if changed {
+            self.emit_status();
+        }
+    }
+
+    /// The classifier answered: it's back, and the status drops the degraded line.
+    fn classifier_back(&mut self) {
+        self.classifier_down = None;
+        if self.classifier_degraded.take().is_some() {
+            self.emit_status();
         }
     }
 
@@ -6493,6 +6772,57 @@ tool, strip prefixes like RULES:, and add tests.",
         );
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Item 2a (org reliability): a second engine starting in a linked worktree another
+    /// session's engine runs in refuses, naming that session; the main checkout and the
+    /// worktree after the first engine exits are open.
+    #[tokio::test]
+    async fn a_second_engine_in_the_same_worktree_refuses_naming_the_owner() {
+        let (repo, wt) = crate::worktree::tests::repo_with_worktree("engine");
+        let opts = |cwd: PathBuf| {
+            let mut profile = Profile::new(ProviderKind::Ollama, "test");
+            profile.tool_mode = ToolMode::Native;
+            Options {
+                cfg: Config {
+                    hermetic: true,
+                    ..Config::default()
+                },
+                profile_name: "test".into(),
+                profile,
+                cwd,
+                mode: Mode::Default,
+                can_ask: true,
+                resume: None,
+                store: Some(tmp_store()),
+                sandbox: false,
+                rich: false,
+                subagent: false,
+                chat: false,
+            }
+        };
+        let script = || Provider::Scripted(scripted::Client::new(vec![]));
+        let mut first = start(opts(wt.clone()), script()).unwrap();
+        let owner = first.events.recv().await.unwrap().session;
+        let err = match start(opts(wt.clone()), script()) {
+            Ok(_) => panic!("a second engine started in the same worktree"),
+            Err(e) => format!("{e:#}"),
+        };
+        assert!(err.contains(&format!("session {owner}")), "{err}");
+        assert!(err.contains(&wt.display().to_string()), "{err}");
+        // A subagent shares its parent's tree; the main checkout is never locked.
+        let mut sub = opts(wt.clone());
+        sub.subagent = true;
+        sub.store = None;
+        shutdown(start(sub, script()).unwrap()).await;
+        let a = start(opts(repo.clone()), script()).unwrap();
+        let b = start(opts(repo.clone()), script()).unwrap();
+        shutdown(a).await;
+        shutdown(b).await;
+        // Once the owner exits, the worktree is free.
+        shutdown(first).await;
+        shutdown(start(opts(wt.clone()), script()).unwrap()).await;
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 
     async fn shutdown(mut h: Handle) {
@@ -8366,6 +8696,88 @@ for line in sys.stdin:
                 break;
             }
         }
+    }
+
+    /// Item 2b (org reliability): a stop that clears the inbox leaves nothing queued to
+    /// restart the session — the messages queued behind the stopped turn never run — while
+    /// a message sent after the clear queues and runs as usual.
+    #[tokio::test]
+    async fn clear_inbox_drops_queued_messages_so_a_stop_stays_stopped() {
+        let script = vec![
+            reply(vec![list_sessions_call()], Stop::ToolUse),
+            reply(vec![text("got the later one")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "work".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let deliver = |h: &Handle, message: &str| {
+            h.ops
+                .send(Op::Deliver {
+                    from: "s2".into(),
+                    from_name: "Manager".into(),
+                    message: message.into(),
+                })
+                .unwrap();
+        };
+        let mut evs = Vec::new();
+        let mut cleared = false;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::SessionRequest { .. } = &env.event {
+                // Mid-turn: two messages queue behind it, then the stop clears them.
+                deliver(&h, "queued-one");
+                deliver(&h, "queued-two");
+                h.ops.send(Op::Interrupt).unwrap();
+                h.ops.send(Op::ClearInbox).unwrap();
+                cleared = true;
+            }
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle && cleared {
+                break;
+            }
+        }
+        // Nothing started after the stopped turn.
+        let started: Vec<String> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::TurnStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(started, ["work"], "a voided message started a turn");
+        // The loop takes the voided messages off the queue right after the stopped turn, says
+        // so, and starts nothing.
+        let notice = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match h.events.recv().await.unwrap().event {
+                    Event::Notice { message, .. } if message.contains("queued session message") => {
+                        break message;
+                    }
+                    Event::TurnStarted { input, .. } => panic!("a voided message ran: {input}"),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("no notice about the dropped messages");
+        assert!(notice.contains("dropped 2 queued session messages"), "{notice}");
+        // A message sent after the clear runs.
+        deliver(&h, "after-clear");
+        let input = loop {
+            if let Event::TurnStarted { input, .. } = h.events.recv().await.unwrap().event {
+                break input;
+            }
+        };
+        assert!(input.contains("after-clear") && !input.contains("queued-"), "{input}");
+        shutdown(h).await;
     }
 
     #[tokio::test]
@@ -10930,7 +11342,7 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
         // …and the failure was logged once, not per call.
         let notices = evs
             .iter()
-            .filter(|e| matches!(&e.event, Event::Notice { message, .. } if message.contains("classifier failed")))
+            .filter(|e| matches!(&e.event, Event::Notice { message, .. } if message.contains("classifier") && message.contains("is down")))
             .count();
         assert_eq!(notices, 1, "one classifier-failure notice");
     }
@@ -10944,6 +11356,297 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
             }],
             Stop::ToolUse,
         )
+    }
+
+    /// A stand-in classifier server on localhost: every chat completion gets `status`, and a
+    /// 200 streams `verdict` (a JSON answer) as the model's text. Counts the requests.
+    async fn fake_classifier(status: u16, verdict: &str) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let chunk = json!({"choices": [{"index": 0, "delta": {"content": verdict}, "finish_reason": null}]});
+        let done = json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]});
+        let body = format!("data: {chunk}\n\ndata: {done}\n\ndata: [DONE]\n\n");
+        let count = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let body = body.clone();
+                let count = count.clone();
+                tokio::spawn(async move {
+                    // Read the whole request (headers, then Content-Length of body).
+                    let mut received = Vec::new();
+                    loop {
+                        let mut buf = [0u8; 8192];
+                        let Ok(n) = socket.read(&mut buf).await else { return };
+                        if n == 0 {
+                            return;
+                        }
+                        received.extend_from_slice(&buf[..n]);
+                        if let Some(end) = received.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let headers = String::from_utf8_lossy(&received[..end]).to_ascii_lowercase();
+                            let len: usize = headers
+                                .lines()
+                                .find_map(|l| l.strip_prefix("content-length: ").map(str::to_owned))
+                                .and_then(|l| l.trim().parse().ok())
+                                .unwrap_or(0);
+                            if received.len() >= end + 4 + len {
+                                break;
+                            }
+                        }
+                    }
+                    count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let response = if status == 200 {
+                        format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                    } else {
+                        format!("HTTP/1.1 {status} Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    };
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        (base, hits)
+    }
+
+    /// A port nothing listens on: the classifier there is unreachable (connection refused).
+    fn unreachable_base() -> String {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        drop(l);
+        format!("http://{addr}/v1")
+    }
+
+    /// An auto-mode config whose classifier is the `classifier` profile at `base`, with an
+    /// optional `fallback` profile at its own base.
+    fn classifier_cfg(base: &str, fallback: Option<&str>) -> Config {
+        let mut cfg = Config {
+            hermetic: true,
+            sandbox_shell: false,
+            ..Config::default()
+        };
+        let profile = |base: &str| {
+            let mut p = Profile::new(ProviderKind::Openai, "judge");
+            p.base_url = Some(base.into());
+            p
+        };
+        cfg.models.insert("classifier".into(), profile(base));
+        cfg.auto_classifier = Some("classifier".into());
+        if let Some(fb) = fallback {
+            cfg.models.insert("backup".into(), profile(fb));
+            cfg.auto_classifier_fallback = Some("backup".into());
+        }
+        cfg
+    }
+
+    /// Item 1 (org reliability): with the classifier unreachable, a read-only call the
+    /// classifier would have judged runs on the built-in rules with no card, a delete of
+    /// scratch the session didn't make still cards, and the outage is one notice, not one
+    /// per call.
+    #[tokio::test]
+    async fn an_unreachable_classifier_falls_back_to_the_rules_not_to_cards() {
+        let script = vec![
+            // A capture of a public page: only the classifier judged it before. The viewport
+            // is invalid so the tool fails at once, after the permission check.
+            reply(
+                vec![Block::ToolUse {
+                    id: "shot".into(),
+                    name: "Screenshot".into(),
+                    input: json!({"url": "https://example.com/docs", "width": 10}),
+                }],
+                Stop::ToolUse,
+            ),
+            // Deletes a file the session didn't make, outside the project: no rule covers it.
+            bash_call("rm", "rm /private/tmp/frog-classifier-down-not-mine.txt"),
+            // Another call for the classifier: still one notice.
+            reply(
+                vec![Block::ToolUse {
+                    id: "shot2".into(),
+                    name: "Screenshot".into(),
+                    input: json!({"url": "https://example.org/", "width": 10}),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = classifier_cfg(&unreachable_base(), None);
+        let mut h = engine_perm_cfg(script, Mode::Auto, cfg);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let carded = |item: &str| {
+            evs.iter().any(|e| matches!(&e.event, Event::PermissionRequest { item: i, .. } if i == item))
+        };
+        assert!(!carded("shot") && !carded("shot2"), "a read-only call carded with the classifier down");
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::AutoApproved { item, reason } if item == "shot" && reason.contains("rules decided")
+        )));
+        assert!(carded("rm"), "a delete outside its own scratch must still card");
+        // The card says which rule gap made it ask, not just that the classifier is down.
+        let reason = evs.iter().find_map(|e| match &e.event {
+            Event::PermissionRequest { item, reason, .. } if item == "rm" => reason.clone(),
+            _ => None,
+        });
+        assert!(reason.unwrap_or_default().contains("no built-in rule covers it"));
+        let notices: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { message, .. } if message.contains("classifier") => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("built-in rules"), "{}", notices[0]);
+    }
+
+    /// Item 1: a configured `auto_classifier_fallback` judges when the classifier answers
+    /// 5xx; the down classifier is skipped (not retried per call) while it stays down.
+    #[tokio::test]
+    async fn a_configured_fallback_classifier_judges_when_the_classifier_is_down() {
+        let (down, down_hits) = fake_classifier(503, "").await;
+        let (backup, backup_hits) =
+            fake_classifier(200, r#"{"reason":"part of the task","decision":"allow"}"#).await;
+        let script = vec![
+            // Not a routine build step: only a classifier can pass it.
+            bash_call("w1", "python3 -c 'print(1)' > made-up-file"),
+            bash_call("w2", "python3 -c 'print(2)' > made-up-file"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = classifier_cfg(&down, Some(&backup));
+        let dir = tmp_store();
+        let mut h = engine_perm_at(script, Mode::Auto, cfg, dir);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        assert!(
+            !evs.iter().any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "the fallback approved both; nothing carded"
+        );
+        let approved = evs
+            .iter()
+            .filter(|e| matches!(&e.event, Event::AutoApproved { reason, .. } if reason == "part of the task"))
+            .count();
+        assert_eq!(approved, 2);
+        // One attempt and its one transport retry; the second call skipped it.
+        assert_eq!(down_hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(backup_hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let notices: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { message, .. } if message.contains("classifier") => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("fallback classifier (backup)"), "{}", notices[0]);
+    }
+
+    /// The `degraded` list of the last `Status` in `evs`.
+    fn last_degraded(evs: &[Envelope]) -> Vec<crate::protocol::Degraded> {
+        evs.iter()
+            .rev()
+            .find_map(|e| match &e.event {
+                Event::Status(s) => Some(s.degraded.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Item 3a (org reliability): a session that fell back to text tool calls says so in its
+    /// status, with why, and only then.
+    #[tokio::test]
+    async fn text_tool_calls_show_as_degraded_with_why() {
+        let text_call =
+            r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+        let script = vec![
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text("none found")], Stop::End),
+        ];
+        let mut h = engine_mode(script, ToolMode::Auto);
+        let boot = run(&mut h, "find .nothing files").await;
+        let d = last_degraded(&boot);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, crate::protocol::DegradedKind::TextTools);
+        assert_eq!(d[0].what, "text tool calls");
+        assert!(d[0].why.contains("failed twice"), "{}", d[0].why);
+        shutdown(h).await;
+        // A profile that asks for text calls isn't degraded.
+        let mut h = engine_mode(vec![reply(vec![text("hi")], Stop::End)], ToolMode::Text);
+        assert!(last_degraded(&run(&mut h, "hi").await).is_empty());
+        shutdown(h).await;
+    }
+
+    /// Item 3b: a session resumed on another model than the one it ran on (a resume with no
+    /// `-m` takes the default) shows the flip; switching on purpose clears it.
+    #[tokio::test]
+    async fn a_silent_model_flip_shows_as_degraded_until_switched_on_purpose() {
+        let dir = tmp_store();
+        let mut h = engine_at(vec![reply(vec![text("one")], Stop::End)], false, Some(dir.clone()), None);
+        let first = run(&mut h, "first").await;
+        let sid = first[0].session.clone();
+        assert!(last_degraded(&first).is_empty(), "no flip on its own model");
+        shutdown(h).await;
+        // Resumed on another model.
+        let mut profile = Profile::new(ProviderKind::Ollama, "glm-flash");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "ollama/glm-flash".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: false,
+            resume: Some(sid),
+            store: Some(dir),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(
+            opts,
+            Provider::Scripted(scripted::Client::new(vec![reply(vec![text("two")], Stop::End)])),
+        )
+        .unwrap();
+        let d = last_degraded(&run(&mut h, "carry on").await);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, crate::protocol::DegradedKind::Model);
+        assert_eq!(d[0].what, "on ollama/glm-flash");
+        assert!(d[0].why.contains("was on test"), "{}", d[0].why);
+        // Switched on purpose: it's the model the session is meant to be on now.
+        h.ops.send(Op::SetModel { spec: "ollama/other".into() }).unwrap();
+        let mut last = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let idle = matches!(env.event, Event::Idle);
+            last.push(env);
+            if idle {
+                break;
+            }
+        }
+        assert!(last_degraded(&last).is_empty(), "{:?}", last_degraded(&last));
+        shutdown(h).await;
+    }
+
+    /// Item 3c: while auto mode's classifier is down, the status says what decides instead.
+    #[tokio::test]
+    async fn a_down_classifier_shows_as_degraded() {
+        let script = vec![
+            bash_call("w", "python3 -c 'print(1)' > made-up-file"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = classifier_cfg(&unreachable_base(), None);
+        let mut h = engine_perm_cfg(script, Mode::Auto, cfg);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let d = last_degraded(&evs);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, crate::protocol::DegradedKind::Classifier);
+        assert!(d[0].why.contains("classifier classifier is down"), "{}", d[0].why);
+        assert!(d[0].why.contains("built-in rules decide"), "{}", d[0].why);
     }
 
     #[tokio::test]

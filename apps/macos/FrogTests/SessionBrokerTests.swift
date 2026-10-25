@@ -651,6 +651,33 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertTrue(toolsOnly.contains("TOOL Bash"))
         XCTAssertFalse(toolsOnly.contains("ASSISTANT:"))
     }
+    /// Item 3 (org reliability): a degraded engine status reaches SessionStatus (and the
+    /// header badge's words): what's degraded and why, each; nothing when it's healthy.
+    func testDegradedStatusReachesSessionStatusAndTheBadge() throws {
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-degraded"))
+        c.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"status","model":"ollama/glm-flash","mode":"auto","cwd":"/tmp","messages":0,"context_tokens":null,"context_window":1,"tool_mode":"text","tier":"weak","tokens_per_sec":null,"todos":[],"degraded":[{"kind":"text_tools","what":"text tool calls","why":"native tool calls failed twice this session"},{"kind":"model","what":"on ollama/glm-flash","why":"this session was on anthropic/claude-opus-5-5; it came back on another model nobody picked"}]}"#.utf8)))
+        let degraded = c.status?.degraded ?? []
+        XCTAssertEqual(degraded.map(\.kind), ["text_tools", "model"])
+        XCTAssertEqual(Degraded.badge(degraded), "text tool calls +1")
+        XCTAssertTrue(Degraded.detail(degraded).contains("on ollama/glm-flash: this session was on anthropic/claude-opus-5-5"))
+
+        var info = SessionBroker.StatusInfo()
+        info.degraded = degraded
+        guard case .object(let o) = info.json, case .array(let rows)? = o["degraded"] else {
+            return XCTFail("no degraded in SessionStatus")
+        }
+        XCTAssertEqual(rows.count, 2)
+        guard case .object(let first) = rows[0] else { return XCTFail() }
+        XCTAssertEqual(first["what"], .string("text tool calls"))
+        XCTAssertEqual(first["why"], .string("native tool calls failed twice this session"))
+
+        // Healthy (or an older engine with no field): no badge, no key.
+        XCTAssertNil(Degraded.badge([]))
+        guard case .object(let healthy) = SessionBroker.StatusInfo().json else { return XCTFail() }
+        XCTAssertNil(healthy["degraded"])
+    }
+
     func testStatusInfoJsonCarriesTheFields() throws {
         var info = SessionBroker.StatusInfo()
         info.engineAlive = true
@@ -708,6 +735,54 @@ final class SessionBrokerTests: XCTestCase {
         // The same name again gets its own.
         let (_, second, _) = try SessionBroker.makeWorktree(from: repo, name: "Fix the Parser!")
         XCTAssertEqual(second, "frog/fix-the-parser-2")
+    }
+
+    /// Item 2c (org reliability): StartSession without worktree:true refuses the user's main
+    /// checkout (the repo that owns .frog/worktrees, from anywhere in it) unless forced,
+    /// reuses an existing free worktree as-is, and refuses one another engine holds,
+    /// naming the session.
+    func testWorkerSessionsStayOutOfTheMainCheckout() throws {
+        let repo = FileManager.default.temporaryDirectory.appending(path: "frog-broker-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo.appending(path: "src"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try SessionBroker.git(["init", "-q", "-b", "main"], in: repo)
+        try "hi\n".write(to: repo.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+        try SessionBroker.git(["add", "."], in: repo)
+        try SessionBroker.git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], in: repo)
+
+        // A repo never used for worker worktrees is just a folder.
+        XCTAssertEqual(SessionBroker.checkout(of: repo), .plain)
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(repo, allowMainCheckout: false))
+
+        let (wt, _, _) = try SessionBroker.makeWorktree(from: repo, name: "worker")
+        // Now it owns .frog/worktrees: the root and any folder in it are refused…
+        for folder in [repo, repo.appending(path: "src")] {
+            XCTAssertThrowsError(try SessionBroker.checkWorkerFolder(folder, allowMainCheckout: false)) { e in
+                let m = (e as? SessionBroker.BrokerError)?.message ?? "\(e)"
+                XCTAssertTrue(m.contains("main checkout"), m)
+                XCTAssertTrue(m.contains("worktree:true"), m)
+                XCTAssertTrue(m.contains(".frog/worktrees/worker"), "suggests the worktree to reuse: \(m)")
+            }
+        }
+        // …unless explicitly forced.
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(repo, allowMainCheckout: true))
+
+        // An existing worktree is reused as-is.
+        guard case .worktree(_, let gitDir) = SessionBroker.checkout(of: wt) else { return XCTFail("not a worktree") }
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(wt, allowMainCheckout: false))
+
+        // One another engine holds (its lock, as the engine writes it) is refused by name.
+        let lock = gitDir.appending(path: "frog-engine.lock")
+        try "eng-0002 4242\n".write(to: lock, atomically: true, encoding: .utf8)
+        let fd = open(lock.path, O_RDONLY)
+        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+        XCTAssertThrowsError(try SessionBroker.checkWorkerFolder(wt, allowMainCheckout: false)) { e in
+            let m = (e as? SessionBroker.BrokerError)?.message ?? "\(e)"
+            XCTAssertTrue(m.contains("session eng-0002"), m)
+        }
+        // Its engine gone (the flock with it), the worktree is free again.
+        close(fd)
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(wt, allowMainCheckout: false))
     }
 
     /// A worktree bases on the repo's remote default branch (origin/HEAD → origin/main), not
@@ -874,6 +949,68 @@ final class SessionBrokerTests: XCTestCase {
 
         // Stopping yourself is refused.
         b.handle(SessionRequest(id: "r3", item: "t3", tool: "StopSession", input: .object(["id": .string(chief.id)])), from: chiefConv)
+    }
+
+    /// Item 2b (org reliability): StopSession with `clear_queue` leaves zero queued messages
+    /// (the engine's inbox, the broker's count and its re-send list), so nothing queued
+    /// restarts the stopped session. Without the flag the queue stays, as before.
+    @MainActor
+    func testStopSessionWithClearQueueLeavesNothingQueued() throws {
+        let b = broker([chief, eng, ops])
+        let chiefConv = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-chief"))
+        let busyTurn = { (id: String) in
+            try JSONDecoder.frog.decode(Envelope.self, from: Data(
+                #"{"seq":1,"session":"\#(id)","created":1,"event":"turn_started","turn":1,"input":"long task"}"#.utf8))
+        }
+        var targets: [String: Conversation] = [:]
+        for id in [eng.id, ops.id] {
+            let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-\(id)"))
+            targets[id] = target
+            target.ingest(try busyTurn(id))
+            b.track(target, as: id)
+            for m in ["one", "two"] {
+                _ = try b.send(from: chief.id, name: chief.name, to: id, message: m, notifyWhenIdle: false).get()
+                // What the real `reach` does: the engine gets it, behind the running turn.
+                target.deliver(from: chief.id, name: chief.name, message: m)
+            }
+            XCTAssertEqual(b.pendingInbound(id), 2)
+            XCTAssertEqual(target.pendingDeliveries, 2)
+        }
+        let target = targets[eng.id]!
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "StopSession",
+                                input: .object(["id": .string(eng.id), "clear_queue": .bool(true)])), from: chiefConv)
+        XCTAssertTrue(target.userStopped)
+        XCTAssertEqual(b.pendingInbound(eng.id), 0, "nothing queued after a clearing stop")
+        XCTAssertEqual(target.pendingDeliveries, 0, "the engine's inbox was cleared")
+
+        // A plain stop keeps the queue: the next message runs, as documented.
+        let other = targets[ops.id]!
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "StopSession",
+                                input: .object(["id": .string(ops.id)])), from: chiefConv)
+        XCTAssertTrue(other.userStopped)
+        XCTAssertEqual(b.pendingInbound(ops.id), 2)
+        XCTAssertEqual(other.pendingDeliveries, 2)
+    }
+
+    /// Item 2b: archiving cancels what's queued for the session — inbox, re-send list and a
+    /// first prompt waiting to be replayed — so nothing starts an archived session again.
+    @MainActor
+    func testArchiveSessionCancelsItsQueuedMessages() throws {
+        let b = broker([chief, eng])
+        var archived: [String: Bool] = [:]
+        b.archiver = { archived[$0] = $1 }
+        let chiefConv = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-chief"))
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-archive"))
+        b.track(target, as: eng.id)
+        b.recordBirth(eng.id, prompt: "the first prompt")
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "queued", notifyWhenIdle: false).get()
+        target.deliver(from: chief.id, name: chief.name, message: "queued")
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "ArchiveSession",
+                                input: .object(["id": .string(eng.id)])), from: chiefConv)
+        XCTAssertEqual(archived[eng.id], true)
+        XCTAssertEqual(b.pendingInbound(eng.id), 0)
+        XCTAssertEqual(target.pendingDeliveries, 0)
+        XCTAssertNil(b.births[eng.id], "an archived session's first prompt is never replayed")
     }
 
     /// ListApprovals collects the pending permission cards across sessions (read-only,

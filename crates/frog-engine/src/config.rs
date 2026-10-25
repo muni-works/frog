@@ -253,6 +253,10 @@ pub struct Config {
     /// `cloud/qwen3-8b`, then Apple's on-device model; with neither usable, it asks.
     #[serde(default)]
     pub auto_classifier: Option<String>,
+    /// A second classifier model, tried when `auto_classifier` can't answer (unreachable,
+    /// timed out, an HTTP error). With neither answering, frog's built-in rules decide alone.
+    #[serde(default)]
+    pub auto_classifier_fallback: Option<String>,
     /// Seconds a permission prompt waits for an answer before frog takes the safe path
     /// (denies the call, tells the agent, and carries on). 0 waits forever.
     #[serde(default = "default_approval_timeout")]

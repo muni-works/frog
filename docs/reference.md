@@ -18,6 +18,7 @@ Each session is an append-only JSONL log in `~/.local/share/frog/sessions/<id>.j
 - **Durability:** records are appended as they happen, the file is fsynced at the end of each turn, and a half-written last line from a crash is ignored.
 - **Crash recovery:** if a session died in the middle of a turn, resuming it gives any tool calls that never finished an "interrupted" result.
 - **One writer at a time:** `flock` stops two frog processes from writing the same session.
+- **Degraded, visibly:** the engine's `status` carries `degraded`, a list of what runs degraded and why: text tool calls the profile didn't ask for, a model other than the one the session was started or set to (a resume without `-m` takes the default), auto mode's classifier down. The app shows it as a small badge in the session header, and `SessionStatus` reports it.
 
 The engine crate has no terminal dependencies, so the compiler enforces this boundary.
 
@@ -140,7 +141,7 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
 - **Edits:** in-project edits run without asking, since they're checkpointed and can be undone. Sandboxed commands already run without asking.
 - **Always asks:** hard rules, no model involved: `sudo`, pushes, `reset --hard`/`clean -f`/history rewrites, `curl | sh`, `rm -rf` outside the project, publishing, system settings, killing processes, and writes outside the project.
 - **The classifier:** a small local model (Apple's on-device model when available, otherwise the session's model; set `auto_classifier` to choose) judges the rest against your recent messages. It answers allow or ask, with a reason, in grammar-constrained JSON. The call's arguments are marked untrusted, so text in them aimed at the classifier doesn't count.
-- **Fails closed:** a timeout, error or unreadable answer means ask.
+- **When the classifier is down:** a timeout, an HTTP error, an unreachable server or an unreadable answer tries `auto_classifier_fallback` (another model) if you set one, then frog's built-in rules alone: reads (read-only commands, MCP read verbs, captures of public pages) and the session's own work still run; anything no rule covers asks. A down classifier is skipped for a minute rather than retried per call, shows one notice per session, and the session status says what's judging instead.
 - **Visible:** approved calls show "Auto: <reason>" on the tool card. When it asks, the permission card says why.
 - **Own scratch:** a Write or Edit of a fresh file under the shared temp dir (`/private/tmp/…`), or of a file this session created, runs without asking. Overwriting someone else's temp file still asks.
 
@@ -167,6 +168,8 @@ No server is trusted by default. Each granted write runs without a card and is l
   allow_keychain = false         # macOS: let commands read the login Keychain
   ```
   Inside a linked git worktree, the worktree's git dir and the common git dir (from `git rev-parse --git-dir --git-common-dir`) are writable, so `git commit` works; the rest of the main checkout stays closed. `git push` still asks.
+
+**One engine per worktree.** An engine that starts in a linked git worktree holds a lock on it (`flock` on `frog-engine.lock` in the worktree's git dir) for as long as it runs, so two sessions never mix uncommitted work in one tree. A second engine there refuses with the session that owns it. The lock dies with its engine, so a crash never leaves a worktree stuck; the main checkout is never locked, and subagents share their parent's tree.
 
   To restrict the network to dev hosts, set `network = "dev"`:
   ```toml

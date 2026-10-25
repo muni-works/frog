@@ -6,7 +6,10 @@
 //! the project always ask. Then a small local model (Apple's on-device model by default) judges
 //! the call against the user's recent requests, with grammar-constrained output. The call's
 //! arguments come from the agent, so they're marked untrusted: text in them that addresses the
-//! classifier carries no weight. Any failure (timeout, error, unparsable answer) means ask.
+//! classifier carries no weight. When the classifier can't answer (unreachable, timed out, an
+//! HTTP error, an unreadable answer), `auto_classifier_fallback` is tried, then the built-in
+//! rules alone ([`rules_fallback`]): a down classifier never cards a call by itself, only a
+//! call no rule can prove harmless.
 
 use crate::config::{Config, Profile};
 use crate::message::Message;
@@ -158,6 +161,32 @@ pub fn local_capture(input: &Value) -> bool {
     }
 }
 
+/// The rules-only judgement when no classifier can answer: the calls that reached the
+/// classifier but that a rule can still prove harmless. `Some(why)` runs it; `None` asks.
+/// Called after the hard rules and every earlier layer (read-only commands, MCP read verbs,
+/// own-scope builds and writes) already passed on the call, so this only covers what the
+/// classifier would otherwise have been the sole judge of. Conservative on purpose.
+pub fn rules_fallback(name: &str, input: &Value) -> Option<&'static str> {
+    let cmd = input["command"].as_str().unwrap_or("");
+    let read_only = !crate::shell::touches_credentials(cmd) && crate::shell::read_only(cmd);
+    match name {
+        // A read-only command reads whether it runs in a pane or unsandboxed.
+        "Bash" if read_only => Some("read-only command"),
+        crate::panes::TERMINAL if input["action"] == "run" && read_only => {
+            Some("read-only command")
+        }
+        // A capture of a public page is a GET of it, like WebFetch of a public host.
+        "Screenshot"
+            if local_capture(input)
+                || crate::tools::web::public_host(input["url"].as_str().unwrap_or("")) =>
+        {
+            Some("captures a public page or the session's own work")
+        }
+        _ if read_tool(name, input) => Some("read-only tool call"),
+        _ => None,
+    }
+}
+
 /// Why a call always asks in auto mode, if it does.
 pub fn hard_rule(name: &str, input: &Value, root: &Path) -> Option<&'static str> {
     static RULES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
@@ -252,6 +281,29 @@ impl Classifier {
             .ok_or_else(|| {
                 anyhow::anyhow!("no classifier model is configured and usable here")
             })?;
+        Self::build(cfg, name, profile)
+    }
+
+    /// The model `auto_classifier` names, or the default, for telling the user which one
+    /// is down when it couldn't even start.
+    pub fn primary_spec(cfg: &Config) -> String {
+        cfg.auto_classifier
+            .clone()
+            .unwrap_or_else(|| "cloud/qwen3-8b".into())
+    }
+
+    /// The second classifier, `auto_classifier_fallback`, when one is configured. `None`:
+    /// there is none, and the built-in rules are the fallback.
+    pub fn fallback(cfg: &Config, dir: &std::path::Path) -> Option<anyhow::Result<Self>> {
+        let spec = cfg.auto_classifier_fallback.as_ref()?;
+        Some((|| {
+            let (name, profile) = cfg.resolve(Some(spec))?;
+            crate::policy::check(dir, &name, &profile)?;
+            Self::build(cfg, name, profile)
+        })())
+    }
+
+    fn build(cfg: &Config, name: String, profile: Profile) -> anyhow::Result<Self> {
         let mode = profile.thinking.unwrap_or(cfg.thinking);
         let think = match crate::harness::cached(&profile) {
             Some(c) if !c.thinks => None,
@@ -689,6 +741,32 @@ mod tests {
         }
         assert_eq!(mcp_write("mcp__x__frobnicate"), None);
         assert_eq!(mcp_write("Bash"), None);
+    }
+
+    #[test]
+    fn rules_fallback_passes_only_what_a_rule_proves_harmless() {
+        for (name, input) in [
+            ("Bash", json!({"command": "git log --oneline | head"})),
+            ("Terminal", json!({"action": "run", "command": "ls -la"})),
+            ("Screenshot", json!({"url": "https://example.com/"})),
+            ("Screenshot", json!({"url": "out/page.html"})),
+            ("mcp__runpod__list-pods", json!({})),
+        ] {
+            assert!(rules_fallback(name, &input).is_some(), "{name} {input}");
+        }
+        for (name, input) in [
+            ("Bash", json!({"command": "rm /private/tmp/not-mine"})),
+            ("Bash", json!({"command": "cat ~/.ssh/id_rsa"})),
+            ("Bash", json!({"command": "python3 x.py"})),
+            ("Terminal", json!({"action": "run", "command": "npm run dev"})),
+            ("Terminal", json!({"action": "type", "text": "ls\n"})),
+            ("Screenshot", json!({"url": "http://192.168.1.5/admin"})),
+            ("Preview", json!({"action": "eval", "js": "fetch('/x')"})),
+            ("Image", json!({"prompt": "a frog"})),
+            ("mcp__runpod__create-pod", json!({})),
+        ] {
+            assert!(rules_fallback(name, &input).is_none(), "{name} {input} must still ask");
+        }
     }
 
     #[test]

@@ -305,6 +305,18 @@ final class Conversation {
         link?.send(.interrupt)
     }
 
+    /// Nothing queued may start this session's next turn: the engine drops the session
+    /// messages in its inbox, and the composer's queued sends go back to the field (taken
+    /// back, like their "x", never lost). A stop that should stay stopped, and an archive.
+    func clearInbox() {
+        pendingDeliveries = 0
+        restored.append(contentsOf: queue)
+        queue.removeAll()
+        continuePending = false
+        continueNote = nil
+        link?.send(.clearInbox)
+    }
+
     /// What an update drain saw: the engine stopped suspended, it had nothing running, or it
     /// never answered inside the budget (the app force-kills it and the turn resumes as a
     /// crash would).

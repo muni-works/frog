@@ -50,6 +50,8 @@ final class SessionBroker {
         var branch: String?
         var ahead: Int?
         var dirty: Int?
+        /// What the live engine runs degraded on, with why (its `Status.degraded`).
+        var degraded: [Degraded] = []
 
         /// "running", "waiting", "idle", or "dead" (no live engine). A queued message keeps
         /// a session running, whatever the last live report said.
@@ -78,6 +80,11 @@ final class SessionBroker {
             if let b = branch { o["branch"] = .string(b) }
             if let a = ahead { o["ahead"] = .number(Double(a)) }
             if let d = dirty { o["dirty"] = .number(Double(d)) }
+            if !degraded.isEmpty {
+                o["degraded"] = .array(degraded.map {
+                    .object(["kind": .string($0.kind), "what": .string($0.what), "why": .string($0.why)])
+                })
+            }
             return .object(o)
         }
     }
@@ -91,6 +98,8 @@ final class SessionBroker {
         /// "default", "accept-edits", "auto" or "yolo" (only when asked for explicitly).
         var mode: String?
         var worktree: Bool
+        /// Run in the user's main checkout anyway (worker sessions belong in worktrees).
+        var allowMainCheckout = false
     }
 
     struct Started: Equatable {
@@ -342,7 +351,8 @@ final class SessionBroker {
                 title: input["title"]?.string ?? "", prompt: input["prompt"]?.string ?? "",
                 cwd: input["cwd"]?.string, model: input["model"]?.string,
                 mode: input["mode"]?.string,
-                worktree: input["worktree"]?.bool ?? false)
+                worktree: input["worktree"]?.bool ?? false,
+                allowMainCheckout: input["allow_main_checkout"]?.bool ?? false)
             Task { [weak c] in
                 do {
                     let s = try await starter(req, c)
@@ -365,9 +375,13 @@ final class SessionBroker {
             switch on ? resolve(key) : resolve(key, includeArchived: true) {
             case .success(let e):
                 guard e.id != sender else { return c.replySession(r.id, error: "That's this session.") }
+                // An archived session's queued messages never run: one left behind restarted
+                // a stopped session, which then deleted work in its tree.
+                let dropped = on ? clearQueue(e.id) : 0
                 archive(e.id, on)
+                let cancelled = dropped > 0 ? " \(Self.cancelled(dropped))." : ""
                 c.replySession(r.id, result: .string(
-                    "\(on ? "Archived" : "Unarchived") \(e.name) (\(e.id)).\(on ? " Its log is kept; UnarchiveSession brings it back." : " It's back in the sidebar.")"))
+                    "\(on ? "Archived" : "Unarchived") \(e.name) (\(e.id)).\(on ? " Its log is kept; UnarchiveSession brings it back.\(cancelled)" : " It's back in the sidebar.")"))
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
@@ -409,19 +423,24 @@ final class SessionBroker {
             // The explicit stop — the only interrupt now that SendMessage only queues. Sent
             // straight to the engine (Op.interrupt applies immediately, not at the boundary),
             // never starting one that's gone: a dead engine has nothing running.
+            // `clear_queue` also cancels its inbox, so no queued message starts the next turn.
             switch resolve(input["id"]?.string ?? "") {
             case .success(let e):
                 guard e.id != sender else { return c.replySession(r.id, error: "That's this session: use your own stop.") }
-                guard let target = tracked(e.id) else {
-                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) has no live engine; nothing to stop."))
+                let target = tracked(e.id)
+                let running = target.map { $0.busy || e.state == "running" || e.state == "waiting" } ?? false
+                let cleared = (input["clear_queue"]?.bool ?? false)
+                    ? " \(Self.cancelled(clearQueue(e.id))), so nothing restarts it." : ""
+                guard let target else {
+                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) has no live engine; nothing to stop.\(cleared)"))
                     return
                 }
-                guard target.busy || e.state == "running" || e.state == "waiting" else {
-                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) isn't running; nothing to stop."))
+                guard running else {
+                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) isn't running; nothing to stop.\(cleared)"))
                     return
                 }
                 target.interrupt()
-                c.replySession(r.id, result: .string("Stopping \(e.name) (\(e.id)): its turn ends cancelled and it goes idle."))
+                c.replySession(r.id, result: .string("Stopping \(e.name) (\(e.id)): its turn ends cancelled and it goes idle.\(cleared)"))
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
@@ -551,6 +570,7 @@ final class SessionBroker {
         info.pendingSummary = c.permission.map { "\($0.name) \($0.arg)" }
         info.queuedMessages = c.queue.count
         info.cwd = c.status?.cwd ?? c.folder.path
+        info.degraded = c.status?.degraded ?? []
         return info
     }
 
@@ -560,6 +580,25 @@ final class SessionBroker {
         guard var info = await Self.readStatus(id, broker: self) else { return nil }
         info.queuedMessages = inbound[id] ?? 0
         return info
+    }
+
+    /// Nothing queued may (re)start session `id`: its engine drops its inbox (when one runs),
+    /// and the broker forgets the queued count, the re-send list an update restart would
+    /// replay, and a first prompt waiting to be replayed. Returns how many messages it
+    /// cancelled. StopSession's `clear_queue` and every archive call it.
+    @discardableResult
+    func clearQueue(_ id: String) -> Int {
+        let target = tracked(id)
+        let dropped = max(inbound[id] ?? 0, pendingInbox[id]?.count ?? 0, target?.pendingDeliveries ?? 0)
+        target?.clearInbox()
+        inbound[id] = 0
+        pendingInbox[id] = nil
+        if births.removeValue(forKey: id) != nil { saveBirths() }
+        return dropped
+    }
+
+    static func cancelled(_ n: Int) -> String {
+        "Its inbox is cleared (\(n) queued message\(n == 1 ? "" : "s") cancelled)"
     }
 
     /// Messages queued in session `id`'s engine inbox, waiting for its next turn boundary.
@@ -1015,6 +1054,75 @@ final class SessionBroker {
         return (current.isEmpty ? "HEAD" : current, true)
     }
 
+    /// Where a folder sits in git, for StartSession's checks (read from the files, no git run).
+    enum Checkout: Equatable {
+        /// Not in a repo, or a main checkout that has no `.frog/worktrees` (never used for workers).
+        case plain
+        /// The user's main checkout (`top`): it owns `.frog/worktrees`.
+        case main(top: URL)
+        /// A linked worktree (`top`), its private git dir holding the engine lock.
+        case worktree(top: URL, gitDir: URL)
+    }
+
+    nonisolated static func checkout(of folder: URL) -> Checkout {
+        let fm = FileManager.default
+        var at = folder.standardizedFileURL
+        while true {
+            let dot = at.appending(path: ".git")
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: dot.path, isDirectory: &isDir) {
+                if isDir.boolValue {
+                    return fm.fileExists(atPath: at.appending(path: ".frog/worktrees").path) ? .main(top: at) : .plain
+                }
+                guard let text = try? String(contentsOf: dot, encoding: .utf8),
+                      let line = text.split(separator: "\n").first(where: { $0.hasPrefix("gitdir:") }) else { return .plain }
+                let path = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+                let gitDir = path.hasPrefix("/") ? URL(fileURLWithPath: path) : at.appending(path: path)
+                // A submodule's `.git` file points at `.git/modules/…`: not a worktree.
+                guard gitDir.deletingLastPathComponent().lastPathComponent == "worktrees" else { return .plain }
+                return .worktree(top: at, gitDir: gitDir.standardizedFileURL)
+            }
+            let up = at.deletingLastPathComponent()
+            if up.path == at.path { return .plain }
+            at = up
+        }
+    }
+
+    /// The session whose engine holds a linked worktree (the engine's `frog-engine.lock` in
+    /// its git dir, an flock that dies with the engine), if one does.
+    nonisolated static func worktreeOwner(gitDir: URL) -> String? {
+        let fd = open(gitDir.appending(path: "frog-engine.lock").path, O_RDONLY)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+            flock(fd, LOCK_UN)
+            return nil
+        }
+        let text = (try? String(contentsOf: gitDir.appending(path: "frog-engine.lock"), encoding: .utf8)) ?? ""
+        return text.split(separator: " ").first.map(String.init) ?? "another session"
+    }
+
+    /// StartSession without `worktree:true`: refuse the user's main checkout (the repo root
+    /// that owns `.frog/worktrees`, or anywhere in it) unless `allowMainCheckout`, and a
+    /// worktree another engine runs in. An existing free worktree is used as-is (reuse).
+    nonisolated static func checkWorkerFolder(_ folder: URL, allowMainCheckout: Bool) throws {
+        switch checkout(of: folder) {
+        case .plain:
+            return
+        case .main(let top):
+            guard !allowMainCheckout else { return }
+            let trees = ((try? FileManager.default.contentsOfDirectory(atPath: top.appending(path: ".frog/worktrees").path)) ?? [])
+                .filter { !$0.hasPrefix(".") }.sorted().prefix(3)
+                .map { top.appending(path: ".frog/worktrees/\($0)").path }
+            let reuse = trees.isEmpty ? "" : ", or reuse a worktree with cwd: \(trees.joined(separator: " or "))"
+            throw BrokerError("\(folder.path) is the user's main checkout of \(top.path): worker sessions belong in worktrees, so two of them never mix work in the user's tree. Pass worktree:true for a fresh one\(reuse). allow_main_checkout:true overrides, only when the user asked for it.")
+        case .worktree(let top, let gitDir):
+            if let owner = worktreeOwner(gitDir: gitDir) {
+                throw BrokerError("\(top.path) already has an engine: session \(owner) runs in it. One engine per worktree: pass worktree:true for a fresh one, or stop or archive \(owner) first.")
+            }
+        }
+    }
+
     /// A git worktree for a new session: `<repo>/.frog/worktrees/<name>` on a new branch
     /// `frog/<name>` from the remote default branch (a numbered name if taken). Returns its
     /// folder, branch, and the base ref it started from.
@@ -1210,6 +1318,7 @@ extension SessionBroker {
             info.model = c.status?.model ?? entry?.model
             info.mode = c.status?.mode.rawValue
             info.modelCalls = c.turns.reduce(0) { $0 + Int($1.usage?.modelCalls ?? 0) }
+            info.degraded = c.status?.degraded ?? []
             if let p = c.permission {
                 info.pendingApprovals = 1
                 info.pendingSummary = "\(p.name) \(p.arg)"
@@ -1297,6 +1406,12 @@ extension SessionBroker {
         }
         var branch: String?
         var base: String?
+        // Worker sessions belong in worktrees: never the user's main checkout unless asked,
+        // and never a worktree another engine already runs in.
+        if !req.worktree {
+            let at = folder
+            try await Task.detached { try Self.checkWorkerFolder(at, allowMainCheckout: req.allowMainCheckout) }.value
+        }
         if req.worktree {
             let from = folder
             let (dir, b, basedOn) = try await Task.detached { try Self.makeWorktree(from: from, name: title) }.value

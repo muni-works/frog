@@ -233,6 +233,49 @@ struct ActivityViewer: View {
                     .monospacedDigit()
                     .contentTransition(.numericText())
             }
+            if let degraded = s.degraded, !degraded.isEmpty {
+                DegradedBadge(degraded: degraded)
+            }
+        }
+    }
+}
+
+/// A small warm badge for a session running degraded: what (text tool calls, a model nobody
+/// picked, auto mode on fallback) in the pill, each one's why on hover and a click away.
+struct DegradedBadge: View {
+    let degraded: [Degraded]
+    @State private var open = false
+
+    var body: some View {
+        if let label = Degraded.badge(degraded) {
+            Button { open.toggle() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill").imageScale(.small)
+                    Text(label).lineLimit(1)
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(.orange.opacity(0.14), in: .capsule)
+                .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help(Degraded.detail(degraded))
+            .popover(isPresented: $open, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(degraded, id: \.kind) { d in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(d.what).font(.callout.weight(.semibold))
+                            Text(d.why).font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(width: 300, alignment: .leading)
+            }
         }
     }
 }
