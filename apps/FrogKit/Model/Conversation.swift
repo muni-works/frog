@@ -124,6 +124,11 @@ final class Conversation {
     /// The engine queues them behind whatever it's doing; between a turn's `idle` and the
     /// next delivered turn's `turn_started`, this is the only sign the engine has work.
     @ObservationIgnored private(set) var pendingDeliveries = 0
+    /// Those messages themselves, oldest first, for the composer's pending strip.
+    private(set) var pendingMessages: [SessionMessage] = []
+    /// Background wakes the engine parked for the next turn boundary, in order (its
+    /// `queued_events`): they flush with the next turn, whatever starts it.
+    private(set) var queuedEvents: [String] = []
     /// Background work running in the engine (Monitors, background jobs and Tasks), as its last
     /// `background` event said. It outlives the turn that started it and dies with the engine,
     /// so an engine with any is never let go.
@@ -314,6 +319,7 @@ final class Conversation {
     /// back, like their "x", never lost). A stop that should stay stopped, and an archive.
     func clearInbox() {
         pendingDeliveries = 0
+        pendingMessages.removeAll()
         restored.append(contentsOf: queue)
         queue.removeAll()
         continuePending = false
@@ -476,6 +482,7 @@ final class Conversation {
     /// A message from another session: the engine queues it and runs it as a turn.
     func deliver(from: String, name: String, message: String) {
         pendingDeliveries += 1
+        pendingMessages.append(SessionMessage(from: from, name: name, body: message))
         link?.send(.deliver(from: from, fromName: name, message: message))
     }
 
@@ -554,6 +561,8 @@ final class Conversation {
             }
             // Whatever its inbox held, and its background work, went with it.
             pendingDeliveries = 0
+            pendingMessages.removeAll()
+            queuedEvents.removeAll()
             backgroundRunning = 0
             busy = false
             progress = nil
@@ -581,8 +590,11 @@ final class Conversation {
             panes.currentTurn = n
             // A delivered turn takes every message waiting in the engine's inbox (the first as
             // its input, the rest as `more`).
-            if !replaying, input.hasPrefix("<session-message ") {
-                pendingDeliveries = max(0, pendingDeliveries - 1 - more.count)
+            // A wake turn takes the messages queued behind it too, as `more`.
+            let taken = ([input] + more.map(\.text)).filter { $0.hasPrefix("<session-message ") }.count
+            if !replaying, taken > 0 {
+                pendingDeliveries = max(0, pendingDeliveries - taken)
+                pendingMessages.removeFirst(min(taken, pendingMessages.count))
             }
             if !replaying { userStopped = false }
             // A replayed turn ran long ago — unless it's still open, when another frog
@@ -724,6 +736,13 @@ final class Conversation {
             jobs[id, default: BackgroundJob(id: id, kind: kind, label: "")].status = status
         case .backgroundProgress:
             break
+        case .queuedEvents(let items):
+            // Live only: a replayed log has no queue.
+            if !replaying { queuedEvents = items }
+        case .wakesDelivered(let n, let wakes):
+            if let i = turns.lastIndex(where: { $0.number == n }) {
+                turns[i].wakes = wakes
+            }
         case .synced:
             replaying = false
             // A turn the history ended in the middle of is running in another frog process:

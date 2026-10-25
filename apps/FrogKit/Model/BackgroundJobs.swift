@@ -103,9 +103,10 @@ struct WakeEvent: Equatable, Sendable {
             guard s.hasPrefix(open), let headEnd = s.firstIndex(of: ">"),
                   let closeAt = s.range(of: close, range: headEnd..<s.endIndex) else { continue }
             let head = s[s.index(s.startIndex, offsetBy: open.count)..<headEnd]
-            let attributes: [(String, String)] = head.split(separator: " ").compactMap { pair in
-                guard let eq = pair.firstIndex(of: "=") else { return nil }
-                return (String(pair[..<eq]), String(pair[pair.index(after: eq)...]))
+            let attributes: [(String, String)] = head.split(separator: " ").compactMap { pair -> (String, String)? in
+                let kv = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                guard kv.count == 2 else { return nil }
+                return (String(kv[0]), String(kv[1]))
             }
             let body = s[s.index(after: headEnd)..<closeAt.lowerBound]
                 .trimmingCharacters(in: .whitespacesAndNewlines)

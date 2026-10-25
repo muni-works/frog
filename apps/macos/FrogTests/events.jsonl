@@ -71,3 +71,5 @@
 {"seq":30,"session":"20260922-174412-a8d1","created":1790113456000,"event":"background_progress","id":"job-1","text":"26"}
 {"seq":31,"session":"20260922-174412-a8d1","created":1790113457000,"event":"background_started","id":"mon-2","kind":"monitor","label":"wc -l < out.jsonl"}
 {"seq":32,"session":"20260922-174412-a8d1","created":1790113458000,"event":"background_done","id":"mon-2","kind":"monitor","status":"timeout","summary":"<monitor-done id=mon-2 status=timeout polls=7>\nno match after 590s. Last output:\n      23\n</monitor-done>"}
+{"seq":33,"session":"20260922-174412-a8d1","created":1790113459000,"event":"queued_events","items":["<wakeup id=mon-3 after_s=60>check</wakeup>"]}
+{"seq":34,"session":"20260922-174412-a8d1","created":1790113460000,"event":"wakes_delivered","turn":3,"wakes":["<wakeup id=mon-3 after_s=60>check</wakeup>"]}

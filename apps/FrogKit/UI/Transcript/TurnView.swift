@@ -61,12 +61,17 @@ struct TurnView: View {
         let parts = TurnParts(turn)
         let flow = TurnFlow(turn.items, showThinking: verbosity.showsThinking)
         VStack(alignment: .leading, spacing: space.inTurn) {
-            switch TurnLead(turn) {
-            case .sessionMessage(let delivered):
-                SessionMessageCard(message: delivered)
-            case .wakes(let wakes):
-                // Background work finished and the engine woke on it: event rows, not a bubble.
-                WakeEventRows(events: wakes, jobs: conversation.jobs)
+            let lead = TurnLead(turn)
+            if !lead.wakes.isEmpty {
+                // Background work finished and the turn opened with it: event rows, not a bubble.
+                WakeEventRows(events: lead.wakes, jobs: conversation.jobs)
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .bottom)), removal: .opacity))
+            }
+            switch lead.opener {
+            case .sessionMessages(let delivered):
+                ForEach(Array(delivered.enumerated()), id: \.offset) { _, message in
+                    SessionMessageCard(message: message)
+                }
             case .none:
                 EmptyView()
             case .prompt:

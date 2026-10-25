@@ -1,22 +1,33 @@
 import SwiftUI
 
-/// What opens a turn in the transcript: a user bubble only for what someone typed. A message
-/// from another session is its card; background wakes are event rows.
-enum TurnLead: Equatable {
-    case prompt
-    case sessionMessage(SessionMessage)
-    case wakes([WakeEvent])
-    case none
+/// What opens a turn in the transcript: event rows for the background wakes it was delivered
+/// with (or started on), then a user bubble only for what someone typed, or a card per
+/// message from another session.
+struct TurnLead: Equatable {
+    enum Opener: Equatable {
+        case prompt
+        case sessionMessages([SessionMessage])
+        case none
+    }
+
+    var wakes: [WakeEvent]
+    var opener: Opener
 
     init(_ turn: TurnState) {
-        if let delivered = SessionMessage.parse(turn.input) {
-            self = .sessionMessage(delivered)
-        } else if turn.more.isEmpty, turn.images.isEmpty, let wakes = WakeEvent.parse(turn.input) {
-            self = .wakes(wakes)
-        } else if !turn.input.isEmpty || !turn.more.isEmpty {
-            self = .prompt
+        wakes = turn.wakes.flatMap { WakeEvent.parse($0) ?? [WakeEvent(kind: .note, id: "", attributes: [], body: $0)] }
+        var input = turn.input
+        if turn.images.isEmpty, let started = WakeEvent.parse(input) {
+            wakes += started
+            input = ""
+        }
+        let texts = (input.isEmpty ? [] : [input]) + turn.more.map(\.text)
+        let delivered = texts.compactMap(SessionMessage.parse)
+        if !texts.isEmpty, delivered.count == texts.count {
+            opener = .sessionMessages(delivered)
+        } else if !input.isEmpty || !turn.more.isEmpty {
+            opener = .prompt
         } else {
-            self = .none
+            opener = .none
         }
     }
 }

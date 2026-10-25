@@ -695,6 +695,11 @@ enum Event: Decodable, Sendable {
     /// One ended: `status` is done, failed, stopped, matched, timeout or
     /// interrupted_by_update; `summary` is the wake the model was given (empty when stopped).
     case backgroundDone(id: String, kind: String, status: String, summary: String)
+    /// The wakes waiting for the next turn boundary, in order (each as the model will get
+    /// it). Sent when one is parked and when a turn takes them (then empty). Live only.
+    case queuedEvents(items: [String])
+    /// The wakes turn `turn` opened with, delivered with its input as one batch.
+    case wakesDelivered(turn: UInt64, wakes: [String])
     case synced(upto: UInt64)
     case idle
     case paneOpened(id: String, kind: PaneKind, title: String, cwd: String?, url: String?)
@@ -741,7 +746,7 @@ extension Event {
         case stepsDone = "steps_done", jobs, jobLabels = "job_labels", inbox
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
         case running
-        case status, summary, text, log
+        case status, summary, text, log, items, wakes
     }
 
     init(from decoder: Decoder) throws {
@@ -841,6 +846,12 @@ extension Event {
             self = .backgroundProgress(
                 id: try c.decode(String.self, forKey: .id),
                 text: try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+        case "queued_events":
+            self = .queuedEvents(items: try c.decodeIfPresent([String].self, forKey: .items) ?? [])
+        case "wakes_delivered":
+            self = .wakesDelivered(
+                turn: try c.decode(UInt64.self, forKey: .turn),
+                wakes: try c.decodeIfPresent([String].self, forKey: .wakes) ?? [])
         case "background_done":
             self = .backgroundDone(
                 id: try c.decode(String.self, forKey: .id),
