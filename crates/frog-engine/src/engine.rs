@@ -3441,6 +3441,28 @@ impl Agent {
         }
     }
 
+    /// A long bare wait ([`crate::auto::long_wait`]) run as a background job (the same path as
+    /// `Bash { run_in_background }`, already permitted): the tool returns at once, telling the
+    /// model what happened, and the job's `<job-done>` wake brings the output when it ends.
+    fn background_wait(&self, input: &Value, secs: u64) -> Result<tools::Output> {
+        let started =
+            crate::background::start_job(&self.shared.bg, input, &self.ctx, &self.jobs_dir())?;
+        let id = started
+            .content
+            .split_whitespace()
+            .find(|w| w.starts_with("job-"))
+            .map(|w| w.trim_end_matches([',', '.']).to_string())
+            .unwrap_or_else(|| "a background job".into());
+        self.notice(
+            Level::Warn,
+            format!("a {secs}s sleep moved to background job {id}; the turn goes on"),
+        );
+        Ok(tools::Output::text(format!(
+            "That wait is now a background job ({id}, {secs}s); continuing. Don't sleep to wait: do other work now or end your turn; the <job-done id={id}> wake, with the output of the commands after the sleep, starts your next turn.\n\n{}",
+            started.content
+        )))
+    }
+
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
     async fn run_tool(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
         // A working directory that was deleted out from under the session (a worktree cleaned
@@ -3480,6 +3502,15 @@ impl Agent {
         }
         if name == crate::subagent::TOOL {
             return self.run_task(id, input).await;
+        }
+        // The sleep guard: a long bare wait would hold the turn (and every event and message
+        // behind it) for minutes, so it runs as a background job and the turn goes on.
+        if name == "Bash"
+            && !self.subagent
+            && !tools::bool_arg(input, "run_in_background")
+            && let Some(secs) = crate::auto::long_wait(input["command"].as_str().unwrap_or(""))
+        {
+            return self.background_wait(input, secs);
         }
         if crate::background::handles(name)
             || (name == "Bash" && tools::bool_arg(input, "run_in_background"))
@@ -10866,6 +10897,92 @@ for line in sys.stdin:
                 .iter()
                 .any(|e| matches!(e.event, Event::BackgroundDone { .. }))
         );
+    }
+
+    /// The sleep guard: a long bare wait (the specimen: `sleep 570; wc -l …; tail …`, a
+    /// 9.5-minute blocking turn) runs as a background job. The tool returns at once with a note
+    /// saying so, a Warn notice tells the user, and the turn's next step runs right away.
+    #[tokio::test]
+    async fn a_long_bare_sleep_becomes_a_background_job() {
+        let dir = tmp_store();
+        let wait = call(
+            "w",
+            "Bash",
+            json!({"command": "sleep 570; wc -l /dev/null; tail -1 /dev/null", "timeout": 590000}),
+        );
+        let script = vec![
+            reply(vec![wait], Stop::ToolUse),
+            reply(vec![text("doing other work meanwhile")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        let t0 = Instant::now();
+        submit(&h, "wait for the run, then count");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        assert!(
+            t0.elapsed() < Duration::from_secs(20),
+            "the turn must not block on the sleep"
+        );
+        assert!(matches!(
+            evs.iter().find_map(|e| match &e.event {
+                Event::TurnEnded { reason, .. } => Some(reason.clone()),
+                _ => None,
+            }),
+            Some(EndReason::Complete)
+        ));
+        assert!(
+            evs.iter().any(|e| matches!(&e.event,
+                Event::BackgroundStarted { id, kind, label } if id == "job-1" && kind == "job" && label.starts_with("sleep 570"))),
+            "the wait runs as job-1"
+        );
+        let out = tool_output(&evs, "w").expect("the wait's result");
+        assert!(
+            out.contains("That wait is now a background job (job-1, 570s); continuing"),
+            "{out}"
+        );
+        assert!(out.contains("<job-done id=job-1>"), "{out}");
+        assert!(
+            notices(&evs)
+                .iter()
+                .any(|n| n.contains("570s sleep moved to background job job-1")),
+            "{:?}",
+            notices(&evs)
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Short sleeps and sleeps with real work after them still run inline, as written.
+    #[tokio::test]
+    async fn a_short_sleep_or_real_work_runs_inline() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("s", "Bash", json!({"command": "sleep 1; echo short"})),
+                    call(
+                        "r",
+                        "Bash",
+                        json!({"command": "sleep 0 && echo real > /dev/null; echo real"}),
+                    ),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "go");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let s = tool_output(&evs, "s").unwrap();
+        assert!(s.contains("short"), "{s}");
+        assert!(tool_output(&evs, "r").unwrap().contains("real"));
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::BackgroundStarted { .. }))
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
