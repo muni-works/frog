@@ -106,7 +106,26 @@ reused: tasks, verifiers, kernels, the share format, accounts. new: the judge se
 
 ## 5. timeline
 
-_tbd_
+dates are launch beats only. the rest is ordered steps.
+
+| beat | A speedrun | C cad trial |
+|---|---|---|
+| beat 1, oct 30 (tang IR, #1 speed, frog OSS) | tease only: a line in the post, "the gym opens at beat 2" | — |
+| **beat 2, nov 3** (cram + H200) | **opens.** sprint-20 on both boards. the H200 is the board 1 story | tease: T1 practice set public, with house receipts |
+| **beat 3, ~nov 17** (app + voice + cortex GA, paid) | phase 1 results and prizes (a cortex head is the prize, launched that day). phase 2 opens on the live set | **opens** T1–T3 inside the vcad app (the GA shell is the workbench). T4 joins once its worlds are ready |
+| after beat 3 | weekly board posts | round 1 closes, then winning parts get printed and shipped |
+
+the lymb prize is "one unit when the first lymb ships". it's a promise of a unit, not a date.
+
+**must exist before A opens at beat 2, in order:**
+1. fail-to-pass filter and the sprint-20 pick
+2. judge workers and test containers
+3. `frog challenge` CLI
+4. the share endpoint, live (zest)
+5. entries table and one static page per board
+6. the house baseline rows
+
+if the share endpoint isn't live, A slips: the replay is the entry. gateway hashes can follow in week 1. until they land, cloud prizes wait on them.
 
 ## 6. infra cost
 
