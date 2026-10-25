@@ -1182,6 +1182,14 @@ struct Agent {
     warming: Arc<Mutex<(bool, Option<Warming>)>>,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
+    /// Why the session moved to text tool calls at run time, for the degraded status.
+    text_why: Option<String>,
+    /// The model this session was started on or last set to on purpose (`Op::SetModel`):
+    /// running on another one (a resume that picked up a different default, a fallback) is
+    /// shown as degraded. Empty: unknown.
+    intended_model: String,
+    /// Why the engine itself moved off `intended_model` (the frog api fallback), if it did.
+    model_flip_why: Option<String>,
     /// This engine's hold on the linked worktree it runs in (see `worktree`), for its life.
     worktree_lock: Option<crate::worktree::Lock>,
     /// `auto_classifier_fallback`, started the first time the classifier can't answer.
@@ -1241,6 +1249,7 @@ impl Agent {
         // engine must agree on the effective mode.
         let mut resumed_mode = None;
         let mut resumed_titled = false;
+        let mut resumed_model: Option<String> = None;
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
@@ -1271,6 +1280,18 @@ impl Agent {
                         _ => {}
                     }
                 }
+                // The model it ran on as far as anyone chose: its last switch, else the one
+                // it started on.
+                resumed_model = Some(
+                    l.events
+                        .iter()
+                        .rev()
+                        .find_map(|e| match &e.event {
+                            Event::ModelChanged { model } => Some(model.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| l.header.model.clone()),
+                );
                 shared.panes.seed_ids(used);
                 // A turn that started and never ended: the engine died or was killed mid-turn.
                 let unfinished = l.events.iter().rev().find_map(|e| match &e.event {
@@ -1293,6 +1314,7 @@ impl Agent {
             }
             (None, _) => (session::new_id(), Vec::new(), 0, 0, None, Vec::new(), None),
         };
+        let intended_model = resumed_model.unwrap_or_else(|| o.profile_name.clone());
         *shared.journal.header.lock().unwrap() = (o.cwd.clone(), o.profile_name.clone());
         shared.journal.start_session(session_id.clone(), seq, log);
         for id in stale_panes {
@@ -1404,6 +1426,9 @@ impl Agent {
             map_logged: false,
             edited: Vec::new(),
             titled: resumed_titled,
+            text_why: None,
+            intended_model,
+            model_flip_why: None,
             worktree_lock: None,
             classifier: None,
             classifier_fallback: None,
@@ -1572,7 +1597,54 @@ impl Agent {
             tokens_per_sec: self.tokens_per_sec(),
             todos: self.ctx.todos.clone(),
             vision: self.vision,
+            degraded: self.degraded(),
         }));
+    }
+
+    /// What this session runs degraded on now, each with why: text tool calls it didn't ask
+    /// for, a model other than the one it was started or set to, auto mode's classifier down.
+    fn degraded(&self) -> Vec<crate::protocol::Degraded> {
+        use crate::protocol::{Degraded, DegradedKind};
+        let mut out = Vec::new();
+        if self.tool_mode == ToolMode::Text && self.profile.tool_mode != ToolMode::Text {
+            out.push(Degraded {
+                kind: DegradedKind::TextTools,
+                what: "text tool calls".into(),
+                why: self.text_mode_why(),
+            });
+        }
+        let norm = |m: &str| crate::providers::normalize(m);
+        if !self.intended_model.is_empty() && norm(&self.intended_model) != norm(&self.profile_name) {
+            out.push(Degraded {
+                kind: DegradedKind::Model,
+                what: format!("on {}", self.profile_name),
+                why: match &self.model_flip_why {
+                    Some(why) => format!("this session is on {}; {why}", self.intended_model),
+                    None => format!(
+                        "this session was on {}; it came back on another model nobody picked (a resume without -m takes the default)",
+                        self.intended_model
+                    ),
+                },
+            });
+        }
+        if self.mode == Mode::Auto
+            && let Some(line) = &self.classifier_degraded
+        {
+            out.push(Degraded {
+                kind: DegradedKind::Classifier,
+                what: "auto mode on fallback".into(),
+                why: line.clone(),
+            });
+        }
+        out
+    }
+
+    /// Why this session runs on text tool calls: its own two failed native/JSON replies this
+    /// session, else the capability probe that put `auto` there.
+    fn text_mode_why(&self) -> String {
+        self.text_why.clone().unwrap_or_else(|| {
+            "its capability probe found native tool calls not working".into()
+        })
     }
 
     fn count_call(&mut self, u: Usage, streamed: &Streamed, compact: bool) {
@@ -1785,7 +1857,12 @@ impl Agent {
                 self.mode_logged = Some(mode);
                 self.emit(Event::ModeChanged { mode });
             }
-            Op::SetModel { spec } => self.set_model(&spec).await?,
+            Op::SetModel { spec } => {
+                self.set_model(&spec).await?;
+                // Switched on purpose: this is the model the session is meant to be on.
+                self.intended_model = self.profile_name.clone();
+                self.model_flip_why = None;
+            }
             Op::Compact { focus } => self.compact(focus.as_deref()).await?,
             Op::Subscribe { after } => {
                 let replay = match &self.store {
@@ -2272,6 +2349,7 @@ impl Agent {
                         format!("frog api unavailable ({e:#}) — continuing on {local}"),
                     );
                     self.set_model(&local).await?;
+                    self.model_flip_why = Some("frog api was unavailable, so it fell back".into());
                     continue;
                 }
             };
@@ -2724,6 +2802,9 @@ impl Agent {
         let from = self.tool_mode;
         self.tool_mode = ToolMode::Text;
         self.mode_failures = 0;
+        self.text_why = Some(
+            format!("{from:?} tool calls failed twice this session").to_lowercase(),
+        );
         if let Some(c) = self.caps.as_mut() {
             match from {
                 ToolMode::Native => c.native_tools = false,
@@ -3997,6 +4078,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             .then(|| harness::cached(&self.profile))
             .flatten();
         self.mode_failures = 0;
+        self.text_why = None;
         self.model_ready = false;
         self.apply_harness();
         self.resolve_window().await;
@@ -8616,6 +8698,88 @@ for line in sys.stdin:
         }
     }
 
+    /// Item 2b (org reliability): a stop that clears the inbox leaves nothing queued to
+    /// restart the session — the messages queued behind the stopped turn never run — while
+    /// a message sent after the clear queues and runs as usual.
+    #[tokio::test]
+    async fn clear_inbox_drops_queued_messages_so_a_stop_stays_stopped() {
+        let script = vec![
+            reply(vec![list_sessions_call()], Stop::ToolUse),
+            reply(vec![text("got the later one")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "work".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let deliver = |h: &Handle, message: &str| {
+            h.ops
+                .send(Op::Deliver {
+                    from: "s2".into(),
+                    from_name: "Manager".into(),
+                    message: message.into(),
+                })
+                .unwrap();
+        };
+        let mut evs = Vec::new();
+        let mut cleared = false;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::SessionRequest { .. } = &env.event {
+                // Mid-turn: two messages queue behind it, then the stop clears them.
+                deliver(&h, "queued-one");
+                deliver(&h, "queued-two");
+                h.ops.send(Op::Interrupt).unwrap();
+                h.ops.send(Op::ClearInbox).unwrap();
+                cleared = true;
+            }
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle && cleared {
+                break;
+            }
+        }
+        // Nothing started after the stopped turn.
+        let started: Vec<String> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::TurnStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(started, ["work"], "a voided message started a turn");
+        // The loop takes the voided messages off the queue right after the stopped turn, says
+        // so, and starts nothing.
+        let notice = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match h.events.recv().await.unwrap().event {
+                    Event::Notice { message, .. } if message.contains("queued session message") => {
+                        break message;
+                    }
+                    Event::TurnStarted { input, .. } => panic!("a voided message ran: {input}"),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("no notice about the dropped messages");
+        assert!(notice.contains("dropped 2 queued session messages"), "{notice}");
+        // A message sent after the clear runs.
+        deliver(&h, "after-clear");
+        let input = loop {
+            if let Event::TurnStarted { input, .. } = h.events.recv().await.unwrap().event {
+                break input;
+            }
+        };
+        assert!(input.contains("after-clear") && !input.contains("queued-"), "{input}");
+        shutdown(h).await;
+    }
+
     #[tokio::test]
     async fn deliver_while_busy_waits_for_the_turn_boundary() {
         let script = vec![
@@ -8701,88 +8865,6 @@ for line in sys.stdin:
             name: crate::irc::TOOL.into(),
             input: json!({ "action": action, "channel": channel }),
         }
-    }
-
-    /// Item 2b (org reliability): a stop that clears the inbox leaves nothing queued to
-    /// restart the session — the messages queued behind the stopped turn never run — while
-    /// a message sent after the clear queues and runs as usual.
-    #[tokio::test]
-    async fn clear_inbox_drops_queued_messages_so_a_stop_stays_stopped() {
-        let script = vec![
-            reply(vec![list_sessions_call()], Stop::ToolUse),
-            reply(vec![text("got the later one")], Stop::End),
-        ];
-        let mut h = engine(script, true);
-        caps(&h, true);
-        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
-        h.ops
-            .send(Op::Submit {
-                text: "work".into(),
-                images: Vec::new(),
-                more: Vec::new(),
-            })
-            .unwrap();
-        let deliver = |h: &Handle, message: &str| {
-            h.ops
-                .send(Op::Deliver {
-                    from: "s2".into(),
-                    from_name: "Manager".into(),
-                    message: message.into(),
-                })
-                .unwrap();
-        };
-        let mut evs = Vec::new();
-        let mut cleared = false;
-        loop {
-            let env = h.events.recv().await.unwrap();
-            if let Event::SessionRequest { .. } = &env.event {
-                // Mid-turn: two messages queue behind it, then the stop clears them.
-                deliver(&h, "queued-one");
-                deliver(&h, "queued-two");
-                h.ops.send(Op::Interrupt).unwrap();
-                h.ops.send(Op::ClearInbox).unwrap();
-                cleared = true;
-            }
-            let idle = matches!(env.event, Event::Idle);
-            evs.push(env);
-            if idle && cleared {
-                break;
-            }
-        }
-        // Nothing started after the stopped turn.
-        let started: Vec<String> = evs
-            .iter()
-            .filter_map(|e| match &e.event {
-                Event::TurnStarted { input, .. } => Some(input.clone()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(started, ["work"], "a voided message started a turn");
-        // The loop takes the voided messages off the queue right after the stopped turn, says
-        // so, and starts nothing.
-        let notice = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                match h.events.recv().await.unwrap().event {
-                    Event::Notice { message, .. } if message.contains("queued session message") => {
-                        break message;
-                    }
-                    Event::TurnStarted { input, .. } => panic!("a voided message ran: {input}"),
-                    _ => {}
-                }
-            }
-        })
-        .await
-        .expect("no notice about the dropped messages");
-        assert!(notice.contains("dropped 2 queued session messages"), "{notice}");
-        // A message sent after the clear runs.
-        deliver(&h, "after-clear");
-        let input = loop {
-            if let Event::TurnStarted { input, .. } = h.events.recv().await.unwrap().event {
-                break input;
-            }
-        };
-        assert!(input.contains("after-clear") && !input.contains("queued-"), "{input}");
-        shutdown(h).await;
     }
 
     #[tokio::test]
@@ -11456,6 +11538,115 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
             .collect();
         assert_eq!(notices.len(), 1, "{notices:?}");
         assert!(notices[0].contains("fallback classifier (backup)"), "{}", notices[0]);
+    }
+
+    /// The `degraded` list of the last `Status` in `evs`.
+    fn last_degraded(evs: &[Envelope]) -> Vec<crate::protocol::Degraded> {
+        evs.iter()
+            .rev()
+            .find_map(|e| match &e.event {
+                Event::Status(s) => Some(s.degraded.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Item 3a (org reliability): a session that fell back to text tool calls says so in its
+    /// status, with why, and only then.
+    #[tokio::test]
+    async fn text_tool_calls_show_as_degraded_with_why() {
+        let text_call =
+            r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+        let script = vec![
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text("none found")], Stop::End),
+        ];
+        let mut h = engine_mode(script, ToolMode::Auto);
+        let boot = run(&mut h, "find .nothing files").await;
+        let d = last_degraded(&boot);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, crate::protocol::DegradedKind::TextTools);
+        assert_eq!(d[0].what, "text tool calls");
+        assert!(d[0].why.contains("failed twice"), "{}", d[0].why);
+        shutdown(h).await;
+        // A profile that asks for text calls isn't degraded.
+        let mut h = engine_mode(vec![reply(vec![text("hi")], Stop::End)], ToolMode::Text);
+        assert!(last_degraded(&run(&mut h, "hi").await).is_empty());
+        shutdown(h).await;
+    }
+
+    /// Item 3b: a session resumed on another model than the one it ran on (a resume with no
+    /// `-m` takes the default) shows the flip; switching on purpose clears it.
+    #[tokio::test]
+    async fn a_silent_model_flip_shows_as_degraded_until_switched_on_purpose() {
+        let dir = tmp_store();
+        let mut h = engine_at(vec![reply(vec![text("one")], Stop::End)], false, Some(dir.clone()), None);
+        let first = run(&mut h, "first").await;
+        let sid = first[0].session.clone();
+        assert!(last_degraded(&first).is_empty(), "no flip on its own model");
+        shutdown(h).await;
+        // Resumed on another model.
+        let mut profile = Profile::new(ProviderKind::Ollama, "glm-flash");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "ollama/glm-flash".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: false,
+            resume: Some(sid),
+            store: Some(dir),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(
+            opts,
+            Provider::Scripted(scripted::Client::new(vec![reply(vec![text("two")], Stop::End)])),
+        )
+        .unwrap();
+        let d = last_degraded(&run(&mut h, "carry on").await);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, crate::protocol::DegradedKind::Model);
+        assert_eq!(d[0].what, "on ollama/glm-flash");
+        assert!(d[0].why.contains("was on test"), "{}", d[0].why);
+        // Switched on purpose: it's the model the session is meant to be on now.
+        h.ops.send(Op::SetModel { spec: "ollama/other".into() }).unwrap();
+        let mut last = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let idle = matches!(env.event, Event::Idle);
+            last.push(env);
+            if idle {
+                break;
+            }
+        }
+        assert!(last_degraded(&last).is_empty(), "{:?}", last_degraded(&last));
+        shutdown(h).await;
+    }
+
+    /// Item 3c: while auto mode's classifier is down, the status says what decides instead.
+    #[tokio::test]
+    async fn a_down_classifier_shows_as_degraded() {
+        let script = vec![
+            bash_call("w", "python3 -c 'print(1)' > made-up-file"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = classifier_cfg(&unreachable_base(), None);
+        let mut h = engine_perm_cfg(script, Mode::Auto, cfg);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let d = last_degraded(&evs);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, crate::protocol::DegradedKind::Classifier);
+        assert!(d[0].why.contains("classifier classifier is down"), "{}", d[0].why);
+        assert!(d[0].why.contains("built-in rules decide"), "{}", d[0].why);
     }
 
     #[tokio::test]

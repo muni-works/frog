@@ -311,6 +311,30 @@ struct Status: Decodable, Sendable {
     var todos: [Todo]
     /// The model can see images.
     var vision: Bool?
+    /// What runs degraded right now (text tool calls, a model nobody picked, auto mode's
+    /// classifier down), each with its why. Absent from older engines.
+    var degraded: [Degraded]?
+}
+
+/// One way a session runs degraded (the engine's `Status.degraded`).
+struct Degraded: Decodable, Sendable, Equatable {
+    /// "text_tools", "model" or "classifier".
+    var kind: String
+    /// What's degraded, short and lowercase.
+    var what: String
+    /// Why, in one line.
+    var why: String
+
+    /// The header badge's words: the first thing degraded, and how many more.
+    static func badge(_ list: [Degraded]) -> String? {
+        guard let first = list.first else { return nil }
+        return list.count > 1 ? "\(first.what) +\(list.count - 1)" : first.what
+    }
+
+    /// Every one, with its why, a line each (the badge's hover and popover).
+    static func detail(_ list: [Degraded]) -> String {
+        list.map { "\($0.what): \($0.why)" }.joined(separator: "\n")
+    }
 }
 
 struct TurnUsage: Decodable, Sendable {

@@ -651,6 +651,33 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertTrue(toolsOnly.contains("TOOL Bash"))
         XCTAssertFalse(toolsOnly.contains("ASSISTANT:"))
     }
+    /// Item 3 (org reliability): a degraded engine status reaches SessionStatus (and the
+    /// header badge's words): what's degraded and why, each; nothing when it's healthy.
+    func testDegradedStatusReachesSessionStatusAndTheBadge() throws {
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-degraded"))
+        c.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"status","model":"ollama/glm-flash","mode":"auto","cwd":"/tmp","messages":0,"context_tokens":null,"context_window":1,"tool_mode":"text","tier":"weak","tokens_per_sec":null,"todos":[],"degraded":[{"kind":"text_tools","what":"text tool calls","why":"native tool calls failed twice this session"},{"kind":"model","what":"on ollama/glm-flash","why":"this session was on anthropic/claude-opus-5-5; it came back on another model nobody picked"}]}"#.utf8)))
+        let degraded = c.status?.degraded ?? []
+        XCTAssertEqual(degraded.map(\.kind), ["text_tools", "model"])
+        XCTAssertEqual(Degraded.badge(degraded), "text tool calls +1")
+        XCTAssertTrue(Degraded.detail(degraded).contains("on ollama/glm-flash: this session was on anthropic/claude-opus-5-5"))
+
+        var info = SessionBroker.StatusInfo()
+        info.degraded = degraded
+        guard case .object(let o) = info.json, case .array(let rows)? = o["degraded"] else {
+            return XCTFail("no degraded in SessionStatus")
+        }
+        XCTAssertEqual(rows.count, 2)
+        guard case .object(let first) = rows[0] else { return XCTFail() }
+        XCTAssertEqual(first["what"], .string("text tool calls"))
+        XCTAssertEqual(first["why"], .string("native tool calls failed twice this session"))
+
+        // Healthy (or an older engine with no field): no badge, no key.
+        XCTAssertNil(Degraded.badge([]))
+        guard case .object(let healthy) = SessionBroker.StatusInfo().json else { return XCTFail() }
+        XCTAssertNil(healthy["degraded"])
+    }
+
     func testStatusInfoJsonCarriesTheFields() throws {
         var info = SessionBroker.StatusInfo()
         info.engineAlive = true

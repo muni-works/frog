@@ -50,6 +50,8 @@ final class SessionBroker {
         var branch: String?
         var ahead: Int?
         var dirty: Int?
+        /// What the live engine runs degraded on, with why (its `Status.degraded`).
+        var degraded: [Degraded] = []
 
         /// "running", "waiting", "idle", or "dead" (no live engine). A queued message keeps
         /// a session running, whatever the last live report said.
@@ -78,6 +80,11 @@ final class SessionBroker {
             if let b = branch { o["branch"] = .string(b) }
             if let a = ahead { o["ahead"] = .number(Double(a)) }
             if let d = dirty { o["dirty"] = .number(Double(d)) }
+            if !degraded.isEmpty {
+                o["degraded"] = .array(degraded.map {
+                    .object(["kind": .string($0.kind), "what": .string($0.what), "why": .string($0.why)])
+                })
+            }
             return .object(o)
         }
     }
@@ -563,6 +570,7 @@ final class SessionBroker {
         info.pendingSummary = c.permission.map { "\($0.name) \($0.arg)" }
         info.queuedMessages = c.queue.count
         info.cwd = c.status?.cwd ?? c.folder.path
+        info.degraded = c.status?.degraded ?? []
         return info
     }
 
@@ -1310,6 +1318,7 @@ extension SessionBroker {
             info.model = c.status?.model ?? entry?.model
             info.mode = c.status?.mode.rawValue
             info.modelCalls = c.turns.reduce(0) { $0 + Int($1.usage?.modelCalls ?? 0) }
+            info.degraded = c.status?.degraded ?? []
             if let p = c.permission {
                 info.pendingApprovals = 1
                 info.pendingSummary = "\(p.name) \(p.arg)"

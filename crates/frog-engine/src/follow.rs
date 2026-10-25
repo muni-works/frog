@@ -66,6 +66,7 @@ impl Running {
             tokens_per_sec: None,
             todos: Vec::new(),
             vision: false,
+            degraded: Vec::new(),
         }
     }
 }

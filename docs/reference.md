@@ -18,6 +18,7 @@ Each session is an append-only JSONL log in `~/.local/share/frog/sessions/<id>.j
 - **Durability:** records are appended as they happen, the file is fsynced at the end of each turn, and a half-written last line from a crash is ignored.
 - **Crash recovery:** if a session died in the middle of a turn, resuming it gives any tool calls that never finished an "interrupted" result.
 - **One writer at a time:** `flock` stops two frog processes from writing the same session.
+- **Degraded, visibly:** the engine's `status` carries `degraded`, a list of what runs degraded and why: text tool calls the profile didn't ask for, a model other than the one the session was started or set to (a resume without `-m` takes the default), auto mode's classifier down. The app shows it as a small badge in the session header, and `SessionStatus` reports it.
 
 The engine crate has no terminal dependencies, so the compiler enforces this boundary.
 
