@@ -4,19 +4,22 @@
 //! (in memory, lost on crash). The daily notice fires at most once per day,
 //! at the first card after midnight, so days with no cards stay silent.
 
+#[cfg(test)]
 use std::sync::LazyLock;
 
 /// The day's counters.
 #[derive(Default, Clone, Copy)]
-pub struct Counts {    /// Calls the first classifier allowed.
+pub struct Counts {
+    /// Calls the first classifier allowed.
     pub auto_allowed: u32,
     /// Calls the second pass upgraded to allow.
     pub second_pass: u32,
     /// Calls the chief approved.
     pub delegated_chief: u32,
-    /// Calls the chief declined or couldn't be reached (they carded).
+    /// Calls the chief was asked about but couldn't decide (they carded).
     pub chief_fallback: u32,
-    /// Calls that carded the user: never-delegable, unclassed flags, denies.
+    /// Calls blocked: carded the user with no chief route (never-delegable,
+    /// ungranted classes), or declined by the chief.
     pub blocked: u32,
 }
 
@@ -80,7 +83,7 @@ impl Digest {
     /// Whether today's notice hasn't fired yet (the caller fires it, then marks).
     pub fn needs_daily_notice(&mut self) -> bool {
         self.roll();
-        self.noticed.is_none() && self.counts.blocked > 0
+        self.noticed.is_none() && self.counts.blocked + self.counts.chief_fallback > 0
     }
 
     pub fn mark_noticed(&mut self) {
@@ -92,7 +95,7 @@ impl Digest {
         self.roll();
         let c = self.counts;
         format!(
-            "delegation today: {} auto-allowed, {} second-pass upgrades, {} chief-approved, {} chief fallbacks, {} carded ({} calls total)",
+            "delegation today: {} auto-allowed, {} second-pass upgrades, {} chief-approved, {} chief fallbacks, {} blocked ({} calls total)",
             c.auto_allowed, c.second_pass, c.delegated_chief, c.chief_fallback, c.blocked, c.total()
         )
     }
@@ -134,7 +137,7 @@ mod tests {
         d.count(Which::Blocked);
         assert_eq!(
             d.summary(),
-            "delegation today: 2 auto-allowed, 1 second-pass upgrades, 1 chief-approved, 1 chief fallbacks, 1 carded (6 calls total)"
+            "delegation today: 2 auto-allowed, 1 second-pass upgrades, 1 chief-approved, 1 chief fallbacks, 1 blocked (6 calls total)"
         );
         // Midnight: everything resets, the notice re-arms.
         *TEST_DAY.lock().unwrap() = Some("20001".into());

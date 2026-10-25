@@ -245,6 +245,16 @@ fn call_hash(name: &str, input: &Value) -> u64 {
     h.finish()
 }
 
+/// How the chief route ended for a still-flagged call (docs/design/delegation.md).
+enum Chief {
+    /// The chief answered: run or deny, no card.
+    Decided(Decision),
+    /// The chief was asked but couldn't decide (no broker, error, timeout, unreadable).
+    Fallback,
+    /// No chief route: no chief configured, or the class isn't granted.
+    NoRoute,
+}
+
 /// How a batch of tool calls ended.
 #[derive(PartialEq)]
 enum Batch {
@@ -4598,25 +4608,30 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     return Decision::Allow;
                 }
                 Err((layer, why)) => {
-                    self.digest.count(crate::digest::Which::Blocked);
-                    self.daily_digest_notice();
                     self.decision(item, layer, "ask", &why, took);
                     reason = Some(format!(
                         "Auto mode asked because {}.",
                         why.trim_end_matches('.')
-                    ))
+                    ));
+                    // Still flagged after the second pass: the chief decides what
+                    // the user shouldn't have to, when its grant list covers the
+                    // class (docs/design/delegation.md). Only a `second-pass` flag
+                    // may route: `never-delegable`, a classifier outage and a hard
+                    // rule with no classifier always card the user.
+                    let routed = if layer == "second-pass" {
+                        self.delegate_flagged(item, name, arg, input, reason.clone().unwrap_or_default())
+                            .await
+                    } else {
+                        Chief::NoRoute
+                    };
+                    match routed {
+                        Chief::Decided(decision) => return decision,
+                        // Counted as a chief fallback already; it cards like any other.
+                        Chief::Fallback => {}
+                        Chief::NoRoute => self.digest.count(crate::digest::Which::Blocked),
+                    }
+                    self.daily_digest_notice();
                 }
-            }
-            // Still flagged after the second pass: the chief decides what the
-            // user shouldn't have to, when its grant list covers the class
-            // (docs/design/delegation.md). Never-delegable calls never come
-            // back here — `auto_judge` errored with `never-delegable` for
-            // those, and only `second-pass` reaches this point.
-            if let Some(decision) = self
-                .delegate_flagged(item, name, arg, input, reason.clone().unwrap_or_default())
-                .await
-            {
-                return decision;
             }
         }
         if !self.can_ask {
@@ -5036,7 +5051,6 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     Level::Info,
                     format!("second pass: `{name} {arg}` allowed with context ({why})"),
                 );
-                #[cfg(test)]
                 self.emit(Event::AutoApproved {
                     item: item.to_string(),
                     reason: format!("second pass: {why}"),
@@ -5070,11 +5084,16 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         arg: &str,
         input: &Value,
         reason: String,
-    ) -> Option<Decision> {
-        let chief = self.cfg.delegation.chief.first()?.clone();
-        let class = crate::delegation::soft_class(name, input, &self.ctx.cwd, &self.ctx.root)?;
+    ) -> Chief {
+        let Some(chief) = self.cfg.delegation.chief.first().cloned() else {
+            return Chief::NoRoute;
+        };
+        let Some(class) = crate::delegation::soft_class(name, input, &self.ctx.cwd, &self.ctx.root)
+        else {
+            return Chief::NoRoute;
+        };
         if !self.cfg.delegation.grants(class) {
-            return None;
+            return Chief::NoRoute;
         }
         if !self.shared.sessions.enabled() {
             self.notice(
@@ -5082,7 +5101,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 format!("delegated:chief: no session broker to reach {chief}; asking you instead"),
             );
             self.digest.count(crate::digest::Which::ChiefFallback);
-            return None;
+            return Chief::Fallback;
         }
         let (id, rx) = self.shared.sessions.open();
         let request = serde_json::json!({
@@ -5121,7 +5140,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 );
                 self.digest.count(crate::digest::Which::ChiefFallback);
                 self.decision(item, "delegated", "ask", "the chief errored", 0);
-                return None;
+                return Chief::Fallback;
             }
             Err(_) => {
                 self.notice(
@@ -5130,7 +5149,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 );
                 self.digest.count(crate::digest::Which::ChiefFallback);
                 self.decision(item, "delegated", "ask", "the chief didn't answer", 0);
-                return None;
+                return Chief::Fallback;
             }
         };
         let parsed = crate::delegation::parse_reply(&reply.unwrap_or(Value::Null));
@@ -5141,7 +5160,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             );
             self.digest.count(crate::digest::Which::ChiefFallback);
             self.decision(item, "delegated", "ask", "the chief's answer was unreadable", 0);
-            return None;
+            return Chief::Fallback;
         };
         self.timing.user_ms += ms(waited.elapsed());
         if allowed {
@@ -5152,7 +5171,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             };
             self.notice(Level::Info, format!("delegated:chief: {why} — `{name} {arg}`"));
             self.decision(item, "delegated", "allow", &why, 0);
-            Some(Decision::Allow)
+            Chief::Decided(Decision::Allow)
         } else {
             self.digest.count(crate::digest::Which::Blocked);
             let why = match &note {
@@ -5160,12 +5179,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 None => format!("{chief} declined it"),
             };
             self.notice(Level::Warn, format!("delegated:chief: {why} — `{name} {arg}`"));
+            self.decision(item, "delegated", "deny", &why, 0);
             self.record_denial(
                 call_hash(name, input),
                 format!("the chief declined: {why}"),
             );
             self.last_note = Some(why);
-            Some(Decision::Deny)
+            Chief::Decided(Decision::Deny)
         }
     }
 
@@ -6791,10 +6811,8 @@ tool, strip prefixes like RULES:, and add tests.",
                 more: Vec::new(),
             })
             .unwrap();
-        let mut sid = String::new();
-        loop {
+        let sid = loop {
             let env = h.events.recv().await.unwrap();
-            sid = env.session.clone();
             if let Event::PermissionRequest { id, .. } = &env.event {
                 h.ops
                     .send(Op::Permission {
@@ -6805,9 +6823,9 @@ tool, strip prefixes like RULES:, and add tests.",
                     .unwrap();
             }
             if matches!(env.event, Event::Idle) {
-                break;
+                break env.session;
             }
-        }
+        };
         shutdown(h).await;
         let logged: Vec<PathBuf> = session::load(&store, &sid)
             .unwrap()
@@ -12017,20 +12035,37 @@ for line in sys.stdin:
         )
     }
 
-    /// Run one turn; for each `SessionRequest`, call `on(id, tool, evs)` (the
-    /// test may reply via `Op::SessionReply`). Collects events until `Idle`.
+    /// Run one turn; for each `SessionRequest`, call `on(id, tool)` (the test may
+    /// reply via `Op::SessionReply`); deny every card. Collects events until `Idle`.
     async fn loop_collect(
         h: &mut Handle,
         mut on: impl FnMut(&str, &str),
     ) -> Vec<Envelope> {
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
         let mut evs: Vec<Envelope> = Vec::new();
+        // `SetClientCaps` also ends in an `Idle`; only the one after this turn counts.
+        let mut started = false;
         loop {
             let env = h.events.recv().await.unwrap();
+            started |= matches!(env.event, Event::TurnStarted { .. });
             if let Event::SessionRequest { id, tool, .. } = &env.event {
                 let (id, tool) = (id.clone(), tool.clone());
                 on(&id, &tool);
             }
-            if matches!(env.event, Event::Idle) {
+            // A card that reaches the user is denied (the tests count them).
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                h.ops
+                    .send(Op::Permission { id: id.clone(), decision: Decision::Deny, note: None })
+                    .unwrap();
+            }
+            if started && matches!(env.event, Event::Idle) {
                 return evs;
             }
             evs.push(env);
@@ -12165,7 +12200,6 @@ for line in sys.stdin:
     /// call runs and the audit trail says `delegated`.
     #[tokio::test]
     async fn chief_approval_delegates_the_flagged_call() {
-        crate::auto::clear_scripts();
         let dir = scratch_path("chief-ok");
         std::fs::create_dir_all(&dir).unwrap();
         crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
@@ -12174,7 +12208,6 @@ for line in sys.stdin:
             crate::auto::Verdict::Ask("still flagged".into()),
         );
         let script = vec![
-            bash_call("mk", &format!("mkdir -p {}", dir.display())),
             bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
             reply(vec![text("done")], Stop::End),
         ];
@@ -12200,7 +12233,6 @@ for line in sys.stdin:
     /// Chief unreachable (the broker errors): the card falls back to the user.
     #[tokio::test]
     async fn unreachable_chief_falls_back_to_a_card() {
-        crate::auto::clear_scripts();
         let dir = scratch_path("chief-dead");
         std::fs::create_dir_all(&dir).unwrap();
         crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
@@ -12231,7 +12263,6 @@ for line in sys.stdin:
     /// Chief declines: the call is denied without ever reaching the user's card queue.
     #[tokio::test]
     async fn chief_decline_denies_without_a_card() {
-        crate::auto::clear_scripts();
         let dir = scratch_path("chief-no");
         std::fs::create_dir_all(&dir).unwrap();
         crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
@@ -12255,25 +12286,26 @@ for line in sys.stdin:
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(asked(&evs), 0);
         assert_eq!(outcome_of(&evs, "ssh"), Some(ToolOutcome::Denied));
-        assert!(layers(&evs, "ssh").contains(&("delegated".into(), "ask".into())));
+        assert!(layers(&evs, "ssh").contains(&("delegated".into(), "deny".into())));
         assert!(evs.iter().any(|e| matches!(&e.event,
-            Event::Notice { message, .. } if message.contains("declined"))));
+            Event::Notice { message, .. } if message.contains("delegated:chief") && message.contains("declined"))));
     }
 
-    /// The digest roll-up reflects every path: an Op::Digest reply arrives with
-    /// today's counts.
+    /// The digest roll-up counts each path once: a classifier allow, a chief
+    /// approval, and a never-delegable card. `Op::Digest` replies with today's counts.
     #[tokio::test]
     async fn digest_counts_each_path() {
-        crate::auto::clear_scripts();
-        *crate::digest::TEST_DAY.lock().unwrap() = Some("30000".into());
         let dir = scratch_path("digest");
         std::fs::create_dir_all(&dir).unwrap();
-        crate::auto::script_judge("echo plain", crate::auto::Verdict::Allow("ordinary".into()));
-        crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("flagged".into()));
-        crate::auto::script_rejudge(&dir.display().to_string(), crate::auto::Verdict::Ask("still".into()));
+        let plain = format!("python3 -c 'print(1)' # {}", dir.display());
+        crate::auto::script_judge(&plain, crate::auto::Verdict::Allow("ordinary".into()));
+        let ssh = format!("ssh -o ConnectTimeout=1 host@{} true", dir.display());
+        crate::auto::script_judge(&ssh, crate::auto::Verdict::Ask("flagged".into()));
+        crate::auto::script_rejudge(&format!("host@{}", dir.display()), crate::auto::Verdict::Ask("still".into()));
         let script = vec![
-            bash_call("a", "echo plain"),
-            bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+            bash_call("a", &plain),
+            bash_call("ssh", &ssh),
+            bash_call("push", &format!("git push --force origin {}", new_id())),
             reply(vec![text("done")], Stop::End),
         ];
         let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
@@ -12283,24 +12315,49 @@ for line in sys.stdin:
         let mut h = engine_deleg(script, Some(cfg));
         caps(&h, true);
         let ops = h.ops.clone();
-        let _evs = loop_collect(&mut h, |id, tool| {
+        let evs = loop_collect(&mut h, |id, tool| {
             if tool == "DelegateApproval" {
                 ops.send(Op::SessionReply { id: id.to_string(), result: Some(json!("approve")), error: None }).unwrap();
             }
         }).await;
-        // Ask for the roll-up.
         h.ops.send(Op::Digest).unwrap();
         let summary = loop {
-            match h.events.recv().await.unwrap().event {
-                Event::Digest { summary } => break summary,
-                _ => {}
+            if let Event::Digest { summary } = h.events.recv().await.unwrap().event {
+                break summary;
             }
         };
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(&dir);
-        *crate::digest::TEST_DAY.lock().unwrap() = None;
+        assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
         assert!(summary.contains("1 auto-allowed"), "{summary}");
         assert!(summary.contains("1 chief-approved"), "{summary}");
-        assert!(summary.contains("1 carded"), "{summary}");
+        assert!(summary.contains("1 blocked"), "{summary}");
+        assert!(summary.contains("(3 calls total)"), "{summary}");
+        // The first card of the day carries the roll-up, once.
+        let daily = evs.iter().filter(|e| matches!(&e.event,
+            Event::Notice { message, .. } if message.starts_with("delegation today:"))).count();
+        assert_eq!(daily, 1);
+    }
+
+    /// A never-delegable call cards the user even when the chief's grants cover
+    /// its soft shape (a force push is also a push to a remote).
+    #[tokio::test]
+    async fn a_chief_grant_never_routes_a_never_delegable_call() {
+        let branch = format!("deleg-{}", new_id());
+        let script = vec![
+            bash_call("push", &format!("git push --force origin {branch}")),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+        cfg.delegation.chief = vec!["chief".into()];
+        cfg.delegation.chief_classes = vec!["network-read-writes".into()];
+        let mut h = engine_deleg(script, Some(cfg));
+        caps(&h, true);
+        let mut asked_chief = false;
+        let evs = loop_collect(&mut h, |_, tool| asked_chief |= tool == "DelegateApproval").await;
+        shutdown(h).await;
+        assert!(!asked_chief, "the chief was asked about a force push");
+        assert_eq!(asked(&evs), 1);
+        assert_eq!(layers(&evs, "push").first(), Some(&("never-delegable".to_string(), "ask".to_string())));
     }
 }

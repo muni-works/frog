@@ -388,6 +388,7 @@ impl Classifier {
         // Tests never reach a model here: an unscripted context keeps the flag.
         #[cfg(test)]
         {
+            let _ = action;
             return Self::scripted(ctx)
                 .unwrap_or_else(|| Verdict::Ask("unscripted second pass (test)".into()));
         }
