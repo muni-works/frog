@@ -253,3 +253,45 @@ card has nothing to ask) · ⋯ menu: "manage on frog.toys" (opens frog.toys/acc
 face goes `.idle`. The engine revokes the key (best effort), deletes the Keychain item, and
 conversations on `cloud/…` show the existing "pick a model" path on their next turn. A
 conversation mid-turn finishes that turn first.
+
+### State 4: credit running low (the upgrade moment)
+
+The one place frog asks for money, so it has to be earned: shown where the credit is being
+spent, at a moment the user isn't waiting on anything, once.
+
+**When.** `low` = credit left would last under 2 days at this week's pace
+(`credit_usd < 2 × total_usd / 7`), or under 10% of `credit_limit_usd`, whichever comes first,
+and never above $5 left (heavy users shouldn't be nagged at $30). Checked when a frog cloud turn
+ends. `api` plans use the same rule.
+
+**Where: one line above the composer** (the `PingLine` / `BiggerModelLine` slot, same height,
+same × at the right), in the conversation whose frog cloud turn just finished. Not in a
+notification, not a sheet, not every conversation.
+
+**The line** (exact):
+
+> frog cloud credit is low: about 2 days left at your pace. **upgrade to pro** ×
+
+- The number: `about N days` rounded down, `less than a day` under 1, `about N hours` is never
+  used (no countdown pressure).
+- The action, by plan: beta → **upgrade to pro** · pro → **upgrade to max** · max and api →
+  **add credit**. It opens frog.toys/upgrade (or /account for add credit) in the default
+  browser. Checkout lives on the web. When the user comes back (app becomes active), the engine
+  refreshes `/me` once, and the line disappears on its own if credit went up.
+- A tiny `FrogFace(.waiting, size: 16)` leads the line, like the activity pill.
+- **Once per credit period.** × (or the action) hides it until `resets_at`, or until credit next
+  crosses the zero line. It doesn't come back the next turn.
+
+**On the card**, while low: the meter fill turns `.orange`, the caption reads
+`$1.30 left · about 2 days at your pace`, face `.waiting`, and a primary button appears: the
+same action as the line (**upgrade to pro** / **upgrade to max** / **add credit**,
+`.borderedProminent`). It goes when credit is no longer low.
+
+**At zero.** Nothing breaks. The existing 402 fallback moves the turn to this Mac's model, and
+the line becomes (exact, once per period):
+
+> out of frog cloud credit, so this ran on this Mac. **upgrade to pro** ×
+
+The card's meter is empty and orange; caption `out of credit · resets nov 1` (pro/max) or
+`out of credit` (beta/api). If this Mac has no usable model, the turn stops with the same line
+and the existing "pick a model" path, so no loop of failed requests.
