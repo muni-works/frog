@@ -114,7 +114,9 @@ SendMessage, and for a worktree the branch it's on and the base ref it started f
         ToolSpec {
             name: ARCHIVE.into(),
             description: "Archive a session, exactly like the sidebar's archive: it disappears \
-from lists and sidebars, its log is never deleted, and UnarchiveSession brings it back."
+from lists and sidebars, its log is never deleted, and UnarchiveSession brings it back. Messages \
+queued in its inbox are cancelled (they never run), so nothing restarts it; a turn already \
+running isn't stopped (StopSession does that)."
                 .into(),
             schema: json!({
                 "type": "object",
@@ -167,11 +169,14 @@ its logs."
             name: STOP.into(),
             description: "Stop a session's running turn now (the only interrupt, since SendMessage \
 only queues). The turn ends cancelled and the session goes idle; anything queued in its inbox \
-runs next as usual."
+runs next as usual, unless clear_queue: true cancels it, so the session stays stopped."
                 .into(),
             schema: json!({
                 "type": "object",
-                "properties": { "id": { "type": "string", "description": "session id or name" } },
+                "properties": {
+                    "id": { "type": "string", "description": "session id or name" },
+                    "clear_queue": { "type": "boolean", "description": "also cancel the messages queued in its inbox, so none of them starts its next turn (default false)" }
+                },
                 "required": ["id"]
             }),
         },

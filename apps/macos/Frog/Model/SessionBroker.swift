@@ -365,9 +365,13 @@ final class SessionBroker {
             switch on ? resolve(key) : resolve(key, includeArchived: true) {
             case .success(let e):
                 guard e.id != sender else { return c.replySession(r.id, error: "That's this session.") }
+                // An archived session's queued messages never run: one left behind restarted
+                // a stopped session, which then deleted work in its tree.
+                let dropped = on ? clearQueue(e.id) : 0
                 archive(e.id, on)
+                let cancelled = dropped > 0 ? " \(Self.cancelled(dropped))." : ""
                 c.replySession(r.id, result: .string(
-                    "\(on ? "Archived" : "Unarchived") \(e.name) (\(e.id)).\(on ? " Its log is kept; UnarchiveSession brings it back." : " It's back in the sidebar.")"))
+                    "\(on ? "Archived" : "Unarchived") \(e.name) (\(e.id)).\(on ? " Its log is kept; UnarchiveSession brings it back.\(cancelled)" : " It's back in the sidebar.")"))
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
@@ -409,19 +413,24 @@ final class SessionBroker {
             // The explicit stop — the only interrupt now that SendMessage only queues. Sent
             // straight to the engine (Op.interrupt applies immediately, not at the boundary),
             // never starting one that's gone: a dead engine has nothing running.
+            // `clear_queue` also cancels its inbox, so no queued message starts the next turn.
             switch resolve(input["id"]?.string ?? "") {
             case .success(let e):
                 guard e.id != sender else { return c.replySession(r.id, error: "That's this session: use your own stop.") }
-                guard let target = tracked(e.id) else {
-                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) has no live engine; nothing to stop."))
+                let target = tracked(e.id)
+                let running = target.map { $0.busy || e.state == "running" || e.state == "waiting" } ?? false
+                let cleared = (input["clear_queue"]?.bool ?? false)
+                    ? " \(Self.cancelled(clearQueue(e.id))), so nothing restarts it." : ""
+                guard let target else {
+                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) has no live engine; nothing to stop.\(cleared)"))
                     return
                 }
-                guard target.busy || e.state == "running" || e.state == "waiting" else {
-                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) isn't running; nothing to stop."))
+                guard running else {
+                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) isn't running; nothing to stop.\(cleared)"))
                     return
                 }
                 target.interrupt()
-                c.replySession(r.id, result: .string("Stopping \(e.name) (\(e.id)): its turn ends cancelled and it goes idle."))
+                c.replySession(r.id, result: .string("Stopping \(e.name) (\(e.id)): its turn ends cancelled and it goes idle.\(cleared)"))
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
@@ -560,6 +569,25 @@ final class SessionBroker {
         guard var info = await Self.readStatus(id, broker: self) else { return nil }
         info.queuedMessages = inbound[id] ?? 0
         return info
+    }
+
+    /// Nothing queued may (re)start session `id`: its engine drops its inbox (when one runs),
+    /// and the broker forgets the queued count, the re-send list an update restart would
+    /// replay, and a first prompt waiting to be replayed. Returns how many messages it
+    /// cancelled. StopSession's `clear_queue` and every archive call it.
+    @discardableResult
+    func clearQueue(_ id: String) -> Int {
+        let target = tracked(id)
+        let dropped = max(inbound[id] ?? 0, pendingInbox[id]?.count ?? 0, target?.pendingDeliveries ?? 0)
+        target?.clearInbox()
+        inbound[id] = 0
+        pendingInbox[id] = nil
+        if births.removeValue(forKey: id) != nil { saveBirths() }
+        return dropped
+    }
+
+    static func cancelled(_ n: Int) -> String {
+        "Its inbox is cleared (\(n) queued message\(n == 1 ? "" : "s") cancelled)"
     }
 
     /// Messages queued in session `id`'s engine inbox, waiting for its next turn boundary.

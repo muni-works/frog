@@ -876,6 +876,68 @@ final class SessionBrokerTests: XCTestCase {
         b.handle(SessionRequest(id: "r3", item: "t3", tool: "StopSession", input: .object(["id": .string(chief.id)])), from: chiefConv)
     }
 
+    /// Item 2b (org reliability): StopSession with `clear_queue` leaves zero queued messages
+    /// (the engine's inbox, the broker's count and its re-send list), so nothing queued
+    /// restarts the stopped session. Without the flag the queue stays, as before.
+    @MainActor
+    func testStopSessionWithClearQueueLeavesNothingQueued() throws {
+        let b = broker([chief, eng, ops])
+        let chiefConv = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-chief"))
+        let busyTurn = { (id: String) in
+            try JSONDecoder.frog.decode(Envelope.self, from: Data(
+                #"{"seq":1,"session":"\#(id)","created":1,"event":"turn_started","turn":1,"input":"long task"}"#.utf8))
+        }
+        var targets: [String: Conversation] = [:]
+        for id in [eng.id, ops.id] {
+            let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-\(id)"))
+            targets[id] = target
+            target.ingest(try busyTurn(id))
+            b.track(target, as: id)
+            for m in ["one", "two"] {
+                _ = try b.send(from: chief.id, name: chief.name, to: id, message: m, notifyWhenIdle: false).get()
+                // What the real `reach` does: the engine gets it, behind the running turn.
+                target.deliver(from: chief.id, name: chief.name, message: m)
+            }
+            XCTAssertEqual(b.pendingInbound(id), 2)
+            XCTAssertEqual(target.pendingDeliveries, 2)
+        }
+        let target = targets[eng.id]!
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "StopSession",
+                                input: .object(["id": .string(eng.id), "clear_queue": .bool(true)])), from: chiefConv)
+        XCTAssertTrue(target.userStopped)
+        XCTAssertEqual(b.pendingInbound(eng.id), 0, "nothing queued after a clearing stop")
+        XCTAssertEqual(target.pendingDeliveries, 0, "the engine's inbox was cleared")
+
+        // A plain stop keeps the queue: the next message runs, as documented.
+        let other = targets[ops.id]!
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "StopSession",
+                                input: .object(["id": .string(ops.id)])), from: chiefConv)
+        XCTAssertTrue(other.userStopped)
+        XCTAssertEqual(b.pendingInbound(ops.id), 2)
+        XCTAssertEqual(other.pendingDeliveries, 2)
+    }
+
+    /// Item 2b: archiving cancels what's queued for the session — inbox, re-send list and a
+    /// first prompt waiting to be replayed — so nothing starts an archived session again.
+    @MainActor
+    func testArchiveSessionCancelsItsQueuedMessages() throws {
+        let b = broker([chief, eng])
+        var archived: [String: Bool] = [:]
+        b.archiver = { archived[$0] = $1 }
+        let chiefConv = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-chief"))
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-archive"))
+        b.track(target, as: eng.id)
+        b.recordBirth(eng.id, prompt: "the first prompt")
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "queued", notifyWhenIdle: false).get()
+        target.deliver(from: chief.id, name: chief.name, message: "queued")
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "ArchiveSession",
+                                input: .object(["id": .string(eng.id)])), from: chiefConv)
+        XCTAssertEqual(archived[eng.id], true)
+        XCTAssertEqual(b.pendingInbound(eng.id), 0)
+        XCTAssertEqual(target.pendingDeliveries, 0)
+        XCTAssertNil(b.births[eng.id], "an archived session's first prompt is never replayed")
+    }
+
     /// ListApprovals collects the pending permission cards across sessions (read-only,
     /// with age) and clears their age once they stop waiting.
     @MainActor

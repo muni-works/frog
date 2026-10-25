@@ -64,6 +64,8 @@ enum Op: Encodable, Sendable {
     /// A press on a `Present` actions button; runs a turn with `send` (or the label).
     case act(label: String, send: String)
     case interrupt
+    /// Drop the session messages queued in the engine's inbox (sent, not yet taken by a turn).
+    case clearInbox
     /// Pick up a turn the app's restart interrupted: the engine runs a turn on the repaired
     /// history with `note` (its own default when nil) as the message.
     case `continue`(note: String? = nil)
@@ -136,6 +138,8 @@ enum Op: Encodable, Sendable {
             try c.encode(command, forKey: .command)
         case .interrupt:
             try c.encode("interrupt", forKey: .op)
+        case .clearInbox:
+            try c.encode("clear_inbox", forKey: .op)
         case .continue(let note):
             try c.encode("continue", forKey: .op)
             try c.encodeIfPresent(note, forKey: .note)

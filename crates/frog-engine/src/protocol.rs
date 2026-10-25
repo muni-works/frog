@@ -111,8 +111,8 @@ pub const SUSPENDED_NOTE: &str =
 
 /// Client → engine.
 ///
-/// `Interrupt`, `Permission`, `Answer`, `Elicit`, `AppCall`, `Drain`, `DrainAbort` and
-/// `StopSubagent` take effect immediately. Everything else is queued
+/// `Interrupt`, `ClearInbox`, `Permission`, `Answer`, `Elicit`, `AppCall`, `Drain`,
+/// `DrainAbort` and `StopSubagent` take effect immediately. Everything else is queued
 /// and handled in order; each queued op ends with [`Event::Idle`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -309,6 +309,12 @@ pub enum Op {
         from_name: String,
         message: String,
     },
+    /// Drop every [`Op::Deliver`] sent so far that no turn has taken yet: the messages
+    /// queued behind the running turn never run. Immediate, like `Interrupt`; a stop that
+    /// should leave the session quiet sends both (`StopSession` with `clear_queue`,
+    /// `ArchiveSession`), or the queued message starts the next turn. Messages sent after it
+    /// queue as usual.
+    ClearInbox,
     /// The user picked an element in a preview pane. `context` (tag, text, selector, source
     /// location) is inlined the next time `mention` (e.g. `@button.submit`) appears in a message.
     PaneMention {

@@ -308,6 +308,11 @@ struct Shared {
     /// the loop force-stops. The jobs it stopped ride along for the ack and the resumed
     /// notice; `acked` keeps a second drain (and the work loop's deadline) from re-acking.
     draining: Mutex<Option<DrainState>>,
+    /// `Op::Deliver`s the router has passed to the work loop, and how many of the first of
+    /// them `Op::ClearInbox` voided: the work loop drops a voided one instead of running it.
+    /// Counting works because the router forwards them in the order the loop takes them.
+    inbox_sent: AtomicU64,
+    inbox_void: AtomicU64,
 }
 
 /// What a running [`Op::Drain`] needs, kept in `Shared::draining`.
@@ -501,6 +506,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             crate::background::Registry::new(move |e| j.emit(e))
         },
         draining: Default::default(),
+        inbox_sent: Default::default(),
+        inbox_void: Default::default(),
         journal,
         panes,
         irc: crate::irc::slot(),
@@ -562,6 +569,16 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Op::Interrupt => {
                     router.cancel.lock().unwrap().cancel();
                     router.bg.stop_all();
+                }
+                Op::ClearInbox => {
+                    let sent = router.inbox_sent.load(Ordering::SeqCst);
+                    router.inbox_void.store(sent, Ordering::SeqCst);
+                }
+                op @ Op::Deliver { .. } => {
+                    router.inbox_sent.fetch_add(1, Ordering::SeqCst);
+                    if work_tx.send(op).is_err() {
+                        break;
+                    }
                 }
                 // An update is coming: set the flag the work loop checks between calls and
                 // after the one in flight. Nothing running: ack now, a no-op.
@@ -697,6 +714,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         agent.meter_busy(false);
         // An op taken off the queue while gathering delivered messages, handled next.
         let mut held: Option<Op> = None;
+        // `Op::Deliver`s taken off the queue so far, to tell the ones `ClearInbox` voided.
+        let mut inbox_taken: u64 = 0;
+        let voided = |taken: &mut u64| {
+            *taken += 1;
+            *taken <= shared.inbox_void.load(Ordering::SeqCst)
+        };
         loop {
             let op = if let Some(op) = held.take() { Some(op) } else { tokio::select! {
                 op = work_rx.recv() => op,
@@ -723,21 +746,33 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             // any op. Those already waiting when one comes up run with it, in order, as one
             // turn (the first as its input, the rest as `more`, as composer sends follow-ups).
             let mut delivered = Vec::new();
+            let mut dropped = 0;
             let op = match op {
                 Op::Deliver {
                     from,
                     from_name,
                     message,
                 } => {
-                    delivered.push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                    if voided(&mut inbox_taken) {
+                        dropped += 1;
+                    } else {
+                        delivered.push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                    }
                     while let Ok(next) = work_rx.try_recv() {
                         match next {
                             Op::Deliver {
                                 from,
                                 from_name,
                                 message,
-                            } => delivered
-                                .push(crate::tools::sessions::wrap(&from, &from_name, &message)),
+                            } => {
+                                if voided(&mut inbox_taken) {
+                                    dropped += 1;
+                                } else {
+                                    delivered.push(crate::tools::sessions::wrap(
+                                        &from, &from_name, &message,
+                                    ))
+                                }
+                            }
                             other => {
                                 held = Some(other);
                                 break;
@@ -748,6 +783,19 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 }
                 op => Some(op),
             };
+            if dropped > 0 {
+                agent.notice(
+                    Level::Info,
+                    format!(
+                        "dropped {dropped} queued session message{}: the inbox was cleared",
+                        if dropped == 1 { "" } else { "s" }
+                    ),
+                );
+            }
+            // Every message in the batch was voided: there's no turn to run.
+            if op.is_none() && delivered.is_empty() {
+                continue;
+            }
             // In the background, and not an op the client waits on: no `Idle` after it.
             if let Some(Op::Warm { draft }) = &op {
                 agent.warm(draft.as_deref());
@@ -1831,6 +1879,7 @@ impl Agent {
             }
             // Handled by the router, never queued.
             Op::Interrupt
+            | Op::ClearInbox
             | Op::Permission { .. }
             | Op::Answer { .. }
             | Op::SessionReply { .. }
@@ -8652,6 +8701,88 @@ for line in sys.stdin:
             name: crate::irc::TOOL.into(),
             input: json!({ "action": action, "channel": channel }),
         }
+    }
+
+    /// Item 2b (org reliability): a stop that clears the inbox leaves nothing queued to
+    /// restart the session — the messages queued behind the stopped turn never run — while
+    /// a message sent after the clear queues and runs as usual.
+    #[tokio::test]
+    async fn clear_inbox_drops_queued_messages_so_a_stop_stays_stopped() {
+        let script = vec![
+            reply(vec![list_sessions_call()], Stop::ToolUse),
+            reply(vec![text("got the later one")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "work".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let deliver = |h: &Handle, message: &str| {
+            h.ops
+                .send(Op::Deliver {
+                    from: "s2".into(),
+                    from_name: "Manager".into(),
+                    message: message.into(),
+                })
+                .unwrap();
+        };
+        let mut evs = Vec::new();
+        let mut cleared = false;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::SessionRequest { .. } = &env.event {
+                // Mid-turn: two messages queue behind it, then the stop clears them.
+                deliver(&h, "queued-one");
+                deliver(&h, "queued-two");
+                h.ops.send(Op::Interrupt).unwrap();
+                h.ops.send(Op::ClearInbox).unwrap();
+                cleared = true;
+            }
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle && cleared {
+                break;
+            }
+        }
+        // Nothing started after the stopped turn.
+        let started: Vec<String> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::TurnStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(started, ["work"], "a voided message started a turn");
+        // The loop takes the voided messages off the queue right after the stopped turn, says
+        // so, and starts nothing.
+        let notice = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match h.events.recv().await.unwrap().event {
+                    Event::Notice { message, .. } if message.contains("queued session message") => {
+                        break message;
+                    }
+                    Event::TurnStarted { input, .. } => panic!("a voided message ran: {input}"),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("no notice about the dropped messages");
+        assert!(notice.contains("dropped 2 queued session messages"), "{notice}");
+        // A message sent after the clear runs.
+        deliver(&h, "after-clear");
+        let input = loop {
+            if let Event::TurnStarted { input, .. } = h.events.recv().await.unwrap().event {
+                break input;
+            }
+        };
+        assert!(input.contains("after-clear") && !input.contains("queued-"), "{input}");
+        shutdown(h).await;
     }
 
     #[tokio::test]

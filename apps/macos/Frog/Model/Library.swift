@@ -93,6 +93,9 @@ final class Library {
     }
 
     func setArchived(_ id: String, _ on: Bool) {
+        // However it's archived (sidebar, phone, a session's ArchiveSession), nothing queued
+        // for it runs afterwards.
+        if on { SessionBroker.shared.clearQueue(id) }
         if on { archived.insert(id); pinned.remove(id) } else { archived.remove(id) }
         if on, chief == id { chief = nil; UserDefaults.standard.removeObject(forKey: "chiefSession") }
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
