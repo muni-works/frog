@@ -264,6 +264,19 @@ private struct SegmentRow: View, Equatable {
     }
 
     var body: some View {
+        content
+        #if DEBUG
+            .onAppear { TranscriptProbe.mounted(probeKey, true) }
+            .onDisappear { TranscriptProbe.mounted(probeKey, false) }
+        #endif
+    }
+
+    #if DEBUG
+    private var probeKey: String { "\(ObjectIdentifier(conversation).hashValue)-\(segment.id)" }
+    #endif
+
+    @ViewBuilder
+    private var content: some View {
         switch segment {
         case .activity(let group):
             ActivityLine(group: group, conversation: conversation, live: live, verbosity: verbosity)
