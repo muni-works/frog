@@ -100,15 +100,47 @@ pub fn cached(p: &Profile) -> Option<Caps> {
 }
 
 pub fn save(p: &Profile, caps: &Caps) {
-    let mut all = read_cache();
-    all.insert(key(p), caps.clone());
-    let _ = std::fs::create_dir_all(data_dir());
+    save_in(&cache_path(), p, caps);
+}
+
+/// Whether `new` may replace `old` in the cache. Only a fresh measurement (a [`probe`] newer
+/// than what's stored) can take a tool format away: a session's run-time evidence is a guess
+/// (one glitchy gateway reply, a model quoting `<tool_call>` in prose), and writing it down
+/// once demoted a model to text tool calls for every later session.
+fn may_replace(old: Option<&Caps>, new: &Caps) -> bool {
+    let Some(old) = old else { return true };
+    let lowers = (old.native_tools && !new.native_tools)
+        || (old.json_mode && !new.json_mode)
+        || (old.text_tools && !new.text_tools);
+    !lowers || new.probed > old.probed
+}
+
+fn save_in(path: &std::path::Path, p: &Profile, caps: &Caps) {
+    let mut all: BTreeMap<String, Caps> = std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let k = key(p);
+    if !may_replace(all.get(&k), caps) {
+        return;
+    }
+    all.insert(k, caps.clone());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     if let Ok(bytes) = serde_json::to_vec_pretty(&all) {
-        let tmp = cache_path().with_extension("json.tmp");
+        let tmp = path.with_extension("json.tmp");
         if std::fs::write(&tmp, bytes).is_ok() {
-            let _ = std::fs::rename(tmp, cache_path());
+            let _ = std::fs::rename(tmp, path);
         }
     }
+}
+
+/// Models whose native tool calling is known to work, so a probe or a session's evidence never
+/// moves them off it: hosted frontier APIs, and Claude through any cloud gateway (Vercel AI
+/// Gateway serves it on the Messages API; OpenRouter and the rest translate faithfully).
+pub fn native_known(p: &Profile) -> bool {
+    is_hosted(p) || (is_cloud(p) && p.model.to_lowercase().contains("claude"))
 }
 
 /// A model that runs in someone's data center: a hosted API, or one reached through a cloud
@@ -135,7 +167,7 @@ pub fn is_hosted(p: &Profile) -> bool {
 }
 
 pub fn tier(p: &Profile, caps: Option<&Caps>) -> Tier {
-    if is_hosted(p) {
+    if native_known(p) {
         return Tier::Strong;
     }
     let Some(c) = caps else { return Tier::Medium };
@@ -154,6 +186,9 @@ pub fn tier(p: &Profile, caps: Option<&Caps>) -> Tier {
 pub fn choose_mode(p: &Profile, caps: Option<&Caps>, tier: Tier) -> ToolMode {
     if p.tool_mode != ToolMode::Auto {
         return p.tool_mode;
+    }
+    if native_known(p) {
+        return ToolMode::Native;
     }
     let Some(c) = caps else {
         return ToolMode::Native;
@@ -445,6 +480,71 @@ mod tests {
         assert!(!answered_directly(&reply(vec![text(
             "Okay, the user wants 17 + 25. Let me add: 10 + 20 is 30, 7 + 5 is 12, so 42."
         )])));
+    }
+
+    fn tmp_cache(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "frog-harness-{name}-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("models.json")
+    }
+
+    fn read_in(path: &std::path::Path, p: &Profile) -> Option<Caps> {
+        let all: BTreeMap<String, Caps> =
+            serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        all.get(&key(p)).cloned()
+    }
+
+    /// A session's evidence can't take a format away from a model: only a newer probe can.
+    #[test]
+    fn downgrades_are_never_persisted() {
+        let path = tmp_cache("downgrade");
+        let p = local("qwen3-coder:30b");
+        let mut probed = caps(true, true, Some(30.5));
+        probed.probed = 1_000;
+        save_in(&path, &p, &probed);
+        // What the old fallback wrote: the same probe with native tools struck out.
+        let mut demoted = probed.clone();
+        demoted.native_tools = false;
+        save_in(&path, &p, &demoted);
+        assert!(read_in(&path, &p).unwrap().native_tools);
+        // Improvements and fresh measurements land.
+        let mut better = probed.clone();
+        better.abstains = false;
+        better.thinks = true;
+        save_in(&path, &p, &better);
+        assert!(read_in(&path, &p).unwrap().thinks);
+        let mut reprobed = demoted.clone();
+        reprobed.probed = 2_000;
+        save_in(&path, &p, &reprobed);
+        assert!(!read_in(&path, &p).unwrap().native_tools);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// The cache entry that broke every Opus session: native tools struck out, text tools on.
+    /// A model known to call natively stays native regardless, at the frontier tier.
+    #[test]
+    fn claude_through_a_gateway_stays_native_whatever_the_cache_says() {
+        let cfg = crate::config::Config::default();
+        let poisoned = caps(false, false, None);
+        for spec in [
+            "vercel/anthropic/claude-opus-5.5",
+            "openrouter/anthropic/claude-sonnet-5",
+        ] {
+            let mut p = cfg.resolve(Some(spec)).unwrap().1;
+            p.tool_mode = ToolMode::Auto;
+            assert!(native_known(&p), "{spec}");
+            let t = tier(&p, Some(&poisoned));
+            assert_eq!(t, Tier::Strong, "{spec}");
+            assert_eq!(choose_mode(&p, Some(&poisoned), t), ToolMode::Native, "{spec}");
+        }
+        // Anything else on a gateway is measured as before.
+        let mut qwen = cfg.resolve(Some("openrouter/qwen/qwen3-coder")).unwrap().1;
+        qwen.tool_mode = ToolMode::Auto;
+        assert!(!native_known(&qwen));
     }
 
     #[test]

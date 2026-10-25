@@ -1119,6 +1119,9 @@ struct Agent {
     caps: Option<Caps>,
     /// Tool-call format failures under `auto`; enough of them switches modes.
     mode_failures: u32,
+    /// Why this session fell back to text tool calls, when it did. Session-only: it survives
+    /// `apply_harness` but is never written to the capability cache.
+    text_fallback: Option<String>,
     /// A Tang sidecar loads its weights on its first completion request. Keep that visible until
     /// the first response arrives, then regular request activity takes over.
     model_ready: bool,
@@ -1230,7 +1233,7 @@ struct Agent {
 impl Agent {
     fn new(o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
         // Cached or shipped capability profiles are useful in both persisted and in-memory engines.
-        let caps = (!harness::is_hosted(&o.profile))
+        let caps = (!harness::native_known(&o.profile))
             .then(|| harness::cached(&o.profile))
             .flatten();
         let tier = harness::tier(&o.profile, caps.as_ref());
@@ -1398,6 +1401,7 @@ impl Agent {
             tier,
             caps,
             mode_failures: 0,
+            text_fallback: None,
             model_ready: false,
             quiet: 0,
             turn_usage: TurnUsage::default(),
@@ -2386,7 +2390,7 @@ impl Agent {
             }
             self.est
                 .calibrate(sent, resp.usage.input + resp.usage.cache_read);
-            let (msg, recovered) = normalize(resp.message);
+            let (msg, recovered) = normalize(resp.message, self.recovers_text_calls());
             let bad_args = msg
                 .tool_uses()
                 .iter()
@@ -2522,6 +2526,9 @@ impl Agent {
     fn apply_harness(&mut self) {
         self.tier = harness::tier(&self.profile, self.caps.as_ref());
         self.tool_mode = harness::choose_mode(&self.profile, self.caps.as_ref(), self.tier);
+        if self.text_fallback.is_some() && self.profile.tool_mode == ToolMode::Auto {
+            self.tool_mode = ToolMode::Text;
+        }
         let base = if self.chat {
             prompt::chat_prompt(&self.cfg, &self.profile.model)
         } else {
@@ -2788,11 +2795,22 @@ impl Agent {
         thinking::budget(base, think, &self.messages)
     }
 
+    /// Whether `<tool_call>` text in a reply is a call: always in text mode, and under native
+    /// only for models that may slip into it (Qwen/Hermes templates on some servers). A model
+    /// known to call tools natively that writes one is quoting the format, not calling.
+    fn recovers_text_calls(&self) -> bool {
+        self.tool_mode == ToolMode::Text || !harness::native_known(&self.profile)
+    }
+
     /// The model botched the tool-call format (text calls under native, invalid JSON args, or
-    /// JSON mode not honored). Under `auto`, two strikes moves to text mode for the session
-    /// and records the finding.
+    /// JSON mode not honored). Under `auto`, two strikes moves to text mode for this session
+    /// only: the finding is never written to the capability cache (see `harness::save`), and a
+    /// model whose native tools are known to work never moves.
     fn note_format_failure(&mut self) {
-        if self.profile.tool_mode != ToolMode::Auto || self.tool_mode == ToolMode::Text {
+        if self.profile.tool_mode != ToolMode::Auto
+            || self.tool_mode == ToolMode::Text
+            || harness::native_known(&self.profile)
+        {
             return;
         }
         self.mode_failures += 1;
@@ -2805,16 +2823,9 @@ impl Agent {
         self.text_why = Some(
             format!("{from:?} tool calls failed twice this session").to_lowercase(),
         );
-        if let Some(c) = self.caps.as_mut() {
-            match from {
-                ToolMode::Native => c.native_tools = false,
-                ToolMode::Json => c.json_mode = false,
-                _ => {}
-            }
-            if self.store.is_some() {
-                harness::save(&self.profile, c);
-            }
-        }
+        self.text_fallback = Some("two format failures this session".into());
+        // never persist the downgrade to the capability cache
+
         self.notice(
             Level::Warn,
             format!(
@@ -4074,7 +4085,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.ctx.judge = Some(self.profile.clone());
         }
         self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
-        self.caps = (!harness::is_hosted(&self.profile))
+        self.caps = (!harness::native_known(&self.profile))
             .then(|| harness::cached(&self.profile))
             .flatten();
         self.mode_failures = 0;
@@ -4139,6 +4150,8 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // A JSON-mode reply is one object whose action comes last, so it's done by the time
         // its call is: nothing to gain.
         let early_tools = self.cfg.early_tools && offer_tools && !quiet && !json_mode;
+        // `<tool_call>` text from a model that calls natively is prose: nothing to start early.
+        let early_text = early_tools && self.recovers_text_calls();
         let specs = if offer_tools && self.profile.provider != ProviderKind::Codex {
             &self.specs[..]
         } else {
@@ -4312,7 +4325,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                         // JSON-mode output is raw JSON; the parsed answer is shown when complete.
                         StreamEvent::Text(_) if json_mode => {}
                         StreamEvent::Text(s) => {
-                            if early_tools {
+                            if early_text {
                                 streamed.early.text(&s, |n, i| self.early_ctx(n, i));
                             }
                             let was_inside = filter.inside;
@@ -5432,13 +5445,15 @@ fn from_json_mode(mut resp: Response) -> Option<Response> {
 
 /// Recover tool calls a model wrote as text instead of via the API.
 /// Returns whether anything was recovered (a sign the configured format isn't working).
-fn normalize(mut msg: Message) -> (Message, bool) {
+/// Without `recover` (native calls from a model known to make them), `<tool_call>` text is the
+/// model quoting the format in prose, not a call.
+fn normalize(mut msg: Message, recover: bool) -> (Message, bool) {
     for b in &mut msg.content {
         if let Block::Text { text } = b {
             *text = prompt::strip_answer_tags(text);
         }
     }
-    if !msg.tool_uses().is_empty() {
+    if !recover || !msg.tool_uses().is_empty() {
         return (msg, false);
     }
     let Some((clean, calls)) = prompt::extract_tool_calls(&msg.text()) else {
@@ -5603,6 +5618,60 @@ mod tests {
             chat: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// An engine on `profile`, also handing back every request the provider was sent.
+    fn engine_profile(
+        script: Vec<Response>,
+        profile: Profile,
+    ) -> (Handle, Arc<Mutex<Vec<String>>>) {
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let client = scripted::Client::new(script);
+        let sent = client.sent.clone();
+        (start(opts, Provider::Scripted(client)).unwrap(), sent)
+    }
+
+    /// Opus on Vercel's AI Gateway, as `vercel/anthropic/claude-opus-5.5` resolves.
+    fn gateway_opus() -> Profile {
+        let mut p = Profile::new(ProviderKind::Openai, "anthropic/claude-opus-5.5");
+        p.base_url = Some("https://ai-gateway.vercel.sh/v1".into());
+        p.tool_mode = ToolMode::Auto;
+        p
+    }
+
+    /// A later turn: submit and collect through the next `Idle` (`run` waits for one first).
+    async fn turn_again(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
+        h.ops
+            .send(Op::Submit {
+                text: prompt.into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        until_idle(h).await
+    }
+
+    fn last_tool_mode(evs: &[Envelope]) -> Option<ToolMode> {
+        evs.iter().rev().find_map(|e| match &e.event {
+            Event::Status(s) => Some(s.tool_mode),
+            _ => None,
+        })
     }
 
     fn engine_qwen3_mode(script: Vec<Response>, mode: ToolMode) -> Handle {
@@ -8374,6 +8443,60 @@ for line in sys.stdin:
                 ..
             }
         )));
+    }
+
+    /// The session's fallback holds for its later turns (each turn re-applies the harness).
+    #[tokio::test]
+    async fn a_text_fallback_lasts_the_session() {
+        let text_call =
+            r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+        let script = vec![
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text("none found")], Stop::End),
+            reply(vec![text("still none")], Stop::End),
+        ];
+        let mut h = engine_mode(script, ToolMode::Auto);
+        let evs = run(&mut h, "find .nothing files").await;
+        assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
+        let evs = turn_again(&mut h, "and now?").await;
+        assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
+    }
+
+    /// Claude through a gateway calls tools natively. When it writes `<tool_call>` in prose
+    /// (quoting frog's own text format, say), that's not a call and not a format failure: the
+    /// session stays native and nothing runs.
+    #[tokio::test]
+    async fn claude_on_a_gateway_never_falls_back_to_text_calls() {
+        let quoted = r#"text mode looks like <tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+        let script = vec![
+            reply(vec![text(quoted)], Stop::End),
+            reply(vec![text(quoted)], Stop::End),
+            reply(vec![text(quoted)], Stop::End),
+        ];
+        let (mut h, sent) = engine_profile(script, gateway_opus());
+        for i in 0..3 {
+            let evs = if i == 0 {
+                run(&mut h, "how does text mode look?").await
+            } else {
+                turn_again(&mut h, "and again?").await
+            };
+            assert!(
+                !notices(&evs).iter().any(|n| n.contains("text tool calls")),
+                "{:?}",
+                notices(&evs)
+            );
+            assert_eq!(last_tool_mode(&evs), Some(ToolMode::Native));
+            assert!(!evs.iter().any(|e| matches!(
+                &e.event,
+                Event::ItemCompleted { item: Item::ToolCall { .. }, .. }
+            )));
+        }
+        // Every request offered native tools, and none described the text format.
+        for req in sent.lock().unwrap().iter() {
+            assert!(req.contains("<tool Read>"), "native tools offered");
+            assert!(!req.contains("To call one, output a block"));
+        }
     }
 
     #[tokio::test]
