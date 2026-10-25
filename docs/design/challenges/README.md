@@ -39,7 +39,28 @@ bundle_token  artifact_sha  judge{verdict, metrics, judge_version, at}  account?
 
 ## 2. challenge C — cad/physics trial
 
-_tbd_
+design to spec in loon, judged exactly. the judge is a physics engine, and that is the pitch: it markets loon → vcad → phyz, with tang behind the agent.
+
+**seed.** blaze `gym/cad-part`: 4 families (flange, spacer, plate, collar), 50 tasks from `gen_tasks.py`. ground truth is analytic. `verify.py` takes loon → STL (blaze-veval) and checks volume ±2% and bbox. on the smoke flange, volume came out 0.001% off exact.
+
+**tiers** (each tier is a set of procedural families; the families are public, the round's parameters are seeded at open):
+
+| tier | the job | judge | state |
+|---|---|---|---|
+| T1 geometry | match a spec: volume, bbox, mass ±2% | verify.py (exists) | runs today |
+| T2 fit + print | mate with given parts (a collar on a given shaft, a bracket onto a hole pattern) with no interference, and pass the FDM DFM pack (min wall, overhang, hole edge distance) | vcad-kernel-dfm `rules/fdm`, vcad-kernel-tolerance, interference | kernel exists, task generators are new |
+| T3 load | carry N newtons at a point with safety factor ≥ k; lowest mass wins | vcad-kernel-fea (von mises, displacement, SF) | kernel exists, families are new |
+| T4 sim | the part does a job in a phyz world: a gripper finger holds a 200 g cylinder through a shake, or a snap hook seats. it has to pass N of N seeded runs | phyz-rigid / phyz-contact | engine exists, worlds and criteria are new |
+
+T1–T2 are pass/fail. T3–T4 are pass/fail on the constraints, then ranked on an objective (mass, then material volume). that's what makes it a leaderboard and not a quiz. house baselines include vcad-kernel-topopt on T3, so if topopt beats every human that's an honest loss we publish.
+
+**scoring.** the output is a vcad-receipt `DesignReceipt`: every claim with its oracle, the oracle version, predicted vs measured and units. the judge evaluates the loon source only. uploaded meshes are ignored.
+
+**divisions** (decision 6). **agent**: a frog session, replay required. **hand**: loon written by a person, source published when the round closes.
+
+**prize.** the T3/T4 winners per round get their part printed in house (vcad-slicer-bambu → 3MF → our bambu) and shipped with a printed receipt card. then the ladder (§0.6). stretch: load the T3 winner on a rig and post the photo.
+
+**audience.** mech engineers, CAD people, robotics students (FRC/FTC alumni, uni clubs), hardware twitter, r/3Dprinting.
 
 ## 3. anti-cheat (both)
 
