@@ -821,6 +821,16 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 agent.warm(draft.as_deref());
                 continue;
             }
+            // Pure status from another session: read, recorded, no reply turn, no `Idle`.
+            if let Some(Op::Inform {
+                from,
+                from_name,
+                message,
+            }) = &op
+            {
+                agent.inform(from, from_name, message);
+                continue;
+            }
             shared.working.store(true, Ordering::Relaxed);
             agent.meter_busy(true);
             let token = CancellationToken::new();
@@ -1956,6 +1966,11 @@ impl Agent {
                 let text = crate::tools::sessions::wrap(&from, &from_name, &message);
                 self.deliver(vec![text]).await?
             }
+            Op::Inform {
+                from,
+                from_name,
+                message,
+            } => self.inform(&from, &from_name, &message),
             Op::SetClientCaps {
                 panes,
                 ask,
@@ -2143,6 +2158,18 @@ impl Agent {
             })
             .collect();
         self.turn_with(&first, Vec::new(), more).await
+    }
+
+    /// An informational message from another session ([`Op::Inform`]): logged as read, and
+    /// kept to go along with the next turn as context. No turn, no wake.
+    fn inform(&mut self, from: &str, from_name: &str, message: &str) {
+        self.emit(Event::MessageRead {
+            from: from.to_string(),
+            from_name: from_name.to_string(),
+            message: message.to_string(),
+        });
+        self.pending
+            .push(crate::tools::sessions::wrap(from, from_name, message));
     }
 
     /// A turn on what's waiting at the boundary, all at once: the background wakes (in the
@@ -11211,6 +11238,59 @@ for line in sys.stdin:
         let (a, b) = (input.find("first").unwrap(), input.find("second").unwrap());
         assert!(input.starts_with("<wakeup id=mon-1") && a < b, "{input}");
         drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The no-response opt: an informational session message is logged as read and starts no
+    /// turn (and wakes nothing); the next turn carries it as context. A plain delivered message
+    /// still starts a turn.
+    #[tokio::test]
+    async fn an_informational_message_is_read_without_a_turn() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(vec![text("noted the status")], Stop::End),
+            reply(vec![text("answered")], Stop::End),
+        ];
+        let (mut h, sent) = engine_early(script, true, ToolMode::Native, Duration::ZERO, &dir, &dir);
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        h.ops
+            .send(Op::Inform {
+                from: "s9".into(),
+                from_name: "okc manager".into(),
+                message: "received, going idle".into(),
+            })
+            .unwrap();
+        let read = drive(&mut h, |e| matches!(e, Event::MessageRead { .. })).await;
+        let sid = read[0].session.clone();
+        let quiet = tokio::time::timeout(Duration::from_millis(800), async {
+            loop {
+                let env = h.events.recv().await.unwrap();
+                if matches!(env.event, Event::TurnStarted { .. }) {
+                    break;
+                }
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "an informational message started a turn");
+        assert!(sent.lock().unwrap().is_empty(), "no model call for it");
+        // Logged as read.
+        let logged = session::events_after(&dir, &sid, 0).unwrap();
+        assert!(logged.iter().any(|e| matches!(&e.event,
+            Event::MessageRead { from, message, .. } if from == "s9" && message == "received, going idle")));
+        // The next turn (a question) runs as usual and carries the status along.
+        h.ops
+            .send(Op::Deliver {
+                from: "s9".into(),
+                from_name: "okc manager".into(),
+                message: "is the pod up?".into(),
+            })
+            .unwrap();
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::TurnStarted { input, .. } if input.contains("is the pod up?"))));
+        let to_model = sent.lock().unwrap().join("\n");
+        assert!(to_model.contains("received, going idle"), "the status rides along as context");
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(dir);
     }

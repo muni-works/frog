@@ -309,6 +309,15 @@ pub enum Op {
         from_name: String,
         message: String,
     },
+    /// A message from another session that's pure status ("received", "going idle"): marked
+    /// read without a reply turn. Queued like [`Op::Deliver`], but no turn starts and nothing
+    /// wakes: it's logged ([`Event::MessageRead`]) and goes along with the next turn as context.
+    Inform {
+        from: String,
+        #[serde(default)]
+        from_name: String,
+        message: String,
+    },
     /// Drop every [`Op::Deliver`] sent so far that no turn has taken yet: the messages
     /// queued behind the running turn never run. Immediate, like `Interrupt`; a stop that
     /// should leave the session quiet sends both (`StopSession` with `clear_queue`,
@@ -630,6 +639,13 @@ pub enum Event {
         turn: u64,
         wakes: Vec<String>,
     },
+    /// An informational message ([`Op::Inform`]) was read: recorded, no turn started. It goes
+    /// along with the next turn as context.
+    MessageRead {
+        from: String,
+        from_name: String,
+        message: String,
+    },
     /// Progress reported by a running MCP tool.
     ToolProgress {
         id: String,
@@ -748,6 +764,7 @@ impl Event {
                 | Self::BackgroundStarted { .. }
                 | Self::BackgroundDone { .. }
                 | Self::WakesDelivered { .. }
+                | Self::MessageRead { .. }
         )
     }
 }
