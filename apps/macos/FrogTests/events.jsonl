@@ -67,3 +67,7 @@
 {"seq":26,"session":"20260922-174412-a8d1","created":1790113454382,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"context_tokens":1777,"input_tokens":3472,"output_tokens":46,"model_calls":2,"tokens_per_sec":38.19412222298146}}
 {"seq":27,"session":"20260922-174412-a8d1","created":1790113454390,"event":"status","model":"ollama/qwen2.5:3b","mode":"yolo","cwd":"/private/tmp/claude-501/frog-fixture","messages":4,"context_tokens":1777,"context_window":32768,"tool_mode":"native","tier":"weak","tokens_per_sec":38.19412222298146,"todos":[]}
 {"seq":28,"session":"20260922-174412-a8d1","created":1790113454390,"event":"idle"}
+{"seq":29,"session":"20260922-174412-a8d1","created":1790113455000,"event":"background_started","id":"job-1","kind":"job","label":"sleep 570; wc -l out.jsonl","log":"/tmp/s.jobs/job-1.log"}
+{"seq":30,"session":"20260922-174412-a8d1","created":1790113456000,"event":"background_progress","id":"job-1","text":"26"}
+{"seq":31,"session":"20260922-174412-a8d1","created":1790113457000,"event":"background_started","id":"mon-2","kind":"monitor","label":"wc -l < out.jsonl"}
+{"seq":32,"session":"20260922-174412-a8d1","created":1790113458000,"event":"background_done","id":"mon-2","kind":"monitor","status":"timeout","summary":"<monitor-done id=mon-2 status=timeout polls=7>\nno match after 590s. Last output:\n      23\n</monitor-done>"}

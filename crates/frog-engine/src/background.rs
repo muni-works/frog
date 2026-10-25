@@ -125,6 +125,7 @@ impl Registry {
 
     fn begin(&self, id: &str, kind: Kind, label: &str, file: Option<PathBuf>) -> CancellationToken {
         let stop = CancellationToken::new();
+        let log = file.as_ref().map(|f| f.display().to_string());
         self.entries.lock().unwrap().insert(
             id.to_string(),
             Entry {
@@ -142,6 +143,7 @@ impl Registry {
             id: id.to_string(),
             kind: kind.as_str().into(),
             label: label.to_string(),
+            log,
         });
         self.announce();
         stop

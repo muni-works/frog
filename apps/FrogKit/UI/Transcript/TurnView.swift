@@ -61,9 +61,15 @@ struct TurnView: View {
         let parts = TurnParts(turn)
         let flow = TurnFlow(turn.items, showThinking: verbosity.showsThinking)
         VStack(alignment: .leading, spacing: space.inTurn) {
-            if let delivered = SessionMessage.parse(turn.input) {
+            switch TurnLead(turn) {
+            case .sessionMessage(let delivered):
                 SessionMessageCard(message: delivered)
-            } else if !turn.input.isEmpty || !turn.more.isEmpty {
+            case .wakes(let wakes):
+                // Background work finished and the engine woke on it: event rows, not a bubble.
+                WakeEventRows(events: wakes, jobs: conversation.jobs)
+            case .none:
+                EmptyView()
+            case .prompt:
                 VStack(alignment: .trailing, spacing: 2) {
                     // Messages queued while the last turn ran go together: a bubble each.
                     VStack(alignment: .trailing, spacing: 6) {

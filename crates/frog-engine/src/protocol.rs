@@ -593,6 +593,9 @@ pub enum Event {
         id: String,
         kind: String,
         label: String,
+        /// A shell job's output file, for clients to link the job's row to its log.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        log: Option<String>,
     },
     /// Live output from background work (a subagent's step, a job's output, a monitor poll).
     BackgroundProgress {

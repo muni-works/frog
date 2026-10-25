@@ -10960,7 +10960,7 @@ for line in sys.stdin:
         ));
         assert!(
             evs.iter().any(|e| matches!(&e.event,
-                Event::BackgroundStarted { id, kind, label } if id == "job-1" && kind == "job" && label.starts_with("sleep 570"))),
+                Event::BackgroundStarted { id, kind, label, log } if id == "job-1" && log.as_deref().is_some_and(|l| l.ends_with("job-1.log")) && kind == "job" && label.starts_with("sleep 570"))),
             "the wait runs as job-1"
         );
         let out = tool_output(&evs, "w").expect("the wait's result");

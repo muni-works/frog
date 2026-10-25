@@ -128,6 +128,10 @@ final class Conversation {
     /// `background` event said. It outlives the turn that started it and dies with the engine,
     /// so an engine with any is never let go.
     @ObservationIgnored private(set) var backgroundRunning = 0
+    /// Background work by id, from its durable start and end events (replayed with the log):
+    /// what a wake's event row names and links to. Live progress isn't kept here, so a job's
+    /// output never re-renders the transcript.
+    private(set) var jobs: [String: BackgroundJob] = [:]
 
     /// Queued messages taken back out (their "x"), for the composer to put back in its field.
     var restored: [Queued] = []
@@ -714,6 +718,12 @@ final class Conversation {
             status = s
         case .background(let running):
             backgroundRunning = running
+        case .backgroundStarted(let id, let kind, let label, let log):
+            jobs[id] = BackgroundJob(id: id, kind: kind, label: label, log: log)
+        case .backgroundDone(let id, let kind, let status, _):
+            jobs[id, default: BackgroundJob(id: id, kind: kind, label: "")].status = status
+        case .backgroundProgress:
+            break
         case .synced:
             replaying = false
             // A turn the history ended in the middle of is running in another frog process:
