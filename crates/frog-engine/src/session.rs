@@ -330,15 +330,39 @@ pub fn header(dir: &Path, id: &str) -> Result<Header> {
     }
 }
 
-/// Durable events with `seq > after`.
+/// Durable events with `seq > after`, read without parsing the rest of the log: a long
+/// session's log is mostly the model's messages (screenshots in tool results among them), and
+/// a client replaying its transcript needs none of them. Records lead with their tag, so a line
+/// that isn't an event is skipped unparsed, and an event's seq is its first field, so with
+/// `after` set the ones already seen are too. A torn last line is ignored, as on load.
 pub fn events_after(dir: &Path, id: &str, after: u64) -> Result<Vec<Envelope>> {
-    Ok(read_records(dir, id)?
-        .into_iter()
-        .filter_map(|r| match r {
-            Record::Event { env } if env.seq > after => Some(env),
-            _ => None,
-        })
-        .collect())
+    const RECORD: &[u8] = br#"{"type":""#;
+    const EVENT: &[u8] = br#"{"type":"event""#;
+    const SEQ: &[u8] = br#"{"type":"event","env":{"seq":"#;
+    let file = File::open(path(dir, id)).with_context(|| format!("no session {id}"))?;
+    let mut lines = BufReader::new(file).split(b'\n').peekable();
+    let mut out = Vec::new();
+    while let Some(line) = lines.next() {
+        let line = line?;
+        if line.starts_with(RECORD) && !line.starts_with(EVENT) {
+            continue;
+        }
+        if after > 0 && line.starts_with(SEQ) {
+            let digits = &line[SEQ.len()..];
+            let n = digits.iter().take_while(|b| b.is_ascii_digit()).count();
+            let seq = std::str::from_utf8(&digits[..n]).ok().and_then(|d| d.parse::<u64>().ok());
+            if seq.is_some_and(|seq| seq <= after) {
+                continue;
+            }
+        }
+        match serde_json::from_slice::<Record>(&line) {
+            Ok(Record::Event { env }) if env.seq > after => out.push(env),
+            Ok(_) => {}
+            Err(_) if lines.peek().is_none() => break,
+            Err(e) => bail!("session {id} is corrupt: {e}"),
+        }
+    }
+    Ok(out)
 }
 
 /// How a session's last turn ended, for listings: is it still going, and if not, how did it
@@ -734,6 +758,28 @@ mod tests {
         let appended = events_after(&dir, "a", first[0].seq).unwrap();
         assert_eq!(appended.len(), 1);
         assert_eq!(appended[0].seq, 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn events_after_skips_messages_and_seen_events_unparsed() {
+        let dir = tmp();
+        let mut log = Log::create(&dir, header("a")).unwrap();
+        for seq in 1..=3 {
+            log.append(&ev(seq, Event::Titled { title: format!("t{seq}") })).unwrap();
+            log.append(&Record::Push { message: Message::user("hi") }).unwrap();
+        }
+        log.sync().unwrap();
+        drop(log);
+        // A message line that wouldn't parse is never read; a torn event at the end is dropped.
+        let mut f = OpenOptions::new().append(true).open(path(&dir, "a")).unwrap();
+        writeln!(f, r#"{{"type":"push","message":{{not json"#).unwrap();
+        write!(f, r#"{{"type":"event","env":{{"seq":4,"#).unwrap();
+        drop(f);
+        let all = events_after(&dir, "a", 0).unwrap();
+        assert_eq!(all.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
+        let newer = events_after(&dir, "a", 2).unwrap();
+        assert_eq!(newer.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![3]);
         let _ = std::fs::remove_dir_all(dir);
     }
 
