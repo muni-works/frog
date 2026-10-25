@@ -9,28 +9,34 @@ import XCTest
 /// tool calls, edits with diffs, and screenshots, whose base64 PNGs are most of a real log's
 /// bytes), then:
 ///
-///  - picked: the conversation is made, its history decoded line by line and delivered as the
-///    engine's pipe would, up to `synced`, and the transcript mounted in place of the last one;
+///  - picked: the conversation is made with its history (from its log, as the app opens a
+///    session now; or replayed by the engine, decoded line by line up to `synced`, as it did
+///    before, for comparison), and the transcript mounted in place of the last one;
 ///  - first paint: the first rows are built and the window has displayed them;
 ///  - ready: scrolled to the end and still (at the bottom, over laid-out content, the document
 ///    height steady for a few frames), with ink in the visible area.
 ///
 /// Asserts both against budgets, and how many rows were ever on screen at once
 /// (`TranscriptProbe.peakMountedRows`): a virtualized transcript keeps that to the visible set.
+/// Also: scrolling up builds older rows in order without leaving its place, at 60 fps; going
+/// back to a session reads nothing from its log until the log grows.
 ///
 ///     xcodebuild test ... -only-testing:FrogTests/TranscriptSwitchBenchmarkTests
 ///
 /// Prints `switch:` lines with the numbers.
 @MainActor
 final class TranscriptSwitchBenchmarkTests: XCTestCase {
-    /// Budgets, debug build, with room for a loaded machine. Measured before the fixes (M-series,
-    /// debug): 400 rows paint 235 ms, ready 259 ms (decode 43, fold 21, the rest the last turn's
-    /// 40 rows built three times over, screenshots decoded in their bodies) — the "Loading
+    /// Budgets, debug build, with room for a loaded machine. Before (M-series, debug): 400 rows
+    /// painted in 235 ms and were ready in 259 ms (decode 43, fold 21, the rest the last turn's
+    /// 40 rows built three times over, screenshots decoded in their bodies): the "Loading
     /// session" Cam sees, before the engine's own replay (50–210 ms on his logs) is counted.
-    /// 5,000 rows paint 3.1 s, ready 3.2 s: folding the history is quadratic (2.8 s, `upsert`
-    /// copying every item it scans past), and once it took 23 s to settle at the end.
-    private static let budget400 = (paint: 0.6, ready: 1.5)
-    private static let budget5000 = (paint: 2.5, ready: 5.0)
+    /// 5,000 rows: 3.1 s / 3.2 s, 2.8 s of it a quadratic history fold, and once 23 s to settle.
+    /// After: the newest 50 rows read from the log, the rest folded in later, only the rows on
+    /// screen built: 400 rows ~65 ms / ~75 ms, 5,000 rows ~60 ms / ~70 ms, 14 rows built.
+    private static let budget400 = (paint: 0.15, ready: 0.25)
+    private static let budget5000 = (paint: 0.15, ready: 0.25)
+    /// Rows on screen at once: a 900×700 window shows about 14.
+    private static let mountedBudget = 30
 
     struct Opened {
         var decode: TimeInterval = 0
@@ -42,6 +48,8 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         var ink: Double = 0
         var settled = false
         var bytes = 0
+        /// Times it was still at the end but blank, before it drew.
+        var blankFrames = 0
     }
 
     // MARK: The session
@@ -118,6 +126,8 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
     // MARK: The window
 
     private var window: NSWindow!
+    /// The transcript's jump (the rail's): a jump is what stops it following the end.
+    private var jump: TurnState.ID?
     private var host: NSHostingView<AnyView>!
 
     override func setUp() async throws {
@@ -140,61 +150,123 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
-    /// Open `lines` as the sidebar does: replay, then the transcript takes the window.
-    func open(_ lines: [String], session: String) throws -> (Opened, Conversation) {
+    /// How a picked session's history reaches the transcript.
+    enum Path {
+        /// From its log, read by the app (`SessionHistory`): the newest rows first, the rest
+        /// folded in off the main thread; the engine sends only what's newer (nothing, here).
+        case log
+        /// All of it replayed by the engine on `subscribe`, decoded line by line and folded
+        /// before anything shows (how every open went before the log path).
+        case replay
+    }
+
+    /// Write `lines` as a session log: a header, each event as its record, and a model message
+    /// beside each (a long log is mostly those).
+    static func writeLog(_ lines: [String], session: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "switch-bench")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: "\(session).jsonl")
+        var out = #"{"type":"header","version":1,"id":"\#(session)","cwd":"/tmp/demo","model":"local/qwen3-4b","created":0}"# + "\n"
+        let message = #"{"type":"push","message":{"role":"assistant","content":[{"type":"text","text":"\#(String(repeating: "model context ", count: 120))"}]}}"#
+        for line in lines {
+            out += #"{"type":"event","env":"# + line + "}\n"
+            out += message + "\n"
+        }
+        try Data(out.utf8).write(to: url)
+        return url
+    }
+
+    /// Open a session as the sidebar does, then time the transcript taking the window.
+    func open(_ lines: [String], session: String, path: Path = .log, url: URL? = nil) throws -> (Opened, Conversation) {
         var m = Opened()
         m.bytes = lines.reduce(0) { $0 + $1.utf8.count }
+        let decoder = JSONDecoder.frog
+        let url = try url ?? (path == .log ? Self.writeLog(lines, session: session) : nil)
         TranscriptProbe.reset()
+        jump = nil
         let link = ReplayLink()
         let picked = Date()
-        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: true, session: session)
-        // The engine's pipe: each line decoded (off the main thread in the app, but it's the
-        // same work and it's on the way to the first paint), then delivered.
-        var envs: [Envelope] = []
-        envs.reserveCapacity(lines.count)
-        let decoder = JSONDecoder.frog
-        for line in lines {
-            envs.append(try decoder.decode(Envelope.self, from: Data(line.utf8)))
+        let c: Conversation
+        var upto: UInt64 = 0
+        switch path {
+        case .log:
+            let history = SessionHistory.open(session, at: url!)
+            c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: true, session: session, history: history)
+            m.decode = Date().timeIntervalSince(picked)
+            upto = c.lastSeq
+        case .replay:
+            c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: true, session: session)
+            // The engine's pipe: each line decoded (off the main thread in the app, but it's the
+            // same work and it's on the way to the first paint), then delivered.
+            var envs: [Envelope] = []
+            envs.reserveCapacity(lines.count)
+            for line in lines {
+                envs.append(try decoder.decode(Envelope.self, from: Data(line.utf8)))
+            }
+            m.decode = Date().timeIntervalSince(picked)
+            let t = Date()
+            for env in envs { link.onEvent(env) }
+            upto = envs.last?.seq ?? 0
+            m.deliver = Date().timeIntervalSince(t)
         }
-        m.decode = Date().timeIntervalSince(picked)
-        var t = Date()
-        for env in envs { link.onEvent(env) }
-        let upto = envs.last?.seq ?? 0
-        link.onEvent(try decoder.decode(Envelope.self, from: Data(#"{"seq":\#(upto + 1),"session":"\#(session)","created":0,"event":"synced","upto":\#(upto)}"#.utf8)))
-        m.deliver = Date().timeIntervalSince(t)
-        XCTAssertFalse(c.replaying)
+        let synced = try decoder.decode(Envelope.self, from: Data(#"{"seq":\#(upto + 1),"session":"\#(session)","created":0,"event":"synced","upto":\#(upto)}"#.utf8))
+        // The replay is folded at `synced`, before the transcript shows; the log path shows
+        // first, and the engine's `synced` comes once it has started.
+        if path == .replay { link.onEvent(synced) }
 
-        t = Date()
+        let t = Date()
         host.rootView = AnyView(
-            TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }))
+            TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }),
+                           jump: Binding(get: { self.jump }, set: { self.jump = $0 }))
                 .id(ObjectIdentifier(c))
                 .frame(width: 900, height: 700))
         // First paint: rows built and displayed.
         while TranscriptProbe.rowBodies == 0, Date().timeIntervalSince(t) < 20 { pump(0.001) }
         host.displayIfNeeded()
         m.paint = Date().timeIntervalSince(picked)
+        if path == .log { link.onEvent(synced) }
+        XCTAssertFalse(c.replaying)
 
         // Ready: at the end, over content, the document steady for three frames.
         let scroll = try XCTUnwrap(TranscriptBench.outerScroll(in: host), "no scroll view")
-        var steady = 0, lastHeight: CGFloat = -1
+        var steady = 0, lastHeight: CGFloat = -1, inkTime: TimeInterval = 0, blankFrames = 0
         while Date().timeIntervalSince(t) < 10 {
             pump(0.005)
             let height = scroll.documentView?.bounds.height ?? 0
             let ok = TranscriptBench.below(scroll) < 24 && TranscriptBench.overContent(scroll) && height == lastHeight
             lastHeight = height
             steady = ok ? steady + 1 : 0
-            if steady >= 3 { m.settled = true; break }
+            // Still, and drawn: the end of a lazy stack can sit over rows it hasn't laid out.
+            if steady >= 3 {
+                let at = Date()
+                if TranscriptBench.ink(scroll, in: host, stride: 12) > 0.002 { m.settled = true; inkTime += Date().timeIntervalSince(at); break }
+                inkTime += Date().timeIntervalSince(at)
+                blankFrames += 1
+                steady = 0
+            }
         }
-        m.ready = Date().timeIntervalSince(picked) - 0.015
+        // Less the last steady frames and the time spent looking for ink.
+        m.ready = Date().timeIntervalSince(picked) - 0.015 - inkTime
+        m.blankFrames = blankFrames
         m.ink = TranscriptBench.ink(scroll, in: host)
+        if m.ink < 0.002 {
+            TranscriptBenchDebug.dump(host, name: "switch-blank-\(session).png")
+            print("switch: blank \(session): doc \(scroll.documentView?.bounds ?? .zero) visible \(scroll.documentVisibleRect) insets \(scroll.contentInsets)")
+        }
         m.peakRows = TranscriptProbe.peakMountedRows
         m.rowBodies = TranscriptProbe.rowBodies
         return (m, c)
     }
 
+    /// Wait for the older turns to fold in.
+    func filled(_ c: Conversation, within seconds: TimeInterval = 20) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while c.olderPending, Date() < deadline { pump(0.01) }
+    }
+
     private func report(_ name: String, rows: Int, _ m: Opened) {
         print("switch: \(name) \(rows) rows, \(m.bytes / 1024) KB log: paint \(Int(m.paint * 1000)) ms, ready \(Int(m.ready * 1000)) ms (decode \(Int(m.decode * 1000)) ms, deliver \(Int(m.deliver * 1000)) ms)")
-        print("switch: \(name) peak mounted rows \(m.peakRows), row bodies \(m.rowBodies), ink \(String(format: "%.4f", m.ink)), settled \(m.settled)")
+        print("switch: \(name) peak mounted rows \(m.peakRows), row bodies \(m.rowBodies), ink \(String(format: "%.4f", m.ink)), settled \(m.settled), blank-at-end \(m.blankFrames)")
     }
 
     private func check(_ m: Opened, _ budget: (paint: Double, ready: Double), _ name: String) {
@@ -202,6 +274,7 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         XCTAssertGreaterThan(m.ink, 0.002, "\(name): blank once ready")
         XCTAssertLessThan(m.paint, budget.paint, "\(name): first paint over budget")
         XCTAssertLessThan(m.ready, budget.ready, "\(name): ready over budget")
+        XCTAssertLessThanOrEqual(m.peakRows, Self.mountedBudget, "\(name): built more rows than are on screen")
     }
 
     func testSwitchTo400RowSession() throws {
@@ -209,8 +282,12 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         _ = try open(Self.session("warm", rows: 40, imageEvery: 9), session: "warm")
         // 400 rows, a screenshot every 6th (Cam's 8a50: 218 items, 72 screenshots, 56 MB).
         let lines = Self.session("s400", rows: 400, imageEvery: 6)
+        
+        let (before, _) = try open(lines, session: "s400-replay", path: .replay)
+        report("s400 replay", rows: 400, before)
         let (m, c) = try open(lines, session: "s400")
         report("s400", rows: 400, m)
+        filled(c)
         XCTAssertEqual(c.turns.reduce(0) { $0 + $1.items.count }, 400)
         check(m, Self.budget400, "s400")
     }
@@ -219,11 +296,103 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         _ = try open(Self.session("warm", rows: 40, imageEvery: 9), session: "warm")
         // 5,000 rows, few screenshots (Cam's 3288: 4,243 items, 873 turns, 23 MB).
         let lines = Self.session("s5000", rows: 5000, imageEvery: 200)
+        let (before, _) = try open(lines, session: "s5000-replay", path: .replay)
+        report("s5000 replay", rows: 5000, before)
         let (m, c) = try open(lines, session: "s5000")
         report("s5000", rows: 5000, m)
+        let t = Date()
+        filled(c)
+        print("switch: s5000 older history folded in \(Int(Date().timeIntervalSince(t) * 1000)) ms after ready")
         XCTAssertEqual(c.turns.reduce(0) { $0 + $1.items.count }, 5000)
-        XCTExpectFailure("baseline: folding a 5,000-row history is quadratic", strict: false)
         check(m, Self.budget5000, "s5000")
+    }
+
+    /// Scrolling up builds older rows above, in order, without moving what's on screen.
+    func testScrollUpFillsOlderRowsInOrder() throws {
+        _ = try open(Self.session("warm", rows: 40, imageEvery: 9), session: "warm")
+        let rows = 1200
+        let (_, c) = try open(Self.session("up", rows: rows, imageEvery: 0), session: "up")
+        filled(c)
+        // Every row, once, in the order it happened.
+        let ids = c.turns.flatMap { $0.items.map(\.id) }
+        XCTAssertEqual(ids.count, rows)
+        XCTAssertEqual(Set(ids).count, rows, "a row folded in twice")
+        XCTAssertEqual(ids.first, "msg-0")
+        XCTAssertEqual(c.turns.map(\.number), (1...UInt64(rows / 40)).map { $0 }, "turns out of order")
+
+        let scroll = try XCTUnwrap(TranscriptBench.outerScroll(in: host))
+        let clip = scroll.contentView
+        // Off the end, as scrolling up does: it stops following.
+        jump = c.turns.last?.id
+        pump(0.5)
+        var heights: [CGFloat] = [], kept: [Double] = [], frames: [TimeInterval] = []
+        for _ in 0..<500 {
+            guard let doc = scroll.documentView else { break }
+            if TranscriptProbe.isMounted(suffix: "-msg-0") { break }
+            // Up a screen, as scrolling does, and let rows go in above if it's near the top.
+            let built = TranscriptProbe.earlier
+            let frame = Date()
+            clip.scroll(to: NSPoint(x: 0, y: max(0, clip.bounds.minY - 250)))
+            scroll.reflectScrolledClipView(clip)
+            // A frame's work: the scroll, the rows it brings in built and laid out, drawn.
+            pump(0)
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+            frames.append(Date().timeIntervalSince(frame))
+            pump(0.05)
+            heights.append(doc.bounds.height)
+            // Rows went in above: the row that was at the top is still on screen.
+            if TranscriptProbe.earlier > built {
+                pump(0.12)
+                kept.append(TranscriptProbe.isMounted(suffix: "-" + TranscriptProbe.kept) ? 1 : 0)
+            }
+        }
+        print("switch: scroll-up \(heights.count) steps, document \(Int(heights.first ?? 0)) → \(Int(heights.last ?? 0)) pt, \(kept.count) fills, the top row still on screen after \(Int(kept.reduce(0, +))), built above \(TranscriptProbe.earlier) times, peak mounted \(TranscriptProbe.peakMountedRows)")
+        let sorted = frames.sorted()
+        let p50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2], p95 = sorted.isEmpty ? 0 : sorted[sorted.count * 95 / 100]
+        print("switch: scroll-up frames p50 \(String(format: "%.1f", p50 * 1000)) ms, p95 \(String(format: "%.1f", p95 * 1000)) ms, max \(String(format: "%.1f", (sorted.last ?? 0) * 1000)) ms")
+        XCTAssertTrue(TranscriptProbe.isMounted(suffix: "-msg-0"), "never reached the first row")
+        // 60 fps is 16.7 ms a frame. Measured ~17 ms p50, ~24 ms p95 in a debug build with the
+        // pump's own overhead in it (release not measured here): room for that, no more.
+        XCTAssertLessThan(p50, 0.025, "scrolling well under 60 fps")
+        XCTAssertGreaterThan(TranscriptBench.ink(scroll, in: host), 0.002, "blank at the top")
+        XCTAssertGreaterThan(kept.count, 0, "no rows went in above")
+        XCTAssertEqual(kept.min(), 1, "the view left its place as older rows went in above it")
+        XCTAssertLessThanOrEqual(TranscriptProbe.peakMountedRows, Self.mountedBudget, "built more than the rows on screen")
+    }
+
+    /// Going back to a session opened a moment ago reads nothing until its log grows; a new event
+    /// grows it, and the next open reads it fresh.
+    func testReswitchFromCacheAndNewEventsInvalidate() throws {
+        _ = try open(Self.session("warm", rows: 40, imageEvery: 9), session: "warm")
+        let lines = Self.session("cached", rows: 2000, imageEvery: 50)
+        let url = try Self.writeLog(lines, session: "cached")
+        let hits = SessionHistory.cacheHits
+        let (first, _) = try open(lines, session: "cached", url: url)
+        _ = try open(Self.session("other", rows: 200, imageEvery: 9), session: "other")
+        let (again, c) = try open(lines, session: "cached", url: url)
+        report("cached first", rows: 2000, first)
+        report("cached again", rows: 2000, again)
+        XCTAssertEqual(SessionHistory.cacheHits, hits + 1, "the second open read the log again")
+        XCTAssertLessThan(again.decode, max(0.005, first.decode / 2), "nothing to decode from the cache")
+        XCTAssertEqual(c.turns.last?.items.last?.id, "shot-1999")
+
+        // A new turn lands in the log: the next open has it.
+        let h = try FileHandle(forWritingTo: url)
+        h.seekToEndOfFile()
+        let seq = 1_000_000
+        let appended: [String] = [
+            #"{"type":"event","env":{"seq":\#(seq),"session":"cached","created":1,"event":"turn_started","turn":999,"input":"fresh"}}"#,
+            #"{"type":"event","env":{"seq":\#(seq + 1),"session":"cached","created":2,"event":"item_started","id":"fresh-1","kind":{"type":"message"}}}"#,
+            #"{"type":"event","env":{"seq":\#(seq + 2),"session":"cached","created":3,"event":"item_completed","id":"fresh-1","item":{"type":"message","text":"new since"}}}"#,
+        ]
+        h.write(Data(appended.map { $0 + "\n" }.joined().utf8))
+        try h.close()
+        let (_, fresh) = try open(lines, session: "cached", url: url)
+        XCTAssertEqual(SessionHistory.cacheHits, hits + 1, "a grown log was served from the cache")
+        XCTAssertEqual(fresh.turns.last?.input, "fresh")
+        XCTAssertEqual(fresh.turns.last?.items.first?.text, "new since")
+        XCTAssertGreaterThanOrEqual(fresh.lastSeq, UInt64(seq + 2))
     }
 }
 

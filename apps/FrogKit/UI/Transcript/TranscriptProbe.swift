@@ -18,6 +18,10 @@ enum TranscriptProbe {
     /// a virtualized transcript keeps these to the visible set, whatever the session's length.
     static var mountedRows: Int { mounted.count }
     static var peakMountedRows = 0
+    /// Times the transcript built more rows above (`showEarlier`).
+    static var earlier = 0
+    /// The row kept in place the last time (its segment id, or "head"/"tail").
+    static var kept = ""
     private static var mounted: Set<String> = []
 
     static func reset() {
@@ -28,7 +32,11 @@ enum TranscriptProbe {
         inkStyledChars = 0
         mounted = []
         peakMountedRows = 0
+        earlier = 0
     }
+
+    static var mountedKeys: Set<String> { mounted }
+    static func isMounted(suffix: String) -> Bool { mounted.contains { $0.hasSuffix(suffix) } }
 
     /// A row (by a key unique across conversations) appeared or disappeared.
     static func mounted(_ key: String, _ on: Bool) {

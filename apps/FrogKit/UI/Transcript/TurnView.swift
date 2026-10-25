@@ -10,13 +10,26 @@ struct TurnActions {
     var canRewind: Bool { fork != nil && rewind != nil }
 }
 
+/// A turn is rows in the transcript's lazy stack, not one view: its prompt, each piece of the
+/// flow (text, an activity line, a visual), and its tail (plan, live status, changes, footer).
+/// Only the rows on screen are built, however long the turn, and a long turn scrolls like the
+/// transcript does rather than being laid out whole (see `TranscriptRows`).
+enum TurnPart {
+    case head
+    case segment(TurnFlow.Segment)
+    case tail
+}
+
 struct TurnView: View {
     let turn: TurnState
     let conversation: Conversation
     let actions: TurnActions
+    /// Which of the turn's rows this is.
+    let part: TurnPart
+    /// Space above the row: between turns for a turn's first row, within one for the rest.
+    var gap: CGFloat = 0
     /// Show the model/speed footer without hovering (see `TurnFooter.pinned`).
     var pinsFooter = true
-    @State private var hovering = false
     /// The pointer is over what you asked (its actions show) rather than elsewhere in the turn.
     @State private var hoveringPrompt = false
     @State private var confirmRewind = false
@@ -29,14 +42,26 @@ struct TurnView: View {
     @Environment(\.models) private var models
     @Environment(\.transcriptTrack) private var track
 
-    init(turn: TurnState, conversation: Conversation, actions: TurnActions, pinsFooter: Bool = true) {
+    init(turn: TurnState, conversation: Conversation, actions: TurnActions, part: TurnPart, gap: CGFloat = 0, pinsFooter: Bool = true) {
         self.turn = turn
         self.conversation = conversation
         self.actions = actions
+        self.part = part
+        self.gap = gap
         self.pinsFooter = pinsFooter
         // Only a prompt sent a moment ago flies in; history, replays and a scrolled-back
         // turn are simply there.
         _landed = State(initialValue: !(turn.sentAt.map { Date.now.timeIntervalSince($0) < 1 } ?? false))
+    }
+
+    /// The pointer is over this turn, any of its rows (its footer shows).
+    private var hovering: Bool { track?.hoveredTurn == turn.id }
+
+    private func hover(_ on: Bool) {
+        guard let track else { return }
+        withAnimation(.easeOut(duration: 0.15)) {
+            if on { track.hoveredTurn = turn.id } else if track.hoveredTurn == turn.id { track.hoveredTurn = nil }
+        }
     }
 
     private var running: Bool { !turn.finished && conversation.busy }
@@ -65,8 +90,6 @@ struct TurnView: View {
     }
 
     var body: some View {
-        let parts = TurnParts(turn)
-        let flow = TurnFlow(turn.items, showThinking: verbosity.showsThinking)
         #if DEBUG
         let _ = TranscriptProbe.turn()
         #endif
@@ -160,14 +183,11 @@ struct TurnView: View {
                     .padding(.top, isFooter(end) ? space.beforeFooter : 0)
                     .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
                     .allowsHitTesting(pinsFooter || hovering)
+
             }
         }
-        // Rows settle into place when they come and go in a finished turn (verbosity, a rewind).
-        // Not while it streams: an implicit animation here animates the whole turn's layout on
-        // every row (each row moves, the transcript's height eases, the follow scroll chases it
-        // for a quarter second), at stream speed. New rows fade in on their own instead.
-        .animation(running ? nil : .snappy(duration: 0.25), value: flow.segments.count)
-        .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hovering = h } }
+        .padding(.top, gap)
+        .onHover(perform: hover)
         .confirmationDialog(
             "Rewind to before this turn?",
             isPresented: $confirmRewind
@@ -177,6 +197,100 @@ struct TurnView: View {
             }
         } message: {
             Text("Files frog edited in this turn and later go back to how they were, and the conversation continues on a new branch from here. The current session is kept. Changes made by shell commands aren't undone.")
+        }
+    }
+
+    private var prompt: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            // Messages queued while the last turn ran go together: a bubble each.
+            VStack(alignment: .trailing, spacing: 6) {
+                UserPrompt(text: turn.input, images: turn.images, tint: promptTint)
+                ForEach(Array(turn.more.enumerated()), id: \.offset) { _, part in
+                    UserPrompt(text: part.text, images: part.images, tint: promptTint)
+                }
+            }
+                // Sent like an iMessage: up from the composer, a little small, then a
+                // springy settle into place. Just a fade under Reduce Motion.
+                .scaleEffect(landed || reduceMotion ? 1 : 0.86, anchor: .bottomTrailing)
+                .offset(y: landed || reduceMotion ? 0 : 44)
+                .opacity(landed ? 1 : 0)
+                .onAppear {
+                    guard !landed else { return }
+                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.66)) {
+                        landed = true
+                    }
+                }
+                .contextMenu { menu(changes: TurnParts(turn).changes.count) }
+            PromptActions(
+                turn: turn,
+                visible: hoveringPrompt && !(running && turn.number == nil),
+                canRewind: actions.canRewind,
+                copy: copy,
+                rewind: { confirmRewind = true },
+                fork: { if let n = turn.number { actions.fork?(n) } }
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .contentShape(.rect)
+        .onHover { hoveringPrompt = $0 }
+    }
+
+    // The answer being written is a typing bubble at the turn's end, not a plain row: the
+    // model's words appear as they arrive, with the frog beside them. The bubble IS that row
+    // (so the handoff is a fade inside one view, not a swap of two), and it settles to the
+    // plain row when the message completes; tool rows run above it.
+    private func row(_ segment: TurnFlow.Segment) -> some View {
+        SegmentRow(segment: segment, conversation: conversation, live: running, verbosity: verbosity)
+            .equatable()
+            .modifier(FadeIn(enabled: running))
+            .background {
+                // The answer being written: where it starts, so a long one stops there.
+                if running, segment.id == liveAnswerID, let track {
+                    Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(TranscriptView.content)).minY }) {
+                        track.answer = (segment.id, $0)
+                    }
+                }
+            }
+            .padding(.top, gap)
+            .onHover(perform: hover)
+    }
+
+    @ViewBuilder
+    private var tail: some View {
+        let parts = TurnParts(turn)
+        let loading = running ? modelLoading : nil
+        let status = running && loading == nil ? liveStatus : nil
+        let plan = running && !parts.plan.isEmpty
+        if plan || loading != nil || status != nil || !parts.changes.isEmpty || turn.end != nil {
+            VStack(alignment: .leading, spacing: space.inTurn) {
+                if plan {
+                    PlanView(todos: parts.plan)
+                }
+                if let loading {
+                    ModelLoadingStatus(model: loading.model, since: loading.since)
+                        .transition(.opacity)
+                } else if let status {
+                    LiveStatus(text: status.text, since: status.since, preview: thinking)
+                        .transition(.opacity)
+                }
+                if !parts.changes.isEmpty {
+                    ChangesStrip(changes: parts.changes)
+                        .equatable()
+                }
+                if let end = turn.end {
+                    // An unpinned footer keeps its place and fades in on hover, so it neither
+                    // covers the answer nor shifts what's below.
+                    EndView(reason: end, usage: turn.usage, answer: answer, hovering: hovering)
+                        // Set off from the answer above it (see `TurnSpace`): the turn's last
+                        // line reads as a caption, not as one more paragraph.
+                        .padding(.top, isFooter(end) ? space.beforeFooter : 0)
+                        .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
+                        .allowsHitTesting(pinsFooter || hovering)
+                }
+            }
+            .padding(.top, gap)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onHover(perform: hover)
         }
     }
 
