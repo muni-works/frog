@@ -903,6 +903,13 @@ pub enum EndReason {
     Denied,
     /// The model kept repeating an identical tool call.
     Looping,
+    /// The agent retried a call that was already denied this turn (or one denied twice this
+    /// session). frog didn't ask again: the turn ends here with the denial, so whoever wakes
+    /// the agent next sees why, and the agent routes around it instead of burning another
+    /// approval window.
+    BlockedOnApproval {
+        denial: String,
+    },
     /// The turn hit the per-turn step limit.
     StepLimit,
     /// An app update's [`Op::Drain`] stopped the turn at a safe point (or force-stopped it at

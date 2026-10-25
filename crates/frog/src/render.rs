@@ -405,6 +405,9 @@ impl Renderer {
                     EndReason::StepLimit => warn(
                         "\n  ⎿  stopped: step limit for one turn reached; say \"continue\" to keep going",
                     ),
+                    EndReason::BlockedOnApproval { denial } => warn(&format!(
+                        "\n  ⎿  stopped: retried a call that was already denied ({denial})"
+                    )),
                     EndReason::Error { error: e } => error(&e.to_string()),
                     EndReason::Complete | EndReason::Denied => {}
                 }

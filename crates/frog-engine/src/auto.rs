@@ -57,6 +57,84 @@ pub fn read_tool(name: &str, input: &Value) -> bool {
 /// Substrings that make even a read-prefixed tool name suspicious (`list-or-delete`).
 const DESTRUCTIVE_TOOL: &[&str] = &["delete", "destroy", "remove", "terminate", "kill", "stop"];
 
+/// An MCP tool name split into its server and its own name, with the server's name dropped
+/// where the tool repeats it (`mcp__planetscale__planetscale_list_databases` →
+/// (`planetscale`, `list_databases`)). `None` for anything that isn't an MCP tool.
+pub fn mcp_parts(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix("mcp__")?;
+    let (server, tool) = rest.split_once("__")?;
+    let short = tool
+        .strip_prefix(server)
+        .filter(|t| t.starts_with(['_', '-']))
+        .unwrap_or(tool)
+        .trim_start_matches(['-', '_']);
+    Some((server, short))
+}
+
+fn words(tool: &str) -> impl Iterator<Item = String> + '_ {
+    tool.split(['_', '-', '.'])
+        .filter(|w| !w.is_empty())
+        .map(str::to_ascii_lowercase)
+}
+
+/// Verbs that open a plain-read MCP tool name (`list_`, `get-`, …).
+const READ_VERBS: &[&str] = &["list", "get", "read", "search", "describe", "stream"];
+
+/// vcad's own read verbs (`see`, `inspect_part`, `measure`, `render_view`, …): looking at
+/// a model changes nothing.
+const VCAD_READ_VERBS: &[&str] = &["see", "inspect", "measure", "describe", "render"];
+
+/// Words that make a read-looking name not clearly a read: it writes, runs, starts or stops
+/// something, or hands out a secret (`get_branch_password`). Any one of them means it cards.
+const NOT_READ: &[&str] = &[
+    "delete", "destroy", "remove", "terminate", "kill", "stop", "write", "create", "drop",
+    "alter", "apply", "insert", "update", "upsert", "execute", "exec", "run", "start",
+    "restart", "set", "reset", "send", "post", "put", "patch", "upload", "export", "save",
+    "deploy", "purge", "password", "passwords", "token", "tokens", "secret", "secrets",
+    "credential", "credentials", "key", "keys",
+];
+
+/// Whether an MCP tool is a plain read in EVERY mode, so it never shows a card: its own name
+/// (after the server's name, when it repeats it) opens with a read verb, or it's one of
+/// vcad's look-at-the-model verbs, and no word in it writes, runs or hands out a secret.
+/// Conservative on purpose: anything not clearly a read keeps asking as before.
+pub fn mcp_read(name: &str) -> bool {
+    let Some((server, tool)) = mcp_parts(name) else {
+        return false;
+    };
+    let words: Vec<String> = words(tool).collect();
+    let Some(first) = words.first() else {
+        return false;
+    };
+    let verb = READ_VERBS.contains(&first.as_str())
+        || (server.eq_ignore_ascii_case("vcad") && VCAD_READ_VERBS.contains(&first.as_str()));
+    let lowered = tool.to_ascii_lowercase();
+    verb && !words.iter().any(|w| NOT_READ.contains(&w.as_str()))
+        && !DESTRUCTIVE_TOOL.iter().any(|d| lowered.contains(d))
+}
+
+/// Whether an MCP call is a write that a `[mcp_trust]` write grant for its server covers:
+/// planetscale's `execute_write_query` and any of its tools named for a write; runpod's pod
+/// lifecycle (`create-pod`, `delete-pod`, `pod-action`); for any other granted server, a
+/// tool named for a write. Returns the server when it matches. A grant never covers
+/// anything else: unclear verbs keep asking.
+pub fn mcp_write(name: &str) -> Option<&str> {
+    const WRITE_WORDS: &[&str] = &[
+        "write", "create", "delete", "drop", "alter", "apply", "insert", "update",
+    ];
+    let (server, tool) = mcp_parts(name)?;
+    let words: Vec<String> = words(tool).collect();
+    let named_write = words.iter().any(|w| WRITE_WORDS.contains(&w.as_str()));
+    let hit = match server.to_ascii_lowercase().as_str() {
+        "runpod" => matches!(
+            words.iter().map(String::as_str).collect::<Vec<_>>().as_slice(),
+            ["create", "pod"] | ["delete", "pod"] | ["pod", "action"]
+        ),
+        _ => named_write,
+    };
+    hit.then_some(server)
+}
+
 /// Whether a Screenshot captures the session's own work: a workspace file (the tool
 /// itself refuses anything outside the workspace before rendering) or a localhost
 /// URL. The tool's own workspace fence is what keeps this safe, so the check mirrors it.
@@ -545,6 +623,72 @@ mod tests {
         ] {
             assert!(!read_tool("WebFetch", &json!({"url": bad})), "{bad} should NOT read");
         }
+    }
+
+    #[test]
+    fn mcp_reads_in_every_mode_are_read_verbs_only() {
+        for ok in [
+            "mcp__planetscale__planetscale_list_databases",
+            "mcp__planetscale__planetscale_list_organizations",
+            "mcp__planetscale__planetscale_get_branch_metrics",
+            "mcp__planetscale__planetscale_get_insights",
+            "mcp__planetscale__planetscale_get_database",
+            "mcp__runpod__list-pods",
+            "mcp__runpod__get-pod",
+            "mcp__runpod__stream-pod-logs",
+            "mcp__x__read_file",
+            "mcp__x__search-docs",
+            "mcp__db__describe_table",
+            "mcp__vcad__see",
+            "mcp__vcad__inspect_part",
+            "mcp__vcad__inspect-cad",
+            "mcp__vcad__measure",
+            "mcp__vcad__render_view",
+            "mcp__vcad__describe_scene",
+        ] {
+            assert!(mcp_read(ok), "{ok} should be a read");
+        }
+        for bad in [
+            "mcp__planetscale__planetscale_execute_write_query",
+            "mcp__planetscale__planetscale_execute_read_query", // not named for a read: asks
+            "mcp__planetscale__planetscale_get_branch_password", // hands out a secret
+            "mcp__runpod__create-pod",
+            "mcp__runpod__delete-pod",
+            "mcp__runpod__pod-action",
+            "mcp__runpod__get-api-key",
+            "mcp__x__list-and-delete",
+            "mcp__x__get_or_create",
+            "mcp__x__listdelete",
+            "mcp__x__read_and_run",
+            "mcp__other__see", // vcad's verbs are vcad's only
+            "mcp__other__render_page",
+            "mcp__vcad__render_and_export",
+            "mcp__vcad__create_cad_loon",
+            "mcp__vcad__update",
+            "Read",
+            "mcp__nosep",
+        ] {
+            assert!(!mcp_read(bad), "{bad} must still card");
+        }
+    }
+
+    #[test]
+    fn mcp_write_patterns_are_scoped_by_server() {
+        assert_eq!(
+            mcp_write("mcp__planetscale__planetscale_execute_write_query"),
+            Some("planetscale")
+        );
+        assert_eq!(mcp_write("mcp__planetscale__planetscale_create_branch"), Some("planetscale"));
+        assert_eq!(mcp_write("mcp__planetscale__planetscale_execute_read_query"), None);
+        for pod in ["mcp__runpod__create-pod", "mcp__runpod__delete-pod", "mcp__runpod__pod-action"] {
+            assert_eq!(mcp_write(pod), Some("runpod"), "{pod}");
+        }
+        // Not pod lifecycle: a runpod grant doesn't reach secrets or clusters.
+        for other in ["mcp__runpod__create-secret", "mcp__runpod__delete-secret", "mcp__runpod__create-cluster"] {
+            assert_eq!(mcp_write(other), None, "{other}");
+        }
+        assert_eq!(mcp_write("mcp__x__frobnicate"), None);
+        assert_eq!(mcp_write("Bash"), None);
     }
 
     #[test]

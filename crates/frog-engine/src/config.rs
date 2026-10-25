@@ -291,6 +291,29 @@ pub struct Config {
     /// bus WebSocket; `channel` is the team channel this Mac's sessions post to.
     #[serde(default)]
     pub irc: IrcConfig,
+    /// `[mcp_trust]`: MCP servers granted a tier beyond plain reads (`planetscale = "write"`).
+    /// A write grant lets that server's write tools (see `auto::mcp_write`) run without a card,
+    /// each one logged and shown as a notice. Empty by default: no server is ever trusted
+    /// unless configured; read-only tools never card anyway.
+    #[serde(default)]
+    pub mcp_trust: BTreeMap<String, McpTrust>,
+}
+
+/// How far a `[mcp_trust]` grant goes for one MCP server.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTrust {
+    /// Reads only: the same as no grant (read-only tools never card).
+    Read,
+    /// Its write tools run without a card, each logged.
+    Write,
+}
+
+impl Config {
+    /// Whether `server` has a write grant in `[mcp_trust]`.
+    pub fn mcp_write_trusted(&self, server: &str) -> bool {
+        self.mcp_trust.get(server) == Some(&McpTrust::Write)
+    }
 }
 
 /// `[irc]`: the agent bus. Off by default — flipping it on is the deploy switch.
@@ -567,6 +590,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.sandbox.allow_read, ["~/.ssh/known_hosts"]);
+    }
+
+    #[test]
+    fn mcp_trust_is_empty_by_default_and_grants_only_what_it_names() {
+        assert!(Config::default().mcp_trust.is_empty());
+        assert!(!Config::default().mcp_write_trusted("planetscale"));
+        let cfg: Config = toml::from_str(
+            r#"
+            [mcp_trust]
+            planetscale = "write"
+            runpod = "read"
+        "#,
+        )
+        .unwrap();
+        assert!(cfg.mcp_write_trusted("planetscale"));
+        assert!(!cfg.mcp_write_trusted("runpod"));
+        assert!(!cfg.mcp_write_trusted("vcad"));
+        assert!(toml::from_str::<Config>("[mcp_trust]\nx = \"admin\"").is_err());
     }
 
     #[test]

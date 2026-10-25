@@ -121,6 +121,7 @@ struct ActivityLabel: View {
         switch end {
         case .complete: ("Finished", "checkmark.circle.fill", .green)
         case .denied: ("Stopped: permission denied", "hand.raised.fill", .orange)
+        case .blockedOnApproval: ("Stopped: retried a denied call", "hand.raised.fill", .orange)
         case .cancelled: ("Interrupted", "stop.circle.fill", .secondary)
         case .suspended: ("Suspended for app update", "pause.circle.fill", .secondary)
         case .maxTokens: ("Hit the output limit", "text.append", .orange)
