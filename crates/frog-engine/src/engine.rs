@@ -1122,6 +1122,8 @@ struct Agent {
     /// Why this session fell back to text tool calls, when it did. Session-only: it survives
     /// `apply_harness` but is never written to the capability cache.
     text_fallback: Option<String>,
+    /// A stale capability probe was measured again (or tried) this session, for this model.
+    reprobed: bool,
     /// A Tang sidecar loads its weights on its first completion request. Keep that visible until
     /// the first response arrives, then regular request activity takes over.
     model_ready: bool,
@@ -1402,6 +1404,7 @@ impl Agent {
             caps,
             mode_failures: 0,
             text_fallback: None,
+            reprobed: false,
             model_ready: false,
             quiet: 0,
             turn_usage: TurnUsage::default(),
@@ -2226,6 +2229,7 @@ impl Agent {
             self.refresh_repo_map(&mentioned);
         }
         self.log_map();
+        self.reprobe_if_stale().await;
         self.apply_harness();
         self.push_user(text);
         self.attach_images(images);
@@ -2795,6 +2799,43 @@ impl Agent {
             .thinking_budget
             .unwrap_or(self.cfg.thinking_budget);
         thinking::budget(base, think, &self.messages)
+    }
+
+    /// Measure the model again when its cached probe is older than `harness::PROBE_TTL_MS`,
+    /// once per session, before the turn's first call. An old finding (native tools broken, say)
+    /// would otherwise decide the tool mode forever. Only under `auto`, which is what reads it,
+    /// and never for a model whose native tools are known.
+    async fn reprobe_if_stale(&mut self) {
+        if self.reprobed || !harness::reprobe_due(&self.profile, self.caps.as_ref(), now_ms()) {
+            return;
+        }
+        self.reprobed = true;
+        // The full tool set, as `frog probe` measures: the probe asks for a Read, which a
+        // chat's trimmed specs don't have.
+        let specs = tools::specs();
+        let probed = harness::probe(&self.provider, &specs, |label, completed, total| {
+            self.emit(Event::Progress {
+                label: label.into(),
+                completed: Some(completed),
+                total: Some(total),
+            })
+        })
+        .await;
+        match probed {
+            Ok(caps) => {
+                if self.store.is_some() {
+                    harness::save(&self.profile, &caps);
+                }
+                self.caps = Some(caps);
+            }
+            Err(e) => self.notice(
+                Level::Warn,
+                format!(
+                    "{}'s capability profile is out of date and re-checking it failed ({e:#}); using the old one",
+                    self.profile.model
+                ),
+            ),
+        }
     }
 
     /// Whether `<tool_call>` text in a reply is a call: always in text mode, and under native
@@ -4090,6 +4131,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             .flatten();
         self.mode_failures = 0;
         self.text_why = None;
+        self.reprobed = false;
         self.model_ready = false;
         self.apply_harness();
         self.resolve_window().await;
