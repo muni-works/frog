@@ -93,6 +93,7 @@ struct TurnView: View {
         #if DEBUG
         let _ = TranscriptProbe.turn()
         #endif
+        let parts = TurnParts(turn)
         VStack(alignment: .leading, spacing: space.inTurn) {
             let lead = TurnLead(turn)
             if !lead.wakes.isEmpty {
