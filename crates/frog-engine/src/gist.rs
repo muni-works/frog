@@ -76,11 +76,15 @@ struct Words {
 /// Summaries for `commands`, in order (empty string where the model had nothing to say),
 /// or an empty vec when no side-model resolved or the call failed. One call, whatever the
 /// batch size; duplicates in `commands` are one entry in the prompt and get the same line.
+/// A hermetic config (benchmarks, engine tests) never asks: rows fall back to the command.
 pub async fn write(
     cfg: &Config,
     dir: &std::path::Path,
     commands: &[Command<'_>],
 ) -> Vec<String> {
+    if cfg.hermetic {
+        return Vec::new();
+    }
     write_with(cfg, dir, commands, |profile| {
         Box::pin(async {
             crate::sidecar::ensure(profile).await?;
@@ -347,15 +351,21 @@ mod tests {
 
         #[tokio::test]
         async fn no_model_resolved_means_no_gists() {
-            // A hermetic config with cloud policy-denied… here: an empty command list short-
-            // circuits, and an unknown path with no candidates behaves the same. The row
-            // never blocks on it.
+            // An empty command list short-circuits before any model is chosen or built.
             let out = write_with(&hermetic(), std::path::Path::new("/t"), &[], |_p| {
                 Box::pin(async {
                     unreachable!("no commands means no provider is built")
                 })
             })
             .await;
+            assert!(out.is_empty());
+        }
+
+        #[tokio::test]
+        async fn a_hermetic_config_never_asks_for_gists() {
+            // Benchmarks and engine tests: no side-model call, whatever the commands. The
+            // row falls back to the raw command.
+            let out = write(&hermetic(), std::path::Path::new("/t"), &[cmd("git log", "out")]).await;
             assert!(out.is_empty());
         }
 
