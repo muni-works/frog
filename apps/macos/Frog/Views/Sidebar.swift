@@ -959,9 +959,17 @@ private struct CompactSessionRow<Menu: View>: View {
             }
             if !expandTitle, !nested {
                 TimelineView(.periodic(from: .now, by: freshComplete ? 5 : 30)) { ctx in
-                    Text(SessionAgeShort.age(session.modifiedDate, now: ctx.date))
-                        .font(.system(size: 11, design: .rounded).monospacedDigit())
-                        .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
+                    // Running shows the spinner whether the app knows it live (a conversation
+                    // open here, following a worker included) or only from recent activity.
+                    if live == .running || live == nil, ctx.date.timeIntervalSince(session.modifiedDate) < 30 {
+                        Text(SessionAgeShort.age(session.modifiedDate, now: ctx.date))
+                            .font(.system(size: 11, design: .rounded).monospacedDigit())
+                            .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
+                    } else {
+                        Text(SessionAgeShort.age(session.modifiedDate, now: ctx.date))
+                            .font(.system(size: 11, design: .rounded).monospacedDigit())
+                            .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
+                    }
                 }
             }
             glyphView.padding(.leading, 5)

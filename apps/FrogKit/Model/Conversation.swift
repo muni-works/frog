@@ -70,6 +70,9 @@ final class Conversation {
     private(set) var failure: String?
     /// A reopened session's history is on its way (until the engine's `synced`).
     private(set) var replaying = false
+    /// The replay's history ended with a turn still open (another frog process is running
+    /// it): once `synced` lands, that turn is running here too, like one started locally.
+    @ObservationIgnored private var replayedOpenTurn = false
     /// When this conversation was opened: only what happens after makes a sound, posts a
     /// notification or counts in the stats. Nil for previews, which never do.
     @ObservationIgnored private var openedLive: Date?
@@ -566,9 +569,15 @@ final class Conversation {
                 pendingDeliveries = max(0, pendingDeliveries - 1 - more.count)
             }
             if !replaying { userStopped = false }
-            // A replayed turn ran long ago.
-            if !replaying { busy = true }
+            // A replayed turn ran long ago — unless it's still open, when another frog
+            // process is running it and `synced` will show it as busy here too.
+            if replaying {
+                replayedOpenTurn = true
+            } else {
+                busy = true
+            }
         case .turnEnded(let n, let reason, let usage):
+            replayedOpenTurn = false
             if let i = turns.lastIndex(where: { $0.number == n }) {
                 for index in turns[i].items.indices { turns[i].items[index].imagePreview = nil }
                 turns[i].end = reason
@@ -695,6 +704,13 @@ final class Conversation {
             backgroundRunning = running
         case .synced:
             replaying = false
+            // A turn the history ended in the middle of is running in another frog process:
+            // show it working, exactly like a turn started here. The events keep streaming
+            // in, and its `turn_ended` clears `busy` like any local one.
+            if replayedOpenTurn {
+                replayedOpenTurn = false
+                busy = true
+            }
             if let (text, warning) = pendingFlash {
                 note(text, warning: warning)
                 pendingFlash = nil
@@ -709,8 +725,10 @@ final class Conversation {
             if !sawFirstIdle {
                 sawFirstIdle = true
                 // A reopened conversation's engine finished starting up with a message already
-                // waiting for it: that turn is next, so it stays busy.
-                if replayOnStart, busy { return }
+                // waiting for it: that turn is next, so it stays busy. A followed session's
+                // follower idles only when no turn is open, or once the worker's turn has
+                // ended — either way there's nothing to stay busy for.
+                if replayOnStart, busy, turns.last?.finished == false { return }
             }
             busy = false
             awaitingCommand = false

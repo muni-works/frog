@@ -315,6 +315,21 @@ pub fn load(dir: &Path, id: &str) -> Result<Loaded> {
     fold(id, read_records(dir, id)?)
 }
 
+/// The log's header (line 1): the session's folder and model, for anything that needs to
+/// describe a session without opening it.
+pub fn header(dir: &Path, id: &str) -> Result<Header> {
+    let file = File::open(path(dir, id)).with_context(|| format!("no session {id}"))?;
+    let mut lines = BufReader::new(file).lines();
+    match lines.next() {
+        Some(Ok(line)) => match serde_json::from_str::<Record>(&line) {
+            Ok(Record::Header(h)) => Ok(h),
+            _ => bail!("session {id} has no header"),
+        },
+        // An empty or unreadable first line is as good as none.
+        _ => bail!("session {id} has no header"),
+    }
+}
+
 /// Durable events with `seq > after`.
 pub fn events_after(dir: &Path, id: &str, after: u64) -> Result<Vec<Envelope>> {
     Ok(read_records(dir, id)?
