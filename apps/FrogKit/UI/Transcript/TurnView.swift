@@ -71,9 +71,21 @@ struct TurnView: View {
         let _ = TranscriptProbe.turn()
         #endif
         VStack(alignment: .leading, spacing: space.inTurn) {
-            if let delivered = SessionMessage.parse(turn.input) {
-                SessionMessageCard(message: delivered)
-            } else if !turn.input.isEmpty || !turn.more.isEmpty {
+            let lead = TurnLead(turn)
+            if !lead.wakes.isEmpty {
+                // Background work finished and the turn opened with it: event rows, not a bubble.
+                WakeEventRows(events: lead.wakes, jobs: conversation.jobs)
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .bottom)), removal: .opacity))
+            }
+            switch lead.opener {
+            case .sessionMessages(let delivered):
+                // Collapsed like a tool row: who, that it's a message, its first line.
+                ForEach(Array(delivered.enumerated()), id: \.offset) { _, message in
+                    EventLineView(event: EventLine(message: message))
+                }
+            case .none:
+                EmptyView()
+            case .prompt:
                 VStack(alignment: .trailing, spacing: 2) {
                     // Messages queued while the last turn ran go together: a bubble each.
                     VStack(alignment: .trailing, spacing: 6) {

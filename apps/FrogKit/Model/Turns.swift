@@ -116,6 +116,8 @@ struct TurnState: Identifiable {
     var images: [ToolImage] = []
     /// Messages sent along with `input` as the same turn (queued follow-ups), in order.
     var more: [MessagePart] = []
+    /// Background wakes delivered with this turn, ahead of its input (`wakes_delivered`).
+    var wakes: [String] = []
     var items: [ItemState] = []
     var end: EndReason?
     var usage: TurnUsage?

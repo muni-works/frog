@@ -309,6 +309,15 @@ pub enum Op {
         from_name: String,
         message: String,
     },
+    /// A message from another session that's pure status ("received", "going idle"): marked
+    /// read without a reply turn. Queued like [`Op::Deliver`], but no turn starts and nothing
+    /// wakes: it's logged ([`Event::MessageRead`]) and goes along with the next turn as context.
+    Inform {
+        from: String,
+        #[serde(default)]
+        from_name: String,
+        message: String,
+    },
     /// Drop every [`Op::Deliver`] sent so far that no turn has taken yet: the messages
     /// queued behind the running turn never run. Immediate, like `Interrupt`; a stop that
     /// should leave the session quiet sends both (`StopSession` with `clear_queue`,
@@ -593,6 +602,9 @@ pub enum Event {
         id: String,
         kind: String,
         label: String,
+        /// A shell job's output file, for clients to link the job's row to its log.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        log: Option<String>,
     },
     /// Live output from background work (a subagent's step, a job's output, a monitor poll).
     BackgroundProgress {
@@ -612,6 +624,27 @@ pub enum Event {
     /// work in flight and mustn't be let go. Live only: a new engine starts with none.
     Background {
         running: usize,
+    },
+    /// The background wakes waiting for the next turn boundary, in the order they came in
+    /// (each as the model will get it: `<job-done …>`, `<monitor-done …>`, …). Sent whenever
+    /// one is parked and when a turn takes them (then empty), so a client can show what will
+    /// flush next. Live only.
+    QueuedEvents {
+        items: Vec<String>,
+    },
+    /// The wakes turn `turn` opened with, in order: delivered as one batch with its input
+    /// (a message, a session message), ahead of it. A turn started on wakes alone carries
+    /// them as its input instead.
+    WakesDelivered {
+        turn: u64,
+        wakes: Vec<String>,
+    },
+    /// An informational message ([`Op::Inform`]) was read: recorded, no turn started. It goes
+    /// along with the next turn as context.
+    MessageRead {
+        from: String,
+        from_name: String,
+        message: String,
     },
     /// Progress reported by a running MCP tool.
     ToolProgress {
@@ -730,6 +763,8 @@ impl Event {
                 | Self::PaneCheckpoint { .. }
                 | Self::BackgroundStarted { .. }
                 | Self::BackgroundDone { .. }
+                | Self::WakesDelivered { .. }
+                | Self::MessageRead { .. }
         )
     }
 }
