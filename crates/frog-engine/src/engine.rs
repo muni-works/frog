@@ -3722,7 +3722,10 @@ impl Agent {
         let ok = crate::auto::parallel_read(name, input)
             && self.offers(name)
             && !self.mcp.handles(name)
-            && input.get("_invalid_json").is_none();
+            && input.get("_invalid_json").is_none()
+            // A working directory deleted out from under the session: `run_tool` falls back
+            // to the root and says so, which a call run on the side can't.
+            && self.ctx.cwd.is_dir();
         ok.then(|| Ctx {
             root: self.ctx.root.clone(),
             cwd: self.ctx.cwd.clone(),
