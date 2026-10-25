@@ -357,3 +357,67 @@ action). Nothing ever deletes a working key on an error. Copy is exact.
 | rate-limited mint (429) | `too many sign-ins just now · try again in a minute` | try again (disabled 60 s) | |
 
 All network calls in the flow use a 10 s timeout, except polls (honour `interval`).
+
+## 4. CLI parity
+
+The CLI is the device flow (RFC 8628), one line rewritten in place, in the same voice. It never
+prints a key, with or without `--json`.
+
+```
+$ frog login
+enter WDJB-MJHT at frog.toys/link (opened in your browser) · waiting
+```
+
+On success the same line is rewritten (`\r` + clear) to:
+
+```
+signed in as cam (@campedersen) · pro · cloud/dart is ready
+```
+
+- **Opening the browser.** On a desktop session frog opens
+  `frog.toys/link?code=WDJB-MJHT` itself. Over SSH (`SSH_CONNECTION` set), or with no browser,
+  it doesn't, and the line reads `open frog.toys/link and enter WDJB-MJHT · waiting`. The page
+  shows the code and asks "is this the code in your terminal?" before approving.
+- **Code format**: 8 letters as `XXXX-XXXX`, no vowels or look-alikes (RFC 8628 §6.1), so it
+  can't spell words and reads aloud cleanly.
+- **Waiting.** `waiting` gets a trailing `·` pulse once a second on a TTY (no spinner glyphs).
+  Not a TTY: the code line prints once, then the result prints on its own line.
+- **Email instead**: `frog login --email cam@muni.works` →
+  `check cam@muni.works for a link · waiting`.
+- **Legacy invite key present**: same flow, success line ends
+  `· your beta credit came with you`.
+- **Already signed in**: `already signed in as cam (@campedersen) · frog logout to switch`.
+- **`FROG_API_KEY` set**: login still works and saves the sign-in, then adds a second line,
+  `note: FROG_API_KEY from your shell wins over this sign-in`.
+
+Outcomes (exit codes: 0 ok, 1 failed, 130 cancelled):
+
+| case | line |
+|---|---|
+| ctrl-c | `cancelled` |
+| code expired (10 min) | `that code expired · run frog login again` |
+| denied on the page | `turned down at frog.toys/link · run frog login again` |
+| offline | `can't reach frog.toys · check your connection and run frog login again` |
+| keychain write failed | `couldn't save to your Keychain · nothing was changed` |
+
+**`frog logout`** → `signed out · this Mac's key is revoked` (or `signed out · couldn't reach
+frog.toys, the key will be revoked next time you're online` when offline). With only an env key:
+`nothing to sign out · FROG_API_KEY comes from your shell`.
+
+**`frog login --status`** (alias `frog account`): one line, same order as the card.
+
+| state | line |
+|---|---|
+| signed in | `cam (@campedersen) · pro · $14.20 left · 212 tasks this week · cloud/dart` |
+| low credit | `cam (@campedersen) · beta · $1.30 left, about 2 days at your pace · frog.toys/upgrade` |
+| signed out | `not signed in · frog login` |
+| legacy key | `invite key · beta · $4.10 left · frog login to keep it with an account` |
+| env key | `FROG_API_KEY from your shell · api · $31.00 left` |
+| offline | `cam (@campedersen) · pro · can't reach frog.toys, last seen $14.20 left` |
+
+`--json` prints `{signed_in, handle, email, plan, credit_usd, week_tasks, week_usd, source}`
+(`source`: `signin`, `keychain`, `env`, or null).
+
+**Low credit in a run.** After a frog cloud turn ends and the state 4 rule fires, one dim line
+once per credit period: `frog cloud credit is low: about 2 days left at your pace ·
+frog.toys/upgrade`. At zero, the fallback already prints its own line. It gains `· frog.toys/upgrade`.
