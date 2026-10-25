@@ -26,7 +26,8 @@ call
                  → class in [delegation] chief's grant list?
                      → yes: route to the CHIEF session via the broker
                          → chief approves → run; audit "delegated:chief"
-                         → chief unreachable / busy / declines / no reply → card Cam
+                         → chief unreachable / waiting on Cam / no reply → card Cam
+                         → chief declines → deny, no card (counted in the roll-up)
                      → no (never-delegable class): card CAM directly
 ```
 
@@ -141,7 +142,9 @@ Named to avoid colliding with the sidebar's hover-summary "digest": this is the 
 | second pass errors / times out / unreadable | keep the flag → card (never fail-open) |
 | chief not configured | card Cam (no delegation anywhere) |
 | chief unresolvable (renamed, archived) | card Cam + one notice |
-| chief busy / doesn't answer in `chief_timeout_secs` | card Cam |
+| chief busy | wait out `chief_timeout_secs` (queuing is the point; the next event flush delivers) |
+| chief doesn't answer in `chief_timeout_secs` | card Cam |
+| chief declines | deny, no card; counted as `chief-declined` in the roll-up |
 | chief's answer unparseable | card Cam, notice says so |
 | chief approves a never-delegable call | impossible by construction: never-delegable classes never route to the chief |
 | config grants a class not in the vocabulary | warn once at startup, ignore the unknown class |

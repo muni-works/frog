@@ -23,24 +23,32 @@ pub struct Counts {
     /// Calls the chief was asked about but couldn't decide (they carded).
     pub chief_fallback: u32,
     /// Calls blocked: carded the user with no chief route (never-delegable,
-    /// ungranted classes), or declined by the chief.
+    /// ungranted classes).
     pub blocked: u32,
+    /// Calls the chief declined: denied, no card — visibility without interrupt.
+    pub chief_declined: u32,
     /// Of `blocked`, the never-delegable ones.
     pub never_delegable: u32,
 }
 
 impl Counts {
     fn total(&self) -> u32 {
-        self.auto_allowed + self.second_pass + self.delegated_chief + self.chief_fallback + self.blocked
+        self.auto_allowed
+            + self.second_pass
+            + self.delegated_chief
+            + self.chief_fallback
+            + self.chief_declined
+            + self.blocked
     }
 
     /// The roll-up line: the app notice, `Op::ApprovalDigest`, `frog approvals`.
     pub fn render(&self, when: &str) -> String {
         format!(
-            "approvals {when}: {} auto-allowed, {} second-pass upgrades, {} chief-approved, {} chief fallbacks, {} blocked ({} never-delegable) ({} calls total)",
+            "approvals {when}: {} auto-allowed, {} second-pass upgrades, {} chief-approved, {} chief-declined, {} chief fallbacks, {} blocked ({} never-delegable) ({} calls total)",
             self.auto_allowed,
             self.second_pass,
             self.delegated_chief,
+            self.chief_declined,
             self.chief_fallback,
             self.blocked,
             self.never_delegable,
@@ -54,6 +62,7 @@ impl Counts {
             Which::SecondPass => self.second_pass += 1,
             Which::DelegatedChief => self.delegated_chief += 1,
             Which::ChiefFallback => self.chief_fallback += 1,
+            Which::ChiefDeclined => self.chief_declined += 1,
             Which::Blocked => self.blocked += 1,
             Which::NeverDelegable => {
                 self.blocked += 1;
@@ -112,7 +121,8 @@ impl Digest {
     /// claims the day across sessions, fires it, then marks).
     pub fn needs_daily_notice(&mut self) -> bool {
         self.roll();
-        self.noticed.is_none() && self.counts.blocked + self.counts.chief_fallback > 0
+        self.noticed.is_none()
+            && self.counts.blocked + self.counts.chief_fallback + self.counts.chief_declined > 0
     }
 
     pub fn mark_noticed(&mut self) {
@@ -139,6 +149,7 @@ pub enum Which {
     SecondPass,
     DelegatedChief,
     ChiefFallback,
+    ChiefDeclined,
     Blocked,
     /// A blocked call in a never-delegable class (counts as blocked too).
     NeverDelegable,
@@ -237,7 +248,7 @@ fn bucket(ds: &[(String, String)]) -> Option<Which> {
     if let Some((_, o)) = ds.iter().rev().find(|(l, _)| l == "delegated") {
         return Some(match o.as_str() {
             "allow" => Which::DelegatedChief,
-            "deny" => Which::Blocked,
+            "deny" => Which::ChiefDeclined,
             _ => Which::ChiefFallback,
         });
     }
@@ -279,10 +290,11 @@ mod tests {
         d.count(Which::SecondPass);
         d.count(Which::DelegatedChief);
         d.count(Which::ChiefFallback);
+        d.count(Which::ChiefDeclined);
         d.count(Which::NeverDelegable);
         assert_eq!(
             d.summary(),
-            "approvals today: 2 auto-allowed, 1 second-pass upgrades, 1 chief-approved, 1 chief fallbacks, 1 blocked (1 never-delegable) (6 calls total)"
+            "approvals today: 2 auto-allowed, 1 second-pass upgrades, 1 chief-approved, 1 chief-declined, 1 chief fallbacks, 1 blocked (1 never-delegable) (7 calls total)"
         );
         // Midnight: everything resets, the notice re-arms.
         *TEST_DAY.lock().unwrap() = Some("20001".into());
@@ -326,7 +338,8 @@ mod tests {
             d(8, 2000, "f", "never-delegable", "ask"),
             d(9, 2000, "f", "ask", "ask"),
             d(10, 2000, "g", "second-pass", "ask"),
-            d(11, 2000, "h", "sandbox", "allow"),
+            d(11, 2000, "i", "delegated", "deny"),
+            d(12, 2000, "h", "sandbox", "allow"),
             d(12, 500, "old", "classifier", "allow"),
         ]
         .join("\n");
@@ -336,7 +349,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(
             c.render("since 1s"),
-            "approvals since 1s: 1 auto-allowed, 1 second-pass upgrades, 1 chief-approved, 1 chief fallbacks, 2 blocked (1 never-delegable) (6 calls total)"
+            "approvals since 1s: 1 auto-allowed, 1 second-pass upgrades, 1 chief-approved, 1 chief-declined, 1 chief fallbacks, 2 blocked (1 never-delegable) (7 calls total)"
         );
     }
 }

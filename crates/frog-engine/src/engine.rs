@@ -5171,7 +5171,8 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.decision(item, "delegated", "allow", &why, 0);
             Chief::Decided(Decision::Allow)
         } else {
-            self.digest.count(crate::digest::Which::Blocked);
+            // Visibility without interrupt: counted in the roll-up, no card.
+            self.digest.count(crate::digest::Which::ChiefDeclined);
             let why = format!("{chief} declined it{note} [{class}]");
             self.notice(
                 Level::Warn,
@@ -12317,6 +12318,51 @@ for line in sys.stdin:
         }
     }
 
+    /// A busy chief (running, its own turn going) waits the full timeout: queuing is
+    /// the point of delegation. Only a chief that's itself waiting on the user fails
+    /// at once — that's a deadlock.
+    #[tokio::test]
+    async fn a_busy_chief_is_waited_out_but_one_waiting_on_the_user_fails_at_once() {
+        let mk = |script: Vec<Response>, chief: String, timeout: u64| {
+            let dir = scratch_path(&format!("chief-{chief}"));
+            crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
+            crate::auto::script_rejudge(&dir.display().to_string(), crate::auto::Verdict::Ask("still flagged".into()));
+            let script = vec![
+                bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+                reply(vec![text("done")], Stop::End),
+            ];
+            let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+            cfg.delegation.chief = vec![chief];
+            cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+            cfg.delegation.chief_timeout_secs = timeout;
+            engine_deleg(script, Some(cfg))
+        };
+        // Busy: nobody answers; the full timeout passes before the card falls back.
+        let started = Instant::now();
+        let mut h = mk(vec![], "busy-chief".into(), 2);
+        caps(&h, true);
+        let evs = loop_collect(&mut h, |_, _| {}).await;
+        shutdown(h).await;
+        assert_eq!(asked(&evs), 1, "a merely busy chief cards after the timeout");
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::Notice { message, .. } if message.contains("didn't answer in 2s"))), "{:?}", names(&evs));
+        assert!(started.elapsed() >= Duration::from_secs(2), "waited the timeout out");
+
+        // Waiting on the user: the broker errors at once, no wait.
+        let mut h = mk(vec![], "away-chief".into(), 60);
+        caps(&h, true);
+        let ops = h.ops.clone();
+        let evs = loop_collect(&mut h, |id, tool| {
+            if tool == "DelegateApproval" {
+                ops.send(Op::SessionReply { id: id.to_string(), result: None, error: Some("Chief is waiting on the user itself.".into()) }).unwrap();
+            }
+        }).await;
+        shutdown(h).await;
+        assert_eq!(asked(&evs), 1);
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::Notice { message, .. } if message.contains("fell back to the user (away-chief: Chief is waiting on the user itself.)"))), "{:?}", names(&evs));
+    }
+
     /// Chief declines: the call is denied without ever reaching the user's card queue.
     #[tokio::test]
     async fn chief_decline_denies_without_a_card() {
@@ -12339,13 +12385,21 @@ for line in sys.stdin:
                 ops.send(Op::SessionReply { id: id.to_string(), result: Some(json!("deny — not ours")), error: None }).unwrap();
             }
         }).await;
-        shutdown(h).await;
-        let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(asked(&evs), 0);
+        assert_eq!(asked(&evs), 0, "a decline denies without carding");
         assert_eq!(outcome_of(&evs, "ssh"), Some(ToolOutcome::Denied));
         assert!(layers(&evs, "ssh").contains(&("delegated".into(), "deny".into())));
         assert!(evs.iter().any(|e| matches!(&e.event,
             Event::Notice { message, .. } if message.contains("delegated:chief") && message.contains("declined"))));
+        // The decline is visible in today's roll-up.
+        h.ops.send(Op::ApprovalDigest).unwrap();
+        let summary = loop {
+            if let Event::ApprovalDigest { summary } = h.events.recv().await.unwrap().event {
+                break summary;
+            }
+        };
+        assert!(summary.contains("1 chief-declined"), "{summary}");
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The digest roll-up counts each path once: a classifier allow, a chief
