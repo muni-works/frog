@@ -5,12 +5,19 @@ struct ItemView: View {
     let conversation: Conversation
     /// False for an MCP App result that a later call in the turn superseded.
     var showsApp = true
+    /// The answer still being written, shown as a typing bubble (see `TypingBubble`).
+    var typing = false
 
     var body: some View {
+        #if DEBUG
+        let _ = TranscriptProbe.row()
+        #endif
         switch item.kind {
         case .message:
-            MarkdownView(text: item.text, streaming: !item.done)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // One view for a message from first word to history, so the handoff from the
+            // typing bubble to the plain row is a fade inside it, not a swap of two (a swap
+            // would rebuild the text view and replay the ink).
+            TypingBubble(text: item.text, conversation: conversation, writing: typing && !item.done)
         case .reasoning:
             ReasoningView(text: item.text, done: item.done)
         case .tool("Diagram", _) where item.result?.diagram != nil:
@@ -346,5 +353,58 @@ struct ApprovalDetails: View {
         }
         .font(.callout)
         .foregroundStyle(.primary)
+    }
+}
+
+/// The answer as it writes itself, in an iMessage-style bubble while it streams: a frog
+/// beside it, the words arriving inside, and the model's speed at its edge. The status line
+/// ("Thinking… 4s") stays for the work before and between answers; this is for the answer.
+///
+/// This is the message row's only view, from the first word to history: at the handoff the
+/// words are already in place, and the bubble's chrome and insets ease out to the plain row in
+/// one animated settle — no swap, so the text view (and its ink) is never rebuilt.
+struct TypingBubble: View {
+    let text: String
+    let conversation: Conversation
+    /// Still streaming: the bubble and its frog show; settling fades them out.
+    var writing: Bool
+    @State private var settled = false
+
+    var body: some View {
+        let live = writing && !settled
+        HStack(alignment: .top, spacing: 8) {
+            FrogFace(mood: .idle, size: 14)
+                .padding(.top, 4)
+                .opacity(live ? 1 : 0)
+                .frame(width: live ? 14 : 0)
+            MarkdownView(text: text, streaming: live)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            speed
+                .opacity(live ? 1 : 0)
+                .frame(width: live ? nil : 0, alignment: .trailing)
+        }
+        .padding(.vertical, live ? 9 : 0)
+        .padding(.leading, live ? 12 : 0)
+        .padding(.trailing, live ? 12 : 6)
+        .background(.quaternary.opacity(live ? 0.45 : 0), in: .rect(cornerRadius: 14))
+        .animation(.easeOut(duration: 0.25), value: settled)
+        .animation(.easeOut(duration: 0.25), value: writing)
+        .onAppear { settled = !writing }
+        .onChange(of: writing) { _, w in
+            if !w { settled = true }
+        }
+        .accessibilityHidden(!live)
+        .accessibilityLabel("frog is writing")
+    }
+
+    /// The model's speed, at the bubble's edge, from the engine's status.
+    @ViewBuilder
+    private var speed: some View {
+        if let s = conversation.status?.tokensPerSec, s > 0 {
+            Text(ModelStats.speedText(s * ModelStats.wordsPerToken))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .fixedSize()
+        }
     }
 }

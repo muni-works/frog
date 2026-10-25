@@ -83,6 +83,45 @@ struct TurnFlow {
     }
 }
 
+/// What a finished item shows, cheaply comparable: the transcript rebuilds a row only when its
+/// stamp changes, instead of every row on every chunk (`ItemState` isn't Equatable, so SwiftUI
+/// can't tell an unchanged row from a changed one by itself).
+struct ItemStamp: Equatable {
+    let id: String
+    let text: Int
+    let output: Int
+    let result: Bool
+    let ok: Bool
+    let needsPermission: Bool
+    let preview: Bool
+    let subagentItems: Int
+    let subagentEnded: Date?
+}
+
+extension ItemState {
+    /// Nil while the item is still running: a live row always rebuilds.
+    var stamp: ItemStamp? {
+        guard done else { return nil }
+        return ItemStamp(id: id, text: text.utf8.count, output: output.utf8.count, result: result != nil,
+                         ok: result?.outcome == .ok, needsPermission: needsPermission, preview: imagePreview != nil,
+                         subagentItems: subagent?.items.count ?? 0, subagentEnded: subagent?.endedAt)
+    }
+}
+
+extension TurnFlow.Segment {
+    /// Nil while any of its items is running.
+    var stamp: [ItemStamp]? {
+        switch self {
+        case .text(let i), .visual(let i), .notice(let i): i.stamp.map { [$0] }
+        case .activity(let g):
+            g.steps.reduce(into: [ItemStamp]?([])) { acc, step in
+                guard let s = step.stamp else { acc = nil; return }
+                acc?.append(s)
+            }
+        }
+    }
+}
+
 /// Steps between two pieces of text, and the sentence that sums them up.
 struct ActivityGroup {
     var steps: [ItemState]
