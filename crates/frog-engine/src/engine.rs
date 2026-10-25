@@ -12131,11 +12131,18 @@ for line in sys.stdin:
             deleg_call("rm", &format!("rm -rf {}", dir.display())),
             reply(vec![text("done")], Stop::End),
         ];
-        let mut h = engine_deleg(script, None);
-        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        // Even with a chief granted scratch-deletes.
+        let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+        cfg.delegation.chief = vec!["chief".into()];
+        cfg.delegation.chief_classes = vec!["scratch-deletes".into()];
+        let mut h = engine_deleg(script, Some(cfg));
+        caps(&h, true);
+        let mut asked_chief = false;
+        let evs = loop_collect(&mut h, |_, tool| asked_chief |= tool == "DelegateApproval").await;
         shutdown(h).await;
         let kept = dir.exists();
         let _ = std::fs::remove_dir_all(&dir);
+        assert!(!asked_chief, "the chief was asked about rm -rf outside scratch");
         assert_eq!(asked(&evs), 1);
         assert!(kept, "nothing was deleted");
         assert_eq!(outcome_of(&evs, "rm"), Some(ToolOutcome::Denied));

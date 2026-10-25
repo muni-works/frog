@@ -115,7 +115,7 @@ The engine already asks the client to carry session tools (`Event::SessionReques
 4. On answer: `Op::Permission` flows into the asking engine's existing `Op::Permission` path. Audit notice `delegated:chief: <tool> <arg> — decided by <chief name>`; the decision event carries `layer: "delegated"`.
 5. Unreachable / rate-limited / timeout (`chief_timeout_secs`) / unparseable answer → the engine's normal card path, marked `delegation fell back to the user`.
 
-**Stub, documented:** until the broker gains the `DelegateApproval`/`ResolveDelegated` handlers, the engine treats `DelegateApproval` exactly like any other session request the client may answer — a client that doesn't know it will never answer, the wait times out, and the card falls back to Cam. So the engine ships complete and safe with no app change; the app change only turns the fallback into the real thing.
+**Built:** the broker handles `DelegateApproval` (resolve the chief from `chiefs`, a system message carrying the card and the `approval_id`, the reply held) and the chief answers with the `ResolveDelegated` session tool (`approval_id`, `decision` approve/deny, `note`) — only the session it was sent to, once. No such chief, the chief asking about its own call, a chief waiting on the user, or unreachable: an error at once, and the asker cards Cam. A client that doesn't know `DelegateApproval` errors or never answers; the wait times out and the card falls back.
 
 ## Audit
 
