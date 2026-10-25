@@ -195,6 +195,15 @@ const MIN_RESULT_CAP: usize = 40_000;
 /// again this session.
 const DENIED_LIMIT: u32 = 2;
 
+/// How long a classifier that couldn't answer is skipped before frog tries it again: a
+/// stopped server costs one timeout per minute, not one per call.
+const CLASSIFIER_RETRY: Duration = Duration::from_secs(60);
+
+/// Why auto mode asks when no classifier could answer and no rule covers the call. The card
+/// names the rule gap, not the outage: a down classifier never cards a call by itself.
+const CLASSIFIER_DOWN_ASK: &str =
+    "no built-in rule covers it (the classifier is down, so rules decide alone)";
+
 /// One tool call's identity for the repeat-denial checks: its tool and its exact arguments.
 fn call_hash(name: &str, input: &Value) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -1110,9 +1119,18 @@ struct Agent {
     warming: Arc<Mutex<(bool, Option<Warming>)>>,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
-    /// The classifier already failed once this session and the user was told:
-    /// later failures fall back quietly instead of repeating the notice.
-    classifier_failed: bool,
+    /// `auto_classifier_fallback`, started the first time the classifier can't answer.
+    classifier_fallback: Option<crate::auto::Classifier>,
+    /// When (and why) the classifier and the fallback model last failed: inside
+    /// `CLASSIFIER_RETRY` it's skipped instead of costing every call a timeout.
+    classifier_down: Option<(Instant, String)>,
+    classifier_fallback_down: Option<(Instant, String)>,
+    /// While the classifier is down: what judges instead and why, one line for the
+    /// status (`None` while the classifier answers).
+    classifier_degraded: Option<String>,
+    /// The fallbacks the user was already told about: one notice per session for each,
+    /// never one per call.
+    classifier_told: HashSet<String>,
     /// Paths this session created (files it wrote that didn't exist, directories a
     /// command made), so an approval card can say "this session made it".
     created: HashSet<PathBuf>,
@@ -1322,7 +1340,11 @@ impl Agent {
             edited: Vec::new(),
             titled: resumed_titled,
             classifier: None,
-            classifier_failed: false,
+            classifier_fallback: None,
+            classifier_down: None,
+            classifier_fallback_down: None,
+            classifier_degraded: None,
+            classifier_told: HashSet::new(),
             created: HashSet::new(),
             prefix_allow: Vec::new(),
             last_note: None,
@@ -4524,7 +4546,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     return Decision::Allow;
                 }
                 Err(why) => {
-                    let layer = if why.contains("classifier is unavailable") {
+                    let layer = if why == CLASSIFIER_DOWN_ASK {
                         "fallback"
                     } else {
                         "classifier"
@@ -4834,8 +4856,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         decision
     }
 
-    /// Auto mode: hard rules, then the classifier. `Ok` runs the call (and records why);
-    /// `Err` says why the user should decide.
+    /// Auto mode: hard rules, then the classifier, then `auto_classifier_fallback`, then the
+    /// built-in rules alone. `Ok` runs the call (and records why); `Err` says why the user
+    /// should decide.
     async fn auto_judge(
         &mut self,
         item: &str,
@@ -4846,65 +4869,169 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         if let Some(why) = crate::auto::hard_rule(name, input, &self.ctx.root) {
             return Err(format!("it {why}"));
         }
-        if self.classifier.is_none() {
-            match crate::auto::Classifier::new(&self.cfg, &self.ctx.root) {
-                Ok(c) => self.classifier = Some(c),
-                Err(e) => {
-                    self.classifier_unavailable(format!("couldn't start ({e:#})"));
-                }
-            }
-        }
-        let model = self
-            .classifier
-            .as_ref()
-            .map(|c| c.profile_name.clone())
-            .unwrap_or_default();
-        self.emit(Event::Progress {
-            label: format!("checking with auto mode ({model})"),
-            completed: None,
-            total: None,
-        });
         let preview = tools::fs::preview(name, input, &self.ctx);
         let action = crate::auto::describe(name, input, preview.as_ref(), sandbox);
-        let inputs = self.inputs.clone();
-        let Some(classifier) = self.classifier.as_mut() else {
-            return Err("the classifier is unavailable".into());
+        let verdict = match self.classifier_verdict(false, &action).await {
+            Ok(v) => {
+                self.classifier_back();
+                Some(v)
+            }
+            Err(down) => match self.classifier_verdict(true, &action).await {
+                Ok(v) => {
+                    let model = self
+                        .classifier_fallback
+                        .as_ref()
+                        .map(|c| c.profile_name.clone())
+                        .unwrap_or_default();
+                    self.classifier_degraded(&format!("the fallback classifier ({model})"), &down);
+                    Some(v)
+                }
+                Err(_) => {
+                    self.classifier_degraded("frog's built-in rules", &down);
+                    None
+                }
+            },
         };
-        match classifier.judge(&inputs, &action).await {
-            crate::auto::Verdict::Allow(reason) => {
+        match verdict {
+            Some(crate::auto::Verdict::Allow(reason)) => {
                 self.emit(Event::AutoApproved {
                     item: item.to_string(),
                     reason,
                 });
                 Ok(())
             }
-            crate::auto::Verdict::Ask(reason) => Err(format!("the classifier said: {reason}")),
-            // The classifier is down, not cautious: read-only commands still run
-            // (the fast path needs no model), everything else asks.
-            crate::auto::Verdict::Failed(why) => {
-                self.classifier_unavailable(why);
-                if name == "Bash" && crate::shell::read_only(input["command"].as_str().unwrap_or(""))
-                {
+            Some(crate::auto::Verdict::Ask(reason)) => Err(format!("the classifier said: {reason}")),
+            Some(crate::auto::Verdict::Failed(why)) => Err(why),
+            // Nothing could judge: the built-in rules decide alone. A down classifier never
+            // cards a call by itself; only a call no rule can prove harmless asks.
+            None => match crate::auto::rules_fallback(name, input) {
+                Some(rule) => {
                     self.emit(Event::AutoApproved {
                         item: item.to_string(),
-                        reason: "read-only command; the classifier is down".into(),
+                        reason: format!("{rule}; the classifier is down, rules decided"),
                     });
                     Ok(())
-                } else {
-                    Err("the classifier is unavailable".into())
                 }
+                None => Err(CLASSIFIER_DOWN_ASK.into()),
+            },
+        }
+    }
+
+    /// One classifier's verdict (`fallback`: `auto_classifier_fallback`'s), started on first
+    /// use. `Err` says why it couldn't answer: it isn't configured, wouldn't start, failed, or
+    /// failed less than `CLASSIFIER_RETRY` ago (skipped, so a stopped server costs one
+    /// timeout, not one per call). Never `Ok(Verdict::Failed)`.
+    async fn classifier_verdict(
+        &mut self,
+        fallback: bool,
+        action: &str,
+    ) -> std::result::Result<crate::auto::Verdict, String> {
+        let down = if fallback {
+            &self.classifier_fallback_down
+        } else {
+            &self.classifier_down
+        };
+        if let Some((at, why)) = down
+            && at.elapsed() < CLASSIFIER_RETRY
+        {
+            return Err(why.clone());
+        }
+        let started = if fallback {
+            self.classifier_fallback.is_some()
+        } else {
+            self.classifier.is_some()
+        };
+        if !started {
+            let built = if fallback {
+                match crate::auto::Classifier::fallback(&self.cfg, &self.ctx.root) {
+                    Some(b) => b,
+                    None => return Err("no fallback classifier is configured".into()),
+                }
+            } else {
+                crate::auto::Classifier::new(&self.cfg, &self.ctx.root)
+            };
+            match built {
+                Ok(c) if fallback => self.classifier_fallback = Some(c),
+                Ok(c) => self.classifier = Some(c),
+                Err(e) => return Err(self.classifier_failed(fallback, format!("it couldn't start ({e:#})"))),
+            }
+        }
+        let slot = if fallback {
+            &self.classifier_fallback
+        } else {
+            &self.classifier
+        };
+        let model = slot.as_ref().map(|c| c.profile_name.clone()).unwrap_or_default();
+        self.emit(Event::Progress {
+            label: format!("checking with auto mode ({model})"),
+            completed: None,
+            total: None,
+        });
+        let inputs = self.inputs.clone();
+        let slot = if fallback {
+            &mut self.classifier_fallback
+        } else {
+            &mut self.classifier
+        };
+        let Some(classifier) = slot.as_mut() else {
+            return Err("it isn't running".into());
+        };
+        match classifier.judge(&inputs, action).await {
+            crate::auto::Verdict::Failed(why) => Err(self.classifier_failed(fallback, why)),
+            v => {
+                if fallback {
+                    self.classifier_fallback_down = None;
+                }
+                Ok(v)
             }
         }
     }
 
-    /// The auto-mode classifier failed: note it once per session.
-    fn classifier_unavailable(&mut self, why: String) {
-        if !self.classifier_failed {
-            self.classifier_failed = true;
+    /// A classifier couldn't answer: skip it until `CLASSIFIER_RETRY` passes. Returns `why`.
+    fn classifier_failed(&mut self, fallback: bool, why: String) -> String {
+        let down = Some((Instant::now(), why.clone()));
+        if fallback {
+            self.classifier_fallback_down = down;
+        } else {
+            self.classifier_down = down;
+        }
+        why
+    }
+
+    /// The classifier is down and `using` judges instead: the status carries one line that
+    /// says so while it lasts, and a notice says it once per session for each fallback,
+    /// never once per call.
+    fn classifier_degraded(&mut self, using: &str, why: &str) {
+        let primary = self
+            .classifier
+            .as_ref()
+            .map(|c| c.profile_name.clone())
+            .unwrap_or_else(|| crate::auto::Classifier::primary_spec(&self.cfg));
+        let why = why.trim_start_matches("it ").trim_end_matches('.');
+        let line = format!("classifier {primary} is down ({why}); {using} decide");
+        let changed = self.classifier_degraded.as_deref() != Some(line.as_str());
+        self.classifier_degraded = Some(line);
+        if self.classifier_told.insert(using.to_string()) {
+            let rest = if using.starts_with("frog's") {
+                "reads and the session's own work still run without asking; only calls no rule covers ask"
+            } else {
+                "it judges each call until the classifier is back"
+            };
             self.notice(
                 Level::Warn,
-                format!("auto mode's classifier failed ({why}); read-only commands still run without asking, the rest ask"),
+                format!("auto mode's classifier ({primary}) is down ({why}); using {using}: {rest}."),
             );
+        }
+        if changed {
+            self.emit_status();
+        }
+    }
+
+    /// The classifier answered: it's back, and the status drops the degraded line.
+    fn classifier_back(&mut self) {
+        self.classifier_down = None;
+        if self.classifier_degraded.take().is_some() {
+            self.emit_status();
         }
     }
 
@@ -10930,7 +11057,7 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
         // …and the failure was logged once, not per call.
         let notices = evs
             .iter()
-            .filter(|e| matches!(&e.event, Event::Notice { message, .. } if message.contains("classifier failed")))
+            .filter(|e| matches!(&e.event, Event::Notice { message, .. } if message.contains("classifier") && message.contains("is down")))
             .count();
         assert_eq!(notices, 1, "one classifier-failure notice");
     }
@@ -10944,6 +11071,188 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
             }],
             Stop::ToolUse,
         )
+    }
+
+    /// A stand-in classifier server on localhost: every chat completion gets `status`, and a
+    /// 200 streams `verdict` (a JSON answer) as the model's text. Counts the requests.
+    async fn fake_classifier(status: u16, verdict: &str) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let chunk = json!({"choices": [{"index": 0, "delta": {"content": verdict}, "finish_reason": null}]});
+        let done = json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]});
+        let body = format!("data: {chunk}\n\ndata: {done}\n\ndata: [DONE]\n\n");
+        let count = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let body = body.clone();
+                let count = count.clone();
+                tokio::spawn(async move {
+                    // Read the whole request (headers, then Content-Length of body).
+                    let mut received = Vec::new();
+                    loop {
+                        let mut buf = [0u8; 8192];
+                        let Ok(n) = socket.read(&mut buf).await else { return };
+                        if n == 0 {
+                            return;
+                        }
+                        received.extend_from_slice(&buf[..n]);
+                        if let Some(end) = received.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let headers = String::from_utf8_lossy(&received[..end]).to_ascii_lowercase();
+                            let len: usize = headers
+                                .lines()
+                                .find_map(|l| l.strip_prefix("content-length: ").map(str::to_owned))
+                                .and_then(|l| l.trim().parse().ok())
+                                .unwrap_or(0);
+                            if received.len() >= end + 4 + len {
+                                break;
+                            }
+                        }
+                    }
+                    count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let response = if status == 200 {
+                        format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                    } else {
+                        format!("HTTP/1.1 {status} Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    };
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        (base, hits)
+    }
+
+    /// A port nothing listens on: the classifier there is unreachable (connection refused).
+    fn unreachable_base() -> String {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        drop(l);
+        format!("http://{addr}/v1")
+    }
+
+    /// An auto-mode config whose classifier is the `classifier` profile at `base`, with an
+    /// optional `fallback` profile at its own base.
+    fn classifier_cfg(base: &str, fallback: Option<&str>) -> Config {
+        let mut cfg = Config {
+            hermetic: true,
+            sandbox_shell: false,
+            ..Config::default()
+        };
+        let profile = |base: &str| {
+            let mut p = Profile::new(ProviderKind::Openai, "judge");
+            p.base_url = Some(base.into());
+            p
+        };
+        cfg.models.insert("classifier".into(), profile(base));
+        cfg.auto_classifier = Some("classifier".into());
+        if let Some(fb) = fallback {
+            cfg.models.insert("backup".into(), profile(fb));
+            cfg.auto_classifier_fallback = Some("backup".into());
+        }
+        cfg
+    }
+
+    /// Item 1 (org reliability): with the classifier unreachable, a read-only call the
+    /// classifier would have judged runs on the built-in rules with no card, a delete of
+    /// scratch the session didn't make still cards, and the outage is one notice, not one
+    /// per call.
+    #[tokio::test]
+    async fn an_unreachable_classifier_falls_back_to_the_rules_not_to_cards() {
+        let script = vec![
+            // A capture of a public page: only the classifier judged it before. The viewport
+            // is invalid so the tool fails at once, after the permission check.
+            reply(
+                vec![Block::ToolUse {
+                    id: "shot".into(),
+                    name: "Screenshot".into(),
+                    input: json!({"url": "https://example.com/docs", "width": 10}),
+                }],
+                Stop::ToolUse,
+            ),
+            // Deletes a file the session didn't make, outside the project: no rule covers it.
+            bash_call("rm", "rm /private/tmp/frog-classifier-down-not-mine.txt"),
+            // Another call for the classifier: still one notice.
+            reply(
+                vec![Block::ToolUse {
+                    id: "shot2".into(),
+                    name: "Screenshot".into(),
+                    input: json!({"url": "https://example.org/", "width": 10}),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = classifier_cfg(&unreachable_base(), None);
+        let mut h = engine_perm_cfg(script, Mode::Auto, cfg);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let carded = |item: &str| {
+            evs.iter().any(|e| matches!(&e.event, Event::PermissionRequest { item: i, .. } if i == item))
+        };
+        assert!(!carded("shot") && !carded("shot2"), "a read-only call carded with the classifier down");
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::AutoApproved { item, reason } if item == "shot" && reason.contains("rules decided")
+        )));
+        assert!(carded("rm"), "a delete outside its own scratch must still card");
+        // The card says which rule gap made it ask, not just that the classifier is down.
+        let reason = evs.iter().find_map(|e| match &e.event {
+            Event::PermissionRequest { item, reason, .. } if item == "rm" => reason.clone(),
+            _ => None,
+        });
+        assert!(reason.unwrap_or_default().contains("no built-in rule covers it"));
+        let notices: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { message, .. } if message.contains("classifier") => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("built-in rules"), "{}", notices[0]);
+    }
+
+    /// Item 1: a configured `auto_classifier_fallback` judges when the classifier answers
+    /// 5xx; the down classifier is skipped (not retried per call) while it stays down.
+    #[tokio::test]
+    async fn a_configured_fallback_classifier_judges_when_the_classifier_is_down() {
+        let (down, down_hits) = fake_classifier(503, "").await;
+        let (backup, backup_hits) =
+            fake_classifier(200, r#"{"reason":"part of the task","decision":"allow"}"#).await;
+        let script = vec![
+            // Not a routine build step: only a classifier can pass it.
+            bash_call("w1", "python3 -c 'print(1)' > made-up-file"),
+            bash_call("w2", "python3 -c 'print(2)' > made-up-file"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = classifier_cfg(&down, Some(&backup));
+        let dir = tmp_store();
+        let mut h = engine_perm_at(script, Mode::Auto, cfg, dir);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        assert!(
+            !evs.iter().any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "the fallback approved both; nothing carded"
+        );
+        let approved = evs
+            .iter()
+            .filter(|e| matches!(&e.event, Event::AutoApproved { reason, .. } if reason == "part of the task"))
+            .count();
+        assert_eq!(approved, 2);
+        // One attempt and its one transport retry; the second call skipped it.
+        assert_eq!(down_hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(backup_hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let notices: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { message, .. } if message.contains("classifier") => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("fallback classifier (backup)"), "{}", notices[0]);
     }
 
     #[tokio::test]
