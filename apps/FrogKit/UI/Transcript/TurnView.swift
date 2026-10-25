@@ -96,6 +96,7 @@ struct TurnView: View {
         let parts = TurnParts(turn)
         VStack(alignment: .leading, spacing: space.inTurn) {
             let lead = TurnLead(turn)
+            let flow = TurnFlow(turn.items, showThinking: verbosity.showsThinking)
             if !lead.wakes.isEmpty {
                 // Background work finished and the turn opened with it: event rows, not a bubble.
                 WakeEventRows(events: lead.wakes, jobs: conversation.jobs)
@@ -331,6 +332,11 @@ struct TurnView: View {
               progress.label.lowercased().hasPrefix("loading ") else { return nil }
         let raw = String(progress.label.dropFirst("loading ".count))
         return (Self.modelName(raw), conversation.progressSince ?? turn.startedAt ?? .now)
+    }
+
+    /// The prompt has a row: what you asked, or a message from another session.
+    static func hasHead(_ turn: TurnState) -> Bool {
+        !turn.input.isEmpty || !turn.more.isEmpty
     }
 
     private static func modelName(_ raw: String) -> String {
