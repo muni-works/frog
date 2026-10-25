@@ -226,3 +226,36 @@ What it doesn't say: "all tests pass" — 277 of 288 ran, and the body says so. 
 Signed-off-by: Cam Pedersen <cam@campedersen.com>
 Co-authored-by: engine retry loop <engine-retry-loop@frog.local>
 ```
+
+## 6. Mockup
+
+docs/design/pr-viral-assets/pr-body.html: the §5 body inside GitHub's PR conversation chrome, with the commit and its trailers below. Self-contained (no network), frog green from apps/FrogKit/UI/Basics/Palette.swift.
+
+## 7. Build plan
+
+Smallest first; each step is independently shippable. Steps 1–2 put real signed bodies on frog's own PRs without waiting for anything else.
+
+1. **Body + short signature.** New `crates/frog-engine/src/forge/body.rs`: `fn body(log: &Loaded, lineage: &[Loaded], cfg: &PrConfig) -> String`, pure, from session records only — §1.1 task (`TurnStarted` input), §1.2 who (`forked_from` lineage + titles; branch-name fallback), §1.3 verified (Bash calls, exit 0, check patterns, pass-count parse), §1.4 not verified (skips, failures, ran-before-last-edit). Signature `short`. Snapshot test against a fixture derived from §5's log.
+   *First increment that ships:* `frog --pr-body [--session <id>]` prints the body to stdout; a worker (or the merge script's PR step) pipes it into `gh pr create --body-file -`. Real bodies on the org's PRs immediately, no other dependencies.
+2. **`[pr]` config.** `crates/frog-engine/src/config.rs`: `PrConfig { signature, checks, ci_note, dco, trailers }` inside the existing `[pr]` section (pr-lifecycle §7), plus a loader for `<repo>/.frog/config.toml` and `.frog/config.local.toml` that reads only `[pr]` and warns on anything else. Default `full` when origin is under frog's own GitHub orgs, else `short`; `full` renders as `short` until the replay endpoint exists.
+3. **Commit attribution.** `crates/frog-engine/src/protocol.rs`: durable `Event::Committed { shas }`. `tools/bash.rs`: diff `git rev-parse HEAD` around each call in a git cwd. `body.rs` switches who/receipts from branch-name fallback to records.
+4. **Trailers.** `tools/bash.rs` sets `FROG_SESSION_NAME`/`FROG_SESSION_SLUG` and env-scoped `core.hooksPath`; new `crates/frog-engine/assets/hooks/prepare-commit-msg` (chains to the repo's own hook, appends the trailer via `git interpret-trailers`). `OpenPR` verifies DCO sign-offs on all commits ahead of base (mirrors `.github/workflows/dco.yml` locally, before the push).
+5. **Body updates + outcome.** `WatchPR`/D edits the `ci ·` line via the session's content ownership (pr-lifecycle §5); new durable `Event::PrOutcome { … }` at terminal state (§4) for the gym.
+6. **Replay link.** Once zest's endpoint exists: bundle + redaction in `forge/share.rs`, `Event::ShareCreated { token }`, the one-time "add a replay link?" line in the app, revoke from the session menu. `full` starts rendering the full signature.
+
+## 8. Gaps and open questions
+
+- **Commit → session attribution doesn't exist** (§3.2): only `Header.forked_from` and the app's parent links bind sessions; no trailer or record maps commits to sessions. Step 3 fixes it; until then attribution is branch-name-based.
+- **Hook chaining** (§3.2) is untested against husky/pre-commit/lefthook repos; `pr.trailers = false` is the escape hatch.
+- **Squash merges** (§3.3): confirm on a scratch repo that co-author trailers survive GitHub's squash and how the DCO check treats squashed sign-offs.
+- **"Not verified" judgments** (which paths a test covers) can't come from the log; v1 takes them from the worker's own notes only.
+- **Check patterns** (§1.3) miss repo-specific scripts until `pr.checks` is set; the project greeting's repo scan (docs/onboarding.md) could suggest them.
+- **`forked_from` lineage depth**: a fork-of-a-fork chain could grow the who-list; v1 shows direct parent plus one level, deeper lines collapse into a count.
+
+### Coordination with zest (share-link edge work)
+
+1. `POST` endpoint: redacted bundle (§2.2) in → 22-char base62 token out, served at `frog.toys/s/<token>`.
+2. Locally-held delete key returned with the token, so revoke works with no account.
+3. Anonymous uploads allowed (signing in adds a list of your replays; it never unlocks the link).
+4. Bundle size limit and retention; the "taken down by its owner" page state.
+5. Receipts view (`#receipts`, `#c<sha7>`) rendering commits and check records from the bundle.
