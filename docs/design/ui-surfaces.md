@@ -190,8 +190,10 @@ reports, notices.
 FrogFace 96, mood `working` when anything runs (else `idle`), and:
 
 > everything's handled
-> frog is working on 3 sessions · the chief decided 4 today · 212 allowed on their own
+> frog is working on 8 sessions · the chief decided 4 today · 212 allowed on their own
 > [See this week]
+
+(The brief's "3 sessions" is the shape; the count is live, and the mockup uses the sidebar's 8.)
 
 Numbers come from the ledger and the roll-up counters. When nothing runs: "everything's handled.
 nothing's running." The suggestion card from components §11 is dropped: the empty inbox shouldn't
@@ -278,7 +280,7 @@ header readout), 460 wide.
 in one line, plus what it did this week.
 
 > **auto** · dart for most steps, leaps to tree when a turn is hard, to bull for long plans.
-> never puts dart in charge of other agents. last 7 days: 80% dart · 15% tree · 5% bull
+> never puts dart in charge of other agents. last 7 days: 80% dart · 15% tree · 5% bull · ~25¢ a task
 
 The "never puts dart in charge" rule is the chief eval's safety result (dart: 3 safety fails, in
 unverified-merge, dirty-prod-server and permission-laundering). Signed out, auto means this mac
@@ -303,7 +305,7 @@ speed), Apple on-device, suggested downloads. Local models show **free** as thei
 
 Footer: `Manage models…` (Settings → Models) and the frog cloud line from accounts-ux (tasks left).
 
-**Where the cost numbers come from.** The margin model (zest `docs/pricing/blended-margin-model.md`
+Auto's ~25¢ is the margin model's 80/15/5 routing over those three. **Where the cost numbers come from.** The margin model (zest `docs/pricing/blended-margin-model.md`
 @168bd7d) card prices × the master plan's task shape (~800k tokens in at 79% cached, 30k out):
 dart 168k × $0.60 + 632k × $0.06 + 30k × $1.50 = $0.18; credit weights 1× / 2× / 6× give tree
 $0.37 and bull $1.10. The margin model still names the middle tier `glass` and maps bull to
@@ -342,3 +344,11 @@ is what the picker shows. Re-run when the weights are re-set.
 5. **auto never puts dart in charge of other agents**
    1. yes, a hard routing rule until dart 2 clears the chief eval's safety cases (recommended)
    2. a soft default the user can override per session
+
+## shots
+
+`ui-surfaces-shots/`, each in `-dark` and `-light`: 01 card-routine · 02 card-spend · 02b
+card-spend-over · 03 card-danger (mid-hold) · 04 card-answer (always… scopes, folds) · 05 inbox ·
+06 inbox-empty · 07 digest · 08 notify · 09 header (badge popover) · 10 header-return · 11 picker ·
+12 picker-hover (signed out). Digest numbers are illustrative; org names, eval scores and costs
+are real (sources above).
