@@ -47,6 +47,7 @@ mod text_filter;
 pub mod thinking;
 pub mod title;
 pub mod tools;
+pub mod worktree;
 
 pub use engine::{Handle, Options, spawn};
 pub use follow::follow;

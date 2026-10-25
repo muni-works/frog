@@ -168,6 +168,8 @@ No server is trusted by default. Each granted write runs without a card and is l
   ```
   Inside a linked git worktree, the worktree's git dir and the common git dir (from `git rev-parse --git-dir --git-common-dir`) are writable, so `git commit` works; the rest of the main checkout stays closed. `git push` still asks.
 
+**One engine per worktree.** An engine that starts in a linked git worktree holds a lock on it (`flock` on `frog-engine.lock` in the worktree's git dir) for as long as it runs, so two sessions never mix uncommitted work in one tree. A second engine there refuses with the session that owns it. The lock dies with its engine, so a crash never leaves a worktree stuck; the main checkout is never locked, and subagents share their parent's tree.
+
   To restrict the network to dev hosts, set `network = "dev"`:
   ```toml
   [sandbox]

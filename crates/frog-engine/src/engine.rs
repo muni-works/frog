@@ -506,7 +506,20 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         irc: crate::irc::slot(),
     });
     shared.bg.set_wake(&work_tx);
+    // One engine per linked worktree (see `worktree`): taken before the session opens, so a
+    // refused engine leaves nothing behind. Subagents share their parent's engine's tree.
+    let worktree_lock = if opts.subagent || opts.store.is_none() {
+        None
+    } else {
+        let me = opts.resume.clone().unwrap_or_default();
+        crate::worktree::acquire(&opts.cwd, &me, Duration::from_secs(5))
+            .map_err(|e| ConfigError(format!("{e:#}")))?
+    };
     let mut agent = Agent::new(opts, provider, shared.clone())?;
+    if let Some(mut lock) = worktree_lock {
+        lock.set_owner(&agent.session_id);
+        agent.worktree_lock = Some(lock);
+    }
     // What's running, before anything slow (MCP servers, a local model loading, probing the
     // provider), so a client can name the model as soon as a conversation opens.
     agent.emit_status();
@@ -819,6 +832,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         shared.panes.shutdown();
         agent.sync_log();
         agent.write_summary();
+        // The worktree is free before the client hears the engine is gone.
+        agent.worktree_lock.take();
         shared.journal.close();
     });
 
@@ -1119,6 +1134,8 @@ struct Agent {
     warming: Arc<Mutex<(bool, Option<Warming>)>>,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
+    /// This engine's hold on the linked worktree it runs in (see `worktree`), for its life.
+    worktree_lock: Option<crate::worktree::Lock>,
     /// `auto_classifier_fallback`, started the first time the classifier can't answer.
     classifier_fallback: Option<crate::auto::Classifier>,
     /// When (and why) the classifier and the fallback model last failed: inside
@@ -1339,6 +1356,7 @@ impl Agent {
             map_logged: false,
             edited: Vec::new(),
             titled: resumed_titled,
+            worktree_lock: None,
             classifier: None,
             classifier_fallback: None,
             classifier_down: None,
@@ -1764,6 +1782,9 @@ impl Agent {
                 self.shared
                     .journal
                     .start_session(self.session_id.clone(), 0, None);
+                if let Some(lock) = self.worktree_lock.as_mut() {
+                    lock.set_owner(&self.session_id);
+                }
                 self.turn = 0;
                 self.notes = self.memory.as_ref().map(|m| m.load()).unwrap_or_default();
                 self.refresh_repo_map(&[]);
@@ -6620,6 +6641,57 @@ tool, strip prefixes like RULES:, and add tests.",
         );
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Item 2a (org reliability): a second engine starting in a linked worktree another
+    /// session's engine runs in refuses, naming that session; the main checkout and the
+    /// worktree after the first engine exits are open.
+    #[tokio::test]
+    async fn a_second_engine_in_the_same_worktree_refuses_naming_the_owner() {
+        let (repo, wt) = crate::worktree::tests::repo_with_worktree("engine");
+        let opts = |cwd: PathBuf| {
+            let mut profile = Profile::new(ProviderKind::Ollama, "test");
+            profile.tool_mode = ToolMode::Native;
+            Options {
+                cfg: Config {
+                    hermetic: true,
+                    ..Config::default()
+                },
+                profile_name: "test".into(),
+                profile,
+                cwd,
+                mode: Mode::Default,
+                can_ask: true,
+                resume: None,
+                store: Some(tmp_store()),
+                sandbox: false,
+                rich: false,
+                subagent: false,
+                chat: false,
+            }
+        };
+        let script = || Provider::Scripted(scripted::Client::new(vec![]));
+        let mut first = start(opts(wt.clone()), script()).unwrap();
+        let owner = first.events.recv().await.unwrap().session;
+        let err = match start(opts(wt.clone()), script()) {
+            Ok(_) => panic!("a second engine started in the same worktree"),
+            Err(e) => format!("{e:#}"),
+        };
+        assert!(err.contains(&format!("session {owner}")), "{err}");
+        assert!(err.contains(&wt.display().to_string()), "{err}");
+        // A subagent shares its parent's tree; the main checkout is never locked.
+        let mut sub = opts(wt.clone());
+        sub.subagent = true;
+        sub.store = None;
+        shutdown(start(sub, script()).unwrap()).await;
+        let a = start(opts(repo.clone()), script()).unwrap();
+        let b = start(opts(repo.clone()), script()).unwrap();
+        shutdown(a).await;
+        shutdown(b).await;
+        // Once the owner exits, the worktree is free.
+        shutdown(first).await;
+        shutdown(start(opts(wt.clone()), script()).unwrap()).await;
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 
     async fn shutdown(mut h: Handle) {
