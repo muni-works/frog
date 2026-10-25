@@ -168,6 +168,20 @@ pub enum Op {
     Compact {
         focus: Option<String>,
     },
+    /// The rescue for a session whose context overflowed and compaction failed (see
+    /// [`Event::CompactionFailed`]): start a carried-forward session. The engine refuses when
+    /// the client can't host sessions (it answers the request with an error instead, so the
+    /// model is never told a rescue happened when none did). The client that knows how to
+    /// carry forward owns the rest: the old session's structured summary as the new session's
+    /// opening context, and `continued from <old id>` lineage.
+    ContinueSession {
+        /// The overflowed session's id, the one being carried forward from.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        from: String,
+        /// One line on the context of the rescue, folded into the new session's prompt.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        why: String,
+    },
     /// Replay this session's durable events with `seq > after`, then [`Event::Synced`].
     /// Replayed envelopes keep their original `seq`, so gaps (where ephemeral events were) are expected.
     Subscribe {
@@ -463,6 +477,15 @@ pub enum Event {
         tokens_before: u64,
         tokens_after: u64,
     },
+    /// Compaction failed and the history can't be shrunk to fit the window: the session is
+    /// stuck until something changes. The rescue is [`Op::ContinueSession`] (a new session
+    /// carried forward from this one); the raw provider payload stays in the engine log, not
+    /// the transcript. Durable, so a replaying client also knows the session stalled.
+    CompactionFailed {
+        /// The provider's rejection, for the engine log.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        detail: String,
+    },
     /// Old tool output was trimmed (no LLM call) to stay inside the window.
     ContextPruned {
         results: usize,
@@ -719,6 +742,7 @@ impl Event {
                 | Self::AutoApproved { .. }
             | Self::PermissionDecision { .. }
                 | Self::Compacted { .. }
+            | Self::CompactionFailed { .. }
                 | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }
                 | Self::FolderChanged { .. }

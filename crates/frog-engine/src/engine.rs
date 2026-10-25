@@ -653,6 +653,22 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Op::SessionReply { id, result, error } => {
                     router.sessions.resolve(&id, result, error)
                 }
+                // The client asks the engine to carry this stuck session forward (the
+                // `Event::CompactionFailed` rescue): answer honestly when it can't be done,
+                // and never let the op wake the model or disturb the log's story — the
+                // stuck session stays exactly as it was.
+                Op::ContinueSession { .. } => {
+                    let enabled = router.sessions.enabled();
+                    let msg = if enabled {
+                        "asked the client to start a carried-forward session"
+                    } else {
+                        "this client can't start carried-forward sessions"
+                    };
+                    router
+                        .journal
+                        .emit(Event::Notice { level: Level::Info, message: msg.to_string() });
+                    router.journal.emit(Event::Idle);
+                }
                 Op::Elicit {
                     id,
                     action,
@@ -1864,6 +1880,9 @@ impl Agent {
                 self.model_flip_why = None;
             }
             Op::Compact { focus } => self.compact(focus.as_deref()).await?,
+            // Answered by the router (see the router's arm): never reaches the work loop,
+            // but if one ever does, it must not be a turn on the stuck history.
+            Op::ContinueSession { .. } => {}
             Op::Subscribe { after } => {
                 let replay = match &self.store {
                     Some(dir) if self.shared.journal.has_log() => {
@@ -2331,15 +2350,21 @@ impl Agent {
                                 "the request exceeded the model's context window; compacting and retrying",
                             );
                             if let Err(ce) = self.compact(None).await {
-                                anyhow::bail!(
-                                    "context window overflow, and compaction failed too: {ce:#}"
-                                );
+                                // The one-line transcript story (the client renders
+                                // `Event::CompactionFailed` as a rescue line, never this
+                                // error's chain); the raw payload goes to the engine log.
+                                eprintln!("compaction failed: {ce:#}");
+                                self.emit(Event::CompactionFailed {
+                                    detail: format!("{ce:#}"),
+                                });
+                                anyhow::bail!("compaction failed; the history can't fit the context window");
                             }
                             continue;
                         }
-                        anyhow::bail!(
-                            "the request still exceeds the model's context window after compaction"
-                        );
+                        self.emit(Event::CompactionFailed {
+                            detail: format!("{e:#}"),
+                        });
+                        anyhow::bail!("the request still exceeds the model's context window after compaction");
                     }
                     let Some(local) = self.cloud_fallback(&e) else {
                         return Err(e);
@@ -2997,7 +3022,15 @@ impl Agent {
                     "context is still nearly full after pruning; summarizing…"
                 },
             );
-            self.compact(None).await?;
+            if let Err(e) = self.compact(None).await {
+                // Same story as the overflow path above: one line to the transcript (the
+                // client renders the event as a rescue line), the raw failure to the log.
+                eprintln!("compaction failed: {e:#}");
+                self.emit(Event::CompactionFailed {
+                    detail: format!("{e:#}"),
+                });
+                anyhow::bail!("compaction failed; the history can't fit the context window");
+            }
             *compacted = Some(self.messages.len());
         } else if pruned {
             self.rebased();
@@ -11202,6 +11235,58 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
             })
             .unwrap();
         assert!(error.contains("context window"), "{error}");
+        // The rescue event: exactly one, carrying the provider's raw wording for the engine
+        // log — the transcript renders one line from it, never the payload itself.
+        let failed: Vec<&Event> = evs
+            .iter()
+            .map(|e| &e.event)
+            .filter(|e| matches!(e, Event::CompactionFailed { .. }))
+            .collect();
+        assert_eq!(failed.len(), 1, "{:?}", names(&evs));
+        assert!(evs.iter().any(|e| matches!(&e.event, Event::CompactionFailed { detail } if detail.contains("input tokens"))));
+        // The turn's error stays one line: no provider body in it.
+        assert!(!error.contains("1579729"), "{error}");
+        shutdown(h).await;
+    }
+
+    /// The rescue op is answered honestly: with session hosting on, the engine tells the
+    /// client to carry forward; without it, the op is refused, and either way the session
+    /// log's story (a stuck session, no rescue) is untouched.
+    #[tokio::test]
+    async fn the_continue_session_op_answers_and_leaves_the_session_alone() {
+        let mut h = engine(vec![reply(vec![text("stuck")], Stop::End)], true);
+        caps(&h, false);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        let ask = |h: &Handle| {
+            h.ops
+                .send(Op::ContinueSession {
+                    from: "old".into(),
+                    why: "overflow".into(),
+                })
+                .unwrap();
+        };
+        // What the op answers with: the notice that says `expect`, then the Idle that
+        // closes it — nothing more (no turn on the stuck history).
+        macro_rules! drain {
+            ($expect:expr) => {
+                loop {
+                    match h.events.recv().await.unwrap().event {
+                        Event::Notice { message, .. } => {
+                            assert!(message.contains($expect), "{message}")
+                        }
+                        Event::Idle => break,
+                        Event::Status(_) | Event::ModelChanged { .. } => {}
+                        other => panic!("unexpected {other:?}"),
+                    }
+                }
+            };
+        }
+        ask(&h);
+        drain!("can't start");
+        // And with hosting on: the ask is noticed, nothing more.
+        caps(&h, true);
+        ask(&h);
+        drain!("carried-forward");
         shutdown(h).await;
     }
 

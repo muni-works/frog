@@ -208,6 +208,10 @@ struct TranscriptView: View {
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                 }
+                if conversation.overflowRescue {
+                    OverflowRescueView(conversation: conversation)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
                 Color.clear.frame(height: 0).id(Self.end)
             }
             .scrollTargetLayout()
