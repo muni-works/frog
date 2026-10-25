@@ -105,14 +105,29 @@ change. The UX depends only on what each call makes possible.
 | start web sign-in | `GET https://frog.toys/auth/app?provider=github&challenge&state` → redirect `frog-auth://done?code&state` | app, GitHub |
 | code → key | `POST /auth/exchange {code, verifier, device_name}` → `{key, plan, handle, email}` | engine |
 | device grant (CLI, email) | `POST /auth/device {email?}` → RFC 8628 `{device_code, user_code, verification_uri (frog.toys/link), interval, expires_in}`; `POST /auth/token` → `{key, plan, handle, email}` | engine, CLI |
-| account | `GET /me` → `{plan, handle, email, credit_usd, credit_limit_usd, resets_at}` (extends ecto/zest#20) | card, CLI `--status` |
-| usage this week | `GET /me/usage?range=7d` → `{days: [{date, usd, tasks}], total_usd, total_tasks}` | card |
+| account | `GET /me` → `{plan, handle, email, credit_cents, task_cost_cents, credit_limit_cents, resets_at}` (extends ecto/zest#20) | card, CLI `--status` |
+| usage this week | `GET /me/usage?range=7d` → `{days: [{date, tasks, usd_cents}], total_tasks, total_usd_cents}` | card |
 | legacy claim | `POST /auth/claim` with the old invite key as bearer, inside a signed-in session → links its credit to the account | migration |
 | sign out | `POST /auth/revoke` (key as bearer), best effort | engine |
 | upgrade / manage | `https://frog.toys/account` and `https://frog.toys/upgrade` web pages (Stripe lives there, never in the app) | card, low-credit line |
 
 Plans assumed: `beta`, `pro`, `max`, `api`. The badge shows the plan name lowercase.
-Credit is shown in dollars, as `/me` returns `credit_usd`.
+
+**Credits are tasks, not dollars.** frog cloud prices a finished task, so the app shows credit
+as **tasks left**: `tasks = credit ÷ task cost`, with the cost the edge reports in
+`task_cost_cents` (25 ¢ today). The edge owns the number; the app never renders dollars. If the
+per-task cost changes, every screen is right the next time `/me` answers.
+
+**Auto-mint on sign-in.** Every successful sign-in (exchange or device-flow token) mints a fresh
+`frog_` key server-side, attached to the user row with the account's default tier — `beta` at
+sign-up, with its starting credit. The edge stores only the key's hash. The key crosses the
+exchange response exactly once and goes straight to the Keychain; there is no show, copy or
+paste step anywhere in the product.
+
+**Session → key exchange.** After the deep link returns (`frog-auth://done?code&state`), the app
+passes `code` + PKCE `verifier` to the engine, the engine calls `POST /auth/exchange`, and only
+`{key, plan, handle, email}` comes back — the key never enters the app process. The device-flow
+`POST /auth/token` has the same shape.
 
 ## 2. The card
 
@@ -217,22 +232,22 @@ card has nothing to ask) · ⋯ menu: "manage on frog.toys" (opens frog.toys/acc
 ```
 [face] frog cloud [pro]                                          [⋯]
        @campedersen · cam@muni.works
-       ████████████████████░░░░░░░   $14.20 left · resets nov 1
-       ▁▃▂▅▇▂▁   this week · 212 tasks · $5.80
+       ████████████████████░░░░░░░   56 tasks left · resets nov 1
+       ▁▃▂▅▇▂▁   this week · 212 tasks
 ```
 
 - **identity line**: `@handle · email` (GitHub sign-in), or just the email (email sign-in).
   Caption, secondary.
 - **credit meter**: a 6 pt capsule, 180 pt wide, track `.quaternary`, fill green
   (`FrogMark.skin` at 0.85, so it reads as frog's, not the system's). Its fraction is
-  `credit_usd / credit_limit_usd`. To its right, monospaced-digit caption:
-  - pro / max: `$14.20 left · resets nov 1`
-  - beta: `$4.10 beta credit left` (no reset)
-  - api: `$31.00 left` (pay as you go; no limit, so no meter. Just the text.)
+  `credit_cents / credit_limit_cents`. To its right, monospaced-digit caption in tasks left:
+  - pro / max: `56 tasks left · resets nov 1`
+  - beta: `16 beta tasks left` (no reset)
+  - api: `124 tasks left` (pay as you go; no limit, so no meter. Just the text.)
 - **this week**: seven bars (Swift Charts `BarMark`, 56×16 pt, one per day, today last, fill
-  `.secondary`; today's bar in green), then caption `this week · 212 tasks · $5.80`. "tasks" =
-  finished turns on frog cloud, matching the pricing unit. Hover on a bar: `.help` with
-  `tue · 41 tasks · $1.10`.
+  `.secondary`; today's bar in green), then caption `this week · 212 tasks`. "tasks" = finished
+  turns on frog cloud, matching the pricing unit — usage and credit speak the same language.
+  Hover on a bar: `.help` with `tue · 41 tasks`.
 - **Fresh, not chatty.** `/me` and usage load when Settings opens (at most every 10 min, 3 s
   timeout, from the account plan) and after each frog cloud turn ends (debounced 30 s). A
   failed fetch keeps the last values dimmed (`.tertiary`) with `updated 2 h ago`. Never "signed
@@ -260,9 +275,9 @@ The one place frog asks for money, so it has to be earned: shown where the credi
 spent, at a moment the user isn't waiting on anything, once.
 
 **When.** `low` = credit left would last under 2 days at this week's pace
-(`credit_usd < 2 × total_usd / 7`), or under 10% of `credit_limit_usd`, whichever comes first,
-and never above $5 left (heavy users shouldn't be nagged at $30). Checked when a frog cloud turn
-ends. `api` plans use the same rule.
+(`credit_cents < 2 × total_usd_cents / 7`), or under 10% of `credit_limit_cents`, whichever comes
+first, and never above $5 left (heavy users shouldn't be nagged at $30). Checked when a frog
+cloud turn ends. `api` plans use the same rule.
 
 **Where: one line above the composer** (the `PingLine` / `BiggerModelLine` slot, same height,
 same × at the right), in the conversation whose frog cloud turn just finished. Not in a
@@ -283,7 +298,7 @@ notification, not a sheet, not every conversation.
   crosses the zero line. It doesn't come back the next turn.
 
 **On the card**, while low: the meter fill turns `.orange`, the caption reads
-`$1.30 left · about 2 days at your pace`, face `.waiting`, and a primary button appears: the
+`1 task left · about 2 days at your pace`, face `.waiting`, and a primary button appears: the
 same action as the line (**upgrade to pro** / **upgrade to max** / **add credit**,
 `.borderedProminent`). It goes when credit is no longer low.
 
@@ -308,7 +323,7 @@ an offer, not a fix) · ⋯ menu: "sign in with email", "change key…", "remove
 
 > **frog cloud** `beta`
 > invite key · Keychain. sign in to keep its credit with your account.
-> ████████░░░░░░  $4.10 beta credit left
+> ████████░░░░░░  16 beta tasks left
 
 The meter and week row show as in state 3 (the key can read `/me` and usage); there's no
 identity line.
@@ -408,16 +423,57 @@ frog.toys, the key will be revoked next time you're online` when offline). With 
 
 | state | line |
 |---|---|
-| signed in | `cam (@campedersen) · pro · $14.20 left · 212 tasks this week · cloud/dart` |
-| low credit | `cam (@campedersen) · beta · $1.30 left, about 2 days at your pace · frog.toys/upgrade` |
+| signed in | `cam (@campedersen) · pro · 56 tasks left · 212 tasks this week · cloud/dart` |
+| low credit | `cam (@campedersen) · beta · 1 task left, about 2 days at your pace · frog.toys/upgrade` |
 | signed out | `not signed in · frog login` |
-| legacy key | `invite key · beta · $4.10 left · frog login to keep it with an account` |
-| env key | `FROG_API_KEY from your shell · api · $31.00 left` |
-| offline | `cam (@campedersen) · pro · can't reach frog.toys, last seen $14.20 left` |
+| legacy key | `invite key · beta · 16 tasks left · frog login to keep it with an account` |
+| env key | `FROG_API_KEY from your shell · api · 124 tasks left` |
+| offline | `cam (@campedersen) · pro · can't reach frog.toys, last seen 56 tasks left` |
 
-`--json` prints `{signed_in, handle, email, plan, credit_usd, week_tasks, week_usd, source}`
-(`source`: `signin`, `keychain`, `env`, or null).
+`--json` prints `{signed_in, handle, email, plan, credit_cents, task_cost_cents, week_tasks,
+source}` (`source`: `signin`, `keychain`, `env`, or null).
 
 **Low credit in a run.** After a frog cloud turn ends and the state 4 rule fires, one dim line
 once per credit period: `frog cloud credit is low: about 2 days left at your pace ·
 frog.toys/upgrade`. At zero, the fallback already prints its own line. It gains `· frog.toys/upgrade`.
+
+## 5. Build plan (smallest first)
+
+Each step ships on its own: the app looks finished after every one. App side and edge side are
+independent queues; nothing in the app waits on the edge beyond the row noted.
+
+**Edge (the frog cloud manager's queue):**
+
+1. **`POST /auth/exchange` + auto-mint.** PKCE code + verifier → mint a `frog_` key attached to
+   the user row (default tier `beta`, starting credit), return `{key, plan, handle, email}`
+   once. This is the one step the app's sign-in needs; nothing before it blocks.
+2. **`GET /me`.** `{plan, handle, email, credit_cents, task_cost_cents, credit_limit_cents,
+   resets_at}`. The card's signed-in states render from this alone.
+3. **`GET /me/usage?range=7d`.** `{days, total_tasks}` for the week row and the low-credit rule.
+4. **`POST /auth/device` + `POST /auth/token`.** RFC 8628 for the CLI and the email path.
+5. **`POST /auth/claim`.** Legacy invite-key migration inside a signed-in session.
+6. **`POST /auth/revoke`.** Best-effort sign-out.
+
+**App (each step independent):**
+
+1. **Key path first (no edge work).** `KeySheet` learns to save through the engine into the
+   Keychain slot the engine reads (`account: cloud`), and `FROG_API_KEY` handling lands. The card
+   keeps its paste flow; only the storage moves. Ships alone.
+2. **Signed-out card.** New state-1 card: FrogFace, sign in with GitHub (hidden behind
+   `FROG_SIGN_IN` until step 4 works), email submenu, key menu items. Without `/auth/exchange`
+   live, the buttons stay compiled out and the card is still an improvement.
+3. **Signed-in card.** With edge steps 1–2 live: full state 3 — identity, meter in tasks left,
+   week row, sign out. Poll `/me` at the cadence above.
+4. **Sign-in flow.** `ASWebAuthenticationSession` + PKCE, beats 2a–2c, error table. Needs edge
+   step 1; steps 2–3 make it rich but the beat works with `/me` alone.
+5. **Low-credit line.** State 4 line above the composer + the card's orange state. Needs `/me/usage`
+   (edge step 3) for the pace rule; the 10%-left rule works with `/me` alone, so a first cut can
+   ship on step 3 alone.
+6. **CLI.** `frog login` / `logout` / `--status` on the device flow (edge step 4), then legacy
+   claim (edge step 5) and the low-credit line in runs.
+7. **Legacy migration.** State 5 card + claim wiring. Last: it's the smallest audience and needs
+   edge step 5.
+
+**Cut line for a first release:** app steps 1–4 and edge steps 1–2. That is the whole goal
+sentence — sign in, key minted and stored, next turn on `cloud/dart` — with paste kept for API
+users. Everything after is richness.
