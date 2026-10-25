@@ -616,6 +616,20 @@ pub enum Event {
     Background {
         running: usize,
     },
+    /// The background wakes waiting for the next turn boundary, in the order they came in
+    /// (each as the model will get it: `<job-done …>`, `<monitor-done …>`, …). Sent whenever
+    /// one is parked and when a turn takes them (then empty), so a client can show what will
+    /// flush next. Live only.
+    QueuedEvents {
+        items: Vec<String>,
+    },
+    /// The wakes turn `turn` opened with, in order: delivered as one batch with its input
+    /// (a message, a session message), ahead of it. A turn started on wakes alone carries
+    /// them as its input instead.
+    WakesDelivered {
+        turn: u64,
+        wakes: Vec<String>,
+    },
     /// Progress reported by a running MCP tool.
     ToolProgress {
         id: String,
@@ -733,6 +747,7 @@ impl Event {
                 | Self::PaneCheckpoint { .. }
                 | Self::BackgroundStarted { .. }
                 | Self::BackgroundDone { .. }
+                | Self::WakesDelivered { .. }
         )
     }
 }

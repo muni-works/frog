@@ -208,7 +208,7 @@ impl Registry {
             summary: notice.clone(),
         });
         self.announce();
-        self.notices.lock().unwrap().push(notice);
+        self.park(notice);
         let wake = self.wake.lock().unwrap().as_ref().and_then(|w| w.upgrade());
         if let Some(tx) = wake {
             let _ = tx.send(Op::Wake);
@@ -300,7 +300,7 @@ impl Registry {
             status: "interrupted_by_update".into(),
             summary: notice.clone(),
         });
-        self.notices.lock().unwrap().push(notice);
+        self.park(notice);
     }
 
     /// Cancel a job's stop token by id (the `stop` path does this under the lock).
@@ -314,8 +314,23 @@ impl Registry {
         !self.notices.lock().unwrap().is_empty()
     }
 
+    /// Leave `notice` for the next turn, telling clients what's queued now. Sent under the
+    /// lock, so the last `QueuedEvents` out is always the true queue.
+    fn park(&self, notice: String) {
+        let mut notices = self.notices.lock().unwrap();
+        notices.push(notice);
+        self.emit(Event::QueuedEvents {
+            items: notices.clone(),
+        });
+    }
+
     pub fn take_notices(&self) -> Vec<String> {
-        std::mem::take(&mut *self.notices.lock().unwrap())
+        let mut notices = self.notices.lock().unwrap();
+        let taken = std::mem::take(&mut *notices);
+        if !taken.is_empty() {
+            self.emit(Event::QueuedEvents { items: Vec::new() });
+        }
+        taken
     }
 
     /// Route a permission answer to the subagent that asked. False if none did.

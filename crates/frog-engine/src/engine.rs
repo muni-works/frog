@@ -758,16 +758,23 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             // turn (the first as its input, the rest as `more`, as composer sends follow-ups).
             let mut delivered = Vec::new();
             let mut dropped = 0;
+            // A wake takes the session messages queued behind it too: what waits at a turn
+            // boundary goes as one batch.
+            let woke = matches!(op, Op::Wake);
             let op = match op {
-                Op::Deliver {
-                    from,
-                    from_name,
-                    message,
-                } => {
-                    if voided(&mut inbox_taken) {
-                        dropped += 1;
-                    } else {
-                        delivered.push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                op @ (Op::Deliver { .. } | Op::Wake) => {
+                    if let Op::Deliver {
+                        from,
+                        from_name,
+                        message,
+                    } = op
+                    {
+                        if voided(&mut inbox_taken) {
+                            dropped += 1;
+                        } else {
+                            delivered
+                                .push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                        }
                     }
                     while let Ok(next) = work_rx.try_recv() {
                         match next {
@@ -784,6 +791,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                                     ))
                                 }
                             }
+                            // Another wake: this batch's turn takes every parked notice.
+                            Op::Wake => {}
                             other => {
                                 held = Some(other);
                                 break;
@@ -804,7 +813,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 );
             }
             // Every message in the batch was voided: there's no turn to run.
-            if op.is_none() && delivered.is_empty() {
+            if op.is_none() && delivered.is_empty() && !woke {
                 continue;
             }
             // In the background, and not an op the client waits on: no `Idle` after it.
@@ -820,6 +829,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 r = async {
                     match op {
                         Some(op) => agent.handle(op).await,
+                        None if woke => agent.wake(delivered).await,
                         None => agent.deliver(delivered).await,
                     }
                 } => r,
@@ -1867,12 +1877,7 @@ impl Agent {
                 self.turn(&note, Vec::new()).await?
             }
             Op::Shell { command } => self.shell(&command).await,
-            Op::Wake => {
-                let notices = self.shared.bg.take_notices();
-                if !notices.is_empty() {
-                    self.turn(&notices.join("\n\n"), Vec::new()).await?
-                }
-            }
+            Op::Wake => self.wake(Vec::new()).await?,
             Op::SetMode { mode } => {
                 self.mode = mode;
                 self.mode_logged = Some(mode);
@@ -2140,6 +2145,24 @@ impl Agent {
         self.turn_with(&first, Vec::new(), more).await
     }
 
+    /// A turn on what's waiting at the boundary, all at once: the background wakes (in the
+    /// order they came in) as its input, and the session messages queued behind them
+    /// (`delivered`, each already wrapped) as `more`.
+    async fn wake(&mut self, delivered: Vec<String>) -> Result<()> {
+        let notices = self.shared.bg.take_notices();
+        if notices.is_empty() {
+            return self.deliver(delivered).await;
+        }
+        let more = delivered
+            .into_iter()
+            .map(|text| Part {
+                text,
+                images: Vec::new(),
+            })
+            .collect();
+        self.turn_with(&notices.join("\n\n"), Vec::new(), more).await
+    }
+
     async fn turn(&mut self, input: &str, images: Vec<crate::protocol::Image>) -> Result<()> {
         self.turn_with(input, images, Vec::new()).await
     }
@@ -2171,12 +2194,21 @@ impl Agent {
         let turn = self.turn;
         // The first turn creates a new session's log: its starting mode goes in first.
         self.log_mode();
+        // Background work that finished while this turn was queued: delivered with it, as one
+        // batch at its start (and shown with it, ahead of its input).
+        let wakes = self.shared.bg.take_notices();
         self.emit(Event::TurnStarted {
             turn,
             input: input.to_string(),
             images: images.clone(),
             more: more.clone(),
         });
+        if !wakes.is_empty() {
+            self.emit(Event::WakesDelivered {
+                turn,
+                wakes: wakes.clone(),
+            });
+        }
         self.active_turn = Some(turn);
         // A draft still waiting to warm is stale now; the turn itself leaves the cache warm.
         self.warming.lock().unwrap().1 = None;
@@ -2199,8 +2231,7 @@ impl Agent {
         self.shared.wake_hold.store(false, Ordering::SeqCst);
 
         let mut text = std::mem::take(&mut self.pending).join("\n");
-        // Background work that finished while this turn was queued.
-        for notice in self.shared.bg.take_notices() {
+        for notice in wakes {
             if !text.is_empty() {
                 text.push('\n');
             }
@@ -11184,6 +11215,58 @@ for line in sys.stdin:
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// Everything waiting at a boundary goes as one batch: a wake that fired mid-turn and a
+    /// session message that arrived mid-turn open one turn together (wake as its input, the
+    /// message as `more`), and clients see the queue while it waits.
+    #[tokio::test]
+    async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m", "Monitor", json!({"after_s": 1, "note": "pod check"})),
+                    call("b", "Bash", json!({"command": "sleep 3; echo slept"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("turn one")], Stop::End),
+            reply(vec![text("saw both")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "work");
+        let parked = drive(&mut h, |e| matches!(e, Event::QueuedEvents { items } if !items.is_empty())).await;
+        assert!(!parked.iter().any(|e| matches!(e.event, Event::TurnEnded { .. })), "parked mid-turn");
+        h.ops
+            .send(Op::Deliver {
+                from: "s9".into(),
+                from_name: "okc manager".into(),
+                message: "serving:true".into(),
+            })
+            .unwrap();
+        drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let next = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let (input, more) = next
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnStarted { input, more, .. } => Some((input.clone(), more.clone())),
+                _ => None,
+            })
+            .unwrap();
+        assert!(input.starts_with("<wakeup id=mon-1") && input.contains("pod check"), "{input}");
+        assert_eq!(more.len(), 1, "{more:?}");
+        assert!(more[0].text.starts_with("<session-message from=\"s9\"") && more[0].text.contains("serving:true"));
+        assert!(
+            next.iter().any(|e| matches!(&e.event, Event::QueuedEvents { items } if items.is_empty())),
+            "the flush empties the queue clients see"
+        );
+        let turns = next.iter().filter(|e| matches!(e.event, Event::TurnStarted { .. })).count();
+        assert_eq!(turns, 1, "one batch, one turn");
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// A stop stays stopped: a wake that came in during the turn the user stopped doesn't
     /// start a turn of its own; it goes along with the user's next message.
     #[tokio::test]
@@ -11228,6 +11311,14 @@ for line in sys.stdin:
             })
             .unwrap();
         assert_eq!(input, "next", "the user's message starts the turn; the wake rides along");
+        let rode = evs.iter().find_map(|e| match &e.event {
+            Event::WakesDelivered { wakes, .. } => Some(wakes.clone()),
+            _ => None,
+        });
+        assert!(
+            rode.is_some_and(|w| w.len() == 1 && w[0].starts_with("<wakeup id=mon-1")),
+            "the held wake is delivered with the turn, and says so"
+        );
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(dir);
     }
