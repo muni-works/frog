@@ -86,6 +86,8 @@ struct WakeEvent: Equatable, Sendable {
             }
             // Plain text up to the next wake (or the end): a note, as long as a tag exists too.
             let next = Kind.tagged.compactMap { rest.range(of: "<\($0.rawValue) ")?.lowerBound }.min()
+            // A tag that opens here but doesn't parse (no close): not the engine's wakes.
+            if next == rest.startIndex { return nil }
             let text = rest[..<(next ?? rest.endIndex)].trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
                 out.append(WakeEvent(kind: .note, id: "", attributes: [], body: text))

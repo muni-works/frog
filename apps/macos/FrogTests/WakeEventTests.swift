@@ -106,6 +106,35 @@ final class WakeEventTests: XCTestCase {
         XCTAssertEqual(row.headline, "sleep 570; wc -l out")
     }
 
+    /// Collapsed by default: a wake, a session message and a notice are one quiet line (source
+    /// and type, the useful fields), with the full payload behind the click.
+    func testSystemRowsAreOneCollapsedLine() throws {
+        let wake = try XCTUnwrap(WakeEvent.parse("<monitor-done id=mon-8 status=timeout polls=40>\nno match after 2400s. Last output:\n      23\n</monitor-done>")?.first)
+        let line = EventLine(wake: wake, job: nil)
+        XCTAssertEqual(line.line, "monitor mon-8 · timed out · no match after 2400s. Last output:")
+        XCTAssertFalse(line.line.contains("<"), "never the raw tags")
+        XCTAssertTrue(line.payload.contains("23"), "expanding shows the full payload")
+        XCTAssertTrue(line.warning)
+        let job = BackgroundJob(id: "job-3", kind: "job", label: "sleep 570; wc -l out", log: "/tmp/job-3.log")
+        let done = EventLine(wake: try XCTUnwrap(WakeEvent.parse("<job-done id=job-3 exit=0>\n26\n</job-done>")?.first), job: job)
+        XCTAssertEqual(done.line, "job job-3 · exit 0 · sleep 570; wc -l out")
+        XCTAssertEqual(done.log, "/tmp/job-3.log")
+
+        let message = try XCTUnwrap(SessionMessage.parse("<session-message from=\"s9\" name=\"okc manager\">\nserving:true\nthe pod is up, cost so far $4\n</session-message>"))
+        let card = EventLine(message: message)
+        XCTAssertEqual(card.line, "okc manager · message · serving:true")
+        XCTAssertEqual(card.payload, "serving:true\nthe pod is up, cost so far $4")
+        XCTAssertEqual(card.session, "s9", "the title links to the sender")
+        let system = EventLine(message: SessionMessage(from: "system", name: "system", body: "Session \"x\" is idle."))
+        XCTAssertEqual(system.line, "system · notice · Session \"x\" is idle.")
+        XCTAssertEqual(system.payload, "", "one line says it all")
+
+        let notice = EventLine(notice: "approval pending: Bash git push\nwaiting 4m", warning: true)
+        XCTAssertEqual(notice.line, "approval pending: Bash git push")
+        XCTAssertEqual(notice.payload, "approval pending: Bash git push\nwaiting 4m")
+        XCTAssertNil(WakeEvent.parse("why did <job-done id=job-1 exit=0> fail?"), "an unclosed tag isn't a wake (and doesn't hang)")
+    }
+
     /// The composer shows the queue: chips for what's parked, "+N more" past three, and the
     /// copy that says nothing is lost.
     func testPendingChipsBadgeAndCopy() {

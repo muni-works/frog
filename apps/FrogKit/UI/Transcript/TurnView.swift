@@ -69,8 +69,9 @@ struct TurnView: View {
             }
             switch lead.opener {
             case .sessionMessages(let delivered):
+                // Collapsed like a tool row: who, that it's a message, its first line.
                 ForEach(Array(delivered.enumerated()), id: \.offset) { _, message in
-                    SessionMessageCard(message: message)
+                    EventLineView(event: EventLine(message: message))
                 }
             case .none:
                 EmptyView()

@@ -49,73 +49,152 @@ struct WakeEventRows: View {
     }
 }
 
-struct WakeEventRow: View {
-    let event: WakeEvent
-    let job: BackgroundJob?
-    @State private var expanded = false
+/// One collapsed system line, the row family for everything that isn't someone talking: a
+/// background wake, a message from another session, a notice. Collapsed by default like a tool
+/// row (glyph, source and type, the useful fields, one line); a click shows the full payload.
+struct EventLine: Equatable {
+    var glyph: String
+    /// Source and type: "monitor mon-8", "okc manager · message".
+    var title: String
+    /// The useful fields after it: outcome, then a one-line detail.
+    var fields: [String]
+    /// Everything, behind the click. Empty when the line already says it all.
+    var payload: String
+    var warning = false
+    /// A job's log file, linked from the line.
+    var log: String?
+    /// The session a message came from, linked from its title.
+    var session: String?
 
-    /// What the piece was: the job's command, the monitor's check, the timer's note.
-    var headline: String {
-        if let label = job?.label, !label.isEmpty { return label }
-        if event.kind == .timer, !event.body.isEmpty { return event.body }
-        return event.kind == .note ? event.body : ""
+    /// The collapsed line as text: "monitor mon-8 · timed out · no match after 2400s".
+    var line: String { ([title] + fields.filter { !$0.isEmpty }).joined(separator: " · ") }
+
+    init(glyph: String, title: String, fields: [String], payload: String, warning: Bool = false, log: String? = nil, session: String? = nil) {
+        self.glyph = glyph
+        self.title = title
+        self.fields = fields
+        self.payload = payload
+        self.warning = warning
+        self.log = log
+        self.session = session
     }
 
-    private var glyph: String {
-        switch event.kind {
-        case .job: "terminal"
-        case .monitor: "eye"
-        case .timer: "alarm"
-        case .task: "person.crop.circle.badge.checkmark"
-        case .note: "info.circle"
+    /// A wake: its type and id, its outcome, then what it was (the job's command, the timer's
+    /// note) or the first line of what the agent was told.
+    init(wake: WakeEvent, job: BackgroundJob?) {
+        let firstLine = wake.body.split(whereSeparator: \.isNewline).first
+            .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        let detail = job.map(\.label).flatMap { $0.isEmpty ? nil : $0 } ?? firstLine
+        let (glyph, kind): (String, String) = switch wake.kind {
+        case .job: ("terminal", "job")
+        case .monitor: ("eye", "monitor")
+        case .timer: ("alarm", "timer")
+        case .task: ("person.crop.circle.badge.checkmark", "task")
+        case .note: ("info.circle", "notice")
         }
+        self.init(
+            glyph: glyph,
+            title: [kind, wake.id].filter { !$0.isEmpty }.joined(separator: " "),
+            fields: wake.kind == .note ? [firstLine] : [wake.outcome, detail],
+            payload: wake.body == firstLine ? "" : wake.body,
+            warning: wake.failed,
+            log: job?.log)
     }
+
+    /// A message from another session (or the system): who, that it's a message, its first line.
+    init(message: SessionMessage) {
+        let who = message.isSystem ? "system" : (message.name.isEmpty ? message.from : message.name)
+        let lines = message.body.split(whereSeparator: \.isNewline)
+        let first = lines.first.map(String.init) ?? ""
+        self.init(
+            glyph: message.isSystem ? "bell" : "arrow.turn.down.right",
+            title: "\(who) · \(message.isSystem ? "notice" : "message")",
+            fields: [first],
+            payload: lines.count > 1 || first.count > 140 ? message.body : "",
+            session: message.isSystem ? nil : message.from)
+    }
+
+    /// An engine notice: one line; a longer one expands.
+    init(notice text: String, warning: Bool) {
+        let lines = text.split(whereSeparator: \.isNewline)
+        let first = lines.first.map(String.init) ?? ""
+        self.init(
+            glyph: warning ? "exclamationmark.triangle" : "info.circle",
+            title: first,
+            fields: [],
+            payload: lines.count > 1 ? text : "",
+            warning: warning)
+    }
+}
+
+struct EventLineView: View {
+    let event: EventLine
+    @State private var expanded = false
+    @Environment(\.openSessionID) private var openSessionID
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: glyph)
-                    .foregroundStyle(.secondary)
+                Image(systemName: event.glyph)
                     .frame(width: 14)
-                if !event.id.isEmpty {
-                    Text("woke on \(event.id)").fontWeight(.medium)
-                }
-                if !headline.isEmpty {
-                    Text(headline)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
+                title
+                ForEach(Array(event.fields.filter { !$0.isEmpty }.enumerated()), id: \.offset) { i, field in
+                    Text("·").foregroundStyle(.tertiary)
+                    Text(field)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .foregroundStyle(i == 0 && event.warning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                 }
-                if !event.outcome.isEmpty {
-                    Text(event.outcome)
-                        .foregroundStyle(event.failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                }
-                if let log = job?.log {
+                if let log = event.log {
                     Button("log") { Platform.open(URL(fileURLWithPath: log)) }
                         .buttonStyle(.plain)
                         .foregroundStyle(.tint)
                         .help(log)
                 }
-                if event.kind != .note, !event.body.isEmpty {
-                    Button { expanded.toggle() } label: {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help(expanded ? "Hide what the agent was told" : "Show what the agent was told")
+                if !event.payload.isEmpty {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .imageScale(.small)
+                        .foregroundStyle(.tertiary)
                 }
             }
-            .font(.caption)
+            .lineLimit(1)
+            .contentShape(.rect)
+            .onTapGesture {
+                guard !event.payload.isEmpty else { return }
+                withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+            }
             if expanded {
-                Text(event.body)
+                Text(event.payload)
                     .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 20)
             }
         }
-        .accessibilityElement(children: .combine)
+        .font(.caption)
+        .foregroundStyle(event.warning && event.fields.isEmpty ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(expanded || event.payload.isEmpty ? "" : "Show all of it")
     }
+
+    @ViewBuilder private var title: some View {
+        if let id = event.session, let openSessionID {
+            Button { openSessionID(id) } label: { Text(event.title).fontWeight(.medium) }
+                .buttonStyle(.plain)
+                .help("Open the session that sent this")
+        } else {
+            Text(event.title).fontWeight(.medium)
+        }
+    }
+}
+
+struct WakeEventRow: View {
+    let event: WakeEvent
+    let job: BackgroundJob?
+
+    var line: EventLine { EventLine(wake: event, job: job) }
+    /// What the piece was: the job's command, the monitor's check, the timer's note.
+    var headline: String { line.fields.last ?? "" }
+
+    var body: some View { EventLineView(event: line) }
 }
