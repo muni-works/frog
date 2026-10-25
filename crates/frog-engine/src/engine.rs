@@ -5481,21 +5481,34 @@ fn normalize(mut msg: Message, recover: bool) -> (Message, bool) {
     if !recover || !msg.tool_uses().is_empty() {
         return (msg, false);
     }
-    let Some((clean, calls)) = prompt::extract_tool_calls(&msg.text()) else {
-        return (msg, false);
-    };
-    msg.content.retain(|b| !matches!(b, Block::Text { .. }));
-    if !clean.is_empty() {
-        msg.content.push(Block::Text { text: clean });
-    }
-    for (name, input) in calls {
-        msg.content.push(Block::ToolUse {
+    // Each text block's calls replace it where it stood. Anthropic rejects the next request if
+    // the latest assistant message's signed thinking blocks moved or changed (a 400, "thinking
+    // blocks in the latest assistant message cannot be modified"), so with interleaved thinking
+    // every thinking block keeps its place; `prompt::to_text_mode` folds the calls back into
+    // one text block at the same index.
+    let mut recovered = false;
+    let mut content = Vec::with_capacity(msg.content.len() + 1);
+    for b in msg.content {
+        let Block::Text { text } = &b else {
+            content.push(b);
+            continue;
+        };
+        let Some((clean, calls)) = prompt::extract_tool_calls(text) else {
+            content.push(b);
+            continue;
+        };
+        recovered = true;
+        if !clean.is_empty() {
+            content.push(Block::Text { text: clean });
+        }
+        content.extend(calls.into_iter().map(|(name, input)| Block::ToolUse {
             id: new_id(),
             name,
             input,
-        });
+        }));
     }
-    (msg, true)
+    msg.content = content;
+    (msg, recovered)
 }
 
 /// The host a web call reaches, for "always allow" (searches share one key).
@@ -8496,6 +8509,95 @@ for line in sys.stdin:
         assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
         let evs = turn_again(&mut h, "and now?").await;
         assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
+    }
+
+    /// The messages of a request as the scripted provider recorded it.
+    fn sent_messages(req: &str) -> Vec<Value> {
+        let at = req.find(r#"[{"role""#).expect("messages in the request");
+        serde_json::from_str(&req[at..]).unwrap()
+    }
+
+    /// The 400 that broke every Opus session: "messages.1.content.12: `thinking` or
+    /// `redacted_thinking` blocks in the latest assistant message cannot be modified". A text
+    /// mode reply with interleaved signed thinking and a `<tool_call>` comes back on the next
+    /// request with every thinking block byte-identical and at the index it had.
+    #[tokio::test]
+    async fn text_mode_leaves_signed_thinking_untouched() {
+        let thought = |t: &str, sig: &str| Block::Thinking {
+            text: t.into(),
+            signature: Some(sig.into()),
+        };
+        let first = vec![
+            thought("plan the search", "sig-one"),
+            text("Looking for them."),
+            thought("glob is enough", "sig-two"),
+            text(r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#),
+        ];
+        let script = vec![
+            reply(first.clone(), Stop::End),
+            reply(vec![thought("none", "sig-three"), text("none found")], Stop::End),
+        ];
+        let mut p = gateway_opus();
+        p.tool_mode = ToolMode::Text;
+        let (mut h, sent) = engine_profile(script, p);
+        let evs = run(&mut h, "find .nothing files").await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::ItemCompleted { item: Item::ToolCall { name, .. }, .. } if name == "Glob"
+        )));
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        let msgs = sent_messages(&sent[1]);
+        let latest = msgs
+            .iter()
+            .rev()
+            .find(|m| m["role"] == "assistant")
+            .expect("the reply is replayed");
+        let blocks = latest["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), first.len(), "{blocks:#?}");
+        for i in [0, 2] {
+            assert_eq!(blocks[i], serde_json::to_value(&first[i]).unwrap(), "block {i}");
+        }
+        assert_eq!(blocks[1]["text"], "Looking for them.");
+        assert!(blocks[3]["text"].as_str().unwrap().contains("<tool_call>"));
+        // The call's result follows as text, never as a native tool block.
+        assert!(!sent[1].contains(r#""type":"tool_use""#));
+    }
+
+    #[test]
+    fn recovered_calls_stay_where_the_model_wrote_them() {
+        let msg = Message {
+            role: Role::Assistant,
+            content: vec![
+                Block::Thinking {
+                    text: "a".into(),
+                    signature: Some("s".into()),
+                },
+                text("first"),
+                Block::Thinking {
+                    text: "b".into(),
+                    signature: Some("t".into()),
+                },
+                text(r#"then <tool_call>{"name":"Glob","arguments":{"pattern":"x"}}</tool_call>"#),
+            ],
+        };
+        let (out, recovered) = normalize(msg, true);
+        assert!(recovered);
+        let kinds: Vec<&str> = out
+            .content
+            .iter()
+            .map(|b| match b {
+                Block::Thinking { .. } => "thinking",
+                Block::Text { .. } => "text",
+                Block::ToolUse { .. } => "call",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["thinking", "text", "thinking", "text", "call"]);
+        let wire = prompt::to_text_mode(std::slice::from_ref(&out));
+        assert_eq!(wire[0].content.len(), 4);
+        assert!(matches!(&wire[0].content[2], Block::Thinking { signature: Some(s), .. } if s == "t"));
+        assert!(matches!(&wire[0].content[3], Block::Text { text } if text.starts_with("then\n<tool_call>")));
     }
 
     #[test]

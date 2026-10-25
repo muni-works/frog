@@ -164,37 +164,75 @@ You may make several calls in one response. After your tool calls, stop and wait
 }
 
 /// Render native tool blocks as text for text-mode models.
+///
+/// In an assistant message, a text block and the calls after it become one text block, as the
+/// model wrote them. That keeps every other block (signed thinking above all) at the index it
+/// had in the model's reply: Anthropic rejects a request whose latest assistant message has its
+/// thinking blocks moved or changed.
 pub fn to_text_mode(messages: &[Message]) -> Vec<Message> {
     messages
         .iter()
-        .map(|m| Message {
-            role: m.role,
-            content: m
-                .content
-                .iter()
-                .map(|b| match b {
-                    Block::ToolUse { name, input, .. } => Block::Text {
-                        text: format!(
-                            "<tool_call>\n{}\n</tool_call>",
-                            json!({ "name": name, "arguments": input })
-                        ),
-                    },
-                    Block::ToolResult {
-                        name,
-                        content,
-                        is_error,
-                        ..
-                    } => Block::Text {
-                        text: format!(
-                            "<tool_result name=\"{name}\"{}>\n{content}\n</tool_result>",
-                            if *is_error { " error=\"true\"" } else { "" }
-                        ),
-                    },
-                    b => b.clone(),
-                })
-                .collect(),
+        .map(|m| {
+            let mut out = text_blocks(m);
+            if m.role == crate::message::Role::Assistant {
+                out.content = fold_calls(&m.content, out.content);
+            }
+            out
         })
         .collect()
+}
+
+/// `rendered` (each of `original`'s blocks as text mode shows it), with each run of text and
+/// calls in `original` joined into one text block.
+fn fold_calls(original: &[Block], rendered: Vec<Block>) -> Vec<Block> {
+    let mut out: Vec<Block> = Vec::with_capacity(rendered.len());
+    // Whether the last block pushed came from a text or call block, so a call can join it.
+    let mut open = false;
+    for (orig, b) in original.iter().zip(rendered) {
+        let foldable = matches!(orig, Block::Text { .. } | Block::ToolUse { .. });
+        let call = matches!(orig, Block::ToolUse { .. });
+        match (&b, out.last_mut()) {
+            (Block::Text { text }, Some(Block::Text { text: prev })) if open && call => {
+                if !prev.is_empty() {
+                    prev.push('\n');
+                }
+                prev.push_str(text);
+            }
+            _ => out.push(b),
+        }
+        open = foldable;
+    }
+    out
+}
+
+fn text_blocks(m: &Message) -> Message {
+    Message {
+        role: m.role,
+        content: m
+            .content
+            .iter()
+            .map(|b| match b {
+                Block::ToolUse { name, input, .. } => Block::Text {
+                    text: format!(
+                        "<tool_call>\n{}\n</tool_call>",
+                        json!({ "name": name, "arguments": input })
+                    ),
+                },
+                Block::ToolResult {
+                    name,
+                    content,
+                    is_error,
+                    ..
+                } => Block::Text {
+                    text: format!(
+                        "<tool_result name=\"{name}\"{}>\n{content}\n</tool_result>",
+                        if *is_error { " error=\"true\"" } else { "" }
+                    ),
+                },
+                b => b.clone(),
+            })
+            .collect(),
+    }
 }
 
 static ANSWER_TAGS: LazyLock<Regex> =
