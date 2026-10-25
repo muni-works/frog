@@ -64,7 +64,25 @@ T1–T2 are pass/fail. T3–T4 are pass/fail on the constraints, then ranked on 
 
 ## 3. anti-cheat (both)
 
-_tbd_
+the rule: **provenance required, and the judge's output is the only score.** everything below enforces those two.
+
+**both**
+- the judge rebuilds from source in a clean container. contestant-reported numbers are never scored.
+- one account per person (github sign-in via better auth). house runs are labeled and can't win prizes.
+- judge bugs get bounties, not scores. if you find an exploit, report it for credits. exploiting it is a DQ. every fix goes in the results post.
+- caps: 60 s eval timeout and a mesh/size limit (C), a per-task wall cap (A). nobody gets to DoS the judge.
+
+**A, speedrun**
+- **no hand-patching.** every changed line has to trace to a model tool call in the replay (Edit/Write args, or a Bash command that writes the file). an untraceable hunk is a DQ.
+- **one user message per task**: the task prompt. an extra `TurnStarted` or `user_ms > 0` marks the entry assisted, and assisted entries don't rank.
+- **cloud board: model outputs can't be forged.** the gateway logs a hash of every response for each session. the bundle's assistant text and tool-call args have to match those hashes. this is the strongest board, so the bigger prizes go here.
+- **local board: self-timed, so it gets checked.** a roofline plausibility check: decode tok/s must be ≤ memory bandwidth ÷ active weight bytes (times the spec-decode factor, if declared). anything over that is flagged automatically. the top 10 per tier redo a short live-set run before prizes, recorded or on our hardware (a mac, mew's 3090).
+- **network:** the challenge profile allows only the model endpoint and package registries. the fix is public on github, so any fetch of the upstream repo or PR in the replay is a DQ. the live set covers memorization.
+
+**C, cad trial**
+- the kernel is deterministic, so the judge reproduces each entry exactly from its loon source.
+- sources and receipts go public when the round closes. near-duplicates are caught by source diff, and the earlier timestamp wins.
+- agent division: same replay rules as A (one prompt, no hand edits to the loon).
 
 ## 4. build vs exists
 
