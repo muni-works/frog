@@ -2395,8 +2395,10 @@ impl Agent {
                 .tool_uses()
                 .iter()
                 .any(|(_, _, i)| i.get("_invalid_json").is_some());
-            if recovered || bad_args || streamed.format_failed {
-                self.note_format_failure();
+            if let Some(why) =
+                format_failure(resp.stop, recovered, bad_args, streamed.format_failed)
+            {
+                self.note_format_failure(why);
             }
 
             let reasoning: String = msg
@@ -2806,7 +2808,7 @@ impl Agent {
     /// JSON mode not honored). Under `auto`, two strikes moves to text mode for this session
     /// only: the finding is never written to the capability cache (see `harness::save`), and a
     /// model whose native tools are known to work never moves.
-    fn note_format_failure(&mut self) {
+    fn note_format_failure(&mut self, why: &str) {
         if self.profile.tool_mode != ToolMode::Auto
             || self.tool_mode == ToolMode::Text
             || harness::native_known(&self.profile)
@@ -2820,10 +2822,8 @@ impl Agent {
         let from = self.tool_mode;
         self.tool_mode = ToolMode::Text;
         self.mode_failures = 0;
-        self.text_why = Some(
-            format!("{from:?} tool calls failed twice this session").to_lowercase(),
-        );
-        self.text_fallback = Some("two format failures this session".into());
+        self.text_why = Some(why.to_string());
+        self.text_fallback = Some(why.to_string());
         // never persist the downgrade to the capability cache
 
         self.notice(
@@ -5443,6 +5443,31 @@ fn from_json_mode(mut resp: Response) -> Option<Response> {
     Some(resp)
 }
 
+/// Why a finished reply counts against the configured tool-call format, if it does. Only the
+/// model's own malformed calls count, in a reply the server says ended normally. Provider and
+/// transport failures (402, 429, 5xx, timeouts, resets, a 400 for the request) never reach
+/// here: they're errors, retried or failing the turn. A reply cut off at the output limit
+/// (`Stop::Length`) can end mid-call with half its JSON, and that's the cap, not the format.
+fn format_failure(
+    stop: Stop,
+    recovered: bool,
+    bad_args: bool,
+    json_failed: bool,
+) -> Option<&'static str> {
+    if !matches!(stop, Stop::End | Stop::ToolUse) {
+        return None;
+    }
+    if recovered {
+        Some("it wrote tool calls as text instead of calling them")
+    } else if bad_args {
+        Some("its tool-call arguments weren't valid JSON")
+    } else if json_failed {
+        Some("its replies didn't follow the JSON format")
+    } else {
+        None
+    }
+}
+
 /// Recover tool calls a model wrote as text instead of via the API.
 /// Returns whether anything was recovered (a sign the configured format isn't working).
 /// Without `recover` (native calls from a model known to make them), `<tool_call>` text is the
@@ -5625,6 +5650,15 @@ mod tests {
         script: Vec<Response>,
         profile: Profile,
     ) -> (Handle, Arc<Mutex<Vec<String>>>) {
+        engine_profile_failing(Vec::new(), script, profile)
+    }
+
+    /// `engine_profile` whose provider first fails the next calls (see [`scripted::Fail`]).
+    fn engine_profile_failing(
+        fails: Vec<scripted::Fail>,
+        script: Vec<Response>,
+        profile: Profile,
+    ) -> (Handle, Arc<Mutex<Vec<String>>>) {
         let opts = Options {
             cfg: Config {
                 hermetic: true,
@@ -5643,6 +5677,7 @@ mod tests {
             chat: false,
         };
         let client = scripted::Client::new(script);
+        *client.fails.lock().unwrap() = fails.into();
         let sent = client.sent.clone();
         (start(opts, Provider::Scripted(client)).unwrap(), sent)
     }
@@ -8461,6 +8496,64 @@ for line in sys.stdin:
         assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
         let evs = turn_again(&mut h, "and now?").await;
         assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
+    }
+
+    #[test]
+    fn only_a_finished_reply_with_a_bad_call_is_a_format_failure() {
+        assert!(format_failure(Stop::End, true, false, false).is_some());
+        assert!(format_failure(Stop::ToolUse, false, true, false).is_some());
+        assert!(format_failure(Stop::End, false, false, true).is_some());
+        assert_eq!(format_failure(Stop::End, false, false, false), None);
+        // Cut off at the output cap, half a call is the cap's fault.
+        assert_eq!(format_failure(Stop::Length, true, true, true), None);
+        assert_eq!(format_failure(Stop::Incomplete, true, true, true), None);
+    }
+
+    /// Provider trouble (a 429, a 503, a reset stream, the 400 for a modified thinking block)
+    /// and replies cut off mid-call at the output cap never count toward the text fallback.
+    #[tokio::test(start_paused = true)]
+    async fn provider_errors_and_truncated_calls_are_not_format_failures() {
+        let mut p = Profile::new(ProviderKind::Ollama, "test");
+        p.tool_mode = ToolMode::Auto;
+        let half = || Block::ToolUse {
+            id: new_id(),
+            name: "Glob".into(),
+            input: json!({ "_invalid_json": "{\"pattern\": \"*.no" }),
+        };
+        let fails = vec![
+            scripted::Fail::http(429, "rate limited"),
+            scripted::Fail::before("connection reset by peer"),
+            scripted::Fail::http(
+                400,
+                "messages.1.content.12: `thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified",
+            ),
+        ];
+        let script = vec![
+            reply(vec![half()], Stop::Length),
+            reply(vec![half()], Stop::Length),
+            reply(vec![half()], Stop::Length),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let (mut h, _) = engine_profile_failing(fails, script, p);
+        let first = run(&mut h, "find .no files").await;
+        assert!(first.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnEnded {
+                reason: EndReason::Error {
+                    error: EngineError::Provider { status: 400, .. }
+                },
+                ..
+            }
+        )));
+        let second = turn_again(&mut h, "try again").await;
+        for evs in [&first, &second] {
+            assert!(
+                !notices(evs).iter().any(|n| n.contains("text tool calls")),
+                "{:?}",
+                notices(evs)
+            );
+        }
+        assert_eq!(last_tool_mode(&second), Some(ToolMode::Native));
     }
 
     /// Claude through a gateway calls tools natively. When it writes `<tool_call>` in prose
