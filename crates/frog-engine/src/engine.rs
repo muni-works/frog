@@ -1749,9 +1749,9 @@ impl Agent {
                 self.turn(&note, Vec::new()).await?
             }
             Op::Shell { command } => self.shell(&command).await,
-            Op::Digest => {
+            Op::ApprovalDigest => {
                 let summary = self.digest.summary();
-                self.emit(Event::Digest { summary });
+                self.emit(Event::ApprovalDigest { summary });
             }
             Op::Wake => {
                 let notices = self.shared.bg.take_notices();
@@ -4635,7 +4635,11 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                         Chief::Decided(decision) => return decision,
                         // Counted as a chief fallback already; it cards like any other.
                         Chief::Fallback => {}
-                        Chief::NoRoute => self.digest.count(crate::digest::Which::Blocked),
+                        Chief::NoRoute => self.digest.count(if layer == "never-delegable" {
+                            crate::digest::Which::NeverDelegable
+                        } else {
+                            crate::digest::Which::Blocked
+                        }),
                     }
                     self.daily_digest_notice();
                 }
@@ -5193,9 +5197,15 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         if !self.cfg.delegation.digest {
             return;
         }
-        if self.digest.needs_daily_notice() {
+        if !self.digest.needs_daily_notice() {
+            return;
+        }
+        // Once per session per day, and once per day across the sessions
+        // sharing this store: the first card after midnight carries it.
+        self.digest.mark_noticed();
+        let day = self.digest.day();
+        if crate::digest::claim_daily(self.store.as_deref(), &day) {
             let summary = self.digest.summary();
-            self.digest.mark_noticed();
             self.notice(Level::Info, summary);
         }
     }
@@ -12332,7 +12342,7 @@ for line in sys.stdin:
     }
 
     /// The digest roll-up counts each path once: a classifier allow, a chief
-    /// approval, and a never-delegable card. `Op::Digest` replies with today's counts.
+    /// approval, and a never-delegable card. `Op::ApprovalDigest` replies with today's counts.
     #[tokio::test]
     async fn digest_counts_each_path() {
         let dir = scratch_path("digest");
@@ -12360,9 +12370,9 @@ for line in sys.stdin:
                 ops.send(Op::SessionReply { id: id.to_string(), result: Some(json!("approve")), error: None }).unwrap();
             }
         }).await;
-        h.ops.send(Op::Digest).unwrap();
+        h.ops.send(Op::ApprovalDigest).unwrap();
         let summary = loop {
-            if let Event::Digest { summary } = h.events.recv().await.unwrap().event {
+            if let Event::ApprovalDigest { summary } = h.events.recv().await.unwrap().event {
                 break summary;
             }
         };
@@ -12371,11 +12381,11 @@ for line in sys.stdin:
         assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
         assert!(summary.contains("1 auto-allowed"), "{summary}");
         assert!(summary.contains("1 chief-approved"), "{summary}");
-        assert!(summary.contains("1 blocked"), "{summary}");
+        assert!(summary.contains("1 blocked (1 never-delegable)"), "{summary}");
         assert!(summary.contains("(3 calls total)"), "{summary}");
         // The first card of the day carries the roll-up, once.
         let daily = evs.iter().filter(|e| matches!(&e.event,
-            Event::Notice { message, .. } if message.starts_with("delegation today:"))).count();
+            Event::Notice { message, .. } if message.starts_with("approvals today:"))).count();
         assert_eq!(daily, 1);
     }
 

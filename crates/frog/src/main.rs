@@ -232,6 +232,56 @@ struct Cli {
     probe: bool,
 }
 
+/// `frog approvals`: who decided what since `--since` (default 24h): the classifier,
+/// the second pass, the chief, or the user.
+fn approvals(args: &[String]) -> Result<bool> {
+    let mut since = "24h".to_string();
+    let mut json = false;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--json" => json = true,
+            "--since" => since = it.next().cloned().unwrap_or_default(),
+            s if s.starts_with("--since=") => since = s["--since=".len()..].to_string(),
+            other => anyhow::bail!("frog approvals [--since 24h] [--json]: unexpected `{other}`"),
+        }
+    }
+    let secs = parse_span(&since)
+        .ok_or_else(|| anyhow::anyhow!("--since takes a span like 24h, 90m, 7d or 3600s, not `{since}`"))?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let counts = frog_engine::digest::rollup(
+        &frog_engine::session::default_dir(),
+        now_ms - (secs as i64) * 1000,
+    );
+    if json {
+        println!("{}", serde_json::to_string(&counts)?);
+    } else {
+        println!("{}", counts.render(&format!("in the last {since}")));
+    }
+    Ok(true)
+}
+
+/// `24h`, `90m`, `7d`, `3600s` or bare seconds, as seconds.
+fn parse_span(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let (n, unit) = match s.char_indices().find(|(_, c)| !c.is_ascii_digit()) {
+        Some((i, _)) => (&s[..i], &s[i..]),
+        None => (s, "s"),
+    };
+    let n: u64 = n.parse().ok()?;
+    let mult = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        _ => return None,
+    };
+    Some(n * mult)
+}
+
 #[tokio::main]
 async fn main() {
     match run().await {
@@ -264,6 +314,11 @@ async fn run() -> Result<bool> {
             print!("{}", a.render());
         }
         return Ok(true);
+    }
+    // `frog approvals [--since 24h] [--json]`: the approvals roll-up across every
+    // session's log (docs/design/delegation.md). Local only.
+    if args.get(1).map(String::as_str) == Some("approvals") {
+        return approvals(&args[2..]);
     }
     let cli = Cli::parse();
     if cli.attempts.is_some() || cli.apply_attempt.is_some() || !cli.discard_attempt.is_empty() {
@@ -1102,4 +1157,17 @@ fn attempts(cli: &Cli) -> Result<bool> {
         checkpoint::remove_attempts(&root, &cli.discard_attempt);
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod approvals_tests {
+    #[test]
+    fn spans_parse_to_seconds() {
+        assert_eq!(super::parse_span("24h"), Some(86_400));
+        assert_eq!(super::parse_span("90m"), Some(5_400));
+        assert_eq!(super::parse_span("7d"), Some(604_800));
+        assert_eq!(super::parse_span("3600"), Some(3_600));
+        assert_eq!(super::parse_span("1w"), None);
+        assert_eq!(super::parse_span(""), None);
+    }
 }
