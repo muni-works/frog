@@ -430,6 +430,17 @@ pub enum Event {
         id: String,
         item: Item,
     },
+    /// A one-line gist of a finished `Bash` tool call's command, written by a small
+    /// side-model in one batched call per turn flush (see `gist`). Live only: a
+    /// replaying client regenerates nothing, and shows the raw (elided) command.
+    CommandGisted {
+        /// The tool call's item id.
+        item: String,
+        /// The command it ran, for hashing on the client (cache).
+        command: String,
+        /// The gist, one line; empty never arrives (the event is only sent when there is one).
+        gist: String,
+    },
     /// A retryable model call failed after its reply had started streaming; the client should
     /// drop these partial items (and their deltas) — the step is re-run from scratch. Durable,
     /// so a replaying client also sees the partials come and go.

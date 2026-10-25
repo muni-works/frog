@@ -15,6 +15,7 @@ pub mod energy;
 pub mod engine;
 pub mod folder;
 pub mod follow;
+pub mod gist;
 pub mod harness;
 pub mod image_paths;
 pub mod imports;

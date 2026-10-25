@@ -266,6 +266,11 @@ pub struct Config {
     /// on-device model when available, else the default model if it runs on your devices.
     #[serde(default)]
     pub brief_model: Option<String>,
+    /// The model that writes shell-command gists for tool rows (a profile or
+    /// provider/model). Default: `cloud/qwen3-8b`, then Apple's on-device model. With
+    /// neither usable, rows show the elided command.
+    #[serde(default)]
+    pub gist_model: Option<String>,
     /// The model `Task` subagents use (a profile or provider/model) unless a call names one.
     /// Default: the session's model. One that can't be resolved or isn't allowed here falls
     /// back to the session's model.
