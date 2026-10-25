@@ -129,7 +129,18 @@ if the share endpoint isn't live, A slips: the replay is the entry. gateway hash
 
 ## 6. infra cost
 
-_tbd_
+these are estimates. the prize budget is cam's money: this section sizes it and commits none of it. turnout is the unknown, so each row has a 500-entrant and a 2,000-entrant number, with 3 sprint-20 attempts per account.
+
+| line | basis | 500 | 2,000 |
+|---|---|---|---|
+| A inference (free credits) | plan: a frog task is ~800k in / 30k out, ~$0.06 on tang H200 at 30% busy ($0.21 at frog api list). 60 tasks per account | ~$1.8k | ~$7.2k |
+| C inference | blaze cad baseline: 22–45k prompt tokens per task, ~99% cached. pennies | <$100 | <$300 |
+| judge (CPU, no GPU) | 2–5 min per verification on warm caches. 2–3 dedicated 16-core boxes (~$100/mo each) cover ~120k verifications in 2 weeks. FEA/sims run in seconds to minutes on the same boxes | ~$200 | ~$400 |
+| hosting | workers + R2 + neon. bundles are 50–200 KB, ≤2 GB total | <$25/mo | <$50/mo |
+| prizes, A per phase | 1 lymb (~$2,000 materials, $5,000 list), 2 mini heads ($999 list; materials from rose), 10 pro years ($240 list, a compute cost to us), credits | ~$3–4k materials | same |
+| prizes, C per round | ~10 printed parts ($5–20 filament, $20–60 shipping) + 1 head for the top tier | ~$1–1.5k | same |
+
+**ballpark, both challenges, first round: ~$6–13k.** about half is turnout-driven inference and about half is prize materials. control: a hard cap on the challenge credit pool (e.g. $2k, then a waitlist), kept separate from zest's $45/day GPU cap. no judge GPU is needed: tang tests that need a GPU stay out of sprint-20, and if a later set needs one it runs on mew.
 
 ## 7. marketing beat
 
