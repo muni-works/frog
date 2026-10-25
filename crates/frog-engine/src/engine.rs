@@ -711,6 +711,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         }
         agent.connect_mcp();
         agent.resolve_window().await;
+        agent.note_text_mode_from_probe();
         agent.emit_status();
         {
             let mut ready = shared.ready.lock().unwrap();
@@ -1160,6 +1161,11 @@ struct Agent {
     caps: Option<Caps>,
     /// Tool-call format failures under `auto`; enough of them switches modes.
     mode_failures: u32,
+    /// Why this session fell back to text tool calls, when it did. Session-only: it survives
+    /// `apply_harness` but is never written to the capability cache.
+    text_fallback: Option<String>,
+    /// A stale capability probe was measured again (or tried) this session, for this model.
+    reprobed: bool,
     /// A Tang sidecar loads its weights on its first completion request. Keep that visible until
     /// the first response arrives, then regular request activity takes over.
     model_ready: bool,
@@ -1271,7 +1277,7 @@ struct Agent {
 impl Agent {
     fn new(o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
         // Cached or shipped capability profiles are useful in both persisted and in-memory engines.
-        let caps = (!harness::is_hosted(&o.profile))
+        let caps = (!harness::native_known(&o.profile))
             .then(|| harness::cached(&o.profile))
             .flatten();
         let tier = harness::tier(&o.profile, caps.as_ref());
@@ -1439,6 +1445,8 @@ impl Agent {
             tier,
             caps,
             mode_failures: 0,
+            text_fallback: None,
+            reprobed: false,
             model_ready: false,
             quiet: 0,
             turn_usage: TurnUsage::default(),
@@ -2303,6 +2311,7 @@ impl Agent {
             self.refresh_repo_map(&mentioned);
         }
         self.log_map();
+        self.reprobe_if_stale().await;
         self.apply_harness();
         self.push_user(text);
         self.attach_images(images);
@@ -2467,13 +2476,15 @@ impl Agent {
             }
             self.est
                 .calibrate(sent, resp.usage.input + resp.usage.cache_read);
-            let (msg, recovered) = normalize(resp.message);
+            let (msg, recovered) = normalize(resp.message, self.recovers_text_calls());
             let bad_args = msg
                 .tool_uses()
                 .iter()
                 .any(|(_, _, i)| i.get("_invalid_json").is_some());
-            if recovered || bad_args || streamed.format_failed {
-                self.note_format_failure();
+            if let Some(why) =
+                format_failure(resp.stop, recovered, bad_args, streamed.format_failed)
+            {
+                self.note_format_failure(why);
             }
 
             let reasoning: String = msg
@@ -2603,6 +2614,9 @@ impl Agent {
     fn apply_harness(&mut self) {
         self.tier = harness::tier(&self.profile, self.caps.as_ref());
         self.tool_mode = harness::choose_mode(&self.profile, self.caps.as_ref(), self.tier);
+        if self.text_fallback.is_some() && self.profile.tool_mode == ToolMode::Auto {
+            self.tool_mode = ToolMode::Text;
+        }
         let base = if self.chat {
             prompt::chat_prompt(&self.cfg, &self.profile.model)
         } else {
@@ -2869,11 +2883,59 @@ impl Agent {
         thinking::budget(base, think, &self.messages)
     }
 
+    /// Measure the model again when its cached probe is older than `harness::PROBE_TTL_MS`,
+    /// once per session, before the turn's first call. An old finding (native tools broken, say)
+    /// would otherwise decide the tool mode forever. Only under `auto`, which is what reads it,
+    /// and never for a model whose native tools are known.
+    async fn reprobe_if_stale(&mut self) {
+        if self.reprobed || !harness::reprobe_due(&self.profile, self.caps.as_ref(), now_ms()) {
+            return;
+        }
+        self.reprobed = true;
+        // The full tool set, as `frog probe` measures: the probe asks for a Read, which a
+        // chat's trimmed specs don't have.
+        let specs = tools::specs();
+        let probed = harness::probe(&self.provider, &specs, |label, completed, total| {
+            self.emit(Event::Progress {
+                label: label.into(),
+                completed: Some(completed),
+                total: Some(total),
+            })
+        })
+        .await;
+        match probed {
+            Ok(caps) => {
+                if self.store.is_some() {
+                    harness::save(&self.profile, &caps);
+                }
+                self.caps = Some(caps);
+            }
+            Err(e) => self.notice(
+                Level::Warn,
+                format!(
+                    "{}'s capability profile is out of date and re-checking it failed ({e:#}); using the old one",
+                    self.profile.model
+                ),
+            ),
+        }
+    }
+
+    /// Whether `<tool_call>` text in a reply is a call: always in text mode, and under native
+    /// only for models that may slip into it (Qwen/Hermes templates on some servers). A model
+    /// known to call tools natively that writes one is quoting the format, not calling.
+    fn recovers_text_calls(&self) -> bool {
+        self.tool_mode == ToolMode::Text || !harness::native_known(&self.profile)
+    }
+
     /// The model botched the tool-call format (text calls under native, invalid JSON args, or
-    /// JSON mode not honored). Under `auto`, two strikes moves to text mode for the session
-    /// and records the finding.
-    fn note_format_failure(&mut self) {
-        if self.profile.tool_mode != ToolMode::Auto || self.tool_mode == ToolMode::Text {
+    /// JSON mode not honored). Under `auto`, two strikes moves to text mode for this session
+    /// only: the finding is never written to the capability cache (see `harness::save`), and a
+    /// model whose native tools are known to work never moves.
+    fn note_format_failure(&mut self, why: &str) {
+        if self.profile.tool_mode != ToolMode::Auto
+            || self.tool_mode == ToolMode::Text
+            || harness::native_known(&self.profile)
+        {
             return;
         }
         self.mode_failures += 1;
@@ -2883,27 +2945,42 @@ impl Agent {
         let from = self.tool_mode;
         self.tool_mode = ToolMode::Text;
         self.mode_failures = 0;
-        self.text_why = Some(
-            format!("{from:?} tool calls failed twice this session").to_lowercase(),
-        );
-        if let Some(c) = self.caps.as_mut() {
-            match from {
-                ToolMode::Native => c.native_tools = false,
-                ToolMode::Json => c.json_mode = false,
-                _ => {}
-            }
-            if self.store.is_some() {
-                harness::save(&self.profile, c);
-            }
+        self.text_why = Some(why.to_string());
+        self.text_fallback = Some(why.to_string());
+        // never persist the downgrade to the capability cache
+        let from = format!("{from:?}").to_lowercase();
+        self.warn_text_mode(format!(
+            "{from} tool calls failed twice ({why}); switching this session to text tool calls. \
+Not saved: the next session starts on {from} again"
+        ));
+    }
+
+    /// Say so whenever a session runs on text tool calls it didn't ask for, naming the model and
+    /// why: in the transcript, and in the engine log (stderr), so a demoted model can't go
+    /// unnoticed.
+    fn warn_text_mode(&self, why: String) {
+        let message = format!("{} ({}): {why}", self.profile_name, self.profile.model);
+        eprintln!("frog: text tool calls: {message}");
+        self.notice(Level::Warn, message);
+    }
+
+    /// At session start or a model switch: a cached probe that put `auto` on text tool calls.
+    fn note_text_mode_from_probe(&self) {
+        if self.profile.tool_mode != ToolMode::Auto || self.tool_mode != ToolMode::Text {
+            return;
         }
-        self.notice(
-            Level::Warn,
-            format!(
-                "{:?} tool calls keep failing; switching to text tool calls",
-                from
-            )
-            .to_lowercase(),
-        );
+        let when = self
+            .caps
+            .as_ref()
+            .filter(|c| c.probed > 0)
+            .and_then(|c| chrono::DateTime::from_timestamp_millis(c.probed))
+            .map(|t| format!(" on {}", t.format("%Y-%m-%d")))
+            .unwrap_or_default();
+        self.warn_text_mode(format!(
+            "using text tool calls: its capability probe{when} found native tool calls not working. \
+`frog --probe -m <model>` measures again"
+        ));
+
     }
 
     /// Settle the context window: configured value, bounded by what the server reports.
@@ -4199,14 +4276,16 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.ctx.judge = Some(self.profile.clone());
         }
         self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
-        self.caps = (!harness::is_hosted(&self.profile))
+        self.caps = (!harness::native_known(&self.profile))
             .then(|| harness::cached(&self.profile))
             .flatten();
         self.mode_failures = 0;
         self.text_why = None;
+        self.reprobed = false;
         self.model_ready = false;
         self.apply_harness();
         self.resolve_window().await;
+        self.note_text_mode_from_probe();
         self.emit(Event::ModelChanged {
             model: self.profile_name.clone(),
         });
@@ -4264,6 +4343,8 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // A JSON-mode reply is one object whose action comes last, so it's done by the time
         // its call is: nothing to gain.
         let early_tools = self.cfg.early_tools && offer_tools && !quiet && !json_mode;
+        // `<tool_call>` text from a model that calls natively is prose: nothing to start early.
+        let early_text = early_tools && self.recovers_text_calls();
         let specs = if offer_tools && self.profile.provider != ProviderKind::Codex {
             &self.specs[..]
         } else {
@@ -4437,7 +4518,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                         // JSON-mode output is raw JSON; the parsed answer is shown when complete.
                         StreamEvent::Text(_) if json_mode => {}
                         StreamEvent::Text(s) => {
-                            if early_tools {
+                            if early_text {
                                 streamed.early.text(&s, |n, i| self.early_ctx(n, i));
                             }
                             let was_inside = filter.inside;
@@ -5555,32 +5636,72 @@ fn from_json_mode(mut resp: Response) -> Option<Response> {
     Some(resp)
 }
 
+/// Why a finished reply counts against the configured tool-call format, if it does. Only the
+/// model's own malformed calls count, in a reply the server says ended normally. Provider and
+/// transport failures (402, 429, 5xx, timeouts, resets, a 400 for the request) never reach
+/// here: they're errors, retried or failing the turn. A reply cut off at the output limit
+/// (`Stop::Length`) can end mid-call with half its JSON, and that's the cap, not the format.
+fn format_failure(
+    stop: Stop,
+    recovered: bool,
+    bad_args: bool,
+    json_failed: bool,
+) -> Option<&'static str> {
+    if !matches!(stop, Stop::End | Stop::ToolUse) {
+        return None;
+    }
+    if recovered {
+        Some("it wrote tool calls as text instead of calling them")
+    } else if bad_args {
+        Some("its tool-call arguments weren't valid JSON")
+    } else if json_failed {
+        Some("its replies didn't follow the JSON format")
+    } else {
+        None
+    }
+}
+
 /// Recover tool calls a model wrote as text instead of via the API.
 /// Returns whether anything was recovered (a sign the configured format isn't working).
-fn normalize(mut msg: Message) -> (Message, bool) {
+/// Without `recover` (native calls from a model known to make them), `<tool_call>` text is the
+/// model quoting the format in prose, not a call.
+fn normalize(mut msg: Message, recover: bool) -> (Message, bool) {
     for b in &mut msg.content {
         if let Block::Text { text } = b {
             *text = prompt::strip_answer_tags(text);
         }
     }
-    if !msg.tool_uses().is_empty() {
+    if !recover || !msg.tool_uses().is_empty() {
         return (msg, false);
     }
-    let Some((clean, calls)) = prompt::extract_tool_calls(&msg.text()) else {
-        return (msg, false);
-    };
-    msg.content.retain(|b| !matches!(b, Block::Text { .. }));
-    if !clean.is_empty() {
-        msg.content.push(Block::Text { text: clean });
-    }
-    for (name, input) in calls {
-        msg.content.push(Block::ToolUse {
+    // Each text block's calls replace it where it stood. Anthropic rejects the next request if
+    // the latest assistant message's signed thinking blocks moved or changed (a 400, "thinking
+    // blocks in the latest assistant message cannot be modified"), so with interleaved thinking
+    // every thinking block keeps its place; `prompt::to_text_mode` folds the calls back into
+    // one text block at the same index.
+    let mut recovered = false;
+    let mut content = Vec::with_capacity(msg.content.len() + 1);
+    for b in msg.content {
+        let Block::Text { text } = &b else {
+            content.push(b);
+            continue;
+        };
+        let Some((clean, calls)) = prompt::extract_tool_calls(text) else {
+            content.push(b);
+            continue;
+        };
+        recovered = true;
+        if !clean.is_empty() {
+            content.push(Block::Text { text: clean });
+        }
+        content.extend(calls.into_iter().map(|(name, input)| Block::ToolUse {
             id: new_id(),
             name,
             input,
-        });
+        }));
     }
-    (msg, true)
+    msg.content = content;
+    (msg, recovered)
 }
 
 /// The host a web call reaches, for "always allow" (searches share one key).
@@ -5728,6 +5849,70 @@ mod tests {
             chat: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// An engine on `profile`, also handing back every request the provider was sent.
+    fn engine_profile(
+        script: Vec<Response>,
+        profile: Profile,
+    ) -> (Handle, Arc<Mutex<Vec<String>>>) {
+        engine_profile_failing(Vec::new(), script, profile)
+    }
+
+    /// `engine_profile` whose provider first fails the next calls (see [`scripted::Fail`]).
+    fn engine_profile_failing(
+        fails: Vec<scripted::Fail>,
+        script: Vec<Response>,
+        profile: Profile,
+    ) -> (Handle, Arc<Mutex<Vec<String>>>) {
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let client = scripted::Client::new(script);
+        *client.fails.lock().unwrap() = fails.into();
+        let sent = client.sent.clone();
+        (start(opts, Provider::Scripted(client)).unwrap(), sent)
+    }
+
+    /// Opus on Vercel's AI Gateway, as `vercel/anthropic/claude-opus-5.5` resolves.
+    fn gateway_opus() -> Profile {
+        let mut p = Profile::new(ProviderKind::Openai, "anthropic/claude-opus-5.5");
+        p.base_url = Some("https://ai-gateway.vercel.sh/v1".into());
+        p.tool_mode = ToolMode::Auto;
+        p
+    }
+
+    /// A later turn: submit and collect through the next `Idle` (`run` waits for one first).
+    async fn turn_again(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
+        h.ops
+            .send(Op::Submit {
+                text: prompt.into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        until_idle(h).await
+    }
+
+    fn last_tool_mode(evs: &[Envelope]) -> Option<ToolMode> {
+        evs.iter().rev().find_map(|e| match &e.event {
+            Event::Status(s) => Some(s.tool_mode),
+            _ => None,
+        })
     }
 
     fn engine_qwen3_mode(script: Vec<Response>, mode: ToolMode) -> Handle {
@@ -8484,7 +8669,7 @@ for line in sys.stdin:
         assert!(
             notices
                 .iter()
-                .any(|n| n.contains("switching to text tool calls")),
+                .any(|n| n.contains("switching this session to text tool calls")),
             "{notices:?}"
         );
         let status = evs.iter().rev().find_map(|e| match &e.event {
@@ -8499,6 +8684,215 @@ for line in sys.stdin:
                 ..
             }
         )));
+    }
+
+    /// The session's fallback holds for its later turns (each turn re-applies the harness).
+    #[tokio::test]
+    async fn a_text_fallback_lasts_the_session() {
+        let text_call =
+            r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+        let script = vec![
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text("none found")], Stop::End),
+            reply(vec![text("still none")], Stop::End),
+        ];
+        let mut h = engine_mode(script, ToolMode::Auto);
+        let evs = run(&mut h, "find .nothing files").await;
+        assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
+        // The notice names the model and says why, and that it isn't saved.
+        let warned = notices(&evs);
+        assert!(
+            warned.iter().any(|n| n.starts_with("test (test): native tool calls failed twice")
+                && n.contains("wrote tool calls as text")
+                && n.contains("Not saved")),
+            "{warned:?}"
+        );
+        let evs = turn_again(&mut h, "and now?").await;
+        assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
+    }
+
+    /// The messages of a request as the scripted provider recorded it.
+    fn sent_messages(req: &str) -> Vec<Value> {
+        let at = req.find(r#"[{"role""#).expect("messages in the request");
+        serde_json::from_str(&req[at..]).unwrap()
+    }
+
+    /// The 400 that broke every Opus session: "messages.1.content.12: `thinking` or
+    /// `redacted_thinking` blocks in the latest assistant message cannot be modified". A text
+    /// mode reply with interleaved signed thinking and a `<tool_call>` comes back on the next
+    /// request with every thinking block byte-identical and at the index it had.
+    #[tokio::test]
+    async fn text_mode_leaves_signed_thinking_untouched() {
+        let thought = |t: &str, sig: &str| Block::Thinking {
+            text: t.into(),
+            signature: Some(sig.into()),
+        };
+        let first = vec![
+            thought("plan the search", "sig-one"),
+            text("Looking for them."),
+            thought("glob is enough", "sig-two"),
+            text(r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#),
+        ];
+        let script = vec![
+            reply(first.clone(), Stop::End),
+            reply(vec![thought("none", "sig-three"), text("none found")], Stop::End),
+        ];
+        let mut p = gateway_opus();
+        p.tool_mode = ToolMode::Text;
+        let (mut h, sent) = engine_profile(script, p);
+        let evs = run(&mut h, "find .nothing files").await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::ItemCompleted { item: Item::ToolCall { name, .. }, .. } if name == "Glob"
+        )));
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        let msgs = sent_messages(&sent[1]);
+        let latest = msgs
+            .iter()
+            .rev()
+            .find(|m| m["role"] == "assistant")
+            .expect("the reply is replayed");
+        let blocks = latest["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), first.len(), "{blocks:#?}");
+        for i in [0, 2] {
+            assert_eq!(blocks[i], serde_json::to_value(&first[i]).unwrap(), "block {i}");
+        }
+        assert_eq!(blocks[1]["text"], "Looking for them.");
+        assert!(blocks[3]["text"].as_str().unwrap().contains("<tool_call>"));
+        // The call's result follows as text, never as a native tool block.
+        assert!(!sent[1].contains(r#""type":"tool_use""#));
+    }
+
+    #[test]
+    fn recovered_calls_stay_where_the_model_wrote_them() {
+        let msg = Message {
+            role: Role::Assistant,
+            content: vec![
+                Block::Thinking {
+                    text: "a".into(),
+                    signature: Some("s".into()),
+                },
+                text("first"),
+                Block::Thinking {
+                    text: "b".into(),
+                    signature: Some("t".into()),
+                },
+                text(r#"then <tool_call>{"name":"Glob","arguments":{"pattern":"x"}}</tool_call>"#),
+            ],
+        };
+        let (out, recovered) = normalize(msg, true);
+        assert!(recovered);
+        let kinds: Vec<&str> = out
+            .content
+            .iter()
+            .map(|b| match b {
+                Block::Thinking { .. } => "thinking",
+                Block::Text { .. } => "text",
+                Block::ToolUse { .. } => "call",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["thinking", "text", "thinking", "text", "call"]);
+        let wire = prompt::to_text_mode(std::slice::from_ref(&out));
+        assert_eq!(wire[0].content.len(), 4);
+        assert!(matches!(&wire[0].content[2], Block::Thinking { signature: Some(s), .. } if s == "t"));
+        assert!(matches!(&wire[0].content[3], Block::Text { text } if text.starts_with("then\n<tool_call>")));
+    }
+
+    #[test]
+    fn only_a_finished_reply_with_a_bad_call_is_a_format_failure() {
+        assert!(format_failure(Stop::End, true, false, false).is_some());
+        assert!(format_failure(Stop::ToolUse, false, true, false).is_some());
+        assert!(format_failure(Stop::End, false, false, true).is_some());
+        assert_eq!(format_failure(Stop::End, false, false, false), None);
+        // Cut off at the output cap, half a call is the cap's fault.
+        assert_eq!(format_failure(Stop::Length, true, true, true), None);
+        assert_eq!(format_failure(Stop::Incomplete, true, true, true), None);
+    }
+
+    /// Provider trouble (a 429, a 503, a reset stream, the 400 for a modified thinking block)
+    /// and replies cut off mid-call at the output cap never count toward the text fallback.
+    #[tokio::test(start_paused = true)]
+    async fn provider_errors_and_truncated_calls_are_not_format_failures() {
+        let mut p = Profile::new(ProviderKind::Ollama, "test");
+        p.tool_mode = ToolMode::Auto;
+        let half = || Block::ToolUse {
+            id: new_id(),
+            name: "Glob".into(),
+            input: json!({ "_invalid_json": "{\"pattern\": \"*.no" }),
+        };
+        let fails = vec![
+            scripted::Fail::http(429, "rate limited"),
+            scripted::Fail::before("connection reset by peer"),
+            scripted::Fail::http(
+                400,
+                "messages.1.content.12: `thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified",
+            ),
+        ];
+        let script = vec![
+            reply(vec![half()], Stop::Length),
+            reply(vec![half()], Stop::Length),
+            reply(vec![half()], Stop::Length),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let (mut h, _) = engine_profile_failing(fails, script, p);
+        let first = run(&mut h, "find .no files").await;
+        assert!(first.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnEnded {
+                reason: EndReason::Error {
+                    error: EngineError::Provider { status: 400, .. }
+                },
+                ..
+            }
+        )));
+        let second = turn_again(&mut h, "try again").await;
+        for evs in [&first, &second] {
+            assert!(
+                !notices(evs).iter().any(|n| n.contains("text tool calls")),
+                "{:?}",
+                notices(evs)
+            );
+        }
+        assert_eq!(last_tool_mode(&second), Some(ToolMode::Native));
+    }
+
+    /// Claude through a gateway calls tools natively. When it writes `<tool_call>` in prose
+    /// (quoting frog's own text format, say), that's not a call and not a format failure: the
+    /// session stays native and nothing runs.
+    #[tokio::test]
+    async fn claude_on_a_gateway_never_falls_back_to_text_calls() {
+        let quoted = r#"text mode looks like <tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+        let script = vec![
+            reply(vec![text(quoted)], Stop::End),
+            reply(vec![text(quoted)], Stop::End),
+            reply(vec![text(quoted)], Stop::End),
+        ];
+        let (mut h, sent) = engine_profile(script, gateway_opus());
+        for i in 0..3 {
+            let evs = if i == 0 {
+                run(&mut h, "how does text mode look?").await
+            } else {
+                turn_again(&mut h, "and again?").await
+            };
+            assert!(
+                !notices(&evs).iter().any(|n| n.contains("text tool calls")),
+                "{:?}",
+                notices(&evs)
+            );
+            assert_eq!(last_tool_mode(&evs), Some(ToolMode::Native));
+            assert!(!evs.iter().any(|e| matches!(
+                &e.event,
+                Event::ItemCompleted { item: Item::ToolCall { .. }, .. }
+            )));
+        }
+        // Every request offered native tools, and none described the text format.
+        for req in sent.lock().unwrap().iter() {
+            assert!(req.contains("<tool Read>"), "native tools offered");
+            assert!(!req.contains("To call one, output a block"));
+        }
     }
 
     #[tokio::test]
@@ -12139,7 +12533,7 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
         assert_eq!(d.len(), 1, "{d:?}");
         assert_eq!(d[0].kind, crate::protocol::DegradedKind::TextTools);
         assert_eq!(d[0].what, "text tool calls");
-        assert!(d[0].why.contains("failed twice"), "{}", d[0].why);
+        assert!(d[0].why.contains("instead of calling them"), "{}", d[0].why);
         shutdown(h).await;
         // A profile that asks for text calls isn't degraded.
         let mut h = engine_mode(vec![reply(vec![text("hi")], Stop::End)], ToolMode::Text);
