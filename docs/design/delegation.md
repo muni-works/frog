@@ -85,8 +85,8 @@ chief_classes = [
   "network-read-writes", "mcp-write-granted", "long-commands",
 ]
 
-# One digest notice per day, at most (default true).
-digest = true
+# One approvals roll-up notice per day, at most (default true).
+rollup = true
 
 # Seconds the chief has to answer before the card falls back to Cam.
 chief_timeout_secs = 300
@@ -123,16 +123,16 @@ Extends #95's notice pattern (`mcp_trust` at engine.rs:4318 — `self.notice(Lev
 
 - every second-pass upgrade: notice + decision `layer: "second-pass"`, outcome `allow`, the reason in `reason`.
 - every chief delegation: notice tagged `delegated:chief:` + decision `layer: "delegated"`, `reason` naming the chief and the class.
-- every never-delegable card: decision `layer: "never-delegable"` so the digest can separate them.
+- every never-delegable card: decision `layer: "never-delegable"` so the approvals roll-up can separate them.
 - chief fallbacks (unreachable, timeout): notice `delegated:chief: fell back to the user (<why>)`, decision `layer: "delegated"`, outcome `ask`.
 
-## Cam's digest
+## Cam's approvals roll-up
 
-At most **one notice per day** to Cam, and an on-demand roll-up:
+Named to avoid colliding with the sidebar's hover-summary "digest": this is the count of who decided what. It replaces per-card interrupts for Cam — at most **one notice per day**, plus an on-demand roll-up:
 
 - The engine keeps the day's counters in memory (per session): `delegated_chief`, `auto_allowed` (first + second pass), `blocked` (cards Cam saw / denies), `never_delegable`. Date-keyed, midnight rollover.
-- `Op::Digest` (new, client-triggered like `Op::Shell`) returns today's counts as text; the CLI gets `frog digest` wiring it through. Also emitted as the day's single notice, at the first Cam-carded call after midnight (so the daily notice exists only on days something actually reached Cam).
-- Target, from Cam: **≤5 cards/day.** The digest exists to measure it. If `blocked` sits above 5 for a few days, the fix is a grant class or a wider scratch rule — a config change, not new machinery.
+- `Op::ApprovalDigest` (new, client-triggered like `Op::Shell`) returns this session's counts as text; `frog approvals --since 24h` rolls up every session's durable `PermissionDecision` events from the session logs. Also emitted as the day's single notice, at the first Cam-carded call after midnight (so the daily notice exists only on days something actually reached Cam).
+- Target, from Cam: **≤5 cards/day.** The roll-up exists to measure it. If `blocked` sits above 5 for a few days, the fix is a grant class or a wider scratch rule — a config change, not new machinery.
 
 ## Failure modes
 
@@ -145,7 +145,7 @@ At most **one notice per day** to Cam, and an on-demand roll-up:
 | chief's answer unparseable | card Cam, notice says so |
 | chief approves a never-delegable call | impossible by construction: never-delegable classes never route to the chief |
 | config grants a class not in the vocabulary | warn once at startup, ignore the unknown class |
-| digest counter lost (crash) | counters are advisory; next session starts at 0 |
+| roll-up counter lost (crash) | counters are advisory; next session starts at 0 |
 
 ## Testing
 
@@ -157,5 +157,5 @@ Per class, in `engine.rs`'s test harness (`engine_perm_cfg`, scripted classifier
 4. `rm -rf` outside scratch → Cam card even when the chief list has `scratch-deletes`.
 5. second pass errors → card.
 6. chief unreachable (session reply errors) → card Cam.
-7. digest counts: one of each path → `Op::Digest` returns 1/1/1 (+ never-delegable).
+7. roll-up counts: one of each path → `Op::ApprovalDigest` returns 1/1/1 (+ never-delegable).
 8. all #95 approval tests still pass unchanged.
