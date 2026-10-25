@@ -710,6 +710,54 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(second, "frog/fix-the-parser-2")
     }
 
+    /// Item 2c (org reliability): StartSession without worktree:true refuses the user's main
+    /// checkout (the repo that owns .frog/worktrees, from anywhere in it) unless forced,
+    /// reuses an existing free worktree as-is, and refuses one another engine holds,
+    /// naming the session.
+    func testWorkerSessionsStayOutOfTheMainCheckout() throws {
+        let repo = FileManager.default.temporaryDirectory.appending(path: "frog-broker-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo.appending(path: "src"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try SessionBroker.git(["init", "-q", "-b", "main"], in: repo)
+        try "hi\n".write(to: repo.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+        try SessionBroker.git(["add", "."], in: repo)
+        try SessionBroker.git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], in: repo)
+
+        // A repo never used for worker worktrees is just a folder.
+        XCTAssertEqual(SessionBroker.checkout(of: repo), .plain)
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(repo, allowMainCheckout: false))
+
+        let (wt, _, _) = try SessionBroker.makeWorktree(from: repo, name: "worker")
+        // Now it owns .frog/worktrees: the root and any folder in it are refused…
+        for folder in [repo, repo.appending(path: "src")] {
+            XCTAssertThrowsError(try SessionBroker.checkWorkerFolder(folder, allowMainCheckout: false)) { e in
+                let m = (e as? SessionBroker.BrokerError)?.message ?? "\(e)"
+                XCTAssertTrue(m.contains("main checkout"), m)
+                XCTAssertTrue(m.contains("worktree:true"), m)
+                XCTAssertTrue(m.contains(".frog/worktrees/worker"), "suggests the worktree to reuse: \(m)")
+            }
+        }
+        // …unless explicitly forced.
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(repo, allowMainCheckout: true))
+
+        // An existing worktree is reused as-is.
+        guard case .worktree(_, let gitDir) = SessionBroker.checkout(of: wt) else { return XCTFail("not a worktree") }
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(wt, allowMainCheckout: false))
+
+        // One another engine holds (its lock, as the engine writes it) is refused by name.
+        let lock = gitDir.appending(path: "frog-engine.lock")
+        try "eng-0002 4242\n".write(to: lock, atomically: true, encoding: .utf8)
+        let fd = open(lock.path, O_RDONLY)
+        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+        XCTAssertThrowsError(try SessionBroker.checkWorkerFolder(wt, allowMainCheckout: false)) { e in
+            let m = (e as? SessionBroker.BrokerError)?.message ?? "\(e)"
+            XCTAssertTrue(m.contains("session eng-0002"), m)
+        }
+        // Its engine gone (the flock with it), the worktree is free again.
+        close(fd)
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(wt, allowMainCheckout: false))
+    }
+
     /// A worktree bases on the repo's remote default branch (origin/HEAD → origin/main), not
     /// the checkout's current branch, so a session forked from a feature branch doesn't
     /// inherit its half-finished work.

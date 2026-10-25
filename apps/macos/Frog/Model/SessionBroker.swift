@@ -91,6 +91,8 @@ final class SessionBroker {
         /// "default", "accept-edits", "auto" or "yolo" (only when asked for explicitly).
         var mode: String?
         var worktree: Bool
+        /// Run in the user's main checkout anyway (worker sessions belong in worktrees).
+        var allowMainCheckout = false
     }
 
     struct Started: Equatable {
@@ -342,7 +344,8 @@ final class SessionBroker {
                 title: input["title"]?.string ?? "", prompt: input["prompt"]?.string ?? "",
                 cwd: input["cwd"]?.string, model: input["model"]?.string,
                 mode: input["mode"]?.string,
-                worktree: input["worktree"]?.bool ?? false)
+                worktree: input["worktree"]?.bool ?? false,
+                allowMainCheckout: input["allow_main_checkout"]?.bool ?? false)
             Task { [weak c] in
                 do {
                     let s = try await starter(req, c)
@@ -1043,6 +1046,75 @@ final class SessionBroker {
         return (current.isEmpty ? "HEAD" : current, true)
     }
 
+    /// Where a folder sits in git, for StartSession's checks (read from the files, no git run).
+    enum Checkout: Equatable {
+        /// Not in a repo, or a main checkout that has no `.frog/worktrees` (never used for workers).
+        case plain
+        /// The user's main checkout (`top`): it owns `.frog/worktrees`.
+        case main(top: URL)
+        /// A linked worktree (`top`), its private git dir holding the engine lock.
+        case worktree(top: URL, gitDir: URL)
+    }
+
+    nonisolated static func checkout(of folder: URL) -> Checkout {
+        let fm = FileManager.default
+        var at = folder.standardizedFileURL
+        while true {
+            let dot = at.appending(path: ".git")
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: dot.path, isDirectory: &isDir) {
+                if isDir.boolValue {
+                    return fm.fileExists(atPath: at.appending(path: ".frog/worktrees").path) ? .main(top: at) : .plain
+                }
+                guard let text = try? String(contentsOf: dot, encoding: .utf8),
+                      let line = text.split(separator: "\n").first(where: { $0.hasPrefix("gitdir:") }) else { return .plain }
+                let path = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+                let gitDir = path.hasPrefix("/") ? URL(fileURLWithPath: path) : at.appending(path: path)
+                // A submodule's `.git` file points at `.git/modules/…`: not a worktree.
+                guard gitDir.deletingLastPathComponent().lastPathComponent == "worktrees" else { return .plain }
+                return .worktree(top: at, gitDir: gitDir.standardizedFileURL)
+            }
+            let up = at.deletingLastPathComponent()
+            if up.path == at.path { return .plain }
+            at = up
+        }
+    }
+
+    /// The session whose engine holds a linked worktree (the engine's `frog-engine.lock` in
+    /// its git dir, an flock that dies with the engine), if one does.
+    nonisolated static func worktreeOwner(gitDir: URL) -> String? {
+        let fd = open(gitDir.appending(path: "frog-engine.lock").path, O_RDONLY)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+            flock(fd, LOCK_UN)
+            return nil
+        }
+        let text = (try? String(contentsOf: gitDir.appending(path: "frog-engine.lock"), encoding: .utf8)) ?? ""
+        return text.split(separator: " ").first.map(String.init) ?? "another session"
+    }
+
+    /// StartSession without `worktree:true`: refuse the user's main checkout (the repo root
+    /// that owns `.frog/worktrees`, or anywhere in it) unless `allowMainCheckout`, and a
+    /// worktree another engine runs in. An existing free worktree is used as-is (reuse).
+    nonisolated static func checkWorkerFolder(_ folder: URL, allowMainCheckout: Bool) throws {
+        switch checkout(of: folder) {
+        case .plain:
+            return
+        case .main(let top):
+            guard !allowMainCheckout else { return }
+            let trees = ((try? FileManager.default.contentsOfDirectory(atPath: top.appending(path: ".frog/worktrees").path)) ?? [])
+                .filter { !$0.hasPrefix(".") }.sorted().prefix(3)
+                .map { top.appending(path: ".frog/worktrees/\($0)").path }
+            let reuse = trees.isEmpty ? "" : ", or reuse a worktree with cwd: \(trees.joined(separator: " or "))"
+            throw BrokerError("\(folder.path) is the user's main checkout of \(top.path): worker sessions belong in worktrees, so two of them never mix work in the user's tree. Pass worktree:true for a fresh one\(reuse). allow_main_checkout:true overrides, only when the user asked for it.")
+        case .worktree(let top, let gitDir):
+            if let owner = worktreeOwner(gitDir: gitDir) {
+                throw BrokerError("\(top.path) already has an engine: session \(owner) runs in it. One engine per worktree: pass worktree:true for a fresh one, or stop or archive \(owner) first.")
+            }
+        }
+    }
+
     /// A git worktree for a new session: `<repo>/.frog/worktrees/<name>` on a new branch
     /// `frog/<name>` from the remote default branch (a numbered name if taken). Returns its
     /// folder, branch, and the base ref it started from.
@@ -1325,6 +1397,12 @@ extension SessionBroker {
         }
         var branch: String?
         var base: String?
+        // Worker sessions belong in worktrees: never the user's main checkout unless asked,
+        // and never a worktree another engine already runs in.
+        if !req.worktree {
+            let at = folder
+            try await Task.detached { try Self.checkWorkerFolder(at, allowMainCheckout: req.allowMainCheckout) }.value
+        }
         if req.worktree {
             let from = folder
             let (dir, b, basedOn) = try await Task.detached { try Self.makeWorktree(from: from, name: title) }.value
