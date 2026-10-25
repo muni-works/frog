@@ -332,3 +332,28 @@ is revoked (best effort) and never stored, and the card stays in state 5 with
 **No nagging.** Legacy users get no line above the composer, no badge and no prompt. The offer
 lives on the card, and in `frog --status` in the CLI. They lose nothing by ignoring it.
 An env-only `FROG_API_KEY` user is never offered migration from the app (it's the shell's key).
+
+## 3. Errors
+
+Rule: errors say what happened and the next step, in one line on the card, with face `.sad` for
+that moment (it relaxes to the state's own mood after 3 s, the text stays until the next
+action). Nothing ever deletes a working key on an error. Copy is exact.
+
+| what happened | card line | action shown | notes |
+|---|---|---|---|
+| user closed the sheet / pressed cancel | (back to state 1, no message) | sign in with GitHub | cancelling isn't an error |
+| GitHub denied or the user declined | `GitHub didn't sign you in · try again, or use email` | sign in with GitHub · use email instead | |
+| can't reach frog.toys (offline, DNS, timeout) | `can't reach frog.toys right now · try again` | try again | detected before opening the sheet where possible, so the sheet never opens on an error page |
+| `state` mismatch / malformed callback | `that sign-in didn't come from this Mac · try again` | try again | log a warning, never the URL's query |
+| exchange failed after GitHub succeeded | `signed in, but couldn't set up this Mac · try again` | try again | retry re-runs the whole sheet, which is one click because the GitHub cookie is warm |
+| Keychain write failed | `couldn't save to your Keychain · try again` | try again | the minted key is revoked, best effort |
+| email: address rejected | `that address didn't work · check it and send again` | (field stays open) | |
+| email: link expired (10 min) | `that link expired · send another` | send another | face `.sad`, field keeps the address |
+| email: link opened but denied | `that link was turned down · send another` | send another | |
+| `/me` fails while signed in | meter dimmed, `updated 2 h ago` | none | never shown as signed out |
+| 401 on a frog cloud request (key revoked/expired) | line above composer: `your frog cloud sign-in expired. **sign in again** ×` | sign in again (starts the sheet from the line) | the key isn't deleted automatically; the card shows state 1 with `your sign-in expired` as the detail |
+| 401 for an env key | line: `FROG_API_KEY was turned down by frog cloud. check your shell's key ×` | none | the sign-in can't help here, so don't offer it |
+| account suspended (403) | `this account can't use frog cloud right now · frog.toys/account` | manage on frog.toys | |
+| rate-limited mint (429) | `too many sign-ins just now · try again in a minute` | try again (disabled 60 s) | |
+
+All network calls in the flow use a 10 s timeout, except polls (honour `interval`).
