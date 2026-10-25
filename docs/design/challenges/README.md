@@ -144,7 +144,13 @@ these are estimates. the prize budget is cam's money: this section sizes it and 
 
 ## 7. marketing beat
 
-_tbd_
+**the replay button is the demo.** every board row has a ▶ that opens `frog.toys/s/<token>`: the session plays back in time, every edit, test and timing, ending on the judge's verdict. no screenshots needed: every claim is a link.
+
+- **A launch post (beat 2).** "the gym is open: 20 real merged PRs, judged by their own tests. beat our time." the H200 number up top, the house replay right under it, then both boards. house rows include our losses (a frontier model beating tang on passes, if it does).
+- **show HN.** "frog speedrun: real PRs, real tests as the judge, replay or it didn't happen." link the board, not the blog. HN rewards real tasks over synthetic benchmarks, and it rewards honest baselines.
+- **local board → r/LocalLLaMA and hardware twitter.** the score card PNG: "qwen3-4b · M3 Max · 87 tok/s · 7/20". per-tier rankings give 0.6B a race of its own.
+- **C launch post (beat 3).** "the judge is a physics engine." one T3 bracket from start to finish: spec → loon → FEA heatmap (vcad-render) → receipt → the printed part on a desk. sent straight to uni robotics clubs, CAD twitter and r/3Dprinting.
+- **cadence.** a weekly board post, a replay of the week, and a results post per phase covering unsolved tasks, judge bugs found and who won what.
 
 ## 8. decisions for cam
 
