@@ -35,7 +35,8 @@ Key properties:
 1. **The second pass can only upgrade, never downgrade a card into a hidden allow it can't justify** — it upgrades flag→allow *with a reason*, and the reason is audited.
 2. **Error/timeout on the second pass = keep the flag** (card). Never fail-open.
 3. **The chief comes before Cam.** Cam's card only fires when the class is never-delegable, or the chief couldn't take it.
-4. **rm and ssh always double-check** — the second pass at minimum — in every mode, not just auto.
+4. **Hard classes override every allow.** A never-delegable call (see below) goes to Cam even when the classifier said allow; soft classes only choose between the chief and Cam.
+5. **rm and ssh always double-check** — the second pass at minimum — in every mode, not just auto.
 
 ## Grant classes
 
@@ -51,17 +52,21 @@ The vocabulary the classifier's reason and the config share. A class is a *shape
 | `mcp-write-granted` | MCP writes on a server already granted in `[mcp_trust]` but flagged for another reason | `mcp__runpod__pod-action` on a session-created pod |
 | `long-commands` | long multi-step commands that are individually ordinary | the 12-command deploy script, all segments routine, all paths own-scope |
 
-**Never-delegable set (fixed, in code, not config):** a call in these classes goes to Cam and nothing else:
+There are two kinds of class, and they do different jobs:
 
-- `rm -rf` (any recursive force delete) **outside scratch**
+- **Hard (never-delegable)** — fixed, in code, not config. These override everything: a classifier `allow` (first or second pass), a `[delegation]` grant, a chief's approval. A call in a hard class always reaches Cam as a card.
+- **Soft (the grant classes above)** — these only decide whether a call that is *still flagged after the second pass* goes to the chief or to Cam. They never turn a flag into an allow by themselves, and they never apply to a hard class.
+
+The hard set:
+
+- deletes outside the session's scratch (`rm -rf` or any other kind)
 - force-push / history rewrite on a shared remote
 - production deploy
 - purchase / spend beyond configured caps
-- public post / publish
+- public posts, publishing, and messages to people (email, chat, social)
 - credentials access (reading or moving keychains, tokens, `.env` secrets out)
-- deletes outside scratch (any kind)
 
-This set is fixed so a mis-edited config can never widen it. Config can only *add* grant classes to the chief's list, never touch this set.
+The hard set is fixed so a mis-edited config can never widen it. Config can only add soft classes to the chief's list.
 
 ## Config shape
 
