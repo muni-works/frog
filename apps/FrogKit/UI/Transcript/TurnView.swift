@@ -107,6 +107,10 @@ struct TurnView: View {
                 .contentShape(.rect)
                 .onHover { hoveringPrompt = $0 }
             }
+            // The answer being written is a typing bubble at the turn's end, not a plain row:
+            // the model's words appear as they arrive, with the frog beside them. The bubble
+            // IS that row (so the handoff is a fade inside one view, not a swap of two), and
+            // it settles to the plain row when the message completes; tool rows run above it.
             ForEach(flow.segments) { segment in
                 SegmentRow(segment: segment, conversation: conversation, live: running, verbosity: verbosity)
                     .equatable()
@@ -252,7 +256,8 @@ private struct SegmentRow: View, Equatable {
         case .activity(let group):
             ActivityLine(group: group, conversation: conversation, live: live, verbosity: verbosity)
         case .text(let item), .visual(let item), .notice(let item):
-            ItemView(item: item, conversation: conversation)
+            ItemView(item: item, conversation: conversation,
+                     typing: live && !item.done && item.kind == .message)
         }
     }
 }
