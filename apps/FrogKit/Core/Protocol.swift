@@ -101,6 +101,8 @@ enum Op: Encodable, Sendable {
     case sessionReply(id: String, result: JSONValue?, error: String?)
     /// A message from another session (`from` is its id, or "system"), queued like a submit.
     case deliver(from: String, fromName: String, message: String)
+    /// A status-only message from another session: read and logged, no turn starts for it.
+    case inform(from: String, fromName: String, message: String)
     /// Answer a `question`: the picked labels, or the user's own words. Neither dismisses it.
     case answer(id: String, choices: [String], other: String?)
     /// Have the model server prefill the conversation now (plus `draft`, the message being
@@ -228,6 +230,11 @@ enum Op: Encodable, Sendable {
             try c.encodeIfPresent(error, forKey: .error)
         case .deliver(let from, let fromName, let message):
             try c.encode("deliver", forKey: .op)
+            try c.encode(from, forKey: .from)
+            try c.encode(fromName, forKey: .fromName)
+            try c.encode(message, forKey: .message)
+        case .inform(let from, let fromName, let message):
+            try c.encode("inform", forKey: .op)
             try c.encode(from, forKey: .from)
             try c.encode(fromName, forKey: .fromName)
             try c.encode(message, forKey: .message)

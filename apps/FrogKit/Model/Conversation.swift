@@ -479,6 +479,12 @@ final class Conversation {
         link?.send(.sessionReply(id: id, result: result, error: error))
     }
 
+    /// A status-only message from another session: the engine records it as read and keeps it
+    /// for the next turn; no turn starts, so nothing waits on it here.
+    func inform(from: String, name: String, message: String) {
+        link?.send(.inform(from: from, fromName: name, message: message))
+    }
+
     /// A message from another session: the engine queues it and runs it as a turn.
     func deliver(from: String, name: String, message: String) {
         pendingDeliveries += 1
