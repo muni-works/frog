@@ -113,3 +113,98 @@ change. The UX depends only on what each call makes possible.
 
 Plans assumed: `beta`, `pro`, `max`, `api`. The badge shows the plan name lowercase.
 Credit is shown in dollars, as `/me` returns `credit_usd`.
+
+## 2. The card
+
+The card is one row in the existing "Cloud" `Section` of the grouped `Form` (Settings → Models),
+where `FrogCloudCard` sits today: first in the section, never removable. Anatomy, the same in
+every state so it morphs instead of swapping:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ [face]  frog cloud  [badge]                     [primary] [ ⋯ ]  │
+│  28pt   detail line (caption, secondary, wraps)                  │
+│         [meter + week row: signed-in states only]                │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+- **face**: `FrogFace(mood:size: 28)`, top-aligned with the title's first baseline, 10 pt gap.
+  It replaces today's `cloud.fill` glyph.
+- **title**: "frog cloud" (`.body`). **badge**: plan capsule, `.caption2.weight(.semibold)`,
+  green on `.green.opacity(0.18)`, padding 5×1, as today. Hidden when signed out.
+- **primary**: at most one button, `.controlSize(.regular)`; **⋯**: `ellipsis.circle` borderless
+  menu, as today. Everything else hides in it.
+- The row grows downward (the meter, the email field). `Motion.panel` animates the height.
+
+### State 1: signed out (no key anywhere)
+
+face `.idle` · no badge · primary **sign in with GitHub** (`.borderedProminent`, GitHub mark
+`Image("github")` 14 pt leading) · ⋯ menu: "sign in with email", "use an API key…",
+"get an API key on the web".
+
+> **frog cloud**
+> fast hosted models, one click away. your code goes there only in projects you allow.
+
+Under the detail line, one tertiary link-style button: **use email instead** (same as the menu
+item; it's there because not everyone has GitHub).
+
+**Email sub-state.** "use email instead" grows the row by one line (`Motion.panel`): a
+`TextField` ("you@example.com", `.roundedBorder`, 220 pt, focused, content type
+`.emailAddress`) and **send link** (`.borderedProminent`, disabled until the text looks like an
+address; ⏎ sends). Esc or "cancel" collapses it. After sending:
+
+> **frog cloud**
+> check your email: we sent a link to cam@muni.works. open it on any device.
+> change · resend
+
+face `.waiting`. "resend" is disabled for 30 s, then re-sends (new grant, old one dropped).
+"change" returns to the field with the address selected. The engine polls the device grant
+every `interval` (default 5 s, `slow_down` adds 5 s). When the link is opened, the card goes
+straight to the success beat below. The grant expires after 10 min (see errors).
+
+**Where else sign-in is offered (signed out).**
+- Model picker, frog cloud section: models listed from the static list (account plan), each row
+  with a trailing **sign in** button that opens Settings → Models with the card highlighted
+  (a 1 s green ring, `Motion.quick`) and starts the GitHub sheet at once. One click from the
+  picker to the sheet.
+- `BiggerModelLine`: its cloud option reads **use frog cloud** and does the same. (Today it
+  says "add a cloud key".)
+- Nowhere else. No launch prompt, no badge on the Settings icon.
+
+### State 2: signing in (browser handoff and return)
+
+Three beats, all inside the same row. The Settings window stays where it is; the system sheet
+attaches to it.
+
+**2a. sheet up.** Clicking sign in with GitHub starts `ASWebAuthenticationSession`. The
+system's own consent alert ("frog wants to use frog.toys to sign in") appears first: that's
+macOS, we don't fight it. Behind it the card shows:
+
+> **frog cloud**
+> finish signing in on the sheet · cancel
+
+face `.waiting`, primary hidden (no double starts). "cancel" calls `session.cancel()`.
+
+**2b. setting up.** The callback arrives and the sheet closes on its own. The card shows:
+
+> **frog cloud**
+> setting up this Mac…
+
+face `.thinking`. This covers the exchange, Keychain write and first `/me` + usage fetch.
+Target under 1 s. Don't add a spinner: the thinking frog is the spinner.
+
+**2c. success.** One beat, then the signed-in card:
+- face `.done` plus one `hop`, `FrogSounds.Cue.ribbit` (when sounds are on), `Haptics.settle()`
+  as the meter rows land (`Motion.panel`).
+- for 4 s the detail line reads **signed in · cloud/dart is ready**, then settles into the
+  state 3 line.
+- If the starting model (`Workspace.startingModel`) was the default rather than one the user
+  picked, it becomes `cloud/dart`. If the user had picked something, it stays, and the line
+  reads **signed in · pick cloud/dart in the model menu any time** instead. Sign-in adds, it
+  doesn't take over.
+- If sign-in was started from the picker or `BiggerModelLine`, Settings closes itself after the
+  beat and the conversation that asked switches to `cloud/dart` (it asked, so that's the intent).
+  The per-project "code goes to the cloud" consent still applies, as today.
+
+The email path joins at 2b when the poll succeeds (with the app in the background, a
+notification "signed in to frog cloud" if notifications are on; nothing otherwise).
