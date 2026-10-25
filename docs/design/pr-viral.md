@@ -167,3 +167,62 @@ Co-authored-by: <session name> <<session-slug>@frog.local>
 ## 4. Gym hook
 
 A PR that merges as opened is the cleanest reward signal frog gets from the world: the repo owner read it and shipped it without asking for changes. pr-lifecycle's D already observes every transition as durable events (`CiStatusChanged`, `ReviewReceived`, `Merged`); this spec adds one derived record at terminal state, written by D into the opening session's log: `Event::PrOutcome { number, merged, rework_commits, review_rounds, ci_reruns, open_ms }` — rework commits are commits pushed after open, review rounds are `changes_requested`→push cycles, CI reruns are re-runs with no new commit. Merged with all three zero is the PR-quality reward (1.0); each rework commit, round and rerun subtracts (weights are the gym's call, not this spec's); closed-unmerged is 0; still open past 14 days is left unscored rather than counted a failure. The gym harvests these with the session that produced them, so trajectory and outcome travel together into dart 2 — and because the body sections (§1) are part of the trajectory, a body that said "not run" honestly and still merged teaches the right thing.
+
+## 5. Filled example
+
+Session `20261022-120159-8b38` in `~/.local/share/frog/sessions/` (read-only; nothing private in the body). A glm-5.3 worker in worktree `frog-stream-retry`, forked from session `20261022-110242-84e0` (same task's first attempt). Its branch `frog/stream-retry` carries commit `5c047c1` "engine: retry mid-stream gateway errors, not just pre-stream HTTP failures" (verified in git: 11 files, +361 −25, signed off by Cam Pedersen). What the log verifiably holds, and where each body line comes from:
+
+| log (verified) | body |
+|---|---|
+| first `TurnStarted.input`: "Engine robustness (crates/frog-engine/src/engine.rs, retry loop near 'fn retryable' …) Two gaps: (1) retryable() only matches HttpError… (2) once streaming has started, no retry happens at all…" | the task |
+| `forked_from` → `…-84e0` (same brief); this session's 3 turns, 190 model calls, 20.9M tokens in, 257k out | **who** |
+| Bash runs: `cargo test -q -p frog-engine` → `test result: ok. 277 passed; 0 failed; 1 ignored; 0 measured; 11 filtered out` (last run after final edits) | **verified** |
+| `cargo build -q -p frog -p frog-engine -p frog-bench` → `BUILD_EXIT=0` | **verified** |
+| earlier runs: `FAILED. 276 passed; 6 failed`, then `FAILED. 277 passed; 5 failed` (red-to-green in the log) | not claimed |
+| skipped tests environmental (`sandbox-exec: sandbox_apply: Operation not permitted`) | stated |
+| no clippy run (verified: 0 `cargo clippy` in the log) | **not verified** |
+| commit sha from the log's Bash result `[frog/stream-retry 5c047c1]` | receipts |
+
+Title: `engine retry loop` · PR title defaults to the commit subject.
+
+```markdown
+Engine robustness (crates/frog-engine/src/engine.rs, retry loop near `fn retryable` and its
+call site). A worker turn on glm-5.3 died on an in-stream gateway error: a 2xx stream that
+failed mid-flight. Two gaps: (1) retryable() only matches HttpError statuses and reqwest
+timeouts — in-stream error events aren't retried; (2) once streaming has started, no retry
+happens at all. Fix: classify these as retryable; discard the partial reply and re-run the
+step with backoff, up to 3 times. Never retry 4xx auth/validation errors.
+
+**who**
+- **engine retry loop** (zai/glm-5.3) · retryable() covers in-stream errors; partial replies
+  discarded via a durable ItemsDiscarded event; tests for every path · 1 commit
+
+**verified**
+- `cargo test -q -p frog-engine` · 277 passed, 0 failed, 1 ignored
+  <details><summary>output</summary>
+
+  ```
+  ....................................................................................... 87/278
+  ....................................................................................... 174/278
+  ................................................................................i...... 261/278
+  .................
+  test result: ok. 277 passed; 0 failed; 1 ignored; 0 measured; 11 filtered out
+  ```
+  </details>
+- `cargo build -q -p frog -p frog-engine -p frog-bench` · ok
+
+**not verified**
+- not run: cargo clippy (no lint ran in this session)
+- skipped: 11 tests — environmental in this sandbox (sandbox-exec/openpty denied; confirmed
+  failing on unmodified code)
+- ci: not yet (updates when checks finish)
+
+<sub>built with [frog](https://frog.toys) · [session replay](https://frog.toys/s/<token>) · [receipts](https://frog.toys/s/<token>#receipts)</sub>
+```
+
+What it doesn't say: "all tests pass" — 277 of 288 ran, and the body says so. The commit, with §3's trailer:
+
+```
+Signed-off-by: Cam Pedersen <cam@campedersen.com>
+Co-authored-by: engine retry loop <engine-retry-loop@frog.local>
+```
