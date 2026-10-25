@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>pr body mockup · frog</title>
+<!-- Mockup for docs/design/pr-viral.md §5. GitHub PR conversation chrome, simplified; the body is what forge::body emits.
+     frog green from apps/FrogKit/UI/Basics/Palette.swift: light (0.180, 0.620, 0.310) ≈ #2E9E4F, dark (0.345, 0.800, 0.435) ≈ #58CC6F. -->
+<style>
+  :root { --frog:#2E9E4F; --ink:#1C1F1D;
+          --gh-border:#d0d7de; --gh-bg:#f6f8fa; --gh-text:#1f2328; --gh-muted:#59636e; --gh-link:#0969da; }
+  * { box-sizing:border-box }
+  body { margin:0; background:#fff; color:var(--gh-text);
+         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif; }
+  .page { max-width:920px; margin:32px auto; padding:0 24px }
+  h1 { font-size:26px; font-weight:400; margin:0 0 8px }
+  h1 .num { color:var(--gh-muted); font-weight:300 }
+  .state { display:flex; gap:8px; align-items:center; color:var(--gh-muted); padding-bottom:16px; border-bottom:1px solid var(--gh-border); margin-bottom:24px }
+  .pill { background:#1f883d; color:#fff; border-radius:2em; padding:5px 12px; font-weight:500 }
+  .branch { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; background:#ddf4ff; color:var(--gh-link); padding:2px 6px; border-radius:6px }
+  .comment { display:flex; gap:12px }
+  .avatar { width:40px; height:40px; border-radius:50%; background:var(--gh-bg); border:1px solid var(--gh-border); flex:none }
+  .box { flex:1; border:1px solid var(--gh-border); border-radius:6px; overflow:hidden }
+  .box header { background:var(--gh-bg); border-bottom:1px solid var(--gh-border); padding:8px 16px; color:var(--gh-muted) }
+  .box header b { color:var(--gh-text) }
+  .md { padding:16px }
+  .md p { margin:0 0 16px }
+  .md ul { margin:0 0 16px; padding-left:2em }
+  .md li { margin:4px 0 }
+  code { font:85% ui-monospace,SFMono-Regular,Menlo,monospace; background:rgba(129,139,152,.12); padding:.2em .4em; border-radius:6px }
+  pre { background:var(--gh-bg); border-radius:6px; padding:12px 16px; overflow:auto; margin:8px 0 0 }
+  pre code { background:none; padding:0; font-size:12px; line-height:1.45 }
+  details { margin:4px 0 12px }
+  summary { cursor:pointer; color:var(--gh-muted) }
+  .label { font-weight:600; margin-bottom:4px }
+  .model { color:var(--gh-muted) }
+  /* the signature: one line, GitHub's <sub>, frog green only on the word frog */
+  .sig { font-size:11.5px; color:var(--gh-muted); border-top:1px solid var(--gh-border); padding-top:10px; margin-top:4px }
+  .sig a { color:var(--gh-muted); text-decoration:none }
+  .sig a:hover { text-decoration:underline }
+  .sig a.frog { color:var(--frog); font-weight:600 }
+  .note { max-width:920px; margin:8px auto 36px; padding:0 24px 0 76px; color:var(--gh-muted); font-size:12px }
+  .commits { margin-top:16px; margin-left:52px; border:1px solid var(--gh-border); border-radius:6px; font-size:13px }
+  .commits > div { padding:8px 16px; border-top:1px solid var(--gh-border) }
+  .commits > div:first-child { border-top:none; background:var(--gh-bg); color:var(--gh-muted) }
+  .trailer { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--gh-muted); white-space:pre; margin-top:6px }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>engine retry loop <span class="num">#123</span></h1>
+  <div class="state"><span class="pill">Open</span> wants to merge 1 commit into <span class="branch">main</span> from <span class="branch">frog/stream-retry</span></div>
+
+  <div class="comment">
+    <div class="avatar"></div>
+    <div class="box">
+      <header><b>campedersen</b> opened</header>
+      <div class="md">
+        <p>Engine robustness (crates/frog-engine/src/engine.rs, retry loop near <code>fn retryable</code> and its call site). A worker turn on glm-5.3 died on an in-stream gateway error: a 2xx stream that failed mid-flight. Two gaps: (1) retryable() only matches HttpError statuses and reqwest timeouts — in-stream error events aren't retried; (2) once streaming has started, no retry happens at all. Fix: classify these as retryable; discard the partial reply and re-run the step with backoff, up to 3 times. Never retry 4xx auth/validation errors.</p>
+
+        <p class="label">who</p>
+        <ul>
+          <li><b>engine retry loop</b> <span class="model">(zai/glm-5.3)</span> · retryable() covers in-stream errors; partial replies discarded via a durable ItemsDiscarded event; tests for every path · 1 commit</li>
+        </ul>
+
+        <p class="label">verified</p>
+        <ul>
+          <li><code>cargo test -q -p frog-engine</code> · 277 passed, 0 failed, 1 ignored
+            <details open><summary>output</summary>
+<pre><code>....................................................................................... 87/278
+....................................................................................... 174/278
+................................................................................i...... 261/278
+.................
+test result: ok. 277 passed; 0 failed; 1 ignored; 0 measured; 11 filtered out</code></pre>
+            </details>
+          </li>
+          <li><code>cargo build -q -p frog -p frog-engine -p frog-bench</code> · ok</li>
+        </ul>
+
+        <p class="label">not verified</p>
+        <ul>
+          <li>not run: cargo clippy (no lint ran in this session)</li>
+          <li>skipped: 11 tests — environmental in this sandbox (sandbox-exec/openpty denied; confirmed failing on unmodified code)</li>
+          <li>ci: not yet (updates when checks finish)</li>
+        </ul>
+
+        <div class="sig"><sub>built with <a class="frog" href="https://frog.toys">frog</a> · <a href="https://frog.toys/s/TOKEN">session replay</a> · <a href="https://frog.toys/s/TOKEN#receipts">receipts</a></sub></div>
+      </div>
+    </div>
+  </div>
+  <div class="note">GitHub renders &lt;sub&gt; small and muted; the green on "frog" is the mockup's hint of the app, GitHub itself will show a plain link.</div>
+
+  <div class="commits">
+    <div>commits</div>
+    <div><b>engine: retry mid-stream gateway errors, not just pre-stream HTTP failures</b> · <code>5c047c1</code>
+      <div class="trailer">Signed-off-by: Cam Pedersen &lt;cam@campedersen.com&gt;
+Co-authored-by: engine retry loop &lt;engine-retry-loop@frog.local&gt;</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
