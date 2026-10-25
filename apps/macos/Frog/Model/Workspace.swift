@@ -244,7 +244,7 @@ final class Workspace {
     /// are in), or after `limit` if that's slow.
     func settled(within limit: Duration) async {
         let deadline = ContinuousClock.now + limit
-        while !gitChecked || conversation?.replaying == true, ContinuousClock.now < deadline {
+        while !gitChecked || conversation?.showable == false, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(5))
         }
     }
@@ -389,7 +389,7 @@ final class Workspace {
         incoming?.stop(reason: "open superseded")
         incoming = c
         // Nothing to cut from, or nothing to wait for: straight on screen.
-        guard conversation != nil, c.replaying else {
+        guard conversation != nil, !c.showable else {
             show(c)
             return c
         }

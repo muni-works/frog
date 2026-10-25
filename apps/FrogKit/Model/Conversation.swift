@@ -187,7 +187,13 @@ final class Conversation {
     /// A conversation over `link`. `replay`: a session with history, which the link replays on
     /// `subscribe` up to a `synced`; until then nothing shows busy and anything sent waits.
     /// `failure`: the link couldn't start.
-    init(folder: URL, link: ConversationLink?, replay: Bool, session: String? = nil, failure: String? = nil) {
+    ///
+    /// `history`: the session's log, read here (see `SessionHistory`). Its newest rows are
+    /// folded in now, before the engine has started, so the transcript is on screen at once; the
+    /// engine is asked only for what came after them, and older turns fill in from the log
+    /// off the main thread (`olderPending` until they have).
+    init(folder: URL, link: ConversationLink?, replay: Bool, session: String? = nil, failure: String? = nil,
+         history: SessionHistory? = nil) {
         self.folder = folder
         openedLive = Date()
         replayOnStart = replay
@@ -206,9 +212,69 @@ final class Conversation {
             // shown busy meanwhile; anything sent waits for the transcript (see `submit`).
             replaying = true
             busy = false
-            link.send(.subscribe(after: 0))
+            if let history {
+                (history.meta + history.tail).forEach(apply)
+                self.history = history
+                olderEnd = history.tailStart
+                olderPending = olderEnd > 0
+            }
+            link.send(.subscribe(after: lastSeq))
+            if olderPending { fillOlder() }
         }
     }
+
+    /// Where older turns come from: the log the newest rows were read from, and how far back
+    /// they've been folded in (an index into its events; 0 once all of it is).
+    @ObservationIgnored private var history: SessionHistory?
+    @ObservationIgnored private var olderEnd = 0
+    @ObservationIgnored private var olderFill: Task<Void, Never>?
+    /// Older turns are still being read from the log (the transcript's top shows it).
+    private(set) var olderPending = false
+    /// Rows per chunk of older history: each is decoded off the main thread and folded in at
+    /// once, before the turns already here.
+    static var olderChunkRows = 400
+    /// How long after opening older turns start folding in.
+    static var olderDelayMs = 250
+
+    /// Read the rest of the history, newest first, a chunk at a time.
+    private func fillOlder() {
+        guard olderFill == nil, let history else { return }
+        olderFill = Task { [weak self] in
+            // After the transcript has opened on the newest rows: folding in older turns is
+            // main-thread work too, and it isn't what you're looking at.
+            try? await Task.sleep(for: .milliseconds(Self.olderDelayMs))
+            while let end = self?.olderEnd, end > 0 {
+                let rows = Self.olderChunkRows
+                let chunk = await Task.detached(priority: .userInitiated) {
+                    history.olderChunk(before: end, rows: rows)
+                }.value
+                guard let self, !Task.isCancelled else { return }
+                self.prepend(chunk.events)
+                self.olderEnd = chunk.start
+            }
+            self?.olderPending = false
+            self?.olderFill = nil
+        }
+    }
+
+    /// Fold older turns' events and put them before the turns here. Folded apart (they're whole
+    /// turns, and history: nothing in them is news), so nothing here changes but the list.
+    private func prepend(_ events: [Envelope]) {
+        // Replaying, so it reports nothing anywhere (the sidebar, the watchdog).
+        let older = Conversation(preview: folder, reopened: true)
+        events.forEach(older.apply)
+        guard !older.turns.isEmpty else { return }
+        if title == nil { title = older.title }
+        if movedTo == nil { movedTo = older.movedTo }
+        turns.insert(contentsOf: older.turns, at: 0)
+        itemAt = [:]
+        for t in turns.indices {
+            for i in turns[t].items.indices { itemAt[turns[t].items[i].id] = (t, i) }
+        }
+    }
+
+    /// Something to show: the history is in, or its newest rows are.
+    var showable: Bool { !replaying || !turns.isEmpty }
 
     /// An engine-less conversation that only renders events fed to `ingest` (previews, snapshots).
     /// `reopened`: as if resuming a session, whose history is fed in up to a `synced`.
@@ -524,10 +590,11 @@ final class Conversation {
         link?.forceKill(reason: reason)
     }
 
-    /// Returns once a reopened session's history is in, or after `limit` if that's slow.
+    /// Returns once a reopened session's history is in (or its newest rows), or after `limit`
+    /// if that's slow.
     func loaded(within limit: Duration) async {
         let deadline = ContinuousClock.now + limit
-        while replaying, ContinuousClock.now < deadline {
+        while !showable, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(5))
         }
     }
@@ -671,6 +738,7 @@ final class Conversation {
             if let i = turns.lastIndex(where: { !$0.finished }) {
                 turns[i].items.removeAll { ids.contains($0.id) }
             }
+            for id in ids { itemAt[id] = nil }
             presentPreview = nil
         case .permissionRequest(let req):
             permission = req
@@ -916,12 +984,26 @@ final class Conversation {
         }
     }
 
+    /// Where each item is (turn, then item index), so an event finds its row without scanning:
+    /// a scan copies every item it passes, and a reopened session's history folds an event per
+    /// row, quadratic in its length. Every upserted item is in it, so an id that isn't is new;
+    /// the place is a hint, checked on use (a discarded item shifts the ones after it).
+    @ObservationIgnored private var itemAt: [String: (turn: Int, item: Int)] = [:]
+
     /// Update the item with this id, creating it in the current turn if needed.
     private func upsert(_ id: String, _ update: (inout ItemState) -> Void) {
-        for t in turns.indices.reversed() {
-            if let i = turns[t].items.firstIndex(where: { $0.id == id }) {
+        if let (t, i) = itemAt[id] {
+            if turns.indices.contains(t), turns[t].items.indices.contains(i), turns[t].items[i].id == id {
                 update(&turns[t].items[i])
                 return
+            }
+            // Moved: find it the slow way.
+            for t in turns.indices.reversed() {
+                if let i = turns[t].items.indices.first(where: { turns[t].items[$0].id == id }) {
+                    itemAt[id] = (t, i)
+                    update(&turns[t].items[i])
+                    return
+                }
             }
         }
         if turns.isEmpty {
@@ -929,6 +1011,7 @@ final class Conversation {
         }
         var item = ItemState(id: id, kind: .message)
         update(&item)
+        itemAt[id] = (turns.count - 1, turns[turns.count - 1].items.count)
         turns[turns.count - 1].items.append(item)
     }
 
