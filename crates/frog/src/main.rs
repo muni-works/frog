@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use frog_engine::config::{Config, ToolMode};
 use frog_engine::session;
+use frog_engine::protocol::Event;
 use frog_engine::{Mode, Options};
 use std::io::Read;
 
@@ -116,6 +117,10 @@ struct Cli {
     /// List sessions started in this directory and exit.
     #[arg(long)]
     sessions: bool,
+    /// Today's delegation roll-up (docs/design/delegation.md) across this directory's
+    /// (or --all) sessions, from their logs, and exit.
+    #[arg(long, requires = "sessions")]
+    digest: bool,
     /// Draw this directory's sessions and their forks as a diagram (JSON with --json) and exit.
     #[arg(long)]
     session_tree: bool,
@@ -366,6 +371,10 @@ async fn run() -> Result<bool> {
     let store = session::default_dir();
     if let Some(r) = &cli.rename {
         session::retitle(&store, &r[0], &r[1])?;
+        return Ok(true);
+    }
+    if cli.sessions && cli.digest {
+        digest(&store, &cwd, cli.all)?;
         return Ok(true);
     }
     if cli.sessions {
@@ -934,6 +943,53 @@ fn bytes(n: u64) -> String {
         1_000..1_000_000 => format!("{:.1} KB", n as f64 / 1e3),
         _ => format!("{:.1} MB", n as f64 / 1e6),
     }
+}
+
+/// Today's delegation roll-up from session logs: count this day's
+/// `permission_decision` events by layer, across sessions. The engine's own
+/// `Op::Digest` counts in memory; this reads the record, so it covers every
+/// session that ran today, including closed ones.
+fn digest(
+    store: &std::path::Path,
+    cwd: &std::path::Path,
+    all: bool,
+) -> Result<()> {
+    let sessions = session::list(store, (!all).then_some(cwd))?;
+    let today = chrono::Utc::now().date_naive();
+    let mut auto_allowed = 0u32;
+    let mut second_pass = 0u32;
+    let mut delegated = 0u32;
+    let mut blocked = 0u32;
+    let mut cards = 0u32;
+    for s in &sessions {
+        let Ok(records) = session::events_after(store, &s.id, 0) else {
+            continue;
+        };
+        for env in records {
+            // Only today's decisions.
+            let day = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(env.created)
+                .map(|t| t.date_naive());
+            if day != Some(today) {
+                continue;
+            }
+            let Event::PermissionDecision { layer, outcome, .. } = &env.event else {
+                continue;
+            };
+            match (layer.as_str(), outcome.as_str()) {
+                ("classifier", "allow") => auto_allowed += 1,
+                ("second-pass", "allow") => second_pass += 1,
+                ("delegated", "allow") => delegated += 1,
+                ("delegated", "ask") => blocked += 1,
+                ("never-delegable", "ask") | ("breaker", "deny") | ("repeat", "deny") => blocked += 1,
+                (_, "ask") | (_, "deny") => cards += 1,
+                _ => {}
+            }
+        }
+    }
+    println!(
+        "delegation today: {auto_allowed} auto-allowed, {second_pass} second-pass upgrades, {delegated} chief-approved, {blocked} blocked, {cards} other asks (target: <=5 cards/day)"
+    );
+    Ok(())
 }
 
 fn list_sessions(

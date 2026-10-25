@@ -1017,4 +1017,77 @@ final class SessionBrokerTests: XCTestCase {
         let info = await broker([]).status(of: id)
         XCTAssertEqual(info?.cwd, "/tmp/start-here")
     }
+
+    // MARK: Delegated approvals
+
+    private func delegationRequest(_ id: String, chief: String) -> SessionRequest {
+        SessionRequest(id: id, item: "t-\(id)", tool: "DelegateApproval", input: .object([
+            "chiefs": .array([.string(chief)]),
+            "approval_id": .string(id),
+            "tool": .string("Bash"),
+            "arg": .string("ssh root@pod-1 uptime"),
+            "class": .string("ssh-scratch"),
+            "reason": .string("remote host"),
+            "timeout_secs": .number(300),
+        ]))
+    }
+
+    /// The asker's request goes to the chief as a system message, held until the chief's
+    /// ResolveDelegated; only that chief may answer, once, and the answer reaches the asker.
+    @MainActor
+    func testDelegatedApprovalReachesTheChiefAndOnlyItsAnswerCounts() throws {
+        let b = broker([chief, eng, ops])
+        let askerLink = QueueLink(), chiefLink = QueueLink(), opsLink = QueueLink()
+        let asker = Conversation(folder: URL(fileURLWithPath: "/tmp/deleg-asker"), link: askerLink, replay: true, session: eng.id)
+        let chiefConv = Conversation(folder: URL(fileURLWithPath: "/tmp/deleg-chief"), link: chiefLink, replay: true, session: chief.id)
+        let opsConv = Conversation(folder: URL(fileURLWithPath: "/tmp/deleg-ops"), link: opsLink, replay: true, session: ops.id)
+        let replies = { (l: QueueLink) in l.sent.filter { $0["op"] as? String == "session_reply" } }
+
+        b.handle(delegationRequest("ap1", chief: "Chief of Staff"), from: asker)
+        XCTAssertTrue(replies(askerLink).isEmpty, "held until the chief answers")
+        let msg = try XCTUnwrap(delivered.last)
+        XCTAssertEqual(msg.to, chief.id)
+        XCTAssertEqual(msg.from, "system")
+        XCTAssertTrue(msg.message.contains("approval_id: ap1"), msg.message)
+        XCTAssertTrue(msg.message.contains("class: ssh-scratch"), msg.message)
+        XCTAssertTrue(msg.message.contains("ResolveDelegated"), msg.message)
+
+        // Someone else can't answer it.
+        b.handle(SessionRequest(id: "x1", item: "tx", tool: "ResolveDelegated", input: .object([
+            "approval_id": .string("ap1"), "decision": .string("approve"),
+        ])), from: opsConv)
+        XCTAssertNotNil(replies(opsLink).last?["error"])
+        XCTAssertTrue(replies(askerLink).isEmpty)
+
+        // The chief does, once.
+        b.handle(SessionRequest(id: "c1", item: "tc", tool: "ResolveDelegated", input: .object([
+            "approval_id": .string("ap1"), "decision": .string("approve"), "note": .string("its pod"),
+        ])), from: chiefConv)
+        let answer = try XCTUnwrap(replies(askerLink).last)
+        XCTAssertEqual(answer["id"] as? String, "ap1")
+        let result = try XCTUnwrap(answer["result"] as? [String: Any])
+        XCTAssertEqual(result["decision"] as? String, "allow")
+        XCTAssertEqual(result["note"] as? String, "its pod")
+        XCTAssertNotNil(replies(chiefLink).last?["result"])
+        b.handle(SessionRequest(id: "c2", item: "tc2", tool: "ResolveDelegated", input: .object([
+            "approval_id": .string("ap1"), "decision": .string("deny"),
+        ])), from: chiefConv)
+        XCTAssertNotNil(replies(chiefLink).last?["error"], "answered already")
+        XCTAssertEqual(replies(askerLink).count, 1)
+    }
+
+    /// No such chief, or the chief asking about its own call: an error at once, so the
+    /// asker cards the user instead of waiting out the timeout.
+    @MainActor
+    func testDelegatedApprovalErrorsWhenThereIsNoChiefToAsk() throws {
+        let b = broker([chief, eng])
+        let link = QueueLink()
+        let asker = Conversation(folder: URL(fileURLWithPath: "/tmp/deleg-asker2"), link: link, replay: true, session: eng.id)
+        let chiefConv = Conversation(folder: URL(fileURLWithPath: "/tmp/deleg-chief2"), link: link, replay: true, session: chief.id)
+        b.handle(delegationRequest("ap2", chief: "nobody"), from: asker)
+        XCTAssertNotNil(link.sent.last?["error"])
+        b.handle(delegationRequest("ap3", chief: chief.id), from: chiefConv)
+        XCTAssertEqual(link.sent.last?["error"] as? String, "The chief's own calls go to the user.")
+        XCTAssertTrue(delivered.isEmpty, "nothing was sent")
+    }
 }

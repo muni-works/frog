@@ -5078,12 +5078,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
     }
 
     /// A call still flagged after the second pass: offer it to the chief before
-    /// it cards the user (docs/design/delegation.md). `Some(decision)` when the
-    /// chief route produced the final answer; `None` when there's no chief
-    /// route (no config, no grant class) and the card proceeds as usual.
-    /// The chief answers over the session wire (`SessionRequest`/`SessionReply`),
-    /// so any client — the Mac app's broker chief-most — can decide; one that
-    /// doesn't know `DelegateApproval` never answers and the card falls back.
+    /// it cards the user (docs/design/delegation.md). `Decided` when the chief
+    /// answered; `Fallback` when it was asked but couldn't decide (counted and
+    /// audited here); `NoRoute` when there's no chief route (no chief configured,
+    /// the class isn't granted). The chief answers over the session wire
+    /// (`SessionRequest` `DelegateApproval` → the broker → the chief's
+    /// `ResolveDelegated` → `SessionReply`); a client that doesn't know
+    /// `DelegateApproval` errors or never answers, and the card falls back.
     async fn delegate_flagged(
         &mut self,
         item: &str,
@@ -5092,7 +5093,8 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         input: &Value,
         reason: String,
     ) -> Chief {
-        let Some(chief) = self.cfg.delegation.chief.first().cloned() else {
+        let chiefs = self.cfg.delegation.chief.clone();
+        let Some(chief) = chiefs.first().cloned() else {
             return Chief::NoRoute;
         };
         let Some(class) = crate::delegation::soft_class(
@@ -5109,21 +5111,19 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             return Chief::NoRoute;
         }
         if !self.shared.sessions.enabled() {
-            self.notice(
-                Level::Warn,
-                format!("delegated:chief: no session broker to reach {chief}; asking you instead"),
-            );
-            self.digest.count(crate::digest::Which::ChiefFallback);
-            return Chief::Fallback;
+            return self.chief_fallback(item, "no session broker to reach the chief");
         }
         let (id, rx) = self.shared.sessions.open();
         let request = serde_json::json!({
             "chief": chief,
+            "chiefs": chiefs,
             "approval_id": id,
             "tool": name,
-            "command": arg,
+            "arg": arg,
             "class": class,
             "reason": reason,
+            "agent_says": self.agent_reason(),
+            "timeout_secs": self.cfg.delegation.chief_timeout_secs,
         });
         self.notice(
             Level::Info,
@@ -5144,62 +5144,48 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         } else {
             tokio::time::timeout(Duration::from_secs(timeout), rx).await
         };
-        let reply = match answer {
-            Ok(Ok(r)) => r,
-            Ok(Err(e)) => {
-                self.notice(
-                    Level::Warn,
-                    format!("delegated:chief: {chief} errored ({e}); asking you instead"),
-                );
-                self.digest.count(crate::digest::Which::ChiefFallback);
-                self.decision(item, "delegated", "ask", "the chief errored", 0);
-                return Chief::Fallback;
-            }
-            Err(_) => {
-                self.notice(
-                    Level::Warn,
-                    format!("delegated:chief: {chief} didn't answer in {timeout}s; asking you instead"),
-                );
-                self.digest.count(crate::digest::Which::ChiefFallback);
-                self.decision(item, "delegated", "ask", "the chief didn't answer", 0);
-                return Chief::Fallback;
-            }
-        };
-        let parsed = crate::delegation::parse_reply(&reply.unwrap_or(Value::Null));
-        let Some((allowed, note)) = parsed else {
-            self.notice(
-                Level::Warn,
-                format!("delegated:chief: {chief}'s answer was unreadable; asking you instead"),
-            );
-            self.digest.count(crate::digest::Which::ChiefFallback);
-            self.decision(item, "delegated", "ask", "the chief's answer was unreadable", 0);
-            return Chief::Fallback;
-        };
         self.timing.user_ms += ms(waited.elapsed());
+        let reply = match answer {
+            Ok(Ok(Ok(r))) => r,
+            Ok(Ok(Err(e))) => return self.chief_fallback(item, &format!("{chief}: {e}")),
+            Ok(Err(_)) => return self.chief_fallback(item, "the broker went away"),
+            Err(_) => {
+                return self.chief_fallback(item, &format!("{chief} didn't answer in {timeout}s"));
+            }
+        };
+        let Some((allowed, note)) = crate::delegation::parse_reply(&reply) else {
+            return self.chief_fallback(item, &format!("{chief}'s answer was unreadable"));
+        };
+        let note = note.map(|n| format!(" ({n})")).unwrap_or_default();
         if allowed {
             self.digest.count(crate::digest::Which::DelegatedChief);
-            let why = match &note {
-                Some(n) => format!("{chief} approved it ({n})"),
-                None => format!("{chief} approved it"),
-            };
-            self.notice(Level::Info, format!("delegated:chief: {why} — `{name} {arg}`"));
+            let why = format!("{chief} approved it{note} [{class}]");
+            self.notice(
+                Level::Info,
+                format!("delegated:chief: `{name} {arg}` — approved by {chief}{note}"),
+            );
             self.decision(item, "delegated", "allow", &why, 0);
             Chief::Decided(Decision::Allow)
         } else {
             self.digest.count(crate::digest::Which::Blocked);
-            let why = match &note {
-                Some(n) => format!("{chief} declined it ({n})"),
-                None => format!("{chief} declined it"),
-            };
-            self.notice(Level::Warn, format!("delegated:chief: {why} — `{name} {arg}`"));
-            self.decision(item, "delegated", "deny", &why, 0);
-            self.record_denial(
-                call_hash(name, input),
-                format!("the chief declined: {why}"),
+            let why = format!("{chief} declined it{note} [{class}]");
+            self.notice(
+                Level::Warn,
+                format!("delegated:chief: `{name} {arg}` — declined by {chief}{note}"),
             );
+            self.decision(item, "delegated", "deny", &why, 0);
+            self.record_denial(call_hash(name, input), format!("the chief declined: {why}"));
             self.last_note = Some(why);
             Chief::Decided(Decision::Deny)
         }
+    }
+
+    /// The chief couldn't take a delegated call: count it, audit it, card the user.
+    fn chief_fallback(&mut self, item: &str, why: &str) -> Chief {
+        self.digest.count(crate::digest::Which::ChiefFallback);
+        self.notice(Level::Warn, format!("delegated:chief: fell back to the user ({why})"));
+        self.decision(item, "delegated", "ask", &format!("delegation fell back to the user: {why}"), 0);
+        Chief::Fallback
     }
 
     /// The day's single digest notice, at the first card after midnight.
@@ -12269,8 +12255,49 @@ for line in sys.stdin:
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
         assert!(evs.iter().any(|e| matches!(&e.event,
-            Event::Notice { message, .. } if message.contains("delegated:chief") && message.contains("asking you instead"))));
+            Event::Notice { message, .. } if message.contains("delegated:chief: fell back to the user") && message.contains("chief folder is gone"))));
         assert!(layers(&evs, "ssh").contains(&("delegated".into(), "ask".into())));
+    }
+
+    /// A chief that never answers: after `chief_timeout_secs` the card falls back to the
+    /// user; a broker-shaped JSON answer (`ResolveDelegated`) is honored, note and all.
+    #[tokio::test]
+    async fn silent_chief_times_out_to_a_card_and_json_answers_are_honored() {
+        for (tag, answer) in [("silent", None), ("json", Some(json!({"decision": "allow", "note": "its pod"})))] {
+            let dir = scratch_path(&format!("chief-{tag}"));
+            crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
+            crate::auto::script_rejudge(&dir.display().to_string(), crate::auto::Verdict::Ask("still flagged".into()));
+            let script = vec![
+                bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+                reply(vec![text("done")], Stop::End),
+            ];
+            let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+            cfg.delegation.chief = vec!["chief".into()];
+            cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+            cfg.delegation.chief_timeout_secs = 1;
+            let mut h = engine_deleg(script, Some(cfg));
+            caps(&h, true);
+            let ops = h.ops.clone();
+            let evs = loop_collect(&mut h, |id, tool| {
+                if let (Some(a), "DelegateApproval") = (&answer, tool) {
+                    ops.send(Op::SessionReply { id: id.to_string(), result: Some(a.clone()), error: None }).unwrap();
+                }
+            })
+            .await;
+            shutdown(h).await;
+            if answer.is_none() {
+                assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
+                assert!(evs.iter().any(|e| matches!(&e.event,
+                    Event::Notice { message, .. } if message.contains("didn't answer in 1s"))));
+            } else {
+                assert_eq!(asked(&evs), 0, "{:?}", names(&evs));
+                let why = evs.iter().find_map(|e| match &e.event {
+                    Event::PermissionDecision { layer, reason, .. } if layer == "delegated" => Some(reason.clone()),
+                    _ => None,
+                });
+                assert_eq!(why.as_deref(), Some("chief approved it (its pod) [ssh-scratch]"));
+            }
+        }
     }
 
     /// Chief declines: the call is denied without ever reaching the user's card queue.

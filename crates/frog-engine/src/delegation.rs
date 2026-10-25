@@ -423,11 +423,18 @@ mod tests {
 pub fn parse_reply(reply: &Value) -> Option<(bool, Option<String>)> {
     let text = match reply {
         Value::String(s) => s.clone(),
-        Value::Object(o) => o
-            .get("decision")
-            .and_then(|d| d.as_str())
-            .map(String::from)
-            .or_else(|| o.get("text").and_then(|t| t.as_str()).map(String::from))?,
+        Value::Object(o) => {
+            let field = |k: &str| o.get(k).and_then(|v| v.as_str()).map(str::trim);
+            if let Some(d) = field("decision") {
+                let note = field("note").filter(|n| !n.is_empty()).map(String::from);
+                return match d.to_ascii_lowercase().as_str() {
+                    "allow" | "approve" => Some((true, note)),
+                    "deny" | "decline" => Some((false, note)),
+                    _ => None,
+                };
+            }
+            field("text")?.to_string()
+        }
         _ => return None,
     };
     let lowered = text.trim().to_ascii_lowercase();
@@ -448,4 +455,24 @@ pub fn parse_reply(reply: &Value) -> Option<(bool, Option<String>)> {
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty());
     Some((yes, note))
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn chief_replies_parse_as_text_or_json() {
+        assert_eq!(parse_reply(&json!("approve — infra")), Some((true, Some("— infra".into()))));
+        assert_eq!(parse_reply(&json!("deny")), Some((false, None)));
+        assert_eq!(
+            parse_reply(&json!({"decision": "allow", "note": "its own pod"})),
+            Some((true, Some("its own pod".into())))
+        );
+        assert_eq!(parse_reply(&json!({"decision": "deny"})), Some((false, None)));
+        assert_eq!(parse_reply(&json!({"decision": "maybe"})), None);
+        assert_eq!(parse_reply(&json!("sure, why not?")), None);
+        assert_eq!(parse_reply(&Value::Null), None);
+    }
 }
