@@ -112,9 +112,11 @@ svg.face{flex:none}
 </defs></svg>
 <div class="page">
 <div class="switch"><button onclick="var h=location.href.split('?')[0];location.href=h+(document.body.classList.contains('light')?'':'?t=light')">flip theme · t</button></div>
-<script>addEventListener('keydown',e=>{if(e.key==='t'){location.href=location.href.split('?')[0]+(document.body.classList.contains('light')?'':'?t=light')}});if(new URLSearchParams(location.search).get('t')==='light')document.body.classList.add('light');</script>
+<script>addEventListener('keydown',e=>{if(e.key==='t'){location.href=location.href.split('?')[0]+(document.body.classList.contains('light')?'':'?t=light')}});if(new URLSearchParams(location.search).get('t')==='light')document.body.classList.add('light');
+const only=new URLSearchParams(location.search).get('only');
+if(only){for(const el of document.querySelectorAll('.sect')){const show=el.id===only;let n=el.nextElementSibling;el.style.display=show?'':'none';while(n&&!n.classList.contains('sect')){n.style.display=show?'':'none';n=n.nextElementSibling}}document.querySelector('.switch').style.display='none'}</script>
 
-<div class="sect">state 1 · signed out <small>no key anywhere. nothing calls the network until a click.</small></div>
+<div class="sect" id="s1">state 1 · signed out <small>no key anywhere. nothing calls the network until a click.</small></div>
 <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">Models</span></div>
 <div class="form">
 <div class="hdr dim">This Mac <small>powered by tang</small></div>
@@ -133,7 +135,7 @@ svg.face{flex:none}
 </div></div>
 <div class="note"><b>⋯</b> holds: sign in with email · use an API key… · get an API key on the web. the key paste never disappears, it just steps back.</div>
 
-<div class="sect">1b · email sub-state <small>"use email instead" grows one line.</small></div>
+<div class="sect" id="s1b">1b · email sub-state <small>"use email instead" grows one line.</small></div>
 <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">Models</span></div>
 <div class="form">
 <div class="hdr dim">This Mac <small>powered by tang</small></div>
@@ -150,7 +152,7 @@ svg.face{flex:none}
 </div></div>
 <div class="note">sent state: <b>check your email: we sent a link to cam@muni.works. open it on any device.</b> · change · resend (disabled 30 s). the card polls and joins the flow at "setting up this Mac…".</div>
 
-<div class="sect">state 2 · signing in <small>system sheet over settings; the card never loses its place.</small></div>
+<div class="sect" id="s2">state 2 · signing in <small>system sheet over settings; the card never loses its place.</small></div>
 <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">Models</span></div>
 <div class="form">
 <div class="hdr dim">This Mac <small>powered by tang</small></div>
@@ -171,7 +173,7 @@ svg.face{flex:none}
 </div>
 <div class="note">on return, one beat: face <b>.thinking</b>, "setting up this Mac…" (exchange, keychain write, first /me — under 1 s), then face <b>.done</b> + one hop, ribbit, and for 4 s: <b>signed in · cloud/dart is ready</b>.</div>
 
-<div class="sect">state 3 · signed in <small>the account card. no button — a signed-in card has nothing to ask.</small></div>
+<div class="sect" id="s3">state 3 · signed in <small>the account card. no button — a signed-in card has nothing to ask.</small></div>
 <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">Models</span></div>
 <div class="form">
 <div class="hdr dim">This Mac <small>powered by tang</small></div>
@@ -192,7 +194,7 @@ svg.face{flex:none}
 </div></div>
 <div class="note">credits are <b>tasks left</b>, not dollars — the price of the product is a finished task. plan badge lowercase. ⋯: manage on frog.toys · sign out (no dialog). beta reads <b>16 beta tasks left</b>, api has the text only, no meter.</div>
 
-<div class="sect">state 4 · credit running low <small>the one place frog asks for money. contextual, once.</small></div>
+<div class="sect" id="s4">state 4 · credit running low <small>the one place frog asks for money. contextual, once.</small></div>
 <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">Models</span></div>
 <div class="form">
 <div class="hdr">Cloud</div>
@@ -215,7 +217,7 @@ svg.face{flex:none}
 </div>
 <div class="note">low = under 2 days at this week's pace, or under 10% left, whichever first — and never above $5, so heavy users aren't nagged. shown once per credit period, in the conversation that spent it. at zero nothing breaks: the turn falls back to this mac and the line reads <b>out of frog cloud credit, so this ran on this Mac.</b></div>
 
-<div class="sect">state 5 · legacy invite key <small>beta users who pasted a frog_ key before sign-in existed. they lose nothing by ignoring this.</small></div>
+<div class="sect" id="s5">state 5 · legacy invite key <small>beta users who pasted a frog_ key before sign-in existed. they lose nothing by ignoring this.</small></div>
 <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">Models</span></div>
 <div class="form">
 <div class="hdr">Cloud</div>
@@ -232,7 +234,7 @@ svg.face{flex:none}
 </div></div>
 <div class="note">key keeps working forever, signed in or not. signing in mints a new key, moves the credit with one <b>claim</b> call, and only then swaps the keychain item — no turn ever runs without a working key. success beat: <b>signed in · your beta credit came with you</b>. no nagging anywhere else.</div>
 
-<div class="sect">errors <small>what happened + the way out, one line, face .sad for a beat.</small></div>
+<div class="sect" id="err">errors <small>what happened + the way out, one line, face .sad for a beat.</small></div>
 <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">Models</span></div>
 <div class="form">
 <div class="hdr">Cloud</div>
@@ -253,7 +255,7 @@ svg.face{flex:none}
 </div></div>
 <div class="note">cancelling the sheet isn't an error — the card just returns to state 1. nothing ever deletes a working key on an error. a failed /me never reads "signed out": values dim with <b>updated 2 h ago</b>.</div>
 
-<div class="sect">cli parity · frog login <small>device flow, one line rewritten in place. the key is never printed.</small></div>
+<div class="sect" id="cli">cli parity · frog login <small>device flow, one line rewritten in place. the key is never printed.</small></div>
 <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">frog — cli</span></div>
 <div style="padding:18px 22px;font:12px/1.9 ui-monospace,'SF Mono',Menlo,monospace;color:var(--text)">
 <div style="color:var(--faint)">$ frog login</div>
@@ -266,7 +268,7 @@ svg.face{flex:none}
 </div>
 <div class="note">over ssh the browser doesn't open: <b>open frog.toys/link and enter WDJB-MJHT · waiting</b>. 8 letters, no vowels or look-alikes. the page asks "is this the code in your terminal?" before approving.</div>
 
-<div class="sect">the picker moment <small>the second place sign-in is offered (with the card, the only two).</small></div>
+<div class="sect" id="picker">the picker moment <small>the second place sign-in is offered (with the card, the only two).</small></div>
 <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">ledger</span></div>
 <div style="padding:16px 22px">
 <div style="font-size:11px;color:var(--faint);margin:0 2px 6px">frog cloud</div>
