@@ -124,3 +124,42 @@ The endpoint is owned by the zest share-link edge work (frog.toys/s). This spec 
 3. Anonymous uploads allowed (signing in adds a list of your replays; it never unlocks the link).
 4. Size limit and retention for bundles, and the takedown page state.
 5. A receipts view (`#receipts`, `#c<sha7>`) rendering the commits and check records in the bundle.
+
+## 3. Receipts
+
+Every commit on a frog branch says who certified it and which session made it:
+
+```
+fix(engine): retry mid-stream gateway errors, not just pre-stream HTTP failures
+
+Signed-off-by: Cam Pedersen <cam@campedersen.com>
+Co-authored-by: engine retry loop <engine-retry-loop@frog.local>
+```
+
+### 3.1 DCO
+- `git commit -s`, as today: CONTRIBUTING.md ("Sign off each commit to certify you wrote it") and `.github/workflows/dco.yml` already enforce a `Signed-off-by` on every non-merge commit of each PR. The sign-off is the git user's — a person. A model can't certify the DCO; the person running frog in their repo with their identity does.
+- frog never writes a `Signed-off-by` naming a worker or a model.
+
+### 3.2 Co-authored-by, from frog's session structure
+
+One trailer per frog session that made the commit:
+
+```
+Co-authored-by: <session name> <<session-slug>@frog.local>
+```
+
+- Name: the session title ("engine retry loop"). Slug: title lowercased, non-alphanumerics → `-`. Distinct per-worker emails keep GitHub from collapsing co-authors into one; `frog.local` matches no GitHub account, so the name shows without an avatar — the name is the credit.
+- Commits made by a person directly in the worktree get no trailer.
+- A session that makes several commits (the example session made three checkpoints across turns, one final commit) carries the same trailer on each.
+
+**Gap: frog doesn't record which session made which commit.** Verified today:
+- `Header.forked_from { session, seq }` (crates/frog-engine/src/session.rs:56) ties a fork to its parent, and the app resolves parents through `Library.parents` / Sidebar's `home(_:)` walk — but nothing maps commits to sessions.
+- No `Co-authored-by` trailer exists in frog's history (checked recent commits; only `Signed-off-by`).
+- pr-lifecycle §5 gives a session content ownership of its PR body, which only weakly binds branch → session.
+
+**Fix (two parts, minimal):**
+1. **Record it.** After each Bash call, the engine diffs `git rev-parse HEAD` before/after in `ctx.cwd`; new commits become a durable record (new `Event::Committed { shas }`, or reuse the `Checkpoint` mechanism's turn pinning). `forge::body` builds §1.2 from these records; branch-name attribution is the fallback for older sessions and human commits.
+2. **Write the trailer at commit time.** The Bash tool sets `FROG_SESSION_NAME`/`FROG_SESSION_SLUG` in the child environment and points git at frog's hook dir via env-scoped `GIT_CONFIG_COUNT`/`core.hooksPath` — nothing is written into the repo. frog's `prepare-commit-msg` runs the repo's own hook first (repo-configured `core.hooksPath` or `.git/hooks`), then appends the trailer with `git interpret-trailers --if-exists doNothing`; other hook names pass through untouched. Escape hatch `pr.trailers = false` disables trailers without breaking §1.2 (records still credit the body). frog never rewrites existing commits to add trailers.
+
+### 3.3 Merges keep receipts
+- pr-lifecycle's queue merges with `expect_head` and the repo's merge method; on frog's repos the squash-merge default collapses per-commit trailers into the squash message — GitHub's squash carries the squashed commits' co-author trailers, but the per-commit sign-offs become the DCO bot's pre-merge concern. Confirm behavior on a scratch repo before relying on it (§5 gaps). A rebase-style merge preserves everything.
