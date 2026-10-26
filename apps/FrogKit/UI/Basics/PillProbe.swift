@@ -44,4 +44,12 @@ enum PillProbe {
     @discardableResult static func label() -> Int { labelBodies += 1; return labelBodies }
     @discardableResult static func tick() -> Int { clockTicks += 1; return clockTicks }
 }
+#else
+/// Release builds: the views reference `PillChurn` unconditionally, so it has to exist —
+/// with the benchmark knobs off (the churn they measure is a DEBUG-instrumentation artifact).
+@MainActor
+enum PillChurn {
+    static let noFrog = false
+    static let noSweep = false
+}
 #endif
