@@ -371,7 +371,8 @@ struct TypingBubble: View {
     var body: some View {
         let live = writing && !settled
         HStack(alignment: .top, spacing: 8) {
-            FrogFace(mood: .idle, size: 14)
+            // Every finished message is this view too: its hidden frog mustn't keep ticking.
+            FrogFace(mood: .idle, size: 14, animating: live)
                 .padding(.top, 4)
                 .opacity(live ? 1 : 0)
                 .frame(width: live ? 14 : 0)

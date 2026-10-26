@@ -16,6 +16,8 @@ struct FrogFace: View {
     var size: CGFloat = 16
     /// Bump to make the frog hop once, whatever its mood.
     var hop: Int = 0
+    /// Off, the frog holds its pose and nothing ticks (a hidden frog's loop still redraws).
+    var animating = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// When the current mood began; its loop starts from frame 0 here.
@@ -24,7 +26,7 @@ struct FrogFace: View {
     @State private var hopped: Date?
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion || !animating)) { timeline in
             let pose = FrogPose(
                 mood: mood,
                 t: reduceMotion ? 0 : timeline.date.timeIntervalSince(since),
