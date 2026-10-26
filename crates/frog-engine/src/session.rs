@@ -54,6 +54,9 @@ pub struct Header {
     pub created: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<ForkPoint>,
+    /// An agent started it (`--worker`): a resume keeps its worker egress policy.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub worker: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -640,6 +643,8 @@ pub fn fork(dir: &Path, id: &str, upto: Option<u64>) -> Result<String> {
             session: id.to_string(),
             seq: last_seq,
         }),
+        // A fork of an agent's session is still an agent's.
+        worker: src.worker,
     };
     let mut log = Log::create(dir, header)?;
     for r in kept {
@@ -676,6 +681,7 @@ mod tests {
             model: "m".into(),
             created: 0,
             forked_from: None,
+            worker: false,
         }
     }
 

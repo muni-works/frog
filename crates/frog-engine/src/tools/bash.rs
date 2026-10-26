@@ -21,6 +21,7 @@ over cat/sed/find/grep. Avoid interactive commands; they will hang until the tim
     if available() {
         description.push_str(" Commands run in a sandbox: they can write only inside the project (and, in a git worktree, its git dirs so commit works), temp folders, toolchain caches and paths the user configured, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works; swift builds get SwiftPM's inner sandbox disabled (frog's is the boundary), and read-only git commands can go over https to GitHub when configured. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
         props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox. Asks the user first; use only when the sandbox blocked something the task needs." });
+        props["allow_hosts"] = json!({ "type": "array", "items": { "type": "string" }, "description": "Hosts beyond the session's network allow-list this command needs. Asks the user first; only after a connection was blocked." });
     }
     ToolSpec {
         name: "Bash".into(),
@@ -151,7 +152,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "{{\n{cmd}\n}} 2>&1\n__frog_ec=$?\npwd -P > '{}'\nexit $__frog_ec",
         cwd_file.display()
     );
-    let (mut command, jail) = shell(input, ctx)?;
+    let (mut command, jail, egress) = shell_call(input, ctx)?;
     let mut child = command
         .arg(&script)
         // Colors for the human watching; they're stripped before the model sees the output.
@@ -237,6 +238,9 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             text
         }
     };
+    if let Some(call) = &egress {
+        egress_note(call, ctx, &mut raw);
+    }
     if jail.is_some() && blocked(&raw) {
         raw.push_str("\n(This ran in frog's sandbox, which allows writes only inside the project, temp folders and toolchain caches, and hides credentials. If the command genuinely needs more, run it again with unsandboxed: true; the user will be asked.)");
     }
@@ -259,6 +263,19 @@ pub fn shell(
     input: &Value,
     ctx: &Ctx,
 ) -> Result<(tokio::process::Command, Option<std::path::PathBuf>)> {
+    shell_call(input, ctx).map(|(command, jail, _)| (command, jail))
+}
+
+/// [`shell`], plus the command's registration with the egress proxy when the session has an
+/// allow-list, to read what it tried to reach.
+pub fn shell_call(
+    input: &Value,
+    ctx: &Ctx,
+) -> Result<(
+    tokio::process::Command,
+    Option<std::path::PathBuf>,
+    Option<std::sync::Arc<crate::egress::Call>>,
+)> {
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| s.ends_with("zsh") || s.ends_with("bash"))
@@ -270,13 +287,59 @@ pub fn shell(
         .sandbox
         .clone()
         .or_else(|| (!unsandboxed).then(|| ctx.shell_sandbox.clone()).flatten());
+    // The egress allow-list binds sandboxed commands only: an approved `unsandboxed` call is
+    // the user's own grant past it.
+    let egress = ctx
+        .egress
+        .as_ref()
+        .filter(|e| jail.is_some() && e.active());
+    let enforce = egress.is_some_and(|e| e.enforced()) && cfg!(target_os = "macos");
+    let enforced_extra;
+    let extra = if enforce {
+        enforced_extra = SandboxConfig {
+            network: Some("egress".into()),
+            ..ctx.sandbox_extra.clone()
+        };
+        &enforced_extra
+    } else {
+        &ctx.sandbox_extra
+    };
     let mut command = match &jail {
         None => tokio::process::Command::new(shell),
         // Git's write dirs follow the session's checkout, not the shell's current directory:
         // a `cd` into another checkout doesn't open its refs and objects for writing.
-        Some(root) => sandboxed(root, &shell, &ctx.sandbox_extra, &git_dirs(&ctx.root))?,
+        Some(root) => sandboxed(root, &shell, extra, &git_dirs(&ctx.root))?,
     };
+    let cmd = input["command"].as_str().unwrap_or("");
+    let mut call = None;
+    if let Some(e) = egress {
+        let tool = if input.get("until_regex").is_some() || input.get("until_exit").is_some() {
+            crate::background::MONITOR
+        } else {
+            "Bash"
+        };
+        // Hosts the user allowed for this one command (its approval card).
+        let extra_hosts = e.take_once(cmd);
+        let Some((url, c)) = crate::egress::register(e, tool, cmd, extra_hosts) else {
+            bail!("frog's network allow-list proxy couldn't start, so sandboxed commands can't run");
+        };
+        for k in [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            command.env(k, &url);
+        }
+        command
+            .env("NO_PROXY", "localhost,127.0.0.1,::1")
+            .env("no_proxy", "localhost,127.0.0.1,::1");
+        call = Some(c);
+    }
     if jail.is_some()
+        && egress.is_none()
         && cfg!(target_os = "macos")
         && ctx.sandbox_extra.network.as_deref() == Some("dev")
     {
@@ -292,7 +355,6 @@ pub fn shell(
     // (GIT_CONFIG_* env; no file is touched), and gh's credential helper supplies auth — no
     // keys ever readable. Only for read subcommands with no `push` in the command: a push
     // stays an approval, and `url.insteadOf` would redirect its URL too.
-    let cmd = input["command"].as_str().unwrap_or("");
     if jail.is_some() && ctx.sandbox_extra.git_https && git_https_applies(cmd) {
         command
             .env("GIT_CONFIG_COUNT", "2")
@@ -307,7 +369,40 @@ pub fn shell(
         .env("PAGER", "cat")
         .env("GIT_PAGER", "cat")
         .env("FROG", "1");
-    Ok((command, jail))
+    Ok((command, jail, call))
+}
+
+/// After an allow-list command: name the hosts a client that ignored the proxy couldn't
+/// resolve (the sandbox denies DNS), and tell the model what was blocked and how to ask.
+fn egress_note(call: &crate::egress::Call, ctx: &Ctx, raw: &mut String) {
+    let enforced = ctx.egress.as_ref().is_some_and(|e| e.enforced());
+    if !enforced {
+        return;
+    }
+    let seen: Vec<String> = call.hits().into_iter().map(|h| h.host).collect();
+    for host in crate::egress::unresolved(raw) {
+        if !seen.contains(&host) && !ctx.egress.as_ref().is_some_and(|e| e.allows(&host)) {
+            call.record(&host, 0);
+        }
+    }
+    let mut hosts: Vec<String> = Vec::new();
+    for h in call.hits() {
+        if !hosts.contains(&h.host) {
+            hosts.push(h.host);
+        }
+    }
+    if hosts.is_empty() {
+        return;
+    }
+    let list = hosts
+        .iter()
+        .map(|h| format!("\"{h}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    raw.push_str(&format!(
+        "\n(frog blocked network access to {}: not on this session's allow-list. The attempt is logged and shown to the user. If the task genuinely needs it, run the command again with allow_hosts: [{list}]; the user will be asked.)",
+        hosts.join(", ")
+    ));
 }
 
 /// Output that looks like the sandbox got in the way.
@@ -750,11 +845,23 @@ fn seatbelt(
         .iter()
         .map(|p| format!("\n  (subpath \"{}\")", quote(p)))
         .collect();
-    let network = if extra.network.as_deref() == Some("dev") {
-        "\n(deny network-outbound)\n(allow network-outbound (remote ip \"localhost:*\"))"
-            .to_string()
-    } else {
-        String::new()
+    let network = match extra.network.as_deref() {
+        Some("dev") => {
+            "\n(deny network-outbound)\n(allow network-outbound (remote ip \"localhost:*\"))"
+                .to_string()
+        }
+        // The egress allow-list: nothing leaves but through the localhost proxy, which
+        // decides by name. Local unix sockets keep working (build daemons, agents), except
+        // mDNSResponder's: with it, any lookup (`dig`, `getaddrinfo`) would still reach DNS,
+        // which carries data out on its own.
+        Some("egress") => concat!(
+            "\n(deny network-outbound)",
+            "\n(allow network-outbound (remote ip \"localhost:*\"))",
+            "\n(allow network-outbound (remote unix-socket))",
+            "\n(deny network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))"
+        )
+        .to_string(),
+        _ => String::new(),
     };
     let profile = format!(
         r#"(version 1)
@@ -973,6 +1080,112 @@ mod tests {
         .await
         .unwrap();
         assert!(!out.content.contains("rc=0"), "{}", out.content);
+    }
+
+    fn egress_ctx(ws: &std::path::Path, mode: crate::egress::Mode, allow: &[&str]) -> Ctx {
+        let mut ctx = Ctx::new(ws.to_path_buf());
+        ctx.shell_sandbox = Some(ws.canonicalize().unwrap());
+        let mut cfg = crate::config::Config {
+            hermetic: true,
+            worker: true,
+            ..Default::default()
+        };
+        cfg.egress.workers_deny_by_default = mode == crate::egress::Mode::Enforce;
+        cfg.egress.interactive = mode;
+        cfg.worker = mode == crate::egress::Mode::Enforce;
+        cfg.egress.allow = allow.iter().map(|s| s.to_string()).collect();
+        ctx.egress = crate::egress::for_session(&cfg, ws);
+        ctx
+    }
+
+    /// Under an enforced list: a listed host goes through the proxy (plain http, to a local
+    /// server, so no network is needed); a client that ignores the proxy can't even resolve,
+    /// and the host it tried is still named; DNS itself is closed.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn egress_passes_listed_hosts_and_names_proxy_dodgers() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let ws = std::env::temp_dir().join(format!("frog-eg-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut s, _) = server.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let n = s.read(&mut buf).await.unwrap();
+            let head = String::from_utf8_lossy(&buf[..n]).to_string();
+            let ok = !head.to_ascii_lowercase().contains("proxy-authorization");
+            let body = if ok { "listed-ok" } else { "leaked-token" };
+            s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes())
+                .await
+                .unwrap();
+        });
+        let mut ctx = egress_ctx(&ws, crate::egress::Mode::Enforce, &["localhost"]);
+        // `--noproxy ''` overrides NO_PROXY so localhost goes through the proxy too.
+        let out = run(
+            &json!({ "command": format!("curl -sS -m 5 --noproxy '' http://localhost:{port}/x") }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(out.content.contains("listed-ok"), "{}", out.content);
+        let out = run(
+            &json!({ "command": "curl -sS -m 5 --noproxy '*' https://oss-cn-beijing.aliyuncs.com/ ; python3 -c \"import socket; socket.getaddrinfo('dns-exfil.example.com', 53)\" 2>&1 | tail -1; echo rc=$?" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(out.content.contains("Could not resolve host"), "{}", out.content);
+        assert!(out.content.contains("gaierror"), "DNS is closed: {}", out.content);
+        assert!(out.content.contains("allow_hosts: [\"oss-cn-beijing.aliyuncs.com\"]"), "{}", out.content);
+        let hits = ctx.egress.as_ref().unwrap().drain();
+        assert!(
+            hits.iter().any(|h| h.host == "oss-cn-beijing.aliyuncs.com" && h.port == 0),
+            "{hits:?}"
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// The everyday tools through the real network under an enforced list: git, curl and
+    /// python reach the listed hosts. Needs the network, so run by hand (`--ignored`).
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore]
+    async fn egress_listed_hosts_work_over_the_network() {
+        let ws = std::env::temp_dir().join(format!("frog-egn-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = egress_ctx(&ws, crate::egress::Mode::Enforce, &[]);
+        let out = run(
+            &json!({ "command": "git ls-remote https://github.com/octocat/Hello-World HEAD | cut -c1-7 && curl -sS -o /dev/null -w 'crates=%{http_code}\\n' https://index.crates.io/config.json && python3 -c \"import urllib.request as u; print('pypi', u.urlopen('https://pypi.org/simple/', timeout=10).status)\" && curl -sS -m 5 https://example.com/ ; echo rc=$?" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(out.content.contains("crates=200"), "{}", out.content);
+        assert!(out.content.contains("pypi 200"), "{}", out.content);
+        assert!(out.content.contains("frog blocked network access to example.com"), "{}", out.content);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// `flag` records an off-list host but doesn't block it (and the profile stays open).
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn egress_flag_mode_records_without_blocking() {
+        let ws = std::env::temp_dir().join(format!("frog-egf-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = egress_ctx(&ws, crate::egress::Mode::Flag, &[]);
+        let out = run(
+            &json!({ "command": "curl -sS -m 5 -o /dev/null https://unlisted.invalid/ ; echo rc=$?" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(!out.content.contains("frog blocked"), "{}", out.content);
+        assert!(!out.content.contains("403"), "{}", out.content);
+        let hits = ctx.egress.as_ref().unwrap().drain();
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].host == "unlisted.invalid" && !hits[0].enforced);
+        let _ = std::fs::remove_dir_all(&ws);
     }
 
     #[tokio::test]

@@ -441,6 +441,7 @@ mod tests {
             model: "m".into(),
             created: 0,
             forked_from: None,
+            worker: false,
         };
         let mut log = Log::create(&dir, header).unwrap();
         let env = |seq, event| Record::Event { env: Envelope { seq, session: "c".into(), created: 0, event } };

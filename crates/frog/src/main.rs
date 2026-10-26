@@ -69,6 +69,10 @@ struct Cli {
     /// Don't sandbox shell commands; every command asks instead (unless allowed or --yolo).
     #[arg(long)]
     no_shell_sandbox: bool,
+    /// This session is an agent's (the app passes it for `StartSession`): its shell commands
+    /// reach only the `[egress]` allow-list unless `workers_deny_by_default = false`.
+    #[arg(long)]
+    worker: bool,
     /// Measure each turn's energy from the Mac's power sensor, and report it with the turn.
     #[arg(long)]
     energy: bool,
@@ -279,6 +283,7 @@ async fn run() -> Result<bool> {
     if cli.no_shell_sandbox {
         cfg.sandbox_shell = false;
     }
+    cfg.worker |= cli.worker;
     if cli.models {
         return list_models(&cfg, cli.json).await;
     }
