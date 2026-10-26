@@ -29,6 +29,8 @@ struct SessionList: View {
     /// Org (the attention tree) by default; the older project and date views stay a choice.
     @AppStorage("sidebarGroup") private var grouping = Grouping.org
     @AppStorage("sidebarSort") private var sort = Sort.activity
+    /// The tree's scope (Live · Today · All), per window like the grouping.
+    @AppStorage("sidebarScope") private var scope = AttentionTree.Scope.live
     @AppStorage("compactSidebar") private var compactSidebar = false
 
     /// How rows are grouped: by project folder (pins, folders, chats), by day, or not at all.
@@ -257,8 +259,6 @@ struct SessionList: View {
 
     // MARK: Attention tree
 
-    /// The tree's scope (Live · Today · All).
-    private var scope: AttentionTree.Scope { .live }
 
     /// The org tree as the sidebar draws it, and each fold head's older branch sessions.
     /// Shared with the quick-switch shortcuts (`WorkspaceView.sidebarOrder`), so ⌘1…9 count
@@ -319,15 +319,30 @@ struct SessionList: View {
                                    openDone: openDone, collapsed: collapsedParents)
         chiefTile
         if !built.layout.org.isEmpty {
-            treeLabel("Org")
+            treeLabel("Org") { scopePicker }
             treeEntries(built.layout.org, folds: built.folds)
         }
         if !built.layout.yours.isEmpty {
+            treeLabel("Yours") {
+                if built.layout.org.isEmpty { scopePicker }
+            }
             treeEntries(built.layout.yours, folds: built.folds)
         }
         if built.layout.org.isEmpty && built.layout.yours.isEmpty && library.chiefSession == nil {
             empty("No conversations yet")
         }
+    }
+
+    /// Live · Today · All: how much settled work the tree shows.
+    private var scopePicker: some View {
+        Picker("Scope", selection: $scope.animation(.snappy(duration: 0.2))) {
+            ForEach(AttentionTree.Scope.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.mini)
+        .fixedSize()
+        .help("Live: settled work folds away · Today: and what finished today · All: everything")
     }
 
     /// A section's small caps label, with an accessory (the scope switch) on the right.
