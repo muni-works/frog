@@ -179,6 +179,21 @@ No server is trusted by default. Each granted write runs without a card and is l
   macOS only (Linux stays open). Seatbelt can't match remote hosts, so it blocks all outbound except localhost, and frog runs a small local CONNECT proxy that only tunnels https (port 443) to those hosts; `HTTPS_PROXY`/`ALL_PROXY` point at it for sandboxed commands. Tools that ignore proxy variables, plain http and ssh get no network.
 
   The trade-off: anything you open is readable by every sandboxed command, including one a prompt injection wrote, and the network is open. `allow_keychain` is the broad one: it exposes every Keychain item that doesn't prompt, not just gh's.
+- **Egress allow-list:** sessions an agent starts (`StartSession`, marked `--worker`; their subagents too) reach only an allow-list of hosts from sandboxed commands; your own sessions stay open unless you ask:
+  ```toml
+  [egress]
+  allow = ["pkg.go.dev"]          # beyond the defaults; a domain covers its subdomains
+  defaults = true                 # github.com, githubusercontent.com, crates.io, pypi.org, pythonhosted.org, registry.npmjs.org, api.frog.toys, huggingface.co, hf.co
+  workers_deny_by_default = true  # agents' sessions enforce the list
+  interactive = "off"             # yours: "off", "flag" (record, don't block) or "enforce"
+  ```
+  Per project, in `~/.config/frog/egress.toml` (frog's config dir, which the sandbox can't write, so an agent can't widen its own list; the nearest folder decides):
+  ```toml
+  [projects."/Users/me/Developer/web"]
+  allow = ["registry.yarnpkg.com"]
+  mode = "enforce"                # optional: overrides worker/interactive here
+  ```
+  macOS only for now. Enforced, the seatbelt profile denies every outbound connection but localhost (DNS included) and `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` point at frog's allow-list proxy, so the check happens at connect time whatever the command looks like (compound commands, `python -c`). An attempt to any other host gets a 403, is logged to `~/.local/share/frog/egress.jsonl`, shows in the transcript as a warning row (`egress_blocked`), and counts in the brief and the morning notice. To get past it a command names the hosts (`allow_hosts: ["…"]`) or asks for `unsandboxed`; either always asks you, in every mode including auto and yolo. Allow covers that run; "always allow …" the rest of the session. Tools that ignore proxy variables (ssh, raw sockets, URLSession-based downloads such as SwiftPM registries) get no network at all.
 - **ssh to user hosts:** ssh can't verify host keys sandboxed (it can't read `~/.ssh/known_hosts`), so connections fail with `hostkeys_find_by_key_hostfile`. Agent sessions that need ssh to your hosts add just that file:
   ```toml
   [sandbox]
