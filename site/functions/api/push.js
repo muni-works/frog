@@ -1,54 +1,45 @@
 // POST /api/push: a Mac running frog asks for a push to a phone it's paired with. The APNs key
-// lives here (APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID), never in the app.
-const { validate, jwt, request, send } = require("./_apns.js");
+// lives here (APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID), never in the app. Callers identify with the
+// shared relay secret: `Authorization: Bearer <PUSH_RELAY_SECRET>` (the Mac reads the same value
+// from FROG_PUSH_SECRET; TODO: wire the Mac to send it, from the pairing secret or a setting).
+const { checkAuth, validate, jwt, request, send, rateLimit } = await import("./_apns.js");
 
 export async function onRequest(context) {
-  const { request } = context.env;
-  const url = new URL(request.url);
-  
-  if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: "POST only" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" }
-    });
+  const { request: req, env } = context;
+  const json = (status, body) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+  if (req.method !== "POST") return json(405, { error: "POST only" });
+
+  try {
+    checkAuth(req.headers.get("Authorization"), env.PUSH_RELAY_SECRET);
+  } catch (e) {
+    return json(e.status ?? 401, { error: e.message });
   }
-  
+
+  // 30 pushes a minute per secret (per isolate; see _apns.js).
+  if (!rateLimit("relay")) return json(429, { error: "too many pushes, slow down" });
+
   let p;
   try {
-    const body = await request.text();
+    const body = await req.text();
     p = validate(body ? JSON.parse(body) : {});
   } catch (e) {
-    return new Response(JSON.stringify({ error: e.message }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" }
-    });
+    return json(400, { error: e.message });
   }
-  
-  const key = context.env.APNS_KEY?.replace(/\\n/g, "\n");
-  if (!key || !context.env.APNS_KEY_ID || !context.env.APNS_TEAM_ID) {
-    return new Response(JSON.stringify({ error: "the relay has no APNs key yet" }), {
-      status: 503,
-      headers: { "Content-Type": "application/json" }
-    });
+
+  const key = env.APNS_KEY?.replace(/\\n/g, "\n");
+  if (!key || !env.APNS_KEY_ID || !env.APNS_TEAM_ID) {
+    return json(503, { error: "the relay has no APNs key yet" });
   }
-  
+
   try {
-    const auth = jwt({
-      key,
-      keyId: context.env.APNS_KEY_ID,
-      teamId: context.env.APNS_TEAM_ID
-    });
+    const auth = await jwt({ key, keyId: env.APNS_KEY_ID, teamId: env.APNS_TEAM_ID });
     const r = await send(request(p, auth));
     // 410: the phone deleted the app or turned pushes off; the Mac should forget it.
     const status = r.status === 200 ? 200 : r.status === 410 ? 410 : 502;
-    return new Response(JSON.stringify(r), {
-      status,
-      headers: { "Content-Type": "application/json" }
-    });
+    return json(status, r);
   } catch (e) {
-    return new Response(JSON.stringify({ error: "APNs unreachable" }), {
-      status: 502,
-      headers: { "Content-Type": "application/json" }
-    });
+    return json(502, { error: "APNs unreachable" });
   }
 }
