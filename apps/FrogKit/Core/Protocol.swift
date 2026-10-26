@@ -673,6 +673,9 @@ enum Event: Decodable, Sendable {
     case turnEnded(turn: UInt64, reason: EndReason, usage: TurnUsage)
     case itemStarted(id: String, kind: ItemKind)
     case itemCompleted(id: String, item: Item)
+    /// A one-line gist of a finished `Bash` call's command, written by a small side-model
+    /// in one batched call per turn flush. Live only; the raw command stays the truth.
+    case commandGisted(item: String, command: String, gist: String)
     /// A retried model call's partial items (message/reasoning that streamed before the
     /// stream failed); drop them from the turn.
     case itemsDiscarded(ids: [String])
@@ -767,6 +770,7 @@ extension Event {
         case images, more
         case stepsDone = "steps_done", jobs, jobLabels = "job_labels", inbox
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
+        case command, gist
         case running
         case status, summary, text, log, items, wakes
     }
@@ -790,6 +794,11 @@ extension Event {
             self = .itemStarted(id: try c.decode(String.self, forKey: .id), kind: try c.decode(ItemKind.self, forKey: .kind))
         case "item_completed":
             self = .itemCompleted(id: try c.decode(String.self, forKey: .id), item: try c.decode(Item.self, forKey: .item))
+        case "command_gisted":
+            self = .commandGisted(
+                item: try c.decode(String.self, forKey: .item),
+                command: try c.decode(String.self, forKey: .command),
+                gist: try c.decode(String.self, forKey: .gist))
         case "item_delta":
             self = .itemDelta(id: try c.decode(String.self, forKey: .id), delta: try c.decode(Delta.self, forKey: .delta))
         case "items_discarded":

@@ -752,6 +752,11 @@ final class Conversation {
                 }
             }
             if case .toolCall = item, isNews(env) { stepsDone += 1 }
+        case .commandGisted(_, let command, let gist):
+            // A finished shell command's one-line summary, written in one batched side-model
+            // call per turn flush (live only). Cached by command hash so identical rows share
+            // it and later turns reuse it; rows read the cache (an @Observable) and rebuild.
+            CommandGists.shared.record(command: command, gist: gist)
         case .itemsDiscarded(let ids):
             // A retried model call streamed a partial reply before the stream failed; drop it
             // so the re-run starts clean.

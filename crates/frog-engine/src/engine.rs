@@ -1271,6 +1271,9 @@ struct Agent {
     blocked: Option<String>,
     /// Context from `Op::Shell`, attached to the next message.
     pending: Vec<String>,
+    /// This turn's finished `Bash` calls (item id, command, output head) awaiting a gist,
+    /// flushed in one side-model call when the turn ends (see `gist`).
+    pending_gists: Vec<(String, String, String)>,
     shared: Arc<Shared>,
 }
 
@@ -1498,6 +1501,7 @@ impl Agent {
             warming: Default::default(),
             session_allow: HashSet::new(),
             pending: Vec::new(),
+            pending_gists: Vec::new(),
             shared,
         };
         if resumed {
@@ -1741,6 +1745,34 @@ impl Agent {
             if !title.is_empty() {
                 self.set_title(title);
             }
+        }
+    }
+
+    /// Write the turn's queued command gists in one batched side-model call, and emit one
+    /// [`Event::CommandGisted`] per item. The model call is bounded and best effort: any
+    /// trouble (no usable model, a timeout, an unreadable answer) silently leaves those rows
+    /// on the raw command — a gist is a display flourish, never worth failing over.
+    /// Duplicated commands across items get the same line, so the call stays one per
+    /// unique command, not one per row.
+    async fn flush_gists(&mut self) {
+        let pending = std::mem::take(&mut self.pending_gists);
+        if pending.is_empty() || self.subagent {
+            return;
+        }
+        let commands: Vec<crate::gist::Command> = pending
+            .iter()
+            .map(|(_, command, output)| crate::gist::Command { command, output })
+            .collect();
+        let gists = crate::gist::write(&self.cfg, &self.root, &commands).await;
+        for ((id, command, _), gist) in pending.iter().zip(gists) {
+            if gist.is_empty() {
+                continue;
+            }
+            self.emit(Event::CommandGisted {
+                item: id.clone(),
+                command: command.clone(),
+                gist,
+            });
         }
     }
 
@@ -2595,6 +2627,7 @@ impl Agent {
             }
             self.active_turn = None;
             self.shared.panes.set_in_turn(false);
+            self.flush_gists().await;
             self.end_turn(turn, reason);
             return Ok(());
         }
@@ -2606,6 +2639,7 @@ impl Agent {
         }
         self.active_turn = None;
         self.shared.panes.set_in_turn(false);
+        self.flush_gists().await;
         self.end_turn(turn, reason);
         Ok(())
     }
@@ -4056,6 +4090,18 @@ Don't repeat it. Change the arguments or try a different approach.",
                 }
             };
             let mut out = out;
+            // Captured before the item's parts move into its event: a shell command queued
+            // for a gist when it finished (see the queue after `ItemCompleted`).
+            let (is_bash, item_id, command, out_head) = if name == "Bash" {
+                (
+                    true,
+                    id.clone(),
+                    input["command"].as_str().unwrap_or("").to_string(),
+                    out.content.chars().take(400).collect(),
+                )
+            } else {
+                (false, String::new(), String::new(), String::new())
+            };
             // One result can't blow the window (and being the most recent, it would never be
             // pruned): clip anything larger than MAX_RESULT_SHARE of the window.
             let result_cap = self.result_cap();
@@ -4138,6 +4184,16 @@ Don't repeat it. Change the arguments or try a different approach.",
                     app: out.app,
                 },
             });
+            // Queue a gist for a finished shell command, written when the turn ends in one
+            // batched side-model call (see `flush_gists`). Skipped calls (not run) don't
+            // need one; the elided command tells that story.
+            if is_bash && outcome == ToolOutcome::Ok && executed {
+                self.pending_gists.push((
+                    item_id,
+                    command,
+                    out_head,
+                ));
+            }
         }
         if looping {
             let why = format!(

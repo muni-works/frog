@@ -239,10 +239,11 @@ struct ActivityStepRow: View {
                 withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    Text(ActivityWords.row(item))
+                    Text(rowTitle)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     outcome
+                    runningClock
                     Spacer(minLength: 8)
                     status
                 }
@@ -254,11 +255,50 @@ struct ActivityStepRow: View {
             if expanded {
                 detail.transition(.opacity)
             } else if !item.done, item.kind != .reasoning {
-                ToolDetail(name: name, item: item, expanded: false)
+                ToolDetail(name: name, item: item, expanded: false, root: conversation.folder.path)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
+    }
+
+    /// The row's words. A shell row running now says the intent ("Running git log…" from the
+    /// elided command) rather than the raw text; done, it reads as always ("Ran …"), with a
+    /// gist replacing the raw command when one arrived.
+    private var rowTitle: String {
+        guard name == "Bash" || name == "!" else { return ActivityWords.row(item) }
+        if !item.done {
+            let elided = CommandElision.elide(item.arg, from: conversation.folder.path)
+            return ActivityWords.isTest(item.arg) ? "Running the tests…" : "Running \(elided)…"
+        }
+        if let gist = CommandGists.shared.gist(for: item.arg) {
+            return gist
+        }
+        return "Ran \(CommandElision.elide(item.arg, from: conversation.folder.path))"
+    }
+
+    /// A running shell row's honest elapsed timer ("1m 40s"), counting while it runs, and a
+    /// subtle hint that output is streaming (its newest line), so a silent-looking wait
+    /// reads as live.
+    @ViewBuilder
+    private var runningClock: some View {
+        if !item.done, let since = item.startedAt {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                HStack(spacing: 6) {
+                    if !item.output.isEmpty {
+                        Image(systemName: "text.alignleft")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .help("Output is streaming")
+                    }
+                    Text(ActivityWords.duration(ctx.date.timeIntervalSince(since)))
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                }
+                .fixedSize()
+                .contentTransition(.opacity)
+            }
+        }
     }
 
     @ViewBuilder
@@ -278,7 +318,7 @@ struct ActivityStepRow: View {
                     ToolImages(images: item.displayImages, preview: !item.done)
                     if !item.done { Text("Approximate step preview").font(.caption).foregroundStyle(.secondary) }
                 }
-                ToolDetail(name: name, item: item)
+                ToolDetail(name: name, item: item, root: conversation.folder.path)
                 if let why = item.autoReason {
                     Label("Auto: \(why)", systemImage: "wand.and.sparkles")
                         .font(.caption)
