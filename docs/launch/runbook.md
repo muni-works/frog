@@ -24,7 +24,7 @@ doc, post, bench page, go/no-go), **frog mgr** (repo, release, install), **zest 
 | C6 | **Flip muni-works/frog to public** after go/no-go G1-G6 | Oct 29 PM | everything public |
 | C7 | Submit Show HN + first comment from Cam's account. Post on X | Oct 30 09:00 | launch |
 | C8 | Apple org enrollment (continuing; does not gate) | — | signed builds later |
-| C9 | **Publish the draft tang-llm release** on muni-works/tang (asset built locally, staged as draft) | Oct 28 | `frog setup`'s prebuilt path |
+| C9 | **Publish the draft tang-llm release** on muni-works/tang | **DONE Oct 26 (Cam)** — v0.1.0 published as a normal release (not prerelease/draft); verified: releases/latest → 200, 7,007,430 bytes, sha256 matches, `codesign -v` clean | `frog setup`'s prebuilt path |
 | opt | Novita key for a same-day h2h | Oct 28 | the bench page's §3 (else "not yet run") |
 
 ## T-minus
@@ -75,7 +75,7 @@ doc, post, bench page, go/no-go), **frog mgr** (repo, release, install), **zest 
 | G1 | export is clean | migration §3 grep gates + gitleaks = 0 findings. File count matches |
 | G2 | CI green on muni-works/frog main and muni-works/tang main | `gh run list -R muni-works/frog -b main -L 1`, same for tang |
 | G3 | install works from frog.toys | `curl -fsSL https://frog.toys/install.sh \| sh` on clean macOS arm64 + Ubuntu x86_64; `sha256` of the served script == `scripts/install.sh` at the tag |
-| G4 | first run works | clean Mac: `frog` → local model answers (tang-llm prebuilt fetched from the **published** draft release, checksum ok). `-m cloud/qwen3-coder-next` answers with a fresh account's key |
+| G4 | first run works | clean Mac: `frog` → local model answers (tang-llm prebuilt fetched from the **published** v0.1.0 — DONE: 200, sha verified). `-m cloud/qwen3-coder-next` answers with a fresh account's key |
 | G5 | frog cloud is ready | `/status?format=json` → `serving:true`, 2 nodes. Sign-in with GitHub (non-org account) + email link works. `/pricing` has no "coming soon". `/beta` points at `/auth`. A Stripe live charge succeeded. Kill switch rehearsed (T-2) |
 | G6 | every number in the post has a receipt | each `{{…}}` filled from bench.md with date + log link, or cut. No "#1"/"fastest" |
 | G7 | links resolve | every URL in beat1.md returns 200 (repo, tang demo script, kernel-verify.md, /docs, /status, frog.toys/bench) |
