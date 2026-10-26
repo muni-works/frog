@@ -275,8 +275,8 @@ struct CodeBlock: View {
                     .fixedSize(horizontal: true, vertical: true)
             }
         }
-        .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary, lineWidth: 0.5))
+        .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: TurnSpace.Card.radius))
+        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.quaternary, lineWidth: 0.5))
         .contextMenu {
             Button("Copy", systemImage: "doc.on.doc") { copy() }
             #if os(macOS)

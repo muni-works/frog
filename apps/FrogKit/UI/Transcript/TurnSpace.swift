@@ -44,8 +44,22 @@ enum TurnSpace {
         static let row: CGFloat = 8
         static let card: CGFloat = 10
         static let roomy: CGFloat = 12
-        /// A tool row's detail, indented under its title past the row's icon.
-        static let iconColumn: CGFloat = 26
+        /// A line's leading icon (tool rows, thoughts, event lines): one width for all of them,
+        /// so their titles line up down the column at `iconColumn`.
+        static let icon: CGFloat = 18
+        /// Where a line's title starts, and its detail is indented to: past the icon and its gap.
+        static let iconColumn: CGFloat = icon + row
+    }
+
+    /// Boxes in the column (code, diagrams, subagents, the plan, cards that need you): edges on
+    /// the column's edges, one corner, one inner padding, so what's inside any box starts at
+    /// the same place. Lines (activity, tool rows, notices, banners) aren't boxes: their content
+    /// sits on the column's edge, and a hover plate bleeds outward (see `linePlate`).
+    enum Card {
+        static let radius: CGFloat = 12
+        static let padding: CGFloat = Inset.roomy
+        /// A box inside a row or a card (a tool's output, a diff): a smaller corner.
+        static let nestedRadius: CGFloat = 8
     }
 
     /// The values for the density setting (see `Density`).
@@ -133,6 +147,25 @@ enum TurnType {
     /// Headings in a message, by level (1, 2, 3+).
     static func heading(_ level: Int) -> CGFloat {
         level == 1 ? body + 4 : level == 2 ? body + 2 : body
+    }
+}
+
+extension View {
+    /// On the transcript's column: at most `TurnSpace.measure` wide, centered, with the gutter
+    /// either side in a narrow window. The transcript, the banners above the composer and the
+    /// composer share it, so the page is one column from the first turn to the field you type in.
+    func turnColumn() -> some View {
+        frame(maxWidth: TurnSpace.measure)
+            .padding(.horizontal, TurnSpace.gutter)
+            .frame(maxWidth: .infinity)
+    }
+
+    /// A line's hover or open plate. It bleeds outward into the gutter rather than padding the
+    /// line in, so the line's icon and words stay on the column's edge, under the paragraphs.
+    func linePlate(_ opacity: Double) -> some View {
+        padding(.horizontal, TurnSpace.Inset.snug)
+            .background(.quaternary.opacity(opacity), in: .rect(cornerRadius: TurnSpace.Card.nestedRadius))
+            .padding(.horizontal, -TurnSpace.Inset.snug)
     }
 }
 

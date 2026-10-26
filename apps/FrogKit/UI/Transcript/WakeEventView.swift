@@ -134,9 +134,10 @@ struct EventLineView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+            // The tool rows' icon column, so an event's title lines up with theirs.
+            HStack(spacing: TurnSpace.Inset.row) {
                 Image(systemName: event.glyph)
-                    .frame(width: 14)
+                    .frame(width: TurnSpace.Inset.icon)
                 title
                 ForEach(Array(event.fields.filter { !$0.isEmpty }.enumerated()), id: \.offset) { i, field in
                     Text("·").foregroundStyle(.tertiary)
@@ -168,7 +169,7 @@ struct EventLineView: View {
                     .font(.caption.monospaced())
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 20)
+                    .padding(.leading, TurnSpace.Inset.iconColumn)
             }
         }
         .font(.caption)

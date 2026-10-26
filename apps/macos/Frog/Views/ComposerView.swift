@@ -56,11 +56,10 @@ struct ComposerView: View {
                 field
                 controls
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
-            .frame(maxWidth: 860)
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, TurnSpace.gutter)
+            .padding(.top, TurnSpace.top)
+            .padding(.bottom, TurnSpace.Inset.snug)
+            .turnColumn()
         )
         // The canvas's margins keep the transcript clear of the cards; popovers opened from
         // here (the model picker, suggestions) mustn't inherit them.

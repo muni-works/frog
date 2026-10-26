@@ -341,8 +341,8 @@ struct DiagramCard: View {
                 if diagram.hasHeat { HeatLegend().padding([.horizontal, .bottom], 12) }
             }
         }
-        .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary, lineWidth: 0.5))
+        .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: TurnSpace.Card.radius))
+        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.quaternary, lineWidth: 0.5))
         .contextMenu { DiagramExportMenu(diagram: diagram) }
     }
 

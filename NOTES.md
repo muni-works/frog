@@ -101,3 +101,33 @@ TranscriptView 25, TurnView 11, ActivityLine 14, MessageText 4, ItemViews 35, Ma
   TranscriptView or that test. Finding handed over: `jump` in the harness isn't observed (Binding over a plain property).
 - Rule from manager: Swift source edits via the Edit tool only (no python string replace).
 - Round 3 (Cam): align out-of-transcript elements (tool rows, subagent/task cards, restart banner, ...) to the column.
+
+## Round 3: everything that isn't prose, aligned to the column
+Survey (before):
+- Lines inset 6pt from the column edge: ToolCallView, ReasoningView, OverflowRescueView (.padding(.horizontal, 6)
+  so their hover/expanded plate has room). Text sits 6pt right of the paragraphs.
+- Box radii all over: code 10, plan 10, opened activity 10, subagent 12, present 12, diagram 14,
+  permission/question/elicitation 14 (pad 14), session message 12 (maxWidth 560).
+- Composer: .padding(.horizontal, 20).frame(maxWidth: 860), so its inner width is 820 (the OLD column); the
+  transcript is now 720, so the composer is wider than the text above it.
+- ResumedBanner (graceful restart), BiggerModelLine, PingLine: full pane width in the bottom inset, padding 14,
+  not tied to the column.
+Stance:
+1. One column for the whole page: transcript, the banners above the composer, the composer. Defined once by
+   `View.turnColumn()` (TurnSpace.measure + gutter). The composer's box edges = the column's edges.
+2. Two kinds of things in the column:
+   - LINES (activity, tool rows, thoughts, notices, event lines, live status, footer, banners): content flush on
+     the column's left edge. A hover/expanded plate BLEEDS outward into the gutter (pad then negative pad) and
+     doesn't push the text in. (claude.ai's hover plates do the same.)
+   - BOXES (code, diagram, subagent, plan, present, opened activity, permission/question/elicitation, MCP apps):
+     edges on the column's edges, one radius (TurnSpace.Card.radius 12) and one inner padding (Card.padding 12),
+     so content in any box starts at column + 12. Boxes nested in a row or card: Card.nestedRadius 8.
+   - Exceptions: your prompt (right-aligned bubble, promptWidth) and the live typing bubble.
+- Round 3 done in the tree: View.turnColumn() (composer + ResumedBanner), linePlate (tool rows and thoughts flush, plate
+  bleeds), Card.radius/padding/nestedRadius on every box, one icon column (18 + 8) for tool rows, thoughts, event lines.
+- Opened thoughts capped at 12 lines + "Show all" (CappedThought in ActivityLine.swift; the name ThoughtText is taken
+  by Thinking/ThinkingStepView.swift). This also FIXED the blank fix-python-test-done render: a 78s thought opened
+  whole made the view land past the end of the content.
+- Snapshot isolation: SnapshotTests/MessageTextTests honor FROG_SNAPSHOT_DIR; run with
+  TEST_RUNNER_FROG_SNAPSHOT_DIR=/private/tmp/snap-x. (TEST_RUNNER_TMPDIR doesn't reach app-hosted tests.)
+- The earlier "bisect" (a8ba5c3 blank / 7169d8b fine) was contaminated by the shared folder. Disregard it.

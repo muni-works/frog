@@ -276,7 +276,7 @@ struct CodeOverlay: View {
             .textSelection(.enabled)
             .overlay {
                 if selected {
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: TurnSpace.Card.radius)
                         .fill(Color(nsColor: .selectedTextBackgroundColor).opacity(0.45))
                         .allowsHitTesting(false)
                 }

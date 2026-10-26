@@ -23,11 +23,11 @@ struct SubagentCard: View {
                 report(r)
             }
         }
-        .padding(12)
-        .background(.quaternary.opacity(running ? 0.45 : 0.3), in: .rect(cornerRadius: 12))
+        .padding(TurnSpace.Card.padding)
+        .background(.quaternary.opacity(running ? 0.45 : 0.3), in: .rect(cornerRadius: TurnSpace.Card.radius))
         .overlay {
             if running {
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: TurnSpace.Card.radius)
                     .strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 1)
             }
         }
@@ -45,7 +45,7 @@ struct SubagentCard: View {
             Image(systemName: "person.2.fill")
                 .foregroundStyle(running ? AnyShapeStyle(.tint) : AnyShapeStyle(failed ? .red : .secondary))
                 .symbolEffect(.pulse, isActive: running)
-                .frame(width: 18)
+                .frame(width: TurnSpace.Inset.icon)
             Text("Subagent").fontWeight(.semibold).font(.callout)
             Text(arg.isEmpty ? "Task" : arg)
                 .font(.callout)
@@ -127,7 +127,7 @@ struct SubagentCard: View {
                 }
             }
         }
-        .padding(.leading, 26)
+        .padding(.leading, TurnSpace.Inset.iconColumn)
     }
 
     // MARK: Done
@@ -167,7 +167,7 @@ struct SubagentCard: View {
                 .transition(.opacity)
             }
         }
-        .padding(.leading, 26)
+        .padding(.leading, TurnSpace.Inset.iconColumn)
     }
 
     private func tail(_ s: String, lines: Int) -> String {

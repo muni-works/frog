@@ -59,7 +59,7 @@ struct ReasoningView: View {
             } label: {
                 HStack(spacing: TurnSpace.Inset.row) {
                     Image(systemName: "sparkles")
-                        .frame(width: 18)
+                        .frame(width: TurnSpace.Inset.icon)
                         .symbolEffect(.pulse, isActive: !done)
                     Text(done ? "Thought" : "Thinking…")
                         .fontWeight(.medium)
@@ -80,17 +80,12 @@ struct ReasoningView: View {
             }
             .buttonStyle(.plain)
             if expanded {
-                Text(text)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                CappedThought(text: text)
                     .padding(.leading, TurnSpace.Inset.iconColumn)
                     .transition(.opacity)
             }
         }
         .padding(.vertical, TurnSpace.Inset.tight)
-        .padding(.horizontal, TurnSpace.Inset.snug)
     }
 
     /// The latest line while streaming (what it's thinking now), the first line once done.
@@ -163,7 +158,7 @@ struct ToolCallView: View {
             } label: {
                 HStack(spacing: TurnSpace.Inset.row) {
                     Image(systemName: ToolIcon.symbol(name))
-                        .frame(width: 18)
+                        .frame(width: TurnSpace.Inset.icon)
                         .foregroundStyle(failed ? .red : .secondary)
                     Text(ToolIcon.title(name))
                         .fontWeight(.medium)
@@ -211,8 +206,8 @@ struct ToolCallView: View {
             }
         }
         .padding(.vertical, TurnSpace.Inset.tight)
-        .padding(.horizontal, TurnSpace.Inset.snug)
-        .background(.quaternary.opacity(expanded ? 0.3 : 0), in: .rect(cornerRadius: 8))
+        // Open, it sits on a plate that bleeds into the gutter: the icon stays on the column's edge.
+        .linePlate(expanded ? 0.3 : 0)
     }
 
     @ViewBuilder
@@ -267,7 +262,7 @@ struct ToolDetail: View {
                 MarkdownView(text: result.display ?? result.output)
                     .padding(TurnSpace.Inset.card)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
+                    .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: TurnSpace.Card.nestedRadius))
             } else if name == "Bash" || name == "!" {
                 CommandDetail(command: item.arg, output: result.display ?? result.output,
                               outcome: result.outcome, root: root)
@@ -328,8 +323,8 @@ struct CommandDetail: View {
             }
         }
         .background(.background.opacity(0.6))
-        .clipShape(.rect(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary, lineWidth: 0.5))
+        .clipShape(.rect(cornerRadius: TurnSpace.Card.nestedRadius))
+        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.nestedRadius).strokeBorder(.quaternary, lineWidth: 0.5))
     }
 
     @ViewBuilder
@@ -426,8 +421,8 @@ struct PermissionCard: View {
             }
             #endif
         }
-        .padding(14)
-        .glassEffect(.regular.tint(.orange.opacity(0.10)), in: .rect(cornerRadius: 14))
+        .padding(TurnSpace.Card.padding)
+        .glassEffect(.regular.tint(.orange.opacity(0.10)), in: .rect(cornerRadius: TurnSpace.Card.radius))
     }
 
 
@@ -500,7 +495,7 @@ struct TypingBubble: View {
                 .opacity(live ? 1 : 0)
                 .frame(width: live ? nil : 0, alignment: .trailing)
         }
-        .padding(.vertical, live ? TurnSpace.Inset.card : 0)
+        .padding(.vertical, live ? TurnSpace.Card.padding : 0)
         .padding(.leading, live ? TurnSpace.Inset.roomy : 0)
         .padding(.trailing, live ? TurnSpace.Inset.roomy : 0)
         .background(.quaternary.opacity(live ? 0.45 : 0), in: .rect(cornerRadius: 14))
