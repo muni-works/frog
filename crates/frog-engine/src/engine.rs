@@ -582,6 +582,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     let sent = router.inbox_sent.load(Ordering::SeqCst);
                     router.inbox_void.store(sent, Ordering::SeqCst);
                 }
+                Op::DismissWakes => router.bg.dismiss(),
                 op @ Op::Deliver { .. } => {
                     router.inbox_sent.fetch_add(1, Ordering::SeqCst);
                     if work_tx.send(op).is_err() {
@@ -2156,6 +2157,7 @@ impl Agent {
             // Handled by the router, never queued.
             Op::Interrupt
             | Op::ClearInbox
+            | Op::DismissWakes
             | Op::Permission { .. }
             | Op::Answer { .. }
             | Op::SessionReply { .. }

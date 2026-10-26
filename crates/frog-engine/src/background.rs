@@ -507,6 +507,15 @@ impl Registry {
         ));
     }
 
+    /// "Dismiss all": stop every pending timer and monitor, then drop the parked wakes
+    /// (telling clients the queue is empty). Jobs and Tasks keep running.
+    pub fn dismiss(&self) {
+        self.cancel("all");
+        let mut notices = self.notices.lock().unwrap();
+        notices.clear();
+        self.emit(Event::QueuedEvents { items: Vec::new() });
+    }
+
     /// Pending watches other than `id`.
     fn others(&self, id: &str) -> Vec<Watch> {
         self.watches().into_iter().filter(|w| w.id != id).collect()
@@ -1309,6 +1318,40 @@ mod tests {
         // Command monitors aren't timers: not capped.
         start_monitor(&reg, &json!({"command": "true", "until_regex": "never", "timeout_s": 60}), &ctx).unwrap();
         reg.stop_all();
+    }
+
+    /// The pending strip's one click: parked wakes gone, watches stopped, real work untouched.
+    #[tokio::test]
+    async fn dismiss_drops_parked_wakes_and_stops_watches_but_not_jobs() {
+        let (reg, seen) = registry();
+        let dir = tmp();
+        let ctx = Ctx::new(dir.clone());
+        start_monitor(&reg, &json!({"after_s": 0, "note": "stale"}), &ctx).unwrap();
+        wait_until(|| reg.has_notices()).await;
+        start_monitor(&reg, &json!({"after_s": 1, "subject": "sweep"}), &ctx).unwrap();
+        start_monitor(&reg, &json!({"command": "true", "until_regex": "never", "timeout_s": 60}), &ctx).unwrap();
+        start_job(&reg, &json!({"command": "sleep 30"}), &ctx, &dir.join("jobs")).unwrap();
+        reg.dismiss();
+        assert!(!reg.has_notices(), "parked wakes dropped");
+        assert!(reg.watches().is_empty(), "timers and monitors stopped");
+        assert_eq!(reg.running(Kind::Job), 1, "the job keeps running");
+        assert!(matches!(
+            seen.lock().unwrap().iter().rev().find(|e| matches!(e, Event::QueuedEvents { .. })),
+            Some(Event::QueuedEvents { items }) if items.is_empty()
+        ));
+        tokio::time::sleep(Duration::from_millis(1_300)).await;
+        assert!(!reg.has_notices(), "the dismissed timer never wakes");
+        reg.stop_all();
+    }
+
+    async fn wait_until(f: impl Fn() -> bool) {
+        for _ in 0..200 {
+            if f() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("never");
     }
 
     #[test]

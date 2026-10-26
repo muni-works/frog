@@ -165,7 +165,7 @@ struct ComposerView: View {
             // What flushes at the next boundary (parked wakes, queued session messages).
             let pending = PendingEvents(queued: conversation.queuedEvents, messages: conversation.pendingMessages, jobs: conversation.jobs)
             if !pending.isEmpty {
-                PendingEventsStrip(pending: pending, busy: conversation.busy)
+                PendingEventsStrip(pending: pending, busy: conversation.busy) { conversation.dismissWakes() }
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
             if !conversation.queue.isEmpty {
