@@ -50,15 +50,24 @@ edge deploy id). Link the method doc and the raw-log bucket.
 | TTFT, 1.2k prompt, cold | {{TTFT_COLD}} | | | |
 | TTFT, cached prefix | {{TTFT_CACHED}} | | | |
 | 8 streams: per-stream / total tok/s | {{API_8S}} | | | |
+| 16 concurrent, 2-node fleet: per-stream / aggregate tok/s, queue depth | {{API_16S}} | | load test Oct 28-29 | |
 | production, last 24 h: p50 TTFT, p50 per-stream tok/s, error rate | {{PROD_24H}} | | Prometheus | |
+
+Load-test method (frog cloud manager, Oct 28-29): signed direct-to-router sweep against the
+2-node fleet, 8 streams/node plus queue pressure; exports p50 TTFT, per-stream and aggregate
+tok/s, error/reject rate, queue depth. Reference baselines (Oct 21, 1 node, 4 streams): 447 tok/s
+aggregate, 137/stream, TTFT ≤ 1.2 s; 8 streams: 588 aggregate. Publish the load curve honestly,
+not just the single-stream peak.
 
 Footnote, engine-level (labeled): single-stream 4-bit {{ENGINE_Q4}} (Oct 21: 234.4), 8-bit Q8_0
 {{ENGINE_Q8}} (Oct 21: 222.2). Quant quality: Q4 vs Q8_0 KL median 0.0005, top-1 agreement
 96.8-97.0%.
 
-Hardware: 1× H200 141 GB per node, {{NODES}} nodes. Weights: unsloth UD-Q4_K_XL GGUF. Method: 3
-coding prompts (explain/refactor/write) from tang `docs/bench/qwen3next-aa/make_prompts.py`, 512
-output tokens, greedy, drafts off, tok/s after the first token.
+Hardware: {{NODES}} nodes × 1 H200 141 GB each (expected Oct 28: 2 nodes, each carrying
+qwen3-coder-next 131072 ctx + qwen3-8b + qwen3-vl-8b, routed by prefix affinity). Weights:
+unsloth UD-Q4_K_XL GGUF. Method: 3 coding prompts (explain/refactor/write) from tang
+`docs/bench/qwen3next-aa/make_prompts.py`, 512 output tokens, greedy, drafts off, tok/s after the
+first token.
 
 <!-- Oct 21 reference values (re-measure Oct 29 on the deployed build, after any FA2 swap):
 API 224.7 (sampler fix) / ~215 via api.frog.toys; 10k 190; TTFT cold 1.8-2.2 s, cached 18-95 ms;
