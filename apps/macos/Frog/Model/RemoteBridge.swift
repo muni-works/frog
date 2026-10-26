@@ -7,7 +7,7 @@ import Network
 ///
 /// Client → Mac: `hello{token}`, `list`, `attach{session, after}`, `detach{session}`,
 /// `op{session, op}` where `op` is an engine `Op` (`submit`, `permission`, `interrupt`, `set_mode`).
-/// Mac → client: `welcome{host}`, `sessions{sessions}`, `event{env}` (engine envelopes,
+/// Mac → client: `welcome{host, bridge}`, `sessions{sessions}`, `event{env}` (engine envelopes,
 /// verbatim), `synced{session, upto}`, `error{message}`.
 ///
 /// History comes from the session's log, so attaching never disturbs the engine; live events are
@@ -228,7 +228,10 @@ final class RemoteBridge {
                 return client.conn.cancel()
             }
             client.authed = true
-            client.send(["type": "welcome", "host": Host.current().localizedName ?? "Mac"])
+            // The client may name its bridge version (older phones don't); welcome says ours,
+            // so either side can tell how far apart they are.
+            client.bridge = (msg["bridge"] as? NSNumber)?.intValue
+            client.send(["type": "welcome", "host": Host.current().localizedName ?? "Mac", "bridge": 1])
             sendContext(to: client)
             sendStats(to: [client])
         case "list":
@@ -395,7 +398,8 @@ final class RemoteBridge {
         return zip(x, y).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    private func sessionList() -> [[String: Any]] {
+    /// One row per session, for `sessions` and `list`. Internal so tests can read it.
+    func sessionList() -> [[String: Any]] {
         let lib = Library.shared
         // The sidebar's, then its archive (the phone shows that on its own page).
         let active = lib.sessions.filter { !lib.archived.contains($0.id) }.prefix(200)
@@ -411,6 +415,8 @@ final class RemoteBridge {
                 row["folder"] = (cwd as NSString).lastPathComponent
                 row["cwd"] = cwd
             }
+            // The started-by tree (Library.parents), so a phone can render the org.
+            if let parent = lib.parents[s.id] { row["parent"] = parent }
             // The session as the Mac knows it, so the phone's rows are the sidebar's.
             if let data = try? JSONEncoder().encode(s), let info = try? JSONSerialization.jsonObject(with: data) {
                 row["info"] = info
@@ -651,6 +657,9 @@ private final class Client {
 
     let conn: NWConnection
     var authed = false
+    /// The bridge protocol version the phone said in `hello`, if it said one (older phones
+    /// didn't); nil means "unknown, assume the oldest".
+    var bridge: Int?
     /// The phone's push address, once it has registered.
     var address: String?
     var attached: [String: Attachment] = [:]
