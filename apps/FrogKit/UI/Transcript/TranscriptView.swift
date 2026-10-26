@@ -17,22 +17,28 @@ struct TranscriptView: View {
     @State private var topInset: CGFloat = 0
     /// The view keeps to the bottom as content grows (see `onScrollGeometryChange`).
     @State private var following = true
-    @State private var userScrolling = false
-    /// A follow scroll is queued for the next run-loop turn; coalesces bursts of growth.
-    @State private var followPending = false
-    /// Where the last turn starts, in the content: a long answer stops following once its
-    /// prompt would pass the top of the view, so you read it from the beginning.
-    @State private var lastTurnTop: CGFloat = .infinity
-    /// Stopped short of the end, with more below (stopped at a long answer's start, or you
-    /// scrolled up while it wrote): the pill offers the way down.
-    @State private var parked = false
-    /// Content below the view, in points.
-    @State private var below: CGFloat = 0
-    /// How tall the content was when the view stopped following: the pill only shows once
-    /// something new has come in past it, not for what was already there.
-    @State private var parkedHeight: CGFloat?
-    @State private var height: CGFloat = 0
+    /// Where the view is and what's below it. Written on every scroll and every bit of growth,
+    /// so it isn't view state: only the pill and the bottom fade read it, and the transcript's
+    /// body (every turn in it) doesn't rebuild each time the content grows a line.
+    @State private var track = ScrollTrack()
+    /// The first turn the transcript builds: a few dozen rows from the end when it opens, and
+    /// earlier as you scroll up to it (`showEarlier`) or jump to a turn before it. Turns above
+    /// aren't in the stack at all: a lazy stack still does work for every row it holds (5,000
+    /// rows took 300 ms more to open), and older history folding in
+    /// (`Conversation.olderPending`) never moves what's on screen. Nil: the last rows.
+    @State private var shownFrom: TurnState.ID?
+    /// Rows are going in above the view (see `showEarlier`).
+    @State private var growingAbove = false
+    /// Finished turns' flows, so the rows aren't re-derived for every turn on every chunk.
+    @State private var flows = FlowCache()
+    @AppStorage(Verbosity.key) private var defaultVerbosity = Verbosity.standard.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Rows built when the transcript opens, and added each time you reach its top.
+    static var windowRows = 50
+    static var earlierRows = 200
+    /// How near the top of what's built (in points) builds more above it.
+    static let nearTop: CGFloat = 60
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -40,95 +46,219 @@ struct TranscriptView: View {
                 // Open at the end, whole: straight to the last row, laid out for real, rather
                 // than an estimate of where the end is that settles into place as rows measure.
                 .onAppear { proxy.scrollTo(Self.end, anchor: .bottom) }
+                // Until it's set, the window is the last rows; once a turn is added it's pinned
+                // where it was, so the new turn doesn't push the top one out from above you.
+                // (Set on appear, it left the stack over rows it hadn't laid out.)
+                .onChange(of: conversation.turns.count) { old, new in
+                    guard shownFrom == nil, new > old, old > 0 else { return }
+                    shownFrom = Self.start(of: Array(conversation.turns.prefix(old)), rows: Self.windowRows)
+                }
                 .onChange(of: jump.wrappedValue) { _, id in
                     guard let id else { return }
                     following = false
-                    withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(id, anchor: .top) }
                     jump.wrappedValue = nil
+                    // A turn above what's built: build down from it first, then go there.
+                    guard let target = conversation.turns.firstIndex(where: { $0.id == id }) else { return }
+                    let row = firstRow(of: conversation.turns[target])
+                    if target < firstShown {
+                        shownFrom = id
+                        DispatchQueue.main.async {
+                            withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(row, anchor: .top) }
+                        }
+                        return
+                    }
+                    withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(row, anchor: .top) }
+                }
+                // Older turns folded in while you were at the top: carry on up into them.
+                .onChange(of: conversation.turns.first?.id) {
+                    if track.atTop { showEarlier(proxy) }
                 }
                 // A new turn goes below one that may be taller than the window. The lazy stack
                 // guesses that turn's height, and the bottom anchor alone can land past the real
                 // content: a blank transcript until you scroll. Scrolling to a row at the end lays
                 // the new rows out for real, and following keeps the view there as it grows.
                 .onChange(of: conversation.turns.last?.id) { _, id in
-                    guard let id else { return }
+                    guard id != nil else { return }
                     following = true
-                    parked = false
+                    track.unpark()
                     proxy.scrollTo(Self.end, anchor: .bottom)
                 }
                 // Follow the answer as it streams: while following, content that grows takes the
                 // view back to the bottom. The size-change anchor alone loses the bottom once the
                 // lazy stack re-estimates rows it hasn't laid out.
                 .onScrollGeometryChange(for: ScrollEnd.self, of: ScrollEnd.init) { old, new in
-                    below = new.below
-                    height = new.contentHeight
+                    defer { track.measured(below: new.below, height: new.contentHeight) }
+                    // Near the top of what's built, once it has opened at the end: build more
+                    // above (and, when what's built is shorter than the view, until it isn't).
+                    // A row in the lazy stack can't be the trigger: the stack estimates the rows
+                    // it hasn't built from the ones it has, and a small one at the top made it
+                    // land short of the end on open, over nothing.
+                    if new.atBottom { track.openedAtEnd = true }
+                    let atTop = track.openedAtEnd && new.contentHeight > 0 && new.visibleTop < Self.nearTop
+                    if atTop != track.atTop {
+                        track.atTop = atTop
+                        if atTop { DispatchQueue.main.async { showEarlier(proxy) } }
+                    }
                     let growth = new.contentHeight - old.contentHeight
-                    if userScrolling {
+                    if track.userScrolling {
                         // Only your own scrolling ends a stop: back at the end, it follows again.
                         following = new.atBottom
-                        if !new.atBottom, parked || conversation.busy {
-                            park(at: new.contentHeight)
+                        if !new.atBottom, track.parked || conversation.busy {
+                            track.park(at: new.contentHeight)
                         } else {
-                            parked = false
+                            track.unpark()
                         }
                         return
                     }
-                    if following, conversation.busy, growth > 0,
-                       lastTurnTop < new.visibleTop + growth + topInset + 4,
-                       let id = conversation.turns.last?.id {
+                    // Past the end of what's laid out: nothing to draw (the lazy stack's estimate
+                    // of rows above shrank under a still offset). Back to the end, and follow.
+                    if new.pastEnd {
+                        following = true
+                        track.unpark()
+                        return follow(proxy)
+                    }
+                    if following, conversation.busy, growth > 0, let live = liveAnswer,
+                       let top = live.first ? track.lastTurnTop : track.answerTop(live.item),
+                       top < new.visibleTop + growth + topInset + 4 {
                         // Keeping to the bottom would push the answer's start above the top:
-                        // stop with the prompt at the top instead, and read from there.
+                        // stop at its start instead (the prompt, when it's the turn's first
+                        // words), and read from there. Only for an answer: a turn of tool calls
+                        // and short notes keeps following, however long it gets. Not animated, and
+                        // after this update: an animated scroll on the lazy stack aims at where it
+                        // estimated the row while the content keeps growing under it, and can
+                        // stop past the laid-out end, a blank transcript until you scroll.
                         following = false
-                        park(at: old.contentHeight)
-                        withAnimation(Motion.quick(reduced: reduceMotion)) { proxy.scrollTo(id, anchor: .top) }
+                        track.park(at: old.contentHeight)
+                        let target = live.first ? firstRow(of: conversation.turns[conversation.turns.count - 1])
+                            : TranscriptRow.ID(turn: live.turn, part: live.item)
+                        DispatchQueue.main.async { proxy.scrollTo(target, anchor: .top) }
                         return
                     }
-                    // Only growth needs chasing (shrinking clamps to the bottom anyway), and the
-                    // scroll waits for the next turn of the run loop: scrolling inside the scroll
-                    // view's own update re-estimates the lazy rows, which changes the geometry
-                    // again, and AppKit aborts on the constraint loop.
-                    guard following, !new.atBottom, new.contentHeight > old.contentHeight, !followPending else { return }
-                    followPending = true
-                    DispatchQueue.main.async {
-                        followPending = false
-                        guard following, !userScrolling else { return }
-                        #if DEBUG
-                        // Perf task: the follow fires at most once per run-loop turn.
-                        os_signpost(.event, log: Self.followLog, name: "transcript.follow")
-                        #endif
-                        proxy.scrollTo(Self.end, anchor: .bottom)
-                    }
+                    // Only growth needs chasing (shrinking clamps to the bottom anyway).
+                    guard following, !new.atBottom, new.contentHeight > old.contentHeight else { return }
+                    follow(proxy)
                 }
                 // Only your own scrolling stops (or restarts) following: the lazy stack also
                 // moves the offset as it measures rows, and that mustn't count.
                 .onScrollPhaseChange { _, phase in
-                    userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
+                    track.userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 }
                 .overlay(alignment: .bottom) {
-                    if unseen {
-                        NewBelow(writing: conversation.busy) {
-                            parked = false
-                            following = true
-                            withAnimation(Motion.panel(reduced: reduceMotion)) { proxy.scrollTo(Self.end, anchor: .bottom) }
-                        }
-                        .padding(.bottom, 14)
-                        .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottom)))
+                    NewBelowPill(track: track, writing: conversation.busy) {
+                        track.unpark()
+                        following = true
+                        withAnimation(Motion.panel(reduced: reduceMotion)) { proxy.scrollTo(Self.end, anchor: .bottom) }
                     }
                 }
-                .animation(Motion.quick(reduced: reduceMotion), value: unseen)
+        }
+        .environment(\.transcriptTrack, track)
+    }
+
+    /// Back to the end. The scroll waits for the next turn of the run loop, once per turn:
+    /// scrolling inside the scroll view's own update re-estimates the lazy rows, which changes
+    /// the geometry again, and AppKit aborts on the constraint loop.
+    private func follow(_ proxy: ScrollViewProxy) {
+        guard !track.followPending else { return }
+        track.followPending = true
+        DispatchQueue.main.async {
+            track.followPending = false
+            guard following, !track.userScrolling else { return }
+            #if DEBUG
+            // Perf task: the follow fires at most once per run-loop turn.
+            os_signpost(.event, log: Self.followLog, name: "transcript.follow")
+            TranscriptProbe.follows += 1
+            #endif
+            proxy.scrollTo(Self.end, anchor: .bottom)
         }
     }
 
-    private func park(at contentHeight: CGFloat) {
-        if !parked { parkedHeight = contentHeight }
-        parked = true
+    /// The rows of the turns built, in order (see `TranscriptRow`).
+    private var rows: [TranscriptRow] {
+        let turns = conversation.turns
+        let first = firstShown
+        let showThinking = verbosity.showsThinking
+        var out: [TranscriptRow] = []
+        for t in turns.indices where t >= first {
+            let turn = turns[t]
+            let start = out.count
+            func add(_ part: TurnPart, _ key: String) {
+                let leads = out.count == start
+                out.append(TranscriptRow(turn: turn, part: part, first: leads,
+                                         gap: leads ? (out.isEmpty ? 0 : space.betweenTurns) : space.inTurn,
+                                         id: TranscriptRow.ID(turn: turn.id, part: key)))
+            }
+            if TurnView.hasHead(turn) { add(.head, "head") }
+            for segment in flows.segments(of: turn, showThinking: showThinking) { add(.segment(segment), segment.id) }
+            add(.tail, "tail")
+        }
+        return out
     }
 
-    /// Something new came in below where you stopped (more than a line: the thinking row
-    /// changing size doesn't count), and it's still out of view.
-    private var unseen: Bool {
-        guard parked, below > 30, let parkedHeight else { return false }
-        return height - parkedHeight > 40
+    /// A turn's first row: where scrolling to the turn goes.
+    private func firstRow(of turn: TurnState) -> TranscriptRow.ID {
+        if TurnView.hasHead(turn) { return TranscriptRow.ID(turn: turn.id, part: "head") }
+        let first = flows.segments(of: turn, showThinking: verbosity.showsThinking).first
+        return TranscriptRow.ID(turn: turn.id, part: first?.id ?? "tail")
+    }
+
+    private var verbosity: Verbosity {
+        VerbosityOverrides.shared.level(
+            for: conversation.sessionID, default: Verbosity(rawValue: defaultVerbosity) ?? .normal)
+    }
+
+    /// Where the built turns start, in `conversation.turns`.
+    private var firstShown: Int {
+        let turns = conversation.turns
+        guard let id = shownFrom ?? Self.start(of: turns, rows: Self.windowRows),
+              let i = turns.firstIndex(where: { $0.id == id }) else { return 0 }
+        return i
+    }
+
+    /// The turn that starts the last `rows` rows (items), counting back from the end.
+    static func start(of turns: [TurnState], rows: Int, before end: Int? = nil) -> TurnState.ID? {
+        var counted = 0
+        var i = (end ?? turns.count) - 1
+        while i > 0, counted + turns[i].items.count < rows {
+            counted += max(1, turns[i].items.count)
+            i -= 1
+        }
+        return turns.indices.contains(i) ? turns[i].id : turns.first?.id
+    }
+
+    /// You're at the top of what's built: build more above it, and keep the row that was at
+    /// the top where it was. A lazy stack doesn't hold its place when rows go in above (it
+    /// shows the new rows' estimated end instead), so it's put back by scrolling to that row,
+    /// laid out for real; it was within `nearTop` of the top, so that's as far as it moves.
+    private func showEarlier(_ proxy: ScrollViewProxy) {
+        let first = firstShown
+        guard first > 0, !growingAbove,
+              let id = Self.start(of: conversation.turns, rows: Self.earlierRows, before: first) else { return }
+        let keep = firstRow(of: conversation.turns[first])
+        #if DEBUG
+        TranscriptProbe.earlier += 1
+        // The row under it (prompts aren't counted as mounted, segments are).
+        TranscriptProbe.kept = flows.segments(of: conversation.turns[first], showThinking: verbosity.showsThinking).first?.id ?? keep.part
+        #endif
+        growingAbove = true
+        shownFrom = id
+        // Again as the rows around it measure (each changes the estimate of the rest).
+        DispatchQueue.main.async {
+            proxy.scrollTo(keep, anchor: .top)
+            DispatchQueue.main.async { proxy.scrollTo(keep, anchor: .top) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                proxy.scrollTo(keep, anchor: .top)
+                growingAbove = false
+            }
+        }
+    }
+
+    /// The answer being written now, when it's the last thing in the transcript: whether it's
+    /// the turn's first words (nothing ran before it), for where a long one stops.
+    private var liveAnswer: (turn: TurnState.ID, item: String, first: Bool)? {
+        guard let turn = conversation.turns.last, let last = turn.items.last,
+              last.kind == .message, !last.done else { return nil }
+        let first = !turn.items.dropLast().contains { if case .tool = $0.kind { true } else { false } }
+        return (turn.id, last.id, first)
     }
 
     /// Where the view is against the end of the content.
@@ -139,8 +269,11 @@ struct TranscriptView: View {
         let below: CGFloat
         /// The top of the visible area, in content coordinates.
         let visibleTop: CGFloat
+        /// The whole visible area is below the end of the content.
+        let pastEnd: Bool
 
         init(_ g: ScrollGeometry) {
+            pastEnd = g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height - 1
             contentHeight = g.contentSize.height
             // Against what's actually visible above the composer. The offset alone misses the top
             // inset, which is large while the content is shorter than the view (it's anchored to
@@ -152,8 +285,8 @@ struct TranscriptView: View {
         }
     }
 
-    /// The transcript's content, for measuring where a turn starts in it.
-    private static let content = "transcript-content"
+    /// The transcript's content, for measuring where a turn (or an answer) starts in it.
+    static let content = "transcript-content"
 
     #if DEBUG
     /// For the perf task: the deferred, coalesced follow-scroll signpost. Instruments' "Points
@@ -166,49 +299,60 @@ struct TranscriptView: View {
 
     private var transcript: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: space.betweenTurns) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 let footers = TurnFooter.pinned(conversation.turns) { ModelStats.shared.cost(of: $0) }
-                ForEach(conversation.turns) { turn in
-                    TurnView(turn: turn, conversation: conversation, actions: actions, pinsFooter: footers.contains(turn.id))
+                let lastTurn = conversation.turns.last?.id
+                // A row per piece of each turn: only what's on screen is built (see `TurnPart`).
+                ForEach(rows) { row in
+                    TurnView(turn: row.turn, conversation: conversation, actions: actions, part: row.part,
+                             gap: row.gap, pinsFooter: footers.contains(row.turn.id))
+                        .id(row.id)
                         .background {
-                            if turn.id == conversation.turns.last?.id {
+                            if row.first, row.turn.id == lastTurn {
                                 Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.content)).minY }) {
-                                    lastTurnTop = $0
+                                    track.lastTurnTop = $0
                                 }
                             }
                         }
                 }
                 if let q = conversation.question {
                     QuestionCard(question: q, conversation: conversation)
+                        .padding(.top, space.betweenTurns)
                         .id(q.id)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 if let e = conversation.elicitation {
                     ElicitationCard(request: e, conversation: conversation)
+                        .padding(.top, space.betweenTurns)
                         .id(e.id)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 // The running turn's live line shows progress once there's something to show.
                 // A busy state with no live engine behind it (the stream died mid-turn) doesn't:
                 // it's a stale window until the watchdog reconciles from the log.
-                if conversation.replaying {
+                // (Not over the newest rows read from the log: they're the transcript already.)
+                if conversation.replaying, conversation.turns.isEmpty {
                     LoadingIndicator(since: conversation.opened)
+                        .padding(.top, space.betweenTurns)
                 } else if conversation.busy, conversation.engineAlive, conversation.permission == nil,
                    conversation.elicitation == nil, conversation.question == nil,
                    conversation.turns.last?.items.isEmpty ?? true {
                     WorkingIndicator(progress: conversation.progress, since: conversation.progressSince)
+                        .padding(.top, space.betweenTurns)
                 }
                 if let preview = conversation.presentPreview {
                     PresentCard(present: preview)
                         .opacity(0.85)
+                        .padding(.top, space.betweenTurns)
                         .transition(.opacity)
                 }
                 if let failure = conversation.failure {
                     Label(failure, systemImage: "exclamationmark.octagon")
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
+                        .padding(.top, space.betweenTurns)
                 }
-                Color.clear.frame(height: 0).id(Self.end)
+                Color.clear.frame(height: space.betweenTurns).id(Self.end)
             }
             .scrollTargetLayout()
             .coordinateSpace(.named(Self.content))
@@ -227,19 +371,11 @@ struct TranscriptView: View {
         // The system's scroll-edge blur is hidden (see ScrollBackdropClear), so fade the
         // content out under the toolbar instead of letting it run into the title.
         .onGeometryChange(for: CGFloat.self, of: { $0.safeAreaInsets.top }) { topInset = $0 }
-        .mask {
-            VStack(spacing: 0) {
-                Color.clear.frame(height: max(0, topInset - 12))
-                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 28)
-                Color.black
-                // A soft edge where the text carries on below the view.
-                LinearGradient(colors: [.black, .black.opacity(below > 8 ? 0.05 : 1)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 44)
-            }
-            .ignoresSafeArea()
+        .mask { TranscriptMask(topInset: topInset, track: track) }
+        .onScrollTargetVisibilityChange(idType: TranscriptRow.ID.self, threshold: 0.05) { ids in
+            var seen = Set<TurnState.ID>()
+            onVisibleTurns(ids.map(\.turn).filter { seen.insert($0).inserted })
         }
-        .onScrollTargetVisibilityChange(idType: TurnState.ID.self, threshold: 0.05) { onVisibleTurns($0) }
         // Start at the bottom, and keep short content there. While following (above), growth
         // keeps the view at the bottom too; once a long answer has stopped at its start, it
         // grows downward under a still view instead.
@@ -672,6 +808,110 @@ struct ScrollBackdropClear: View {
 }
 #endif
 
+/// Where the transcript is against its end, kept off the view's own state: geometry callbacks
+/// write it on every scroll and every line of growth, and only what reads `unseen` or
+/// `moreBelow` (the pill and the bottom fade) updates when those flip.
+@MainActor @Observable
+final class ScrollTrack {
+    /// Something new came in below where you stopped, and it's still out of view.
+    private(set) var unseen = false
+    /// The turn the pointer is over, any of its rows: its footer shows.
+    var hoveredTurn: TurnState.ID?
+    /// Text carries on below the view (the soft bottom edge).
+    private(set) var moreBelow = false
+
+    /// Stopped short of the end, with more below (stopped at a long answer's start, or you
+    /// scrolled up while it wrote): the pill offers the way down.
+    @ObservationIgnored private(set) var parked = false
+    /// How tall the content was when the view stopped following: the pill only shows once
+    /// something new has come in past it, not for what was already there.
+    @ObservationIgnored private var parkedHeight: CGFloat?
+    @ObservationIgnored private var below: CGFloat = 0
+    @ObservationIgnored private var height: CGFloat = 0
+    @ObservationIgnored var userScrolling = false
+    /// A follow scroll is queued for the next run-loop turn; coalesces bursts of growth.
+    @ObservationIgnored var followPending = false
+    /// Where the last turn starts, in the content.
+    @ObservationIgnored var lastTurnTop: CGFloat = .infinity
+    /// Where the answer being written starts, in the content (reported by its row).
+    @ObservationIgnored var answer: (item: String, top: CGFloat)?
+    /// The view is near the top of what's built (see `TranscriptView.nearTop`).
+    @ObservationIgnored var atTop = false
+    /// It has been at the end once: it opened.
+    @ObservationIgnored var openedAtEnd = false
+    func answerTop(_ item: String) -> CGFloat? {
+        answer?.item == item ? answer?.top : nil
+    }
+
+    func park(at contentHeight: CGFloat) {
+        if !parked { parkedHeight = contentHeight }
+        parked = true
+        refresh()
+    }
+
+    func unpark() {
+        parked = false
+        refresh()
+    }
+
+    func measured(below: CGFloat, height: CGFloat) {
+        self.below = below
+        self.height = height
+        refresh()
+    }
+
+    /// Observed values are written only when they change: each write would update their readers.
+    private func refresh() {
+        // More than a line: the thinking row changing size doesn't count.
+        let unseen = parked && below > 30 && parkedHeight.map { height - $0 > 40 } == true
+        if unseen != self.unseen { self.unseen = unseen }
+        let more = below > 8
+        if more != moreBelow { moreBelow = more }
+    }
+}
+
+extension EnvironmentValues {
+    /// The transcript's scroll tracking, for rows that report where they are (the live answer).
+    @Entry var transcriptTrack: ScrollTrack? = nil
+}
+
+/// The toolbar fade at the top and, where the text carries on below the view, a soft edge.
+private struct TranscriptMask: View {
+    let topInset: CGFloat
+    let track: ScrollTrack
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: max(0, topInset - 12))
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: 28)
+            Color.black
+            LinearGradient(colors: [.black, .black.opacity(track.moreBelow ? 0.05 : 1)], startPoint: .top, endPoint: .bottom)
+                .frame(height: 44)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// The pill, when something new came in below where you're reading.
+private struct NewBelowPill: View {
+    let track: ScrollTrack
+    let writing: Bool
+    let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            if track.unseen {
+                NewBelow(writing: writing, action: action)
+                    .padding(.bottom, 14)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottom)))
+            }
+        }
+        .animation(Motion.quick(reduced: reduceMotion), value: track.unseen)
+    }
+}
+
 /// The way down to a message that came in below where you're reading.
 private struct NewBelow: View {
     let writing: Bool
@@ -692,5 +932,37 @@ private struct NewBelow: View {
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .capsule)
         .help("Go to the end and follow the answer")
+    }
+}
+
+/// One row of the transcript's lazy stack: a piece of a turn (see `TurnPart`).
+struct TranscriptRow: Identifiable {
+    struct ID: Hashable {
+        let turn: TurnState.ID
+        /// "head", "tail", or the segment's id.
+        let part: String
+    }
+
+    let turn: TurnState
+    let part: TurnPart
+    /// The turn's first row.
+    let first: Bool
+    let gap: CGFloat
+    let id: ID
+}
+
+/// Finished turns' flows, by turn: a finished turn's rows only change when items are added
+/// to it (a notice) or the thinking setting changes. The running turn's is derived each time.
+@MainActor
+final class FlowCache {
+    private var flows: [TurnState.ID: (count: Int, thinking: Bool, segments: [TurnFlow.Segment])] = [:]
+
+    func segments(of turn: TurnState, showThinking: Bool) -> [TurnFlow.Segment] {
+        if turn.finished, let hit = flows[turn.id], hit.count == turn.items.count, hit.thinking == showThinking {
+            return hit.segments
+        }
+        let segments = TurnFlow(turn.items, showThinking: showThinking).segments
+        if turn.finished { flows[turn.id] = (turn.items.count, showThinking, segments) }
+        return segments
     }
 }

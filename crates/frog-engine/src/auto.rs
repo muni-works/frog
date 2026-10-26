@@ -187,6 +187,110 @@ pub fn rules_fallback(name: &str, input: &Value) -> Option<&'static str> {
     }
 }
 
+/// Whether a call may run concurrently with the reply's other reads (and before its own
+/// permission check, speculatively): it changes nothing, and the permission layers allow it
+/// without a card in every mode, so running it early can't run something the user would be
+/// asked about. The same rules the engine's `permit` applies: the read tools, WebSearch,
+/// WebFetch of a public host, and a shell command the parser proves read-only (sandboxed, no
+/// credential paths, not a long wait). MCP reads aren't here: they go through the session's
+/// MCP connections, which run one call at a time.
+pub fn parallel_read(name: &str, input: &Value) -> bool {
+    match name {
+        "Read" | "Grep" | "Glob" | "WebSearch" => true,
+        "WebFetch" => crate::tools::web::public_host(input["url"].as_str().unwrap_or("")),
+        "Bash" => {
+            let cmd = input["command"].as_str().unwrap_or("").trim();
+            input["unsandboxed"].as_bool() != Some(true)
+                && !crate::tools::bool_arg(input, "run_in_background")
+                && !crate::shell::touches_credentials(cmd)
+                && crate::shell::read_only(cmd)
+                && long_wait(cmd).is_none()
+                // A `cd` moves the session's directory, which a call run on the side can't.
+                && !crate::shell::segments(cmd)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|s| s.split_whitespace().next() == Some("cd"))
+        }
+        _ => false,
+    }
+}
+
+/// The shortest `sleep` that [`long_wait`] moves to the background, in seconds.
+pub const LONG_WAIT_S: f64 = 60.0;
+
+/// A Bash command that is only a long wait: one `sleep` of at least [`LONG_WAIT_S`] seconds,
+/// with nothing around it but read-only checks (`sleep 570; wc -l out.jsonl; tail -1 run.log`).
+/// Returns the sleep's length in whole seconds. Run inline, such a command holds the turn for
+/// minutes doing nothing (no events, no messages, a session that looks hung), so the engine
+/// runs it as a background job instead and the job's wake brings back the checks' output.
+/// Real work in it (`sleep 600 && cargo build`), a sleep piped into something, a short sleep,
+/// or anything the shell parser can't read: `None`, and it runs inline as written.
+pub fn long_wait(cmd: &str) -> Option<u64> {
+    // A newline separates commands like `;` does (quoted newlines aren't modeled: leave those).
+    let cmd = if cmd.contains(['\'', '"']) {
+        cmd.to_string()
+    } else {
+        cmd.trim().replace('\n', ";")
+    };
+    let segments = crate::shell::segments(&cmd)?;
+    let mut wait: Option<f64> = None;
+    for seg in &segments {
+        match sleep_seconds(seg) {
+            Some(secs) => {
+                // One wait only; two sleeps is a script with a rhythm, not a wait.
+                if wait.is_some() || piped(&cmd, seg) {
+                    return None;
+                }
+                wait = Some(secs);
+            }
+            None if crate::shell::read_only(seg) => {}
+            None => return None,
+        }
+    }
+    let secs = wait.filter(|s| *s >= LONG_WAIT_S)?;
+    Some(secs.round() as u64)
+}
+
+/// `sleep` with durations (`570`, `9m`, `1.5h`, `30s`; several add up, as GNU sleep does).
+fn sleep_seconds(seg: &str) -> Option<f64> {
+    let mut words = seg.split_whitespace();
+    if words.next()? != "sleep" {
+        return None;
+    }
+    let mut total = 0.0;
+    let mut any = false;
+    for w in words {
+        let (num, unit) = match w.char_indices().find(|(_, c)| c.is_ascii_alphabetic()) {
+            Some((i, _)) => w.split_at(i),
+            None => (w, ""),
+        };
+        let n: f64 = num
+            .parse()
+            .ok()
+            .filter(|n: &f64| n.is_finite() && *n >= 0.0)?;
+        total += n * match unit {
+            "" | "s" => 1.0,
+            "m" => 60.0,
+            "h" => 3_600.0,
+            "d" => 86_400.0,
+            _ => return None,
+        };
+        any = true;
+    }
+    any.then_some(total)
+}
+
+/// Whether `seg` sits in a pipeline in `cmd` (a lone `|` right before or after it).
+fn piped(cmd: &str, seg: &str) -> bool {
+    let Some(at) = cmd.find(seg) else {
+        return true;
+    };
+    let before = cmd[..at].trim_end();
+    let after = cmd[at + seg.len()..].trim_start();
+    (before.ends_with('|') && !before.ends_with("||"))
+        || (after.starts_with('|') && !after.starts_with("||"))
+}
+
 /// Why a call always asks in auto mode, if it does.
 pub fn hard_rule(name: &str, input: &Value, root: &Path) -> Option<&'static str> {
     static RULES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
@@ -529,6 +633,45 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::path::PathBuf;
+
+    /// The sleep guard: a bare long sleep (or one with only read-only checks around it, the
+    /// specimen that blocked a turn for 9.5 minutes) is a long wait; real work, pipelines and
+    /// short sleeps are not.
+    #[test]
+    fn long_wait_spots_bare_sleeps_and_leaves_real_work_inline() {
+        assert_eq!(long_wait("sleep 570"), Some(570));
+        assert_eq!(long_wait("  sleep 9m  "), Some(540));
+        assert_eq!(long_wait("sleep 1m 30s"), Some(90));
+        assert_eq!(long_wait("sleep 1.5h"), Some(5_400));
+        // The specimen, and its siblings from the same session.
+        assert_eq!(
+            long_wait(
+                "sleep 570; wc -l /tmp/out/baseline.jsonl; tail -1 /tmp/out/resume2.log 2>/dev/null"
+            ),
+            Some(570)
+        );
+        assert_eq!(
+            long_wait(
+                "sleep 570; tail -1 /tmp/out/resume.log 2>/dev/null; pgrep -f run_baseline.sh >/dev/null && echo RUNNING || echo DEAD"
+            ),
+            Some(570)
+        );
+        assert_eq!(long_wait("sleep 600\ntail -2 /tmp/job.log"), Some(600));
+        // Real work, a pipeline, two sleeps: inline as written.
+        assert_eq!(long_wait("sleep 570 && cargo build"), None);
+        assert_eq!(long_wait("sleep 570; npm test"), None);
+        assert_eq!(long_wait("sleep 600 | tee /tmp/x"), None);
+        assert_eq!(long_wait("cat big.log | sleep 600"), None);
+        assert_eq!(long_wait("sleep 300; ls; sleep 300"), None);
+        assert_eq!(long_wait("while true; do sleep 600; done"), None);
+        assert_eq!(long_wait("sleep $(cat n)"), None);
+        assert_eq!(long_wait("sleep forever"), None);
+        // Short waits stay inline.
+        assert_eq!(long_wait("sleep 59"), None);
+        assert_eq!(long_wait("sleep 5; tail -1 log"), None);
+        assert_eq!(long_wait("echo hi"), None);
+        assert_eq!(long_wait(""), None);
+    }
 
     #[test]
     fn hard_rules_catch_the_dangerous_and_leave_the_ordinary() {

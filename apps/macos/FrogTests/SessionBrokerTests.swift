@@ -44,6 +44,23 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(delivered, [Delivery(to: eng.id, from: chief.id, name: chief.name, message: "hi")])
     }
 
+    /// The no-response opt: an informational send goes to `inform` (read, no turn), never to
+    /// `reach`, so nothing sits in the target's inbox; a plain send still delivers.
+    func testAnInformationalSendIsReadWithoutATurn() throws {
+        let b = broker([chief, eng])
+        var informed: [Delivery] = []
+        b.inform = { to, from, name, message in
+            informed.append(Delivery(to: to, from: from, name: name, message: message))
+            return true
+        }
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "received", notifyWhenIdle: true, informational: true).get()
+        XCTAssertEqual(informed.map(\.message), ["received"])
+        XCTAssertTrue(delivered.isEmpty, "no turn-starting delivery")
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "is the pod up?", notifyWhenIdle: false).get()
+        XCTAssertEqual(delivered.map(\.message), ["is the pod up?"])
+        XCTAssertEqual(informed.count, 1)
+    }
+
     /// A dead engine (process gone, stale `.live`) shows as idle: sending restarts it with
     /// `-r`, on the session's stored model and mode, and the message starts its next turn.
     func testSendToADeadEngineRestartsItAndStartsATurn() throws {

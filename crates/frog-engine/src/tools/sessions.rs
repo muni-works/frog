@@ -76,14 +76,17 @@ active first."
             description: "Send a message to another session, by id or by name. It's queued: the \
 target reads it at its next turn boundary and starts a turn if idle. Set notify_when_idle to get \
 a message from \"system\" with its last reply when the target goes idle. Replies come back as <session-message> \
-turns; don't wait in a loop."
+turns; don't wait in a loop. Set informational for pure status that needs no answer (\"received\", \
+\"going idle\", \"acknowledged\"): the target records it as read and sees it with its next turn, but \
+no turn starts for it."
                 .into(),
             schema: json!({
                 "type": "object",
                 "properties": {
                     "to": { "type": "string", "description": "session id or name" },
                     "message": { "type": "string" },
-                    "notify_when_idle": { "type": "boolean" }
+                    "notify_when_idle": { "type": "boolean" },
+                    "informational": { "type": "boolean", "description": "pure status, no reply wanted: marked read without starting a turn" }
                 },
                 "required": ["to", "message"]
             }),

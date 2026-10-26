@@ -45,7 +45,10 @@ extension Conversation {
                       failure: "Couldn't start frog: \(error.localizedDescription)")
             return
         }
-        self.init(folder: folder, link: engine, replay: replay, session: session)
+        // The newest rows straight from the log, before the engine has started (see
+        // `SessionHistory`); the engine sends only what came after them.
+        let history = replay ? session.flatMap { SessionHistory.open($0, at: Frog.sessions.appending(path: "\($0).jsonl")) } : nil
+        self.init(folder: folder, link: engine, replay: replay, session: session, history: history)
     }
 }
 

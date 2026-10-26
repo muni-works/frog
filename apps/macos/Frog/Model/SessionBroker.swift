@@ -177,6 +177,8 @@ final class SessionBroker {
     }
     /// Deliver an op to session `id`, starting its engine if needed. False if it can't be reached.
     var reach: (_ id: String, _ from: String, _ fromName: String, _ message: String) -> Bool = { _, _, _, _ in false }
+    /// Hand session `id` a status-only message (read, no turn). False if it can't be reached.
+    var inform: (_ id: String, _ from: String, _ fromName: String, _ message: String) -> Bool = { _, _, _, _ in false }
     var starter: (_ request: StartRequest, _ parent: Conversation?) async throws -> Started = { _, _ in
         throw BrokerError("starting sessions isn't available")
     }
@@ -344,8 +346,11 @@ final class SessionBroker {
             let result = send(
                 from: sender, name: name(of: c),
                 to: input["to"]?.string ?? "", message: input["message"]?.string ?? "",
-                notifyWhenIdle: input["notify_when_idle"]?.bool ?? false)
+                notifyWhenIdle: input["notify_when_idle"]?.bool ?? false,
+                informational: input["informational"]?.bool ?? false)
             switch result {
+            case .success(let e) where input["informational"]?.bool == true:
+                c.replySession(r.id, result: .string("Sent to \(e.name) (\(e.id)) as informational: recorded as read, no turn starts for it; it sees the message with its next turn."))
             case .success(let e):
                 let how = e.state == "running" ? "queued (target busy)" : "delivered (turn started)"
                 c.replySession(r.id, result: .string("Sent to \(e.name) (\(e.id)); \(how). It reads the message at its next turn boundary; its reply, if any, arrives as a <session-message>."))
@@ -824,7 +829,7 @@ final class SessionBroker {
         return .failure(BrokerError("No session \"\(key)\". ListSessions shows what's there."))
     }
 
-    func send(from sender: String, name: String, to: String, message: String, notifyWhenIdle: Bool) -> Result<Entry, BrokerError> {
+    func send(from sender: String, name: String, to: String, message: String, notifyWhenIdle: Bool, informational: Bool = false) -> Result<Entry, BrokerError> {
         let message = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return .failure(BrokerError("`message` is empty")) }
         let target: Entry
@@ -834,6 +839,13 @@ final class SessionBroker {
         }
         guard target.id != sender else { return .failure(BrokerError("That's this session.")) }
         if let e = charge(sender) { return .failure(e) }
+        // Status only: read without a turn, so nothing sits in the inbox and no idle watch arms.
+        if informational {
+            guard inform(target.id, sender, name, message) else {
+                return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
+            }
+            return .success(target)
+        }
         guard reach(target.id, sender, name, message) else {
             return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
         }
@@ -1272,6 +1284,11 @@ extension SessionBroker {
         reach = { [unowned self] id, from, name, message in
             guard let c = conversation(for: id) else { return false }
             c.deliver(from: from, name: name, message: message)
+            return true
+        }
+        inform = { [unowned self] id, from, name, message in
+            guard let c = conversation(for: id) else { return false }
+            c.inform(from: from, name: name, message: message)
             return true
         }
         onLimit = { id in

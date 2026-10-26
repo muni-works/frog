@@ -163,6 +163,12 @@ struct ComposerView: View {
                 DictationProblemView(problem: problem) { dictation.problem = nil }
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+            // What flushes at the next boundary (parked wakes, queued session messages).
+            let pending = PendingEvents(queued: conversation.queuedEvents, messages: conversation.pendingMessages, jobs: conversation.jobs)
+            if !pending.isEmpty {
+                PendingEventsStrip(pending: pending, busy: conversation.busy)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
             if !conversation.queue.isEmpty {
                 QueuedMessages(conversation: conversation)
             }

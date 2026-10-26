@@ -33,6 +33,9 @@ struct ActivityLine: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = TranscriptProbe.row()
+        #endif
         VStack(alignment: .leading, spacing: 8) {
             // Running steps aren't in the sentence yet; the live line says what's happening.
             if !group.done.isEmpty {
