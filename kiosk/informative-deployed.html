@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>frog — informative face concept</title>
+<style>
+  /* Concept 2: the face plus quiet status furniture.
+     - voice: soft ring (listening) / 16-bar arc (speaking) under the chin
+     - corner notification dot; pupils dart at it, then return
+     - bottom line: clock · mood | voice word | network dot
+     Face + mood tracks shared with ../frogface.html. */
+  :root {
+    --skin: #51da60;
+    --spot: #36b347;
+    --ink: #15171a;
+    --paper: #fbfbf9;
+  }
+  html, body {
+    margin: 0; height: 100%;
+    background: #0b0d0e;
+    overflow: hidden;
+    cursor: none;
+  }
+  #stage {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+  }
+  /* viewBox is 704 x 748 (the face box plus a strip for the voice indicator) */
+  svg { height: 88vh; width: auto; max-width: 94vw; }
+
+  #bar {
+    position: fixed; left: 40px; right: 40px; bottom: 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: ui-rounded, system-ui, sans-serif;
+    font-size: 15px; letter-spacing: 0.14em;
+    color: #5a5f63; user-select: none;
+  }
+  #bar .net {
+    display: inline-block; width: 9px; height: 9px; margin-left: 12px;
+    border-radius: 50%; background: var(--skin);
+    animation: net 4s ease-in-out infinite;
+  }
+  @keyframes net { 0%, 100% { opacity: 0.9 } 50% { opacity: 0.35 } }
+
+  .dot {
+    position: fixed; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--skin); opacity: 0; transition: opacity 0.35s;
+  }
+  .dot.on { opacity: 1; animation: ping 0.9s ease-out infinite; }
+  @keyframes ping {
+    0% { box-shadow: 0 0 0 0 rgba(81, 218, 96, 0.45); }
+    100% { box-shadow: 0 0 0 22px rgba(81, 218, 96, 0); }
+  }
+  .dot.tl { top: 40px; left: 40px; }  .dot.tr { top: 40px; right: 40px; }
+  .dot.bl { bottom: 64px; left: 40px; } .dot.br { bottom: 64px; right: 40px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <!-- FrogMark transcribed from apps/FrogKit/UI/Basics/FrogFace.swift (1024 grid,
+       box 160,200 704x704; this file extends the box 44 units for the indicator). -->
+  <svg id="frog" viewBox="160 200 704 748" aria-label="frog">
+    <defs>
+      <clipPath id="clip-silhouette">
+        <path id="silhouette-path" d=""/>
+      </clipPath>
+    </defs>
+    <g id="body">
+      <g id="head">
+        <path id="silhouette" fill="var(--skin)"/>
+        <g clip-path="url(#clip-silhouette)">
+          <g id="spots" fill="var(--spot)"></g>
+        </g>
+        <g id="eyes">
+          <g id="pupil-l">
+            <circle class="pupil" fill="var(--ink)"/>
+            <circle class="glint-a" fill="var(--paper)"/>
+            <circle class="glint-b" fill="var(--paper)"/>
+          </g>
+          <g id="pupil-r">
+            <circle class="pupil" fill="var(--ink)"/>
+            <circle class="glint-a" fill="var(--paper)"/>
+            <circle class="glint-b" fill="var(--paper)"/>
+          </g>
+        </g>
+        <path id="mouth" fill="var(--ink)"/>
+      </g>
+    </g>
+    <!-- voice furniture under the chin (grid y 904..948) -->
+    <g id="voicefx">
+      <ellipse id="ring" cx="512" cy="890" rx="170" ry="26"
+               fill="none" stroke="var(--skin)" stroke-width="2.5" opacity="0"/>
+      <g id="wave" fill="var(--skin)"></g>
+    </g>
+  </svg>
+</div>
+<div class="dot" id="dot"></div>
+<div id="bar">
+  <span id="clockline"></span>
+  <span id="voiceline"><span id="voice-word"></span><span class="net"></span></span>
+</div>
+<script>
+"use strict";
+
+// ---- geometry (grid units, from FrogMark) ---------------------------------
+const BOX = { x: 160, y: 200, w: 704, h: 704 };
+const FEET = { x: 512, y: 802 };
+const PUPIL_R = 68;
+const PUPILS = [{ x: 360, y: 344 }, { x: 664, y: 344 }];
+
+function headPath() {
+  return (
+    `M 216 568 ` +
+    `A 296 224 0 0 1 808 568 ` +
+    `A 296 234 0 0 1 216 568 Z ` +
+    `M 240 352 a 120 120 0 1 0 240 0 a 120 120 0 1 0 -240 0 ` +
+    `M 544 352 a 120 120 0 1 0 240 0 a 120 120 0 1 0 -240 0`
+  );
+}
+
+const SPOTS = [
+  [290, 469, 18], [262, 523, 11], [742, 463, 16], [772, 510, 10], [323, 541, 30], [701, 541, 30],
+];
+
+function mouthPath(frown) {
+  const y1 = frown ? 1194 - 572 : 572;
+  const yc = frown ? 1194 - 636 : 636;
+  return `M 420 ${y1} Q 512 ${yc} 604 ${y1}`;
+}
+
+// ---- Move tracks (from FrogPose) ------------------------------------------
+function mix(a, b, f) { return a + (b - a) * f; }
+function mixMove(a, b, f) {
+  const nx = m => ({ tx: m.tx || 0, ty: m.ty || 0, sx: m.sx ?? 1, sy: m.sy ?? 1, rot: m.rot || 0 });
+  a = nx(a); b = nx(b);
+  return {
+    tx: mix(a.tx, b.tx, f), ty: mix(a.ty, b.ty, f),
+    sx: mix(a.sx, b.sx, f), sy: mix(a.sy, b.sy, f),
+    rot: mix(a.rot, b.rot, f),
+  };
+}
+const REST = { tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 };
+
+function easeFn(x1, y1, x2, y2) {
+  return function (x) {
+    const bez = (s, a, b) => { const u = 1 - s; return 3*u*u*s*a + 3*u*s*s*b + s*s*s; };
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 24; i++) {
+      const s = (lo + hi) / 2;
+      if (bez(s, x1, x2) < x) lo = s; else hi = s;
+    }
+    return bez((lo + hi) / 2, y1, y2);
+  };
+}
+const EASE = easeFn(0.25, 0.1, 0.25, 1);
+const IN_OUT = easeFn(0.42, 0, 0.58, 1);
+const OUT = easeFn(0, 0, 0.58, 1);
+const hopMidA = easeFn(0.2, 0.8, 0.3, 1);
+const hopMidB = easeFn(0.6, 0, 0.8, 0.4);
+
+function makeTrack(period, alternate, stops) {
+  return function (t) {
+    const p = Math.max(t, 0) / period;
+    let f = p % 1;
+    if (alternate && Math.floor(p) % 2 === 1) f = 1 - f;
+    let i = stops.length - 1;
+    while (i > 0 && stops[i][0] > f) i--;
+    if (i + 1 >= stops.length) return stops[stops.length - 1][1];
+    const [fa, ma, ea] = stops[i];
+    const [fb, mb] = stops[i + 1];
+    const local = fb > fa ? (f - fa) / (fb - fa) : 1;
+    return mixMove(ma, mb, ea(local));
+  };
+}
+
+const breathe = makeTrack(3.2, false, [
+  [0, REST, IN_OUT], [0.5, { ...REST, sx: 1.012, sy: 0.982 }, IN_OUT], [1, REST, IN_OUT],
+]);
+const pump = makeTrack(1.1, false, [
+  [0, REST, IN_OUT], [0.45, { ...REST, sx: 1.05, sy: 0.94 }, IN_OUT], [1, REST, IN_OUT],
+]);
+const blink = (period) => makeTrack(period, false, [
+  [0, REST, EASE], [0.92, REST, EASE], [0.95, { ...REST, sy: 0.08 }, EASE], [1, REST, EASE],
+]);
+const ponder = makeTrack(4, false, [
+  [0, { tx: 22, ty: -44, sx: 1, sy: 0.8 }, IN_OUT],
+  [0.33, { tx: 44, ty: -30, sx: 1, sy: 0.8 }, IN_OUT],
+  [0.66, { tx: -10, ty: -48, sx: 1, sy: 0.8 }, IN_OUT],
+  [1, { tx: 22, ty: -44, sx: 1, sy: 0.8 }, IN_OUT],
+]);
+const scan = makeTrack(2.4, false, [
+  [0, { tx: -46, ty: 12 }, EASE], [0.25, { tx: -16, ty: 12 }, EASE],
+  [0.5, { tx: 16, ty: 12 }, EASE], [0.75, { tx: 46, ty: 12 }, EASE],
+  [0.88, { tx: -46, ty: 22 }, EASE], [1, { tx: -46, ty: 12 }, EASE],
+]);
+const hopTrack = makeTrack(2.4, false, [
+  [0, REST, OUT],
+  [0.08, { sx: 1.1, sy: 0.86 }, hopMidA],
+  [0.20, { ty: -120, sx: 0.94, sy: 1.08 }, hopMidB],
+  [0.31, { sx: 1.12, sy: 0.84 }, OUT],
+  [0.36, { sx: 0.98, sy: 1.02 }, EASE],
+  [0.40, REST, OUT], [1, REST, OUT],
+]);
+const tilt = makeTrack(1.8, false, [
+  [0, { rot: -7 }, IN_OUT], [0.5, { rot: 7 }, IN_OUT], [1, { rot: -7 }, IN_OUT],
+]);
+const wide = makeTrack(1.8, false, [
+  [0, { sx: 1.12, sy: 1.12 }, IN_OUT], [0.5, { sx: 1.04, sy: 1.04 }, IN_OUT],
+  [1, { sx: 1.12, sy: 1.12 }, IN_OUT],
+]);
+const droop = makeTrack(3, true, [
+  [0, { ty: 14, sy: 0.5 }, IN_OUT], [1, { ty: 18, sy: 0.42 }, IN_OUT],
+]);
+const sink = makeTrack(3, true, [
+  [0, REST, IN_OUT], [1, { ty: 12 }, IN_OUT],
+]);
+
+// notification glance: dart, hold with a micro-saccade, return
+const makeGlance = (tx, ty) => makeTrack(2.0, false, [
+  [0, REST, EASE], [0.11, { tx, ty }, OUT],
+  [0.55, { tx: tx * 0.9, ty: ty * 0.88 }, IN_OUT],
+  [0.68, { tx: tx * 1.06, ty: ty * 1.02 }, EASE],
+  [1, REST, IN_OUT],
+]);
+const CORNERS = {
+  tl: { cls: "tl", eyes: makeGlance(-46, -34) },
+  tr: { cls: "tr", eyes: makeGlance(46, -34) },
+  bl: { cls: "bl", eyes: makeGlance(-40, 26) },
+  br: { cls: "br", eyes: makeGlance(40, 26) },
+};
+const GLANCE_LEN = 2.0;
+
+const MOODS = {
+  idle:     { body: breathe, eyes: blink(5),   frown: false },
+  reading:  { body: null,    eyes: scan,       frown: false },
+  thinking: { body: breathe, eyes: ponder,     frown: false },
+  working:  { body: pump,    eyes: blink(3.3), frown: false },
+  done:     { body: hopTrack, eyes: null,      frown: false },
+  waiting:  { body: tilt,    eyes: wide,       frown: false },
+  sad:      { body: sink,    eyes: droop,      frown: true },
+};
+
+// ---- SVG setup -------------------------------------------------------------
+const svg = document.getElementById("frog");
+document.getElementById("silhouette-path").setAttribute("d", headPath());
+document.getElementById("silhouette").setAttribute("d", headPath());
+
+const spotsG = document.getElementById("spots");
+for (const [x, y, r] of SPOTS) {
+  const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  c.setAttribute("cx", x); c.setAttribute("cy", y); c.setAttribute("r", r);
+  spotsG.appendChild(c);
+}
+
+const mouth = document.getElementById("mouth");
+mouth.setAttribute("stroke", "var(--ink)");
+mouth.setAttribute("stroke-width", "30");
+mouth.setAttribute("stroke-linecap", "round");
+mouth.setAttribute("fill", "none");
+
+const pupils = [
+  { g: document.getElementById("pupil-l"), c: PUPILS[0] },
+  { g: document.getElementById("pupil-r"), c: PUPILS[1] },
+];
+for (const p of pupils) {
+  const set = (cls, x, y, r) => {
+    const el = p.g.querySelector(cls);
+    el.setAttribute("cx", x); el.setAttribute("cy", y); el.setAttribute("r", r);
+  };
+  set(".pupil", p.c.x, p.c.y, PUPIL_R);
+  set(".glint-a", p.c.x + 22, p.c.y - 22, 22);
+  set(".glint-b", p.c.x - 24, p.c.y + 24, 9);
+}
+
+function applyMove(g, m, pivot) {
+  const t = `translate(${pivot.x + m.tx},${pivot.y + m.ty}) ` +
+            `rotate(${m.rot || 0}) scale(${m.sx},${m.sy}) ` +
+            `translate(${-pivot.x},${-pivot.y})`;
+  g.setAttribute("transform", t);
+}
+
+// ---- voice indicator: ring when listening, bars when speaking --------------
+const ring = document.getElementById("ring");
+const waveG = document.getElementById("wave");
+const NBARS = 16, BW = 9, GAP = 7;
+const BARS = [];
+for (let i = 0; i < NBARS; i++) {
+  const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  r.setAttribute("x", 512 - (NBARS * BW + (NBARS - 1) * GAP) / 2 + i * (BW + GAP));
+  r.setAttribute("rx", BW / 2);
+  waveG.appendChild(r);
+  BARS.push(r);
+}
+let ringAmp = 0, barAmp = 0, ringTarget = 0, barTarget = 0;
+const VOICE_RING = { quiet: 0, listening: 0.95, speaking: 0.22 };
+const VOICE_BARS = { quiet: 0, listening: 0.12, speaking: 1 };
+
+// ---- notification glance ---------------------------------------------------
+const dot = document.getElementById("dot");
+let glancing = false, glanceStart = 0, glanceTrack = null;
+
+function notify() {
+  const keys = Object.keys(CORNERS).filter(k => !dot.classList.contains(k));
+  const corner = CORNERS[keys[Math.floor(Math.random() * keys.length)]];
+  dot.className = "dot on " + corner.cls;
+  glanceTrack = corner.eyes;
+  glanceStart = performance.now() / 1000;
+  glancing = true;
+  if (voice === "quiet") setVoice("listening");
+  setTimeout(() => { dot.className = "dot " + corner.cls; }, 2000);
+}
+
+// ---- clock / net / labels --------------------------------------------------
+const clockline = document.getElementById("clockline");
+const voiceWord = document.getElementById("voice-word");
+function drawClock() {
+  clockline.textContent = new Date().toTimeString().slice(0, 5) + " · " + mood;
+}
+setInterval(drawClock, 5000);
+
+// ---- render loop -----------------------------------------------------------
+let mood = "idle";
+let since = performance.now() / 1000;
+let voice = "quiet";
+
+function setVoice(name) {
+  voice = name;
+  ringTarget = VOICE_RING[name];
+  barTarget = VOICE_BARS[name];
+  voiceWord.textContent = name === "quiet" ? "" : name;
+}
+
+function setMood(name) {
+  if (!MOODS[name]) return false;
+  mood = name; since = performance.now() / 1000;
+  drawClock();
+  return true;
+}
+
+function frame() {
+  const now = performance.now() / 1000;
+  const t = now - since;
+  const spec = MOODS[mood];
+  const bodyMove = spec.body ? spec.body(t) : REST;
+  let eyesMove = spec.eyes ? spec.eyes(t) : REST;
+  if (glancing) {
+    const gt = now - glanceStart;
+    if (gt < GLANCE_LEN) eyesMove = glanceTrack(gt);
+    else glancing = false;
+  }
+  applyMove(document.getElementById("body"), bodyMove, FEET);
+  for (const p of pupils) applyMove(p.g, eyesMove, p.c);
+  mouth.setAttribute("d", mouthPath(spec.frown));
+
+  ringAmp += (ringTarget - ringAmp) * 0.06;
+  barAmp += (barTarget - barAmp) * 0.1;
+  ring.setAttribute("rx", 170 + Math.sin(now * 2.4) * 7 * ringAmp);
+  ring.setAttribute("opacity", (ringAmp * 0.4).toFixed(3));
+  for (let i = 0; i < NBARS; i++) {
+    const h = 4 + (Math.sin(now * 4.6 + i * 0.85) * 0.5 + 0.5) *
+              (9 + 6 * Math.sin(i * 1.7)) * barAmp;
+    BARS[i].setAttribute("y", (890 - h / 2).toFixed(1));
+    BARS[i].setAttribute("height", h.toFixed(2));
+    BARS[i].setAttribute("opacity", (0.15 + barAmp * 0.85).toFixed(3));
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+
+// ---- face driver polling (real driver replaces the demo cycle) -------------
+// Polls the mood driver (frogface-driver.py, port 8787): GET /state returns
+// {mood, voice, notify}. If the driver is down, falls back to the demo cycle
+// so the face is never frozen.
+let driverUp = false;
+let lastNotifyConsumed = null;
+
+async function pollDriver() {
+  try {
+    const r = await fetch("http://localhost:8787/state", { cache: "no-store" });
+    const s = await r.json();
+    if (!driverUp) {          // driver just came up: stop the demo cycle
+      driverUp = true;
+      demoTimer && clearInterval(demoTimer);
+      voiceTimer && clearTimeout(voiceTimer);
+      demoTimer = null; voiceTimer = null;
+    }
+    if (s.mood !== mood) setMood(s.mood);
+    if (s.voice !== voice) setVoice(s.voice);
+    if (s.notify && s.notify !== lastNotifyConsumed) {
+      lastNotifyConsumed = s.notify;
+      const corner = CORNERS[s.notify];
+      dot.className = "dot on " + corner.cls;
+      glanceTrack = corner.eyes;
+      glanceStart = performance.now() / 1000;
+      glancing = true;
+      setTimeout(() => { dot.className = "dot " + corner.cls; }, 2000);
+    }
+  } catch (e) {
+    if (driverUp) {           // driver went down: resume the demo cycle
+      driverUp = false;
+      startDemoCycle();
+    }
+  }
+}
+setInterval(pollDriver, 1000);
+pollDriver();
+
+// ---- demo fallback (only runs while the driver is unreachable) -------------
+let demoTimer = null, voiceTimer = null;
+function startDemoCycle() {
+  if (demoTimer) return;
+  const names = Object.keys(MOODS);
+  demoTimer = setInterval(() => setMood(names[(names.indexOf(mood) + 1) % names.length]), 6000);
+  const VOICE_LOOP = [["quiet", 4], ["listening", 5], ["speaking", 7]];
+  let vi = 0;
+  const step = () => {
+    const [name, secs] = VOICE_LOOP[vi];
+    setVoice(name);
+    vi = (vi + 1) % VOICE_LOOP.length;
+    voiceTimer = setTimeout(step, secs * 1000);
+  };
+  step();
+  setTimeout(notify, 2500);
+  demoNotifyTimer = setInterval(notify, 9000);
+}
+let demoNotifyTimer = null;
+
+// start in demo mode; the first successful poll switches to driver control
+startDemoCycle();
+document.addEventListener("pointerdown", notify);
+
+setMood(decodeURIComponent(location.hash.slice(1)) in MOODS
+  ? decodeURIComponent(location.hash.slice(1)) : mood);
+drawClock();
+window.setFrogMood = setMood;
+window.setFrogVoice = setVoice;
+window.frogNotify = notify;
+</script>
+</body>
+</html>
