@@ -79,6 +79,36 @@ struct Entry {
     file: Option<PathBuf>,
     stop: CancellationToken,
     started: Instant,
+    /// When a timer fires, or a monitor gives up.
+    due: Option<Instant>,
+}
+
+/// One pending timer or monitor, for lists the model reads.
+pub struct Watch {
+    pub id: String,
+    pub kind: Kind,
+    pub label: String,
+    pub left: Option<Duration>,
+}
+
+impl Watch {
+    /// `mon-3 wake in 1800s (in 12m)`.
+    pub fn line(&self) -> String {
+        match self.left {
+            Some(left) => format!("{} {} (in {})", self.id, self.label, short_duration(left)),
+            None => format!("{} {}", self.id, self.label),
+        }
+    }
+}
+
+/// `45s`, `12m`, `3h`: rounded up, so a pending timer never reads `0s`.
+fn short_duration(d: Duration) -> String {
+    let s = d.as_secs() + u64::from(d.subsec_nanos() > 0);
+    match s {
+        0..60 => format!("{s}s"),
+        60..3_600 => format!("{}m", s.div_ceil(60)),
+        _ => format!("{}h", s.div_ceil(3_600)),
+    }
 }
 
 type Emit = Box<dyn Fn(Event) + Send + Sync>;
@@ -124,6 +154,17 @@ impl Registry {
     }
 
     fn begin(&self, id: &str, kind: Kind, label: &str, file: Option<PathBuf>) -> CancellationToken {
+        self.begin_until(id, kind, label, file, None)
+    }
+
+    fn begin_until(
+        &self,
+        id: &str,
+        kind: Kind,
+        label: &str,
+        file: Option<PathBuf>,
+        due: Option<Duration>,
+    ) -> CancellationToken {
         let stop = CancellationToken::new();
         let log = file.as_ref().map(|f| f.display().to_string());
         self.entries.lock().unwrap().insert(
@@ -137,6 +178,7 @@ impl Registry {
                 file,
                 stop: stop.clone(),
                 started: Instant::now(),
+                due: due.map(|d| Instant::now() + d),
             },
         );
         self.emit(Event::BackgroundStarted {
@@ -346,6 +388,39 @@ impl Registry {
         true
     }
 
+    /// Pending timers and monitors (not jobs or Tasks), oldest first.
+    pub fn watches(&self) -> Vec<Watch> {
+        let now = Instant::now();
+        let entries = self.entries.lock().unwrap();
+        let mut out: Vec<(Instant, Watch)> = entries
+            .iter()
+            .filter(|(_, e)| e.running && matches!(e.kind, Kind::Timer | Kind::Monitor))
+            .map(|(id, e)| {
+                let w = Watch {
+                    id: id.clone(),
+                    kind: e.kind,
+                    label: e.label.clone(),
+                    left: e.due.map(|d| d.saturating_duration_since(now)),
+                };
+                (e.started, w)
+            })
+            .collect();
+        out.sort_by_key(|(started, _)| *started);
+        out.into_iter().map(|(_, w)| w).collect()
+    }
+
+    /// Stop the pending timers and monitors `target` names: an id, or `all`. Returns what it
+    /// stopped, oldest first.
+    pub fn cancel(&self, target: &str) -> Vec<Watch> {
+        let target = target.trim();
+        let hit: Vec<Watch> = self
+            .watches()
+            .into_iter()
+            .filter(|w| target == "all" || w.id == target)
+            .collect();
+        hit.into_iter().filter(|w| self.stop(&w.id)).collect()
+    }
+
     /// Something running: none means nothing to wait for.
     pub fn any_running(&self) -> bool {
         self.entries.lock().unwrap().values().any(|e| e.running)
@@ -545,14 +620,23 @@ pub fn start_job(reg: &Arc<Registry>, input: &Value, ctx: &Ctx, dir: &Path) -> R
 
 /// `Monitor` (already permitted when it runs a command).
 pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Output> {
+    if let Some(target) = input["cancel"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(Output::text(cancel_text(reg, target)));
+    }
     let command = input["command"].as_str().map(str::trim).unwrap_or("");
     if command.is_empty() {
         let Some(after) = int_arg(input, "after_s") else {
-            bail!("give a `command` with `until_regex` or `until_exit`, or `after_s` for a timer");
+            bail!("give a `command` with `until_regex` or `until_exit`, `after_s` for a timer, or `cancel`");
         };
         let id = reg.new_id(Kind::Timer);
         let note = input["note"].as_str().unwrap_or("").to_string();
-        let stop = reg.begin(&id, Kind::Timer, &format!("wake in {after}s"), None);
+        let stop = reg.begin_until(
+            &id,
+            Kind::Timer,
+            &format!("wake in {after}s"),
+            None,
+            Some(Duration::from_secs(after)),
+        );
         let (reg2, id2) = (reg.clone(), id.clone());
         tokio::spawn(async move {
             tokio::select! {
@@ -563,7 +647,7 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
             reg2.finish(&id2, "done", String::new(), notice);
         });
         return Ok(Output::text(format!(
-            "Timer {id} set: you'll get a <wakeup id={id}> message in {after}s."
+            "Timer {id} set: you'll get a <wakeup id={id}> message in {after}s. Monitor {{\"cancel\": \"{id}\"}} cancels it."
         )));
     }
     let regex = match input["until_regex"].as_str().filter(|s| !s.is_empty()) {
@@ -587,7 +671,7 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
     crate::tools::bash::shell(input, &shell_ctx(ctx))?;
     let id = reg.new_id(Kind::Monitor);
     let label = command.lines().next().unwrap_or("").to_string();
-    let stop = reg.begin(&id, Kind::Monitor, &label, None);
+    let stop = reg.begin_until(&id, Kind::Monitor, &label, None, Some(timeout));
     let (reg2, id2, input2, ctx2, command) = (
         reg.clone(),
         id.clone(),
@@ -641,10 +725,27 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
         }
     });
     Ok(Output::text(format!(
-        "Monitor {id} started: polling every {}s for up to {}s. You'll get a <monitor-done id={id}> message on a match or at the timeout. JobStop {{\"id\": \"{id}\"}} stops it.",
+        "Monitor {id} started: polling every {}s for up to {}s. You'll get a <monitor-done id={id}> message on a match or at the timeout. Monitor {{\"cancel\": \"{id}\"}} (or JobStop) stops it.",
         interval.as_secs(),
         timeout.as_secs()
     )))
+}
+
+/// `Monitor { cancel }`: what it stopped, or what's pending when nothing matched.
+fn cancel_text(reg: &Registry, target: &str) -> String {
+    let stopped = reg.cancel(target);
+    if !stopped.is_empty() {
+        let lines: Vec<String> = stopped.iter().map(Watch::line).collect();
+        return format!("Cancelled {}: {}.", stopped.len(), lines.join("; "));
+    }
+    let pending: Vec<String> = reg.watches().iter().map(Watch::line).collect();
+    if pending.is_empty() {
+        return format!("Nothing pending matches `{target}`: no timers or monitors are pending.");
+    }
+    format!(
+        "Nothing pending matches `{target}`. Pending: {}.",
+        pending.join("; ")
+    )
 }
 
 /// Run a monitor's command once: its output (stdout and stderr) and exit code.
@@ -776,7 +877,7 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: MONITOR.into(),
-            description: "Watch for something in the background and get a message when it happens, instead of polling yourself. With `command`: run it every `interval_s` seconds until its output matches `until_regex` or it exits with code `until_exit` (true means 0), or `timeout_s` passes. The command runs like Bash (same sandbox and permissions). With only `after_s`: a timer that wakes you after that many seconds.".into(),
+            description: "Watch for something in the background and get a message when it happens, instead of polling yourself. With `command`: run it every `interval_s` seconds until its output matches `until_regex` or it exits with code `until_exit` (true means 0), or `timeout_s` passes. The command runs like Bash (same sandbox and permissions). With only `after_s`: a timer that wakes you after that many seconds. With `cancel`: stop a pending timer or monitor by id, or `all` of them, as soon as what it watches stops mattering.".into(),
             schema: json!({"type": "object", "properties": {
                 "command": {"type": "string", "description": "Shell command to poll"},
                 "until_regex": {"type": "string", "description": "Stop when the command's output matches this regex"},
@@ -784,7 +885,8 @@ pub fn specs() -> Vec<ToolSpec> {
                 "timeout_s": {"type": "integer", "description": "Give up after this many seconds (default 600)"},
                 "interval_s": {"type": "integer", "description": "Seconds between polls (default 5)"},
                 "after_s": {"type": "integer", "description": "Timer only: wake after this many seconds"},
-                "note": {"type": "string", "description": "Timer only: a reminder to include in the wakeup"}
+                "note": {"type": "string", "description": "Timer only: a reminder to include in the wakeup"},
+                "cancel": {"type": "string", "description": "Stop pending timers/monitors instead of starting one: an id, or `all`"}
             }}),
         },
     ]
@@ -929,6 +1031,49 @@ mod tests {
             .filter(|e| matches!(e, Event::Background { .. }))
             .count();
         assert_eq!(counts, 4, "two starts, two ends");
+    }
+
+    /// A watch that stopped mattering is cancelled by id (or all at once) and never wakes.
+    #[tokio::test]
+    async fn cancel_by_id_kills_the_timer_and_it_never_wakes() {
+        let (reg, seen) = registry();
+        let ctx = Ctx::new(tmp());
+        let set = start_monitor(&reg, &json!({"after_s": 1, "note": "b300 retry"}), &ctx).unwrap();
+        assert!(set.content.contains(r#"{"cancel": "mon-1"}"#), "{}", set.content);
+        start_monitor(&reg, &json!({"after_s": 1}), &ctx).unwrap();
+        start_monitor(&reg, &json!({"after_s": 1}), &ctx).unwrap();
+        let out = start_monitor(&reg, &json!({"cancel": "mon-1"}), &ctx).unwrap();
+        assert!(out.content.starts_with("Cancelled 1: mon-1 wake in 1s"), "{}", out.content);
+        let out = start_monitor(&reg, &json!({"cancel": "mon-9"}), &ctx).unwrap();
+        assert!(
+            out.content.contains("Nothing pending matches `mon-9`. Pending: mon-2")
+                && out.content.contains("mon-3"),
+            "{}",
+            out.content
+        );
+        let out = start_monitor(&reg, &json!({"cancel": "all"}), &ctx).unwrap();
+        assert!(out.content.starts_with("Cancelled 2: mon-2"), "{}", out.content);
+        tokio::time::sleep(Duration::from_millis(1_500)).await;
+        assert!(!reg.has_notices(), "no wakeup after a cancel");
+        assert!(!reg.any_running());
+        let stopped = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, Event::BackgroundDone { status, .. } if status == "stopped"))
+            .count();
+        assert_eq!(stopped, 3);
+        let none = start_monitor(&reg, &json!({"cancel": "all"}), &ctx).unwrap();
+        assert!(none.content.contains("no timers or monitors are pending"));
+    }
+
+    #[test]
+    fn short_durations_round_up() {
+        assert_eq!(short_duration(Duration::from_millis(200)), "1s");
+        assert_eq!(short_duration(Duration::from_secs(59)), "59s");
+        assert_eq!(short_duration(Duration::from_secs(61)), "2m");
+        assert_eq!(short_duration(Duration::from_secs(1_800)), "30m");
+        assert_eq!(short_duration(Duration::from_secs(7_200)), "2h");
     }
 
     #[tokio::test]
