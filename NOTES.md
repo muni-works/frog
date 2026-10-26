@@ -10,8 +10,49 @@ DESIGN-ONLY (docs + mockup). Commit per piece (`git commit -s`), never push. Edi
 3. docs/design/worktree-ux/mockup.html — workers sidebar scope + teardown prompt
 4. report (≤30 lines, shas, open questions)
 
-## Survey
-(pending)
+## Survey (checkpoint 1, verified in source at 115b40d)
+Creation (apps/macos/Frog/Model/SessionBroker.swift):
+- StartSession input → StartRequest{title,prompt,cwd,model,mode,worktree(default FALSE),allowMainCheckout} :93, :362.
+  So "auto worktree" is NOT automatic: without worktree:true, checkWorkerFolder :1166 REFUSES the main checkout
+  (repo root holding .frog/worktrees; names up to 3 existing trees to reuse) unless allow_main_checkout, refuses a
+  worktree whose engine lock is held, and REUSES any free worktree as-is (no check it's the caller's).
+- makeWorktree :1187: base = worktreeBase :1096 (origin/HEAD → origin/main|master → current branch if no remote);
+  name = slug(title) (≤40 chars); COLLISION = silent renumber: while dir or branch frog/<pick> exists → <slug>-2, -3…
+  `git worktree add -b frog/<pick> .frog/worktrees/<pick> <base>`; adds /.frog/worktrees/ to info/exclude.
+  Result {id,name,cwd,branch,base}. Parent recorded via Library.setParent (owner = spawning session).
+- A restart that re-calls StartSession with the same title gets <slug>-2: a NEW empty tree, the old one's work
+  stranded. Silent. That's the collision bug class, not "wrong tree" but "lost tree".
+Flock (two separate locks):
+- session.rs Log::locked :181 — flock on the session JSONL, one writer per session; in_use/wait_free probe it.
+- worktree.rs — the per-worktree ENGINE lock: `.git/worktrees/<name>/frog-engine.lock`, flock LOCK_EX|NB, content
+  "<session> <pid>". acquire() :84 at engine start (engine.rs:521, not subagents) on opts.cwd = PROCESS cwd; same
+  session waits ≤5 s (relaunch), other session → error naming holder + pid. Released on drop / process death
+  (engine.rs:941 before "engine gone"). App mirrors it read-only: worktreeOwner :1151 (try-lock probe).
+  Main checkout (`.git` dir) never locks.
+- No stale cleanup exists. A dead holder = lock free (flock semantics) but the tree, branch, lock file stay forever.
+Resume path (#107 relevance):
+- conversation(for:) :990 resumes with Conversation(folder: info.folder) — info.cwd from `--sessions --json` =
+  HEADER cwd (main.rs:964). SessionStatus prefers the log's last ShellCwd/UseFolder (:1416). So a session that `cd`'d
+  into a worktree resumes in its header cwd (the main checkout) — linked() is None there → NO lock, no refusal.
+  Likely mechanism of #107 incident 2. #107 (OPEN): engine compares serving cwd vs session's recorded tree, refuses.
+- Library listing drops sessions whose cwd no longer exists (Library.swift:66): removing a worktree makes its
+  sessions vanish from the sidebar (log kept). Teardown must archive first / keep a record.
+- engine.rs:3788: cwd deleted under a live session → falls back to session root with a warning.
+Visibility today:
+- ListSessions fields branch/ahead/dirty + SessionStatus via Git.quick (status --porcelain=v2 --branch): ahead is
+  vs UPSTREAM (nil for unpushed frog/* branches). Sidebar SessionMeta "3↑" = rev-list base..HEAD (vs main).
+  Two different "ahead"s. SessionFolds folds same-worktree sessions into one row. RowSuffix shows the branch name.
+- Sidebar scope: AttentionTree.Scope live|today|all, `@AppStorage("sidebarScope")` (Sidebar.swift:43, picker :394).
+Teardown today: none. ArchiveSession = hide only. checkpoint.rs has `worktree remove --force` + prune for race attempts.
+Sandbox (bash.rs):
+- git_dirs(ctx.root) :608 = `git rev-parse --git-dir --git-common-dir`, canonicalized, deduped. Passed from :277 with
+  the SESSION root (not shell cwd: a cd elsewhere doesn't widen it). seatbelt :759: allow default, deny file-write*,
+  re-allow root, tmp, caches, git dirs, allow_write; deny secrets (read+write). bwrap same list on Linux.
+- Guarantees: worktree files writable; main checkout's FILES not writable; other worktrees' files not writable.
+- Does NOT guarantee: common dir = whole main .git → shared refs (branch -f main, update-ref), refs/stash (shared
+  across worktrees! the #107 stash incident), main's .git/index + HEAD, OTHER worktrees' .git/worktrees/<x>/ (their
+  index, HEAD, frog-engine.lock), `git worktree remove/prune` admin entries. Reads: allow default (all but secrets).
+- Engine also: Write/Edit outside the session root (e.g. main checkout) asks, denied headless (engine.rs:4965).
 
 ---
 
