@@ -247,8 +247,12 @@ struct TurnView: View {
         guard let last = turn.items.last else { return nil }
         if last.kind == .message, !last.done, !last.text.isEmpty { return nil }
         if let current = turn.items.last(where: { !$0.done && $0.kind != .message }) {
+            if case .tool("Task", _) = current.kind {
+                // The agent's own row shows what it's doing; this line, how the turn's agents stand.
+                return conversation.permission == nil ? conversation.agentStatus(turn).map { ($0, current.startedAt) } : nil
+            }
             if current.needsPermission { return nil }
-            if case .tool(let name, _) = current.kind, name == "Task" || name == "Diagram" { return nil }
+            if case .tool("Diagram", _) = current.kind { return nil }
             return (ActivityWords.now(current), current.startedAt)
         }
         // Between steps: the model is working out what to do next.

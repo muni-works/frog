@@ -14,52 +14,29 @@ struct AgentStepRow: View {
     private var running: Bool { !item.done }
     private var failed: Bool { item.result.map { $0.outcome != .ok } ?? false }
 
-    /// The agent's own TodoWrite plan: done and total, when it wrote one.
-    private var planProgress: (done: Int, total: Int)? {
-        guard let todos = run?.items.last(where: { step in
-            if case .tool("TodoWrite", _) = step.kind { return step.done }
-            return false
-        })?.result?.input?["todos"]?.array,
-           !todos.isEmpty else { return nil }
-        let done = todos.filter { $0["status"]?.string == "completed" }.count
-        return (done, todos.count)
-    }
-
     var body: some View {
         HStack(spacing: TurnSpace.Inset.snug) {
-            Image(systemName: "person.2.fill")
-                .font(.caption)
-                .foregroundStyle(running ? AnyShapeStyle(.tint) : AnyShapeStyle(failed ? .red : .secondary))
-                .symbolEffect(.pulse, isActive: running)
-                .frame(width: TurnSpace.Inset.icon)
-            Text(arg.isEmpty ? "Agent" : arg)
-                .font(.callout)
+            // A step like any other: "Agent: audit the sidebar · Reading main.rs · 3/5".
+            Text(ActivityWords.row(item))
                 .lineLimit(1)
                 .truncationMode(.tail)
             if running, let activity = run?.activity {
                 Text("· \(activity)")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            } else if failed, let head = item.result?.output.split(separator: "\n").first {
-                Text("· failed: \(String(head.prefix(60)))")
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            } else if let r = item.result, r.outcome == .ok {
-                Text("· reported")
-                    .font(.callout)
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if failed {
+                Text("· failed")
+                    .foregroundStyle(.red)
+                    .help(item.result.flatMap { agentFailureHead($0.output) } ?? "")
             }
-            Spacer(minLength: 8)
-            if let (done, total) = planProgress {
-                Text("\(done)/\(total)")
-                    .font(.caption.monospacedDigit())
+            if running, let plan = run?.plan {
+                Text("· \(plan.done)/\(plan.total)")
+                    .monospacedDigit()
                     .foregroundStyle(.tertiary)
                     .fixedSize()
             }
+            Spacer(minLength: 8)
             if running {
                 if let since = item.startedAt {
                     TimelineView(.periodic(from: .now, by: 1)) { ctx in
@@ -84,9 +61,10 @@ struct AgentStepRow: View {
                 Image(systemName: "chevron.right")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees(showRun ? 90 : 0))
             }
         }
+        .font(.callout)
+        .foregroundStyle(.secondary)
         .contentShape(.rect)
         .onTapGesture {
             guard !running else { return }
@@ -98,32 +76,32 @@ struct AgentStepRow: View {
     }
 }
 
-/// One tool call inside a subagent: icon, name, argument, and whether it's done.
-private struct StepRow: View {
+/// A finished agent's step, opened: its report (or the failure), capped, and a way to its
+/// whole run. The parent's answer usually quotes what matters; this is for checking.
+struct AgentReport: View {
+    let arg: String
     let item: ItemState
+    let conversation: Conversation
+    @State private var showRun = false
 
     var body: some View {
-        if case .tool(let name, let arg) = item.kind {
-            HStack(spacing: 7) {
-                Image(systemName: ToolIcon.symbol(name))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14)
-                Text(ToolIcon.title(name)).font(.caption.weight(.medium))
-                Text(arg)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 4)
-                if !item.done {
-                    ProgressView().controlSize(.mini)
-                } else if item.result?.outcome == .ok {
-                    Image(systemName: "checkmark").font(.caption2.weight(.bold)).foregroundStyle(.green)
-                } else {
-                    Image(systemName: "xmark").font(.caption2.weight(.bold)).foregroundStyle(.red)
-                }
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
+            if let r = item.result, !r.output.isEmpty {
+                Text(r.output)
+                    .font(.callout)
+                    .foregroundStyle(r.outcome == .ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
+                    .lineLimit(12)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if let run = item.subagent, run.steps > 0 {
+                Button("Show its \(run.steps) step\(run.steps == 1 ? "" : "s")") { showRun = true }
+                    .linkButton()
+                    .font(.caption)
+            }
+        }
+        .sheet(isPresented: $showRun) {
+            SubagentRunSheet(title: arg, run: item.subagent, conversation: conversation)
         }
     }
 }
