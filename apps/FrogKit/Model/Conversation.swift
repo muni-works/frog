@@ -106,6 +106,11 @@ final class Conversation {
     /// When the last event arrived; a busy conversation whose engine has gone quiet for this
     /// long reconciles from the session log (see `watchdog`).
     @ObservationIgnored private var lastEventAt = Date.now
+    /// Streamed text waiting to be folded in, a frame's worth at a time: each write to `turns`
+    /// invalidates every view that reads it, and a fast model streams hundreds of deltas a
+    /// second (see `flushDeltas`).
+    @ObservationIgnored private var pendingDeltas: [(id: String, delta: Delta)] = []
+    @ObservationIgnored private var deltaFlush: DispatchWorkItem?
     /// Reads a session log's durable events after a seq (the Mac reads `~/.local/share/frog/`
     /// itself; tests feed a fixture). Nil means there's nothing to reconcile from.
     @ObservationIgnored static var logReader: ((String, UInt64) async -> [Envelope])?
@@ -539,7 +544,7 @@ final class Conversation {
         guard failure == nil else { return }
         failure = why
         busy = false
-        progress = nil
+        if progress != nil { progress = nil }
     }
 
     /// Answer a `sessionRequest`.
@@ -640,10 +645,19 @@ final class Conversation {
             queuedEvents.removeAll()
             backgroundRunning = 0
             busy = false
-            progress = nil
+            if progress != nil { progress = nil }
             stopWatchdog()
             return
         }
+        // Anything else lands after the text streamed before it.
+        if case .itemDelta(let id, let delta) = env.event, link != nil, !replaying, delta.isText {
+            lastSeq = max(lastSeq, env.seq)
+            lastEventAt = .now
+            pendingDeltas.append((id, delta))
+            scheduleDeltaFlush()
+            return
+        }
+        flushDeltas()
         lastSeq = max(lastSeq, env.seq)
         lastEventAt = .now
         if sessionID != env.session {
@@ -697,12 +711,12 @@ final class Conversation {
                     Conversation.effects?.turnEnded(self, turn: turns[i])
                 }
             }
-            progress = nil
-            presentPreview = nil
+            if progress != nil { progress = nil }
+            if presentPreview != nil { presentPreview = nil }
             // Replayed turns are old news; the sidebar hears once, when the history is in.
             if !replaying { onSessionChange?() }
         case .itemStarted(let id, let kind):
-            presentPreview = nil
+            if presentPreview != nil { presentPreview = nil }
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             upsert(id) { item in
                 item.kind = Self.kind(kind)
@@ -716,7 +730,7 @@ final class Conversation {
                 case .imagePreview(let image, _, _, _): item.imagePreview = image
                 }
             }
-            progress = nil
+            if progress != nil { progress = nil }
         case .itemCompleted(let id, let item):
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             upsert(id) { state in
@@ -745,7 +759,7 @@ final class Conversation {
                 turns[i].items.removeAll { ids.contains($0.id) }
             }
             for id in ids { itemAt[id] = nil }
-            presentPreview = nil
+            if presentPreview != nil { presentPreview = nil }
         case .permissionRequest(let req):
             permission = req
             if isNews(env) {
@@ -754,18 +768,18 @@ final class Conversation {
                 Conversation.permissionRequests?(self, req)
             }
             upsert(req.item) { $0.needsPermission = true }
-            progress = nil
+            if progress != nil { progress = nil }
         case .permissionResolved:
             permission = nil
         case .elicitation(let e):
             elicitation = e
-            progress = nil
+            if progress != nil { progress = nil }
         case .elicitationDone(let id):
             if elicitation?.id == id { elicitation = nil }
         case .question(let q):
             question = q
             if isNews(env) { FrogSounds.shared.play(.drip) }
-            progress = nil
+            if progress != nil { progress = nil }
         case .questionResolved(let id):
             if question?.id == id { question = nil }
         case .toolProgress(let id, let p):
@@ -780,7 +794,7 @@ final class Conversation {
                 if state.subagent == nil { state.subagent = SubagentRun() }
                 state.subagent?.apply(inner)
             }
-            progress = nil
+            if progress != nil { progress = nil }
         case .appResult(let id, let result, let error):
             appCalls.removeValue(forKey: id)?(result, error)
         case .progress(let update):
@@ -807,7 +821,8 @@ final class Conversation {
             // coordinator reads it through the drain's wait below, nothing to fold here.
             break
         case .status(let s):
-            status = s
+            // Written only when it changed: every view of it rebuilds on a write.
+            if status != s { status = s }
         case .background(let running):
             backgroundRunning = running
         case .backgroundStarted(let id, let kind, let label, let log):
@@ -853,7 +868,7 @@ final class Conversation {
             }
             busy = false
             awaitingCommand = false
-            progress = nil
+            if progress != nil { progress = nil }
             permission = nil
             elicitation = nil
             question = nil
@@ -885,6 +900,41 @@ final class Conversation {
     }
 
     /// Tell the sidebar whether this conversation is running or waiting on the user.
+    private func scheduleDeltaFlush() {
+        guard deltaFlush == nil else { return }
+        let work = DispatchWorkItem { [weak self] in self?.flushDeltas() }
+        deltaFlush = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 30, execute: work)
+    }
+
+    /// Fold in the streamed text: consecutive deltas to one item, of one kind, as one write.
+    private func flushDeltas() {
+        deltaFlush?.cancel()
+        deltaFlush = nil
+        guard !pendingDeltas.isEmpty else { return }
+        let deltas = pendingDeltas
+        pendingDeltas = []
+        var merged: [(id: String, delta: Delta)] = []
+        for d in deltas {
+            if let last = merged.last, last.id == d.id, let joined = last.delta.joined(d.delta) {
+                merged[merged.count - 1].delta = joined
+            } else {
+                merged.append(d)
+            }
+        }
+        for d in merged {
+            upsert(d.id) { item in
+                switch d.delta {
+                case .text(let t), .reasoning(let t): item.text += t
+                case .output(let t): item.output += t
+                case .imagePreview: break
+                }
+            }
+        }
+        if progress != nil { progress = nil }
+        reportLive()
+    }
+
     private func reportLive() {
         guard let id = sessionID, !replaying else { return }
         _ = id
@@ -955,13 +1005,13 @@ final class Conversation {
         guard !events.isEmpty else {
             // Nothing new was logged. With the engine gone that means the turn it was on
             // never finished: it's over either way.
-            if link?.isAlive != true { busy = false; progress = nil }
+            if link?.isAlive != true { busy = false; if progress != nil { progress = nil } }
             return
         }
         Motion.cut { events.forEach { self.ingest($0) } }
         if let last = events.last, case .turnEnded = last.event {
             busy = false
-            progress = nil
+            if progress != nil { progress = nil }
         }
         reportLive()
     }

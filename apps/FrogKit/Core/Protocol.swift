@@ -305,7 +305,7 @@ struct Todo: Codable, Sendable, Hashable {
     var status: String
 }
 
-struct Status: Decodable, Sendable {
+struct Status: Decodable, Sendable, Equatable {
     var model: String
     var mode: Mode
     var cwd: String
@@ -509,6 +509,21 @@ enum Delta: Decodable, Sendable {
     case reasoning(String)
     case output(String)
     case imagePreview(ToolImage, step: UInt64, of: UInt64, imageIndex: Int)
+
+    /// Text that's only appended (what `Conversation` batches).
+    var isText: Bool {
+        if case .imagePreview = self { false } else { true }
+    }
+
+    /// This delta and the next as one, when they're the same kind of text.
+    func joined(_ next: Delta) -> Delta? {
+        switch (self, next) {
+        case (.text(let a), .text(let b)): .text(a + b)
+        case (.reasoning(let a), .reasoning(let b)): .reasoning(a + b)
+        case (.output(let a), .output(let b)): .output(a + b)
+        default: nil
+        }
+    }
 
     private enum Key: String, CodingKey { case type, text, image, step, of, imageIndex }
 
