@@ -826,6 +826,12 @@ final class Conversation {
             if itemAt[req.item] != nil { upsert(req.item) { $0.needsPermission = true } }
             if progress != nil { progress = nil }
         case .permissionResolved:
+            // An agent goes on working once answered: it isn't waiting on you any more.
+            if let item = permission?.item, itemAt[item] != nil {
+                upsert(item) { state in
+                    if case .tool("Task", _) = state.kind { state.needsPermission = false }
+                }
+            }
             permission = nil
         case .elicitation(let e):
             elicitation = e
@@ -1033,16 +1039,13 @@ final class Conversation {
         guard busy, let last = turns.last, !last.finished else { return nil }
         guard permission == nil, elicitation == nil, question == nil else { return nil }
         if let current = last.items.last(where: { !$0.done && $0.kind != .message }) {
-            if current.needsPermission { return nil }
             if case .tool("Task", _) = current.kind {
                 // The subagent's own activity ("Reading main.rs"), so lists that watch this
-                // conversation don't show a bare "Here: <folder>" while it works.
-                let agents = last.agents
-                if agents.filter({ $0.state == .running || $0.state == .waiting }).count > 1 {
-                    return "Waiting on \(agents.filter { $0.state == .running || $0.state == .waiting }.count) agents…"
-                }
-                return current.subagent.map { "Subagent: \($0.activity)" } ?? "Running a subagent…"
+                // conversation don't show a bare "Here: <folder>" while it works (also after
+                // an approval it asked for: its item's flag outlives the prompt).
+                return "Subagent: \(current.subagent?.activity ?? "Starting")"
             }
+            if current.needsPermission { return nil }
             if case .tool(let name, _) = current.kind, name == "Diagram" { return nil }
             return ActivityWords.now(current)
         }
