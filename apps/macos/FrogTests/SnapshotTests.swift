@@ -7,8 +7,14 @@ import XCTest
 /// or a screen: `$TMPDIR/frog-snapshots/<fixture>-<state>.png`.
 @MainActor
 final class SnapshotTests: XCTestCase {
+    /// `$FROG_SNAPSHOT_DIR` when set (pass it as `TEST_RUNNER_FROG_SNAPSHOT_DIR` to xcodebuild):
+    /// the shared temp folder is written by every worktree's test run, so two sessions rendering
+    /// at once overwrite each other's PNGs.
     private var outDir: URL {
-        FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
+        if let dir = ProcessInfo.processInfo.environment["FROG_SNAPSHOT_DIR"], !dir.isEmpty {
+            return URL(fileURLWithPath: dir)
+        }
+        return FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
     }
 
     private func fixtures() throws -> [URL] {
