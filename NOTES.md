@@ -66,3 +66,12 @@ Stance: ONE noun, "agent". Every agent is a session with a log. Waiting is a par
 
 ## Progress
 - 4274391 checkpoint 0
+- BUG (from the subagent-live snapshot): the header reads "29883095m 6s". `SubagentRun.startedAt` ends up
+  near the epoch when a fixture/replay starts the run. Derive it from the Task item's startedAt instead.
+
+## Mockup (docs/design/agents/mockup.html; renders are git-excluded)
+Six surfaces, numbered on the mock: 1 anchor line (replaces SubagentCard in the flow; all 7 states in the
+strip below), 2 peek (hover/space), 3 rail spans per agent colored by outcome, 4 pill "3 agents · 1 failed",
+5 sidebar pie+count on the parent, agents fold under it and unfold only while running or failed, failed
+puts the parent in Needs you, 6 thread pane = the agent's real transcript as a tab of the right card,
+opened at the failing step, with Retry / Continue as session / Show in turn.
