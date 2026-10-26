@@ -3,6 +3,7 @@ import XCTest
 
 /// Chapter derivation for the timeline rail (see `Chapter`): a chapter starts at each prompt,
 /// at a compaction notice, and after a run of turns with no prompt.
+@MainActor
 final class ChapterTests: XCTestCase {
     private func turn(_ input: String = "", notice: String? = nil) -> TurnState {
         var t = TurnState(input: input)
@@ -60,5 +61,42 @@ final class ChapterTests: XCTestCase {
         XCTAssertEqual(Chapter.words("Install the new build and restart frog"), "install the new build")
         XCTAssertEqual(Chapter.title(Chapter(turn: UUID(), number: 1, kind: .prompt), TurnState(input: "?"), turns: 1), "?")
         XCTAssertEqual(Chapter.title(Chapter(turn: UUID(), number: 1, kind: .prompt), TurnState(input: "<session-message from=\"x\">hi</session-message>"), turns: 3), "on its own · 3 turns")
+    }
+
+    // MARK: Model titles (`chapter_titled`)
+
+    private var seq: UInt64 = 0
+
+    private func ingest(_ c: Conversation, _ event: String) {
+        seq += 1
+        let line = #"{"seq":\#(seq),"session":"ch","created":1790113417019,"event":\#(event)}"#
+        guard let env = try? JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8)) else {
+            return XCTFail("bad event: \(line)")
+        }
+        c.ingest(env)
+    }
+
+    func testHeuristicShowsUntilTheModelTitleArrivesThenTheModelWins() {
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp"), link: nil, replay: false)
+        ingest(c, #""turn_started","turn":1,"input":"can you fix the rail, it jumps""#)
+        ingest(c, #""turn_started","turn":2,"input":"now draft the release notes""#)
+        // Instantly: the heuristic titles, before any model title.
+        XCTAssertEqual(Chapter.cached(c.turns).titles, ["fix the rail", "draft the release notes"])
+        // The engine titled the closed chapter: it wins, the open one stays heuristic.
+        ingest(c, #""chapter_titled","turn":1,"title":"timeline rail fix""#)
+        XCTAssertEqual(c.turns[0].chapterTitle, "timeline rail fix")
+        XCTAssertEqual(Chapter.cached(c.turns).titles, ["timeline rail fix", "draft the release notes"])
+        // A title for a turn that isn't here (or an empty one) changes nothing.
+        ingest(c, #""chapter_titled","turn":9,"title":"ghost""#)
+        ingest(c, #""chapter_titled","turn":2,"title":"""#)
+        XCTAssertEqual(Chapter.cached(c.turns).titles, ["timeline rail fix", "draft the release notes"])
+    }
+
+    func testModelTitleOverridesEveryKind() {
+        var t = TurnState(input: "<session-message from=\"x\">hi</session-message>")
+        XCTAssertEqual(Chapter.title(Chapter(turn: t.id, number: 1, kind: .run), t, turns: 7), "on its own · 7 turns")
+        t.chapterTitle = "fleet drain"
+        XCTAssertEqual(Chapter.title(Chapter(turn: t.id, number: 1, kind: .run), t, turns: 7), "fleet drain")
+        XCTAssertEqual(Chapter.title(Chapter(turn: t.id, number: 1, kind: .compacted), t, turns: 2), "fleet drain")
     }
 }

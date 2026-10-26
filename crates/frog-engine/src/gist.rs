@@ -45,7 +45,7 @@ fn schema() -> Value {
 /// `cloud/qwen3-8b` (small and fast), else Apple's on-device model when it's here. A
 /// candidate this project's policy rejects is skipped for the next; none usable means no
 /// gists (the caller falls back to the elided command).
-fn choose(cfg: &Config, dir: &std::path::Path) -> Option<(String, Profile)> {
+pub(crate) fn choose(cfg: &Config, dir: &std::path::Path) -> Option<(String, Profile)> {
     let mut candidates: Vec<String> = match &cfg.gist_model {
         Some(spec) => vec![spec.clone()],
         None => vec!["cloud/qwen3-8b".into()],

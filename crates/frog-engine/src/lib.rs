@@ -5,6 +5,7 @@ pub mod ask;
 pub mod auto;
 pub mod background;
 pub mod catalog;
+pub mod chapter;
 pub mod checkpoint;
 pub mod codemap;
 pub mod config;
