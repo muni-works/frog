@@ -280,16 +280,15 @@ struct DegradedBadge: View {
     }
 }
 
-/// Dock tile progress, like Xcode's: while any window has a turn running, the icon gets a
-/// spinning ring; it goes away when everything is idle.
+/// The Dock tile while any window has a turn running: the icon's frog, working (its throat
+/// pumps), instead of a spinner; the plain icon when everything is idle.
 @MainActor
 final class DockActivity {
     static let shared = DockActivity()
 
     private var busy: Set<ObjectIdentifier> = []
     private var timer: Timer?
-    private var phase: CGFloat = 0
-    private lazy var view = DockTileView(frame: NSRect(x: 0, y: 0, width: 128, height: 128))
+    private lazy var view = NSHostingView(rootView: DockFrog(at: .now))
 
     func set(_ id: ObjectIdentifier, busy isBusy: Bool) {
         if isBusy { busy.insert(id) } else { busy.remove(id) }
@@ -305,37 +304,37 @@ final class DockActivity {
             return
         }
         guard timer == nil else { return }
+        view.frame = NSRect(x: 0, y: 0, width: 128, height: 128)
         NSApp.dockTile.contentView = view
+        // The Dock takes a snapshot per display(): a dozen a second reads as motion there.
         timer = Timer.scheduledTimer(withTimeInterval: 1 / 12, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.phase = (self.phase + 1 / 24).truncatingRemainder(dividingBy: 1)
-                self.view.phase = self.phase
+                self.view.rootView = DockFrog(at: .now)
                 NSApp.dockTile.display()
             }
         }
     }
 }
 
-private final class DockTileView: NSView {
-    var phase: CGFloat = 0
+/// The app icon redrawn live: its dark squircle (AppIcon.icon's fill, on the macOS icon grid)
+/// and the frog in it, posed at `at`.
+private struct DockFrog: View {
+    let at: Date
 
-    override func draw(_ dirtyRect: NSRect) {
-        NSApp.applicationIconImage?.draw(in: bounds)
-        let inset = bounds.insetBy(dx: 10, dy: 10)
-        let center = NSPoint(x: inset.midX, y: inset.midY)
-        let radius = inset.width / 2
-        let track = NSBezierPath()
-        track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
-        NSColor.black.withAlphaComponent(0.25).setStroke()
-        track.lineWidth = 7
-        track.stroke()
-        let arc = NSBezierPath()
-        let start = 90 - phase * 360
-        arc.appendArc(withCenter: center, radius: radius, startAngle: start, endAngle: start - 100, clockwise: true)
-        (NSColor(named: "AccentColor") ?? .systemGreen).setStroke()
-        arc.lineWidth = 7
-        arc.lineCapStyle = .round
-        arc.stroke()
+    var body: some View {
+        GeometryReader { geo in
+            let side = geo.size.width * 0.8125
+            ZStack {
+                RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
+                    .fill(LinearGradient(colors: [Color(red: 0.090, green: 0.102, blue: 0.094),
+                                                  Color(red: 0.059, green: 0.067, blue: 0.059)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .frame(width: side, height: side)
+                    .shadow(color: .black.opacity(0.35), radius: geo.size.width * 0.02, y: geo.size.width * 0.01)
+                FrogFace(mood: .working, size: side * 0.78, at: at)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
     }
 }
