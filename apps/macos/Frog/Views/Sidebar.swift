@@ -217,6 +217,10 @@ struct SessionList: View {
                 .padding(.bottom, 8)
             }
             .scrollIndicators(.never)
+            // A git hover card is anchored to its badge: scrolling the list closes it.
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { old, new in
+                if abs(new - old) > 1 { GitCardController.shared.close() }
+            }
             footer
         }
         .frame(maxHeight: maxHeight)

@@ -493,8 +493,9 @@ struct GitCard: View {
         }
         .task(id: card) {
             index.load(card, commitsFor: request.single ? card.pending.first : nil)
-            GitCardController.shared.refit()
         }
+        // Commits or stats arriving change its height: the panel follows.
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in GitCardController.shared.refit() }
         .focusable(pinned)
         .focused($focused)
         .focusEffectDisabled()
