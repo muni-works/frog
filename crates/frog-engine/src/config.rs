@@ -244,6 +244,19 @@ pub struct Config {
     /// Empty by default: nothing widens unless configured.
     #[serde(default)]
     pub sandbox: SandboxConfig,
+    /// `[egress]`: the hosts sandboxed commands may reach, and which sessions enforce it
+    /// (agent-started ones by default). See `egress`.
+    #[serde(default)]
+    pub egress: crate::egress::EgressConfig,
+    /// This session was started by an agent (`--worker`, which the app passes for
+    /// `StartSession`; kept in the session log so a resume stays one). Not a config.toml key.
+    #[serde(skip)]
+    pub worker: bool,
+    /// Set on a subagent's config by its parent: the parent's egress state, so the subagent's
+    /// commands obey the same list and grants and its hits surface in the parent's
+    /// transcript. Not a config.toml key.
+    #[serde(skip)]
+    pub egress_parent: Option<std::sync::Arc<crate::egress::Egress>>,
     /// Start read-only tool calls (Read, Grep, Glob, public web reads, read-only shell
     /// commands) as soon as their arguments arrive, while the model is still writing the rest
     /// of its reply, and run a reply's leading reads side by side. Results, history and events
