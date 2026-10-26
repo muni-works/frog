@@ -8,6 +8,7 @@ use crate::provider::ToolSpec;
 use crate::tools::Output;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -22,14 +23,14 @@ const MAX_POINTS: usize = 24;
 const MAX_STATS: usize = 6;
 const MAX_ACTIONS: usize = 6;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Present {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
     pub blocks: Vec<Block>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Block {
     Table {
@@ -74,7 +75,7 @@ pub enum Block {
     },
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChartKind {
     #[default]
@@ -82,14 +83,14 @@ pub enum ChartKind {
     Line,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Series {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     pub values: Vec<f64>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Stat {
     pub label: String,
     pub value: String,
@@ -99,7 +100,7 @@ pub struct Stat {
     pub tone: Option<Tone>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Choice {
     pub label: String,
     /// Sent instead of the label when set: the message the press stands for.
@@ -107,13 +108,13 @@ pub struct Choice {
     pub send: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Side {
     pub label: String,
     pub text: String,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Tone {
     #[default]
