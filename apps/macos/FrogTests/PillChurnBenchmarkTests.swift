@@ -106,4 +106,17 @@ final class PillChurnBenchmarkTests: XCTestCase {
         defer { UserDefaults.standard.removeObject(forKey: "pillChurn.noFrog") }
         try measure("variantA")
     }
+
+    /// Variant B: frog static AND the sweep pinned — whether the 60/s working line matters
+    /// beyond A. (The sweep is a view of its own, not the frog; pinning it keeps the capsule
+    /// lit but static.)
+    func testVariantB() throws {
+        UserDefaults.standard.set(true, forKey: "pillChurn.noFrog")
+        UserDefaults.standard.set(true, forKey: "pillChurn.noSweep")
+        defer {
+            UserDefaults.standard.removeObject(forKey: "pillChurn.noFrog")
+            UserDefaults.standard.removeObject(forKey: "pillChurn.noSweep")
+        }
+        try measure("variantB")
+    }
 }

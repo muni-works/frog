@@ -284,7 +284,7 @@ struct WorkingLine: View {
         #if DEBUG
         let _ = PillProbe.line()
         #endif
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { ctx in
+        TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion || PillChurn.noSweep)) { ctx in
             #if DEBUG
             let _ = PillProbe.line()
             #endif

@@ -1,12 +1,13 @@
 #if DEBUG
 import Foundation
 
-/// The A/B knob for the activity pill's churn benchmark: DEBUG builds only, never shipped
-/// behavior. It reuses the state the frog already has for Reduce Motion — `animating: false`
-/// holds its pose and stops the 30/s timeline from ticking.
+/// The A/B knobs for the activity pill's churn benchmark: DEBUG builds only, never shipped
+/// behavior. They reuse the states the views already have for Reduce Motion — `noFrog` holds
+/// the frog's pose (`animating: false`), `noSweep` pauses the working line's 60/s timeline.
 @MainActor
 enum PillChurn {
     static var noFrog: Bool { UserDefaults.standard.bool(forKey: "pillChurn.noFrog") }
+    static var noSweep: Bool { UserDefaults.standard.bool(forKey: "pillChurn.noSweep") }
 }
 
 /// Counters for the activity pill's churn benchmark (`PillChurnBenchmarkTests`): how often the
