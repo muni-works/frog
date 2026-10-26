@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The session frog.eco's hero screenshot shows, and a believable sidebar around it.
+"""The session frog.toys's hero screenshot shows, and a believable sidebar around it.
 
     hero_fixture.py <home>
 

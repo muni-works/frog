@@ -74,7 +74,7 @@ struct EnergySettings: View {
                 Text("This Mac's part comes from its own power sensor, read ten times a second over each turn, less what it drew at rest. A cloud model's data center part is an estimate from the tokens used: open-weight models scale a published estimate by their active parameters; closed models, whose size isn't published, assume a frontier model like GPT-4o.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                Link("How it's measured, and every bench run", destination: URL(string: "https://frog.eco/energy")!)
+                Link("How it's measured, and every bench run", destination: URL(string: "https://frog.toys/energy")!)
             }
         }
         .formStyle(.grouped)
