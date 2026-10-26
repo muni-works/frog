@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>frog — sidebar git badges</title>
+<style>
+  :root { --mono: ui-monospace, "SF Mono", Menlo, monospace; --purple:#9a4fd0; --green:#2f9e5b; --side:#d9d8d6; }
+  .light { --win:#fff; --side:#f4f3f2; --line:#e2e0de; --text:#1d1d1f; --sec:#6e6e73; --ter:#a1a1a6; --quat:rgba(0,0,0,.12);
+           --hover:rgba(0,0,0,.04); --sel:rgba(47,158,91,.18); --accent:#2f9e5b; --orange:#e8890c; --red:#d6453d;
+           --purple:#9a4fd0; --green:#2f9e5b; --amber:#c98a12; --chip:rgba(0,0,0,.05); --tip:#fff; --seg:rgba(0,0,0,.07); --segon:#fff; }
+  .dark  { --win:#1e1e1e; --side:#262627; --line:rgba(255,255,255,.09); --text:#ececec; --sec:rgba(235,235,245,.6);
+           --ter:rgba(235,235,245,.32); --quat:rgba(235,235,245,.16); --hover:rgba(255,255,255,.05); --sel:rgba(48,209,88,.16);
+           --accent:#30d158; --orange:#ff9f0a; --red:#ff453a; --purple:#c38bff; --green:#30d158; --amber:#ffb340;
+           --chip:rgba(255,255,255,.07); --tip:#333335; --seg:rgba(255,255,255,.08); --segon:rgba(255,255,255,.2); }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:28px 32px 40px; background:#d9d8d6; color:#1d1d1f;
+         font:13px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
+  h1 { font-size:18px; margin:0 0 4px; } h2 { font-size:13px; margin:30px 0 10px; text-transform:uppercase; letter-spacing:.05em; color:#55555a; }
+  .lede { color:#55555a; margin:0 0 22px; max-width:1000px; }
+  code { font:11.5px var(--mono); background:rgba(0,0,0,.06); border-radius:3px; padding:0 4px; }
+  .stage { display:flex; gap:28px; align-items:flex-start; flex-wrap:wrap; }
+  .cap { font-size:11px; color:#55555a; margin:8px 2px 0; max-width:560px; }
+
+  /* window */
+  .window { background:var(--win); color:var(--text); border-radius:10px; overflow:hidden; display:flex;
+            box-shadow:0 0 0 .5px rgba(0,0,0,.25), 0 14px 40px rgba(0,0,0,.18); }
+  .sidebar { width:300px; background:var(--side); border-right:.5px solid var(--line); padding:10px 6px 14px; height:850px; overflow:visible; position:relative; }
+  .ghost { width:300px; padding:44px 28px; }
+  .ghost i { display:block; height:9px; background:var(--chip); border-radius:4px; margin:11px 0; }
+  .lights { display:flex; gap:8px; padding:2px 8px 12px; }
+  .lights i { width:12px; height:12px; border-radius:50%; display:block; }
+  .lights i:nth-child(1){background:#ff5f57} .lights i:nth-child(2){background:#febc2e} .lights i:nth-child(3){background:#28c840}
+  .search { margin:0 4px 6px; background:var(--chip); border-radius:6px; padding:4px 8px; color:var(--ter); font-size:12px; }
+  .chief { display:flex; align-items:center; gap:8px; margin:4px 4px 2px; padding:7px 8px; border-radius:8px; background:var(--chip); }
+  .chief .t { font-weight:600; } .chief .s { color:var(--sec); font-size:11.5px; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .label { display:flex; align-items:center; gap:5px; padding:12px 4px 3px 8px; font-size:10px; font-weight:600;
+           letter-spacing:.6px; text-transform:uppercase; color:var(--sec); }
+  .label.o { color:var(--orange); } .label .sp { flex:1; }
+  .seg { display:inline-flex; background:var(--seg); border-radius:5px; padding:1px; gap:1px; text-transform:none; letter-spacing:0; font-weight:500; font-size:10px; }
+  .seg span { padding:1px 6px; border-radius:4px; color:var(--text); } .seg span.on { background:var(--segon); box-shadow:0 .5px 1.5px rgba(0,0,0,.2); }
+
+  /* tree rows (AttentionRows.swift metrics: 24 pt rows, 14 pt indent, 14 pt disclosure, 18 pt monogram) */
+  .row { display:flex; align-items:center; height:24px; padding:0 6px 0 4px; border-radius:6px; position:relative; }
+  .row.sel { background:var(--sel); }
+  .row .disc { width:14px; flex:none; color:var(--ter); font-size:8px; font-weight:700; text-align:center; }
+  .row .disc.open { transform:rotate(90deg); }
+  .mg { width:18px; height:18px; border-radius:5px; font:600 9px -apple-system; display:inline-flex; align-items:center;
+        justify-content:center; flex:none; margin-right:7px; }
+  .row .t { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row .t.mgr { font-weight:600; } .row .t.settled { font-size:12px; opacity:.55; } .row .t.top { opacity:.8; }
+  .row .sum { color:var(--ter); font-size:11px; margin-left:6px; white-space:nowrap; }
+  .tr { display:flex; align-items:center; gap:6px; flex:none; margin-left:6px; }
+  .age { font-size:11px; color:var(--ter); font-variant-numeric:tabular-nums; }
+  .pane { font:600 10px -apple-system; color:var(--sec); }
+  .st { width:14px; height:14px; display:grid; place-items:center; flex:none; }
+  .spin { width:11px; height:11px; border-radius:50%; border:1.6px solid var(--quat); border-top-color:var(--sec); animation:r .9s linear infinite; }
+  @keyframes r { to { transform:rotate(360deg); } }
+  .wait { width:7px; height:7px; border-radius:50%; background:var(--orange); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--orange) 25%, transparent); }
+  .fail { width:6px; height:6px; border-radius:50%; background:var(--red); }
+  .ring { width:9px; height:9px; border-radius:50%; box-shadow:inset 0 0 0 1px var(--ter); }
+  .chk { color:var(--green); opacity:.75; font-size:9px; font-weight:800; }
+  .fold { display:flex; align-items:center; height:22px; padding:0 6px 0 4px; font-size:11px; color:var(--ter); }
+  .fold .disc { width:14px; text-align:center; font-size:8px; font-weight:700; }
+  .fold .f { color:color-mix(in srgb, var(--red) 80%, transparent); }
+  .fold .sp { flex:1; }
+
+  /* the badge */
+  .gb { display:inline-flex; align-items:center; gap:6px; flex:none; }
+  .gb.muted { opacity:.7; }
+  .bd { display:inline-flex; align-items:center; gap:2px; font:11px -apple-system; font-variant-numeric:tabular-nums; color:var(--sec); }
+  .gl { position:relative; width:12px; height:12px; display:inline-block; }
+  .gl svg { width:12px; height:12px; display:block; fill:none; stroke-width:1.35; stroke-linecap:round; stroke-linejoin:round; }
+  .gl.br svg { stroke:var(--purple); } .gl.mg2 svg { stroke:var(--green); }
+  .gl.amber svg { stroke:var(--amber); } .gl.det svg { stroke:var(--ter); }
+  .gl .dirty { position:absolute; top:-1.5px; right:-2.5px; width:4.5px; height:4.5px; border-radius:50%; background:var(--purple);
+               box-shadow:0 0 0 1.2px var(--side); }
+  .gl.amber .dirty { background:var(--amber); }
+  .bd.amber { color:var(--amber); }
+
+  /* tooltip */
+  .tip { position:absolute; z-index:3; background:var(--tip); color:var(--text); font-size:11px; line-height:1.45; padding:5px 8px;
+         border-radius:6px; box-shadow:0 0 0 .5px rgba(0,0,0,.25), 0 6px 18px rgba(0,0,0,.2); white-space:nowrap; }
+  .tip .m { font-family:var(--mono); font-size:10.5px; }
+  .tip .s { color:var(--sec); }
+  .note { position:absolute; z-index:4; font:500 10.5px -apple-system; color:#fff; background:#d0368a; border-radius:9px; padding:1px 7px; white-space:nowrap; }
+
+  /* hovered badge + hover card (a transient popover) */
+  .row.hov { background:var(--hover); }
+  .gbhot { border-radius:5px; padding:1px 4px; margin:-1px -4px; background:var(--quat); }
+  .card { position:absolute; z-index:5; background:var(--tip); color:var(--text); border-radius:10px; padding:8px 0 0;
+          box-shadow:0 0 0 .5px rgba(0,0,0,.28), 0 12px 32px rgba(0,0,0,.24); font-size:12px; text-align:left; cursor:default; }
+  .card .arrow { position:absolute; top:-6px; width:12px; height:12px; background:var(--tip); transform:rotate(45deg);
+                 box-shadow:-.5px -.5px 0 rgba(0,0,0,.2); }
+  .ch { display:flex; justify-content:space-between; align-items:baseline; padding:0 12px 4px; }
+  .ch b { font-weight:600; } .ch span { font-size:11px; color:var(--sec); font-variant-numeric:tabular-nums; }
+  .csec { font:600 9.5px -apple-system; letter-spacing:.6px; text-transform:uppercase; color:var(--ter); padding:7px 12px 2px; }
+  .cr { display:grid; grid-template-columns:1fr auto 74px; gap:8px; align-items:center; padding:4px 12px; }
+  .cr:hover, .cr.focus { background:color-mix(in srgb, var(--accent) 14%, transparent); }
+  .cr.focus { box-shadow:inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); border-radius:5px; margin:0 4px; padding:4px 8px; }
+  .cl { min-width:0; } .ct { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cs { font-size:10.5px; color:var(--ter); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cm { display:flex; align-items:center; gap:5px; white-space:nowrap; }
+  .cap-m { display:inline-flex; align-items:center; gap:3px; font:600 10px -apple-system; color:#fff; background:var(--green);
+           border-radius:9px; padding:1px 6px 1px 4px; }
+  .cap-m svg { width:10px; height:10px; fill:none; stroke:#fff; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+  .cref { font:10.5px var(--mono); color:var(--sec); }
+  .cchip { font:10px var(--mono); color:var(--sec); background:var(--chip); border-radius:4px; padding:0 5px; max-width:130px;
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cup { font:10.5px var(--mono); color:var(--text); }
+  .cd { font:10.5px var(--mono); text-align:right; white-space:nowrap; }
+  .add { color:var(--green); } .del { color:var(--red); margin-left:5px; }
+  .cmore { font-size:11px; color:var(--ter); padding:2px 12px; }
+  .cc { padding:3px 12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:11.5px; }
+  .cc .sha { font:10.5px var(--mono); color:var(--ter); margin-right:7px; }
+  .cc.tot { font:10.5px var(--mono); color:var(--sec); padding-top:5px; }
+  .cf { display:flex; gap:6px; align-items:center; margin-top:6px; padding:6px 12px 7px; border-top:.5px solid var(--line);
+        font-size:11px; color:var(--accent); } .cf .sp { flex:1; } .cf .k { color:var(--ter); }
+  .url { position:absolute; left:0; bottom:-24px; font:10.5px var(--mono); color:var(--sec); background:var(--tip);
+         border-radius:4px; padding:2px 6px; box-shadow:0 0 0 .5px rgba(0,0,0,.2); }
+
+  /* anatomy strip */
+  .strip { display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; max-width:1180px; }
+  .cell { border-radius:10px; padding:12px 14px; background:var(--win); color:var(--text); box-shadow:0 0 0 .5px rgba(0,0,0,.15); }
+  .cell .ex { display:flex; align-items:center; gap:8px; height:26px; background:var(--side); border-radius:6px; padding:0 10px; margin-bottom:8px; }
+  .cell .ex .t { flex:1; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cell b { font-size:12px; } .cell p { margin:3px 0 0; font-size:11.5px; color:var(--sec); }
+  .cell.no { opacity:.75; } .cell.no b { text-decoration:line-through; text-decoration-color:var(--red); }
+  .claude-dot { width:6px; height:6px; border-radius:50%; background:var(--ter); }
+
+  /* workers projection (worktree-ux mockup language) */
+  .wrow { display:grid; grid-template-columns:16px 1fr auto 14px; gap:6px; align-items:center; padding:4px 6px 4px 8px; border-radius:6px; }
+  .wrow.sel { background:var(--sel); }
+  .who { width:16px; height:16px; border-radius:50%; color:#fff; font-size:9px; font-weight:700; display:grid; place-items:center; }
+  .chip { display:inline-block; font:10.5px/1.3 var(--mono); color:var(--sec); background:var(--chip); border-radius:4px; padding:0 5px; margin-top:1px;
+          max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; vertical-align:top; }
+  .chip.div { color:var(--amber); background:color-mix(in srgb, var(--amber) 14%, transparent); }
+  .meta { font:10.5px var(--mono); color:var(--sec); white-space:nowrap; }
+  .meta .up { color:var(--text); } .meta .down { color:var(--ter); } .meta .d { color:var(--orange); } .meta .ok { color:var(--green); }
+  .repo { display:flex; align-items:center; gap:6px; padding:8px 8px 2px; font-size:11px; font-weight:600; color:var(--sec); }
+  .repo .sw { width:8px; height:8px; border-radius:2px; } .repo .sp { flex:1; }
+  .clean { font-weight:500; font-size:10.5px; color:var(--green); background:color-mix(in srgb, var(--green) 12%, transparent); border-radius:4px; padding:1px 6px; }
+  .detail { margin:0 6px 4px 30px; padding:6px 8px; border-radius:6px; background:var(--win); box-shadow:0 0 0 .5px var(--line); font-size:11px; color:var(--sec); }
+  .detail dl { display:grid; grid-template-columns:46px 1fr; gap:2px 6px; margin:0; }
+  .detail dt { color:var(--ter); } .detail dd { margin:0; font:10.5px var(--mono); color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .detail .acts { display:flex; gap:6px; margin-top:6px; }
+  .btn { font-size:11px; padding:2px 8px; border-radius:5px; background:var(--chip); color:var(--text); }
+  .flow { max-width:420px; font-size:12px; color:#3a3a3c; line-height:1.55; }
+  .flow ol { padding-left:18px; margin:6px 0; }
+</style>
+</head>
+<body>
+
+<h1>Sidebar git badges: mockup</h1>
+<p class="lede">The org tree (<b>Today</b> scope) with git badges, using the session names and counts from the live
+  listing. The left window is light and the right is dark, with the same data. A badge sits left of the age and the
+  state glyph, which keep their columns. Purple <b>branch</b> + N is commits ahead of origin/main. A dot on it means the
+  tree is dirty and the session has <i>settled</i>. Green <b>merge</b> means landed in base (no number on a leaf, the
+  count on a group). Amber means stuck mid-rebase or merge. Managers and done folds sum their children, deduped by tree.
+  See <code>README.md</code> §1–§3.</p>
+
+<div class="stage">
+  <div><div class="window light" id="w-light"></div>
+    <p class="cap">Light. The <b>group card</b>: the pointer has rested 500 ms on frog manager's badge. Landed rows
+      (title, <b>Merged</b> + ecto/frog and a sha for a local merge or #N for a PR, then +N −M) come from all the children,
+      newest first, followed by what hasn't landed. The focused row (keyboard ↓) opens github.com/ecto/frog/commit/b36d033.
+      The manager rows read their whole
+      subtree whatever the scope: <b>frog manager</b> ⎇ 37 = 1 + 2 + 10 + 17 + 7, and its ⇡ 12 includes the 11 in
+      “11 earlier”.</p></div>
+  <div><div class="window dark" id="w-dark"></div>
+    <p class="cap">Dark. The <b>session card</b> on subagent visibility v2: it landed once (b36d033), then gained 2
+      commits that aren't in main yet (the badge shows ⎇ 2, because ahead wins). <b>frog cloud manager</b> is collapsed (“· 2 running · 1 waiting”), and its aggregate stays
+      the same (⎇ 20). <b>okc decode layer</b> finished with 19 files uncommitted (the dot). That dot also rides up to
+      okc manager. <b>kv quant sweep</b> stopped mid-rebase (amber), so tang manager v2 turns amber too.</p></div>
+</div>
+
+<h2>Anatomy</h2>
+<div class="strip light" id="strip"></div>
+
+<h2>Drill-in: the badge opens the Workers scope (worktree-ux §3), same index</h2>
+<div class="stage">
+  <div class="window light">
+    <div class="sidebar" style="height:440px">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div class="search">Search</div>
+      <div class="label">Org <span class="sp"></span><span class="seg"><span>Live</span><span>Today</span><span>All</span><span class="on">Workers</span></span></div>
+      <div class="repo"><span class="sw" style="background:#5b9e72"></span>frog · 11<span class="sp"></span><span class="clean">Clean up 6 merged</span></div>
+      <div class="wrow"><span class="who" style="background:#3f8f63">f</span><div><div>sidebar git</div><span class="chip">frog/sidebar-git</span></div><span class="meta"><span class="up">↑1</span></span><span class="st"><span class="spin"></span></span></div>
+      <div class="wrow sel"><span class="who" style="background:#3f8f63">f</span><div><div>accounts ux spec v3</div><span class="chip div">frog/accounts-ux-spec</span></div><span class="meta"><span class="up">↑17</span> <span class="down">↓133</span></span><span class="st"><span class="ring"></span></span></div>
+      <div class="detail"><dl>
+        <dt>path</dt><dd>~/Developer/frog/.frog/worktrees/accounts-ux-spec</dd>
+        <dt>base</dt><dd>origin/main @ 77b5f8c · 133 behind</dd>
+        <dt>folded</dt><dd>accounts ux spec, accounts ux spec v3</dd>
+        <dt>PR</dt><dd style="color:var(--ter)">not asked · Refresh runs gh</dd>
+      </dl><div class="acts"><span class="btn">Open</span><span class="btn">Refresh</span><span class="btn">Reveal</span></div></div>
+      <div class="wrow"><span class="who" style="background:#3f8f63">f</span><div><div>delegation pipeline v5</div><span class="chip div">frog/delegation-pipeline</span></div><span class="meta"><span class="up">↑10</span> <span class="down">↓133</span></span><span class="st"><span class="ring"></span></span></div>
+      <div class="wrow"><span class="who" style="background:#3f8f63">f</span><div><div>subagent visibility v2</div><span class="chip">frog/subagent-visibility</span></div><span class="meta"><span class="up">↑2</span> <span class="down">↓3</span></span><span class="st"><span class="ring"></span></span></div>
+      <div class="wrow"><span class="who" style="background:#3f8f63">f</span><div><div style="opacity:.6">freedom analysis v2</div><span class="chip">frog/freedom-analysis</span></div><span class="meta"><span class="ok">merged</span></span><span class="st"><span class="chk">✓</span></span></div>
+    </div>
+  </div>
+  <div class="flow">
+    <b>One index, two projections.</b>
+    <ol>
+      <li>A session row shows the <b>summary</b>: <code>⎇ 17</code>.</li>
+      <li>Clicking the badge (or “Show in Workers” in the row menu) switches the scope to <b>Workers</b> and expands that
+        tree, with path, base, the sessions folded into it, and the PR line.</li>
+      <li>The tree row shows the <b>full meta</b> (<code>↑17 ↓133</code>, the branch chip amber because it has diverged
+        more than 20). It's the same numbers from the same <code>GitIndex</code> entry.</li>
+      <li><b>Refresh</b> is the only thing that touches the network: <code>git fetch origin main</code>, then
+        <code>gh pr view frog/accounts-ux-spec</code>, cached by (tip, base) sha.</li>
+      <li>The row's ⇡ and Workers' <b>merged</b> use one test, so “Clean up 6 merged” and a manager's ⇡ count the
+        same trees.</li>
+    </ol>
+  </div>
+</div>
+
+<script>
+const G = {
+  br: '<svg viewBox="0 0 12 12"><path d="M3.5 11V1.6M1.8 3.3 3.5 1.5l1.7 1.8M3.5 8.2c0-2.6 1.6-3.8 5.2-4.6M7.2 2 9 3.4 7.6 5.3"/></svg>',
+  mg: '<svg viewBox="0 0 12 12"><path d="M8 11V1.6M6.3 3.3 8 1.5l1.7 1.8M2.5 11V9.2c0-1.9 1.4-2.9 5.5-3.6"/></svg>',
+};
+// badge: a = ahead, l = landed (true on a leaf, number on a group), d = dirty dot, t = trouble, det = detached
+function badge(b, muted, hot) {
+  if (!b) return '';
+  if (hot) return `<span class="gbhot">${badge(b, false)}</span>`;
+  const parts = [];
+  if (b.a !== undefined || b.d || b.t || b.det) {
+    const cls = b.t ? 'amber' : b.det ? 'det' : 'br';
+    parts.push(`<span class="bd ${b.t ? 'amber' : ''}"><span class="gl ${cls}">${G.br}${b.d ? '<span class="dirty"></span>' : ''}</span>${b.a ? b.a : ''}</span>`);
+  }
+  if (b.l) parts.push(`<span class="bd"><span class="gl mg2">${G.mg}</span>${b.l === true ? '' : b.l}</span>`);
+  return `<span class="gb ${muted ? 'muted' : ''}">${parts.join('')}</span>`;
+}
+const glyph = s => ({ spin:'<span class="spin"></span>', wait:'<span class="wait"></span>', fail:'<span class="fail"></span>',
+  ring:'<span class="ring"></span>', chk:'<span class="chk">✓</span>' }[s] || '');
+
+const TREE = [
+  ['label', 'Needs you', 1, 'o'],
+  ['needs', 'okc attn decode', 'Run the decode bench on an H200? ($3.50/h)', '4m'],
+  ['label', 'Org', null, '', true],
+  ['mgr', 'F', '#30d158', 'frog manager', { a:37, l:12 }, 'open', null, 'spin'],
+  ['row', 1, 'sidebar git', { a:1 }, { sel:true, st:'spin' }],
+  ['row', 1, 'subagent visibility v2', { a:2 }, { st:'chk', age:'3h', settled:true, card:true }],
+  ['row', 1, 'delegation pipeline v5', { a:10 }, { st:'chk', age:'1d', settled:true, folded:true }],
+  ['row', 1, 'accounts ux spec v3', { a:17 }, { st:'chk', age:'1d', settled:true }],
+  ['row', 1, 'pr viral spec', { a:7 }, { st:'chk', age:'1d', settled:true }],
+  ['row', 1, 'freedom analysis v2', { l:true }, { st:'chk', age:'2h', settled:true }],
+  ['fold', 1, '11 earlier', 0, { l:11 }],
+  ['mgr', 'T', '#ff9f0a', 'tang manager v2', { a:12, l:5, t:true }, 'open', null, 'spin'],
+  ['row', 1, 'glm5 router', { a:3 }, { st:'spin' }],
+  ['row', 1, 'kv quant sweep', { a:5, t:true, d:true }, { st:'fail', age:'40m', settled:true }],
+  ['row', 1, 'mtp draft', { l:true }, { st:'chk', age:'5h', settled:true }],
+  ['fold', 1, '4 earlier', 0, { l:4 }],
+  ['mgr', 'Z', '#64d2ff', 'frog cloud manager', { a:20, l:6 }, 'closed', '@2 running · 1 waiting', 'ring'],
+  ['mgr', 'O', '#bf5af2', 'okc manager', { a:31, l:2, d:true }, 'open', null, 'ring'],
+  ['row', 1, 'okc decode layer', { a:6, d:true }, { st:'chk', age:'1d', settled:true }],
+  ['row', 1, 'okc attn decode', { a:2 }, { st:'wait' }],
+  ['row', 1, 'okc moe wgmma', { l:true }, { st:'chk', age:'1d', settled:true }],
+  ['fold', 1, '5 earlier · 1 failed', 1, { a:23, l:1 }],
+  ['mgr', 'H', '#ff6482', 'frog head node manager', { a:3, l:2 }, 'closed', null, 'ring'],
+  ['label', 'Yours'],
+  ['row', 0, 'mew gha runner setup', { a:4 }, { st:'ring', age:'2d', top:true }],
+  ['row', 0, 'blaze distill', null, { st:'ring', age:'3d', top:true }],
+  ['row', 0, 'challenges spec', null, { st:'ring', age:'1d', top:true }],
+  ['fold', 0, '6 done', 0, { l:3 }],
+];
+
+// Hover cards: real merges from ecto/frog's origin/main (local merges show the sha, PR merges #N).
+const mergedCap = '<span class="cap-m">' + '<svg viewBox="0 0 12 12"><path d="M8 11V1.6M6.3 3.3 8 1.5l1.7 1.8M2.5 11V9.2c0-1.9 1.4-2.9 5.5-3.6"/></svg>Merged</span>';
+const landedRow = (t, ref, add, del, sub, focus) => `<div class="cr ${focus ? 'focus' : ''}">
+  <div class="cl"><div class="ct">${t}</div>${sub ? `<div class="cs">${sub}</div>` : ''}</div>
+  <div class="cm">${mergedCap}<span class="cref">ecto/frog${ref}</span></div>
+  <div class="cd"><span class="add">+${add}</span><span class="del">−${del}</span></div></div>`;
+const aheadRow = (t, chip, n, add, del, trouble) => `<div class="cr">
+  <div class="cl"><div class="ct">${t}</div></div>
+  <div class="cm"><span class="cchip">${chip}</span><span class="cup">↑${n}</span></div>
+  <div class="cd">${trouble ? `<span style="color:var(--amber)">${trouble}</span>` : `<span class="add">+${add}</span><span class="del">−${del}</span>`}</div></div>`;
+function groupCard() {
+  return `<div class="card" style="left:150px;top:22px;width:440px"><span class="arrow" style="left:84px"></span>
+    <div class="ch"><b>frog manager</b><span>12 landed · 37 ahead</span></div>
+    <div class="csec">Landed</div>
+    ${landedRow('main conflict fix', '@77b5f8c', 6, 11)}
+    ${landedRow('subagent visibility', '@b36d033', '1,751', 378, '', true)}
+    ${landedRow('worktree ux', '@ef41cd7', 653, 1)}
+    ${landedRow('freedom analysis v2', '@12c3672', 310, 0)}
+    ${landedRow('transcript: instant session switch + virtualization', '#104', '1,165', 38, 'transcript perf batch')}
+    ${landedRow('engine: never persist native→text downgrades', '#97', 751, 78, 'opus text-mode fix')}
+    <div class="cmore">… 6 more</div>
+    <div class="csec">Not landed</div>
+    ${aheadRow('accounts ux spec v3', 'frog/accounts-ux-spec', 17, '1,241', 0)}
+    ${aheadRow('delegation pipeline v5', 'frog/delegation-pipeline', 10, '2,611', 51)}
+    ${aheadRow('pr viral spec', 'frog/pr-viral-spec', 7, 362, 0)}
+    <div class="cmore">… 2 more</div>
+    <div class="cf"><span>Show in Workers</span><span class="sp"></span><span class="k">↩ open · ⌘C copy · Esc</span></div>
+    <div class="url">github.com/ecto/frog/commit/b36d033</div></div>`;
+}
+function sessionCard() {
+  return `<div class="card" style="left:120px;top:22px;width:440px"><span class="arrow" style="left:118px"></span>
+    <div class="ch"><b>subagent visibility v2</b><span>2 ahead · landed once</span></div>
+    <div class="csec">Landed</div>
+    ${landedRow('subagent visibility', '@b36d033', '1,751', 378)}
+    <div class="csec">Not landed · frog/subagent-visibility</div>
+    <div class="cc"><span class="sha">fa29b9a</span>notes: rebase onto the fixed main; local fix superseded</div>
+    <div class="cc"><span class="sha">a4237cb</span>notes: main’s broken merge (c816903) and the resolution</div>
+    <div class="cc tot"><span class="add">+13</span> <span class="del">−0</span> · 1 file vs origin/main · clean</div>
+    <div class="cf"><span>Show in Workers</span><span class="sp"></span><span class="k">⌘R refresh</span></div></div>`;
+}
+
+function sidebar(dark) {
+  let h = `<div class="sidebar"><div class="lights"><i></i><i></i><i></i></div><div class="search">Search</div>
+    <div class="chief"><span class="mg" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);margin:0">C</span>
+    <span class="t">chief</span><span class="s">Routing the okc bench ask</span><span class="st">${glyph('spin')}</span></div>`;
+  for (const r of TREE) {
+    const k = r[0];
+    if (k === 'label') {
+      h += `<div class="label ${r[3] || ''}">${r[1]}${r[2] ? ' ' + r[2] : ''}<span class="sp"></span>${r[4] ? '<span class="seg"><span>Live</span><span class="on">Today</span><span>All</span><span>Workers</span></span>' : ''}</div>`;
+    } else if (k === 'needs') {
+      h += `<div class="row" style="height:auto;padding:4px 8px;gap:8px;align-items:flex-start"><span class="wait" style="margin-top:5px"></span>
+        <div style="flex:1;min-width:0"><div>${r[1]}</div><div style="font-size:11px;color:var(--sec);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r[2]}</div></div>
+        <span class="age">${r[3]}</span></div>`;
+    } else if (k === 'mgr') {
+      const [, m, tint, title, b, disc, sum, st] = r;
+      const live = st === 'spin';
+      const card = !dark && title === 'frog manager' ? groupCard() : '';
+      h += `<div class="row ${card ? 'hov' : ''}"><span class="disc ${disc === 'open' ? 'open' : ''}">›</span>
+        <span class="mg" style="background:color-mix(in srgb, ${tint} 20%, transparent);color:${tint}">${m}</span>
+        <span class="t ${live ? 'mgr' : 'top'}">${title}${sum ? `<span class="sum">${sum}</span>` : ''}</span>
+        <span class="tr">${badge(b, !live, !!card)}<span class="st">${glyph(st)}</span></span>${card}</div>`;
+    } else if (k === 'row') {
+      const [, depth, title, b, o] = r;
+      const tip = o.card && dark ? sessionCard() : '';
+      h += `<div class="row ${o.sel ? 'sel' : ''} ${tip ? 'hov' : ''}"><span style="width:${depth * 14}px;flex:none"></span>
+        <span class="disc">${o.folded ? '›' : ''}</span>
+        <span class="t ${o.settled ? 'settled' : ''} ${o.top ? 'top' : ''}">${title}</span>
+        <span class="tr">${badge(b, (o.settled || o.top) && !tip, !!tip)}${o.pane ? `<span class="pane">${o.pane}</span>` : ''}${o.age ? `<span class="age">${o.age}</span>` : ''}<span class="st">${glyph(o.st)}</span></span>${tip}</div>`;
+    } else if (k === 'fold') {
+      const [, depth, text, failed, b] = r;
+      const [main, fail] = text.split(' · ');
+      h += `<div class="fold"><span style="width:${depth * 14}px;flex:none"></span><span class="disc">›</span>${main}${fail ? `<span class="f">&nbsp;· ${fail}</span>` : ''}
+        <span class="sp"></span>${badge(b, true)}<span style="width:20px"></span></div>`;
+    }
+  }
+  return h + '</div><div class="ghost"><i style="width:60%"></i><i></i><i style="width:85%"></i><i style="width:40%"></i><i></i><i style="width:70%"></i></div>';
+}
+document.getElementById('w-light').innerHTML = sidebar(false);
+document.getElementById('w-dark').innerHTML = sidebar(true);
+
+const CELLS = [
+  ['sidebar git', { a:1 }, 'Ahead', 'Purple branch + N: commits the branch carries that origin/main doesn’t. Shown only when N > 0. No dot while running, because a running tree is always dirty.'],
+  ['okc decode layer', { a:6, d:true }, 'Ahead + dirty (settled)', 'The dot means the session finished with uncommitted changes (19 files, in the tooltip). It shows only on settled rows.'],
+  ['frog head print prep', { d:true }, 'Dirty, nothing ahead', 'The glyph alone with its dot: there are edits but no commits yet.'],
+  ['freedom analysis v2', { l:true }, 'Landed (leaf)', 'Green merge glyph, no number: the branch is in base (an ancestor, patch-equivalent, or a PR gh said is merged). Ahead wins: merged and then 2 more shows ⎇ 2.'],
+  ['frog manager', { a:37, l:12 }, 'Group aggregate', 'Σ ahead over unlanded trees · count of landed trees. Deduped by tree. It’s the same in every scope, so collapsing a manager doesn’t change it.'],
+  ['kv quant sweep', { a:5, t:true, d:true }, 'Trouble', 'Amber: a rebase, merge or cherry-pick is in progress, or there are conflicts. The counts freeze at their last good value, and the tooltip says “rebasing onto origin/main · 2 conflicts”.'],
+  ['scratch', { a:3, det:true }, 'Detached HEAD', 'Tertiary glyph, ahead from one per-tree rev-list. The tooltip says “detached at 9e02a1c”.'],
+  ['blaze distill', null, 'No git, or main checkout', 'Nothing. The main checkout’s dirty files are shared by every session there, so they aren’t this row’s.'],
+];
+let s = '';
+for (const [t, b, name, p] of CELLS) s += `<div class="cell"><div class="ex"><span class="t">${t}</span>${badge(b)}<span class="st"><span class="ring"></span></span></div><b>${name}</b><p>${p}</p></div>`;
+s += `<div class="cell no"><div class="ex"><span class="t">blaze distill</span><span class="claude-dot"></span><span class="st"><span class="ring"></span></span></div>
+  <b>Claude’s plain dot</b><p>Not proposed (open question 1). Our dots already mean waiting, unread and failed, so a fourth grey dot next to the state ring would read as state.</p></div>`;
+document.getElementById('strip').innerHTML = s;
+// Prose uses ⎇ (branch) and ⇡ (merge) as stand-ins; draw them as the real glyphs.
+for (const el of document.querySelectorAll('.cap, .flow, .cell p')) {
+  el.innerHTML = el.innerHTML
+    .replaceAll('⎇', `<span class="gl br" style="vertical-align:-2px">${G.br}</span>`)
+    .replaceAll('⇡', `<span class="gl mg2" style="vertical-align:-2px">${G.mg}</span>`);
+}
+</script>
+</body>
+</html>
