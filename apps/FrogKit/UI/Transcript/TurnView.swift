@@ -93,10 +93,18 @@ struct TurnView: View {
         #if DEBUG
         let _ = TranscriptProbe.turn()
         #endif
-        let parts = TurnParts(turn)
+        switch part {
+        case .head: head
+        case .segment(let segment): row(segment)
+        case .tail: tail
+        }
+    }
+
+    /// The turn's first row: what opened it (background work, a message from another session,
+    /// or what you asked).
+    private var head: some View {
         VStack(alignment: .leading, spacing: space.inTurn) {
             let lead = TurnLead(turn)
-            let flow = TurnFlow(turn.items, showThinking: verbosity.showsThinking)
             if !lead.wakes.isEmpty {
                 // Background work finished and the turn opened with it: event rows, not a bubble.
                 WakeEventRows(events: lead.wakes, jobs: conversation.jobs)
@@ -111,84 +119,11 @@ struct TurnView: View {
             case .none:
                 EmptyView()
             case .prompt:
-                VStack(alignment: .trailing, spacing: 2) {
-                    // Messages queued while the last turn ran go together: a bubble each.
-                    VStack(alignment: .trailing, spacing: 6) {
-                        UserPrompt(text: turn.input, images: turn.images, tint: promptTint)
-                        ForEach(Array(turn.more.enumerated()), id: \.offset) { _, part in
-                            UserPrompt(text: part.text, images: part.images, tint: promptTint)
-                        }
-                    }
-                        // Sent like an iMessage: up from the composer, a little small, then a
-                        // springy settle into place. Just a fade under Reduce Motion.
-                        .scaleEffect(landed || reduceMotion ? 1 : 0.86, anchor: .bottomTrailing)
-                        .offset(y: landed || reduceMotion ? 0 : 44)
-                        .opacity(landed ? 1 : 0)
-                        .onAppear {
-                            guard !landed else { return }
-                            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.66)) {
-                                landed = true
-                            }
-                        }
-                        .contextMenu { menu(changes: parts.changes.count) }
-                    PromptActions(
-                        turn: turn,
-                        visible: hoveringPrompt && !(running && turn.number == nil),
-                        canRewind: actions.canRewind,
-                        copy: copy,
-                        rewind: { confirmRewind = true },
-                        fork: { if let n = turn.number { actions.fork?(n) } }
-                    )
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .contentShape(.rect)
-                .onHover { hoveringPrompt = $0 }
-            }
-            // The answer being written is a typing bubble at the turn's end, not a plain row:
-            // the model's words appear as they arrive, with the frog beside them. The bubble
-            // IS that row (so the handoff is a fade inside one view, not a swap of two), and
-            // it settles to the plain row when the message completes; tool rows run above it.
-            ForEach(flow.segments) { segment in
-                SegmentRow(segment: segment, conversation: conversation, live: running, verbosity: verbosity)
-                    .equatable()
-                    .modifier(FadeIn(enabled: running))
-                    .id(segment.id)
-                    .background {
-                        // The answer being written: where it starts, so a long one stops there.
-                        if running, segment.id == liveAnswerID, let track {
-                            Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(TranscriptView.content)).minY }) {
-                                track.answer = (segment.id, $0)
-                            }
-                        }
-                    }
-            }
-            if running, !parts.plan.isEmpty {
-                PlanView(todos: parts.plan)
-            }
-            if running, let loading = modelLoading {
-                ModelLoadingStatus(model: loading.model, since: loading.since)
-                    .transition(.opacity)
-            } else if running, let status = liveStatus {
-                LiveStatus(text: status.text, since: status.since, preview: thinking)
-                    .transition(.opacity)
-            }
-            if !parts.changes.isEmpty {
-                ChangesStrip(changes: parts.changes)
-                    .equatable()
-            }
-            if let end = turn.end {
-                // An unpinned footer keeps its place and fades in on hover, so it neither
-                // covers the answer nor shifts what's below.
-                EndView(reason: end, usage: turn.usage, answer: answer, hovering: hovering)
-                    // Set off from the answer above it (see `TurnSpace`): the turn's last
-                    // line reads as a caption, not as one more paragraph.
-                    .padding(.top, isFooter(end) ? space.beforeFooter : 0)
-                    .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
-                    .allowsHitTesting(pinsFooter || hovering)
-
+                prompt
             }
         }
         .padding(.top, gap)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onHover(perform: hover)
         .confirmationDialog(
             "Rewind to before this turn?",
