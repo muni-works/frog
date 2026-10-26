@@ -96,19 +96,67 @@ fn bundled_caps(p: &Profile) -> Option<Caps> {
 }
 
 pub fn cached(p: &Profile) -> Option<Caps> {
-    read_cache().remove(&key(p)).or_else(|| bundled_caps(p))
+    from_cache(read_cache().remove(&key(p))).or_else(|| bundled_caps(p))
+}
+
+/// A probe older than this is measured again before it decides anything: servers, chat
+/// templates and gateways change under a model name.
+pub const PROBE_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// A cache entry worth trusting. One with no probe time wasn't measured: the old run-time
+/// fallback wrote those over a shipped profile, with a format struck out.
+fn from_cache(entry: Option<Caps>) -> Option<Caps> {
+    entry.filter(|c| c.probed > 0)
+}
+
+/// Whether `c` should be measured again before it decides the tool mode (see [`PROBE_TTL_MS`]).
+/// A shipped profile (`probed == 0`) is never stale.
+pub fn stale(c: &Caps, now_ms: i64) -> bool {
+    c.probed > 0 && now_ms.saturating_sub(c.probed) > PROBE_TTL_MS
 }
 
 pub fn save(p: &Profile, caps: &Caps) {
-    let mut all = read_cache();
-    all.insert(key(p), caps.clone());
-    let _ = std::fs::create_dir_all(data_dir());
+    save_in(&cache_path(), p, caps);
+}
+
+/// Whether `new` may replace `old` in the cache. Only a fresh measurement (a [`probe`] newer
+/// than what's stored) can take a tool format away: a session's run-time evidence is a guess
+/// (one glitchy gateway reply, a model quoting `<tool_call>` in prose), and writing it down
+/// once demoted a model to text tool calls for every later session.
+fn may_replace(old: Option<&Caps>, new: &Caps) -> bool {
+    let Some(old) = old else { return true };
+    let lowers = (old.native_tools && !new.native_tools)
+        || (old.json_mode && !new.json_mode)
+        || (old.text_tools && !new.text_tools);
+    !lowers || new.probed > old.probed
+}
+
+fn save_in(path: &std::path::Path, p: &Profile, caps: &Caps) {
+    let mut all: BTreeMap<String, Caps> = std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let k = key(p);
+    if !may_replace(all.get(&k), caps) {
+        return;
+    }
+    all.insert(k, caps.clone());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     if let Ok(bytes) = serde_json::to_vec_pretty(&all) {
-        let tmp = cache_path().with_extension("json.tmp");
+        let tmp = path.with_extension("json.tmp");
         if std::fs::write(&tmp, bytes).is_ok() {
-            let _ = std::fs::rename(tmp, cache_path());
+            let _ = std::fs::rename(tmp, path);
         }
     }
+}
+
+/// Models whose native tool calling is known to work, so a probe or a session's evidence never
+/// moves them off it: hosted frontier APIs, and Claude through any cloud gateway (Vercel AI
+/// Gateway serves it on the Messages API; OpenRouter and the rest translate faithfully).
+pub fn native_known(p: &Profile) -> bool {
+    is_hosted(p) || (is_cloud(p) && p.model.to_lowercase().contains("claude"))
 }
 
 /// A model that runs in someone's data center: a hosted API, or one reached through a cloud
@@ -126,6 +174,16 @@ pub fn is_cloud(p: &Profile) -> bool {
             .any(|pre| !pre.local && url == Some(pre.base_url.trim_end_matches('/')))
 }
 
+/// Whether a session on `p` should measure the model again before trusting `caps`: under
+/// `auto` (the only mode that reads them), for a model that gets probed at all, when the
+/// probe is [`stale`].
+pub fn reprobe_due(p: &Profile, caps: Option<&Caps>, now_ms: i64) -> bool {
+    p.tool_mode == ToolMode::Auto
+        && p.provider != ProviderKind::Codex
+        && !native_known(p)
+        && caps.is_some_and(|c| stale(c, now_ms))
+}
+
 /// Hosted frontier APIs don't need probing.
 pub fn is_hosted(p: &Profile) -> bool {
     // A sidecar model runs locally on a port frog picks, so it has no `base_url` of its own.
@@ -135,7 +193,7 @@ pub fn is_hosted(p: &Profile) -> bool {
 }
 
 pub fn tier(p: &Profile, caps: Option<&Caps>) -> Tier {
-    if is_hosted(p) {
+    if native_known(p) {
         return Tier::Strong;
     }
     let Some(c) = caps else { return Tier::Medium };
@@ -154,6 +212,9 @@ pub fn tier(p: &Profile, caps: Option<&Caps>) -> Tier {
 pub fn choose_mode(p: &Profile, caps: Option<&Caps>, tier: Tier) -> ToolMode {
     if p.tool_mode != ToolMode::Auto {
         return p.tool_mode;
+    }
+    if native_known(p) {
+        return ToolMode::Native;
     }
     let Some(c) = caps else {
         return ToolMode::Native;
@@ -445,6 +506,186 @@ mod tests {
         assert!(!answered_directly(&reply(vec![text(
             "Okay, the user wants 17 + 25. Let me add: 10 + 20 is 30, 7 + 5 is 12, so 42."
         )])));
+    }
+
+    fn tmp_cache(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "frog-harness-{name}-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("models.json")
+    }
+
+    fn read_in(path: &std::path::Path, p: &Profile) -> Option<Caps> {
+        let all: BTreeMap<String, Caps> =
+            serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        all.get(&key(p)).cloned()
+    }
+
+    /// A session's evidence can't take a format away from a model: only a newer probe can.
+    #[test]
+    fn downgrades_are_never_persisted() {
+        let path = tmp_cache("downgrade");
+        let p = local("qwen3-coder:30b");
+        let mut probed = caps(true, true, Some(30.5));
+        probed.probed = 1_000;
+        save_in(&path, &p, &probed);
+        // What the old fallback wrote: the same probe with native tools struck out.
+        let mut demoted = probed.clone();
+        demoted.native_tools = false;
+        save_in(&path, &p, &demoted);
+        assert!(read_in(&path, &p).unwrap().native_tools);
+        // Improvements and fresh measurements land.
+        let mut better = probed.clone();
+        better.abstains = false;
+        better.thinks = true;
+        save_in(&path, &p, &better);
+        assert!(read_in(&path, &p).unwrap().thinks);
+        let mut reprobed = demoted.clone();
+        reprobed.probed = 2_000;
+        save_in(&path, &p, &reprobed);
+        assert!(!read_in(&path, &p).unwrap().native_tools);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// The cache entry that broke every Opus session: native tools struck out, text tools on.
+    /// A model known to call natively stays native regardless, at the frontier tier.
+    #[test]
+    fn claude_through_a_gateway_stays_native_whatever_the_cache_says() {
+        let cfg = crate::config::Config::default();
+        let poisoned = caps(false, false, None);
+        for spec in [
+            "vercel/anthropic/claude-opus-5.5",
+            "openrouter/anthropic/claude-sonnet-5",
+        ] {
+            let mut p = cfg.resolve(Some(spec)).unwrap().1;
+            p.tool_mode = ToolMode::Auto;
+            assert!(native_known(&p), "{spec}");
+            let t = tier(&p, Some(&poisoned));
+            assert_eq!(t, Tier::Strong, "{spec}");
+            assert_eq!(
+                choose_mode(&p, Some(&poisoned), t),
+                ToolMode::Native,
+                "{spec}"
+            );
+        }
+        // Anything else on a gateway is measured as before.
+        let mut qwen = cfg.resolve(Some("openrouter/qwen/qwen3-coder")).unwrap().1;
+        qwen.tool_mode = ToolMode::Auto;
+        assert!(!native_known(&qwen));
+    }
+
+    /// The entry that demoted Opus, as it sat in models.json.
+    fn opus_entry() -> Caps {
+        Caps {
+            native_tools: false,
+            text_tools: true,
+            json_mode: false,
+            abstains: true,
+            thinks: true,
+            think_off: None,
+            params_b: None,
+            probed: 1_790_623_352_866,
+        }
+    }
+
+    #[test]
+    fn old_probes_are_measured_again() {
+        let day = 24 * 60 * 60 * 1000;
+        let c = opus_entry();
+        assert!(!stale(&c, c.probed + 6 * day));
+        assert!(stale(&c, c.probed + 8 * day));
+        // Shipped profiles aren't measurements, so they never go stale.
+        assert!(!stale(
+            &Caps {
+                probed: 0,
+                ..c.clone()
+            },
+            i64::MAX
+        ));
+
+        let now = c.probed + 26 * day;
+        let mut p = local("qwen3-coder:30b");
+        p.tool_mode = ToolMode::Auto;
+        assert!(reprobe_due(&p, Some(&c), now));
+        assert!(!reprobe_due(&p, Some(&c), c.probed + day));
+        assert!(!reprobe_due(&p, None, now));
+        // An explicit mode doesn't read the probe; a known-native model isn't probed.
+        p.tool_mode = ToolMode::Native;
+        assert!(!reprobe_due(&p, Some(&c), now));
+        let mut opus = crate::config::Config::default()
+            .resolve(Some("vercel/anthropic/claude-opus-5.5"))
+            .unwrap()
+            .1;
+        opus.tool_mode = ToolMode::Auto;
+        assert!(!reprobe_due(&opus, Some(&c), now));
+    }
+
+    /// An entry with no probe time was written by the old run-time fallback over a shipped
+    /// profile: the shipped profile wins.
+    #[test]
+    fn downgrade_written_entries_are_not_trusted() {
+        assert_eq!(
+            from_cache(Some(Caps {
+                probed: 0,
+                ..opus_entry()
+            })),
+            None
+        );
+        assert_eq!(from_cache(Some(opus_entry())), Some(opus_entry()));
+        let mut p = Profile::new(ProviderKind::Openai, "mlx-community/Qwen3-8B-4bit");
+        p.sidecar = Some(p.model.clone());
+        let shipped = bundled_caps(&p).unwrap();
+        let demoted = Caps {
+            native_tools: false,
+            ..shipped.clone()
+        };
+        assert_eq!(
+            from_cache(Some(demoted)).or_else(|| bundled_caps(&p)),
+            Some(shipped)
+        );
+    }
+
+    /// A re-probe measures what the model does now: a model whose native calls work is native
+    /// again, whatever the old entry said.
+    #[tokio::test]
+    async fn a_reprobe_finds_working_native_tools() {
+        use crate::message::{Block, Role};
+        use crate::provider::{Stop, scripted};
+        let reply = |content: Vec<Block>| Response {
+            message: Message {
+                role: Role::Assistant,
+                content,
+            },
+            usage: Default::default(),
+            stop: Stop::End,
+        };
+        let text = |t: &str| Block::Text { text: t.into() };
+        let script = vec![
+            reply(vec![text(
+                r#"<tool_call>{"name":"Read","arguments":{"file_path":"probe.txt"}}</tool_call>"#,
+            )]),
+            reply(vec![Block::ToolUse {
+                id: "t1".into(),
+                name: "Read".into(),
+                input: serde_json::json!({ "file_path": "probe.txt" }),
+            }]),
+            reply(vec![text("42")]),
+            reply(vec![text(
+                r#"{"thought":"","action":{"tool":"Read","args":{"file_path":"probe.txt"}}}"#,
+            )]),
+        ];
+        let provider = Provider::Scripted(scripted::Client::new(script));
+        let caps = probe(&provider, &crate::tools::specs(), |_, _, _| {})
+            .await
+            .unwrap();
+        assert!(caps.native_tools && caps.text_tools && caps.abstains);
+        assert!(caps.probed > opus_entry().probed && may_replace(Some(&opus_entry()), &caps));
+        let mut p = local("qwen3-coder:30b");
+        p.tool_mode = ToolMode::Auto;
+        assert_eq!(choose_mode(&p, Some(&caps), Tier::Strong), ToolMode::Native);
     }
 
     #[test]

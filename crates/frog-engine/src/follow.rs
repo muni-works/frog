@@ -97,11 +97,15 @@ pub fn follow(store: PathBuf, id: String) -> Handle {
                     Some(Op::Subscribe { after }) => {
                         // A turn the history ends in the middle of: the worker is running it
                         // now, so the follower shows it as working (like a live session).
+                        // Judged from the whole log: a client that already has the history
+                        // up to `after` (it read the log itself) asks only for what's newer,
+                        // and the open turn or the model may be older than that.
                         let mut open = false;
-                        for env in session::events_after(&store, &id, after).unwrap_or_default() {
+                        for env in session::events_after(&store, &id, 0).unwrap_or_default() {
                             last = last.max(env.seq);
                             open = turn_state(&env.event).unwrap_or(open);
                             running.apply(&env.event);
+                            if env.seq <= after { continue; }
                             if ev_tx.send(env).is_err() { return; }
                         }
                         // Name the session like a starting engine would: a follower that
