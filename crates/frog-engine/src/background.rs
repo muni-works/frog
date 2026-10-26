@@ -403,6 +403,13 @@ pub fn forward(
                     _ => {}
                 }
             }
+            // A background task has no item of its own in the parent's turn (the Task call
+            // returned at once): its clients can't fold these into a row, and folding them
+            // blindly used to create a message row that never finished. Its steps ride
+            // BackgroundProgress (the run above), so they're shown without a phantom row.
+            if item.starts_with("task-") {
+                return;
+            }
             reg.emit(Event::Subagent {
                 item: item.clone(),
                 inner: Box::new(inner),
