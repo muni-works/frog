@@ -85,7 +85,7 @@ final class SidebarSnapshotTests: XCTestCase {
             Self.s("cd1", "renew daemon.so", ago: 200, repo: "home"),
             Self.s("cd2", "licensing audit", ago: 1300, repo: "home"),
             Self.s("blaze", "blaze distill", ago: 0.4, repo: "blaze"),
-            Self.s("node", "Make the frog cloud node boot from a fresh image", ago: 4400, repo: "zest", end: .failed),
+            Self.s("node", "Make the frog cloud node boot from a fresh image", ago: 4400, repo: "zest"),
             Self.s("mine-old", "kino stream eval", ago: 3000, repo: "kino"),
         ]
         let parents = [
@@ -97,7 +97,7 @@ final class SidebarSnapshotTests: XCTestCase {
         ]
         let live: [String: Library.Live] = [
             "chief": .running, "fm": .running, "grace": .running, "drill": .running, "decode": .running,
-            "bf16": .waiting, "prefill": .running, "cloud": .running, "keys": .running, "batch": .waiting, "blaze": .running,
+            "bf16": .waiting, "prefill": .running, "cloud": .running, "keys": .running, "batch": .waiting, "blaze": .running, "node": .unread,
         ]
         Library.shared.stage(sessions: sessions, live: live, parents: parents, chief: "chief",
                              archived: [], asks: ["bf16": "pod past its 2h cap · $3.50/hr · extend?",

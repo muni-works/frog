@@ -26,7 +26,7 @@ enum AttentionTree {
 
     /// The `.done` fold of the chief's own finished leaves ("N done by chief").
     static let chiefFold = "chief:"
-    /// The `.done` fold of your settled root sessions.
+    /// The `.done` fold of your settled root sessions (older failures included).
     static let yoursFold = "yours:"
 
     struct Layout: Equatable {
@@ -98,8 +98,10 @@ enum AttentionTree {
                     chiefLeaves.append(block.root)
                 }
             } else {
-                // Yours: live and failed show in every scope.
-                if state(block.root) != .done || shown.contains(block.root.id) {
+                // Yours: live work shows in every scope, and so does today's failure (an old
+                // one has had its look).
+                let st = state(block.root)
+                if !st.settled || (st == .failed && recent(block.root)) || shown.contains(block.root.id) {
                     out.yours += block.entries
                 } else {
                     yourLeaves.append(block.root)

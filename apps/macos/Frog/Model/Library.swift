@@ -56,6 +56,9 @@ final class Library {
             lastListed = .now
             let home = FileManager.default.homeDirectoryForCurrentUser
             if let all = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--all", "--json"], cwd: home) {
+                #if DEBUG
+                if staged { return }  // a listing already in flight when a snapshot staged its own
+                #endif
                 // A conversation whose folder is gone can't be reopened.
                 // Race attempts live in their own worktrees and are shown in the race, not here.
                 // Worker worktrees (`<repo>/.frog/worktrees/`, `<repo>/.claude/worktrees/`) are

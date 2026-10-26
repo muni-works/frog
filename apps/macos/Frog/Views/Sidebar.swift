@@ -318,6 +318,15 @@ struct SessionList: View {
         let built = Self.attention(library, sort: sort, scope: scope, current: current,
                                    openDone: openDone, collapsed: collapsedParents)
         chiefTile
+        // A lens, not a move: each also keeps its place in the tree, with its orange dot.
+        if !built.layout.needsYou.isEmpty {
+            treeLabel("Needs you", count: built.layout.needsYou.count, tint: .orange)
+            ForEach(built.layout.needsYou) { s in
+                NeedsYouRow(session: s, ask: library.asking(s.id) ?? "Waiting on you", selected: s.id == current) {
+                    open(s)
+                } menu: { rowMenu(s) }
+            }
+        }
         if !built.layout.org.isEmpty {
             treeLabel("Org") { scopePicker }
             treeEntries(built.layout.org, folds: built.folds)

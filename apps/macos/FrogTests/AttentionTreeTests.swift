@@ -83,10 +83,12 @@ final class AttentionTreeTests: XCTestCase {
         XCTAssertEqual(ids(out.yours), ["mine", "old"])
     }
 
-    func testYoursKeepsFailuresInLiveScope() {
+    func testYoursKeepsTodaysFailuresInLiveScope() {
         var s = states
         s["old"] = .failed
-        XCTAssertEqual(ids(layout(s, parents: parents, order: order).yours), ["mine", "old"])
+        XCTAssertEqual(ids(layout(s, parents: parents, recent: ["old"], order: order).yours), ["mine", "old"])
+        // An old failure folds with the rest, its red count kept.
+        XCTAssertEqual(ids(layout(s, parents: parents, order: order).yours), ["mine", "yours:+1 1x"])
     }
 
     func testWithoutAChiefRootsWithChildrenAreManagers() {
