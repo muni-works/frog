@@ -1272,4 +1272,27 @@ final class SessionBrokerTests: XCTestCase {
         let info = await broker([]).status(of: id)
         XCTAssertEqual(info?.cwd, "/tmp/start-here")
     }
+
+    /// Switching away from any session (not only agents') keeps a turn in flight running; an
+    /// engine still starting up with nothing asked of it is let go. A message sent before the
+    /// engine named its session is held until it does, then it's that session's engine.
+    func testAPaneLettingGoKeepsAnyWorkingSessionAndLetsAnIdleStartupGo() throws {
+        let b = broker([])
+        let idle = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: QueueLink(), replay: false)
+        XCTAssertFalse(b.keep(idle), "a new thread nobody wrote in")
+
+        let link = QueueLink()
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: false)
+        c.submit("hello")
+        XCTAssertNil(c.sessionID)
+        XCTAssertTrue(b.keep(c), "a message queued while the engine starts up")
+        try link.event(#""event":"idle""#)
+        XCTAssertEqual(c.sessionID, "s")
+        b.observe("s", running: true, waiting: false)
+        XCTAssertTrue(b.adopt("s") === c, "the held engine is session s's now")
+
+        try link.event(#""event":"turn_started","turn":1,"input":"hello""#)
+        XCTAssertTrue(b.keep(c), "a turn in flight, in a session no one started")
+        XCTAssertTrue(b.adopt("s") === c)
+    }
 }
