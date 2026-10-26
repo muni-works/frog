@@ -68,6 +68,16 @@ jobs:
             -project Frog.xcodeproj -scheme Frog -configuration Debug \
             -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
+      # Release builds break differently from Debug (DEBUG-only symbols used
+      # unconditionally, warnings as errors differences): the launch pipeline
+      # (release.yml) builds Release, so CI guards it too.
+      - name: build Release
+        run: |
+          cd apps/macos
+          xcodebuild build -quiet \
+            -project Frog.xcodeproj -scheme Frog -configuration Release \
+            -derivedDataPath build/ci-release -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
 
       # The remote app's targets (iPhone, iPad, watch, extensions): the same Swift as the Mac,
       # but these five targets compile FrogKit/UI/Basics without UI/Transcript, which is where
