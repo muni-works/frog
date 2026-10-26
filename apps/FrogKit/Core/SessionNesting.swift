@@ -91,7 +91,8 @@ enum SessionNesting {
     /// stays up). Settled children collapse under a `.done` row unless their parent is in
     /// `openDone`; `keep` (the session on screen, say) is never tucked away. Children sort by
     /// state (`State`'s order), roots by `before`. A parent in `collapsed` shows none of its
-    /// children, only their counts.
+    /// children, only their counts. With `foldQuiet`, so does a parent with nothing live under
+    /// it (a quiet manager: one line, "6 done") until its done row is opened (`openDone`).
     ///
     /// - Parameters:
     ///   - parent: the session that started `id`, if any (only parents in `items` nest).
@@ -104,7 +105,8 @@ enum SessionNesting {
         before: (SessionInfo, SessionInfo) -> Bool,
         openDone: Set<String> = [],
         keep: Set<String> = [],
-        collapsed: Set<String> = []
+        collapsed: Set<String> = [],
+        foldQuiet: Bool = false
     ) -> [Entry] {
         let ids = Set(items.map(\.id))
         var children: [String: [SessionInfo]] = [:]
@@ -131,6 +133,16 @@ enum SessionNesting {
             return e
         }
 
+        // Whether `keep` reaches into a session's subtree (the one on screen sits under it).
+        var keeps: [String: Bool] = [:]
+        func holdsKept(_ s: SessionInfo, _ seen: Set<String> = []) -> Bool {
+            if let k = keeps[s.id] { return k }
+            guard !seen.contains(s.id) else { return false }
+            let k = keep.contains(s.id) || (children[s.id] ?? []).contains { holdsKept($0, seen.union([s.id])) }
+            keeps[s.id] = k
+            return k
+        }
+
         var out: [Entry] = []
         var placed: Set<String> = []
         // Tucked away, but placed: a cycle can't surface them elsewhere.
@@ -143,7 +155,11 @@ enum SessionNesting {
             let kids = (children[s.id] ?? []).filter { !placed.contains($0.id) }
             var counts = Counts()
             kids.forEach { counts.add(effective($0)) }
-            let folded = collapsed.contains(s.id) && !kids.isEmpty
+            // A quiet parent (nothing live under it, nothing kept) folds to its counts unless
+            // its done row was opened.
+            let quiet = foldQuiet && effective(s).settled && !openDone.contains(s.id)
+                && !kids.contains(where: { holdsKept($0) })
+            let folded = (collapsed.contains(s.id) || quiet) && !kids.isEmpty
             out.append(.row(s, depth: depth, counts: counts, collapsed: folded))
             if folded { kids.forEach(hide); return }
             let next = min(depth + 1, maxDepth)

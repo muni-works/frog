@@ -18,9 +18,8 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use tokio::task::JoinHandle;
 
-/// Tools that may start early: they read files and change nothing (Read only records what it
-/// read, which is replayed when its result is used), and they never ask permission.
-pub const TOOLS: [&str; 3] = ["Read", "Grep", "Glob"];
+// Which calls may start early is `auto::parallel_read`: they change nothing (Read only records
+// what it read, which is replayed when its result is used), and they never ask permission.
 
 const CLOSE: &str = "</tool_call>";
 

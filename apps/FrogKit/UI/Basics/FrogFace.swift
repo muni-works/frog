@@ -16,6 +16,11 @@ struct FrogFace: View {
     var size: CGFloat = 16
     /// Bump to make the frog hop once, whatever its mood.
     var hop: Int = 0
+    /// Off, the frog holds its pose and nothing ticks (a hidden frog's loop still redraws).
+    var animating = true
+    /// Drawn at this moment instead of ticking on its own: for a frog snapshotted where nothing
+    /// drives a timeline (the Dock tile).
+    var at: Date?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// When the current mood began; its loop starts from frame 0 here.
@@ -24,11 +29,15 @@ struct FrogFace: View {
     @State private var hopped: Date?
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion || !animating || at != nil)) { timeline in
+            #if DEBUG
+            let _ = PillProbe.frog()
+            #endif
+            let now = at ?? timeline.date
             let pose = FrogPose(
                 mood: mood,
-                t: reduceMotion ? 0 : timeline.date.timeIntervalSince(since),
-                hop: reduceMotion ? nil : hopped.map { timeline.date.timeIntervalSince($0) })
+                t: reduceMotion ? 0 : now.timeIntervalSince(at == nil ? since : .distantPast),
+                hop: reduceMotion ? nil : hopped.map { now.timeIntervalSince($0) })
             let unit = size / FrogMark.box.width
             MarkCanvas(eyes: pose.eyes, frown: mood == .sad)
                 .frame(width: size, height: size)

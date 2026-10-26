@@ -4,16 +4,28 @@ extension Conversation {
     /// Every file changed in this session, in first-touched order, with each edit's diff.
     var sessionChanges: [FileChange] {
         var out: [FileChange] = []
+        var at: [String: Int] = [:]
         for turn in turns {
-            for change in TurnParts(turn).changes {
-                if let i = out.firstIndex(where: { $0.path == change.path }) {
+            for change in changes(of: turn) {
+                if let i = at[change.path] {
                     out[i].diffs += change.diffs
                 } else {
+                    at[change.path] = out.count
                     out.append(change)
                 }
             }
         }
         return out
+    }
+
+    /// A turn's changes. A finished turn's only change when items are added to it, so they're
+    /// kept: several views read `sessionChanges` on every event, and folding every turn each
+    /// time was a fold of the whole session per event.
+    func changes(of turn: TurnState) -> [FileChange] {
+        if turn.finished, let hit = changesCache[turn.id], hit.count == turn.items.count { return hit.changes }
+        let changes = TurnParts(turn).changes
+        if turn.finished { changesCache[turn.id] = (turn.items.count, changes) }
+        return changes
     }
 }
 

@@ -86,7 +86,9 @@ final class MessageTextTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.3))
         guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return XCTFail("no bitmap") }
         host.cacheDisplay(in: host.bounds, to: rep)
-        let dir = FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
+        // See `SnapshotTests.outDir`.
+        let dir = ProcessInfo.processInfo.environment["FROG_SNAPSHOT_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appending(path: "message-text.png"))
     }

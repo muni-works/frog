@@ -157,6 +157,7 @@ pub async fn run(spec: &str, speed: f64, ask: bool) -> Result<()> {
             tokens_per_sec: None,
             todos: Vec::new(),
             vision: false,
+            degraded: Vec::new(),
         },
         ops,
     };

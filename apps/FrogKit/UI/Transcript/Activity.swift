@@ -9,6 +9,9 @@ struct ActivityLabel: View {
     var maxWidth: CGFloat = 300
 
     var body: some View {
+        #if DEBUG
+        let _ = PillProbe.label()
+        #endif
         if conversation.failure != nil {
             HStack(spacing: 7) {
                 icon { Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red) }
@@ -21,9 +24,12 @@ struct ActivityLabel: View {
                 Text("Opening…").foregroundStyle(.secondary)
             }
         } else if conversation.busy, let turn = conversation.turns.last, !turn.finished {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                #if DEBUG
+                let _ = PillProbe.tick()
+                #endif
                 HStack(spacing: 7) {
-                    icon { Image(systemName: Self.symbol(turn)).foregroundStyle(.tint) }
+                    icon(at: ctx.date) { Image(systemName: Self.symbol(turn)).foregroundStyle(.tint) }
                     // Hugs the text, up to `maxWidth`.
                     Text(Self.live(turn, in: conversation)).lineLimit(1).truncationMode(.middle)
                         .frame(maxWidth: maxWidth, alignment: .leading)
@@ -57,11 +63,15 @@ struct ActivityLabel: View {
         }
     }
 
-    /// The frog, or the plain symbol when the playful frog is off.
+    /// The frog, or the plain symbol when the playful frog is off. The pill's frog does not
+    /// run its own 30/s timeline: it rides this label's 1Hz clock (the mood changes when work
+    /// changes, not per frame), so the capsule costs a frame a second instead of thirty.
+    /// DEBUG churn benchmarking holds its pose through `PillChurn.noFrog` (Reduce Motion).
     @ViewBuilder
-    private func icon(@ViewBuilder plain: () -> some View) -> some View {
+    private func icon(at: Date? = nil, @ViewBuilder plain: () -> some View) -> some View {
         if playful {
-            FrogFace(mood: conversation.failure != nil ? .sad : conversation.mood, size: 16).frame(width: 16)
+            FrogFace(mood: conversation.failure != nil ? .sad : conversation.mood, size: 16,
+                     animating: !PillChurn.noFrog, at: at).frame(width: 16)
         } else {
             plain().frame(width: 14)
         }
@@ -87,9 +97,9 @@ struct ActivityLabel: View {
     static func live(_ turn: TurnState, in c: Conversation) -> String {
         if c.permission != nil { return "Waiting for your permission" }
         guard let last = turn.items.last else { return "Thinking" }
+        // A Task in hand: the agents say what they're doing in the sidebar; here, how many.
+        if let waiting = c.waitingOnAgents(turn) { return waiting }
         switch last.kind {
-        case .tool("Task", _):
-            return "Subagent: \(last.subagent?.activity ?? "Starting")"
         case .tool(let name, let arg):
             let verb = ["Bash": "Running", "Read": "Reading", "Edit": "Editing", "Write": "Writing",
                         "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "CodeMap": "Mapping",
@@ -274,7 +284,15 @@ struct WorkingLine: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { ctx in
+        #if DEBUG
+        let _ = PillProbe.line()
+        #endif
+        // The sweep rides a 1Hz beat, not its own 60/s timeline: the motion is 1.6s long, so
+        // one step a second is indistinguishable at this height and the churn mostly leaves.
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            #if DEBUG
+            let _ = PillProbe.line()
+            #endif
             GeometryReader { geo in
                 let w = geo.size.width
                 let t = ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6

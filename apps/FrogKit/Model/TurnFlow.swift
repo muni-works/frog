@@ -83,6 +83,45 @@ struct TurnFlow {
     }
 }
 
+/// What a finished item shows, cheaply comparable: the transcript rebuilds a row only when its
+/// stamp changes, instead of every row on every chunk (`ItemState` isn't Equatable, so SwiftUI
+/// can't tell an unchanged row from a changed one by itself).
+struct ItemStamp: Equatable {
+    let id: String
+    let text: Int
+    let output: Int
+    let result: Bool
+    let ok: Bool
+    let needsPermission: Bool
+    let preview: Bool
+    let subagentItems: Int
+    let subagentEnded: Date?
+}
+
+extension ItemState {
+    /// Nil while the item is still running: a live row always rebuilds.
+    var stamp: ItemStamp? {
+        guard done else { return nil }
+        return ItemStamp(id: id, text: text.utf8.count, output: output.utf8.count, result: result != nil,
+                         ok: result?.outcome == .ok, needsPermission: needsPermission, preview: imagePreview != nil,
+                         subagentItems: subagent?.items.count ?? 0, subagentEnded: subagent?.endedAt)
+    }
+}
+
+extension TurnFlow.Segment {
+    /// Nil while any of its items is running.
+    var stamp: [ItemStamp]? {
+        switch self {
+        case .text(let i), .visual(let i), .notice(let i): i.stamp.map { [$0] }
+        case .activity(let g):
+            g.steps.reduce(into: [ItemStamp]?([])) { acc, step in
+                guard let s = step.stamp else { acc = nil; return }
+                acc?.append(s)
+            }
+        }
+    }
+}
+
 /// Steps between two pieces of text, and the sentence that sums them up.
 struct ActivityGroup {
     var steps: [ItemState]
@@ -209,7 +248,7 @@ enum ActivityWords {
         case "WebSearch":
             return [.text(args.count == 1 ? "searched the web for “\(args[0])”" : "searched the web \(args.count) times")]
         case "Task":
-            return [.text(calls.count == 1 ? "ran a subagent" : "ran \(count(calls.count, "subagent"))")]
+            return [.text(calls.count == 1 ? "ran an agent" : "ran \(count(calls.count, "agent"))")]
         case "TodoWrite": return [.text("updated the plan")]
         case "Image": return [.text("generated images")]
         case "Screenshot": return [.text("captured the page")]
@@ -251,7 +290,7 @@ enum ActivityWords {
             case "Bash", "!": return "Ran \(arg)"
             case "WebFetch": return "Fetched \(arg)"
             case "WebSearch": return "Searched the web for “\(arg)”"
-            case "Task": return arg.isEmpty ? "Ran a subagent" : "Subagent: \(arg)"
+            case "Task": return arg.isEmpty ? "Ran an agent" : "Agent: \(arg)"
             case "TodoWrite": return "Updated the plan"
             case "Diagram": return arg.isEmpty ? "Drew a diagram" : "Drew \(arg)"
             case "Present": return "Showed results"
@@ -280,7 +319,8 @@ enum ActivityWords {
             case "Bash", "!": return isTest(arg) ? "Running the tests…" : "Running \(arg)…"
             case "WebFetch": return "Fetching \(host(arg))…"
             case "WebSearch": return "Searching the web for “\(arg)”…"
-            case "Task": return item.subagent?.activity.appending("…") ?? "Starting a subagent…"
+            case "Task":
+                return item.subagent.map { "Agent: \($0.activity)…" } ?? "Starting an agent…"
             case "TodoWrite": return "Updating the plan…"
             case "Image": return "Generating images…"
             case "Screenshot": return "Capturing the page…"

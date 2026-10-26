@@ -244,15 +244,20 @@ pub struct Config {
     /// Empty by default: nothing widens unless configured.
     #[serde(default)]
     pub sandbox: SandboxConfig,
-    /// Start read-only tool calls (Read, Grep, Glob) as soon as their arguments arrive, while
-    /// the model is still writing the rest of its reply. Results, history and events are the
-    /// same as without it; only the waiting overlaps.
+    /// Start read-only tool calls (Read, Grep, Glob, public web reads, read-only shell
+    /// commands) as soon as their arguments arrive, while the model is still writing the rest
+    /// of its reply, and run a reply's leading reads side by side. Results, history and events
+    /// are the same as without it; only the waiting overlaps.
     #[serde(default = "default_true")]
     pub early_tools: bool,
     /// The model auto mode's classifier uses (a profile or provider/model). Default:
     /// `cloud/qwen3-8b`, then Apple's on-device model; with neither usable, it asks.
     #[serde(default)]
     pub auto_classifier: Option<String>,
+    /// A second classifier model, tried when `auto_classifier` can't answer (unreachable,
+    /// timed out, an HTTP error). With neither answering, frog's built-in rules decide alone.
+    #[serde(default)]
+    pub auto_classifier_fallback: Option<String>,
     /// Seconds a permission prompt waits for an answer before frog takes the safe path
     /// (denies the call, tells the agent, and carries on). 0 waits forever.
     #[serde(default = "default_approval_timeout")]
@@ -261,6 +266,11 @@ pub struct Config {
     /// on-device model when available, else the default model if it runs on your devices.
     #[serde(default)]
     pub brief_model: Option<String>,
+    /// The model that writes shell-command gists for tool rows (a profile or
+    /// provider/model). Default: `cloud/qwen3-8b`, then Apple's on-device model. With
+    /// neither usable, rows show the elided command.
+    #[serde(default)]
+    pub gist_model: Option<String>,
     /// The model `Task` subagents use (a profile or provider/model) unless a call names one.
     /// Default: the session's model. One that can't be resolved or isn't allowed here falls
     /// back to the session's model.

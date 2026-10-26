@@ -56,11 +56,10 @@ struct ComposerView: View {
                 field
                 controls
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
-            .frame(maxWidth: 860)
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, TurnSpace.gutter)
+            .padding(.top, TurnSpace.top)
+            .padding(.bottom, TurnSpace.Inset.snug)
+            .turnColumn()
         )
         // The canvas's margins keep the transcript clear of the cards; popovers opened from
         // here (the model picker, suggestions) mustn't inherit them.
@@ -162,6 +161,12 @@ struct ComposerView: View {
             if let problem = dictation.problem {
                 DictationProblemView(problem: problem) { dictation.problem = nil }
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            // What flushes at the next boundary (parked wakes, queued session messages).
+            let pending = PendingEvents(queued: conversation.queuedEvents, messages: conversation.pendingMessages, jobs: conversation.jobs)
+            if !pending.isEmpty {
+                PendingEventsStrip(pending: pending, busy: conversation.busy)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
             if !conversation.queue.isEmpty {
                 QueuedMessages(conversation: conversation)

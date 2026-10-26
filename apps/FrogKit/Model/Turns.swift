@@ -116,6 +116,8 @@ struct TurnState: Identifiable {
     var images: [ToolImage] = []
     /// Messages sent along with `input` as the same turn (queued follow-ups), in order.
     var more: [MessagePart] = []
+    /// Background wakes delivered with this turn, ahead of its input (`wakes_delivered`).
+    var wakes: [String] = []
     var items: [ItemState] = []
     var end: EndReason?
     var usage: TurnUsage?
@@ -124,6 +126,13 @@ struct TurnState: Identifiable {
     /// When you sent it from this window: its bubble animates in, like a sent iMessage.
     /// Nil for turns that arrive from a log (history, replay, another window).
     var sentAt: Date?
+    /// The model's title for the chapter starting at this turn (`chapter_titled`), when one
+    /// arrived; it wins over the rail's heuristic title.
+    var chapterTitle: String?
 
     var finished: Bool { end != nil }
+
+    /// Bumped whenever any turn's `chapterTitle` lands, so a memo of chapter titles knows to
+    /// redo them (a title arrives on an earlier turn, which a key on the last turn misses).
+    @MainActor static var chapterTitles = 0
 }
