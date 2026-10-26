@@ -79,3 +79,25 @@ TranscriptView 25, TurnView 11, ActivityLine 14, MessageText 4, ItemViews 35, Ma
   sessions' worktrees; a full-suite render got overwritten by main's look. Render SnapshotTests alone and
   check md5 vs baseline. The scroll-up flake probably comes from concurrent suites (CPU contention).
 - Cleaned: /private/tmp/type-dd, type-dd-base, type-base worktree, .snap.
+
+## Round 2 — more vertical space, bullet lists (Cam)
+- BUG: bullets got paragraphSpacingBefore = paragraph gap AND paragraphSpacing = list gap; TextKit adds
+  them, so items sat 20pt apart (5 leading +14 +6), MORE than paragraphs (14). Inverted hierarchy.
+- Fix: every gap comes from paragraphSpacingBefore only, chosen from (previous block, this block):
+  heading → section; after a heading → afterHeading; bullet after bullet → list; else paragraph.
+  `TurnSpace.Scale.gap(_ block:, after:)` (cross-platform, used by AppKit MessageStyle and iOS BlocksView).
+- Values (comfortable/compact): line 6/2, paragraph 16/8, list 6/3, section 28/16, afterHeading 6/3.
+  Visible gap = leading + gap (TextKit adds lineSpacing under every line): paragraph ≈22, item ≈12,
+  wrap 6, above a heading ≈34, under it ≈12.
+- Bullets: fixed marker column (TurnType.markerColumn = 22) so text of "1." and "10." items lines up;
+  marker right-aligned to the column (right tab stop) 8pt before the text; nested lists indent by one
+  column so a child's marker sits under the parent's text. Unordered markers by depth: • ◦ ▪.
+- Cam's density is COMPACT (defaults eco.frog / eco.frog.dev density=compact); SnapshotTests read it too.
+  Compact used to squeeze prose (line 2, paragraph 8, list 3). New stance: density tightens the chrome, and the
+  prose only a notch: compact line 5, list 5, paragraph 14, section 24, heading 5.
+- Bullets in label color (a small glyph needs it), numbers secondary. Marker right-aligned by its measured width
+  (firstLineHeadIndent), no leading tab, so copying a list still gives "• item".
+- STOP: frog manager says testScrollUpFillsOlderRowsInOrder is flaky-bench (4371)'s job. Don't instrument
+  TranscriptView or that test. Finding handed over: `jump` in the harness isn't observed (Binding over a plain property).
+- Rule from manager: Swift source edits via the Edit tool only (no python string replace).
+- Round 3 (Cam): align out-of-transcript elements (tool rows, subagent/task cards, restart banner, ...) to the column.
