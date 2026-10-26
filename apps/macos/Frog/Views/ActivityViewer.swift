@@ -306,8 +306,8 @@ final class DockActivity {
         guard timer == nil else { return }
         view.frame = NSRect(x: 0, y: 0, width: 128, height: 128)
         NSApp.dockTile.contentView = view
-        // The Dock takes a snapshot per display(): at the frog's own 30 a second, as in the app.
-        timer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in
+        // The Dock takes a snapshot per display(): 20 a second: smooth there, at a third less of its work than 30.
+        timer = Timer.scheduledTimer(withTimeInterval: 1 / 20, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.view.rootView = DockFrog(at: .now)
