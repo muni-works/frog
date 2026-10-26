@@ -820,7 +820,7 @@ extension Event {
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
         case command, gist
         case running
-        case status, summary, text, log, items, wakes
+        case status, text, log, items, wakes
     }
 
     init(from decoder: Decoder) throws {
