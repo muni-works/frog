@@ -161,12 +161,7 @@ Cam's question: AI is new and the law hasn't caught up. How far can we push mode
 
 ### 4.3 Verdict
 
-Right goal, wrong mechanism.
-- Serve **stock open weights** under a **short, published hard-line policy** with **owner attestation**.
-- Use narrow category filters only where law or vendors force them (CSAM; sexual content on Stripe-billed tiers; malware distribution).
-- Don't build a server-side legality classifier.
-- Don't use "obliterated" anywhere.
-- If abliterated weights are offered at all, make them **local-only**, where the user is the operator.
+Right goal, wrong mechanism. Serve **stock open weights** under a **short, published hard-line policy** with **owner attestation**. Use narrow category filters only where law or vendors force them (CSAM, sexual content on Stripe-billed tiers, malware distribution). Build no server-side legality classifier, and don't use "obliterated" anywhere. Abliterated weights, if offered at all, are **local-only**.
 
 ---
 
@@ -273,6 +268,20 @@ The stages below are ordered by dependency. Per Cam's rule, only launches get da
 - Don't sell exceptions to the hard lines. The master plan's safety commitments "carry to any acquirer," so they shouldn't be for sale to customers either.
 - Don't assume Section 230 covers model output.
 
+### 6.1 Should muni seek grant money for the research layer?
+
+**Market signal.** Funder-matching services now treat cash, cloud credits, GPU hours and API credits as interchangeable needs for independent labs ([Open Research Fund](https://www.openresearchfund.com/)). That supports the consumer-freedom thesis: for unfunded developers, frontier access is a budget problem as much as a policy problem. frog's free local path and cheap cloud tiers answer it directly.
+
+**Fit is poor for the obvious targets:**
+- **Schmidt Sciences, Science of Trustworthy AI ($5M on that index).** The 2026 agenda explicitly excludes "model safeguards (e.g., I/O filtering, constitutional classifiers)," "policy and AI governance," "jailbreak discovery," and "near-term product engineering" ([Schmidt Sciences](https://www.schmidtsciences.org/research-agenda/trustworthy-ai-research-agenda/)). A legality classifier is out of scope by name, and §4 recommends against building one anyway. The only plausible fit is §2.1, "science of evaluation": an open over-refusal benchmark with construct and predictive validity (the freedom bench). Our eligibility as a for-profit is unconfirmed.
+- **SFF.** Funded by Jaan Tallinn. Theme rounds accept for-profits, but the 2026 main-round application closed April 22 ([SFF-2026](https://survivalandflourishing.fund/2026/application)). The index's "rolling" label points at the rolling application form, not an open round.
+- **Open Philanthropy, now Coefficient Giving** ([Coefficient Giving](https://coefficientgiving.org/)). Its global-catastrophic-risk grants fit a "reduce refusals" agenda poorly.
+
+**Recommendation.**
+- Don't pursue grants now. Capital strategy is undecided in the master plan, and these funders' priorities lean toward *more* restriction. That is a slow-burn string on our hard lines.
+- If we pursue one later, it should be narrow and no-strings: a grant for the **open, published freedom bench** (data, code and results public; no data-retention or monitoring conditions; no say over product policy). Apply through an academic partner if for-profit eligibility blocks us.
+- Walk away from any term that touches user data, adds monitoring, or gives the funder input on who we serve. That's the "never be Flock Safety" test.
+
 ---
 
 ## 7. Needs a lawyer (consolidated)
@@ -301,3 +310,5 @@ The stages below are ordered by dependency. Per Cam's rule, only launches get da
 **EU law:** [AI Act and Omnibus timeline](https://www.techtimes.com/articles/320101/20260710/eu-ai-act-enforcement-here-chatbot-rules-live-high-risk-ai-delay-now-binding-law.htm) · [CMS on downstream modifiers](https://cms.law/en/swe/legal-updates/general-purpose-ai-models-obligations-and-roles-for-providers-and-downstream-modifiers-under-the-eu-ai-act) · [Directive 2009/24/EC](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32009L0024)
 
 **Models and vendors:** [Arditi et al., refusal direction](https://arxiv.org/abs/2406.11717) · [OR-Bench](https://arxiv.org/abs/2405.20947) · [DeepSeek V4.x on HF](https://huggingface.co/api/models?search=DeepSeek-V4&author=deepseek-ai&limit=20) · [abliterated models on HF](https://huggingface.co/api/models?search=abliterated&sort=downloads&limit=15) · [huihui DeepSeek V4 Flash abliterated](https://huggingface.co/huihui-ai/Huihui-DeepSeek-V4-Flash-0731-abliterated-GGUF) · [Venice ToS](https://venice.ai/legal/tos) · [Venice privacy](https://venice.ai/privacy) · [Stripe restricted businesses](https://stripe.com/legal/restricted-businesses) · [RunPod ToS](https://www.runpod.io/legal/terms-of-service) · [Cloudflare Self-Serve Agreement](https://www.cloudflare.com/terms/) · [DHS DeepSeek order (WinBuzzer)](https://winbuzzer.com/2026/10/20/us-civilian-agencies-must-remove-deepseek-based-ai-xcxwbn/) · [Federal Register filing](https://public-inspection.federalregister.gov/2026-21447.pdf) · [governments restricting DeepSeek](https://www.msn.com/en-in/news/other/from-rome-to-washington-why-governments-are-pulling-deepseek-off-official-systems/ar-AA2fENvp)
+
+**Funding:** [Open Research Fund](https://www.openresearchfund.com/) · [Schmidt Sciences Trustworthy AI agenda](https://www.schmidtsciences.org/research-agenda/trustworthy-ai-research-agenda/) · [SFF-2026 application](https://survivalandflourishing.fund/2026/application) · [Coefficient Giving (formerly Open Philanthropy)](https://coefficientgiving.org/)
