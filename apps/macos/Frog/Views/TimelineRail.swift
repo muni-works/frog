@@ -25,9 +25,9 @@ struct TimelineRail: View {
     private var chapters: [Chapter] { Chapter.of(turns) }
     private var chapterStarts: [Int] { Chapter.starts(of: chapters, in: turns) }
 
-    private func currentChapter(in h: CGFloat) -> Int? {
-        guard let lo = turns.indices.filter({ visible.contains(turns[$0].id) }).min() else { return nil }
-        return Chapter.index(of: lo, in: chapterStarts)
+    private func currentChapter(_ starts: [Int]) -> Int? {
+        guard let lo = turns.firstIndex(where: { visible.contains($0.id) }) else { return nil }
+        return Chapter.index(of: lo, in: starts)
     }
 
     private var accessibility: String {
@@ -160,8 +160,10 @@ struct TimelineRail: View {
     /// taller and solid for the chapter on screen, a faint dash for the rest. A compaction
     /// boundary draws as a small gap in the rail (the summarized break), not a notch.
     private func drawChapters(_ ctx: GraphicsContext, _ size: CGSize, _ h: CGFloat) {
-        let starts = chapterStarts
-        let current = currentChapter(in: h)
+        // Each of these folds every turn: once per draw, not once per chapter.
+        let chapters = self.chapters
+        let starts = Chapter.starts(of: chapters, in: turns)
+        let current = currentChapter(starts)
         for (c, start) in starts.enumerated() {
             let y = y(of: start, in: h)
             let here = c == current

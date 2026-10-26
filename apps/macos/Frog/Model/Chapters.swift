@@ -54,7 +54,8 @@ struct Chapter {
 
     /// The index in `turns` each chapter starts at, in order.
     static func starts(of chapters: [Chapter], in turns: [TurnState]) -> [Int] {
-        chapters.compactMap { c in turns.firstIndex { $0.id == c.turn } }
+        let at = Dictionary(turns.indices.map { (turns[$0].id, $0) }, uniquingKeysWith: { a, _ in a })
+        return chapters.compactMap { at[$0.turn] }
     }
 
     /// The chapter a turn is in: the last one starting at or before it. Binary search.
