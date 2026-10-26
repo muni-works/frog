@@ -63,11 +63,12 @@ struct ActivityLabel: View {
         }
     }
 
-    /// The frog, or the plain symbol when the playful frog is off.
+    /// The frog, or the plain symbol when the playful frog is off. DEBUG churn benchmarking
+    /// holds its pose through `PillChurn.noFrog` (the Reduce Motion path).
     @ViewBuilder
     private func icon(@ViewBuilder plain: () -> some View) -> some View {
         if playful {
-            FrogFace(mood: conversation.failure != nil ? .sad : conversation.mood, size: 16).frame(width: 16)
+            FrogFace(mood: conversation.failure != nil ? .sad : conversation.mood, size: 16, animating: !PillChurn.noFrog).frame(width: 16)
         } else {
             plain().frame(width: 14)
         }

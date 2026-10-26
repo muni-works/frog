@@ -1,6 +1,14 @@
 #if DEBUG
 import Foundation
 
+/// The A/B knob for the activity pill's churn benchmark: DEBUG builds only, never shipped
+/// behavior. It reuses the state the frog already has for Reduce Motion — `animating: false`
+/// holds its pose and stops the 30/s timeline from ticking.
+@MainActor
+enum PillChurn {
+    static var noFrog: Bool { UserDefaults.standard.bool(forKey: "pillChurn.noFrog") }
+}
+
 /// Counters for the activity pill's churn benchmark (`PillChurnBenchmarkTests`): how often the
 /// glass capsule's pieces re-evaluate while a turn runs — the playful frog at 30 a second, the
 /// working line's sweep at 60, the elapsed clock at 1. A body that runs once per distinctive

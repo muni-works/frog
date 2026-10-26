@@ -99,4 +99,11 @@ final class PillChurnBenchmarkTests: XCTestCase {
 
     /// Current build, frog on, sweep on: the churn suspect as shipped.
     func testBaseline() throws { try measure("baseline") }
+
+    /// Variant A: the frog holds a static pose in the pill (the Reduce Motion path).
+    func testVariantA() throws {
+        UserDefaults.standard.set(true, forKey: "pillChurn.noFrog")
+        defer { UserDefaults.standard.removeObject(forKey: "pillChurn.noFrog") }
+        try measure("variantA")
+    }
 }
