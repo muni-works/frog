@@ -1,8 +1,8 @@
 # Sidebar git badges — design
 
 Status: **design for review** (Cam). No code yet. Base: `77b5f8c` (main).
-Mockup: [mockup.html](mockup.html) (the org tree with badges, light and dark; the anatomy strip; the
-Workers scope fed by the same data).
+Mockup: [mockup.html](mockup.html) (the org tree with badges, light and dark; the hover cards for a
+group row and a session row; the anatomy strip; the Workers scope fed by the same data).
 
 Cam asked for per-row git badges like Claude's sidebar: a purple branch glyph with commits ahead, a
 green merged glyph with a count, and group rows that sum their children. This spec fits that into
@@ -26,7 +26,8 @@ per repo when refs change, and once per tree when a turn ends. The network is us
 | Ahead (tools) | `Git.quick`, `Git.swift:64` | ListSessions/SessionStatus count against the **upstream**, which is nil for unpushed `frog/*` (worktree-ux F12). |
 | Lock | `worktree.rs` | `.git/worktrees/<name>/frog-engine.lock` holds `"<session> <pid>"`. No branch, base or counts. |
 | Manifest, header `worktree`, `frog --worktrees --json`, Workers | worktree-ux §1, §3 | **Specced, not built.** |
-| Merge events | — | **None.** The engine logs no merge. Pond's GitHub read (`pond/github.rs`) asks for OPEN PRs only. |
+| Merge events, diffstats | — | **None.** The engine logs no merge and no diffstat (the only `--numstat` is `checkpoint.rs:205`, which applies race diffs). Pond's GitHub read (`pond/github.rs`) asks for OPEN PRs only. |
+| Merge commits on base | git | In frog's `origin/main`, 58 of 116 merges are `Merge pull request #N from ecto/<branch>`, and the PR title is the first body line. The rest (all recent ones) are local `Merge remote-tracking branch 'origin/frog/<x>'`. The last 200 first-parent merges list in **17 ms**, and one merge's `diff --shortstat M^1...M^2` takes **~40 ms**. |
 
 What that means for the design:
 1. **"Merged" has to come from local git.** Most merges in this org are local `git merge
@@ -174,6 +175,94 @@ MERGED for a branch git can't prove (a squash with conflict edits), it pins `lan
 that tip. `CompactPRCache` is deleted. Its glyph becomes the shared badge, and `changedFiles` moves to
 the tooltip if gh has been asked.
 
+## 3b. The hover card
+
+Resting on a badge opens a floating card that lists the work behind the number. It replaces the
+badge's tooltip. The row's own tooltip (title, tree, model) stays on the rest of the row.
+
+```
+ ┌ frog manager ─────────────────────────── 12 landed · 37 ahead ┐
+ │ LANDED                                                        │
+ │ subagent visibility v2          [Merged] ecto/frog · b36d033  │
+ │                                              +1751  −378      │
+ │ worktree ux                     [Merged] ecto/frog · ef41cd7  │
+ │                                               +653    −1      │
+ │ engine: never persist native→…  [Merged] ecto/frog #97        │
+ │                                               +751   −78      │
+ │ … 9 more                                                      │
+ │ NOT LANDED                                                    │
+ │ accounts ux spec v3   frog/accounts-ux-spec   ↑17  +2210 −40  │
+ │ delegation pipeline v5 …                                      │
+ │ ───────────────────────────────────────────────────────────── │
+ │ Show in Workers                                   Refresh  ⌘R │
+ └───────────────────────────────────────────────────────────────┘
+```
+
+**Group card** (manager, done fold, repo header). The rows come from all the children, deduped by
+tree, in two sections:
+- **Landed**, newest merge first, at most 8 rows, then "… N more" (which opens Workers filtered to
+  that owner). Each row shows the title, a green **Merged** capsule, the repo, `#N` for a PR merge or
+  the short merge sha for a local merge, and `+N −M` in green and red. The child's session title
+  sits under it in tertiary when it differs from the PR title.
+- **Not landed** (only when ahead > 0), most ahead first, at most 5 rows: the session title, the
+  branch chip, `↑N`, and `+N −M` against base. A row in trouble shows its amber reason
+  ("rebasing · 2 conflicts") in place of the diffstat.
+- A header with the group's name and the same numbers as its badge, so the card never disagrees
+  with the row.
+
+**Session card** (any session row with a badge). The same two sections, for one tree:
+- **Landed**: every merge that brought this branch into base. There can be more than one. A branch
+  merged, then worked on and merged again, shows two rows.
+- **Not landed**: up to 5 of the branch's own commits (`fa29b9a notes: rebase onto the fixed main`),
+  newest first, with "… N more", and a footer `+13 −0 · 1 file vs origin/main`. It adds
+  `● 19 uncommitted` when the dot is on.
+- An empty section isn't drawn. A landed leaf with nothing new shows only Landed.
+
+**Click-through.** A PR row opens `https://github.com/<owner>/<repo>/pull/<N>`. A local-merge row
+opens `…/commit/<sha>`. A not-landed row opens the branch's compare page,
+`…/compare/<base>...<branch>`, but only when the branch has an upstream on that remote. Without
+one, the row isn't a link and shows the sha (its menu has "Copy sha"). `<owner>/<repo>` is parsed
+from `remote.<origin>.url` (`git@github.com:ecto/frog.git` → `ecto/frog`, and https too). A remote
+that isn't GitHub gets no links. Opening a link doesn't call gh or any API. ⌥-click on a row opens
+its session instead of the browser.
+
+### Where the card's data comes from (no engine merge log exists)
+
+The card has its own item type, `LandedItem { mergeSha, tipSha, title, pr: Int?, slug, added,
+removed, at, tree }`, in `GitIndex`. It's built in two tiers.
+
+| Tier | When | What | Cost |
+|---|---|---|---|
+| **Merge index** (eager, cheap) | the repo batch, when the base ref moved | `git log <base> --first-parent --merges -n 200 --format='%H %P%x09%s%x09%b'`. For each merge: `^2`, the PR number and title parsed from `Merge pull request #N from owner/branch` + the first body line, or the branch from `Merge (remote-tracking )?branch '<x>'`. Map `^2` to the tree whose branch tip it is (or contains, for squash/cherry matches from the batch). | ~17 ms per base move, per repo |
+| **Diffstats** (lazy) | **the first hover** of a card that shows an item with no cached stat | `git diff --shortstat M^1...M^2` for a merge, `git show --shortstat <c>` for a squash commit, `git diff --shortstat <base>...<tip>` for not-landed rows. Only for the ≤ 13 rows the card shows, in parallel. | ~40 ms each, cached **forever** by sha (a merge's stat can't change). A not-landed stat is keyed by (tip, base). |
+| **Titles** for local merges | from the index | the owning session's title, else the branch name | none |
+| gh | **never** for the card | — | — |
+
+So the card opens right away with titles and Merged capsules. Missing `+N −M` cells show a
+placeholder dash and fill in within ~100 ms the first time. After that the card is entirely
+cached. Nothing is prefetched for rows that are visible but not hovered. Merges older than the
+200-merge window list from the `tornDown.landed` record (§4). It gains `{mergeSha, pr, added,
+removed}`, so a torn-down tree's row stays exact.
+
+### Lifecycle (macOS conventions)
+
+| Event | Behavior |
+|---|---|
+| Pointer rests on the badge **500 ms** (the system tooltip delay) | The card opens as a transient popover, anchored below the badge, arrow pointing at it. It's placed to the side away from the row, so the row stays readable. Passing over a badge without resting opens nothing. |
+| Pointer moves from the badge to the card | It stays open. A **300 ms grace** covers the gap, and a triangle-shaped safe zone from the pointer to the card's near edge keeps a diagonal move from closing it (the menu-submenu rule). |
+| Pointer leaves both | It closes after 250 ms, with a 120 ms fade. Coming back during the fade reopens it with no delay. |
+| Another badge is rested on while a card is open | The card **moves** to it with no delay (the warm state, like tooltips), until 1 s passes with no badge under the pointer. |
+| **Click** the badge | Pins the card: it becomes a semitransient popover that takes key focus. It closes on Esc, a click outside, or another click on the badge. Hover cards never take focus, so typing in the composer is never interrupted. |
+| Keyboard: the sidebar has focus on a row | **Space** opens the row's card pinned (the Quick Look convention). ↑/↓ moves through the card's rows, **Return** opens the focused link, **⌘C** copies its URL or sha, ⌥Return opens the session, **Esc** closes it and returns focus to the row. |
+| Sidebar scrolls, window resigns key, the row disappears (scope change, collapse), or the drag starts | It closes at once. |
+| Data changes while it's open (a ref event) | The rows update in place. The card doesn't jump, and a moved row keeps the focus ring. |
+| VoiceOver | The badge's label is "37 commits ahead, 12 landed", with the action "Show landed work" (= pin). Each card row is a link with the label "subagent visibility v2, merged as b36d033, 1751 added, 378 removed". |
+| Reduce Motion | No fade. |
+
+The badge click used to drill into Workers (§4). Pinning wins that click, and **Show in Workers**
+moves to the card's footer (and stays in the row menu). Refresh (⌘R while the card is pinned) is the
+same Refresh as in §3, and it's the only network action reachable from the card.
+
 ## 4. Integration with the Workers scope (worktree-ux §3)
 
 - **One index, two projections.** Workers rows (one per tree) and session rows (one per session)
@@ -184,9 +273,10 @@ the tooltip if gh has been asked.
   definition when the manifest lands.
 - **One "merged".** The row's `⇡` and Workers' **merged** state dot use the same test (ancestor, or
   cherry, or a pinned PR). The "Clean up N merged" button and a manager's `⇡ N` count the same trees.
-- **The badge drills in.** Clicking a row's badge switches the scope to Workers with that tree
-  scrolled to and expanded (path, base, lock pid, parked refs). It's the same as "Show in Workers" in
-  the row menu. It's the only click a badge has.
+- **The card drills in.** **Show in Workers** in the hover card's footer (and in the row menu) switches
+  the scope to Workers with that tree scrolled to and expanded (path, base, lock pid, parked refs). A
+  group card's "… N more" opens Workers filtered to that owner. Clicking the badge itself pins the card
+  (§3b).
 - **After teardown** (worktree-ux §4) the session is archived with `tornDown { at, parked, branch }`.
   This spec adds `landed: Bool` to that record, so a manager's `⇡ 12` doesn't drop when its merged
   trees are auto-removed after 24 h. Archived-by-hand sessions don't count. Torn-down ones do.
@@ -214,6 +304,10 @@ the tooltip if gh has been asked.
 | F14 | Huge tree, slow `status` | dirty is unknown (no dot). After 2 s the status is killed, and that tree backs off for 10 min. | a badge never blocks |
 | F15 | Repo batch fails (corrupt packed-refs, a lock held by git gc) | the last good values, with no flicker to "none" | retry on the next ref event |
 | F16 | Old git (< 2.41, no `%(ahead-behind)`) | normal badge | falls back to one `rev-list --left-right --count` per tree, still only on ref events |
+| F17 | Card: no GitHub remote, or the branch was never pushed | rows show the sha, not a link | no guessed URLs |
+| F18 | Card: a merge older than the 200-merge window, tree still present | the row comes from `tornDown`, or from a one-off `git log --merges --ancestry-path <tip>..<base>` on first hover | rare, lazy |
+| F19 | Card: shortstat slow (a huge merge) | the dash stays. The stat is killed at 2 s and retried on the next hover. | the card never waits |
+| F20 | Card: the merge was an octopus or `-s ours` | `^2..^N` are each mapped. `-s ours` shows `+0 −0`. | honest numbers |
 
 ## Build order (when approved)
 
@@ -224,8 +318,10 @@ the tooltip if gh has been asked.
 3. Replace `CompactPRCache` and `SessionMetaCache` in the compact rows and the repo headers. gh moves
    to the Refresh menu.
 4. Trouble states (F7) and detached heads (F6).
-5. When the Workers scope builds: the badge click drills in, and `tornDown.landed` is added.
-6. ListSessions/SessionStatus `ahead` against base (goes with the manifest, worktree-ux build step 1).
+5. The hover card: the merge index in the repo batch, lazy diffstats, the popover lifecycle (hover,
+   pin, Space), and GitHub links from the remote URL.
+6. When the Workers scope builds: "Show in Workers" drills in, and `tornDown.landed` is added.
+7. ListSessions/SessionStatus `ahead` against base (goes with the manifest, worktree-ux build step 1).
 
 ## Open questions for Cam
 
@@ -235,3 +331,7 @@ the tooltip if gh has been asked.
 3. Hide the dirty dot while a session runs (recommended), or always show it?
 4. Should the manager aggregate include the manager's own tree? (Recommend yes. It only matters for
    managers that run in a worktree.)
+5. Clicking a badge: **pin the card** (recommended; macOS popovers open on click), or keep the first
+   draft's jump straight into Workers?
+6. Should a local-merge row link to the **merge commit** (recommended; it always exists on GitHub once
+   pushed), or to the branch's compare page (which breaks once the branch is deleted)?
