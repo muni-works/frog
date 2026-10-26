@@ -33,7 +33,14 @@ enum UpdateDrain {
     /// time here is fine for that: the sends already happened.
     static func drainAll() async {
         let budget = self.budget
-        let conversations = Library.shared.open
+        // Both fleets: what a window shows and what the broker runs headless (the manager
+        // fleet and workers live in `SessionBroker.background`, unseen). Missing the
+        // background fleet suspended only what was on screen and let workers' turns die as
+        // crashes mid-update — the bug the field report caught.
+        var conversations = Library.shared.open
+        for b in SessionBroker.shared.liveBackground where !conversations.contains(where: { $0 === b }) {
+            conversations.append(b)
+        }
         let deadline = Int64((Date().addingTimeInterval(budget)).timeIntervalSince1970 * 1000)
         for c in conversations {
             c.sendDrain(deadline: deadline)

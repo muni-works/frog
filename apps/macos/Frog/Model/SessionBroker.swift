@@ -765,6 +765,13 @@ final class SessionBroker {
         return background[id]
     }
 
+    /// Every live conversation the broker runs headless: sessions started for work that no
+    /// window shows. The update drain must reach these too (a graceful restart used to
+    /// suspend only what was on screen and let these engines' turns die as crashes).
+    var liveBackground: [Conversation] {
+        background.values.filter { $0.isLive }
+    }
+
     /// A permission prompt opened in session `child`: tell the session that started it,
     /// so a manager can decide (or tell the user) instead of the prompt sitting unseen.
     /// The child waits on it until answered or its timeout takes the safe path.
