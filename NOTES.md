@@ -14,4 +14,18 @@ uploading a probe file to an Alibaba bucket while claiming zero tool calls). Pie
    grant path.
 
 ## Progress
-- checkpoint 0
+- d3ea32a checkpoint 0
+- 3dc272c policy ([egress], ~/.config/frog/egress.toml), proxy (token per call), egress.jsonl
+- bcb6cfc seatbelt enforce (deny outbound but localhost + DNS), EgressBlocked, allow_hosts/unsandboxed
+  always card (even auto/yolo), --worker + header.worker, subagents share parent's Egress
+- 928a4c4 digest in the brief + morning notice
+- 2c48bf0 app: notice rows, --worker on StartSession, iOS durable
+- 1561bbe docs (docs/design/egress.md, reference.md)
+Suites: engine 491/0 (8 ignored; a first loaded run had 4 timing flakes, all pass alone and on
+rerun); app 348, 2 failures = TranscriptSwitchBenchmarkTests (known, unrelated). Network check
+(`egress_listed_hosts_work_over_the_network`, --ignored): git/curl/python reach listed hosts.
+Target dirs deleted.
+
+## Deferred
+Linux enforcement; WebFetch for workers; ssh/URLSession tools get no network when enforced;
+CDN/upload-capable listed hosts.
