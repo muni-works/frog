@@ -1,6 +1,9 @@
 import SwiftUI
 
-/// Every conversation, as tabs: pinned ones as tiles on top, then one group per project folder
+/// Every conversation. By default (Group By › Org) the attention tree: the chief's tile, what
+/// needs you, the org as a started-by tree scoped to Live, Today or All, then yours, with search
+/// filtering it in place (`AttentionTree`, docs/design/sidebar-refactor.md). The older views:
+/// pinned ones as tiles on top, then one group per project folder
 /// (newest activity first), then plain chats, which archive themselves once they go quiet.
 /// The view options (the header's filter button) group by project, by date or not at all, and
 /// sort by last activity, creation or name. Searching or browsing the archive is by day. Rows show whether a
@@ -933,6 +936,9 @@ struct SessionList: View {
 
     private var footer: some View {
         let count = library.archived.count
+        // The org view counts what's live across the tree (running or waiting on you).
+        let liveCount = grouping == .org && !showArchived
+            ? active.count(where: { [.running, .waiting].contains(rowState($0)) }) : 0
         return HStack {
             if showArchived {
                 Button { showArchived = false } label: { Label("Back to conversations", systemImage: "chevron.left") }
@@ -940,12 +946,16 @@ struct SessionList: View {
                 Button { showArchived = true } label: { Label("Archived (\(count))", systemImage: "archivebox") }
             }
             Spacer()
+            if liveCount > 0 {
+                Text("\(liveCount) live").monospacedDigit().foregroundStyle(.tertiary)
+                    .help("\(liveCount) session\(liveCount == 1 ? "" : "s") running or waiting on you")
+            }
         }
         .buttonStyle(.plain)
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
-        .padding(.vertical, count > 0 || showArchived ? 9 : 0)
+        .padding(.vertical, count > 0 || showArchived || liveCount > 0 ? 9 : 0)
     }
 
     @ViewBuilder
