@@ -1568,7 +1568,9 @@ extension SessionBroker {
     }
 
     /// The engine flags for a session started by another session: its permission
-    /// mode (see `childMode`) plus the app-wide flags.
+    /// mode (see `childMode`), `--worker` (an agent's session: its shell commands reach only
+    /// the `[egress]` allow-list, and the engine keeps that across resumes), plus the
+    /// app-wide flags.
     static func engineFlags(req: StartRequest, parent: Conversation?) -> [String] {
         let mode = childMode(asked: req.mode, parent: parent?.status?.mode)
         let flag: [String] = switch mode {
@@ -1577,6 +1579,6 @@ extension SessionBroker {
         case .acceptEdits: ["--accept-edits"]
         case .default: []
         }
-        return flag + Workspace.engineFlags(chat: false).filter { $0 != "--yolo" && $0 != "--auto" && $0 != "--accept-edits" }
+        return flag + ["--worker"] + Workspace.engineFlags(chat: false).filter { $0 != "--yolo" && $0 != "--auto" && $0 != "--accept-edits" }
     }
 }
