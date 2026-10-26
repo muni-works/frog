@@ -75,3 +75,7 @@ TranscriptView 25, TurnView 11, ActivityLine 14, MessageText 4, ItemViews 35, Ma
 - FLAKE: testScrollUpFillsOlderRowsInOrder "no rows went in above" (0 fills, built above 0) failed 2/3 on the
   snap binary in-suite, passed alone and on re-run; base/a8ba5c3/5b8dd4a each passed 1/1. Base worktree at
   /private/tmp/type-base (dd /private/tmp/type-dd-base) — delete at end.
+- DONE. Full app suite green twice (269 tests). Snapshot gotcha: $TMPDIR/frog-snapshots is shared with other
+  sessions' worktrees; a full-suite render got overwritten by main's look. Render SnapshotTests alone and
+  check md5 vs baseline. The scroll-up flake probably comes from concurrent suites (CPU contention).
+- Cleaned: /private/tmp/type-dd, type-dd-base, type-base worktree, .snap.
