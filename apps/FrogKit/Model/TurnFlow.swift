@@ -248,10 +248,7 @@ enum ActivityWords {
         case "WebSearch":
             return [.text(args.count == 1 ? "searched the web for “\(args[0])”" : "searched the web \(args.count) times")]
         case "Task":
-            let failed = calls.filter { $0.result?.outcome == .error }.count
-            var pieces: [Piece] = [.text(calls.count == 1 ? "ran an agent" : "ran \(count(calls.count, "agent"))")]
-            if failed > 0 { pieces.append(.failed(failed)) }
-            return pieces
+            return [.text(calls.count == 1 ? "ran an agent" : "ran \(count(calls.count, "agent"))")]
         case "TodoWrite": return [.text("updated the plan")]
         case "Image": return [.text("generated images")]
         case "Screenshot": return [.text("captured the page")]

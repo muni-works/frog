@@ -65,7 +65,10 @@ extension TurnState {
             var activity: String?
             switch state {
             case .failed:
-                activity = item.result?.output.split(separator: "\n").first.map(String.init)
+                // The failure's first line of the report (or a plain error string).
+                activity = item.result?.output.split(separator: "\n").first
+                    .map { String($0).trimmingCharacters(in: .whitespaces) }
+                    .flatMap { $0.isEmpty ? nil : String($0.prefix(80)) }
             case .running:
                 activity = item.subagent?.activity
             case .waiting, .done:
