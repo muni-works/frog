@@ -487,10 +487,11 @@ struct TypingBubble: View {
 
     var body: some View {
         let live = writing && !settled
-        HStack(alignment: .top, spacing: 8) {
+        // No gap beside a collapsed frog: a finished answer lines up with the activity lines.
+        HStack(alignment: .top, spacing: live ? TurnSpace.Inset.row : 0) {
             // Every finished message is this view too: its hidden frog mustn't keep ticking.
             FrogFace(mood: .idle, size: 14, animating: live)
-                .padding(.top, 4)
+                .padding(.top, TurnSpace.Inset.tight)
                 .opacity(live ? 1 : 0)
                 .frame(width: live ? 14 : 0)
             MarkdownView(text: text, streaming: live)
@@ -499,9 +500,9 @@ struct TypingBubble: View {
                 .opacity(live ? 1 : 0)
                 .frame(width: live ? nil : 0, alignment: .trailing)
         }
-        .padding(.vertical, live ? 9 : 0)
-        .padding(.leading, live ? 12 : 0)
-        .padding(.trailing, live ? 12 : 6)
+        .padding(.vertical, live ? TurnSpace.Inset.card : 0)
+        .padding(.leading, live ? TurnSpace.Inset.roomy : 0)
+        .padding(.trailing, live ? TurnSpace.Inset.roomy : 0)
         .background(.quaternary.opacity(live ? 0.45 : 0), in: .rect(cornerRadius: 14))
         .animation(.easeOut(duration: 0.25), value: settled)
         .animation(.easeOut(duration: 0.25), value: writing)

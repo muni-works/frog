@@ -36,7 +36,7 @@ struct ActivityLine: View {
         #if DEBUG
         let _ = TranscriptProbe.row()
         #endif
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
             // Running steps aren't in the sentence yet; the live line says what's happening.
             if !group.done.isEmpty {
                 line
@@ -64,7 +64,9 @@ struct ActivityLine: View {
         Button {
             withAnimation(.snappy(duration: 0.25)) { expanded.toggle() }
         } label: {
+            // A UI size under the 14pt answer, secondary: it reads as a margin note, not text.
             Text("\(ActivityText(pieces: group.summary).text)\(gistText)  \(chevron)")
+                .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -379,10 +381,11 @@ struct LiveStatus: View {
     var preview: String?
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: TurnSpace.Inset.row) {
             ProgressView().controlSize(.mini)
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 Text(text + elapsed(at: ctx.date))
+                    .font(.callout)
                     .monospacedDigit()
                     .contentTransition(.opacity)
             }

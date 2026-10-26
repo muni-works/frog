@@ -13,6 +13,8 @@ struct MessageText: NSViewRepresentable {
 
     func makeNSView(context: Context) -> MessageTextView {
         let view = MessageTextView(usingTextLayoutManager: false)
+        // Draws inline code's rounded backgrounds (see `InlineCodeLayoutManager`).
+        view.textContainer?.replaceLayoutManager(InlineCodeLayoutManager())
         view.isEditable = false
         view.isSelectable = true
         view.isRichText = true
@@ -313,6 +315,45 @@ final class CodeAttachmentCell: NSTextAttachmentCell {
 extension NSAttributedString.Key {
     /// Marks a code block's attachment with its code, for copying.
     static let frogCode = NSAttributedString.Key("frogCode")
+    /// Inline code: a rounded tint behind it, hugging the glyphs rather than the line.
+    static let frogInlineCode = NSAttributedString.Key("frogInlineCode")
+}
+
+/// Inline code sits on a small rounded tint, like claude.ai's: around the glyphs' own height,
+/// not the line's (which includes the leading and a paragraph's space above). A plain
+/// `.backgroundColor` can only fill the line fragment, square. Drawn under the selection.
+final class InlineCodeLayoutManager: NSLayoutManager {
+    static let pad: CGFloat = 2
+    static let radius: CGFloat = 4
+
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        if let storage = textStorage, let container = textContainers.first {
+            let chars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+            NSColor.labelColor.withAlphaComponent(0.09).setFill()
+            storage.enumerateAttribute(.frogInlineCode, in: chars) { value, range, _ in
+                guard value != nil, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
+                // Not written in yet (see `InkReveal`): no tint ahead of the pen.
+                if temporaryAttribute(.foregroundColor, atCharacterIndex: range.location, effectiveRange: nil) as? NSColor == .clear { return }
+                let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                var g = glyphs.location
+                // One rounded rect per line the code wraps across.
+                while g < NSMaxRange(glyphs) {
+                    var line = NSRange()
+                    let fragment = lineFragmentRect(forGlyphAt: g, effectiveRange: &line)
+                    let run = NSIntersectionRange(line, glyphs)
+                    guard run.length > 0 else { break }
+                    let span = boundingRect(forGlyphRange: run, in: container)
+                    let baseline = fragment.minY + location(forGlyphAt: run.location).y
+                    let rect = NSRect(x: span.minX - Self.pad, y: baseline - font.ascender - 1,
+                                      width: span.width + Self.pad * 2, height: font.ascender - font.descender + 2)
+                    NSBezierPath(roundedRect: rect.offsetBy(dx: origin.x, dy: origin.y),
+                                 xRadius: Self.radius, yRadius: Self.radius).fill()
+                    g = NSMaxRange(run)
+                }
+            }
+        }
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+    }
 }
 
 /// How each markdown block looks as attributed text. Spacing comes from `TurnSpace`, so a
@@ -440,7 +481,7 @@ enum MessageStyle {
                 if intent.contains(.emphasized) { traits.insert(.italic) }
                 if intent.contains(.code) {
                     f = .monospacedSystemFont(ofSize: font.pointSize - 1, weight: .regular)
-                    attrs[.backgroundColor] = NSColor.labelColor.withAlphaComponent(0.08)
+                    attrs[.frogInlineCode] = true
                 }
                 if intent.contains(.strikethrough) { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
                 if !traits.isEmpty {
