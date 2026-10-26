@@ -20,22 +20,18 @@ struct ThinkingAvatar: View {
     private var still: Bool { reduceMotion }
 
     var body: some View {
-        ZStack {
-            FrogShape(part: .body, lids: 1, gaze: 0, crossed: false)
-                .fill(Color.frog, style: FillStyle(eoFill: true))
-            FrogShape(part: .eyes, lids: still ? resting : lids, gaze: 0, crossed: mood == .sad)
-                .fill(Color.frog, style: FillStyle(eoFill: mood == .sad))
-        }
-        .frame(width: 22, height: 22)
-        .scaleEffect(mood == .sad ? 1 : (smiling ? 1.08 : 1))
-        .rotationEffect(mood == .sad ? .degrees(0) : (smiling ? .degrees(-3) : .zero))
-        .offset(y: still ? 0 : -lift)
-        .animation(.snappy(duration: 0.25), value: mood)
-        .onChange(of: mood, initial: true) { _, new in settle(new) }
-        .onChange(of: hop) { _, _ in jump() }
-        .onChange(of: decided) { _, _ in smile() }
-        .task(id: mood) { await live() }
-        .accessibilityHidden(true)
+        FrogShape(part: .glyph, lids: still ? resting : lids, frown: mood == .sad)
+            .fill(Color.frog)
+            .frame(width: 22, height: 22)
+            .scaleEffect(mood == .sad ? 1 : (smiling ? 1.08 : 1))
+            .rotationEffect(mood == .sad ? .degrees(0) : (smiling ? .degrees(-3) : .zero))
+            .offset(y: still ? 0 : -lift)
+            .animation(.snappy(duration: 0.25), value: mood)
+            .onChange(of: mood, initial: true) { _, new in settle(new) }
+            .onChange(of: hop) { _, _ in jump() }
+            .onChange(of: decided) { _, _ in smile() }
+            .task(id: mood) { await live() }
+            .accessibilityHidden(true)
     }
 
     /// How open the eyes rest in this mood: half-lidded while thinking.

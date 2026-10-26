@@ -10,6 +10,9 @@ extension EngineProcess: ConversationLink {
     /// The process is there to send events. False once it has exited (the pipe's `nil` may
     /// still be on its way), which is what a stale busy conversation checks.
     var isAlive: Bool { isRunning }
+
+    /// The drain deadline passed without the engine stopping: kill it, and say why in the log.
+    func forceKill(reason: String) { kill(reason: reason) }
 }
 
 extension Conversation {
@@ -42,7 +45,10 @@ extension Conversation {
                       failure: "Couldn't start frog: \(error.localizedDescription)")
             return
         }
-        self.init(folder: folder, link: engine, replay: replay, session: session)
+        // The newest rows straight from the log, before the engine has started (see
+        // `SessionHistory`); the engine sends only what came after them.
+        let history = replay ? session.flatMap { SessionHistory.open($0, at: Frog.sessions.appending(path: "\($0).jsonl")) } : nil
+        self.init(folder: folder, link: engine, replay: replay, session: session, history: history)
     }
 }
 
@@ -80,7 +86,9 @@ final class MacEffects: ConversationEffects {
         let request = turn.input
         Task { [weak c] in
             guard let t = await Titler.title(for: request, answer: answer) else { return }
-            c?.send(.setTitle(t))
+            // The model's SetTitle (or a rename) may have landed while this ran; it wins.
+            guard let c, c.title == nil else { return }
+            c.send(.setTitle(t))
         }
     }
 }

@@ -248,7 +248,7 @@ final class Panes {
     @discardableResult
     func focusSession(_ id: String) -> Bool {
         guard let pane = paneShowing(id) else { return false }
-        pane.incoming?.stop()
+        pane.incoming?.stop(reason: "open superseded")
         pane.incoming = nil
         pane.workspace.open(id)
         focus(pane)
@@ -280,9 +280,9 @@ final class Panes {
     func setWorkspace(_ workspace: Workspace, in pane: Pane) {
         guard workspace !== pane.workspace else { return }
         // Anything else on its way in has been overtaken.
-        if pane.incoming !== workspace { pane.incoming?.stop() }
+        if pane.incoming !== workspace { pane.incoming?.stop(reason: "open superseded") }
         pane.incoming = nil
-        pane.workspace.stop()
+        pane.workspace.stop(reason: "pane switched folder")
         pane.workspace = workspace
         pane.peekChanges = false
         Recents.add(workspace.folder)
@@ -306,10 +306,10 @@ final class Panes {
     /// file first; resuming a session another process holds would start a new one instead.
     func move(_ pane: Pane, to url: URL) {
         guard let id = pane.workspace.conversation?.sessionID else { return }
-        pane.incoming?.stop()
+        pane.incoming?.stop(reason: "open superseded")
         pane.incoming = nil
         let old = pane.workspace
-        old.stop()
+        old.stop(reason: "session moved folder")
         Task {
             await Frog.released(session: id, within: .seconds(3))
             // Something else took the pane meanwhile.
@@ -328,7 +328,7 @@ final class Panes {
         if focusSession(s.id) { return }
         guard let url = s.folder, pane.incoming?.conversation?.sessionID != s.id else { return }
         if Library.shared.focusSession(s.id, excluding: window) { return }
-        pane.incoming?.stop()
+        pane.incoming?.stop(reason: "open superseded")
         pane.incoming = nil
         if pane.workspace.folder.standardizedFileURL.path == url.standardizedFileURL.path {
             pane.workspace.open(s.id)
@@ -422,8 +422,8 @@ final class Panes {
     func close(_ pane: Pane) {
         guard isSplit, let rest = layout.removing(pane.id) else { return }
         let wasFirst = pane === items.first
-        pane.incoming?.stop()
-        pane.workspace.stop()
+        pane.incoming?.stop(reason: "pane closed")
+        pane.workspace.stop(reason: "pane closed")
         items.removeAll { $0 === pane }
         setLayout(rest)
         if focusedID == pane.id { focusedID = items[0].id }
@@ -442,8 +442,8 @@ final class Panes {
     func stopAll() {
         Library.shared.register(window: nil, panes: self)
         items.forEach {
-            $0.incoming?.stop()
-            $0.workspace.stop()
+            $0.incoming?.stop(reason: "window closed")
+            $0.workspace.stop(reason: "window closed")
         }
     }
 }

@@ -385,6 +385,7 @@ impl Renderer {
             Event::Compacted {
                 tokens_before,
                 tokens_after,
+                ..
             } => {
                 self.idle();
                 info(&format!(
@@ -397,6 +398,7 @@ impl Renderer {
                 self.idle();
                 match reason {
                     EndReason::Cancelled => info("  ⎿  interrupted"),
+                    EndReason::Suspended => info("  ⎿  suspended for app update"),
                     EndReason::MaxTokens => warn("\n  ⎿  hit the output token limit"),
                     EndReason::Looping => {
                         warn("\n  ⎿  stopped: the model kept repeating the same tool call")
@@ -404,6 +406,9 @@ impl Renderer {
                     EndReason::StepLimit => warn(
                         "\n  ⎿  stopped: step limit for one turn reached; say \"continue\" to keep going",
                     ),
+                    EndReason::BlockedOnApproval { denial } => warn(&format!(
+                        "\n  ⎿  stopped: retried a call that was already denied ({denial})"
+                    )),
                     EndReason::Error { error: e } => error(&e.to_string()),
                     EndReason::Complete | EndReason::Denied => {}
                 }

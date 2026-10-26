@@ -146,6 +146,16 @@ final class EngineProcess {
     private let encoder = JSONEncoder()
     private var reader: Task<Void, Never>?
 
+    /// What the `exit:` line in the log says about this engine: which session it ran and why
+    /// the app stopped it, if the app did. A box, not properties of `self`: the exit is logged
+    /// even when nothing holds the EngineProcess any more (a background engine the broker
+    /// let go of), which used to leave its exit unlogged.
+    private final class Identity: @unchecked Sendable {
+        var session: String?
+        var stopReason: String?
+    }
+    private let identity = Identity()
+
     /// Called on the main actor for every event, then once with `nil` when the process exits.
     var onEvent: (Envelope?) -> Void = { _ in }
     /// Every stdout line, verbatim, before it's decoded (for the iPhone bridge).
@@ -153,10 +163,19 @@ final class EngineProcess {
     private(set) var stderr = ""
 
     /// How the process ended, for error messages.
-    var exitDescription: String {
+    var exitDescription: String { Self.describeExit(process) }
+
+    private nonisolated static func describeExit(_ process: Process) -> String {
         guard !process.isRunning else { return "still running" }
         let how = process.terminationReason == .uncaughtSignal ? "signal" : "status"
         return "\(how) \(process.terminationStatus)"
+    }
+
+    /// The `exit:` log line: how it ended, its pid and session, and whether the app stopped it
+    /// (and why) or it ended on its own.
+    nonisolated static func exitLine(_ how: String, pid: Int32, session: String?, stopReason: String?) -> String {
+        let why = stopReason.map { "stop: \($0)" } ?? "not stopped by the app"
+        return "exit: \(how) pid \(pid) session \(session ?? "?") (\(why))"
     }
 
     /// The engine process is still running (see `ConversationLink.isAlive`).
@@ -177,20 +196,28 @@ final class EngineProcess {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
+        if let i = arguments.firstIndex(of: "-r"), arguments.indices.contains(i + 1) {
+            identity.session = arguments[i + 1]
+        }
     }
 
     func start() throws {
-        Self.log("start \(process.executableURL?.path ?? "?") \(process.arguments?.joined(separator: " ") ?? "") in \(process.currentDirectoryURL?.path ?? "?")")
         try process.run()
+        Self.log("start pid \(process.processIdentifier) \(process.executableURL?.path ?? "?") \(process.arguments?.joined(separator: " ") ?? "") in \(process.currentDirectoryURL?.path ?? "?")")
         let lines = Self.lines(output.fileHandleForReading)
         let errLines = Self.lines(errors.fileHandleForReading)
+        let identity = identity
+        let process = process
         reader = Task { [weak self] in
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     for await line in lines {
                         await MainActor.run { self?.onLine(line) }
                         guard let env = try? JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8)) else { continue }
-                        await MainActor.run { self?.onEvent(env) }
+                        await MainActor.run {
+                            if identity.session != env.session { identity.session = env.session }
+                            self?.onEvent(env)
+                        }
                     }
                 }
                 group.addTask {
@@ -200,10 +227,15 @@ final class EngineProcess {
                     }
                 }
             }
-            await MainActor.run {
-                if let self { Self.log("exit: \(self.exitDescription)") }
-                self?.onEvent(nil)
+            // The pipes close a moment before the process is reaped: wait for it (briefly), so
+            // the line says how it ended rather than "still running".
+            for _ in 0..<50 where process.isRunning {
+                try? await Task.sleep(for: .milliseconds(20))
             }
+            // Logged whether or not anything still holds this EngineProcess.
+            Self.log(Self.exitLine(Self.describeExit(process), pid: process.processIdentifier,
+                                   session: identity.session, stopReason: identity.stopReason))
+            self?.onEvent(nil)
         }
     }
 
@@ -243,7 +275,14 @@ final class EngineProcess {
     }
 
     /// Ask the engine to save and exit; force it if it doesn't within a second.
-    func stop() {
+    func stop() { stop(reason: "unspecified") }
+
+    /// `stop()`, with why the app is stopping it, for the log's `exit:` line.
+    func stop(reason: String) {
+        if identity.stopReason == nil {
+            identity.stopReason = reason
+            Self.log("stop pid \(process.processIdentifier) session \(identity.session ?? "?"): \(reason)")
+        }
         send(.shutdown)
         try? input.fileHandleForWriting.close()
         let p = process
@@ -251,6 +290,18 @@ final class EngineProcess {
             try? await Task.sleep(for: .seconds(1))
             if p.isRunning { p.terminate() }
         }
+    }
+
+    /// Force-kill now: an engine that missed an update's drain deadline. Its turn stays open
+    /// in the log, which is exactly the crash shape the resume path already picks up. One
+    /// stop path with `stop(reason:)`: the kill records the reason the same way, then
+    /// terminates at once (SIGTERM; the engine's own runtime turns that into its exit).
+    func kill(reason: String) {
+        if identity.stopReason == nil {
+            identity.stopReason = reason
+            Self.log("stop pid \(process.processIdentifier) session \(identity.session ?? "?"): \(reason)")
+        }
+        if process.isRunning { process.terminate() }
     }
 }
 

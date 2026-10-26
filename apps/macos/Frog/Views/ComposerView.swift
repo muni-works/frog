@@ -15,6 +15,10 @@ struct ComposerView: View {
     @State private var attachments: [ToolImage] = []
     @State private var dictation = Dictation()
     @State private var downloads = ModelDownloads.shared
+    /// Restores the draft when this conversation appears; saves it as it's typed.
+    @State private var drafts = DraftStore.shared
+    /// The keystroke save, restarted on every change (about ⅓ s of quiet writes).
+    @State private var draftSave: Task<Void, Never>?
     @Environment(\.switchFolder) private var switchFolder
 
     private var canSend: Bool {
@@ -45,17 +49,18 @@ struct ComposerView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            topRow
-                .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
-            field
-            controls
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
-        .frame(maxWidth: 860)
-        .frame(maxWidth: .infinity)
+        draftHooks(
+            VStack(alignment: .leading, spacing: 8) {
+                topRow
+                    .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
+                field
+                controls
+            }
+            .padding(.horizontal, TurnSpace.gutter)
+            .padding(.top, TurnSpace.top)
+            .padding(.bottom, TurnSpace.Inset.snug)
+            .turnColumn()
+        )
         // The canvas's margins keep the transcript clear of the cards; popovers opened from
         // here (the model picker, suggestions) mustn't inherit them.
         .contentMargins(0, for: .scrollContent)
@@ -68,6 +73,26 @@ struct ComposerView: View {
             .ignoresSafeArea()
             .allowsHitTesting(false)
         }
+    }
+
+    /// What's typed stays with the conversation, applied to the body (not `field`, whose long
+    /// modifier chain doesn't have room): restored when it appears — a switch back, a reopen, a
+    /// relaunch (a session id persists; a fresh conversation's draft rides its folder) — saved
+    /// as it's typed, and adopted by the session once the engine has named one.
+    private func draftHooks(_ view: some View) -> some View {
+        view
+            .onAppear { restoreDraft() }
+            .onChange(of: text) { saveDraftSoon() }
+            .onChange(of: attachments) { saveDraftSoon() }
+            // Out for good: saved (the willTerminate read comes before the write below it).
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                saveDraftNow()
+            }
+            // The engine named the session (its first message logged): the draft typed before
+            // it moves under the session key, so a later fresh conversation here starts clean.
+            .onChange(of: conversation.sessionID) { _, id in
+                if let id { drafts.adopt(id, folder: workspace.folder) }
+            }
     }
 
     /// Before the first message: where the conversation works (a folder, or none for a plain
@@ -137,6 +162,12 @@ struct ComposerView: View {
                 DictationProblemView(problem: problem) { dictation.problem = nil }
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+            // What flushes at the next boundary (parked wakes, queued session messages).
+            let pending = PendingEvents(queued: conversation.queuedEvents, messages: conversation.pendingMessages, jobs: conversation.jobs)
+            if !pending.isEmpty {
+                PendingEventsStrip(pending: pending, busy: conversation.busy)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
             if !conversation.queue.isEmpty {
                 QueuedMessages(conversation: conversation)
             }
@@ -192,9 +223,18 @@ struct ComposerView: View {
         .onChange(of: window?.focusComposerRequest) { controller.focus() }
         .onChange(of: window?.dictationRequest) { toggleDictation() }
         // Nothing listens once the conversation or window goes away, or Frog isn't in front.
-        .onDisappear { dictation.cancel() }
+        // Going away is also a save point: the draft is on disk before the next conversation
+        // appears (its ⅓ s wait wouldn't survive the switch).
+        .onDisappear {
+            dictation.cancel()
+            saveDraftNow()
+        }
+        // Type-to-focus targets the focused pane's composer while it exists.
+        .onAppear { window?.composer = controller }
+        .onDisappear { if window?.composer === controller { window?.composer = nil } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             dictation.stop()
+            saveDraftNow()
         }
         .onChange(of: skillSuggestions.map(\.name)) { picked = 0 }
         .onChange(of: window?.raceRequest) {
@@ -354,6 +394,51 @@ struct ComposerView: View {
         text = ""
         attachments = []
         mention = nil
+        // It went: the draft is gone (a pending keystroke save must not bring it back).
+        draftSave?.cancel()
+        draftSave = nil
+        drafts.clear(id: conversation.sessionID, folder: workspace.folder)
+    }
+
+    // MARK: Drafts
+
+    /// What's typed stays with the conversation: restored on appear (a switch back, a reopen,
+    /// a relaunch), saved under its session (or, before the first message, its folder), cleared
+    /// when it's sent.
+    private func restoreDraft() {
+        guard let draft = drafts.draft(for: conversation.sessionID, folder: workspace.folder),
+              text.isEmpty, !draft.text.isEmpty else { return }
+        text = draft.text
+        attachments = draft.images
+        // The selection is best-effort: the text view clamps it to its length.
+        controller.focus()
+        controller.select(NSRange(location: min(draft.cursor, max(draft.text.utf16.count - 1, 0)), length: 0))
+    }
+
+    /// Typing settles for ⅓ s before the draft is written; every keystroke restarts the wait.
+    private func saveDraftSoon() {
+        draftSave?.cancel()
+        guard !text.isEmpty || !attachments.isEmpty else { return }
+        draftSave = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            saveDraftNow()
+        }
+    }
+
+    private func saveDraftNow() {
+        draftSave?.cancel()
+        draftSave = nil
+        guard !text.isEmpty || !attachments.isEmpty else {
+            drafts.clear(id: conversation.sessionID, folder: workspace.folder)
+            return
+        }
+        let cursor = controller.textView.map { $0.selectedRange().location == NSNotFound ? 0 : $0.selectedRange().location } ?? 0
+        drafts.save(
+            ComposerDraft(text: text, images: attachments, cursor: cursor, saved: .now),
+            id: conversation.sessionID,
+            folder: workspace.folder
+        )
     }
 
     private func toggleDictation() {
@@ -685,4 +770,3 @@ private struct ModelDownloadStatus: View {
         return String(format: "%.1f GB of %.1f GB", fraction * total, total)
     }
 }
-

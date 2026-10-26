@@ -50,6 +50,8 @@ final class SessionBroker {
         var branch: String?
         var ahead: Int?
         var dirty: Int?
+        /// What the live engine runs degraded on, with why (its `Status.degraded`).
+        var degraded: [Degraded] = []
 
         /// "running", "waiting", "idle", or "dead" (no live engine). A queued message keeps
         /// a session running, whatever the last live report said.
@@ -78,6 +80,11 @@ final class SessionBroker {
             if let b = branch { o["branch"] = .string(b) }
             if let a = ahead { o["ahead"] = .number(Double(a)) }
             if let d = dirty { o["dirty"] = .number(Double(d)) }
+            if !degraded.isEmpty {
+                o["degraded"] = .array(degraded.map {
+                    .object(["kind": .string($0.kind), "what": .string($0.what), "why": .string($0.why)])
+                })
+            }
             return .object(o)
         }
     }
@@ -88,7 +95,11 @@ final class SessionBroker {
         var prompt: String
         var cwd: String?
         var model: String?
+        /// "default", "accept-edits", "auto" or "yolo" (only when asked for explicitly).
+        var mode: String?
         var worktree: Bool
+        /// Run in the user's main checkout anyway (worker sessions belong in worktrees).
+        var allowMainCheckout = false
     }
 
     struct Started: Equatable {
@@ -157,8 +168,17 @@ final class SessionBroker {
     var directoryIncludingArchived: () -> [Entry] = { [] }
     /// Hide (or show) a session in the sidebar, exactly like the sidebar's own archive.
     var archiver: (_ id: String, _ on: Bool) -> Void = { _, _ in }
+    /// `MoveSession`: re-file a session under a new parent (nil unparents; a top-level row
+    /// again). Parentage is the app's (Library's `sessionParents`), so the move is a closure
+    /// like the archiver; refusal (a session nested under its own descendant) comes back as
+    /// the error the model sees. The recorded parent on success.
+    var mover: (_ id: String, _ parent: String?) -> Result<String?, BrokerError> = { _, _ in
+        .failure(BrokerError("moving sessions isn't available"))
+    }
     /// Deliver an op to session `id`, starting its engine if needed. False if it can't be reached.
     var reach: (_ id: String, _ from: String, _ fromName: String, _ message: String) -> Bool = { _, _, _, _ in false }
+    /// Hand session `id` a status-only message (read, no turn). False if it can't be reached.
+    var inform: (_ id: String, _ from: String, _ fromName: String, _ message: String) -> Bool = { _, _, _, _ in false }
     var starter: (_ request: StartRequest, _ parent: Conversation?) async throws -> Started = { _, _ in
         throw BrokerError("starting sessions isn't available")
     }
@@ -171,15 +191,24 @@ final class SessionBroker {
     /// Whether session `id` is really mid-turn or has messages waiting (replayed history
     /// reports otherwise, and a notice about a session that's working would be false).
     var targetBusy: (_ id: String) -> Bool = { _ in false }
+    /// The conversation a window shows for session `id`, if any (the app's `Library`); the
+    /// broker's own background engines are in `background`.
+    var windowConversation: (_ id: String) -> Conversation? = { _ in nil }
     /// What session `id` said and how its last turn ended, for the report a watcher gets when
     /// it goes idle (the hand-back from a session it started or messaged).
     var lastReport: (_ id: String) -> String? = { _ in nil }
     /// Inbound session messages waiting in a target engine's inbox, by session id. Counted
     /// here because the engine holds them; bumped on send, cleared when the target runs
-    /// them (its turn starts) or is restarted dead.
+    /// them (its turn starts) or is restarted dead. The messages themselves ride along, so
+    /// an update's restart can re-send the ones its engine never ran.
     private var inbound: [String: Int] = [:]
+    private var pendingInbox: [String: [(String, String, String)]] = [:]
     /// When each session's current permission card arrived (ListApprovals reports its age).
     private var waitingSince: [String: Date] = [:]
+    /// The session that started session `id`, if one did (pending approvals escalate to it).
+    /// The session that started session `id`, if one did (pending approvals escalate to it).
+    var parentOf: (_ id: String) -> String? = { _ in nil }
+
 
     /// Sends since the user last did something, per sending session.
     private var sent: [String: [Date]] = [:]
@@ -236,8 +265,52 @@ final class SessionBroker {
             line.contains("\"turn_ended\"") && !line.contains("\"model_calls\":0")
         }
     }
-    /// Background engines seen running: stopped when they go idle.
+    /// Background engines seen running: stopped once they've sat settled for `idleGrace`.
     private var armedBackground: Set<String> = []
+    /// How long a background engine must stay settled (see `Conversation.settled`) before it's
+    /// let go. An `idle` follows every op the engine handles (startup, `subscribe`, a rename,
+    /// a mode change, a turn's end), so letting go on the first one stopped engines at a turn
+    /// boundary with a delivered message about to run, and cancelled it.
+    var idleGrace: Duration = .seconds(30)
+    /// Runs `work` after `delay` on the main actor (tests run it by hand).
+    var after: (_ delay: Duration, _ work: @escaping @MainActor () -> Void) -> Void = { delay, work in
+        Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            work()
+        }
+    }
+    /// Per session, bumped whenever it's seen working (or its engine is replaced): a scheduled
+    /// idle stop only fires if nothing happened since it was scheduled.
+    private var idleEpoch: [String: Int] = [:]
+
+    /// A background engine may be let go: nothing running, queued, or still starting up.
+    private func canLetGo(_ c: Conversation) -> Bool {
+        guard c.settled else { return false }
+        guard let id = c.sessionID else { return true }
+        return !targetBusy(id)
+    }
+
+    /// Let background engine `c` (session `id`) go once it's been settled for `idleGrace`,
+    /// unless it works, is adopted by a pane, or is replaced meanwhile.
+    private func scheduleIdleStop(_ id: String, _ c: Conversation) {
+        guard canLetGo(c) else { return }
+        idleEpoch[id, default: 0] += 1
+        let epoch = idleEpoch[id]
+        let grace = idleGrace
+        after(grace) { [weak self, weak c] in
+            guard let self, let c, self.idleEpoch[id] == epoch,
+                  self.background[id] === c, self.armedBackground.contains(id),
+                  self.canLetGo(c) else { return }
+            self.armedBackground.remove(id)
+            self.background[id] = nil
+            c.stop(reason: "background idle (settled \(grace))")
+        }
+    }
+
+    /// Session `id` is working (or its engine changed): any idle stop scheduled for it is off.
+    private func touch(_ id: String) {
+        idleEpoch[id, default: 0] += 1
+    }
 
     struct BrokerError: LocalizedError, Equatable {
         var message: String
@@ -273,8 +346,11 @@ final class SessionBroker {
             let result = send(
                 from: sender, name: name(of: c),
                 to: input["to"]?.string ?? "", message: input["message"]?.string ?? "",
-                notifyWhenIdle: input["notify_when_idle"]?.bool ?? false)
+                notifyWhenIdle: input["notify_when_idle"]?.bool ?? false,
+                informational: input["informational"]?.bool ?? false)
             switch result {
+            case .success(let e) where input["informational"]?.bool == true:
+                c.replySession(r.id, result: .string("Sent to \(e.name) (\(e.id)) as informational: recorded as read, no turn starts for it; it sees the message with its next turn."))
             case .success(let e):
                 let how = e.state == "running" ? "queued (target busy)" : "delivered (turn started)"
                 c.replySession(r.id, result: .string("Sent to \(e.name) (\(e.id)); \(how). It reads the message at its next turn boundary; its reply, if any, arrives as a <session-message>."))
@@ -286,7 +362,9 @@ final class SessionBroker {
             let req = StartRequest(
                 title: input["title"]?.string ?? "", prompt: input["prompt"]?.string ?? "",
                 cwd: input["cwd"]?.string, model: input["model"]?.string,
-                worktree: input["worktree"]?.bool ?? false)
+                mode: input["mode"]?.string,
+                worktree: input["worktree"]?.bool ?? false,
+                allowMainCheckout: input["allow_main_checkout"]?.bool ?? false)
             Task { [weak c] in
                 do {
                     let s = try await starter(req, c)
@@ -309,9 +387,13 @@ final class SessionBroker {
             switch on ? resolve(key) : resolve(key, includeArchived: true) {
             case .success(let e):
                 guard e.id != sender else { return c.replySession(r.id, error: "That's this session.") }
+                // An archived session's queued messages never run: one left behind restarted
+                // a stopped session, which then deleted work in its tree.
+                let dropped = on ? clearQueue(e.id) : 0
                 archive(e.id, on)
+                let cancelled = dropped > 0 ? " \(Self.cancelled(dropped))." : ""
                 c.replySession(r.id, result: .string(
-                    "\(on ? "Archived" : "Unarchived") \(e.name) (\(e.id)).\(on ? " Its log is kept; UnarchiveSession brings it back." : " It's back in the sidebar.")"))
+                    "\(on ? "Archived" : "Unarchived") \(e.name) (\(e.id)).\(on ? " Its log is kept; UnarchiveSession brings it back.\(cancelled)" : " It's back in the sidebar.")"))
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
@@ -353,19 +435,24 @@ final class SessionBroker {
             // The explicit stop — the only interrupt now that SendMessage only queues. Sent
             // straight to the engine (Op.interrupt applies immediately, not at the boundary),
             // never starting one that's gone: a dead engine has nothing running.
+            // `clear_queue` also cancels its inbox, so no queued message starts the next turn.
             switch resolve(input["id"]?.string ?? "") {
             case .success(let e):
                 guard e.id != sender else { return c.replySession(r.id, error: "That's this session: use your own stop.") }
-                guard let target = tracked(e.id) else {
-                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) has no live engine; nothing to stop."))
+                let target = tracked(e.id)
+                let running = target.map { $0.busy || e.state == "running" || e.state == "waiting" } ?? false
+                let cleared = (input["clear_queue"]?.bool ?? false)
+                    ? " \(Self.cancelled(clearQueue(e.id))), so nothing restarts it." : ""
+                guard let target else {
+                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) has no live engine; nothing to stop.\(cleared)"))
                     return
                 }
-                guard target.busy || e.state == "running" || e.state == "waiting" else {
-                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) isn't running; nothing to stop."))
+                guard running else {
+                    c.replySession(r.id, result: .string("\(e.name) (\(e.id)) isn't running; nothing to stop.\(cleared)"))
                     return
                 }
                 target.interrupt()
-                c.replySession(r.id, result: .string("Stopping \(e.name) (\(e.id)): its turn ends cancelled and it goes idle."))
+                c.replySession(r.id, result: .string("Stopping \(e.name) (\(e.id)): its turn ends cancelled and it goes idle.\(cleared)"))
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
@@ -374,18 +461,22 @@ final class SessionBroker {
             // parent has), and yolo additionally needs an explicit flag.
             switch resolve(input["id"]?.string ?? "") {
             case .success(let e):
-                guard let target = tracked(e.id) else {
-                    return c.replySession(r.id, error: "\(e.name) (\(e.id)) has no engine running; its mode is picked up when one starts.")
-                }
                 guard let raw = input["mode"]?.string, let wanted = Mode(rawValue: raw) else {
                     return c.replySession(r.id, error: "`mode` must be default, accept-edits, auto or yolo.")
                 }
+                // The ceiling holds whether or not an engine is running: a stored mode is
+                // applied at the next start just as a live one would be now.
                 let mine = c.status?.mode ?? .default
                 if wanted.rank > mine.rank {
                     return c.replySession(r.id, error: "You're in \(mine.rawValue) mode; you can't raise another session to \(wanted.rawValue).")
                 }
                 if wanted == .yolo, mine != .yolo || input["yolo"]?.bool != true {
                     return c.replySession(r.id, error: "Setting a session to yolo needs mode: \"yolo\" and an explicit yolo: true.")
+                }
+                guard let target = tracked(e.id) else {
+                    // No engine running: persist the mode so the next engine start picks it up.
+                    Library.shared.setStoredMode(e.id, wanted)
+                    return c.replySession(r.id, result: .string("\(e.name) (\(e.id)) set to \(wanted.rawValue) mode; persisted (applies next start)."))
                 }
                 target.setMode(wanted)
                 c.replySession(r.id, result: .string("\(e.name) (\(e.id)) is now in \(wanted.rawValue) mode (from its next turn)."))
@@ -395,11 +486,13 @@ final class SessionBroker {
         case "SetSessionModel":
             switch resolve(input["id"]?.string ?? "") {
             case .success(let e):
-                guard let target = tracked(e.id) else {
-                    return c.replySession(r.id, error: "\(e.name) (\(e.id)) has no engine running; a restart picks up the session's stored model.")
-                }
                 guard let model = input["model"]?.string, !model.isEmpty else {
                     return c.replySession(r.id, error: "`model` is required (provider/model, e.g. local/qwen3-4b).")
+                }
+                guard let target = tracked(e.id) else {
+                    // No engine running: persist the model so the next engine start picks it up.
+                    Library.shared.setStoredModel(e.id, model)
+                    return c.replySession(r.id, result: .string("\(e.name) (\(e.id)) set to \(model); persisted (applies next start)."))
                 }
                 target.setModel(model)
                 c.replySession(r.id, result: .string("\(e.name) (\(e.id)) moves to \(model) (from its next model call)."))
@@ -442,6 +535,38 @@ final class SessionBroker {
                         await Library.shared.rename(e.id, to: trimmed)
                         c?.replySession(r.id, result: .string("Renamed \(e.id) to \"\(trimmed)\"."))
                     }
+                }
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
+        case "MoveSession":
+            // Re-file a session under a new parent — the nesting the sidebar derives from.
+            // Sidebar organization only: the log, model, mode and history stay the session's
+            // own (a mis-filed session stops being stuck). nil/absent parent unparents.
+            switch resolve(input["id"]?.string ?? "", includeArchived: true) {
+            case .success(let e):
+                let asked = (input["parent"]?.string ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                var parent: Entry?
+                if !asked.isEmpty {
+                    switch resolve(asked, includeArchived: true) {
+                    case .success(let p): parent = p
+                    case .failure(let err): return c.replySession(r.id, error: err.message)
+                    }
+                }
+                // Moving under itself would erase its own parentage (a cycle).
+                if let p = parent, p.id == e.id {
+                    return c.replySession(r.id, error: "That's \(e.name) itself; a session can't be its own parent.")
+                }
+                switch mover(e.id, parent?.id) {
+                case .failure(let err):
+                    c.replySession(r.id, error: err.message)
+                case .success(nil):
+                    c.replySession(r.id, result: .string("Unparented \(e.name) (\(e.id)): it's a top-level row again."))
+                case .success:
+                    // The resolved entry, not the recorded id, so the model sees a name.
+                    let who = parent.map { "\($0.name) (\($0.id))" } ?? "its new parent"
+                    c.replySession(r.id, result: .string("Moved \(e.name) (\(e.id)) under \(who); the sidebar regroups."))
                 }
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
@@ -489,6 +614,7 @@ final class SessionBroker {
         info.pendingSummary = c.permission.map { "\($0.name) \($0.arg)" }
         info.queuedMessages = c.queue.count
         info.cwd = c.status?.cwd ?? c.folder.path
+        info.degraded = c.status?.degraded ?? []
         return info
     }
 
@@ -498,6 +624,25 @@ final class SessionBroker {
         guard var info = await Self.readStatus(id, broker: self) else { return nil }
         info.queuedMessages = inbound[id] ?? 0
         return info
+    }
+
+    /// Nothing queued may (re)start session `id`: its engine drops its inbox (when one runs),
+    /// and the broker forgets the queued count, the re-send list an update restart would
+    /// replay, and a first prompt waiting to be replayed. Returns how many messages it
+    /// cancelled. StopSession's `clear_queue` and every archive call it.
+    @discardableResult
+    func clearQueue(_ id: String) -> Int {
+        let target = tracked(id)
+        let dropped = max(inbound[id] ?? 0, pendingInbox[id]?.count ?? 0, target?.pendingDeliveries ?? 0)
+        target?.clearInbox()
+        inbound[id] = 0
+        pendingInbox[id] = nil
+        if births.removeValue(forKey: id) != nil { saveBirths() }
+        return dropped
+    }
+
+    static func cancelled(_ n: Int) -> String {
+        "Its inbox is cleared (\(n) queued message\(n == 1 ? "" : "s") cancelled)"
     }
 
     /// Messages queued in session `id`'s engine inbox, waiting for its next turn boundary.
@@ -620,6 +765,47 @@ final class SessionBroker {
         return background[id]
     }
 
+    /// Every live conversation the broker runs headless: sessions started for work that no
+    /// window shows. The update drain must reach these too (a graceful restart used to
+    /// suspend only what was on screen and let these engines' turns die as crashes).
+    var liveBackground: [Conversation] {
+        background.values.filter { $0.isLive }
+    }
+
+    /// A permission prompt opened in session `child`: tell the session that started it,
+    /// so a manager can decide (or tell the user) instead of the prompt sitting unseen.
+    /// The child waits on it until answered or its timeout takes the safe path.
+    @discardableResult
+    func escalate(_ req: PermissionRequest, from child: String, name: String) -> Bool {
+        guard let parent = parentOf(child), parent != child else { return false }
+        return reach(parent, "system", "system", Self.escalation(req, session: child, name: name))
+    }
+
+    /// The structured notice a parent gets for a child's pending approval.
+    static func escalation(_ req: PermissionRequest, session: String, name: String) -> String {
+        var lines = [
+            "Approval pending in session \"\(name)\" (\(session)).",
+            "card: \(req.id)",
+            "tool: \(req.name)",
+            "command: \(req.arg)",
+        ]
+        if let r = req.reason { lines.append("reason: \(r)") }
+        if let c = req.card {
+            if let a = c.agentReason { lines.append("agent says: \(a)") }
+            lines.append("trigger: \(c.trigger)")
+            for t in c.touches ?? [] {
+                let size = t.bytes.map { " \(ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file))" } ?? ""
+                let mine = t.createdHere == true ? " (made by this session)" : ""
+                lines.append("touches: \(t.path)\(size)\(mine)")
+            }
+            lines.append("risk: \(c.risk)")
+            lines.append("recommendation: \(c.recommendation)")
+            lines.append("If nobody answers in \(c.timeoutSecs / 60) min it's denied and the session carries on.")
+        }
+        lines.append("Only the user can answer it, in that session's window; tell them if it matters.")
+        return lines.joined(separator: "\n")
+    }
+
     /// Report session `child`'s next turn back to `parent` when it goes idle (the hand-back).
     func watchStarted(_ child: String, reportTo parent: String) {
         guard !parent.isEmpty else { return }
@@ -650,7 +836,7 @@ final class SessionBroker {
         return .failure(BrokerError("No session \"\(key)\". ListSessions shows what's there."))
     }
 
-    func send(from sender: String, name: String, to: String, message: String, notifyWhenIdle: Bool) -> Result<Entry, BrokerError> {
+    func send(from sender: String, name: String, to: String, message: String, notifyWhenIdle: Bool, informational: Bool = false) -> Result<Entry, BrokerError> {
         let message = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return .failure(BrokerError("`message` is empty")) }
         let target: Entry
@@ -660,12 +846,20 @@ final class SessionBroker {
         }
         guard target.id != sender else { return .failure(BrokerError("That's this session.")) }
         if let e = charge(sender) { return .failure(e) }
+        // Status only: read without a turn, so nothing sits in the inbox and no idle watch arms.
+        if informational {
+            guard inform(target.id, sender, name, message) else {
+                return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
+            }
+            return .success(target)
+        }
         guard reach(target.id, sender, name, message) else {
             return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
         }
         // The message sits in the target's inbox until its next turn boundary: a queued
         // message keeps it "running" in the status truth (bug 2d).
         inbound[target.id, default: 0] += 1
+        pendingInbox[target.id, default: []].append((sender, name, message))
         Library.shared.reportQueued(target.id)
         if notifyWhenIdle {
             watches[target.id, default: []].append(Watch(sender: sender, armed: false))
@@ -703,8 +897,17 @@ final class SessionBroker {
             waitingSince[id] = nil
         }
         if running {
-            // The engine is working a turn: anything we queued into its inbox has been taken.
-            inbound[id] = 0
+            touch(id)
+            // The engine is working a turn: what it hasn't taken from its inbox yet is what's
+            // still queued (messages delivered mid-turn wait for the next one).
+            inbound[id] = (Library.shared.conversation(id) ?? background[id])?.pendingDeliveries ?? 0
+            // What it HAS taken is off the re-send list: an update restart must not replay
+            // messages the engine already ran.
+            let taken = inbound[id] ?? 0
+            if var list = pendingInbox[id] {
+                list.removeFirst(min(taken, list.count))
+                pendingInbox[id] = list.isEmpty ? nil : list
+            }
             if var list = watches[id] {
                 let input = currentInput(id)
                 for i in list.indices where input == nil || list[i].anyTurn || input!.hasPrefix("<session-message from=\"\(list[i].sender)\"") {
@@ -733,19 +936,25 @@ final class SessionBroker {
                 b.attempts += 1
                 births[id] = b
                 saveBirths()
-                if dead { background[id] = nil }
+                if dead {
+                    background[id] = nil
+                    armedBackground.remove(id)
+                }
                 _ = replayPrompt(id, b.prompt)
                 return
             }
         }
-        // An engine that died mid-turn (its process gone, no `turn_ended`, a stale `.live`):
-        // its conversation isn't live and its last turn is still open. Restart the engine and
-        // have it pick the turn back up, rather than leaving the session stuck open forever.
-        // The restarted turn runs and settles first; idle notices wait for that. (Before the
-        // busy check: a dead engine's open turn looks busy.)
-        if dead, let c = background[id], c.turns.last.map({ !$0.finished }) == true {
-            background[id] = nil
-            _ = conversation(for: id)
+        // A dead engine (killed mid-turn: no `turn_ended`, a stale `.live`) leaves the
+        // session stuck busy — an open turn never settles and queued messages can never
+        // flush. Reconcile from the log the way the window's own watchdog does: the turn
+        // ends as the log says and the queued count clears, so delivered messages run when
+        // an engine next starts (a user action; no auto-resume here).
+        if let c = windowConversation(id) ?? background[id], !c.isLive,
+           inbound[id] != 0 || !c.queue.isEmpty || c.turns.last.map({ !$0.finished }) == true {
+            // Cleared here (not inside the async reconcile): callers reading the queued
+            // count right after this report must see it drained.
+            inbound[id] = 0
+            Task { await c.reconcile() }
             return
         }
         // Idle only when nothing is running and nothing is queued: a live engine mid-turn
@@ -762,17 +971,12 @@ final class SessionBroker {
             }
         }
         // A background engine that did its work lets go; a new message starts it again.
-        // Never while a turn is open (a just-started child's first turn is), or while its
-        // engine is still working — that was the cancel-at-birth bug.
-        if armedBackground.remove(id) != nil, let c = background.removeValue(forKey: id) {
-            let turnOpen = c.turns.last.map { !$0.finished } ?? false
-            if turnOpen || c.busy {
-                // Still working: keep it, and re-arm so the next real idle lets it go.
-                background[id] = c
-                armedBackground.insert(id)
-            } else {
-                c.stop()
-            }
+        // Only once it's truly settled (no open turn, nothing queued here or in its inbox, not
+        // mid-resume) and has stayed so for `idleGrace`: never on the bare `idle` that follows
+        // every op, which stopped engines at a turn boundary with a delivered message about
+        // to run (cancelled at birth) and right after a resume.
+        if armedBackground.contains(id), let c = background[id] {
+            scheduleIdleStop(id, c)
         }
     }
 
@@ -790,17 +994,57 @@ final class SessionBroker {
         // An engine that died mid-turn left it open: the fresh engine continues it, ahead of
         // anything new (the user may have stopped the old one; the report says which).
         let unfinished = background[id].map { c in c.turns.last.map { !$0.finished } ?? false } ?? false
-        let c = Conversation(folder: folder, arguments: ["-r", id] + Workspace.engineFlags(chat: info.isChat, mode: false), model: nil)
+        // A model or mode set while no engine ran (SetSessionModel/Mode) applies now, once.
+        let stored = Library.shared.takeStored(id)
+        let c = Conversation(folder: folder, arguments: Self.resumeArguments(id, chat: info.isChat),
+                             model: stored.model)
+        Self.apply(stored, to: c)
         background[id] = c
+        // A fresh engine isn't armed until it's seen working; nothing scheduled for the old
+        // one applies to it.
+        armedBackground.remove(id)
+        touch(id)
         // A fresh engine has an empty inbox; its session's queued count starts over.
         inbound[id] = 0
+        // An update's restart is here: this session's engine never ran what was delivered
+        // to the old one — re-send it (the manifest said the turn was suspended; this is
+        // the inbox half). Anything queued before a plain restart was already re-sent by
+        // the registry's `queued`; this list only fills between a send and a drain.
+        if let unsent = pendingInbox[id], !unsent.isEmpty, SessionRegistry.shared.current.afterUpdate {
+            pendingInbox[id] = nil
+            inbound[id] = 0
+            Task { @MainActor in
+                // Give the fresh engine a beat to subscribe before the re-sends go.
+                try? await Task.sleep(for: .milliseconds(600))
+                for (from, name, message) in unsent {
+                    guard let c = self.conversation(for: id) else { return }
+                    c.deliver(from: from, name: name, message: message)
+                }
+            }
+        } else {
+            pendingInbox[id] = nil
+        }
         if unfinished, continueOpen { c.continueInterrupted() }
         return c
+    }
+
+    /// The flags a closed session is resumed with: `-r` and the app-wide flags, never `-m` or
+    /// a mode flag (the engine keeps the model and mode the session last used).
+    static func resumeArguments(_ id: String, chat: Bool) -> [String] {
+        ["-r", id] + Workspace.engineFlags(chat: chat, mode: false)
+    }
+
+    /// A stored override's part an engine takes after it starts: the mode. (The model goes in
+    /// as `-m`, which a resumed engine honors; it resumes in its log's last mode whatever the
+    /// flags say, so the mode is an op it takes at its first turn boundary.)
+    static func apply(_ stored: (model: String?, mode: Mode?), to c: Conversation) {
+        if let mode = stored.mode { c.setMode(mode) }
     }
 
     /// A pane opening session `id` takes over its background engine instead of starting another.
     func adopt(_ id: String) -> Conversation? {
         armedBackground.remove(id)
+        touch(id)
         guard let c = background.removeValue(forKey: id), c.isLive else { return nil }
         return c
     }
@@ -808,9 +1052,15 @@ final class SessionBroker {
     /// A pane is letting go of `c`: keep it running in the background if it's busy and part of
     /// a group of sessions, rather than stopping it mid-task. True if kept.
     func keep(_ c: Conversation) -> Bool {
-        guard c.busy, c.isLive, let id = c.sessionID, Library.shared.isAgentSession(id) else { return false }
+        // Busy includes a delivered message the engine hasn't started yet (between one turn's
+        // `idle` and the next's start): stopping then would cancel it. Live background work
+        // (a Monitor, a job, a Task) would die with the engine.
+        let working = c.busy || c.pendingDeliveries > 0 || c.backgroundRunning > 0
+            || c.turns.last.map { !$0.finished } == true
+        guard working, c.isLive, let id = c.sessionID, Library.shared.isAgentSession(id) else { return false }
         background[id] = c
         armedBackground.insert(id)
+        touch(id)
         return true
     }
 
@@ -860,6 +1110,75 @@ final class SessionBroker {
         }
         let current = try git(["branch", "--show-current"], in: repo).trimmingCharacters(in: .whitespacesAndNewlines)
         return (current.isEmpty ? "HEAD" : current, true)
+    }
+
+    /// Where a folder sits in git, for StartSession's checks (read from the files, no git run).
+    enum Checkout: Equatable {
+        /// Not in a repo, or a main checkout that has no `.frog/worktrees` (never used for workers).
+        case plain
+        /// The user's main checkout (`top`): it owns `.frog/worktrees`.
+        case main(top: URL)
+        /// A linked worktree (`top`), its private git dir holding the engine lock.
+        case worktree(top: URL, gitDir: URL)
+    }
+
+    nonisolated static func checkout(of folder: URL) -> Checkout {
+        let fm = FileManager.default
+        var at = folder.standardizedFileURL
+        while true {
+            let dot = at.appending(path: ".git")
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: dot.path, isDirectory: &isDir) {
+                if isDir.boolValue {
+                    return fm.fileExists(atPath: at.appending(path: ".frog/worktrees").path) ? .main(top: at) : .plain
+                }
+                guard let text = try? String(contentsOf: dot, encoding: .utf8),
+                      let line = text.split(separator: "\n").first(where: { $0.hasPrefix("gitdir:") }) else { return .plain }
+                let path = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+                let gitDir = path.hasPrefix("/") ? URL(fileURLWithPath: path) : at.appending(path: path)
+                // A submodule's `.git` file points at `.git/modules/…`: not a worktree.
+                guard gitDir.deletingLastPathComponent().lastPathComponent == "worktrees" else { return .plain }
+                return .worktree(top: at, gitDir: gitDir.standardizedFileURL)
+            }
+            let up = at.deletingLastPathComponent()
+            if up.path == at.path { return .plain }
+            at = up
+        }
+    }
+
+    /// The session whose engine holds a linked worktree (the engine's `frog-engine.lock` in
+    /// its git dir, an flock that dies with the engine), if one does.
+    nonisolated static func worktreeOwner(gitDir: URL) -> String? {
+        let fd = open(gitDir.appending(path: "frog-engine.lock").path, O_RDONLY)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+            flock(fd, LOCK_UN)
+            return nil
+        }
+        let text = (try? String(contentsOf: gitDir.appending(path: "frog-engine.lock"), encoding: .utf8)) ?? ""
+        return text.split(separator: " ").first.map(String.init) ?? "another session"
+    }
+
+    /// StartSession without `worktree:true`: refuse the user's main checkout (the repo root
+    /// that owns `.frog/worktrees`, or anywhere in it) unless `allowMainCheckout`, and a
+    /// worktree another engine runs in. An existing free worktree is used as-is (reuse).
+    nonisolated static func checkWorkerFolder(_ folder: URL, allowMainCheckout: Bool) throws {
+        switch checkout(of: folder) {
+        case .plain:
+            return
+        case .main(let top):
+            guard !allowMainCheckout else { return }
+            let trees = ((try? FileManager.default.contentsOfDirectory(atPath: top.appending(path: ".frog/worktrees").path)) ?? [])
+                .filter { !$0.hasPrefix(".") }.sorted().prefix(3)
+                .map { top.appending(path: ".frog/worktrees/\($0)").path }
+            let reuse = trees.isEmpty ? "" : ", or reuse a worktree with cwd: \(trees.joined(separator: " or "))"
+            throw BrokerError("\(folder.path) is the user's main checkout of \(top.path): worker sessions belong in worktrees, so two of them never mix work in the user's tree. Pass worktree:true for a fresh one\(reuse). allow_main_checkout:true overrides, only when the user asked for it.")
+        case .worktree(let top, let gitDir):
+            if let owner = worktreeOwner(gitDir: gitDir) {
+                throw BrokerError("\(top.path) already has an engine: session \(owner) runs in it. One engine per worktree: pass worktree:true for a fresh one, or stop or archive \(owner) first.")
+            }
+        }
     }
 
     /// A git worktree for a new session: `<repo>/.frog/worktrees/<name>` on a new branch
@@ -961,9 +1280,22 @@ extension SessionBroker {
             Library.shared.setArchived(id, on)
             Library.shared.refresh()
         }
+        mover = { id, parent in
+            // No refresh: parentage isn't part of the sessions listing. `parents` is
+            // observed, so the sidebar's grouping re-derives from the mutation itself.
+            switch Library.shared.move(id, to: parent) {
+            case .success(let recorded): return .success(recorded)
+            case .failure(let refusal): return .failure(BrokerError(refusal.message))
+            }
+        }
         reach = { [unowned self] id, from, name, message in
             guard let c = conversation(for: id) else { return false }
             c.deliver(from: from, name: name, message: message)
+            return true
+        }
+        inform = { [unowned self] id, from, name, message in
+            guard let c = conversation(for: id) else { return false }
+            c.inform(from: from, name: name, message: message)
             return true
         }
         onLimit = { id in
@@ -972,9 +1304,11 @@ extension SessionBroker {
                 warning: true)
         }
         currentInput = { id in Library.shared.conversation(id)?.turns.last?.input }
+        windowConversation = { id in Library.shared.conversation(id) }
         targetBusy = { id in
             guard let c = Library.shared.conversation(id) ?? self.background[id] else { return false }
             return c.busy || c.turns.last.map { !$0.finished } == true || !c.queue.isEmpty
+                || c.pendingDeliveries > 0
         }
         firstTurnRan = { [unowned self] id in
             guard let c = Library.shared.conversation(id) ?? self.background[id] else {
@@ -1020,7 +1354,20 @@ extension SessionBroker {
         }
         starter = { [unowned self] req, parent in try await start(req, parent: parent) }
         Conversation.sessionRequests = { [unowned self] c, r in handle(r, from: c) }
+        // TODO(item 3, carried forward): the rescue op's broker half — start a session whose
+        // opening context is `from`'s structured Summary (files w/ +/−, turns with requests
+        // and outcomes, tests run) plus "continued from <from>" lineage, then
+        // `c.rescueAnswered(from: <new id>, started: true)`. Until then the op emission and
+        // the one-line render are live; pressing the button answers "couldn't start" honestly.
+        Conversation.rescues = { c, from in
+            c.rescueAnswered(from: "not wired yet (item 3)", started: false)
+        }
         Conversation.userActivity = { [unowned self] c in if let id = c.sessionID { userActivity(id) } }
+        parentOf = { id in Library.shared.parents[id] }
+        Conversation.permissionRequests = { [unowned self] c, req in
+            guard let id = c.sessionID else { return }
+            escalate(req, from: id, name: name(of: c))
+        }
     }
 
     /// `ArchiveSession`/`UnarchiveSession`: the sidebar's archive, as a broker operation. Hides
@@ -1037,8 +1384,8 @@ extension SessionBroker {
         let lib = Library.shared
         let conv = lib.conversation(id) ?? broker.background[id]
         let entry = lib.sessions.first { $0.id == id }
-        guard entry != nil || conv != nil else { return nil }
-        info.cwd = entry?.cwd ?? conv?.folder.path
+        guard entry != nil || conv != nil || Self.hasLog(id) else { return nil }
+        info.cwd = conv?.status?.cwd ?? entry?.cwd ?? conv?.folder.path
         if let c = conv, c.isLive {
             // Live: everything comes from the folded events.
             info.engineAlive = true
@@ -1050,6 +1397,7 @@ extension SessionBroker {
             info.model = c.status?.model ?? entry?.model
             info.mode = c.status?.mode.rawValue
             info.modelCalls = c.turns.reduce(0) { $0 + Int($1.usage?.modelCalls ?? 0) }
+            info.degraded = c.status?.degraded ?? []
             if let p = c.permission {
                 info.pendingApprovals = 1
                 info.pendingSummary = "\(p.name) \(p.arg)"
@@ -1060,11 +1408,14 @@ extension SessionBroker {
             if let c = conv { info.lastEnd = c.turns.last?.end.map { String(describing: $0) } }
             info.model = entry?.model
             let tail = await Task.detached { Self.logTail(id) }.value
-            if let (model, mode, modelCalls, lastEnd) = tail {
+            if let (model, mode, modelCalls, lastEnd, cwd) = tail {
                 info.model = info.model ?? model
                 info.mode = mode
                 info.modelCalls = modelCalls
                 info.lastEnd = info.lastEnd ?? lastEnd
+                // Where the session actually works now: the last `UseFolder` move or Bash
+                // `cd` (into a worktree, say) beats the start cwd from the header.
+                if let cwd { info.cwd = cwd }
             }
         }
         // Worktrees report their branch, commits ahead of origin/main, and dirty files.
@@ -1077,22 +1428,34 @@ extension SessionBroker {
         return info
     }
 
-    /// The model, mode, model-call count and last turn end from a session's log, without
-    /// folding the whole history: the last `model_changed`/`mode_changed`, the summed
-    /// `turn_ended` usage, and the last `turn_ended` reason. Nil when the log can't be read.
-    nonisolated private static func logTail(_ id: String) -> (String?, String?, Int, String?)? {
+    /// The session's log exists on disk (a session the sidebar's listing doesn't know yet,
+    /// or one from another Mac): its log still answers SessionStatus.
+    nonisolated private static func hasLog(_ id: String) -> Bool {
+        FileManager.default.fileExists(atPath: FrogPaths.sessions.appending(path: "\(id).jsonl").path)
+    }
+
+    /// The model, mode, model-call count, last turn end and current working folder from a
+    /// session's log, without folding the whole history: the last `model_changed` /
+    /// `mode_changed`, the summed `turn_ended` usage, the last `turn_ended` reason, and the
+    /// last `folder_changed` / `shell_cwd` (else the header's cwd). Nil when the log can't
+    /// be read.
+    nonisolated private static func logTail(_ id: String) -> (String?, String?, Int, String?, String?)? {
         let file = FrogPaths.sessions.appending(path: "\(id).jsonl")
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
         var model: String?
         var mode: String?
         var calls = 0
         var lastEnd: String?
+        var cwd: String?
+        var headerCwd: String?
         for line in text.split(separator: "\n") {
-            guard let v = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
-                  let env = v["env"] as? [String: Any] else { continue }
+            guard let v = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
+            if v["type"] as? String == "header" { headerCwd = v["cwd"] as? String }
+            guard let env = v["env"] as? [String: Any] else { continue }
             switch env["event"] as? String {
             case "model_changed": model = env["model"] as? String
             case "mode_changed": mode = env["mode"] as? String
+            case "folder_changed", "shell_cwd": cwd = env["cwd"] as? String
             case "turn_ended":
                 if let usage = env["usage"] as? [String: Any] {
                     calls += (usage["model_calls"] as? Int) ?? 0
@@ -1103,7 +1466,7 @@ extension SessionBroker {
             default: break
             }
         }
-        return (model, mode, calls, lastEnd)
+        return (model, mode, calls, lastEnd, cwd ?? headerCwd)
     }
 
     /// `StartSession`: a new conversation (in a worktree if asked), titled, with its first
@@ -1122,6 +1485,12 @@ extension SessionBroker {
         }
         var branch: String?
         var base: String?
+        // Worker sessions belong in worktrees: never the user's main checkout unless asked,
+        // and never a worktree another engine already runs in.
+        if !req.worktree {
+            let at = folder
+            try await Task.detached { try Self.checkWorkerFolder(at, allowMainCheckout: req.allowMainCheckout) }.value
+        }
         if req.worktree {
             let from = folder
             let (dir, b, basedOn) = try await Task.detached { try Self.makeWorktree(from: from, name: title) }.value
@@ -1134,7 +1503,7 @@ extension SessionBroker {
         // replayed rather than lost (see `births`).
         let pending = "pending-" + UUID().uuidString
         recordBirth(pending, prompt: req.prompt)
-        let c = Conversation(folder: folder, arguments: Workspace.engineFlags(chat: false), model: model)
+        let c = Conversation(folder: folder, arguments: Self.engineFlags(req: req, parent: parent), model: model)
         guard c.failure == nil else {
             births[pending] = nil
             saveBirths()
@@ -1149,7 +1518,7 @@ extension SessionBroker {
         births[pending] = nil
         guard let id = c.sessionID else {
             saveBirths()
-            c.stop()
+            c.stop(reason: "start timeout (no session id in 20 s)")
             throw BrokerError(c.failure ?? "the new session didn't start in time")
         }
         recordBirth(id, prompt: req.prompt)
@@ -1159,5 +1528,31 @@ extension SessionBroker {
         var started = Started(id: id, name: title, cwd: folder.path, branch: branch)
         started.base = base
         return started
+    }
+
+    /// The permission mode a started session runs in: its parent's by default,
+    /// never above it, and yolo only when asked for explicitly.
+    static func childMode(asked: String?, parent: Mode?) -> Mode {
+        // Modes by how much they allow; a child's mode can't outrank its parent's.
+        func rank(_ m: Mode) -> Int { switch m { case .default: 0; case .acceptEdits: 1; case .auto: 2; case .yolo: 3 } }
+        let parentMode = parent ?? .default
+        if let asked = asked.flatMap(Mode.init(rawValue:)) {
+            return rank(asked) <= rank(parentMode) ? asked : parentMode
+        }
+        // Inherit, except yolo is never passed on silently.
+        return parentMode == .yolo ? .auto : parentMode
+    }
+
+    /// The engine flags for a session started by another session: its permission
+    /// mode (see `childMode`) plus the app-wide flags.
+    static func engineFlags(req: StartRequest, parent: Conversation?) -> [String] {
+        let mode = childMode(asked: req.mode, parent: parent?.status?.mode)
+        let flag: [String] = switch mode {
+        case .yolo: ["--yolo"]
+        case .auto: ["--auto"]
+        case .acceptEdits: ["--accept-edits"]
+        case .default: []
+        }
+        return flag + Workspace.engineFlags(chat: false).filter { $0 != "--yolo" && $0 != "--auto" && $0 != "--accept-edits" }
     }
 }

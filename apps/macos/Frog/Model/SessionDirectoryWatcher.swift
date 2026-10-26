@@ -33,18 +33,21 @@ final class SessionDirectoryWatcher: @unchecked Sendable { // state confined to 
         timer.setEventHandler { [weak self] in self?.scan() }
         rescanTimer = timer
         timer.resume()
-        scan()
+        // On the queue, like every other scan: the sources above are already live, and a scan
+        // here on the caller's (main) thread raced theirs over `files` and `snapshot`. That's
+        // heap corruption, e.g. the 2026-10-22 crash in `Dictionary` lookup under `scan` on main.
+        queue.async { self.scan() }
     }
 
     private func scan() {
+        dispatchPrecondition(condition: .onQueue(queue))
         guard let urls = try? FileManager.default.contentsOfDirectory(
-            at: FrogPaths.sessions, includingPropertiesForKeys: [.isDirectoryKey]) else { return }
+            at: FrogPaths.sessions, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey]) else { return }
         var current: [String: Date] = [:]
-        for log in urls {
-            guard log.pathExtension == "jsonl",
-                  (try? log.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true else { continue }
+        for log in urls where log.pathExtension == "jsonl" {
+            guard let values = try? log.resourceValues(forKeys: [.isDirectoryKey, .contentModificationDateKey]),
+                  values.isDirectory != true, let modified = values.contentModificationDate else { continue }
             let id = log.deletingPathExtension().lastPathComponent
-            guard let modified = try? log.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else { continue }
             current[id] = modified
             if files[id] == nil { watch(log, id: id) }
         }
@@ -55,6 +58,7 @@ final class SessionDirectoryWatcher: @unchecked Sendable { // state confined to 
     }
 
     private func watch(_ url: URL, id: String) {
+        dispatchPrecondition(condition: .onQueue(queue))
         let fd = open(url.path, O_EVTONLY)
         guard fd >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(
@@ -67,6 +71,7 @@ final class SessionDirectoryWatcher: @unchecked Sendable { // state confined to 
     }
 
     private func readAppended(id: String, url: URL) {
+        dispatchPrecondition(condition: .onQueue(queue))
         guard var tail = files[id], let handle = try? FileHandle(forReadingFrom: url) else { return }
         defer { try? handle.close() }
         let size = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.uint64Value ?? tail.offset

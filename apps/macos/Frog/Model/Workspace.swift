@@ -244,7 +244,7 @@ final class Workspace {
     /// are in), or after `limit` if that's slow.
     func settled(within limit: Duration) async {
         let deadline = ContinuousClock.now + limit
-        while !gitChecked || conversation?.replaying == true, ContinuousClock.now < deadline {
+        while !gitChecked || conversation?.showable == false, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(5))
         }
     }
@@ -255,12 +255,13 @@ final class Workspace {
 
     func refresh() async {
         Library.shared.refresh()
-        if !isChat { git = await Git.status(folder) }
+        // Written only when it changed: every view of it would rebuild for nothing.
+        if !isChat, case let g = await Git.status(folder), g != git { git = g }
         gitChecked = true
         if skills.isEmpty, let k = try? await Frog.json([SkillInfo].self, args: ["--skills", "--json"], cwd: folder) {
             skills = k
         }
-        if let s = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--json"], cwd: folder) {
+        if let s = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--json"], cwd: folder), s != sessions {
             sessions = s
         }
         if !modelsLoaded, let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
@@ -294,7 +295,7 @@ final class Workspace {
         guard id != incoming?.sessionID else { return }
         guard id != conversation?.sessionID else {
             // Back to the one on screen before another finished opening.
-            incoming?.stop()
+            incoming?.stop(reason: "open cancelled")
             incoming = nil
             opening = nil
             return
@@ -330,10 +331,10 @@ final class Workspace {
         }
     }
 
-    func stop() {
+    func stop(reason: String = "workspace closed") {
         race?.discard()
-        incoming?.stop()
-        if let c = conversation, !SessionBroker.shared.keep(c) { c.stop() }
+        incoming?.stop(reason: "\(reason) (opening)")
+        if let c = conversation, !SessionBroker.shared.keep(c) { c.stop(reason: reason) }
     }
 
     /// The engine flags every new conversation gets from Settings. `mode: false` for a
@@ -354,14 +355,28 @@ final class Workspace {
         return flag + computerUse + chat + noSandbox
     }
 
+    /// The engine arguments and `-m` model a conversation starts with. A resume (`-r`) gets
+    /// neither a model nor a mode flag: the engine keeps the model and mode the session last
+    /// used. (Passing the picker's model there flipped every session opened from the sidebar,
+    /// managers' workers included, to whatever the last chat used.)
+    static func launch(_ arguments: [String], chat: Bool, model: String?) -> (arguments: [String], model: String?) {
+        if arguments.first == "-r" { return (arguments + engineFlags(chat: chat, mode: false), nil) }
+        return (arguments + engineFlags(chat: chat), model)
+    }
+
     @discardableResult
     private func start(arguments: [String]) -> Conversation {
         // A newly opened session during a download must start on the still-runnable model.
         let startupModel = pendingDownload == nil ? preferredModel : conversation?.status?.model
         // A session already running in the background (another session messaged it) is
         // picked up as is; a second engine can't open its log.
-        let adopted = arguments.first == "-r" && arguments.count > 1 ? SessionBroker.shared.adopt(arguments[1]) : nil
-        let c = adopted ?? Conversation(folder: folder, arguments: arguments + Self.engineFlags(chat: isChat), model: startupModel)
+        let resumed = arguments.first == "-r" && arguments.count > 1 ? arguments[1] : nil
+        let adopted = resumed.flatMap { SessionBroker.shared.adopt($0) }
+        // A model or mode another session set while this one was stopped applies now, once.
+        let stored = adopted == nil ? resumed.map { Library.shared.takeStored($0) } : nil
+        let launch = Self.launch(arguments, chat: isChat, model: stored?.model ?? startupModel)
+        let c = adopted ?? Conversation(folder: folder, arguments: launch.arguments, model: launch.model)
+        if let stored, adopted == nil { SessionBroker.apply(stored, to: c) }
         c.onSessionChange = { [weak self, weak c] in
             guard let self else { return }
             self.selection = c?.sessionID
@@ -372,10 +387,10 @@ final class Workspace {
             }
             Task { await self.refresh() }
         }
-        incoming?.stop()
+        incoming?.stop(reason: "open superseded")
         incoming = c
         // Nothing to cut from, or nothing to wait for: straight on screen.
-        guard conversation != nil, c.replaying else {
+        guard conversation != nil, !c.showable else {
             show(c)
             return c
         }
@@ -392,7 +407,7 @@ final class Workspace {
         incoming = nil
         opening = nil
         // A busy agent session keeps working off screen.
-        if let old = conversation, !SessionBroker.shared.keep(old) { old.stop() }
+        if let old = conversation, !SessionBroker.shared.keep(old) { old.stop(reason: "replaced on screen") }
         cloudForThisConversation = false
         explicitModelChoice = nil
         Motion.cut { conversation = c }

@@ -265,18 +265,18 @@ struct CodeBlock: View {
                 .buttonStyle(.borderless)
                 .help("Copy")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, TurnSpace.Inset.roomy)
+            .padding(.vertical, TurnSpace.Inset.snug)
             Divider().opacity(0.5)
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(Highlight.block(code, Highlight.lang(fence: language)))
                     .font(.system(.callout, design: .monospaced))
-                    .padding(12)
+                    .padding(TurnSpace.Inset.roomy)
                     .fixedSize(horizontal: true, vertical: true)
             }
         }
-        .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary, lineWidth: 0.5))
+        .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: TurnSpace.Card.radius))
+        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.quaternary, lineWidth: 0.5))
         .contextMenu {
             Button("Copy", systemImage: "doc.on.doc") { copy() }
             #if os(macOS)

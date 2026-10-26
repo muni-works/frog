@@ -15,8 +15,13 @@ final class InkReveal: NSObject {
     private unowned let view: MessageTextView
     /// Characters of the text storage shown so far.
     private(set) var revealed = 0
-    /// Recently revealed runs, fading from green to ink.
-    private var inked: [(range: NSRange, at: CFTimeInterval)] = []
+    /// Recently revealed runs, fading from green to ink, each with the fade step it was last
+    /// drawn at (-1: not yet), so a frame only restyles runs whose color has moved.
+    private var inked: [(range: NSRange, at: CFTimeInterval, step: Int)] = []
+    /// Recent arrivals (time, length), for the stream's rate.
+    private var arrivals: [(at: CFTimeInterval, length: Int)] = []
+    /// The stream is too fast for the ink to show: text simply appears, as under Reduce Motion.
+    private var instant = false
     private var link: CADisplayLink?
     private var last: CFTimeInterval = 0
     /// Fractional characters owed from earlier frames.
@@ -40,8 +45,19 @@ final class InkReveal: NSObject {
     private static let lagDone = 0.1
     /// The slowest pace, in characters a second: about reading speed.
     private static let minRate = 42.0
+    /// Fade steps from green to ink: a run is restyled only when it crosses one.
+    private static let fadeSteps = 10
+    /// Runs fading at once; older ones settle early. ~30 frames' worth at 60 Hz.
+    private static let maxRuns = 30
+    /// Above this arrival rate (characters a second, ~300 tokens/s) the pen reveals several
+    /// words a frame and the ink window spans most of the view: the fade can't be seen, only
+    /// paid for. Text just appears until the stream slows below `slowRate`.
+    private static let fastRate = 1200.0
+    private static let slowRate = 600.0
 
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    /// Text appears as it arrives: Reduce Motion, or a stream too fast to ink.
+    private var plain: Bool { reduceMotion || instant }
     private var length: Int { view.textStorage?.length ?? 0 }
 
     init(view: MessageTextView) {
@@ -62,11 +78,31 @@ final class InkReveal: NSObject {
             // reopened), is simply there.
             if !streaming || reduceMotion || length > 600 { revealed = length }
         }
-        if reduceMotion { revealed = length }
+        let now = CACurrentMediaTime()
+        measureRate(now: now)
+        if plain {
+            revealed = length
+            // Nothing hidden or fading: no restyling to do, and the clock stops (in `schedule`).
+            if inked.isEmpty, styledFrom == Int.max { return schedule() }
+        }
         revealed = min(revealed, length)
         inked.removeAll { $0.range.location >= length }
-        style(now: CACurrentMediaTime())
+        style(now: now)
         schedule()
+    }
+
+    /// How fast text is arriving, over the last half second; switches `instant` with some
+    /// hysteresis so a stream near the line doesn't flicker between the two.
+    private func measureRate(now: CFTimeInterval) {
+        guard streaming else { instant = false; arrivals.removeAll(); return }
+        let total = length
+        if let last = arrivals.last, total < last.length { arrivals.removeAll() }
+        arrivals.append((now, total))
+        arrivals.removeAll { now - $0.at > 0.5 }
+        guard let first = arrivals.first, arrivals.count > 1 else { return }
+        let rate = Double(total - first.length) / max(now - first.at, 0.05)
+        if !instant, rate > Self.fastRate { instant = true }
+        else if instant, rate < Self.slowRate { instant = false }
     }
 
     func windowChanged() {
@@ -97,8 +133,7 @@ final class InkReveal: NSObject {
         let h = writtenHeight() ?? .greatestFiniteMagnitude
         guard h != lastWritten else { return }
         lastWritten = h
-        view.invalidateIntrinsicContentSize()
-        view.superview?.needsLayout = true
+        view.sizeChanged()
     }
 
     /// Code blocks are views of their own: they appear when the pen reaches them.
@@ -107,9 +142,9 @@ final class InkReveal: NSObject {
     // MARK: Clock
 
     private func schedule() {
-        let pending = revealed < length || !inked.isEmpty || (streaming && !reduceMotion)
-        guard pending, view.window != nil, !reduceMotion else {
-            if !pending || reduceMotion { finish() }
+        let pending = revealed < length || !inked.isEmpty || (streaming && !plain)
+        guard pending, view.window != nil, !plain else {
+            if !pending || plain { finish() }
             return
         }
         guard link == nil else { return }
@@ -142,7 +177,7 @@ final class InkReveal: NSObject {
         if revealed < total, now >= holdUntil || !streaming {
             advance(by: dt, total: total, now: now)
         }
-        style(now: now)
+        styleFrame(now: now)
         grewIfNeeded()
         if revealed >= total, inked.isEmpty, !streaming {
             finish()
@@ -166,7 +201,7 @@ final class InkReveal: NSObject {
         }
         let start = revealed
         revealed = target
-        inked.append((NSRange(location: start, length: target - start), now))
+        inked.append((NSRange(location: start, length: target - start), now, -1))
         // A breath after a sentence or paragraph, when the model isn't far ahead.
         if streaming, total - target < 24, target >= 2 {
             let prev = text.character(at: target - 2)
@@ -178,13 +213,19 @@ final class InkReveal: NSObject {
 
     // MARK: Styling
 
+    /// Everything from the oldest fading run to the end, again: for when the storage changed
+    /// (new text to hide, or a re-parsed tail whose temporary attributes can't be trusted).
     private func style(now: CFTimeInterval) {
         guard let layout = view.layoutManager, let storage = view.textStorage else { return }
         let total = storage.length
-        inked.removeAll { now - $0.at >= Self.inkTime }
+        settle(now: now)
         let from = min(styledFrom, inked.first?.range.location ?? revealed, revealed, total)
         if from < total {
             layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: from, length: total - from))
+            #if DEBUG
+            TranscriptProbe.inkStyles += 1
+            TranscriptProbe.inkStyledChars += total - from
+            #endif
         }
         styledFrom = Int.max
         // Not yet revealed: laid out, but drawn clear.
@@ -193,21 +234,68 @@ final class InkReveal: NSObject {
                                          forCharacterRange: NSRange(location: revealed, length: total - revealed))
             styledFrom = revealed
         }
-        // Newly revealed: green, faint, settling into each run's own color.
-        let accent = NSColor(named: "AccentColor") ?? .controlAccentColor
-        for ink in inked {
-            let range = NSIntersectionRange(ink.range, NSRange(location: 0, length: total))
-            guard range.length > 0 else { continue }
-            let t = Self.ease((now - ink.at) / Self.inkTime)
-            storage.enumerateAttribute(.foregroundColor, in: range) { value, sub, _ in
-                let own = (value as? NSColor) ?? .labelColor
-                let color = accent.blended(withFraction: t, of: own) ?? own
-                layout.addTemporaryAttribute(.foregroundColor, value: color.withAlphaComponent(own.alphaComponent * (0.2 + 0.8 * t)),
-                                             forCharacterRange: sub)
-            }
-            styledFrom = min(styledFrom, range.location)
-        }
+        for i in inked.indices { paint(i, now: now) }
         view.syncCodeVisibility()
+    }
+
+    /// One frame: only what moved. The newly revealed run (drawn over its clear), runs whose
+    /// fade crossed a step, and runs that have settled (back to their own color). The hidden
+    /// tail keeps the clear it was given when it arrived.
+    private func styleFrame(now: CFTimeInterval) {
+        guard let layout = view.layoutManager, let storage = view.textStorage else { return }
+        let total = storage.length
+        for range in settle(now: now) {
+            let r = NSIntersectionRange(range, NSRange(location: 0, length: total))
+            if r.length > 0 { layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: r) }
+        }
+        var touched = false
+        for i in inked.indices where inked[i].step != Self.step(now - inked[i].at) {
+            paint(i, now: now)
+            touched = true
+        }
+        if touched { view.syncCodeVisibility() }
+    }
+
+    /// Drops runs that have finished fading, and the oldest past `maxRuns`; returns their ranges.
+    @discardableResult
+    private func settle(now: CFTimeInterval) -> [NSRange] {
+        var done: [NSRange] = []
+        inked.removeAll { run in
+            guard now - run.at >= Self.inkTime else { return false }
+            done.append(run.range)
+            return true
+        }
+        if inked.count > Self.maxRuns {
+            done += inked.prefix(inked.count - Self.maxRuns).map(\.range)
+            inked.removeFirst(inked.count - Self.maxRuns)
+        }
+        return done
+    }
+
+    private static func step(_ age: Double) -> Int {
+        min(fadeSteps, Int((age / inkTime) * Double(fadeSteps)))
+    }
+
+    /// Newly revealed: green, faint, settling into the run's own color, at its fade step.
+    private func paint(_ i: Int, now: CFTimeInterval) {
+        guard let layout = view.layoutManager, let storage = view.textStorage else { return }
+        let range = NSIntersectionRange(inked[i].range, NSRange(location: 0, length: storage.length))
+        let step = Self.step(now - inked[i].at)
+        inked[i].step = step
+        guard range.length > 0 else { return }
+        let accent = NSColor(named: "AccentColor") ?? .controlAccentColor
+        let t = Self.ease(Double(step) / Double(Self.fadeSteps))
+        storage.enumerateAttribute(.foregroundColor, in: range) { value, sub, _ in
+            let own = (value as? NSColor) ?? .labelColor
+            let color = accent.blended(withFraction: t, of: own) ?? own
+            layout.addTemporaryAttribute(.foregroundColor, value: color.withAlphaComponent(own.alphaComponent * (0.2 + 0.8 * t)),
+                                         forCharacterRange: sub)
+        }
+        styledFrom = min(styledFrom, range.location)
+        #if DEBUG
+        TranscriptProbe.inkStyles += 1
+        TranscriptProbe.inkStyledChars += range.length
+        #endif
     }
 
     private static func ease(_ t: Double) -> CGFloat {

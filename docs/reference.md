@@ -18,6 +18,7 @@ Each session is an append-only JSONL log in `~/.local/share/frog/sessions/<id>.j
 - **Durability:** records are appended as they happen, the file is fsynced at the end of each turn, and a half-written last line from a crash is ignored.
 - **Crash recovery:** if a session died in the middle of a turn, resuming it gives any tool calls that never finished an "interrupted" result.
 - **One writer at a time:** `flock` stops two frog processes from writing the same session.
+- **Degraded, visibly:** the engine's `status` carries `degraded`, a list of what runs degraded and why: text tool calls the profile didn't ask for, a model other than the one the session was started or set to (a resume without `-m` takes the default), auto mode's classifier down. The app shows it as a small badge in the session header, and `SessionStatus` reports it.
 
 The engine crate has no terminal dependencies, so the compiler enforces this boundary.
 
@@ -140,8 +141,19 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
 - **Edits:** in-project edits run without asking, since they're checkpointed and can be undone. Sandboxed commands already run without asking.
 - **Always asks:** hard rules, no model involved: `sudo`, pushes, `reset --hard`/`clean -f`/history rewrites, `curl | sh`, `rm -rf` outside the project, publishing, system settings, killing processes, and writes outside the project.
 - **The classifier:** a small local model (Apple's on-device model when available, otherwise the session's model; set `auto_classifier` to choose) judges the rest against your recent messages. It answers allow or ask, with a reason, in grammar-constrained JSON. The call's arguments are marked untrusted, so text in them aimed at the classifier doesn't count.
-- **Fails closed:** a timeout, error or unreadable answer means ask.
+- **When the classifier is down:** a timeout, an HTTP error, an unreachable server or an unreadable answer tries `auto_classifier_fallback` (another model) if you set one, then frog's built-in rules alone: reads (read-only commands, MCP read verbs, captures of public pages) and the session's own work still run; anything no rule covers asks. A down classifier is skipped for a minute rather than retried per call, shows one notice per session, and the session status says what's judging instead.
 - **Visible:** approved calls show "Auto: <reason>" on the tool card. When it asks, the permission card says why.
+- **Own scratch:** a Write or Edit of a fresh file under the shared temp dir (`/private/tmp/…`), or of a file this session created, runs without asking. Overwriting someone else's temp file still asks.
+
+**MCP tools.** In every mode, an MCP tool whose own name opens with a read verb (`list_`, `get-`, `read_`, `search-`, `describe_`, `stream-`; a repeated server name like `planetscale_list_databases` is skipped) runs without asking, as do vcad's `see`/`inspect`/`measure`/`describe`/`render` tools. A name with a write, run, start/stop or secret word in it (`get_or_create`, `get_branch_password`) still asks, and so does anything not clearly a read. To let one server's writes through, grant it a write tier in `config.toml`:
+```toml
+[mcp_trust]
+planetscale = "write"   # execute_write_query and its create/delete/drop/alter/apply/insert/update tools
+# runpod = "write"      # create-pod, delete-pod, pod-action
+```
+No server is trusted by default. Each granted write runs without a card and is logged: a notice with the server, tool and arguments, a `trust` permission decision in the session log, and a line in the engine log.
+
+**Never asks twice.** A call (same tool, same arguments) that was denied on a card isn't asked about again in that turn: the turn ends `blocked_on_approval` with the denial, so the agent (or whoever wakes it) routes around it. Denied twice in a session, it's denied at once for the rest of the session, with a notice, and the agent carries on.
 
 **Sandbox.** Shell commands run in a sandbox by default: seatbelt on macOS, bubblewrap (`bwrap`) on Linux. Without a working `bwrap` (not installed, or unprivileged user namespaces are off), Linux commands ask instead.
 - **What it limits:** a command can write only inside the project, temp folders and toolchain caches (`~/.cargo`, `~/.npm`, …). It can't read credentials (`~/.ssh`, `~/.aws`, `~/.gnupg`, keychains, …), so a prompt-injected command can't send them anywhere. Network access works.
@@ -157,6 +169,8 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
   ```
   Inside a linked git worktree, the worktree's git dir and the common git dir (from `git rev-parse --git-dir --git-common-dir`) are writable, so `git commit` works; the rest of the main checkout stays closed. `git push` still asks.
 
+**One engine per worktree.** An engine that starts in a linked git worktree holds a lock on it (`flock` on `frog-engine.lock` in the worktree's git dir) for as long as it runs, so two sessions never mix uncommitted work in one tree. A second engine there refuses with the session that owns it. The lock dies with its engine, so a crash never leaves a worktree stuck; the main checkout is never locked, and subagents share their parent's tree.
+
   To restrict the network to dev hosts, set `network = "dev"`:
   ```toml
   [sandbox]
@@ -165,6 +179,14 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
   macOS only (Linux stays open). Seatbelt can't match remote hosts, so it blocks all outbound except localhost, and frog runs a small local CONNECT proxy that only tunnels https (port 443) to those hosts; `HTTPS_PROXY`/`ALL_PROXY` point at it for sandboxed commands. Tools that ignore proxy variables, plain http and ssh get no network.
 
   The trade-off: anything you open is readable by every sandboxed command, including one a prompt injection wrote, and the network is open. `allow_keychain` is the broad one: it exposes every Keychain item that doesn't prompt, not just gh's.
+- **ssh to user hosts:** ssh can't verify host keys sandboxed (it can't read `~/.ssh/known_hosts`), so connections fail with `hostkeys_find_by_key_hostfile`. Agent sessions that need ssh to your hosts add just that file:
+  ```toml
+  [sandbox]
+  allow_read = ["~/.ssh/known_hosts"]  # read-only; private keys stay unreadable
+  ```
+  `~` is expanded when the sandbox is built, not when the config is parsed. The no-sudo and no-writes-outside-scratch rules still bind. (For git over GitHub, `git_https = true` avoids `~/.ssh` entirely.)
+
+  **Manager briefs:** the default brief for a manager (or any long-running agent session) should say to run with `allow_read = ["~/.ssh/known_hosts"]` under `[sandbox]`, so its ssh runs sandboxed instead of escaping with `unsandboxed: true` and carding.
 - **gh, minimal setup:** hand gh its token through the environment and let it read its config directory (gh refuses to start if it can't read `config.yml`):
   ```toml
   [sandbox]

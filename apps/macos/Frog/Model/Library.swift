@@ -15,7 +15,12 @@ final class Library {
     private(set) var sessions: [SessionInfo] = []
     private(set) var pinned: Set<String>
     private(set) var archived: Set<String>
-    private(set) var live: [String: Live] = [:]
+    private(set) var live: [String: Live] = [:] {
+        // The Dock frog wants you exactly when some session is waiting on you.
+        didSet { DockActivity.shared.attention = live.values.contains(.waiting) }
+    }
+    /// The chief of staff: one session, as a tile above the pins. It keeps its pin.
+    private(set) var chief: String?
     /// Sessions started by another session (`StartSession`): child id → parent id.
     private(set) var parents: [String: String]
     /// The session shown in the key window: finishing there doesn't count as unread.
@@ -23,10 +28,15 @@ final class Library {
     @ObservationIgnored private var windows: [ObjectIdentifier: WeakWindow] = [:]
     @ObservationIgnored private var conversations: [String: WeakConversation] = [:]
     @ObservationIgnored private var refreshing: Task<Void, Never>?
+    /// When the last `frog --sessions --all` started. A listing costs about a second of CPU
+    /// with a thousand sessions, and a streaming session asks for one every second.
+    @ObservationIgnored private var lastListed = ContinuousClock.now - .seconds(60)
+    static let listInterval = Duration.seconds(3)
 
     private init() {
         pinned = Set(UserDefaults.standard.stringArray(forKey: "pinnedSessions") ?? [])
         archived = Set(UserDefaults.standard.stringArray(forKey: "archivedSessions") ?? [])
+        chief = UserDefaults.standard.string(forKey: "chiefSession")
         parents = UserDefaults.standard.dictionary(forKey: "sessionParents") as? [String: String] ?? [:]
         _ = SessionDirectoryWatcher.shared
         refresh()
@@ -34,20 +44,32 @@ final class Library {
 
     /// Reload the list (coalesced: a burst of calls makes one `frog --sessions --all`).
     func refresh() {
+        #if DEBUG
+        dispatchPrecondition(condition: .onQueue(.main))  // see Conversation.apply
+        if staged { return }
+        #endif
         refreshing?.cancel()
         refreshing = Task {
-            try? await Task.sleep(for: .milliseconds(150))
+            let due = lastListed + Self.listInterval - .now
+            try? await Task.sleep(for: max(.milliseconds(150), due))
             guard !Task.isCancelled else { return }
+            lastListed = .now
             let home = FileManager.default.homeDirectoryForCurrentUser
             if let all = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--all", "--json"], cwd: home) {
+                #if DEBUG
+                if staged { return }  // a listing already in flight when a snapshot staged its own
+                #endif
                 // A conversation whose folder is gone can't be reopened.
                 // Race attempts live in their own worktrees and are shown in the race, not here.
                 // Worker worktrees (`<repo>/.frog/worktrees/`, `<repo>/.claude/worktrees/`) are
                 // shown under their repo (see `Sidebar.home`).
-                sessions = all.filter { s in
+                let listed = all.filter { s in
                     guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/") else { return false }
                     return FileManager.default.fileExists(atPath: cwd)
                 }
+                // Unchanged, it isn't written: every view of the list would rebuild for nothing.
+                guard listed != sessions else { return }
+                sessions = listed
                 archiveQuietChats()
                 RemoteBridge.shared.listChanged()
             }
@@ -57,12 +79,41 @@ final class Library {
     // MARK: Pins and archive
 
     func togglePin(_ id: String) {
+        // The chief keeps its pin (the folded strip and the phone show it as one); Remove
+        // Chief first to unpin it.
+        if id == chief { return }
         if pinned.remove(id) == nil { pinned.insert(id) }
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
     }
 
+    // MARK: Chief
+
+    /// The chief of staff's session, as the sidebar shows it.
+    var chiefSession: SessionInfo? { chief.flatMap { id in sessions.first { $0.id == id } } }
+
+    /// Make session `id` the chief: pinned if it isn't already, never archived.
+    func makeChief(_ id: String) {
+        archived.remove(id)
+        pinned.insert(id)
+        UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
+        UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
+        let was = chief
+        chief = id
+        if was != id { UserDefaults.standard.set(id, forKey: "chiefSession") }
+    }
+
+    /// No chief, until one is made again.
+    func removeChief() {
+        chief = nil
+        UserDefaults.standard.removeObject(forKey: "chiefSession")
+    }
+
     func setArchived(_ id: String, _ on: Bool) {
+        // However it's archived (sidebar, phone, a session's ArchiveSession), nothing queued
+        // for it runs afterwards.
+        if on { SessionBroker.shared.clearQueue(id) }
         if on { archived.insert(id); pinned.remove(id) } else { archived.remove(id) }
+        if on, chief == id { chief = nil; UserDefaults.standard.removeObject(forKey: "chiefSession") }
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
     }
@@ -94,9 +145,97 @@ final class Library {
         UserDefaults.standard.set(parents, forKey: "sessionParents")
     }
 
+    /// Why a [`Library.move`] was refused; the message is the tool's error.
+    enum MoveRefusal: Error, Equatable {
+        /// The new parent sits under the session being moved (or is it).
+        case nestsWithinItself
+
+        var message: String {
+            switch self {
+            case .nestsWithinItself:
+                "That would nest the session under itself or one of its descendants."
+            }
+        }
+    }
+
+    /// `MoveSession`: re-file `child` under `parent` (nil unparents; a top-level row
+    /// again). Sidebar nesting only — the log, model, mode and history are the session's
+    /// own. Refuses a move that would nest a session under itself or a descendant (the
+    /// sidebar's tree walks tolerate a cycle, but one must never be recorded). Unparenting
+    /// an unparented session is a successful no-op. `parents` is observed, so the sidebar's
+    /// grouping re-derives on the change.
+    @discardableResult
+    func move(_ child: String, to parent: String?) -> Result<String?, MoveRefusal> {
+        if let parent {
+            guard !Self.wouldCycle(child, parent: parent, in: parents) else {
+                return .failure(.nestsWithinItself)
+            }
+            parents[child] = parent
+        } else {
+            guard parents.removeValue(forKey: child) != nil else { return .success(nil) }
+        }
+        UserDefaults.standard.set(parents, forKey: "sessionParents")
+        return .success(parent)
+    }
+
+    /// Whether moving `child` under `parent` would close a loop: its own descendant. The
+    /// walk is bounded by the recorded parents, so it terminates even on an existing cycle.
+    static func wouldCycle(_ child: String, parent: String?, in parents: [String: String]) -> Bool {
+        guard let parent else { return false }  // unparenting can't cycle
+        // Walk up from the proposed parent: if the child is anywhere above it (or is it),
+        // the move would nest the session under its own subtree.
+        var seen: Set<String> = []
+        var at: String? = parent
+        while let current = at, seen.insert(current).inserted {
+            if current == child { return true }
+            at = parents[current]
+        }
+        return false
+    }
+
     /// Part of a group of sessions: started by one, or started one.
     func isAgentSession(_ id: String) -> Bool {
         parents[id] != nil || parents.values.contains(id)
+    }
+
+    // MARK: Stored model and mode
+
+    /// Durable per-session overrides, applied by the next engine start (SetSessionModel /
+    /// SetSessionMode while no engine is running).
+    func setStoredModel(_ id: String, _ spec: String) {
+        var stored = UserDefaults.standard.dictionary(forKey: "sessionModels") as? [String: String] ?? [:]
+        stored[id] = spec
+        UserDefaults.standard.set(stored, forKey: "sessionModels")
+    }
+
+    func setStoredMode(_ id: String, _ mode: Mode) {
+        var stored = UserDefaults.standard.dictionary(forKey: "sessionModes") as? [String: String] ?? [:]
+        stored[id] = mode.rawValue
+        UserDefaults.standard.set(stored, forKey: "sessionModes")
+    }
+
+    /// The stored model override for session `id`, if any.
+    func storedModel(_ id: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: "sessionModels") as? [String: String])?[id]
+    }
+
+    /// The stored permission mode override for session `id`, if any.
+    func storedMode(_ id: String) -> Mode? {
+        (UserDefaults.standard.dictionary(forKey: "sessionModes") as? [String: String])?[id]
+            .flatMap(Mode.init(rawValue:))
+    }
+
+    /// Session `id`'s stored overrides, cleared as they're taken: the engine starting now
+    /// applies them, and after that its log remembers them (`model_changed`/`mode_changed`),
+    /// so a later change made in the session isn't overridden at every restart.
+    func takeStored(_ id: String) -> (model: String?, mode: Mode?) {
+        let taken = (storedModel(id), storedMode(id))
+        for key in ["sessionModels", "sessionModes"] {
+            guard var stored = UserDefaults.standard.dictionary(forKey: key) as? [String: String],
+                  stored.removeValue(forKey: id) != nil else { continue }
+            UserDefaults.standard.set(stored, forKey: key)
+        }
+        return taken
     }
 
     // MARK: Renaming
@@ -122,11 +261,67 @@ final class Library {
         conversations[id]?.value
     }
 
+    /// Every conversation open on this Mac right now.
+    var open: [Conversation] {
+        conversations.values.compactMap(\.value)
+    }
+
+    /// What session `id` is waiting on you for, in a line: its question, the tool it wants
+    /// to run, or the server's request. Nil when it isn't open here or isn't asking.
+    func asking(_ id: String) -> String? {
+        #if DEBUG
+        if let staged = stagedAsks[id] { return staged }
+        #endif
+        guard let c = conversation(id) else { return nil }
+        if let q = c.question { return q.question }
+        if let p = c.permission {
+            let arg = p.arg.split(separator: "\n").first.map(String.init) ?? ""
+            return arg.isEmpty ? p.name : "\(p.name) \(arg)"
+        }
+        if let e = c.elicitation { return e.message }
+        return nil
+    }
+
+    #if DEBUG
+    @ObservationIgnored private var stagedAsks: [String: String] = [:]
+    @ObservationIgnored private var staged = false
+
+    /// Snapshot tests: replace the listing with fixtures (nothing persisted, no refresh).
+    func stage(sessions: [SessionInfo], live: [String: Live] = [:], parents: [String: String] = [:],
+               chief: String? = nil, pinned: Set<String> = [], archived: Set<String> = [],
+               asks: [String: String] = [:]) {
+        if !staged { backup = (self.sessions, self.live, self.parents, self.chief, self.pinned, self.archived) }
+        staged = true
+        refreshing?.cancel()
+        self.sessions = sessions
+        self.live = live
+        self.parents = parents
+        self.chief = chief
+        self.pinned = pinned
+        self.archived = archived
+        stagedAsks = asks
+    }
+
+    @ObservationIgnored private var backup: ([SessionInfo], [String: Live], [String: String], String?, Set<String>, Set<String>)?
+
+    /// Back to the real listing after `stage`.
+    func unstage() {
+        guard staged, let b = backup else { return }
+        (sessions, live, parents, chief, pinned, archived) = b
+        stagedAsks = [:]
+        staged = false
+        backup = nil
+    }
+    #endif
+
     /// An open conversation's state; called as its events arrive. The one truth for the
     /// sidebar's dot and every list: a session is running when a turn is open OR messages
     /// are still queued in its engine's inbox (bug 2d — a queued-only session used to read
     /// as idle until its next turn boundary).
     func report(_ id: String, conversation: Conversation, running: Bool, waiting: Bool) {
+        #if DEBUG
+        dispatchPrecondition(condition: .onQueue(.main))  // see Conversation.apply
+        #endif
         conversations[id] = WeakConversation(value: conversation)
         SessionBroker.shared.observe(id, running: running, waiting: waiting)
         let queued = SessionBroker.shared.pendingInbound(id) != 0

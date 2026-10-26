@@ -24,6 +24,7 @@ You help with software engineering tasks: fixing bugs, adding features, refactor
 - Be concise and direct. Your output is shown in a terminal.
 - Don't narrate every step. Say briefly what you'll do, do it, then summarize the result in a few lines.
 - Reference code as path:line.
+- Once the task is clear, name the session with the SetTitle tool: 2-3 lowercase words for its topic, e.g. fix login timeout. Name the work itself, not any rules or context wrapped around the request; rename only when the topic clearly changes.
 - When the task is done, stop. Don't start unrequested work.";
 
 /// The instruction files a session in `cwd` reads (FROG.md, CLAUDE.md, AGENTS.md), in order.
@@ -163,37 +164,75 @@ You may make several calls in one response. After your tool calls, stop and wait
 }
 
 /// Render native tool blocks as text for text-mode models.
+///
+/// In an assistant message, a text block and the calls after it become one text block, as the
+/// model wrote them. That keeps every other block (signed thinking above all) at the index it
+/// had in the model's reply: Anthropic rejects a request whose latest assistant message has its
+/// thinking blocks moved or changed.
 pub fn to_text_mode(messages: &[Message]) -> Vec<Message> {
     messages
         .iter()
-        .map(|m| Message {
-            role: m.role,
-            content: m
-                .content
-                .iter()
-                .map(|b| match b {
-                    Block::ToolUse { name, input, .. } => Block::Text {
-                        text: format!(
-                            "<tool_call>\n{}\n</tool_call>",
-                            json!({ "name": name, "arguments": input })
-                        ),
-                    },
-                    Block::ToolResult {
-                        name,
-                        content,
-                        is_error,
-                        ..
-                    } => Block::Text {
-                        text: format!(
-                            "<tool_result name=\"{name}\"{}>\n{content}\n</tool_result>",
-                            if *is_error { " error=\"true\"" } else { "" }
-                        ),
-                    },
-                    b => b.clone(),
-                })
-                .collect(),
+        .map(|m| {
+            let mut out = text_blocks(m);
+            if m.role == crate::message::Role::Assistant {
+                out.content = fold_calls(&m.content, out.content);
+            }
+            out
         })
         .collect()
+}
+
+/// `rendered` (each of `original`'s blocks as text mode shows it), with each run of text and
+/// calls in `original` joined into one text block.
+fn fold_calls(original: &[Block], rendered: Vec<Block>) -> Vec<Block> {
+    let mut out: Vec<Block> = Vec::with_capacity(rendered.len());
+    // Whether the last block pushed came from a text or call block, so a call can join it.
+    let mut open = false;
+    for (orig, b) in original.iter().zip(rendered) {
+        let foldable = matches!(orig, Block::Text { .. } | Block::ToolUse { .. });
+        let call = matches!(orig, Block::ToolUse { .. });
+        match (&b, out.last_mut()) {
+            (Block::Text { text }, Some(Block::Text { text: prev })) if open && call => {
+                if !prev.is_empty() {
+                    prev.push('\n');
+                }
+                prev.push_str(text);
+            }
+            _ => out.push(b),
+        }
+        open = foldable;
+    }
+    out
+}
+
+fn text_blocks(m: &Message) -> Message {
+    Message {
+        role: m.role,
+        content: m
+            .content
+            .iter()
+            .map(|b| match b {
+                Block::ToolUse { name, input, .. } => Block::Text {
+                    text: format!(
+                        "<tool_call>\n{}\n</tool_call>",
+                        json!({ "name": name, "arguments": input })
+                    ),
+                },
+                Block::ToolResult {
+                    name,
+                    content,
+                    is_error,
+                    ..
+                } => Block::Text {
+                    text: format!(
+                        "<tool_result name=\"{name}\"{}>\n{content}\n</tool_result>",
+                        if *is_error { " error=\"true\"" } else { "" }
+                    ),
+                },
+                b => b.clone(),
+            })
+            .collect(),
+    }
 }
 
 static ANSWER_TAGS: LazyLock<Regex> =

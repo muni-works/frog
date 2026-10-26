@@ -42,6 +42,10 @@ struct FrogApp: App {
         }
         SessionBroker.shared.install()
         ModelContext.useMac()
+        // Type-to-focus: printable keys reach the composer when no field holds them.
+        TypeToFocus.begin()
+        // A test host and the morning notice mustn't read or write the user's drafts.
+        DraftStore.enabled = !SingleInstance.isTesting && !MorningNotice.headless
         DiagramLayout.mermaid = { source, cwd in
             await Diagram.fromMermaid(source, cwd: cwd ?? FileManager.default.homeDirectoryForCurrentUser)
         }

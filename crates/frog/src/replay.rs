@@ -157,6 +157,7 @@ pub async fn run(spec: &str, speed: f64, ask: bool) -> Result<()> {
             tokens_per_sec: None,
             todos: Vec::new(),
             vision: false,
+            degraded: Vec::new(),
         },
         ops,
     };
@@ -303,6 +304,7 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                         preview: diffs.get(id.as_str()).map(|d| (*d).clone()),
                         reason: None,
                         subagent: None,
+                        card: None,
                     });
                     p.answer().await?;
                 }

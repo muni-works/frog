@@ -51,18 +51,68 @@ impl Mode {
 #[serde(rename_all = "snake_case")]
 pub enum Decision {
     Allow,
-    /// Allow this and similar calls for the rest of the session.
+    /// Allow this and similar calls for the rest of the session. For shell
+    /// commands it means the same as `AllowPrefix`: no blanket allow of a program.
     AllowAlways,
+    /// Allow this program on paths under the card's `prefix` for the rest of the
+    /// session (falls back to allowing once when the card has no prefix).
+    AllowPrefix,
     Deny,
+}
+
+/// What a permission prompt shows so the user can decide quickly: why the agent
+/// wants it, what triggered the prompt, what it touches, and frog's advice.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct ApprovalCard {
+    /// What the agent said it was doing, from its message before the call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_reason: Option<String>,
+    /// The rule or verdict that made it ask.
+    pub trigger: String,
+    /// Paths the command names, with sizes and whether this session created them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub touches: Vec<Touch>,
+    /// One line on what could go wrong.
+    pub risk: String,
+    /// `allow` or `deny`, and why.
+    pub recommendation: String,
+    /// The path prefix `AllowPrefix` would cover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    /// Seconds until frog stops waiting and takes the safe path (deny).
+    pub timeout_secs: u64,
+}
+
+/// One path a command touches.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Touch {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exists: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dir: bool,
+    /// Total bytes (a directory's, counted up to a cap).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// This session made it (wrote the file or created the directory).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub created_here: bool,
 }
 
 /// What [`Op::Continue`] tells the model when the client gives no note of its own.
 pub const CONTINUE_NOTE: &str =
     "<resumed after the app restarted; your previous turn was interrupted; continue>";
 
+/// What [`Op::Continue`] tells the model when an app update's [`Op::Drain`] suspended the turn
+/// and the relaunched app picks it back up. Its own note, not [`CONTINUE_NOTE`]: the model
+/// knows it wasn't its fault or the user's.
+pub const SUSPENDED_NOTE: &str =
+    "<resumed after the app updated; your previous turn was suspended; continue>";
+
 /// Client → engine.
 ///
-/// `Interrupt`, `Permission`, `Answer`, `Elicit`, `AppCall` and `StopSubagent` take effect immediately. Everything else is queued
+/// `Interrupt`, `ClearInbox`, `Permission`, `Answer`, `Elicit`, `AppCall`, `Drain`,
+/// `DrainAbort` and `StopSubagent` take effect immediately. Everything else is queued
 /// and handled in order; each queued op ends with [`Event::Idle`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -98,6 +148,9 @@ pub enum Op {
     Permission {
         id: String,
         decision: Decision,
+        /// With a deny: the user's words, sent back to the agent so it can adjust.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
     },
     /// Answer an [`Event::Question`]. No choices and no `other` dismisses it.
     Answer {
@@ -114,6 +167,20 @@ pub enum Op {
     },
     Compact {
         focus: Option<String>,
+    },
+    /// The rescue for a session whose context overflowed and compaction failed (see
+    /// [`Event::CompactionFailed`]): start a carried-forward session. The engine refuses when
+    /// the client can't host sessions (it answers the request with an error instead, so the
+    /// model is never told a rescue happened when none did). The client that knows how to
+    /// carry forward owns the rest: the old session's structured summary as the new session's
+    /// opening context, and `continued from <old id>` lineage.
+    ContinueSession {
+        /// The overflowed session's id, the one being carried forward from.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        from: String,
+        /// One line on the context of the rescue, folded into the new session's prompt.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        why: String,
     },
     /// Replay this session's durable events with `seq > after`, then [`Event::Synced`].
     /// Replayed envelopes keep their original `seq`, so gaps (where ephemeral events were) are expected.
@@ -138,6 +205,18 @@ pub enum Op {
     StopSubagent {
         id: String,
     },
+    /// Graceful stop for an app update: finish the current step, then stop at the next safe
+    /// point (a finished model call, a finished tool call) and end the turn [`EndReason::Suspended`].
+    /// Not a cancel — the turn is resumable via [`Op::Continue`]. `Drain` while idle is a no-op
+    /// ack. Immediate, like [`Op::Interrupt`], but cooperative.
+    Drain {
+        /// Unix ms; after this the engine force-stops (cancels the running tool or call) and
+        /// records itself suspended anyway.
+        deadline: i64,
+    },
+    /// The drain was called off (the user cancelled the update). Engines already suspended stay
+    /// that way (the next user message resumes them); a still-running turn keeps going.
+    DrainAbort,
     /// Internal: background work finished and left a notice for the model. Starts a turn
     /// when the engine is idle; never sent by clients.
     #[serde(skip)]
@@ -243,6 +322,34 @@ pub enum Op {
         #[serde(default)]
         from_name: String,
         message: String,
+    },
+    /// A message from another session that's pure status ("received", "going idle"): marked
+    /// read without a reply turn. Queued like [`Op::Deliver`], but no turn starts and nothing
+    /// wakes: it's logged ([`Event::MessageRead`]) and goes along with the next turn as context.
+    Inform {
+        from: String,
+        #[serde(default)]
+        from_name: String,
+        message: String,
+    },
+    /// Drop every [`Op::Deliver`] sent so far that no turn has taken yet: the messages
+    /// queued behind the running turn never run. Immediate, like `Interrupt`; a stop that
+    /// should leave the session quiet sends both (`StopSession` with `clear_queue`,
+    /// `ArchiveSession`), or the queued message starts the next turn. Messages sent after it
+    /// queue as usual.
+    ClearInbox,
+    /// Re-file session `session` under `parent` in the client's sidebar — the nesting its
+    /// rows derive from. `None` unparents (a top-level row again). Parentage is the client's
+    /// (the engine never reads it), so the move travels as a `MoveSession` tool call: the
+    /// engine emits [`Event::SessionRequest`] and the client that owns the sessions answers
+    /// with [`Op::SessionReply`]. This op exists as the protocol shape of that move (the
+    /// app-side enum mirrors it); sent by a client it's a no-op — the engine has no parentage
+    /// to change. A mis-filed session stops being stuck.
+    MoveSession {
+        session: String,
+        /// The new parent's id or name; `None` unparents.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
     },
     /// The user picked an element in a preview pane. `context` (tag, text, selector, source
     /// location) is inlined the next time `mention` (e.g. `@button.submit`) appears in a message.
@@ -350,6 +457,26 @@ pub enum Event {
         id: String,
         item: Item,
     },
+    /// A one-line gist of a finished `Bash` tool call's command, written by a small
+    /// side-model in one batched call per turn flush (see `gist`). Live only: a
+    /// replaying client regenerates nothing, and shows the raw (elided) command.
+    CommandGisted {
+        /// The tool call's item id.
+        item: String,
+        /// The command it ran, for hashing on the client (cache).
+        command: String,
+        /// The gist, one line; empty never arrives (the event is only sent when there is one).
+        gist: String,
+    },
+    /// A chapter's title, written by a small side-model when the next chapter opened (see
+    /// `chapter`). The app derives chapters and a heuristic title itself; this one, when it
+    /// arrives, wins. Durable, so a replaying client shows it too.
+    ChapterTitled {
+        /// The turn the chapter starts at.
+        turn: u64,
+        /// A few lowercase words; empty never arrives.
+        title: String,
+    },
     /// A retryable model call failed after its reply had started streaming; the client should
     /// drop these partial items (and their deltas) — the step is re-run from scratch. Durable,
     /// so a replaying client also sees the partials come and go.
@@ -371,9 +498,41 @@ pub enum Event {
         item: String,
         reason: String,
     },
+    /// How one permission check was decided, for measuring the ask rate:
+    /// which layer answered (rule, classifier, fallback, user) and how long it took.
+    PermissionDecision {
+        /// The tool call's item id.
+        item: String,
+        /// `rule` (built-in read-only or hard rule), `classifier` (the model's
+        /// verdict), `sandbox`, `session` (an earlier allow-always), `fallback`
+        /// (the classifier was down; a read-only fast path answered), or `ask`.
+        layer: String,
+        /// `allow` or `ask`.
+        outcome: String,
+        /// How the decision was reached, one line.
+        reason: String,
+        /// Milliseconds the deciding layer took.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        ms: u64,
+    },
     Compacted {
         tokens_before: u64,
         tokens_after: u64,
+        /// What the compaction kept, as a receipt (the structured summary's fields: files
+        /// with +/−, turns with their requests and outcomes, tests run and whether each
+        /// passed). Absent in older logs and in engines with no session store, so the token
+        /// counts stand alone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<KeptSummary>,
+    },
+    /// Compaction failed and the history can't be shrunk to fit the window: the session is
+    /// stuck until something changes. The rescue is [`Op::ContinueSession`] (a new session
+    /// carried forward from this one); the raw provider payload stays in the engine log, not
+    /// the transcript. Durable, so a replaying client also knows the session stalled.
+    CompactionFailed {
+        /// The provider's rejection, for the engine log.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        detail: String,
     },
     /// Old tool output was trimmed (no LLM call) to stay inside the window.
     ContextPruned {
@@ -386,6 +545,11 @@ pub enum Event {
     },
     /// The conversation moved to another folder (`UseFolder`); tools now work there.
     FolderChanged {
+        cwd: PathBuf,
+    },
+    /// A `Bash` call `cd`'d the shell somewhere else: where commands run now (a worktree,
+    /// say). Logged so a reader of a dead session's log knows where it was working.
+    ShellCwd {
         cwd: PathBuf,
     },
     ModeChanged {
@@ -417,6 +581,24 @@ pub enum Event {
     },
 
     // ---- ephemeral ----
+    /// The engine stopped where [`Op::Drain`] asked: the turn ended [`EndReason::Suspended`] and
+    /// its log is fsynced. The ack the update flow waits for. `jobs` lists the background jobs
+    /// stopped for the update; `inbox` the messages delivered but never run, so the app re-sends
+    /// them (as fresh deliveries) after the restart.
+    Drained {
+        steps_done: u32,
+        /// Background job ids stopped by the drain (their `BackgroundDone` says
+        /// `interrupted_by_update`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        jobs: Vec<String>,
+        /// The ids and one-line labels of those jobs, so the resumed notice can name them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        job_labels: Vec<(String, String)>,
+        /// Delivered messages that never ran as a turn, as `(from, from_name, message)`:
+        /// the app re-delivers them after the restart.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        inbox: Vec<(String, String, String)>,
+    },
     ItemDelta {
         id: String,
         delta: Delta,
@@ -437,6 +619,10 @@ pub enum Event {
         /// Set when a subagent asks: its id (the `Task` call, or the background task id).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subagent: Option<String>,
+        /// For shell commands: the agent's reason, the trigger, what it touches and
+        /// frog's advice. A client that can forward it may escalate to a parent session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        card: Option<ApprovalCard>,
     },
     /// The model asks the user to choose (`Ask`). Reply with [`Op::Answer`] using the same id.
     /// `item` is the tool call waiting on it.
@@ -478,6 +664,9 @@ pub enum Event {
         id: String,
         kind: String,
         label: String,
+        /// A shell job's output file, for clients to link the job's row to its log.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        log: Option<String>,
     },
     /// Live output from background work (a subagent's step, a job's output, a monitor poll).
     BackgroundProgress {
@@ -491,6 +680,33 @@ pub enum Event {
         kind: String,
         status: String,
         summary: String,
+    },
+    /// How many background pieces (tasks, jobs, monitors, timers) are running now. Sent
+    /// whenever one starts or ends, so a client knows an engine with no turn open still has
+    /// work in flight and mustn't be let go. Live only: a new engine starts with none.
+    Background {
+        running: usize,
+    },
+    /// The background wakes waiting for the next turn boundary, in the order they came in
+    /// (each as the model will get it: `<job-done …>`, `<monitor-done …>`, …). Sent whenever
+    /// one is parked and when a turn takes them (then empty), so a client can show what will
+    /// flush next. Live only.
+    QueuedEvents {
+        items: Vec<String>,
+    },
+    /// The wakes turn `turn` opened with, in order: delivered as one batch with its input
+    /// (a message, a session message), ahead of it. A turn started on wakes alone carries
+    /// them as its input instead.
+    WakesDelivered {
+        turn: u64,
+        wakes: Vec<String>,
+    },
+    /// An informational message ([`Op::Inform`]) was read: recorded, no turn started. It goes
+    /// along with the next turn as context.
+    MessageRead {
+        from: String,
+        from_name: String,
+        message: String,
     },
     /// Progress reported by a running MCP tool.
     ToolProgress {
@@ -596,17 +812,31 @@ impl Event {
                 | Self::PermissionResolved { .. }
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
+            | Self::PermissionDecision { .. }
                 | Self::Compacted { .. }
+            | Self::CompactionFailed { .. }
                 | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }
                 | Self::FolderChanged { .. }
+                | Self::ShellCwd { .. }
                 | Self::ModeChanged { .. }
                 | Self::Titled { .. }
+                | Self::ChapterTitled { .. }
                 | Self::PaneOpened { .. }
                 | Self::PaneClosed { .. }
                 | Self::PaneCheckpoint { .. }
                 | Self::BackgroundStarted { .. }
                 | Self::BackgroundDone { .. }
+                | Self::WakesDelivered { .. }
+                | Self::MessageRead { .. }
+        ) || matches!(
+            // A subagent's steps are worth keeping: without them a reopened session shows
+            // only the Task's report. Text deltas stay live-only, as in the main transcript.
+            self,
+            Self::Subagent {
+                inner,
+                ..
+            } if matches!(**inner, Event::ItemStarted { .. } | Event::ItemCompleted { .. })
         )
     }
 }
@@ -786,8 +1016,19 @@ pub enum EndReason {
     Denied,
     /// The model kept repeating an identical tool call.
     Looping,
+    /// The agent retried a call that was already denied this turn (or one denied twice this
+    /// session). frog didn't ask again: the turn ends here with the denial, so whoever wakes
+    /// the agent next sees why, and the agent routes around it instead of burning another
+    /// approval window.
+    BlockedOnApproval {
+        denial: String,
+    },
     /// The turn hit the per-turn step limit.
     StepLimit,
+    /// An app update's [`Op::Drain`] stopped the turn at a safe point (or force-stopped it at
+    /// the deadline). Never a cancel: the turn is resumable via [`Op::Continue`] and the
+    /// relaunched app picks it up automatically.
+    Suspended,
     Cancelled,
     Error {
         error: EngineError,
@@ -861,6 +1102,53 @@ pub struct TurnUsage {
     /// What the turn cost in energy, when it was measured (`--energy`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub energy: Option<TurnEnergy>,
+}
+
+/// What a compaction kept, as a receipt ([`Event::Compacted`]'s `summary`): the structured
+/// summary's fields, trimmed to what a banner's expander shows. Built from the session log
+/// without a model call (see `summary::build`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KeptSummary {
+    /// The session it summarizes (the one compacted).
+    pub id: String,
+    /// Files edited, with lines added and removed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<KeptFile>,
+    /// Turns as one line each: what was asked, and how it ended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub turns: Vec<KeptTurn>,
+    /// How the last turn ended (`complete`, `cancelled`, …), for the banner's tail.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub outcome: String,
+}
+
+/// One file the compaction kept: its path and the lines added and removed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KeptFile {
+    pub path: String,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// One turn the compaction kept: what was asked, which tools ran, the tests run and whether
+/// each passed, and how the turn ended.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KeptTurn {
+    pub request: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    /// Test commands run, and whether each passed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<KeptTest>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub outcome: String,
+}
+
+/// One test the compaction kept: the command and whether it passed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KeptTest {
+    pub command: String,
+    pub passed: bool,
 }
 
 /// A turn's energy in watt-hours: the whole Mac above its idle power just before, and for a
@@ -984,6 +1272,31 @@ pub struct Status {
     /// The model can see images.
     #[serde(default)]
     pub vision: bool,
+    /// What's running degraded right now, each with its one-line why (empty when nothing is):
+    /// the session header shows them, and SessionStatus reports them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degraded: Vec<Degraded>,
+}
+
+/// One way a session runs degraded, for the header badge and SessionStatus.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Degraded {
+    pub kind: DegradedKind,
+    /// What's degraded, short and lowercase ("text tool calls").
+    pub what: String,
+    /// Why, in one line.
+    pub why: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DegradedKind {
+    /// Tool calls written as text (native tool calls off) though the profile didn't ask for it.
+    TextTools,
+    /// Running on another model than the one the session was started or set to.
+    Model,
+    /// Auto mode's classifier is down; a fallback model or the built-in rules decide.
+    Classifier,
 }
 
 #[cfg(test)]
@@ -1085,6 +1398,43 @@ mod tests {
         assert!(!asked.is_durable());
     }
 
+    /// A subagent's steps survive a reopen: started/completed items inside a `subagent`
+    /// wrapper are durable (the log keeps them), while its deltas stay live-only.
+    #[test]
+    fn subagent_steps_are_durable_and_deltas_are_not() {
+        let started = Event::Subagent {
+            item: "t1".into(),
+            inner: Box::new(Event::ItemStarted {
+                id: "s1".into(),
+                kind: ItemKind::ToolCall {
+                    name: "Read".into(),
+                    arg: "main.rs".into(),
+                },
+            }),
+        };
+        assert!(started.is_durable());
+        let completed = Event::Subagent {
+            item: "t1".into(),
+            inner: Box::new(Event::ItemCompleted {
+                id: "s1".into(),
+                item: Item::Message { text: "done".into() },
+            }),
+        };
+        assert!(completed.is_durable());
+        let delta = Event::Subagent {
+            item: "t1".into(),
+            inner: Box::new(Event::ItemDelta {
+                id: "s1".into(),
+                delta: Delta::Text { text: "hi".into() },
+            }),
+        };
+        assert!(!delta.is_durable());
+        // Round-trip: the serde shape is unchanged.
+        let json = serde_json::to_string(&started).unwrap();
+        let back: Event = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, Event::Subagent { .. }));
+    }
+
     #[test]
     fn client_caps_default_off() {
         let old: Op = serde_json::from_str(r#"{"op":"set_client_caps","panes":true}"#).unwrap();
@@ -1131,6 +1481,24 @@ mod tests {
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["event"], "session_request");
         assert!(!e.is_durable());
+        // The move's op shape: session + parent, parent omitted when unparenting.
+        let m: Op = serde_json::from_str(
+            r#"{"op":"move_session","session":"eng-0002","parent":"chief-0001"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            m,
+            Op::MoveSession {
+                ref session,
+                ref parent
+            } if session == "eng-0002" && parent.as_deref() == Some("chief-0001")
+        ));
+        let unparented: Op =
+            serde_json::from_str(r#"{"op":"move_session","session":"eng-0002"}"#).unwrap();
+        assert!(matches!(
+            unparented,
+            Op::MoveSession { ref session, parent: None } if session == "eng-0002"
+        ));
     }
 
     #[test]

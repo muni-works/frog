@@ -63,10 +63,16 @@ pub fn build(header: &Header, events: &[Envelope], title: Option<&str>) -> Summa
     let mut updated = header.created;
     let mut outcome = String::new();
     let mut titled: Option<String> = None;
+    // The first message as typed, before `first_line` clips it: the title fallback may need
+    // the lines after the leading rules boilerplate.
+    let mut first_input = String::new();
     for env in events {
         match &env.event {
             Event::TurnStarted { input, .. } => {
                 updated = updated.max(env.created);
+                if first_input.is_empty() {
+                    first_input = input.clone();
+                }
                 turns.push(Turn {
                     request: first_line(input),
                     ..Default::default()
@@ -124,7 +130,7 @@ pub fn build(header: &Header, events: &[Envelope], title: Option<&str>) -> Summa
     let title = title
         .map(String::from)
         .or(titled)
-        .or_else(|| turns.first().map(|t| clip(&t.request, 80)))
+        .or_else(|| (!first_input.is_empty()).then(|| crate::title::derive(&first_input)))
         .unwrap_or_default();
     Summary {
         id: header.id.clone(),
@@ -153,8 +159,10 @@ fn reason_label(r: &EndReason) -> &'static str {
         EndReason::Complete => "complete",
         EndReason::MaxTokens => "cut off at max tokens",
         EndReason::Denied => "stopped: tool call denied",
+        EndReason::BlockedOnApproval { .. } => "stopped: blocked on an approval already denied",
         EndReason::Looping => "stopped: looping",
         EndReason::StepLimit => "stopped: step limit",
+        EndReason::Suspended => "suspended for app update",
         EndReason::Cancelled => "cancelled",
         EndReason::Error { .. } => "error",
     }
@@ -534,6 +542,24 @@ mod tests {
             },
         ));
         evs
+    }
+
+    #[test]
+    fn summary_title_falls_back_to_a_stripped_first_input() {
+        let mut evs = fixture();
+        evs[0] = env(
+            1,
+            2_000,
+            Event::TurnStarted {
+                turn: 1,
+                input: "RULES: stay in the worktree.\n\nContinue this branch: fix the login bug"
+                    .into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            },
+        );
+        let s = build(&header(), &evs, None);
+        assert_eq!(s.title, "fix the login bug");
     }
 
     #[test]

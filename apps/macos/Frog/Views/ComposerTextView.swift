@@ -48,6 +48,12 @@ final class ComposerController {
         tv.window?.makeFirstResponder(tv)
     }
 
+    /// Put the cursor (a zero-length range) somewhere, e.g. where a restored draft left it.
+    func select(_ range: NSRange) {
+        guard let tv = textView else { return }
+        tv.setSelectedRange(range)
+    }
+
     // MARK: Dictation
 
     /// Where dictated text sits in the field, and what was last put there.

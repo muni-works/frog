@@ -165,6 +165,10 @@ fn default_subagent_steps() -> u32 {
     100
 }
 
+fn default_approval_timeout() -> u64 {
+    600
+}
+
 fn default_background_tasks() -> usize {
     4
 }
@@ -240,19 +244,33 @@ pub struct Config {
     /// Empty by default: nothing widens unless configured.
     #[serde(default)]
     pub sandbox: SandboxConfig,
-    /// Start read-only tool calls (Read, Grep, Glob) as soon as their arguments arrive, while
-    /// the model is still writing the rest of its reply. Results, history and events are the
-    /// same as without it; only the waiting overlaps.
+    /// Start read-only tool calls (Read, Grep, Glob, public web reads, read-only shell
+    /// commands) as soon as their arguments arrive, while the model is still writing the rest
+    /// of its reply, and run a reply's leading reads side by side. Results, history and events
+    /// are the same as without it; only the waiting overlaps.
     #[serde(default = "default_true")]
     pub early_tools: bool,
-    /// The model auto mode's classifier uses (a profile or provider/model). Default: Apple's
-    /// on-device model when available, else the session's model.
+    /// The model auto mode's classifier uses (a profile or provider/model). Default:
+    /// `cloud/qwen3-8b`, then Apple's on-device model; with neither usable, it asks.
     #[serde(default)]
     pub auto_classifier: Option<String>,
+    /// A second classifier model, tried when `auto_classifier` can't answer (unreachable,
+    /// timed out, an HTTP error). With neither answering, frog's built-in rules decide alone.
+    #[serde(default)]
+    pub auto_classifier_fallback: Option<String>,
+    /// Seconds a permission prompt waits for an answer before frog takes the safe path
+    /// (denies the call, tells the agent, and carries on). 0 waits forever.
+    #[serde(default = "default_approval_timeout")]
+    pub approval_timeout_secs: u64,
     /// The model that writes the pond's brief (a profile or provider/model). Default: Apple's
     /// on-device model when available, else the default model if it runs on your devices.
     #[serde(default)]
     pub brief_model: Option<String>,
+    /// The model that writes shell-command gists for tool rows (a profile or
+    /// provider/model). Default: `cloud/qwen3-8b`, then Apple's on-device model. With
+    /// neither usable, rows show the elided command.
+    #[serde(default)]
+    pub gist_model: Option<String>,
     /// The model `Task` subagents use (a profile or provider/model) unless a call names one.
     /// Default: the session's model. One that can't be resolved or isn't allowed here falls
     /// back to the session's model.
@@ -283,6 +301,29 @@ pub struct Config {
     /// bus WebSocket; `channel` is the team channel this Mac's sessions post to.
     #[serde(default)]
     pub irc: IrcConfig,
+    /// `[mcp_trust]`: MCP servers granted a tier beyond plain reads (`planetscale = "write"`).
+    /// A write grant lets that server's write tools (see `auto::mcp_write`) run without a card,
+    /// each one logged and shown as a notice. Empty by default: no server is ever trusted
+    /// unless configured; read-only tools never card anyway.
+    #[serde(default)]
+    pub mcp_trust: BTreeMap<String, McpTrust>,
+}
+
+/// How far a `[mcp_trust]` grant goes for one MCP server.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTrust {
+    /// Reads only: the same as no grant (read-only tools never card).
+    Read,
+    /// Its write tools run without a card, each logged.
+    Write,
+}
+
+impl Config {
+    /// Whether `server` has a write grant in `[mcp_trust]`.
+    pub fn mcp_write_trusted(&self, server: &str) -> bool {
+        self.mcp_trust.get(server) == Some(&McpTrust::Write)
+    }
 }
 
 /// `[irc]`: the agent bus. Off by default — flipping it on is the deploy switch.
@@ -325,7 +366,10 @@ fn irc_url() -> String {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct SandboxConfig {
     /// Paths (`~/` allowed) a sandboxed command may read even though they're credentials,
-    /// e.g. `~/.config/gh`.
+    /// e.g. `~/.config/gh`. Agent sessions that need `ssh` to user hosts set
+    /// `allow_read = ["~/.ssh/known_hosts"]` (read-only; keys stay unreadable; the no-sudo and
+    /// no-writes-outside-scratch rules still bind). `~` is expanded when the sandbox is built,
+    /// not when the config is parsed.
     #[serde(default)]
     pub allow_read: Vec<String>,
     /// Paths (`~/` allowed) a sandboxed command may write in addition to the project, temp
@@ -543,6 +587,37 @@ mod tests {
         assert_eq!(cfg.irc.channel.as_deref(), Some("#frog"));
         assert_eq!(cfg.irc.account.as_deref(), Some("cam-mac"));
         assert_eq!(cfg.irc.url, "wss://example.invalid/bus");
+    }
+
+    #[test]
+    fn sandbox_allow_read_parses_with_tildes_intact() {
+        // `~` is expanded when the sandbox is built (bash.rs `expand_home`), not here.
+        let cfg: Config = toml::from_str(
+            r#"
+            [sandbox]
+            allow_read = ["~/.ssh/known_hosts"]
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.sandbox.allow_read, ["~/.ssh/known_hosts"]);
+    }
+
+    #[test]
+    fn mcp_trust_is_empty_by_default_and_grants_only_what_it_names() {
+        assert!(Config::default().mcp_trust.is_empty());
+        assert!(!Config::default().mcp_write_trusted("planetscale"));
+        let cfg: Config = toml::from_str(
+            r#"
+            [mcp_trust]
+            planetscale = "write"
+            runpod = "read"
+        "#,
+        )
+        .unwrap();
+        assert!(cfg.mcp_write_trusted("planetscale"));
+        assert!(!cfg.mcp_write_trusted("runpod"));
+        assert!(!cfg.mcp_write_trusted("vcad"));
+        assert!(toml::from_str::<Config>("[mcp_trust]\nx = \"admin\"").is_err());
     }
 
     #[test]

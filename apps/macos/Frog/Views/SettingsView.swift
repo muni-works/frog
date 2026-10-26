@@ -31,6 +31,8 @@ private struct GeneralSettings: View {
     @State private var pond = Pond.shared
     @AppStorage(CalendarSense.key) private var calendarSense = false
     @AppStorage(MorningNotice.key) private var morningNotice = true
+    @AppStorage(UpdateDrain.key) private var gracefulUpdates = false
+    @AppStorage(UpdateDrain.budgetKey) private var drainBudget = 20.0
 
     private func setCalendar(_ on: Bool) async {
         guard on else {
@@ -56,6 +58,17 @@ private struct GeneralSettings: View {
                 }
             }
             Toggle("Notify me when a turn finishes while I'm in another app", isOn: $notifyWhenDone)
+            Section {
+                Toggle("Pause agents for app updates and resume them", isOn: $gracefulUpdates)
+                if gracefulUpdates {
+                    Stepper(value: $drainBudget, in: 5...120, step: 5) {
+                        Text("Wait up to \(Int(drainBudget))s for agents to stop")
+                    }
+                }
+            } footer: {
+                Text("Off, an update stops working agents where they are and they resume as after a crash. On, an update asks each agent to stop at its next safe point first, waits up to the budget, then installs — agents resume their turns on the model they were running, right where they stopped. Long-running jobs they had are stopped and listed; the agent decides what to re-run.")
+                    .foregroundStyle(.secondary)
+            }
             Section {
                 Toggle("Keep the brief fresh while Frog is closed", isOn: Binding(
                     get: { pond.background ?? false },
@@ -665,7 +678,9 @@ struct SuggestedModelRow: View {
 // MARK: - Permissions
 
 private struct PermissionSettings: View {
-    @AppStorage("defaultMode") private var defaultMode = Mode.default.rawValue
+    /// New threads start here; Auto by default (a local classifier plus a read-only
+    /// fast path approves plain work; risky steps still ask).
+    @AppStorage("defaultMode") private var defaultMode = Mode.auto.rawValue
     @AppStorage("computerUse") private var computerUse = false
     @AppStorage("sandboxShell") private var sandboxShell = true
 

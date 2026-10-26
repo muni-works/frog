@@ -312,6 +312,8 @@ struct Server {
     instructions: Option<String>,
     tools: RwLock<Vec<Tool>>,
     dirty: Arc<AtomicBool>,
+    /// Its config, kept so a dead sign-in can reconnect mid-session.
+    cfg: ServerConfig,
 }
 
 /// A tool the model may call.
@@ -411,6 +413,7 @@ impl Hub {
                             instructions,
                             tools: RwLock::new(tools),
                             dirty,
+                            cfg,
                         },
                     );
                 }
@@ -482,6 +485,7 @@ impl Hub {
                         instructions,
                         tools: RwLock::new(tools),
                         dirty,
+                        cfg: cfg.clone(),
                     },
                 );
             }
@@ -891,6 +895,13 @@ impl Hub {
     }
 
     async fn raw_call(&self, server: &str, name: &str, input: &Value) -> Result<Value> {
+        let params_for = |name: &str| {
+            let mut params = CallToolRequestParams::new(name.to_string());
+            if let Value::Object(m) = input {
+                params = params.with_arguments(m.clone());
+            }
+            params
+        };
         let client = self
             .inner
             .servers
@@ -899,22 +910,107 @@ impl Hub {
             .get(server)
             .map(|s| s.client.clone())
             .context("MCP server not connected")?;
-        let mut params = CallToolRequestParams::new(name.to_string());
-        match input {
-            Value::Object(m) => params = params.with_arguments(m.clone()),
-            Value::Null => {}
-            other => bail!("MCP tool arguments must be an object, got {other}"),
-        }
-        let result = tokio::time::timeout(CALL_TIMEOUT, client.call_tool(params))
+        let attempt = match tokio::time::timeout(CALL_TIMEOUT, client.call_tool(params_for(name)))
             .await
-            .map_err(|_| {
-                anyhow!(
-                    "`{name}` on `{server}` didn't finish within {}s",
-                    CALL_TIMEOUT.as_secs()
-                )
-            })?
-            .map_err(|e| anyhow!("{server}: {e}"))?;
+        {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(e)) => Err(anyhow!("{server}: {e}")),
+            Err(_) => Err(anyhow!(
+                "`{name}` on `{server}` didn't finish within {}s",
+                CALL_TIMEOUT.as_secs()
+            )),
+        };
+        let result = match attempt {
+            Ok(result) => result,
+            Err(e) if reauthorization_needed(&e) => {
+                // The token died mid-session: refresh once and retry on a fresh
+                // connection. A refresh that fails surfaces by name, not raw transport.
+                self.reconnect(server).await?;
+                let client = self
+                    .inner
+                    .servers
+                    .read()
+                    .unwrap()
+                    .get(server)
+                    .map(|s| s.client.clone())
+                    .context("MCP server not connected")?;
+                match tokio::time::timeout(CALL_TIMEOUT, client.call_tool(params_for(name))).await {
+                    Ok(Ok(result)) => result,
+                    _ => bail!("`{server}`'s sign-in lapsed; reconnect to re-authorize"),
+                }
+            }
+            Err(e) => return Err(e),
+        };
         Ok(serde_json::to_value(result)?)
+    }
+
+    /// Reconnect one server whose token died mid-session: refresh once (the browser
+    /// appears only if the server demands a fresh interactive sign-in), then swap the
+    /// connection in. Stdio servers just reconnect.
+    async fn reconnect(&self, server: &str) -> Result<()> {
+        let (host, cfg) = {
+            let servers = self.inner.servers.read().unwrap();
+            let Some(s) = servers.get(server) else {
+                bail!("`{server}` isn't connected, so it can't reconnect");
+            };
+            (self.inner.host.clone(), s.cfg.clone())
+        };
+        // A mid-session reconnect refreshes the grant (the token may be revoked rather
+        // than expired); it never pops a browser. If the refresh can't produce a token,
+        // name the server and stop.
+        if let Some(url) = &cfg.url {
+            let refreshed = match crate::mcp_oauth::stored(server) {
+                Some(_) => {
+                    crate::mcp_oauth::refresh(&plain_http(), server, url).await
+                }
+                None => Ok(None),
+            };
+            match refreshed {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    bail!("`{server}`'s sign-in expired; reconnect to re-authorize");
+                }
+                Err(e) => {
+                    bail!("`{server}` couldn't refresh its sign-in ({e:#}); reconnect to re-authorize");
+                }
+            }
+        }
+        let dirty = Arc::new(AtomicBool::new(false));
+        let handler = Client {
+            server: server.to_string(),
+            host,
+            dirty: dirty.clone(),
+        };
+        let result = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            connect_one(&cfg, &self.inner.host.root, handler),
+        )
+        .await
+        .map_err(|_| anyhow!("`{server}` didn't respond within {}s", CONNECT_TIMEOUT.as_secs()))
+        .and_then(|r| r);
+        match result {
+            Ok((client, tools)) => {
+                let instructions = client
+                    .peer_info()
+                    .and_then(|i| i.instructions.clone())
+                    .filter(|s| !s.trim().is_empty());
+                self.inner.servers.write().unwrap().insert(
+                    server.to_string(),
+                    Server {
+                        client,
+                        trust: cfg.trust,
+                        instructions,
+                        tools: RwLock::new(tools),
+                        dirty,
+                        cfg,
+                    },
+                );
+                Ok(())
+            }
+            Err(e) => Err(anyhow!(
+                "`{server}`'s sign-in lapsed and reconnecting failed: {e:#}; reconnect to re-authorize"
+            )),
+        }
     }
 
     /// Fetch (once per content) the app's HTML and save the result beside it.
@@ -1038,28 +1134,143 @@ async fn connect_one(
                 reqwest::header::HeaderValue::from_str(&expand_env(v))?,
             );
         }
-        let http = reqwest::Client::builder().default_headers(map).build()?;
-        handler
-            .serve(StreamableHttpClientTransport::with_client(
-                http,
-                rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(url.clone()),
-            ))
-            .await?
-    } else {
-        let command = cfg.command.as_deref().context("no command or url")?;
-        let mut cmd = tokio::process::Command::new(command);
-        cmd.args(&cfg.args).current_dir(cwd).kill_on_drop(true);
-        for (k, v) in &cfg.env {
-            cmd.env(k, expand_env(v));
+        let http = reqwest::Client::builder().default_headers(map.clone()).build()?;
+        // A plain client (no configured headers) does the OAuth HTTP — discovery,
+        // registration, tokens — so the MCP server's headers never reach the
+        // authorization server. Tokens from an earlier sign-in ride along on the first
+        // connect; expired ones refresh first, quietly.
+        let plain = plain_http();
+        let tokens = match crate::mcp_oauth::bearer(&handler.server) {
+            Some(tokens) => Some(tokens),
+            None if crate::mcp_oauth::stored(&handler.server).is_some() => {
+                match crate::mcp_oauth::refresh(&plain, &handler.server, url).await {
+                    Ok(_) => crate::mcp_oauth::bearer(&handler.server),
+                    // Transient (network, metadata): connect unauthenticated; the 401
+                    // path decides between a browser and a clear failure.
+                    Err(_) => None,
+                }
+            }
+            None => None,
+        };
+        let first = StreamableHttpClientTransport::with_client(
+            http.clone(),
+            config_with_auth(&map, url, tokens),
+        );
+        match handler.clone().serve(first).await {
+            Ok(client) => client,
+            Err(e) if authorization_required(&e) => {
+                // Sign in with the browser and reconnect. The session didn't wait: this
+                // whole function runs behind a spawned connect.
+                let challenge = e.auth_challenge().map(str::to_string);
+                crate::mcp_oauth::authorize(
+                    &plain,
+                    &handler.server,
+                    url,
+                    challenge.as_deref(),
+                    crate::mcp_oauth::system_browser(),
+                    crate::mcp_oauth::AUTH_TIMEOUT,
+                )
+                .await
+                .map_err(|e| anyhow!("`{}` needs a sign-in and it failed: {e:#}", handler.server))?;
+                let Some(tokens) = crate::mcp_oauth::bearer(&handler.server) else {
+                    bail!("`{}` signed in but the tokens didn't stick", handler.server);
+                };
+                handler
+                    .serve(StreamableHttpClientTransport::with_client(
+                        http,
+                        config_with_auth(&map, url, Some(tokens)),
+                    ))
+                    .await?
+            }
+            Err(e) => return Err(e.into()),
         }
-        let (transport, _stderr) = TokioChildProcess::builder(cmd)
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .with_context(|| format!("starting `{command}`"))?;
-        handler.serve(transport).await?
+    } else {
+        return connect_stdio(cfg, cwd, handler).await;
     };
     let tools = client.list_all_tools().await?;
     Ok((client, tools))
+}
+
+async fn connect_stdio(
+    cfg: &ServerConfig,
+    cwd: &Path,
+    handler: Client,
+) -> Result<(RunningService<RoleClient, Client>, Vec<Tool>)> {
+    let command = cfg.command.as_deref().context("no command or url")?;
+    let mut cmd = tokio::process::Command::new(command);
+    cmd.args(&cfg.args).current_dir(cwd).kill_on_drop(true);
+    for (k, v) in &cfg.env {
+        cmd.env(k, expand_env(v));
+    }
+    let (transport, _stderr) = TokioChildProcess::builder(cmd)
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("starting `{command}`"))?;
+    let client = handler.serve(transport).await?;
+    let tools = client.list_all_tools().await?;
+    Ok((client, tools))
+}
+
+/// A reqwest client with no default headers, for OAuth's own HTTP (discovery,
+/// registration, token); authorization-server endpoints must not receive the MCP
+/// server's configured headers.
+fn plain_http() -> Arc<reqwest::Client> {
+    static HTTP: LazyLock<Arc<reqwest::Client>> = LazyLock::new(|| {
+        Arc::new(reqwest::Client::builder().build().expect("reqwest client"))
+    });
+    HTTP.clone()
+}
+
+/// Whether an initialize error is the 401/403 OAuth answers: either the transport said
+/// `Auth required` (a challenge came with it), or it said "authorization required" (the
+/// auth layer had no usable token). False for every other failure.
+fn authorization_required(e: &rmcp::service::ClientInitializeError) -> bool {
+    e.auth_challenge().is_some() || e.is_authorization_required()
+}
+
+/// Whether a mid-session tool error means the server refused our authorization: the
+/// transport reports `Auth required` (401, with or without a challenge) or an
+/// insufficient-scope 403. Rendered text is what crosses the module boundary; the same
+/// words `unavailable_reason` already keys on.
+fn reauthorization_needed(e: &anyhow::Error) -> bool {
+    let text = format!("{e:#}").to_ascii_lowercase();
+    text.contains("auth required")
+        || text.contains("authorization required")
+        || text.contains("insufficient scope")
+        || text.contains("www-authenticate")
+}
+
+/// Transport custom headers: the config's headers, plus `Authorization: Bearer …` when a
+/// token exists. The bearer travels as a custom header rather than the transport's own
+/// `auth_header` slot, so one builder shapes every attempt.
+fn transport_headers(
+    map: &reqwest::header::HeaderMap,
+    bearer: Option<&str>,
+) -> std::collections::HashMap<reqwest::header::HeaderName, reqwest::header::HeaderValue> {
+    let mut out: std::collections::HashMap<_, _> =
+        map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    if let Some(bearer) = bearer
+        && let Ok(value) = reqwest::header::HeaderValue::from_str(bearer)
+    {
+        out.insert(
+            reqwest::header::AUTHORIZATION,
+            value,
+        );
+    }
+    out
+}
+
+/// The transport config for a connect attempt: the config's headers and, when tokens
+/// exist, their Bearer.
+fn config_with_auth(
+    map: &reqwest::header::HeaderMap,
+    url: &str,
+    bearer: Option<String>,
+) -> rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig {
+    rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(
+        url.to_string(),
+    )
+    .custom_headers(transport_headers(map, bearer.as_deref()))
 }
 
 /// `${VAR}` in config values reads from the environment, so secrets stay out of files.
@@ -1070,6 +1281,19 @@ fn expand_env(v: &str) -> String {
         std::env::var(&c[1]).unwrap_or_default()
     })
     .into_owned()
+}
+
+/// The Keychain, for MCP OAuth tokens; the same `security` CLI pattern as providers.
+pub(crate) fn keychain_get(id: &str) -> Option<String> {
+    crate::providers::keychain_mcp_get(id)
+}
+
+pub(crate) fn keychain_set(id: &str, value: &str) -> Result<()> {
+    crate::providers::keychain_mcp_set(id, value)
+}
+
+pub(crate) fn keychain_delete(id: &str) {
+    crate::providers::keychain_mcp_delete(id)
 }
 
 /// `mcp__<server>__<tool>`, limited to the characters provider APIs accept (`[a-zA-Z0-9_-]`,

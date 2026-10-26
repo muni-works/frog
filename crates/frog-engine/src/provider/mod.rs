@@ -130,6 +130,38 @@ impl std::fmt::Display for StreamError {
 
 impl std::error::Error for StreamError {}
 
+impl HttpError {
+    /// A "your request exceeds the model's context window" rejection: OpenAI-style and
+    /// Anthropic wording, and the variants Vercel's AI Gateway fans a gateway 400 out to.
+    /// `true` for the same class of error reported by any of its providers.
+    pub fn context_overflow(&self) -> bool {
+        if !matches!(self.status, 400 | 413) {
+            return false;
+        }
+        let b = self.body.to_lowercase();
+        [
+            "maximum context length",
+            "context window",
+            "context length",
+            "input too long",
+            "prompt is too long",
+            "prompt too long",
+            "exceeds the maximum allowed input length",
+            "exceeds max length",
+            "longer than the model's context",
+            "longer than the context length",
+            "reduce the length of the input",
+            "reduce the length of the messages",
+            "reduce the input",
+            "too large for this model",
+            "input_length_exceeded",
+            "request too large",
+        ]
+        .iter()
+        .any(|m| b.contains(m))
+    }
+}
+
 pub enum Provider {
     OpenAi(openai::Client),
     Anthropic(anthropic::Client),

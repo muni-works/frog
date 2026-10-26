@@ -58,6 +58,8 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 /// Read-only commands that never need approval (when not chained or redirected).
+/// Compounds and pipelines are covered by `shell::read_only`, which parses them;
+/// this list handles bare commands and the user's `allow_bash` prefixes.
 const SAFE_BASH: &[&str] = &[
     "ls",
     "pwd",
@@ -186,6 +188,30 @@ const MAX_CONTINUES: u32 = 3;
 /// Output budget requested from hosted APIs that don't set their own: well within what current
 /// frontier and open models accept, and far above the defaults that cut thinking short.
 const CLOUD_MAX_OUTPUT: u32 = 16_384;
+/// The smallest useful tool-result cap: windows below this keep results whole.
+const MIN_RESULT_CAP: usize = 40_000;
+
+/// Denials of one identical carded call (same tool and arguments) after which it never asks
+/// again this session.
+const DENIED_LIMIT: u32 = 2;
+
+/// How long a classifier that couldn't answer is skipped before frog tries it again: a
+/// stopped server costs one timeout per minute, not one per call.
+const CLASSIFIER_RETRY: Duration = Duration::from_secs(60);
+
+/// Why auto mode asks when no classifier could answer and no rule covers the call. The card
+/// names the rule gap, not the outage: a down classifier never cards a call by itself.
+const CLASSIFIER_DOWN_ASK: &str =
+    "no built-in rule covers it (the classifier is down, so rules decide alone)";
+
+/// One tool call's identity for the repeat-denial checks: its tool and its exact arguments.
+fn call_hash(name: &str, input: &Value) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    name.hash(&mut h);
+    input.to_string().hash(&mut h);
+    h.finish()
+}
 
 /// How a batch of tool calls ended.
 #[derive(PartialEq)]
@@ -193,6 +219,12 @@ enum Batch {
     Continue,
     Denied,
     Looping,
+    /// The agent retried a call already denied this turn: frog didn't ask again, and the
+    /// turn ends with the denial (`EndReason::BlockedOnApproval`).
+    Blocked(String),
+    /// A drain (app update) stopped the batch: the calls that hadn't run are recorded
+    /// interrupted-by-update, and the turn ends suspended.
+    Suspended,
 }
 
 const COMPACT_PROMPT: &str = "Your context window is nearly full. Write a detailed summary of this conversation \
@@ -243,6 +275,9 @@ pub struct Handle {
 struct Shared {
     cancel: Mutex<CancellationToken>,
     pending: Mutex<HashMap<String, oneshot::Sender<Decision>>>,
+    /// A note the user sent with a permission answer, by request id, until the
+    /// agent picks it up.
+    notes: Mutex<HashMap<String, String>>,
     /// Open `Ask` questions, answered by `Op::Answer`.
     questions: Mutex<HashMap<String, oneshot::Sender<crate::protocol::Answer>>>,
     /// A client shows questions to someone who can answer (`SetClientCaps { ask }`).
@@ -268,6 +303,28 @@ struct Shared {
     /// inbox, the SendMessage contract all the way down. A slot, not a value, because the
     /// client can turn the bus on after the engine started.
     irc: crate::irc::Slot,
+    /// A drain in progress: `Some(...)` from [`Op::Drain`] until the running turn suspends
+    /// (or the work loop acks, when nothing is running). The deadline is unix ms; past it
+    /// the loop force-stops. The jobs it stopped ride along for the ack and the resumed
+    /// notice; `acked` keeps a second drain (and the work loop's deadline) from re-acking.
+    draining: Mutex<Option<DrainState>>,
+    /// `Op::Deliver`s the router has passed to the work loop, and how many of the first of
+    /// them `Op::ClearInbox` voided: the work loop drops a voided one instead of running it.
+    /// Counting works because the router forwards them in the order the loop takes them.
+    inbox_sent: AtomicU64,
+    inbox_void: AtomicU64,
+    /// The user stopped a running turn: background wakes already waiting don't start a turn
+    /// of their own (a stop stays stopped); they go along with the next turn instead, which
+    /// clears this.
+    wake_hold: AtomicBool,
+}
+
+/// What a running [`Op::Drain`] needs, kept in `Shared::draining`.
+struct DrainState {
+    deadline: i64,
+    jobs: Vec<String>,
+    job_labels: Vec<(String, String)>,
+    acked: bool,
 }
 
 /// Event numbering and the session log. Shared, so events raised outside the agent loop (MCP
@@ -440,6 +497,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     let shared = Arc::new(Shared {
         cancel: Default::default(),
         pending: Default::default(),
+        notes: Default::default(),
         questions: Default::default(),
         client_ask: Default::default(),
         sessions: Default::default(),
@@ -451,12 +509,29 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             let j = journal.clone();
             crate::background::Registry::new(move |e| j.emit(e))
         },
+        draining: Default::default(),
+        inbox_sent: Default::default(),
+        inbox_void: Default::default(),
+        wake_hold: Default::default(),
         journal,
         panes,
         irc: crate::irc::slot(),
     });
     shared.bg.set_wake(&work_tx);
+    // One engine per linked worktree (see `worktree`): taken before the session opens, so a
+    // refused engine leaves nothing behind. Subagents share their parent's engine's tree.
+    let worktree_lock = if opts.subagent || opts.store.is_none() {
+        None
+    } else {
+        let me = opts.resume.clone().unwrap_or_default();
+        crate::worktree::acquire(&opts.cwd, &me, Duration::from_secs(5))
+            .map_err(|e| ConfigError(format!("{e:#}")))?
+    };
     let mut agent = Agent::new(opts, provider, shared.clone())?;
+    if let Some(mut lock) = worktree_lock {
+        lock.set_owner(&agent.session_id);
+        agent.worktree_lock = Some(lock);
+    }
     // What's running, before anything slow (MCP servers, a local model loading, probing the
     // provider), so a client can name the model as soon as a conversation opens.
     agent.emit_status();
@@ -497,8 +572,64 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     journal.emit(Event::Synced { upto });
                 }
                 Op::Interrupt => {
+                    if router.working.load(Ordering::Relaxed) {
+                        router.wake_hold.store(true, Ordering::SeqCst);
+                    }
                     router.cancel.lock().unwrap().cancel();
                     router.bg.stop_all();
+                }
+                Op::ClearInbox => {
+                    let sent = router.inbox_sent.load(Ordering::SeqCst);
+                    router.inbox_void.store(sent, Ordering::SeqCst);
+                }
+                op @ Op::Deliver { .. } => {
+                    router.inbox_sent.fetch_add(1, Ordering::SeqCst);
+                    if work_tx.send(op).is_err() {
+                        break;
+                    }
+                }
+                // An update is coming: set the flag the work loop checks between calls and
+                // after the one in flight. Nothing running: ack now, a no-op.
+                Op::Drain { deadline } => {
+                    let working = router.working.load(Ordering::Relaxed);
+                    {
+                        let mut d = router.draining.lock().unwrap();
+                        // A second Drain (a retry) moves the deadline later but never back.
+                        let state = d.get_or_insert(DrainState {
+                            deadline: i64::MIN,
+                            jobs: Vec::new(),
+                            job_labels: Vec::new(),
+                            acked: false,
+                        });
+                        state.deadline = state.deadline.max(deadline);
+                    }
+                    // Background jobs are stopped now (each records `BackgroundDone` with
+                    // `interrupted_by_update`); they're listed in the ack so the resumed
+                    // notice can name them.
+                    let jobs = router.bg.stop_for_update();
+                    if working {
+                        let mut d = router.draining.lock().unwrap();
+                        if let Some(s) = d.as_mut() {
+                            s.jobs = jobs.0;
+                            s.job_labels = jobs.1;
+                        }
+                    } else {
+                        let mut d = router.draining.lock().unwrap();
+                        if let Some(s) = d.as_mut() {
+                            s.acked = true;
+                        }
+                        router.journal.emit(Event::Drained {
+                            steps_done: 0,
+                            jobs: jobs.0,
+                            job_labels: jobs.1,
+                            inbox: Vec::new(),
+                        });
+                    }
+                }
+                // The update was called off. A turn already suspended stays that way (the
+                // next message continues it); a still-running one just keeps going.
+                Op::DrainAbort => {
+                    *router.draining.lock().unwrap() = None;
                 }
                 // Mid-turn the server is busy with the turn itself, which leaves it warm.
                 Op::Warm { .. } if router.working.load(Ordering::Relaxed) => {}
@@ -512,11 +643,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                         break;
                     }
                 }
-                Op::Permission { id, decision } => {
+                Op::Permission { id, decision, note } => {
                     if let Some(tx) = router.pending.lock().unwrap().remove(&id) {
+                        if let Some(n) = note.filter(|n| !n.trim().is_empty()) {
+                            router.notes.lock().unwrap().insert(id.clone(), n);
+                        }
                         let _ = tx.send(decision);
                     } else {
-                        router.bg.answer(&id, decision);
+                        router.bg.answer(&id, decision, note);
                     }
                 }
                 Op::Answer { id, answer } => {
@@ -526,6 +660,22 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 }
                 Op::SessionReply { id, result, error } => {
                     router.sessions.resolve(&id, result, error)
+                }
+                // The client asks the engine to carry this stuck session forward (the
+                // `Event::CompactionFailed` rescue): answer honestly when it can't be done,
+                // and never let the op wake the model or disturb the log's story — the
+                // stuck session stays exactly as it was.
+                Op::ContinueSession { .. } => {
+                    let enabled = router.sessions.enabled();
+                    let msg = if enabled {
+                        "asked the client to start a carried-forward session"
+                    } else {
+                        "this client can't start carried-forward sessions"
+                    };
+                    router
+                        .journal
+                        .emit(Event::Notice { level: Level::Info, message: msg.to_string() });
+                    router.journal.emit(Event::Idle);
                 }
                 Op::Elicit {
                     id,
@@ -582,6 +732,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             agent.loaded_tools.clear();
         }
         agent.resolve_window().await;
+        agent.note_text_mode_from_probe();
         agent.emit_status();
         {
             let mut ready = shared.ready.lock().unwrap();
@@ -593,6 +744,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         agent.meter_busy(false);
         // An op taken off the queue while gathering delivered messages, handled next.
         let mut held: Option<Op> = None;
+        // `Op::Deliver`s taken off the queue so far, to tell the ones `ClearInbox` voided.
+        let mut inbox_taken: u64 = 0;
+        let voided = |taken: &mut u64| {
+            *taken += 1;
+            *taken <= shared.inbox_void.load(Ordering::SeqCst)
+        };
         loop {
             let op = if let Some(op) = held.take() { Some(op) } else { tokio::select! {
                 op = work_rx.recv() => op,
@@ -611,29 +768,53 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             if let Op::Shutdown = op {
                 break;
             }
-            // A wake whose notices an earlier turn already took.
-            if matches!(op, Op::Wake) && !shared.bg.has_notices() {
+            // A wake whose notices an earlier turn already took, or one the user's stop holds
+            // for the next turn.
+            if matches!(op, Op::Wake)
+                && (!shared.bg.has_notices() || shared.wake_hold.load(Ordering::SeqCst))
+            {
                 continue;
             }
             // Messages from other sessions never interrupt a turn: they queue behind it like
             // any op. Those already waiting when one comes up run with it, in order, as one
             // turn (the first as its input, the rest as `more`, as composer sends follow-ups).
             let mut delivered = Vec::new();
+            let mut dropped = 0;
+            // A wake takes the session messages queued behind it too: what waits at a turn
+            // boundary goes as one batch.
+            let woke = matches!(op, Op::Wake);
             let op = match op {
-                Op::Deliver {
-                    from,
-                    from_name,
-                    message,
-                } => {
-                    delivered.push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                op @ (Op::Deliver { .. } | Op::Wake) => {
+                    if let Op::Deliver {
+                        from,
+                        from_name,
+                        message,
+                    } = op
+                    {
+                        if voided(&mut inbox_taken) {
+                            dropped += 1;
+                        } else {
+                            delivered
+                                .push(crate::tools::sessions::wrap(&from, &from_name, &message));
+                        }
+                    }
                     while let Ok(next) = work_rx.try_recv() {
                         match next {
                             Op::Deliver {
                                 from,
                                 from_name,
                                 message,
-                            } => delivered
-                                .push(crate::tools::sessions::wrap(&from, &from_name, &message)),
+                            } => {
+                                if voided(&mut inbox_taken) {
+                                    dropped += 1;
+                                } else {
+                                    delivered.push(crate::tools::sessions::wrap(
+                                        &from, &from_name, &message,
+                                    ))
+                                }
+                            }
+                            // Another wake: this batch's turn takes every parked notice.
+                            Op::Wake => {}
                             other => {
                                 held = Some(other);
                                 break;
@@ -644,9 +825,32 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 }
                 op => Some(op),
             };
+            if dropped > 0 {
+                agent.notice(
+                    Level::Info,
+                    format!(
+                        "dropped {dropped} queued session message{}: the inbox was cleared",
+                        if dropped == 1 { "" } else { "s" }
+                    ),
+                );
+            }
+            // Every message in the batch was voided: there's no turn to run.
+            if op.is_none() && delivered.is_empty() && !woke {
+                continue;
+            }
             // In the background, and not an op the client waits on: no `Idle` after it.
             if let Some(Op::Warm { draft }) = &op {
                 agent.warm(draft.as_deref());
+                continue;
+            }
+            // Pure status from another session: read, recorded, no reply turn, no `Idle`.
+            if let Some(Op::Inform {
+                from,
+                from_name,
+                message,
+            }) = &op
+            {
+                agent.inform(from, from_name, message);
                 continue;
             }
             shared.working.store(true, Ordering::Relaxed);
@@ -657,10 +861,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 r = async {
                     match op {
                         Some(op) => agent.handle(op).await,
+                        None if woke => agent.wake(delivered).await,
                         None => agent.deliver(delivered).await,
                     }
                 } => r,
                 _ = token.cancelled() => Err(Interrupted.into()),
+                _ = drain_deadline(shared.clone()) => Err(Interrupted.into()),
             };
             shared.pending.lock().unwrap().clear();
             // A question still open when the turn ends (interrupted) was dismissed; say so,
@@ -679,6 +885,28 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 });
             }
             shared.panes.set_in_turn(false);
+            // A drain (app update) ends the turn suspended, never cancelled: the ack tells
+            // the client the engine stopped at a safe point and the jobs it stopped. A turn
+            // this boundary was about to start (a delivered batch, `delivered` here) never
+            // runs: the app re-sends it after the restart.
+            if let Some((jobs, labels)) = take_drain(&shared) {
+                let _ = &r;
+                match agent.active_turn.take() {
+                    Some(turn) => agent.end_turn(turn, EndReason::Suspended),
+                    None => agent.notice(Level::Warn, "drained with no turn running"),
+                }
+                shared.journal.emit(Event::Drained {
+                    steps_done: agent.turn_usage.model_calls,
+                    jobs,
+                    job_labels: labels,
+                    inbox: Vec::new(),
+                });
+                shared.working.store(false, Ordering::Relaxed);
+                agent.emit_status();
+                agent.emit(Event::Idle);
+                agent.meter_busy(false);
+                continue;
+            }
             if let Err(e) = r {
                 agent.repair();
                 let reason = if e.is::<Interrupted>() {
@@ -696,6 +924,16 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             }
             shared.working.store(false, Ordering::Relaxed);
             agent.emit_status();
+            // Background work that finished during the turn was parked (never injected into
+            // it): it runs now, as the next turn, before the engine goes idle, so nobody sees
+            // an idle session that is about to wake. A stop holds it instead.
+            if held.is_none()
+                && shared.bg.has_notices()
+                && !shared.wake_hold.load(Ordering::SeqCst)
+            {
+                held = Some(Op::Wake);
+                continue;
+            }
             agent.emit(Event::Idle);
             agent.meter_busy(false);
         }
@@ -705,6 +943,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         shared.panes.shutdown();
         agent.sync_log();
         agent.write_summary();
+        // The worktree is free before the client hears the engine is gone.
+        agent.worktree_lock.take();
         shared.journal.close();
     });
 
@@ -715,7 +955,94 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     })
 }
 
+/// Waits until `Op::Drain`'s deadline has passed — the step in flight is then killed (the
+/// turn records itself suspended, the same shape a crash would leave). Re-checks the state
+/// periodically rather than reading it once, because a drain can be delivered (and the router
+/// task only runs) while the step is already in flight. Resolves only for a pending,
+/// un-acked drain past its deadline; otherwise keeps waiting, so the `select!` it arms sits
+/// quietly (its drop cancels it) when no drain ever comes.
+async fn drain_deadline(shared: Arc<Shared>) {
+    loop {
+        let left = {
+            let d = shared.draining.lock().unwrap();
+            match d.as_ref() {
+                Some(s) if !s.acked => s.deadline.saturating_sub(now_ms()),
+                _ => i64::MAX,
+            }
+        };
+        if left <= 0 {
+            return;
+        }
+        // Poll coarse: a late drain is caught within ~200 ms, near deadlines within ~50.
+        let pause = left.min(50).max(0);
+        tokio::time::sleep(Duration::from_millis(pause as u64)).await;
+    }
+}
+
+/// Take the drain, if one is pending and un-acked: the jobs it stopped and their labels.
+/// Marks it acked so a second take (and the work loop's deadline) is a no-op.
+fn take_drain(shared: &Arc<Shared>) -> Option<(Vec<String>, Vec<(String, String)>)> {
+    let mut d = shared.draining.lock().unwrap();
+    let s = d.as_mut().filter(|s| !s.acked)?;
+    s.acked = true;
+    Some((
+        std::mem::take(&mut s.jobs),
+        std::mem::take(&mut s.job_labels),
+    ))
+}
+
+/// A drain is waiting to suspend the turn at its next safe point.
+fn draining(shared: &Shared) -> bool {
+    shared
+        .draining
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|s| !s.acked)
+}
+
+/// Like [`draining`], but yields first so the router task (which may be holding a freshly
+/// delivered `Op::Drain` it hasn't recorded yet) gets to run — the safe points sit right
+/// after awaits that can resolve without yielding (an instant tool, a cached reply), and
+/// without this a drain delivered in that window would be missed until the next real await.
+async fn drain_pending(shared: &Shared) -> bool {
+    tokio::task::yield_now().await;
+    draining(shared)
+}
+
 /// Map any failure onto the closed [`EngineError`] set.
+/// The receipt a compaction's banner shows: the structured summary as protocol types.
+fn kept(s: crate::summary::Summary) -> crate::protocol::KeptSummary {
+    use crate::protocol::{KeptFile, KeptSummary, KeptTest, KeptTurn};
+    KeptSummary {
+        id: s.id,
+        files: s
+            .files
+            .into_iter()
+            .map(|(path, added, removed)| KeptFile {
+                path,
+                added,
+                removed,
+            })
+            .collect(),
+        turns: s
+            .turns
+            .into_iter()
+            .map(|t| KeptTurn {
+                request: t.request,
+                tools: t.tools,
+                tests: t
+                    .tests
+                    .into_iter()
+                    .map(|(command, passed)| KeptTest { command, passed })
+                    .collect(),
+                outcome: t.outcome,
+            })
+            .collect(),
+        outcome: s.outcome,
+    }
+}
+
 fn classify(e: &anyhow::Error) -> EngineError {
     if let Some(h) = e.downcast_ref::<HttpError>() {
         return EngineError::Provider {
@@ -862,6 +1189,10 @@ struct Agent {
     messages: Vec<Message>,
     ctx: Ctx,
     mode: Mode,
+    /// The mode the session log has on record (its last `mode_changed`; none means Default).
+    /// Whenever the effective mode differs, the next chance to write logs it (see
+    /// `log_mode`), so a restarted engine resumes in it and no change is ever silent.
+    mode_logged: Option<Mode>,
     can_ask: bool,
     rich: bool,
     subagent: bool,
@@ -883,6 +1214,11 @@ struct Agent {
     caps: Option<Caps>,
     /// Tool-call format failures under `auto`; enough of them switches modes.
     mode_failures: u32,
+    /// Why this session fell back to text tool calls, when it did. Session-only: it survives
+    /// `apply_harness` but is never written to the capability cache.
+    text_fallback: Option<String>,
+    /// A stale capability probe was measured again (or tried) this session, for this model.
+    reprobed: bool,
     /// A Tang sidecar loads its weights on its first completion request. Keep that visible until
     /// the first response arrives, then regular request activity takes over.
     model_ready: bool,
@@ -933,6 +1269,9 @@ struct Agent {
     map_logged: bool,
     /// Files edited this session, relative to the root, for ranking the map.
     edited: Vec<String>,
+    /// The session has a title (from the model's `SetTitle`, a client, or a resumed log), so
+    /// the headless fallback shouldn't add one.
+    titled: bool,
     /// The model can see images (probed, or `vision` in the profile).
     vision: bool,
     /// The server takes a per-call reasoning budget (probed).
@@ -945,16 +1284,64 @@ struct Agent {
     warming: Arc<Mutex<(bool, Option<Warming>)>>,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
+    /// Why the session moved to text tool calls at run time, for the degraded status.
+    text_why: Option<String>,
+    /// The model this session was started on or last set to on purpose (`Op::SetModel`):
+    /// running on another one (a resume that picked up a different default, a fallback) is
+    /// shown as degraded. Empty: unknown.
+    intended_model: String,
+    /// Why the engine itself moved off `intended_model` (the frog api fallback), if it did.
+    model_flip_why: Option<String>,
+    /// This engine's hold on the linked worktree it runs in (see `worktree`), for its life.
+    worktree_lock: Option<crate::worktree::Lock>,
+    /// `auto_classifier_fallback`, started the first time the classifier can't answer.
+    classifier_fallback: Option<crate::auto::Classifier>,
+    /// When (and why) the classifier and the fallback model last failed: inside
+    /// `CLASSIFIER_RETRY` it's skipped instead of costing every call a timeout.
+    classifier_down: Option<(Instant, String)>,
+    classifier_fallback_down: Option<(Instant, String)>,
+    /// While the classifier is down: what judges instead and why, one line for the
+    /// status (`None` while the classifier answers).
+    classifier_degraded: Option<String>,
+    /// The fallbacks the user was already told about: one notice per session for each,
+    /// never one per call.
+    classifier_told: HashSet<String>,
+    /// Paths this session created (files it wrote that didn't exist, directories a
+    /// command made), so an approval card can say "this session made it".
+    created: HashSet<PathBuf>,
+    /// (program, path prefix) pairs the user allowed for this session.
+    prefix_allow: Vec<(String, PathBuf)>,
+    /// What the user said with their last answer (a deny with a note, or frog's own
+    /// note when a prompt timed out), for the tool result.
+    last_note: Option<String>,
     session_allow: HashSet<String>,
+    /// Calls denied on a card this turn (hash of tool + arguments → what the denial said):
+    /// an identical retry this turn doesn't ask again, it ends the turn (`BlockedOnApproval`).
+    turn_denied: HashMap<u64, String>,
+    /// How many times each carded call (hash of tool + arguments) was denied this session;
+    /// at `DENIED_LIMIT` it's auto-denied without a card for the rest of the session.
+    session_denied: HashMap<u64, u32>,
+    /// Set by `permit` when it refused a repeat of a call denied this turn: the batch stops
+    /// and the turn ends with this denial.
+    blocked: Option<String>,
     /// Context from `Op::Shell`, attached to the next message.
     pending: Vec<String>,
+    /// This turn's finished `Bash` calls (item id, command, output head) awaiting a gist,
+    /// flushed in one side-model call when the turn ends (see `gist`).
+    pending_gists: Vec<(String, String, String)>,
+    /// The open chapter, followed so the turn that closes it can have it titled (see
+    /// `chapter`).
+    chapters: crate::chapter::Tracker,
+    /// Chapter titles written this session, by content hash: the same chapter never asks
+    /// twice. Shared with the title task.
+    chapter_titles: Arc<Mutex<HashMap<u64, String>>>,
     shared: Arc<Shared>,
 }
 
 impl Agent {
     fn new(o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
         // Cached or shipped capability profiles are useful in both persisted and in-memory engines.
-        let caps = (!harness::is_hosted(&o.profile))
+        let caps = (!harness::native_known(&o.profile))
             .then(|| harness::cached(&o.profile))
             .flatten();
         let tier = harness::tier(&o.profile, caps.as_ref());
@@ -974,6 +1361,9 @@ impl Agent {
         let mut resumed_mode = None;
         // MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
         let mut loaded_tools: Vec<String> = Vec::new();
+        let mut resumed_titled = false;
+        let mut resumed_model: Option<String> = None;
+        let mut resumed_chapters = crate::chapter::Tracker::default();
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
@@ -982,6 +1372,7 @@ impl Agent {
                 let (seq, turn) = (l.last_seq(), l.last_turn());
                 resumed_map = l.repo_map.clone();
                 loaded_tools = l.loaded;
+                resumed_chapters = crate::chapter::Tracker::from_events(&l.events);
                 let inputs = l
                     .events
                     .iter()
@@ -992,6 +1383,9 @@ impl Agent {
                     .collect();
                 let mut used = Vec::new();
                 for e in &l.events {
+                    if matches!(e.event, Event::Titled { .. }) {
+                        resumed_titled = true;
+                    }
                     match &e.event {
                         Event::PaneOpened { id, .. } => {
                             used.push(id.clone());
@@ -1002,6 +1396,18 @@ impl Agent {
                         _ => {}
                     }
                 }
+                // The model it ran on as far as anyone chose: its last switch, else the one
+                // it started on.
+                resumed_model = Some(
+                    l.events
+                        .iter()
+                        .rev()
+                        .find_map(|e| match &e.event {
+                            Event::ModelChanged { model } => Some(model.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| l.header.model.clone()),
+                );
                 shared.panes.seed_ids(used);
                 // A turn that started and never ended: the engine died or was killed mid-turn.
                 let unfinished = l.events.iter().rev().find_map(|e| match &e.event {
@@ -1024,6 +1430,7 @@ impl Agent {
             }
             (None, _) => (session::new_id(), Vec::new(), 0, 0, None, Vec::new(), None),
         };
+        let intended_model = resumed_model.unwrap_or_else(|| o.profile_name.clone());
         *shared.journal.header.lock().unwrap() = (o.cwd.clone(), o.profile_name.clone());
         shared.journal.start_session(session_id.clone(), seq, log);
         for id in stale_panes {
@@ -1089,6 +1496,7 @@ impl Agent {
                 ctx
             },
             mode: resumed_mode.unwrap_or(o.mode),
+            mode_logged: resumed_mode,
             can_ask: o.can_ask,
             rich: o.rich,
             subagent: o.subagent,
@@ -1106,6 +1514,8 @@ impl Agent {
             tier,
             caps,
             mode_failures: 0,
+            text_fallback: None,
+            reprobed: false,
             model_ready: false,
             quiet: 0,
             turn_usage: TurnUsage::default(),
@@ -1134,7 +1544,23 @@ impl Agent {
             map_building: false,
             map_logged: false,
             edited: Vec::new(),
+            titled: resumed_titled,
+            text_why: None,
+            intended_model,
+            model_flip_why: None,
+            worktree_lock: None,
             classifier: None,
+            classifier_fallback: None,
+            classifier_down: None,
+            classifier_fallback_down: None,
+            classifier_degraded: None,
+            classifier_told: HashSet::new(),
+            created: HashSet::new(),
+            prefix_allow: Vec::new(),
+            last_note: None,
+            turn_denied: HashMap::new(),
+            session_denied: HashMap::new(),
+            blocked: None,
             vision: false,
             budget_ok: false,
             cache_key_ok: false,
@@ -1142,6 +1568,9 @@ impl Agent {
             warming: Default::default(),
             session_allow: HashSet::new(),
             pending: Vec::new(),
+            pending_gists: Vec::new(),
+            chapters: resumed_chapters,
+            chapter_titles: Default::default(),
             shared,
         };
         if resumed {
@@ -1151,6 +1580,9 @@ impl Agent {
             if let Some(turn) = unfinished {
                 agent.end_turn(turn, EndReason::Cancelled);
             }
+            // A session last run from a flag (`--auto` from StartSession or Settings) never
+            // logged its mode: record what this engine runs in, so the next restart keeps it.
+            agent.log_mode();
         }
         agent.sync_specs();
         // A resumed session keeps the map it last sent: one rebuilt from the files as they are
@@ -1260,6 +1692,20 @@ impl Agent {
         self.shared.irc.lock().unwrap().clone()
     }
 
+    /// Log the effective mode if the session's log doesn't already say it (an unlogged
+    /// session counts as Default). Persisted sessions only: an in-memory engine or a
+    /// subagent has no log to resume from.
+    fn log_mode(&mut self) {
+        if self.store.is_none() || self.subagent {
+            return;
+        }
+        if self.mode_logged.unwrap_or(Mode::Default) == self.mode {
+            return;
+        }
+        self.mode_logged = Some(self.mode);
+        self.emit(Event::ModeChanged { mode: self.mode });
+    }
+
     fn emit_status(&self) {
         self.emit(Event::Status(Status {
             model: self.profile_name.clone(),
@@ -1273,7 +1719,54 @@ impl Agent {
             tokens_per_sec: self.tokens_per_sec(),
             todos: self.ctx.todos.clone(),
             vision: self.vision,
+            degraded: self.degraded(),
         }));
+    }
+
+    /// What this session runs degraded on now, each with why: text tool calls it didn't ask
+    /// for, a model other than the one it was started or set to, auto mode's classifier down.
+    fn degraded(&self) -> Vec<crate::protocol::Degraded> {
+        use crate::protocol::{Degraded, DegradedKind};
+        let mut out = Vec::new();
+        if self.tool_mode == ToolMode::Text && self.profile.tool_mode != ToolMode::Text {
+            out.push(Degraded {
+                kind: DegradedKind::TextTools,
+                what: "text tool calls".into(),
+                why: self.text_mode_why(),
+            });
+        }
+        let norm = |m: &str| crate::providers::normalize(m);
+        if !self.intended_model.is_empty() && norm(&self.intended_model) != norm(&self.profile_name) {
+            out.push(Degraded {
+                kind: DegradedKind::Model,
+                what: format!("on {}", self.profile_name),
+                why: match &self.model_flip_why {
+                    Some(why) => format!("this session is on {}; {why}", self.intended_model),
+                    None => format!(
+                        "this session was on {}; it came back on another model nobody picked (a resume without -m takes the default)",
+                        self.intended_model
+                    ),
+                },
+            });
+        }
+        if self.mode == Mode::Auto
+            && let Some(line) = &self.classifier_degraded
+        {
+            out.push(Degraded {
+                kind: DegradedKind::Classifier,
+                what: "auto mode on fallback".into(),
+                why: line.clone(),
+            });
+        }
+        out
+    }
+
+    /// Why this session runs on text tool calls: its own two failed native/JSON replies this
+    /// session, else the capability probe that put `auto` there.
+    fn text_mode_why(&self) -> String {
+        self.text_why.clone().unwrap_or_else(|| {
+            "its capability probe found native tool calls not working".into()
+        })
     }
 
     fn count_call(&mut self, u: Usage, streamed: &Streamed, compact: bool) {
@@ -1309,7 +1802,85 @@ impl Agent {
         });
     }
 
-    fn end_turn(&self, turn: u64, reason: EndReason) {
+    /// A title for sessions nobody else will name. The Mac app names its own conversations
+    /// (rich), the model may call `SetTitle`, and a user may; when none of that happened by
+    /// the end of the first turn, the first input stands in, with wrapper boilerplate stripped.
+    fn auto_title(&mut self, turn: u64) {
+        if self.titled || self.rich || turn != 1 {
+            return;
+        }
+        if let Some(input) = self.inputs.first() {
+            let title = crate::title::derive(input);
+            if !title.is_empty() {
+                self.set_title(title);
+            }
+        }
+    }
+
+    /// Write the turn's queued command gists in one batched side-model call, and emit one
+    /// [`Event::CommandGisted`] per item. The model call is bounded and best effort: any
+    /// trouble (no usable model, a timeout, an unreadable answer) silently leaves those rows
+    /// on the raw command — a gist is a display flourish, never worth failing over.
+    /// Duplicated commands across items get the same line, so the call stays one per
+    /// unique command, not one per row.
+    async fn flush_gists(&mut self) {
+        let pending = std::mem::take(&mut self.pending_gists);
+        if pending.is_empty() || self.subagent {
+            return;
+        }
+        let commands: Vec<crate::gist::Command> = pending
+            .iter()
+            .map(|(_, command, output)| crate::gist::Command { command, output })
+            .collect();
+        let gists = crate::gist::write(&self.cfg, &self.root, &commands).await;
+        for ((id, command, _), gist) in pending.iter().zip(gists) {
+            if gist.is_empty() {
+                continue;
+            }
+            self.emit(Event::CommandGisted {
+                item: id.clone(),
+                command: command.clone(),
+                gist,
+            });
+        }
+    }
+
+    /// Title a chapter that just closed, in the background: one bounded side-model call
+    /// (see `chapter`), then a durable [`Event::ChapterTitled`]. Never awaited — the new turn
+    /// doesn't wait on a display flourish — and best effort: no usable model, a timeout or
+    /// an unreadable answer sends nothing, and the app keeps its heuristic title. A chapter
+    /// already titled this session (same content) re-sends its title without a call.
+    fn title_chapter(&self, closed: crate::chapter::Closed) {
+        if self.subagent || closed.turns.is_empty() {
+            return;
+        }
+        let key = closed.key();
+        let cached = self.chapter_titles.lock().unwrap().get(&key).cloned();
+        if let Some(title) = cached {
+            self.emit(Event::ChapterTitled { turn: closed.start, title });
+            return;
+        }
+        if self.cfg.hermetic {
+            return;
+        }
+        let (cfg, root) = (self.cfg.clone(), self.root.clone());
+        let (journal, cache) = (self.shared.journal.clone(), self.chapter_titles.clone());
+        let session = journal.session();
+        tokio::spawn(async move {
+            let Some(title) = crate::chapter::write(&cfg, &root, &closed).await else {
+                return;
+            };
+            cache.lock().unwrap().insert(key, title.clone());
+            // The session moved on (cleared, switched) while the model thought: drop it.
+            if journal.session() != session {
+                return;
+            }
+            journal.emit(Event::ChapterTitled { turn: closed.start, title });
+        });
+    }
+
+    fn end_turn(&mut self, turn: u64, reason: EndReason) {
+        self.auto_title(turn);
         let timing = self.turn_clock.map(|start| {
             let mut t = self.timing.clone();
             t.wall_ms = ms(start.elapsed());
@@ -1340,6 +1911,10 @@ impl Agent {
                     NoticeKind::WaitingOnUser,
                     "turn ended: a tool call was denied, waiting on user".to_string(),
                 )),
+                EndReason::BlockedOnApproval { denial } => Some((
+                    NoticeKind::WaitingOnUser,
+                    format!("turn ended: blocked on an approval that was already denied ({denial})"),
+                )),
                 EndReason::Error { error } => {
                     Some((NoticeKind::Errored, format!("turn errored: {error:?}")))
                 }
@@ -1355,6 +1930,16 @@ impl Agent {
         }
         self.sync_log();
         self.write_summary();
+    }
+
+    /// Record the session's title and remember it's named. A client's `Op::SetTitle` and the
+    /// model's `SetTitle` tool both land here.
+    fn set_title(&mut self, title: String) {
+        self.titled = true;
+        if let Some(bus) = self.irc() {
+            bus.set_session(&self.session_id, &title);
+        }
+        self.emit(Event::Titled { title });
     }
 
     fn meter_busy(&self, busy: bool) {
@@ -1445,18 +2030,22 @@ impl Agent {
                 self.turn(&note, Vec::new()).await?
             }
             Op::Shell { command } => self.shell(&command).await,
-            Op::Wake => {
-                let notices = self.shared.bg.take_notices();
-                if !notices.is_empty() {
-                    self.turn(&notices.join("\n\n"), Vec::new()).await?
-                }
-            }
+            Op::Wake => self.wake(Vec::new()).await?,
             Op::SetMode { mode } => {
                 self.mode = mode;
+                self.mode_logged = Some(mode);
                 self.emit(Event::ModeChanged { mode });
             }
-            Op::SetModel { spec } => self.set_model(&spec).await?,
+            Op::SetModel { spec } => {
+                self.set_model(&spec).await?;
+                // Switched on purpose: this is the model the session is meant to be on.
+                self.intended_model = self.profile_name.clone();
+                self.model_flip_why = None;
+            }
             Op::Compact { focus } => self.compact(focus.as_deref()).await?,
+            // Answered by the router (see the router's arm): never reaches the work loop,
+            // but if one ever does, it must not be a turn on the stuck history.
+            Op::ContinueSession { .. } => {}
             Op::Subscribe { after } => {
                 let replay = match &self.store {
                     Some(dir) if self.shared.journal.has_log() => {
@@ -1478,9 +2067,11 @@ impl Agent {
                 self.write_summary();
                 self.messages.clear();
                 self.inputs.clear();
+                self.chapters = Default::default();
                 self.skills_loaded.clear();
                 self.rules_seen.clear();
                 self.edited.clear();
+                self.titled = false;
                 let sandbox = self.ctx.sandbox.take();
                 let shell_sandbox = self.ctx.shell_sandbox.take();
                 let web = self.ctx.web.clone();
@@ -1499,6 +2090,9 @@ impl Agent {
                 self.shared
                     .journal
                     .start_session(self.session_id.clone(), 0, None);
+                if let Some(lock) = self.worktree_lock.as_mut() {
+                    lock.set_owner(&self.session_id);
+                }
                 self.turn = 0;
                 self.notes = self.memory.as_ref().map(|m| m.load()).unwrap_or_default();
                 self.refresh_repo_map(&[]);
@@ -1506,12 +2100,9 @@ impl Agent {
                 self.notice(Level::Info, "started a new conversation");
             }
             Op::SetTitle { title } => {
-                let title: String = title.trim().chars().take(80).collect();
+                let title = crate::title::clean(&title);
                 if !title.is_empty() {
-                    if let Some(bus) = self.irc() {
-                        bus.set_session(&self.session_id, &title);
-                    }
-                    self.emit(Event::Titled { title });
+                    self.set_title(title);
                 }
             }
             Op::Deliver {
@@ -1522,6 +2113,11 @@ impl Agent {
                 let text = crate::tools::sessions::wrap(&from, &from_name, &message);
                 self.deliver(vec![text]).await?
             }
+            Op::Inform {
+                from,
+                from_name,
+                message,
+            } => self.inform(&from, &from_name, &message),
             Op::SetClientCaps {
                 panes,
                 ask,
@@ -1548,11 +2144,14 @@ impl Agent {
             }
             // Handled by the router, never queued.
             Op::Interrupt
+            | Op::ClearInbox
             | Op::Permission { .. }
             | Op::Answer { .. }
             | Op::SessionReply { .. }
             | Op::Elicit { .. }
             | Op::AppCall { .. }
+            | Op::Drain { .. }
+            | Op::DrainAbort
             | Op::StopSubagent { .. }
             | Op::PaneOpen { .. }
             | Op::PaneInput { .. }
@@ -1563,6 +2162,10 @@ impl Agent {
             | Op::PaneMention { .. }
             | Op::Warm { .. }
             | Op::Shutdown => {}
+            // Parentage is the client's: a move arrives as a `MoveSession` tool call the
+            // client answers, never as this op. Sent anyway, it names nothing the engine
+            // could change.
+            Op::MoveSession { .. } => {}
         }
         Ok(())
     }
@@ -1708,6 +2311,36 @@ impl Agent {
         self.turn_with(&first, Vec::new(), more).await
     }
 
+    /// An informational message from another session ([`Op::Inform`]): logged as read, and
+    /// kept to go along with the next turn as context. No turn, no wake.
+    fn inform(&mut self, from: &str, from_name: &str, message: &str) {
+        self.emit(Event::MessageRead {
+            from: from.to_string(),
+            from_name: from_name.to_string(),
+            message: message.to_string(),
+        });
+        self.pending
+            .push(crate::tools::sessions::wrap(from, from_name, message));
+    }
+
+    /// A turn on what's waiting at the boundary, all at once: the background wakes (in the
+    /// order they came in) as its input, and the session messages queued behind them
+    /// (`delivered`, each already wrapped) as `more`.
+    async fn wake(&mut self, delivered: Vec<String>) -> Result<()> {
+        let notices = self.shared.bg.take_notices();
+        if notices.is_empty() {
+            return self.deliver(delivered).await;
+        }
+        let more = delivered
+            .into_iter()
+            .map(|text| Part {
+                text,
+                images: Vec::new(),
+            })
+            .collect();
+        self.turn_with(&notices.join("\n\n"), Vec::new(), more).await
+    }
+
     async fn turn(&mut self, input: &str, images: Vec<crate::protocol::Image>) -> Result<()> {
         self.turn_with(input, images, Vec::new()).await
     }
@@ -1737,18 +2370,33 @@ impl Agent {
             .collect();
         self.turn += 1;
         let turn = self.turn;
+        // The first turn creates a new session's log: its starting mode goes in first.
+        self.log_mode();
+        // Background work that finished while this turn was queued: delivered with it, as one
+        // batch at its start (and shown with it, ahead of its input).
+        let wakes = self.shared.bg.take_notices();
         self.emit(Event::TurnStarted {
             turn,
             input: input.to_string(),
             images: images.clone(),
             more: more.clone(),
         });
+        if !wakes.is_empty() {
+            self.emit(Event::WakesDelivered {
+                turn,
+                wakes: wakes.clone(),
+            });
+        }
         self.active_turn = Some(turn);
         // A draft still waiting to warm is stale now; the turn itself leaves the cache warm.
         self.warming.lock().unwrap().1 = None;
         self.shared.panes.set_in_turn(true);
         self.inputs.push(input.to_string());
         self.inputs.extend(more.iter().map(|p| p.text.clone()));
+        let texts: Vec<String> = more.iter().map(|p| p.text.clone()).collect();
+        if let Some(closed) = self.chapters.started(turn, input, &texts) {
+            self.title_chapter(closed);
+        }
         self.turn_clock = Some(Instant::now());
         if let Some(m) = &self.meter {
             // Idle from the seconds spent waiting before this turn (the op loop marked it busy).
@@ -1758,10 +2406,14 @@ impl Agent {
         self.quiet = 0;
         self.checkpoint(turn);
         self.turn_usage = TurnUsage::default();
+        // A new turn may ask again what the last one was denied (the session's breaker still holds).
+        self.turn_denied.clear();
+        self.blocked = None;
+        // Wakes a stop held go along with this turn (below); later ones start turns again.
+        self.shared.wake_hold.store(false, Ordering::SeqCst);
 
         let mut text = std::mem::take(&mut self.pending).join("\n");
-        // Background work that finished while this turn was queued.
-        for notice in self.shared.bg.take_notices() {
+        for notice in wakes {
             if !text.is_empty() {
                 text.push('\n');
             }
@@ -1806,6 +2458,7 @@ impl Agent {
             self.refresh_repo_map(&mentioned);
         }
         self.log_map();
+        self.reprobe_if_stale().await;
         self.apply_harness();
         self.push_user(text);
         self.attach_images(images);
@@ -1843,6 +2496,7 @@ impl Agent {
         self.sync_log();
 
         let mut compacted = None;
+        let mut overflowed = false;
         let mut guard = LoopGuard::default();
         let mut steps = 0;
         // Cut-off replies continued in a row (reset whenever a reply runs tools).
@@ -1903,6 +2557,33 @@ impl Agent {
             {
                 Ok(r) => r,
                 Err(e) => {
+                    // The request exceeded the model's context window (estimate missed, or a
+                    // result landed that the window can never hold): compact and retry the step
+                    // once, instead of ending the turn on a 400. The second failure is real.
+                    if e.downcast_ref::<HttpError>().is_some_and(HttpError::context_overflow) {
+                        if !overflowed {
+                            overflowed = true;
+                            self.notice(
+                                Level::Warn,
+                                "the request exceeded the model's context window; compacting and retrying",
+                            );
+                            if let Err(ce) = self.compact(None).await {
+                                // The one-line transcript story (the client renders
+                                // `Event::CompactionFailed` as a rescue line, never this
+                                // error's chain); the raw payload goes to the engine log.
+                                eprintln!("compaction failed: {ce:#}");
+                                self.emit(Event::CompactionFailed {
+                                    detail: format!("{ce:#}"),
+                                });
+                                anyhow::bail!("compaction failed; the history can't fit the context window");
+                            }
+                            continue;
+                        }
+                        self.emit(Event::CompactionFailed {
+                            detail: format!("{e:#}"),
+                        });
+                        anyhow::bail!("the request still exceeds the model's context window after compaction");
+                    }
                     let Some(local) = self.cloud_fallback(&e) else {
                         return Err(e);
                     };
@@ -1911,6 +2592,7 @@ impl Agent {
                         format!("frog api unavailable ({e:#}) — continuing on {local}"),
                     );
                     self.set_model(&local).await?;
+                    self.model_flip_why = Some("frog api was unavailable, so it fell back".into());
                     continue;
                 }
             };
@@ -1947,13 +2629,15 @@ impl Agent {
             }
             self.est
                 .calibrate(sent, resp.usage.input + resp.usage.cache_read);
-            let (msg, recovered) = normalize(resp.message);
+            let (msg, recovered) = normalize(resp.message, self.recovers_text_calls());
             let bad_args = msg
                 .tool_uses()
                 .iter()
                 .any(|(_, _, i)| i.get("_invalid_json").is_some());
-            if recovered || bad_args || streamed.format_failed {
-                self.note_format_failure();
+            if let Some(why) =
+                format_failure(resp.stop, recovered, bad_args, streamed.format_failed)
+            {
+                self.note_format_failure(why);
             }
 
             let reasoning: String = msg
@@ -1976,6 +2660,7 @@ impl Agent {
                 .then(|| self.file_nudge(&answer, &named))
                 .flatten();
             if !answer.is_empty() {
+                self.chapters.replied(&answer);
                 self.complete_item(
                     streamed.message,
                     ItemKind::Message,
@@ -1985,6 +2670,24 @@ impl Agent {
 
             let uses = msg.tool_uses();
             self.push_msg(msg);
+            // Safe point (the model's message closed and is in the log): an app update's
+            // drain suspends the turn here, before any tool of this step runs, marking the
+            // calls it never got to — never "[Request interrupted by user]".
+            if drain_pending(&self.shared).await {
+                let missing: Vec<Block> = uses
+                    .iter()
+                    .map(|(id, name, _)| Block::ToolResult {
+                        id: id.clone(),
+                        name: name.clone(),
+                        content: "Interrupted by app update; will be re-run or resumed.".into(),
+                        is_error: true,
+                    })
+                    .collect();
+                if !missing.is_empty() {
+                    self.extend_last(missing);
+                }
+                break EndReason::Suspended;
+            }
             if let (true, Some(nudge)) = (uses.is_empty(), nudge) {
                 nudged = true;
                 self.notice(
@@ -1995,6 +2698,10 @@ impl Agent {
                 continue;
             }
             if uses.is_empty() {
+                // An update's drain takes the turn here, finished answer and all.
+                if drain_pending(&self.shared).await {
+                    break EndReason::Suspended;
+                }
                 // Ran out of output room mid-reply (long thinking, usually): carry on rather
                 // than end the turn, a few times, so long work doesn't stop on a token cap.
                 if resp.stop == Stop::Length && continued < MAX_CONTINUES {
@@ -2017,8 +2724,35 @@ impl Agent {
                 Batch::Continue => {}
                 Batch::Denied => break EndReason::Denied,
                 Batch::Looping => break EndReason::Looping,
+                Batch::Blocked(denial) => break EndReason::BlockedOnApproval { denial },
+                Batch::Suspended => break EndReason::Suspended,
+            }
+            // Safe point (a tool call finished, its result recorded): an app update's drain
+            // suspends the turn here.
+            if drain_pending(&self.shared).await {
+                break EndReason::Suspended;
+            }
+            // Stop landed mid-tool: the tool already recorded "Interrupted by user.", so end
+            // the turn here instead of handing the result back to the model. The outer select
+            // races this future against the token; whichever wins, the turn ends cancelled.
+            if self.shared.cancel.lock().unwrap().is_cancelled() {
+                return Err(Interrupted.into());
             }
         };
+        // A suspended turn ends exactly here, before any warm-up (there's no next turn to
+        // warm) and after everything the log needs: history, events, the fsync below.
+        if reason == EndReason::Suspended {
+            if let Some((id, _)) = self.shared.journal.live.lock().unwrap().take() {
+                if let Some(dir) = &self.store {
+                    let _ = std::fs::remove_file(session::live_path(dir, &id));
+                }
+            }
+            self.active_turn = None;
+            self.shared.panes.set_in_turn(false);
+            self.flush_gists().await;
+            self.end_turn(turn, reason);
+            return Ok(());
+        }
         // Prune now, while the user reads the reply, and warm the result: the next turn then
         // starts from a prefix that's already cached instead of prefilling all of it.
         if self.prune(context::PRUNE_AT) {
@@ -2027,6 +2761,7 @@ impl Agent {
         }
         self.active_turn = None;
         self.shared.panes.set_in_turn(false);
+        self.flush_gists().await;
         self.end_turn(turn, reason);
         Ok(())
     }
@@ -2035,6 +2770,9 @@ impl Agent {
     fn apply_harness(&mut self) {
         self.tier = harness::tier(&self.profile, self.caps.as_ref());
         self.tool_mode = harness::choose_mode(&self.profile, self.caps.as_ref(), self.tier);
+        if self.text_fallback.is_some() && self.profile.tool_mode == ToolMode::Auto {
+            self.tool_mode = ToolMode::Text;
+        }
         let base = if self.chat {
             prompt::chat_prompt(&self.cfg, &self.profile.model)
         } else {
@@ -2213,22 +2951,12 @@ impl Agent {
 
     /// Write or update this session's summary from its log. No model call.
     fn write_summary(&self) {
-        let (Some(dir), Some(out)) = (
-            &self.store,
-            self.memory.as_ref().and_then(|m| m.sessions_dir()),
-        ) else {
+        let Some(summary) = self.build_summary() else {
             return;
         };
-        if !self.shared.journal.has_log() {
-            return;
-        }
-        let Ok(loaded) = session::load(dir, &self.session_id) else {
+        let Some(out) = self.memory.as_ref().and_then(|m| m.sessions_dir()) else {
             return;
         };
-        if loaded.events.is_empty() {
-            return;
-        }
-        let summary = crate::summary::build(&loaded.header, &loaded.events, None);
         if let Err(e) = crate::summary::write(&out, &summary) {
             self.notice(
                 Level::Warn,
@@ -2236,6 +2964,22 @@ impl Agent {
             );
         }
     }
+
+    /// This session's structured summary (the #53 fields: files with +/−, turns with their
+    /// requests/outcomes, tests run), built from the log without a model call. None when
+    /// there's nothing to summarize (no store, no log, no events).
+    fn build_summary(&self) -> Option<crate::summary::Summary> {
+        let dir = self.store.as_ref()?;
+        if !self.shared.journal.has_log() {
+            return None;
+        }
+        let loaded = session::load(dir, &self.session_id).ok()?;
+        if loaded.events.is_empty() {
+            return None;
+        }
+        Some(crate::summary::build(&loaded.header, &loaded.events, None))
+    }
+
 
     /// `/remember`, `/forget`, `/memory` and `/recall`: answered with a notice, no model call.
     /// Returns false if `text` isn't one of them.
@@ -2301,11 +3045,59 @@ impl Agent {
         thinking::budget(base, think, &self.messages)
     }
 
+    /// Measure the model again when its cached probe is older than `harness::PROBE_TTL_MS`,
+    /// once per session, before the turn's first call. An old finding (native tools broken, say)
+    /// would otherwise decide the tool mode forever. Only under `auto`, which is what reads it,
+    /// and never for a model whose native tools are known.
+    async fn reprobe_if_stale(&mut self) {
+        if self.reprobed || !harness::reprobe_due(&self.profile, self.caps.as_ref(), now_ms()) {
+            return;
+        }
+        self.reprobed = true;
+        // The full tool set, as `frog probe` measures: the probe asks for a Read, which a
+        // chat's trimmed specs don't have.
+        let specs = tools::specs();
+        let probed = harness::probe(&self.provider, &specs, |label, completed, total| {
+            self.emit(Event::Progress {
+                label: label.into(),
+                completed: Some(completed),
+                total: Some(total),
+            })
+        })
+        .await;
+        match probed {
+            Ok(caps) => {
+                if self.store.is_some() {
+                    harness::save(&self.profile, &caps);
+                }
+                self.caps = Some(caps);
+            }
+            Err(e) => self.notice(
+                Level::Warn,
+                format!(
+                    "{}'s capability profile is out of date and re-checking it failed ({e:#}); using the old one",
+                    self.profile.model
+                ),
+            ),
+        }
+    }
+
+    /// Whether `<tool_call>` text in a reply is a call: always in text mode, and under native
+    /// only for models that may slip into it (Qwen/Hermes templates on some servers). A model
+    /// known to call tools natively that writes one is quoting the format, not calling.
+    fn recovers_text_calls(&self) -> bool {
+        self.tool_mode == ToolMode::Text || !harness::native_known(&self.profile)
+    }
+
     /// The model botched the tool-call format (text calls under native, invalid JSON args, or
-    /// JSON mode not honored). Under `auto`, two strikes moves to text mode for the session
-    /// and records the finding.
-    fn note_format_failure(&mut self) {
-        if self.profile.tool_mode != ToolMode::Auto || self.tool_mode == ToolMode::Text {
+    /// JSON mode not honored). Under `auto`, two strikes moves to text mode for this session
+    /// only: the finding is never written to the capability cache (see `harness::save`), and a
+    /// model whose native tools are known to work never moves.
+    fn note_format_failure(&mut self, why: &str) {
+        if self.profile.tool_mode != ToolMode::Auto
+            || self.tool_mode == ToolMode::Text
+            || harness::native_known(&self.profile)
+        {
             return;
         }
         self.mode_failures += 1;
@@ -2315,24 +3107,42 @@ impl Agent {
         let from = self.tool_mode;
         self.tool_mode = ToolMode::Text;
         self.mode_failures = 0;
-        if let Some(c) = self.caps.as_mut() {
-            match from {
-                ToolMode::Native => c.native_tools = false,
-                ToolMode::Json => c.json_mode = false,
-                _ => {}
-            }
-            if self.store.is_some() {
-                harness::save(&self.profile, c);
-            }
+        self.text_why = Some(why.to_string());
+        self.text_fallback = Some(why.to_string());
+        // never persist the downgrade to the capability cache
+        let from = format!("{from:?}").to_lowercase();
+        self.warn_text_mode(format!(
+            "{from} tool calls failed twice ({why}); switching this session to text tool calls. \
+Not saved: the next session starts on {from} again"
+        ));
+    }
+
+    /// Say so whenever a session runs on text tool calls it didn't ask for, naming the model and
+    /// why: in the transcript, and in the engine log (stderr), so a demoted model can't go
+    /// unnoticed.
+    fn warn_text_mode(&self, why: String) {
+        let message = format!("{} ({}): {why}", self.profile_name, self.profile.model);
+        eprintln!("frog: text tool calls: {message}");
+        self.notice(Level::Warn, message);
+    }
+
+    /// At session start or a model switch: a cached probe that put `auto` on text tool calls.
+    fn note_text_mode_from_probe(&self) {
+        if self.profile.tool_mode != ToolMode::Auto || self.tool_mode != ToolMode::Text {
+            return;
         }
-        self.notice(
-            Level::Warn,
-            format!(
-                "{:?} tool calls keep failing; switching to text tool calls",
-                from
-            )
-            .to_lowercase(),
-        );
+        let when = self
+            .caps
+            .as_ref()
+            .filter(|c| c.probed > 0)
+            .and_then(|c| chrono::DateTime::from_timestamp_millis(c.probed))
+            .map(|t| format!(" on {}", t.format("%Y-%m-%d")))
+            .unwrap_or_default();
+        self.warn_text_mode(format!(
+            "using text tool calls: its capability probe{when} found native tool calls not working. \
+`frog --probe -m <model>` measures again"
+        ));
+
     }
 
     /// Settle the context window: configured value, bounded by what the server reports.
@@ -2371,8 +3181,30 @@ impl Agent {
             (Some(c), _) => c,
             (None, Some(p)) if self.profile.provider == ProviderKind::Ollama => p.min(32_768),
             (None, Some(p)) => p,
-            (None, None) => self.profile.context_window(),
+            // Neither the config nor the server said: the catalog may still know the model's
+            // real limit, which beats the per-provider default.
+            (None, None) => crate::catalog::cached(&self.profile_name)
+                .and_then(|m| m.context)
+                .unwrap_or_else(|| self.profile.context_window()),
         };
+        // Once per session: where the window came from, so a wrong one is traceable. `configured`
+        // here means the catalog or the profile said it, not the server. Benchmarks (hermetic)
+        // don't care.
+        if !self.cfg.hermetic {
+            let source = match (probed, configured) {
+                (Some(_), _) => "server",
+                (None, Some(_)) => "catalog",
+                (None, None) => "default",
+            };
+            self.notice(
+                Level::Info,
+                format!(
+                    "context window: {} tokens (from {source}); auto-compacting past {}",
+                    self.window,
+                    (self.window as f64 * context::HARD_LIMIT) as u64
+                ),
+            );
+        }
         self.provider.set_context_window(self.window);
         // The tools, repo map and prompt were built before the window was known; a small one
         // trims them.
@@ -2458,18 +3290,42 @@ impl Agent {
             .tokens(self.fixed_chars() + context::history_chars(&self.messages))
     }
 
+    /// The most chars one tool result may carry: [`context::MAX_RESULT_SHARE`] of the window,
+    /// in chars via the estimator.
+    fn result_cap(&self) -> usize {
+        self.est
+            .chars((self.window as f64 * context::MAX_RESULT_SHARE) as u64)
+            .max(MIN_RESULT_CAP)
+    }
+
     /// Stage 1: prune stale and old tool output (no LLM), once the prompt passes `start` of the
-    /// window. Stage 2: summarize again when new messages fill the window.
+    /// window. Stage 2: summarize again when new messages fill the window. The hard limit
+    /// ([`context::HARD_LIMIT`]) bypasses the once-per-new-messages hysteresis: past it, the next
+    /// call is one oversized tool result away from a provider 400, so compact regardless.
     async fn fit_context(&mut self, compacted: &mut Option<usize>, start: f64) -> Result<()> {
         let pruned = self.prune(start);
-        if (self.estimate() as f64) > self.window as f64 * context::COMPACT_AT
-            && compacted.is_none_or(|len| self.messages.len() > len)
+        let hard = (self.window as f64 * context::HARD_LIMIT) as u64;
+        if self.estimate() > hard
+            || ((self.estimate() as f64) > self.window as f64 * context::COMPACT_AT
+                && compacted.is_none_or(|len| self.messages.len() > len))
         {
             self.notice(
                 Level::Warn,
-                "context is still nearly full after pruning; summarizing…",
+                if self.estimate() > hard {
+                    "context is nearly at the provider's limit; summarizing…"
+                } else {
+                    "context is still nearly full after pruning; summarizing…"
+                },
             );
-            self.compact(None).await?;
+            if let Err(e) = self.compact(None).await {
+                // Same story as the overflow path above: one line to the transcript (the
+                // client renders the event as a rescue line), the raw failure to the log.
+                eprintln!("compaction failed: {e:#}");
+                self.emit(Event::CompactionFailed {
+                    detail: format!("{e:#}"),
+                });
+                anyhow::bail!("compaction failed; the history can't fit the context window");
+            }
             *compacted = Some(self.messages.len());
         } else if pruned {
             self.rebased();
@@ -2681,6 +3537,7 @@ impl Agent {
             }
             if !self.chat {
                 specs.extend(crate::background::specs());
+                specs.push(crate::title::spec());
             }
             if !self.skills.is_empty() {
                 specs.push(crate::skills::spec());
@@ -2884,6 +3741,23 @@ impl Agent {
             .unwrap()
             .insert(id.to_string(), stop.clone());
         let forward = crate::background::forward(self.shared.bg.clone(), id.to_string(), false);
+        // A drain cascades to a live subagent: it suspends its own turn (its engine ends it
+        // `Suspended`), and the parent's drain deadline bounds its wait.
+        let cascade = {
+            let d = self.shared.draining.lock().unwrap();
+            d.as_ref()
+                .filter(|s| !s.acked)
+                .map(|s| (s.deadline, stop.clone()))
+        };
+        if let Some((deadline, token)) = cascade {
+            tokio::spawn(async move {
+                let left = deadline.saturating_sub(now_ms());
+                if left > 0 {
+                    tokio::time::sleep(Duration::from_millis(left as u64)).await;
+                }
+                token.cancel();
+            });
+        }
         let out = crate::subagent::run(opts, input, stop, forward).await;
         self.shared.subagents.lock().unwrap().remove(id);
         out
@@ -2895,6 +3769,28 @@ impl Agent {
             Some(dir) => dir.join(format!("{}.jobs", self.session_id)),
             None => std::env::temp_dir().join(format!("frog-jobs-{}", self.session_id)),
         }
+    }
+
+    /// A long bare wait ([`crate::auto::long_wait`]) run as a background job (the same path as
+    /// `Bash { run_in_background }`, already permitted): the tool returns at once, telling the
+    /// model what happened, and the job's `<job-done>` wake brings the output when it ends.
+    fn background_wait(&self, input: &Value, secs: u64) -> Result<tools::Output> {
+        let started =
+            crate::background::start_job(&self.shared.bg, input, &self.ctx, &self.jobs_dir())?;
+        let id = started
+            .content
+            .split_whitespace()
+            .find(|w| w.starts_with("job-"))
+            .map(|w| w.trim_end_matches([',', '.']).to_string())
+            .unwrap_or_else(|| "a background job".into());
+        self.notice(
+            Level::Warn,
+            format!("a {secs}s sleep moved to background job {id}; the turn goes on"),
+        );
+        Ok(tools::Output::text(format!(
+            "That wait is now a background job ({id}, {secs}s); continuing. Don't sleep to wait: do other work now or end your turn; the <job-done id={id}> wake, with the output of the commands after the sleep, starts your next turn.\n\n{}",
+            started.content
+        )))
     }
 
     /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
@@ -2937,6 +3833,15 @@ impl Agent {
         if name == crate::subagent::TOOL {
             return self.run_task(id, input).await;
         }
+        // The sleep guard: a long bare wait would hold the turn (and every event and message
+        // behind it) for minutes, so it runs as a background job and the turn goes on.
+        if name == "Bash"
+            && !self.subagent
+            && !tools::bool_arg(input, "run_in_background")
+            && let Some(secs) = crate::auto::long_wait(input["command"].as_str().unwrap_or(""))
+        {
+            return self.background_wait(input, secs);
+        }
         if crate::background::handles(name)
             || (name == "Bash" && tools::bool_arg(input, "run_in_background"))
         {
@@ -2973,6 +3878,11 @@ impl Agent {
         if name == crate::folder::TOOL && !self.subagent {
             return self.use_folder(input).await;
         }
+        if name == crate::title::TOOL {
+            let title = crate::title::parse(input)?;
+            self.set_title(title.clone());
+            return Ok(tools::Output::text(format!("Session titled \"{title}\".")));
+        }
         if name == crate::panes::TERMINAL {
             return self.shared.panes.terminal(input, self.subagent).await;
         }
@@ -3007,7 +3917,11 @@ impl Agent {
                 });
             }
         };
-        let out = {
+        let cwd_before = self.ctx.cwd.clone();
+        let mut out = {
+            // Stop cancels a long tool in flight (Bash kills its process group), not just
+            // between tools: watch the turn's token alongside the tool future.
+            self.ctx.cancel = Some(self.shared.cancel.lock().unwrap().clone());
             let run = tools::run(name, input, &mut self.ctx);
             tokio::pin!(run);
             loop {
@@ -3018,6 +3932,7 @@ impl Agent {
                 }
             }
         };
+        self.ctx.cancel = None;
         while let Ok(chunk) = rx.try_recv() {
             emit(chunk);
         }
@@ -3029,11 +3944,28 @@ impl Agent {
         }
         self.ctx.progress = None;
         self.ctx.preview = None;
+        // Cancelled mid-run: the result reads as an interrupt, not an error, and the turn ends
+        // cleanly right after (run_tools' remaining calls skip, the caller sees Interrupted).
+        if out.is_err() && self.shared.cancel.lock().unwrap().is_cancelled() {
+            out = Ok(tools::Output {
+                content: "Interrupted by user.".into(),
+                ..Default::default()
+            });
+        }
+        // A `cd` that stuck: say where the shell works now, durably (SessionStatus on a dead
+        // session reads it from the log).
+        // (Compared canonically: the shell reports `pwd -P`, so `/var` comes back as
+        // `/private/var` without having moved.)
+        let canon = |p: &PathBuf| p.canonicalize().unwrap_or_else(|_| p.clone());
+        if self.ctx.cwd != cwd_before && canon(&self.ctx.cwd) != canon(&cwd_before) {
+            self.shared.journal.emit(Event::ShellCwd {
+                cwd: self.ctx.cwd.clone(),
+            });
+        }
         out
     }
 
-    /// Run one batch of tool calls. Returns true if the user denied one.
-    /// Whether the model may call `name` now: it's in the tool list this step was offered, or
+    /// Run one batch of tool calls. Returns true if the user denied one.    /// Whether the model may call `name` now: it's in the tool list this step was offered, or
     /// it's a connected MCP server's tool (with many, only some are listed up front and the
     /// rest load on demand; that saves context, it isn't a permission).
     fn offers(&self, name: &str) -> bool {
@@ -3041,15 +3973,18 @@ impl Agent {
             || (name.starts_with("mcp__") && self.mcp.handles(name))
     }
 
-    /// A context to run `name` in while its reply is still streaming, if it may: one of the
-    /// read-only tools (`early::TOOLS`) that this step offers and that never asks. Its own
+    /// A context to run `name` in on the side (while its reply is still streaming, or beside
+    /// the reply's other reads), if it may: a call that changes nothing and that the permission
+    /// layers never ask about ([`crate::auto::parallel_read`]), which this step offers. Its own
     /// context, so nothing it records reaches `self.ctx` unless its result is used.
     fn early_ctx(&self, name: &str, input: &Value) -> Option<Ctx> {
-        let ok = crate::early::TOOLS.contains(&name)
-            && tools::kind(name) == Kind::Read
+        let ok = crate::auto::parallel_read(name, input)
             && self.offers(name)
             && !self.mcp.handles(name)
-            && input.get("_invalid_json").is_none();
+            && input.get("_invalid_json").is_none()
+            // A working directory deleted out from under the session: `run_tool` falls back
+            // to the root and says so, which a call run on the side can't.
+            && self.ctx.cwd.is_dir();
         ok.then(|| Ctx {
             root: self.ctx.root.clone(),
             cwd: self.ctx.cwd.clone(),
@@ -3061,6 +3996,7 @@ impl Agent {
             permitted: self.ctx.permitted.clone(),
             progress: None,
             preview: None,
+            cancel: None,
             web: self.ctx.web.clone(),
             image: self.ctx.image.clone(),
             screenshot_endpoint: self.ctx.screenshot_endpoint.clone(),
@@ -3094,9 +4030,29 @@ impl Agent {
             content: Vec::new(),
         });
         let mut denied = false;
+        let mut blocked: Option<String> = None;
         let mut looping = false;
         let mut replan: Option<String> = None;
-        for (index, (id, name, input)) in uses.into_iter().enumerate() {
+        let uses_len = uses.len();
+        // Parallel reads: the reply's leading run of calls that change nothing all start now,
+        // side by side (those its stream already started keep running), and the loop below
+        // takes their results in order. The first call that could change something closes the
+        // run, so it and everything after it run one at a time, after every read before it.
+        if self.cfg.early_tools {
+            for (index, (_, name, input)) in uses.iter().enumerate() {
+                let ctx = self.early_ctx(name, input);
+                early.ready(index, name.clone(), input.clone(), ctx);
+            }
+        }
+        for index in 0..uses_len {
+            // Safe point between tool calls (the previous call's result is recorded): an
+            // update's drain records the rest of the batch as interrupted-by-update and
+            // suspends the turn here, before anything more runs.
+            if drain_pending(&self.shared).await {
+                self.mark_suspended(&uses, index);
+                return Ok(Batch::Suspended);
+            }
+            let (id, name, input) = uses[index].clone();
             // Taken for every call, so a mismatch drops all the early runs after it.
             let started_early = early.take(index, &name, &input);
             let key = format!("{name}\u{0}{input}");
@@ -3172,6 +4128,12 @@ Don't repeat it. Change the arguments or try a different approach.",
                     msg,
                     Some("refused: repeated identical call"),
                 )
+            } else if blocked.is_some() {
+                text(
+                    ToolOutcome::Skipped,
+                    "Skipped: the turn ended on a call that was already denied.".to_string(),
+                    None,
+                )
             } else if denied {
                 text(
                     ToolOutcome::Skipped,
@@ -3187,26 +4149,81 @@ Don't repeat it. Change the arguments or try a different approach.",
                     ),
                     Some("refused: not an available tool"),
                 )
-            } else if self.timed_permit(&id, &name, &arg, &input).await == Decision::Deny {
-                let msg = if self.can_ask {
-                    "The user rejected this tool call. Stop and wait for their instructions."
+            } else if let Decision::Deny = self.timed_permit(&id, &name, &arg, &input).await {
+                if let Some(denial) = self.blocked.clone() {
+                    // A retry of a call already denied this turn: no second card. The turn
+                    // ends with the denial, so whoever wakes the agent next sees why.
+                    self.last_note = None;
+                    blocked = Some(denial.clone());
+                    text(
+                        ToolOutcome::Denied,
+                        format!(
+                            "Not run: this exact call was already denied this turn ({denial}). frog didn't ask again and ended the turn. Don't retry it: find another way, or leave it for the user."
+                        ),
+                        None,
+                    )
                 } else {
-                    "Not permitted in non-interactive mode (run with --yolo to allow)."
+                // A deny with a note (the user's, or frog's own when the prompt timed
+                // out) is direction, not a stop: the agent adjusts and carries on.
+                let (msg, stop) = match self.last_note.take() {
+                    Some(note) => (
+                        format!("Not run: the call was denied with this note: {note}\nAdjust your approach accordingly and continue with the rest of the task."),
+                        false,
+                    ),
+                    None if self.can_ask => (
+                        "The user rejected this tool call. Stop and wait for their instructions.".to_string(),
+                        true,
+                    ),
+                    None => (
+                        "Not permitted in non-interactive mode (run with --yolo to allow).".to_string(),
+                        false,
+                    ),
                 };
-                denied = self.can_ask;
-                text(ToolOutcome::Denied, msg.to_string(), None)
+                denied = stop;
+                text(ToolOutcome::Denied, msg, None)
+                }
             } else {
                 let started = Instant::now();
                 self.snapshot(&name, &input);
+                // Provenance: which paths this call is about to bring into being.
+                let before: Vec<PathBuf> = match &*name {
+                    "Bash" => crate::approval::missing(
+                        input["command"].as_str().unwrap_or(""),
+                        &self.ctx.cwd,
+                    ),
+                    "Write" => input["file_path"]
+                        .as_str()
+                        .map(|p| crate::approval::normalize(&self.ctx.resolve(p)))
+                        .filter(|p| !p.exists())
+                        .into_iter()
+                        .collect(),
+                    _ => Vec::new(),
+                };
                 let ran = match started_early {
                     Some(call) => self.finish_early(call, started).await,
                     None => None,
                 };
                 let early = ran.as_ref().map(|(_, overlap)| ms(*overlap));
+                // A drain past its deadline kills the tool in flight (the same token
+                // `Interrupt` uses) and records it interrupted-by-update.
                 let r = match ran {
                     Some((r, _)) => r,
-                    None => self.run_tool(&id, &name, &input).await,
+                    None => {
+                        // A tool in flight gets the rest of the drain deadline; past it, the
+                        // tool is killed (dropping its future kills its process group) and
+                        // recorded interrupted-by-update, here and for the rest of the batch.
+                        let deadline = drain_deadline(self.shared.clone());
+                        tokio::select! {
+                            r = self.run_tool(&id, &name, &input) => r,
+                            _ = deadline => {
+                                self.mark_suspended(&uses, index);
+                                return Ok(Batch::Suspended);
+                            }
+                        }
+                    }
                 };
+                self.created
+                    .extend(before.into_iter().filter(|p| p.exists()));
                 let took = ms(started.elapsed());
                 self.timing.tool_ms += took;
                 self.timing.early_ms += early.unwrap_or(0);
@@ -3221,6 +4238,28 @@ Don't repeat it. Change the arguments or try a different approach.",
                 }
             };
             let mut out = out;
+            // Captured before the item's parts move into its event: a shell command queued
+            // for a gist when it finished (see the queue after `ItemCompleted`).
+            let (is_bash, item_id, command, out_head) = if name == "Bash" {
+                (
+                    true,
+                    id.clone(),
+                    input["command"].as_str().unwrap_or("").to_string(),
+                    out.content.chars().take(400).collect(),
+                )
+            } else {
+                (false, String::new(), String::new(), String::new())
+            };
+            // One result can't blow the window (and being the most recent, it would never be
+            // pruned): clip anything larger than MAX_RESULT_SHARE of the window.
+            let result_cap = self.result_cap();
+            if out.content.len() > result_cap {
+                out.content = crate::tools::truncate_middle(&out.content, result_cap);
+                out.content.push_str(&format!(
+                    "\n\n[frog] Output capped at {} of the model's {}-token window; ask more narrowly or read a range.",
+                    result_cap, self.window
+                ));
+            }
             if outcome == ToolOutcome::Ok {
                 if executed && replayable(&name) {
                     guard.last.insert(key.clone(), out.content.clone());
@@ -3293,6 +4332,16 @@ Don't repeat it. Change the arguments or try a different approach.",
                     app: out.app,
                 },
             });
+            // Queue a gist for a finished shell command, written when the turn ends in one
+            // batched side-model call (see `flush_gists`). Skipped calls (not run) don't
+            // need one; the elided command tells that story.
+            if is_bash && outcome == ToolOutcome::Ok && executed {
+                self.pending_gists.push((
+                    item_id,
+                    command,
+                    out_head,
+                ));
+            }
         }
         if looping {
             let why = format!(
@@ -3304,13 +4353,34 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         } else if let Some(r) = replan {
             self.extend_last(vec![Block::Text { text: r }]);
         }
-        Ok(if denied {
+        Ok(if let Some(denial) = blocked {
+            Batch::Blocked(denial)
+        } else if denied {
             Batch::Denied
         } else if looping {
             Batch::Looping
         } else {
             Batch::Continue
         })
+    }
+
+    /// Every call in the batch from `from` on never ran (an update's drain stopped it):
+    /// record each as interrupted-by-update in the batch's results message, so the history
+    /// is whole and `repair()` has nothing dangling on resume.
+    fn mark_suspended(&mut self, uses: &[(String, String, Value)], from: usize) {
+        let missing: Vec<Block> = uses[from..]
+            .iter()
+            .map(|(id, name, _)| Block::ToolResult {
+                id: id.clone(),
+                name: name.clone(),
+                content: "Interrupted by app update; will be re-run or resumed.".into(),
+                is_error: true,
+            })
+            .collect();
+        if !missing.is_empty() {
+            self.extend_last(missing);
+        }
+        self.sync_log();
     }
 
     /// What a model call sends for `messages` in the current tool mode.
@@ -3410,13 +4480,16 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.ctx.judge = Some(self.profile.clone());
         }
         self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
-        self.caps = (!harness::is_hosted(&self.profile))
+        self.caps = (!harness::native_known(&self.profile))
             .then(|| harness::cached(&self.profile))
             .flatten();
         self.mode_failures = 0;
+        self.text_why = None;
+        self.reprobed = false;
         self.model_ready = false;
         self.apply_harness();
         self.resolve_window().await;
+        self.note_text_mode_from_probe();
         self.emit(Event::ModelChanged {
             model: self.profile_name.clone(),
         });
@@ -3474,6 +4547,8 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // A JSON-mode reply is one object whose action comes last, so it's done by the time
         // its call is: nothing to gain.
         let early_tools = self.cfg.early_tools && offer_tools && !quiet && !json_mode;
+        // `<tool_call>` text from a model that calls natively is prose: nothing to start early.
+        let early_text = early_tools && self.recovers_text_calls();
         let specs = if offer_tools && self.profile.provider != ProviderKind::Codex {
             &self.specs[..]
         } else {
@@ -3647,7 +4722,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                         // JSON-mode output is raw JSON; the parsed answer is shown when complete.
                         StreamEvent::Text(_) if json_mode => {}
                         StreamEvent::Text(s) => {
-                            if early_tools {
+                            if early_text {
                                 streamed.early.text(&s, |n, i| self.early_ctx(n, i));
                             }
                             let was_inside = filter.inside;
@@ -3802,21 +4877,102 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // terms.
         let terminal_run = name == crate::panes::TERMINAL && pane_action == "run";
         let pane = !terminal_run && matches!(name, crate::panes::TERMINAL | crate::panes::PREVIEW);
-        // Web reads change nothing and show on their tool card, like reads. Auto mode runs
-        // unwatched, so there the classifier sees the URL first (a query string can carry data).
-        if kind == Kind::Net && self.mode != Mode::Auto {
+        // Web reads change nothing and show on their tool card, like reads — in every
+        // mode (Cam's decision 2026-10-23): WebSearch always, WebFetch when the host is
+        // a plain public domain (the fetch itself still re-checks every resolved IP
+        // against private ranges, and a non-public host keeps asking as before). A
+        // public-host GET sends nothing the request itself doesn't show.
+        if kind == Kind::Net && (name == "WebSearch" || crate::tools::web::public_host(input["url"].as_str().unwrap_or("")))
+        {
+            self.decision(item, "rule", "allow", "read-only web call", 0);
             return Decision::Allow;
         }
+        // MCP tools that only read (`list_*`, `get-*`, vcad's `inspect_*`, …) run without a
+        // card in every mode: a manager in default mode stalled ten minutes on each one. Auto
+        // mode keeps its slightly wider verb list on top.
+        if name.starts_with("mcp__")
+            && (crate::auto::mcp_read(name)
+                || (self.mode == Mode::Auto && crate::auto::read_tool(name, input)))
+        {
+            self.decision(item, "rule", "allow", "read-only tool call", 0);
+            return Decision::Allow;
+        }
+        // A write the user granted this server in `[mcp_trust]` (`planetscale = "write"`):
+        // no card, but every one is on the record (engine log, a notice, the decision event).
+        if let Some(server) =
+            crate::auto::mcp_write(name).filter(|s| self.cfg.mcp_write_trusted(s))
+        {
+            let tool = crate::auto::mcp_parts(name).map_or(name, |(_, t)| t);
+            let args = tools::truncate_middle(&input.to_string(), 400);
+            let line = format!(
+                "mcp_trust: ran {server} › {tool} without a card ([mcp_trust] {server} = \"write\"); args: {args}"
+            );
+            if self.cfg.log_calls {
+                eprintln!("{line}");
+            }
+            self.notice(Level::Info, line);
+            self.decision(item, "trust", "allow", &format!("write grant for {server}"), 0);
+            return Decision::Allow;
+        }
+        let call = call_hash(name, input);
         if name == crate::folder::TOOL {
             return self.ask_folder(item, name, arg).await;
         }
+        let mcp = name.starts_with("mcp__");
         let cmd = input["command"].as_str().unwrap_or("").trim();
         let prefix = cmd.split_whitespace().next().unwrap_or("").to_string();
-        let mcp = name.starts_with("mcp__");
+        let leaves_sandbox = name == "Bash" && input["unsandboxed"].as_bool() == Some(true);
+        // Layer 1, built-in rules, no model call. A command the parser proves
+        // read-only (no writes, no subshells, no credential paths) runs without
+        // asking in every mode, sandboxed or not: it can only read, and the
+        // sandbox is a write fence, not the only thing standing between the agent
+        // and `cat`.
+        if name == "Bash"
+            && !crate::shell::touches_credentials(cmd)
+            && (bash_allowed(cmd, &self.cfg.allow_bash) || crate::shell::read_only(cmd))
+        {
+            self.decision(item, "rule", "allow", "read-only command", 0);
+            return Decision::Allow;
+        }
         // A sandboxed command can only write inside the project and can't read credentials,
         // so it runs without asking; leaving the sandbox always asks.
-        let leaves_sandbox = name == "Bash" && input["unsandboxed"].as_bool() == Some(true);
         if name == "Bash" && self.ctx.shell_sandbox.is_some() && !leaves_sandbox {
+            self.decision(item, "sandbox", "allow", "sandboxed", 0);
+            return Decision::Allow;
+        }
+        // A screenshot of a session-local file (the tool itself refuses anything outside the
+        // workspace) or of localhost: a local capture and a localhost URL can only show the
+        // session's own work. Anything else keeps asking. (Allow-by-default in every mode
+        // would hand out the whole web; the chief's list scopes this to auto at minimum.)
+        if name == "Screenshot"
+            && self.mode == Mode::Auto
+            && crate::auto::local_capture(input)
+        {
+            self.decision(item, "rule", "allow", "captures only the session's own work", 0);
+            return Decision::Allow;
+        }
+        // A path prefix the user allowed for this program earlier this session.
+        if name == "Bash"
+            && !crate::shell::touches_credentials(cmd)
+            && crate::approval::prefix_allows(cmd, &self.ctx.cwd, &self.prefix_allow)
+        {
+            self.decision(item, "session", "allow", "under a path prefix allowed this session", 0);
+            return Decision::Allow;
+        }
+        // Provenance (auto mode): a routine build/test step (known build tools,
+        // plain file ops, parser-proven reads; no interpreters, network or
+        // substitutions) acting only on in-project paths or the session's own
+        // scratch (paths it created, fresh dirs under the shared temp dir)
+        // doesn't need the classifier or a prompt. Destructive programs there
+        // need provenance; anything outside this scope still asks.
+        if name == "Bash"
+            && self.mode == Mode::Auto
+            && !crate::shell::touches_credentials(cmd)
+            && crate::auto::hard_rule(name, input, &self.ctx.root).is_none()
+            && crate::approval::routine(cmd)
+            && crate::approval::own_scope(cmd, &self.ctx.cwd, &self.ctx.root, &self.created)
+        {
+            self.decision(item, "provenance", "allow", "touches only the project or its own scratch", 0);
             return Decision::Allow;
         }
         let key = match kind {
@@ -3836,8 +4992,22 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             .flatten();
         let outside = target.as_ref().is_some_and(|p| self.ctx.outside(p));
         if let Some(path) = target.filter(|_| outside) {
+            // Provenance (auto mode): writing into a path this session created,
+            // or a fresh file in the shared temp dir, is the session's own
+            // scratch — as in-project as its own checkout. Anything else
+            // outside still asks (and is denied headless).
+            if self.mode == Mode::Auto
+                && crate::approval::path_in_own_scope(&path, &self.ctx.root, &self.created)
+            {
+                self.decision(item, "provenance", "allow", "writes only its own scratch", 0);
+                self.ctx.permitted.insert(path);
+                return Decision::Allow;
+            }
             if !self.can_ask {
                 return Decision::Deny;
+            }
+            if let Some(d) = self.repeat_refusal(item, name, arg, call) {
+                return d;
             }
             let id = new_id();
             let (tx, rx) = oneshot::channel();
@@ -3855,20 +5025,40 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     path.display()
                 )),
                 subagent: None,
+                card: None,
             });
             let decision = rx.await.unwrap_or(Decision::Deny);
             self.emit(Event::PermissionResolved { id, decision });
             if decision != Decision::Deny {
                 self.ctx.permitted.insert(path);
+            } else {
+                self.record_denial(call, "the user denied it".into());
             }
             return decision;
+        }
+        // Auto mode: a Write/Edit of the session's own scratch (a fresh path under the shared
+        // temp dir, or one this session made) is as much its own as the project. `ctx.outside`
+        // already counts temp dirs as scratch, so the hard rule's "outside the project" (which
+        // knows only the project root) mustn't card it.
+        if self.mode == Mode::Auto
+            && matches!(name, "Write" | "Edit")
+            && let Some(p) = input["file_path"].as_str()
+            && crate::auto::hard_rule(name, input, &self.ctx.root).is_some()
+            && crate::approval::path_in_own_scope(
+                &crate::approval::normalize(&self.ctx.resolve(p)),
+                &self.ctx.root,
+                &self.created,
+            )
+        {
+            self.decision(item, "provenance", "allow", "writes only its own scratch", 0);
+            return Decision::Allow;
         }
         let auto = match kind {
             Kind::Edit => {
                 self.mode == Mode::AcceptEdits
                     // Auto mode: edits inside the project are checkpointed and can be undone.
                     || (self.mode == Mode::Auto
-                        && crate::auto::hard_rule(name, input, &self.root).is_none())
+                        && crate::auto::hard_rule(name, input, &self.ctx.root).is_none())
             }
             Kind::Net => false,
             _ if matches!(name, "Image" | "Screenshot" | "Compare")
@@ -3878,9 +5068,18 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             {
                 false
             }
-            _ => bash_allowed(cmd, &self.cfg.allow_bash),
+            // Read-only commands were allowed in layer 1 above; anything left
+            // here is a write or unknown, which only auto mode's classifier may pass.
+            _ => false,
         };
         if auto || self.session_allow.contains(&key) {
+            self.decision(
+                item,
+                if self.session_allow.contains(&key) { "session" } else { "rule" },
+                "allow",
+                if self.session_allow.contains(&key) { "allowed earlier this session" } else { "mode allows it" },
+                0,
+            );
             return Decision::Allow;
         }
         let mut reason = leaves_sandbox.then(|| {
@@ -3901,10 +5100,20 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             };
             let started = Instant::now();
             let verdict = self.auto_judge(item, name, input, sandbox).await;
-            self.timing.classifier_ms += ms(started.elapsed());
+            let took = ms(started.elapsed());
+            self.timing.classifier_ms += took;
             match verdict {
-                Ok(()) => return Decision::Allow,
+                Ok(()) => {
+                    self.decision(item, "classifier", "allow", "the classifier approved it", took);
+                    return Decision::Allow;
+                }
                 Err(why) => {
+                    let layer = if why == CLASSIFIER_DOWN_ASK {
+                        "fallback"
+                    } else {
+                        "classifier"
+                    };
+                    self.decision(item, layer, "ask", &why, took);
                     reason = Some(format!(
                         "Auto mode asked because {}.",
                         why.trim_end_matches('.')
@@ -3913,7 +5122,11 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             }
         }
         if !self.can_ask {
+            self.decision(item, "ask", "ask", "not interactive: denied", 0);
             return Decision::Deny;
+        }
+        if let Some(d) = self.repeat_refusal(item, name, arg, call) {
+            return d;
         }
         let always = match kind {
             Kind::Edit => "allow all edits this session".to_string(),
@@ -3941,15 +5154,46 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 "always allow typing into terminal panes this session".to_string()
             }
             _ if pane => format!("always allow preview {pane_action} this session"),
-            _ if leaves_sandbox => {
-                format!("always allow `{prefix}` outside the sandbox this session")
-            }
-            _ => format!("always allow `{prefix}` this session"),
+            _ => String::new(), // shell commands: set from the card below
+        };
+        let timeout_secs = self.cfg.approval_timeout_secs;
+        self.last_note = None;
+        // Shell commands get a card, and no blanket "always allow `rm`": the only
+        // session-wide choice is this program under the card's path prefix.
+        let card = (name == "Bash").then(|| {
+            // A command's own relative paths resolve where the shell runs (`ctx.cwd`,
+            // which `cd` moves); "outside the project" is judged against the session's
+            // checkout (`ctx.root`), which never moves.
+            crate::approval::card(
+                cmd,
+                &self.ctx.cwd,
+                &self.ctx.root,
+                reason.as_deref().unwrap_or("no rule or verdict allowed it"),
+                self.agent_reason(),
+                &self.created,
+                timeout_secs,
+            )
+        });
+        let always = match card.as_ref().and_then(|c| c.prefix.as_ref()) {
+            Some(p) => format!(
+                "allow `{}` under {p} this session",
+                crate::approval::program(cmd)
+            ),
+            None if card.is_some() => String::new(),
+            None => always,
         };
         let id = new_id();
         let (tx, rx) = oneshot::channel();
         self.shared.pending.lock().unwrap().insert(id.clone(), tx);
         let preview = tools::fs::preview(name, input, &self.ctx);
+        self.decision(
+            item,
+            "ask",
+            "ask",
+            reason.as_deref().unwrap_or("no rule or verdict allowed it"),
+            0,
+        );
+        let card_prefix = card.as_ref().and_then(|c| c.prefix.clone());
         self.emit(Event::PermissionRequest {
             id: id.clone(),
             item: item.into(),
@@ -3959,6 +5203,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             preview,
             reason,
             subagent: None,
+            card,
         });
         // The bus mirrors the card as one line with a link. IRC never approves: the click
         // happens in the app, on a link the bus can't forge (the id is frog's own).
@@ -3969,13 +5214,120 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             );
         }
         let asked = Instant::now();
-        let decision = rx.await.unwrap_or(Decision::Deny);
+        // Waiting has a limit: past it, frog takes the safe path (deny), says so in
+        // the tool result, and the agent carries on with the rest of the task.
+        let answer = if timeout_secs == 0 {
+            Ok(rx.await)
+        } else {
+            tokio::time::timeout(Duration::from_secs(timeout_secs), rx).await
+        };
+        let decision = match answer {
+            Ok(d) => d.unwrap_or(Decision::Deny),
+            Err(_) => {
+                self.shared.pending.lock().unwrap().remove(&id);
+                let mins = (timeout_secs as f64 / 60.0).round() as u64;
+                self.last_note = Some(format!(
+                    "nobody answered within {} so frog took the safe path and skipped it; don't retry it, find another way or leave it for the user",
+                    if mins >= 1 { format!("{mins} min") } else { format!("{timeout_secs} s") }
+                ));
+                self.notice(
+                    Level::Warn,
+                    format!("A permission prompt went unanswered for {timeout_secs}s; denied it and carried on."),
+                );
+                Decision::Deny
+            }
+        };
         self.timing.user_ms += ms(asked.elapsed());
-        self.emit(Event::PermissionResolved { id, decision });
-        if decision == Decision::AllowAlways {
-            self.session_allow.insert(key);
+        // A note only means something with a deny; with an allow it's dropped.
+        let note = self.shared.notes.lock().unwrap().remove(&id);
+        if let (Some(note), Decision::Deny) = (note, decision) {
+            self.last_note = Some(format!("\"{note}\""));
         }
-        decision
+        if decision == Decision::Deny {
+            let why = match &self.last_note {
+                Some(n) => format!("denied: {n}"),
+                None => "the user denied it".into(),
+            };
+            self.record_denial(call, why);
+        }
+        self.emit(Event::PermissionResolved { id, decision });
+        match decision {
+            Decision::AllowAlways | Decision::AllowPrefix if name == "Bash" => {
+                if let Some(p) = card_prefix {
+                    self.prefix_allow.push((
+                        crate::approval::program(cmd),
+                        crate::approval::normalize(Path::new(&p)),
+                    ));
+                }
+                Decision::Allow
+            }
+            Decision::AllowAlways | Decision::AllowPrefix => {
+                self.session_allow.insert(key);
+                Decision::Allow
+            }
+            d => d,
+        }
+    }
+
+    /// What the agent said just before this call, for the approval card.
+    fn agent_reason(&self) -> Option<String> {
+        let text = self
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::Assistant)?
+            .text();
+        let text = text.trim();
+        (!text.is_empty()).then(|| tools::truncate_middle(text, 300))
+    }
+
+    /// Remember a card's deny: this turn's retries of the identical call don't ask again, and
+    /// the session's count moves toward its breaker.
+    fn record_denial(&mut self, call: u64, why: String) {
+        self.turn_denied.insert(call, why);
+        *self.session_denied.entry(call).or_insert(0) += 1;
+    }
+
+    /// Just before a card would go up: never burn an approval window on a call already
+    /// refused. Retried in the same turn, it's denied at once and the turn ends
+    /// (`BlockedOnApproval`); denied `DENIED_LIMIT` times this session, it's denied at once
+    /// with a notice and the agent carries on. `None`: ask as usual.
+    fn repeat_refusal(&mut self, item: &str, name: &str, arg: &str, call: u64) -> Option<Decision> {
+        if let Some(denial) = self.turn_denied.get(&call).cloned() {
+            self.decision(item, "repeat", "deny", &format!("already denied this turn: {denial}"), 0);
+            self.notice(
+                Level::Warn,
+                format!(
+                    "Blocked on approval: `{name} {arg}` was already denied this turn ({denial}). frog didn't ask again and ended the turn."
+                ),
+            );
+            self.blocked = Some(denial);
+            return Some(Decision::Deny);
+        }
+        if self.session_denied.get(&call).copied().unwrap_or(0) >= DENIED_LIMIT {
+            let why = "this call was denied twice and won't ask again this session";
+            self.decision(item, "breaker", "deny", why, 0);
+            self.notice(Level::Warn, format!("`{name} {arg}`: {why}."));
+            self.last_note = Some(format!(
+                "{why}; don't retry it, find another way or leave it for the user"
+            ));
+            // A retry later this turn ends the turn instead of repeating this.
+            self.turn_denied.insert(call, why.to_string());
+            return Some(Decision::Deny);
+        }
+        None
+    }
+
+    /// Record how one permission check was decided, so the ask rate can be
+    /// measured from session logs. Not shown as a notice; a durable event.
+    fn decision(&self, item: &str, layer: &str, outcome: &str, reason: &str, ms: u64) {
+        self.emit(Event::PermissionDecision {
+            item: item.to_string(),
+            layer: layer.to_string(),
+            outcome: outcome.to_string(),
+            reason: reason.to_string(),
+            ms,
+        });
     }
 
     /// `ListSessions`, `SendMessage`, `StartSession`: the client carries them out.
@@ -4054,10 +5406,11 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     .into(),
             ),
             subagent: None,
+            card: None,
         });
         let asked = Instant::now();
         let decision = match rx.await.unwrap_or(Decision::Deny) {
-            Decision::AllowAlways => Decision::Allow,
+            Decision::AllowAlways | Decision::AllowPrefix => Decision::Allow,
             d => d,
         };
         self.timing.user_ms += ms(asked.elapsed());
@@ -4065,8 +5418,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         decision
     }
 
-    /// Auto mode: hard rules, then the classifier. `Ok` runs the call (and records why);
-    /// `Err` says why the user should decide.
+    /// Auto mode: hard rules, then the classifier, then `auto_classifier_fallback`, then the
+    /// built-in rules alone. `Ok` runs the call (and records why); `Err` says why the user
+    /// should decide.
     async fn auto_judge(
         &mut self,
         item: &str,
@@ -4074,42 +5428,172 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         input: &Value,
         sandbox: crate::auto::Sandbox,
     ) -> std::result::Result<(), String> {
-        if let Some(why) = crate::auto::hard_rule(name, input, &self.root) {
+        if let Some(why) = crate::auto::hard_rule(name, input, &self.ctx.root) {
             return Err(format!("it {why}"));
         }
-        if self.classifier.is_none() {
-            match crate::auto::Classifier::new(
-                &self.cfg,
-                (&self.profile_name, &self.profile),
-                &self.root,
-            ) {
-                Ok(c) => self.classifier = Some(c),
-                Err(e) => return Err(format!("the classifier couldn't start ({e:#})")),
-            }
-        }
-        let model = self
-            .classifier
-            .as_ref()
-            .map(|c| c.profile_name.clone())
-            .unwrap_or_default();
-        self.emit(Event::Progress {
-            label: format!("checking with auto mode ({model})"),
-            completed: None,
-            total: None,
-        });
         let preview = tools::fs::preview(name, input, &self.ctx);
         let action = crate::auto::describe(name, input, preview.as_ref(), sandbox);
-        let inputs = self.inputs.clone();
-        let classifier = self.classifier.as_mut().expect("set above");
-        match classifier.judge(&inputs, &action).await {
-            crate::auto::Verdict::Allow(reason) => {
+        let verdict = match self.classifier_verdict(false, &action).await {
+            Ok(v) => {
+                self.classifier_back();
+                Some(v)
+            }
+            Err(down) => match self.classifier_verdict(true, &action).await {
+                Ok(v) => {
+                    let model = self
+                        .classifier_fallback
+                        .as_ref()
+                        .map(|c| c.profile_name.clone())
+                        .unwrap_or_default();
+                    self.classifier_degraded(&format!("the fallback classifier ({model})"), &down);
+                    Some(v)
+                }
+                Err(_) => {
+                    self.classifier_degraded("frog's built-in rules", &down);
+                    None
+                }
+            },
+        };
+        match verdict {
+            Some(crate::auto::Verdict::Allow(reason)) => {
                 self.emit(Event::AutoApproved {
                     item: item.to_string(),
                     reason,
                 });
                 Ok(())
             }
-            crate::auto::Verdict::Ask(reason) => Err(format!("the classifier said: {reason}")),
+            Some(crate::auto::Verdict::Ask(reason)) => Err(format!("the classifier said: {reason}")),
+            Some(crate::auto::Verdict::Failed(why)) => Err(why),
+            // Nothing could judge: the built-in rules decide alone. A down classifier never
+            // cards a call by itself; only a call no rule can prove harmless asks.
+            None => match crate::auto::rules_fallback(name, input) {
+                Some(rule) => {
+                    self.emit(Event::AutoApproved {
+                        item: item.to_string(),
+                        reason: format!("{rule}; the classifier is down, rules decided"),
+                    });
+                    Ok(())
+                }
+                None => Err(CLASSIFIER_DOWN_ASK.into()),
+            },
+        }
+    }
+
+    /// One classifier's verdict (`fallback`: `auto_classifier_fallback`'s), started on first
+    /// use. `Err` says why it couldn't answer: it isn't configured, wouldn't start, failed, or
+    /// failed less than `CLASSIFIER_RETRY` ago (skipped, so a stopped server costs one
+    /// timeout, not one per call). Never `Ok(Verdict::Failed)`.
+    async fn classifier_verdict(
+        &mut self,
+        fallback: bool,
+        action: &str,
+    ) -> std::result::Result<crate::auto::Verdict, String> {
+        let down = if fallback {
+            &self.classifier_fallback_down
+        } else {
+            &self.classifier_down
+        };
+        if let Some((at, why)) = down
+            && at.elapsed() < CLASSIFIER_RETRY
+        {
+            return Err(why.clone());
+        }
+        let started = if fallback {
+            self.classifier_fallback.is_some()
+        } else {
+            self.classifier.is_some()
+        };
+        if !started {
+            let built = if fallback {
+                match crate::auto::Classifier::fallback(&self.cfg, &self.ctx.root) {
+                    Some(b) => b,
+                    None => return Err("no fallback classifier is configured".into()),
+                }
+            } else {
+                crate::auto::Classifier::new(&self.cfg, &self.ctx.root)
+            };
+            match built {
+                Ok(c) if fallback => self.classifier_fallback = Some(c),
+                Ok(c) => self.classifier = Some(c),
+                Err(e) => return Err(self.classifier_failed(fallback, format!("it couldn't start ({e:#})"))),
+            }
+        }
+        let slot = if fallback {
+            &self.classifier_fallback
+        } else {
+            &self.classifier
+        };
+        let model = slot.as_ref().map(|c| c.profile_name.clone()).unwrap_or_default();
+        self.emit(Event::Progress {
+            label: format!("checking with auto mode ({model})"),
+            completed: None,
+            total: None,
+        });
+        let inputs = self.inputs.clone();
+        let slot = if fallback {
+            &mut self.classifier_fallback
+        } else {
+            &mut self.classifier
+        };
+        let Some(classifier) = slot.as_mut() else {
+            return Err("it isn't running".into());
+        };
+        match classifier.judge(&inputs, action).await {
+            crate::auto::Verdict::Failed(why) => Err(self.classifier_failed(fallback, why)),
+            v => {
+                if fallback {
+                    self.classifier_fallback_down = None;
+                }
+                Ok(v)
+            }
+        }
+    }
+
+    /// A classifier couldn't answer: skip it until `CLASSIFIER_RETRY` passes. Returns `why`.
+    fn classifier_failed(&mut self, fallback: bool, why: String) -> String {
+        let down = Some((Instant::now(), why.clone()));
+        if fallback {
+            self.classifier_fallback_down = down;
+        } else {
+            self.classifier_down = down;
+        }
+        why
+    }
+
+    /// The classifier is down and `using` judges instead: the status carries one line that
+    /// says so while it lasts, and a notice says it once per session for each fallback,
+    /// never once per call.
+    fn classifier_degraded(&mut self, using: &str, why: &str) {
+        let primary = self
+            .classifier
+            .as_ref()
+            .map(|c| c.profile_name.clone())
+            .unwrap_or_else(|| crate::auto::Classifier::primary_spec(&self.cfg));
+        let why = why.trim_start_matches("it ").trim_end_matches('.');
+        let line = format!("classifier {primary} is down ({why}); {using} decide");
+        let changed = self.classifier_degraded.as_deref() != Some(line.as_str());
+        self.classifier_degraded = Some(line);
+        if self.classifier_told.insert(using.to_string()) {
+            let rest = if using.starts_with("frog's") {
+                "reads and the session's own work still run without asking; only calls no rule covers ask"
+            } else {
+                "it judges each call until the classifier is back"
+            };
+            self.notice(
+                Level::Warn,
+                format!("auto mode's classifier ({primary}) is down ({why}); using {using}: {rest}."),
+            );
+        }
+        if changed {
+            self.emit_status();
+        }
+    }
+
+    /// The classifier answered: it's back, and the status drops the degraded line.
+    fn classifier_back(&mut self) {
+        self.classifier_down = None;
+        if self.classifier_degraded.take().is_some() {
+            self.emit_status();
         }
     }
 
@@ -4117,6 +5601,28 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
     async fn compact(&mut self, focus: Option<&str>) -> Result<()> {
         if self.messages.is_empty() {
             return Ok(());
+        }
+        // If the history itself is over the window (one huge result that no cap caught), the
+        // summarization request would overflow too: clip every oversized result first,
+        // deterministically, recent ones included, so the summary request fits.
+        if self.estimate() > self.window {
+            let per_result = (self.result_cap() / 2).max(1_000);
+            let plan = context::plan_emergency(&self.messages, per_result);
+            for (id, content) in &plan {
+                self.record(Record::Replace {
+                    id: id.clone(),
+                    content: content.clone(),
+                });
+                context::apply(&mut self.messages, id, content);
+            }
+            if !plan.is_empty() {
+                self.emit(Event::ContextPruned {
+                    results: plan.len(),
+                    tokens_before: self.usage.context(),
+                    tokens_after: self.estimate(),
+                });
+                self.rebased();
+            }
         }
         let mut msgs = self.messages.clone();
         let mut instr = COMPACT_PROMPT.to_string();
@@ -4180,7 +5686,11 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         self.emit(Event::Compacted {
             tokens_before: before,
             tokens_after: resp.usage.output,
+            summary: self.build_summary().map(kept),
         });
+        if let Some(closed) = self.chapters.compacted(self.active_turn.unwrap_or(self.turn)) {
+            self.title_chapter(closed);
+        }
         self.rebased();
         Ok(())
     }
@@ -4334,32 +5844,72 @@ fn from_json_mode(mut resp: Response) -> Option<Response> {
     Some(resp)
 }
 
+/// Why a finished reply counts against the configured tool-call format, if it does. Only the
+/// model's own malformed calls count, in a reply the server says ended normally. Provider and
+/// transport failures (402, 429, 5xx, timeouts, resets, a 400 for the request) never reach
+/// here: they're errors, retried or failing the turn. A reply cut off at the output limit
+/// (`Stop::Length`) can end mid-call with half its JSON, and that's the cap, not the format.
+fn format_failure(
+    stop: Stop,
+    recovered: bool,
+    bad_args: bool,
+    json_failed: bool,
+) -> Option<&'static str> {
+    if !matches!(stop, Stop::End | Stop::ToolUse) {
+        return None;
+    }
+    if recovered {
+        Some("it wrote tool calls as text instead of calling them")
+    } else if bad_args {
+        Some("its tool-call arguments weren't valid JSON")
+    } else if json_failed {
+        Some("its replies didn't follow the JSON format")
+    } else {
+        None
+    }
+}
+
 /// Recover tool calls a model wrote as text instead of via the API.
 /// Returns whether anything was recovered (a sign the configured format isn't working).
-fn normalize(mut msg: Message) -> (Message, bool) {
+/// Without `recover` (native calls from a model known to make them), `<tool_call>` text is the
+/// model quoting the format in prose, not a call.
+fn normalize(mut msg: Message, recover: bool) -> (Message, bool) {
     for b in &mut msg.content {
         if let Block::Text { text } = b {
             *text = prompt::strip_answer_tags(text);
         }
     }
-    if !msg.tool_uses().is_empty() {
+    if !recover || !msg.tool_uses().is_empty() {
         return (msg, false);
     }
-    let Some((clean, calls)) = prompt::extract_tool_calls(&msg.text()) else {
-        return (msg, false);
-    };
-    msg.content.retain(|b| !matches!(b, Block::Text { .. }));
-    if !clean.is_empty() {
-        msg.content.push(Block::Text { text: clean });
-    }
-    for (name, input) in calls {
-        msg.content.push(Block::ToolUse {
+    // Each text block's calls replace it where it stood. Anthropic rejects the next request if
+    // the latest assistant message's signed thinking blocks moved or changed (a 400, "thinking
+    // blocks in the latest assistant message cannot be modified"), so with interleaved thinking
+    // every thinking block keeps its place; `prompt::to_text_mode` folds the calls back into
+    // one text block at the same index.
+    let mut recovered = false;
+    let mut content = Vec::with_capacity(msg.content.len() + 1);
+    for b in msg.content {
+        let Block::Text { text } = &b else {
+            content.push(b);
+            continue;
+        };
+        let Some((clean, calls)) = prompt::extract_tool_calls(text) else {
+            content.push(b);
+            continue;
+        };
+        recovered = true;
+        if !clean.is_empty() {
+            content.push(Block::Text { text: clean });
+        }
+        content.extend(calls.into_iter().map(|(name, input)| Block::ToolUse {
             id: new_id(),
             name,
             input,
-        });
+        }));
     }
-    (msg, true)
+    msg.content = content;
+    (msg, recovered)
 }
 
 /// The host a web call reaches, for "always allow" (searches share one key).
@@ -4507,6 +6057,70 @@ mod tests {
             chat: false,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// An engine on `profile`, also handing back every request the provider was sent.
+    fn engine_profile(
+        script: Vec<Response>,
+        profile: Profile,
+    ) -> (Handle, Arc<Mutex<Vec<String>>>) {
+        engine_profile_failing(Vec::new(), script, profile)
+    }
+
+    /// `engine_profile` whose provider first fails the next calls (see [`scripted::Fail`]).
+    fn engine_profile_failing(
+        fails: Vec<scripted::Fail>,
+        script: Vec<Response>,
+        profile: Profile,
+    ) -> (Handle, Arc<Mutex<Vec<String>>>) {
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let client = scripted::Client::new(script);
+        *client.fails.lock().unwrap() = fails.into();
+        let sent = client.sent.clone();
+        (start(opts, Provider::Scripted(client)).unwrap(), sent)
+    }
+
+    /// Opus on Vercel's AI Gateway, as `vercel/anthropic/claude-opus-5.5` resolves.
+    fn gateway_opus() -> Profile {
+        let mut p = Profile::new(ProviderKind::Openai, "anthropic/claude-opus-5.5");
+        p.base_url = Some("https://ai-gateway.vercel.sh/v1".into());
+        p.tool_mode = ToolMode::Auto;
+        p
+    }
+
+    /// A later turn: submit and collect through the next `Idle` (`run` waits for one first).
+    async fn turn_again(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
+        h.ops
+            .send(Op::Submit {
+                text: prompt.into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        until_idle(h).await
+    }
+
+    fn last_tool_mode(evs: &[Envelope]) -> Option<ToolMode> {
+        evs.iter().rev().find_map(|e| match &e.event {
+            Event::Status(s) => Some(s.tool_mode),
+            _ => None,
+        })
     }
 
     fn engine_qwen3_mode(script: Vec<Response>, mode: ToolMode) -> Handle {
@@ -4745,11 +6359,17 @@ mod tests {
                 "item_started",
                 "item_delta",
                 "item_completed",
+                // The first turn's end names the session (headless title fallback).
+                "titled",
                 "turn_ended",
                 "status",
                 "idle"
             ]
         );
+        assert!(matches!(
+            &evs[5].event,
+            Event::Titled { title } if title == "hi"
+        ));
         let seqs: Vec<u64> = evs.iter().map(|e| e.seq).collect();
         assert!(
             seqs.windows(2).all(|w| w[1] == w[0] + 1),
@@ -4759,7 +6379,7 @@ mod tests {
             matches!(&evs[4].event, Event::ItemCompleted { item: Item::Message { text }, .. } if text == "hello")
         );
         assert!(matches!(
-            &evs[5].event,
+            &evs[6].event,
             Event::TurnEnded {
                 reason: EndReason::Complete,
                 ..
@@ -4776,6 +6396,296 @@ mod tests {
             })
             .collect();
         assert!(ids.iter().all(|i| *i == ids[0]));
+    }
+
+    /// An engine with a store, scripted replies, running in `cwd`.
+    fn drain_engine(script: Vec<Response>, dir: PathBuf, cwd: PathBuf) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd,
+            mode: Mode::AcceptEdits,
+            can_ask: true,
+            resume: None,
+            store: Some(dir),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// `drain_between_tools`: `Drain` mid-turn, with the first tool call's result recorded,
+    /// ends the turn `Suspended` — never `Cancelled` — with the ack after it, and no interrupt
+    /// marker in the log.
+    #[tokio::test]
+    async fn drain_between_tools_suspends() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("a.rs"), "fn a() {}\n").unwrap();
+        let script = vec![
+            reply(
+                vec![call("t1", "Read", json!({ "file_path": "a.rs" }))],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("never")], Stop::End),
+        ];
+        let mut h = drain_engine(script, dir.clone(), project);
+        // Skip startup events, then start the turn.
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut sid = String::new();
+        // Drain once the first tool call's result is recorded.
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            match &env.event {
+                Event::TurnStarted { .. } => sid = env.session.clone(),
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, outcome: ToolOutcome::Ok, .. },
+                    ..
+                } if name == "Read" => {
+                    h.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() + 30_000,
+                        })
+                        .unwrap();
+                }
+                _ => {}
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(
+            evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })),
+            "suspended, not cancelled"
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Cancelled, .. })),
+            "never cancelled: {:?}",
+            names(&evs)
+        );
+        shutdown(h).await;
+        // The log is whole: the tool result is (only) where it should be, and no interrupt
+        // marker anywhere.
+        let blocks = logged_blocks(&dir, &sid);
+        assert!(
+            !blocks.iter().any(|(_, b)| matches!(b, Block::Text { text } if text.contains("[Request interrupted by user]"))),
+            "no interrupt marker"
+        );
+        assert!(
+            blocks
+                .iter()
+                .any(|(_, b)| matches!(b, Block::ToolResult { id, .. } if id == "t1")),
+            "the finished tool call's result is recorded"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+
+    /// `DrainAbort` calls a drain off: the turn keeps going normally — no suspend, the
+    /// remaining steps run to a `Complete`. Then a second drain (no abort this time) still
+    /// suspends, so both paths hold in one session.
+    #[tokio::test]
+    async fn drain_abort_lets_the_turn_continue() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("a.rs"), "fn a() {}\n").unwrap();
+        let script = vec![
+            reply(
+                vec![call("t1", "Read", json!({ "file_path": "a.rs" }))],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("kept going")], Stop::End),
+        ];
+        let mut h = drain_engine(script, dir.clone(), project);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut sid = String::new();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::TurnEnded { .. });
+            match &env.event {
+                Event::TurnStarted { .. } => sid = env.session.clone(),
+                // Drain on the first tool result, then abort it at once: the update was
+                // called off before the deadline.
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, outcome: ToolOutcome::Ok, .. },
+                    ..
+                } if name == "Read" => {
+                    h.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() + 30_000,
+                        })
+                        .unwrap();
+                    h.ops.send(Op::DrainAbort).unwrap();
+                }
+                _ => {}
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(
+            evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Complete, .. })),
+            "the turn carried on: {:?}",
+            names(&evs)
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })),
+            "never suspended after an abort"
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(&e.event, Event::Drained { .. })),
+            "the aborted drain never acks"
+        );
+        shutdown(h).await;
+        // The log is a plain finished turn: no interrupted-by-update marker anywhere.
+        assert!(
+            !logged_blocks(&dir, &sid)
+                .iter()
+                .any(|(_, b)| matches!(b, Block::ToolResult { content, is_error: true, .. }
+                    if content.contains("Interrupted by app update"))),
+            "no drain markers in the log"
+        );
+
+        // A second drain, no abort, still suspends: the abort didn't wedge the engine.
+        let script = vec![
+            reply(
+                vec![call("t2", "Read", json!({ "file_path": "a.rs" }))],
+                Stop::ToolUse,
+            ),
+            // Unused if the drain lands; present so the turn would carry on if it didn't.
+            reply(vec![text("unused")], Stop::End),
+        ];
+        let mut h2 = drain_engine(script, dir.clone(), dir.join("repo"));
+        while !matches!(h2.events.recv().await.unwrap().event, Event::Idle) {}
+        h2.ops
+            .send(Op::Submit {
+                text: "again".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut evs2 = Vec::new();
+        loop {
+            let env = h2.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            match &env.event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, outcome: ToolOutcome::Ok, .. },
+                    ..
+                } if name == "Read" => {
+                    h2.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() + 30_000,
+                        })
+                        .unwrap();
+                }
+                _ => {}
+            }
+            evs2.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(
+            evs2.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })),
+            "a later drain still suspends"
+        );
+        shutdown(h2).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `drain_kills_long_tool`: a drain whose deadline has passed records the tool in flight
+    /// as interrupted-by-update (it never even starts), and the turn suspends.
+    #[tokio::test]
+    async fn drain_kills_long_tool() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        let script = vec![reply(
+            vec![call(
+                "t1",
+                "Bash",
+                json!({ "command": "sleep 30", "timeout": 30_000 }),
+            )],
+            Stop::ToolUse,
+        )];
+        let mut h = drain_engine(script, dir.clone(), project);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        // Drain with a deadline already in the past, as soon as the turn starts.
+        let mut sid = String::new();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            match &env.event {
+                Event::Status(_) if sid.is_empty() => sid = env.session.clone(),
+                Event::TurnStarted { .. } => {
+                    sid = env.session.clone();
+                    h.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() - 1,
+                        })
+                        .unwrap();
+                }
+                _ => {}
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(
+            evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })),
+            "suspended after the kill: {:?}",
+            names(&evs)
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(&e.event, Event::ItemStarted { kind: ItemKind::ToolCall { .. }, .. } )),
+            "the long tool never started"
+        );
+        let blocks = logged_blocks(&dir, &sid);
+        assert!(
+            blocks.iter().any(|(_, b)| matches!(b, Block::ToolResult { id, content, is_error: true, .. }
+                if id == "t1" && content.contains("Interrupted by app update"))),
+            "the interrupted-by-update marker is recorded: {blocks:?}",
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -5040,8 +6950,88 @@ mod tests {
                 "turn_started",
                 "item_started",
                 "item_completed",
+                "titled",
                 "turn_ended"
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn set_title_tool_names_the_session_and_disables_the_fallback() {
+        let call = Block::ToolUse {
+            id: "t1".into(),
+            name: crate::title::TOOL.into(),
+            input: json!({ "title": "\"fix login timeout\"" }),
+        };
+        let mut h = engine(
+            vec![
+                reply(vec![call], Stop::ToolUse),
+                reply(vec![text("done")], Stop::End),
+            ],
+            true,
+        );
+        let evs = run(&mut h, "RULES: stay inside /tmp\n\nfix the login timeout in auth.rs").await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::ItemCompleted {
+                item: Item::ToolCall { outcome: ToolOutcome::Ok, .. },
+                ..
+            }
+        )));
+        // The model's title wins over the derived one, exactly once.
+        let titles: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Titled { title } => Some(title.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles, ["fix login timeout"]);
+    }
+
+    #[tokio::test]
+    async fn headless_first_turn_falls_back_to_a_derived_title() {
+        let mut h = engine(vec![reply(vec![text("ok")], Stop::End)], false);
+        let evs = run(
+            &mut h,
+            "RULES: work only inside the worktree.\n\nContinue this branch: finish the SetTitle \
+tool, strip prefixes like RULES:, and add tests.",
+        )
+        .await;
+        let titles: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Titled { title } => Some(title.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles.len(), 1);
+        assert!(titles[0].starts_with("finish the SetTitle tool"), "{:?}", titles);
+    }
+
+    #[tokio::test]
+    async fn titled_sessions_are_not_renamed_by_the_fallback() {
+        // The fallback only fires for turn 1: a second turn never adds a title.
+        let dir = tmp_store();
+        let mut h = engine_at(
+            vec![
+                reply(vec![text("one")], Stop::End),
+                reply(vec![text("two")], Stop::End),
+            ],
+            false,
+            Some(dir.clone()),
+            None,
+        );
+        let sid = run(&mut h, "first real request").await[0].session.clone();
+        shutdown(h).await;
+        let loaded = session::load(&dir, &sid).unwrap();
+        assert_eq!(
+            loaded
+                .events
+                .iter()
+                .filter(|e| matches!(e.event, Event::Titled { .. }))
+                .count(),
+            1
         );
     }
 
@@ -5131,6 +7121,7 @@ mod tests {
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -5182,6 +7173,68 @@ mod tests {
             chat: true,
         };
         start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// A `cd` that sticks (into a worktree, say) is logged as a durable `ShellCwd`, so a
+    /// dead session's log still says where it was working; a command that stays put isn't.
+    #[tokio::test]
+    async fn a_bash_cd_logs_the_shell_cwd() {
+        let base = std::env::temp_dir().join(format!("frog-shell-cwd-{}", new_id()));
+        let (root, store) = (base.join("repo"), base.join("store"));
+        let tree = root.join(".frog/worktrees/w");
+        for d in [&tree, &store] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let tree = tree.canonicalize().unwrap();
+        let bash = |id: &str, cmd: String| Block::ToolUse {
+            id: id.into(),
+            name: "Bash".into(),
+            input: json!({ "command": cmd }),
+        };
+        let script = vec![
+            reply(vec![bash("a", "true".into())], Stop::ToolUse),
+            reply(vec![bash("b", format!("cd {}", tree.display()))], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let (mut h, _) = engine_sent(script, Some(store.clone()), None, None, root.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "work in the worktree".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut sid = String::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            sid = env.session.clone();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                        note: None,
+                    })
+                    .unwrap();
+            }
+            if matches!(env.event, Event::Idle) {
+                break;
+            }
+        }
+        shutdown(h).await;
+        let logged: Vec<PathBuf> = session::load(&store, &sid)
+            .unwrap()
+            .events
+            .into_iter()
+            .filter_map(|e| match e.event {
+                Event::ShellCwd { cwd } => Some(cwd),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(logged.len(), 1, "only the cd is logged: {logged:?}");
+        assert_eq!(logged[0].canonicalize().unwrap(), tree);
+        let _ = std::fs::remove_dir_all(base);
     }
 
     /// A chat isn't offered Bash, so a model that calls it anyway gets an error, and nothing
@@ -5237,6 +7290,57 @@ mod tests {
         );
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Item 2a (org reliability): a second engine starting in a linked worktree another
+    /// session's engine runs in refuses, naming that session; the main checkout and the
+    /// worktree after the first engine exits are open.
+    #[tokio::test]
+    async fn a_second_engine_in_the_same_worktree_refuses_naming_the_owner() {
+        let (repo, wt) = crate::worktree::tests::repo_with_worktree("engine");
+        let opts = |cwd: PathBuf| {
+            let mut profile = Profile::new(ProviderKind::Ollama, "test");
+            profile.tool_mode = ToolMode::Native;
+            Options {
+                cfg: Config {
+                    hermetic: true,
+                    ..Config::default()
+                },
+                profile_name: "test".into(),
+                profile,
+                cwd,
+                mode: Mode::Default,
+                can_ask: true,
+                resume: None,
+                store: Some(tmp_store()),
+                sandbox: false,
+                rich: false,
+                subagent: false,
+                chat: false,
+            }
+        };
+        let script = || Provider::Scripted(scripted::Client::new(vec![]));
+        let mut first = start(opts(wt.clone()), script()).unwrap();
+        let owner = first.events.recv().await.unwrap().session;
+        let err = match start(opts(wt.clone()), script()) {
+            Ok(_) => panic!("a second engine started in the same worktree"),
+            Err(e) => format!("{e:#}"),
+        };
+        assert!(err.contains(&format!("session {owner}")), "{err}");
+        assert!(err.contains(&wt.display().to_string()), "{err}");
+        // A subagent shares its parent's tree; the main checkout is never locked.
+        let mut sub = opts(wt.clone());
+        sub.subagent = true;
+        sub.store = None;
+        shutdown(start(sub, script()).unwrap()).await;
+        let a = start(opts(repo.clone()), script()).unwrap();
+        let b = start(opts(repo.clone()), script()).unwrap();
+        shutdown(a).await;
+        shutdown(b).await;
+        // Once the owner exits, the worktree is free.
+        shutdown(first).await;
+        shutdown(start(opts(wt.clone()), script()).unwrap()).await;
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 
     async fn shutdown(mut h: Handle) {
@@ -5356,8 +7460,8 @@ mod tests {
             .take_while(|e| !matches!(e.event, Event::Synced { .. }))
             .count();
         assert_eq!(
-            durable, 4,
-            "turn_started, item_started, item_completed, turn_ended"
+            durable, 5,
+            "turn_started, item_started, item_completed, titled, turn_ended"
         );
         assert!(matches!(&replay[0].event, Event::TurnStarted { input, .. } if input == "hi"));
         assert!(replay.iter().all(|e| e.session == sid));
@@ -5414,8 +7518,8 @@ mod tests {
             .collect();
         assert_eq!(
             replayed.len(),
-            4,
-            "turn_started, item_started, item_completed, turn_ended"
+            5,
+            "turn_started, item_started, item_completed, titled, turn_ended"
         );
         assert!(matches!(&replayed[0].event, Event::TurnStarted { input, .. } if input == "hi"));
 
@@ -5578,6 +7682,142 @@ mod tests {
             "the repaired tool call is still in the history"
         );
         shutdown(h).await;
+    }
+
+
+    /// `drain_resume_continues`: after a drain suspends a turn, a resumed engine continues
+    /// it with the update note (the app's job to send, as it will after a real update), on
+    /// the session's stored model, and the work carries on from the repaired history —
+    /// including the tool call the drain marked interrupted-by-update.
+    #[tokio::test]
+    async fn drain_resume_continues_on_the_stored_model_with_the_note() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("a.rs"), "fn a() {}\n").unwrap();
+        // Step 1 streams a tool call; the drain lands during it, so the call is marked
+        // interrupted-by-update and the turn suspends at the model-message safe point.
+        let script = vec![
+            reply(
+                vec![call("t1", "Read", json!({ "file_path": "a.rs" }))],
+                Stop::ToolUse,
+            ),
+        ];
+        let mut h = drain_engine(script, dir.clone(), project.clone());
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        // Drain the moment the turn starts, so the message safe point takes it.
+        let mut sid = String::new();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            if matches!(env.event, Event::TurnStarted { .. }) {
+                sid = env.session.clone();
+                h.ops
+                    .send(Op::Drain {
+                        deadline: now_ms() + 30_000,
+                    })
+                    .unwrap();
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })));
+        shutdown(h).await;
+        assert!(
+            logged_blocks(&dir, &sid)
+                .iter()
+                .any(|(_, b)| matches!(b, Block::ToolResult { id, content, .. } if id == "t1" && content.contains("Interrupted by app update"))),
+            "the never-run call is marked interrupted-by-update"
+        );
+
+        // The relaunched app: spawn with `resume`, then `Continue` with the update note.
+        let (mut h2, sent) = engine_sent(
+            vec![reply(vec![text("done")], Stop::End)],
+            Some(dir.clone()),
+            Some(sid),
+            None,
+            project,
+        );
+        while !matches!(h2.events.recv().await.unwrap().event, Event::Idle) {}
+        h2.ops
+            .send(Op::Continue {
+                note: Some(crate::protocol::SUSPENDED_NOTE.into()),
+            })
+            .unwrap();
+        let evs = until_idle(&mut h2).await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnStarted { input, .. } if input == crate::protocol::SUSPENDED_NOTE
+        )));
+        assert!(evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Complete, .. })));
+        let req = sent.lock().unwrap().last().cloned().unwrap();
+        assert!(req.contains("resumed after the app updated"), "the update note, not the crash note");
+        assert!(
+            !req.contains("resumed after the app restarted"),
+            "never the crash note"
+        );
+        assert!(req.contains("t1"), "the marked call is in the history the model continues from");
+        shutdown(h2).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `drain_during_model_stream`: a drain while the reply still streams keeps the partial
+    /// text and suspends at the stream's end (the safe point fires once the message closes).
+    #[tokio::test]
+    async fn drain_during_model_stream_keeps_the_partial_text() {
+        let dir = tmp_store();
+        let project = dir.join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        let script = vec![reply(vec![text("partial answer")], Stop::End)];
+        let mut h = drain_engine(script, dir.clone(), project);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        // Drain while the message item is streaming.
+        let mut sid = String::new();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let done = matches!(env.event, Event::Drained { .. });
+            match &env.event {
+                Event::TurnStarted { .. } => sid = env.session.clone(),
+                Event::ItemDelta { .. } => {
+                    h.ops
+                        .send(Op::Drain {
+                            deadline: now_ms() + 30_000,
+                        })
+                        .unwrap();
+                }
+                _ => {}
+            }
+            evs.push(env);
+            if done {
+                break;
+            }
+        }
+        assert!(evs.iter().any(|e| matches!(&e.event, Event::TurnEnded { reason: EndReason::Suspended, .. })));
+        shutdown(h).await;
+        let blocks = logged_blocks(&dir, &sid);
+        assert!(
+            blocks.iter().any(|(_, b)| matches!(b, Block::Text { text } if text.contains("partial answer"))),
+            "the streamed partial text is kept in the history"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -6032,6 +8272,141 @@ mod tests {
         }
         assert_eq!(status, Some(Mode::Yolo), "the engine resumed in the session's mode");
         shutdown(h).await;
+    }
+
+    /// A persisted engine started in `mode` (the `--auto`-style flag), in `dir`.
+    fn engine_in_mode(
+        script: Vec<Response>,
+        mode: Mode,
+        dir: &Path,
+        resume: Option<String>,
+    ) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                sandbox_shell: false,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: dir.to_path_buf(),
+            mode,
+            can_ask: true,
+            resume,
+            store: Some(dir.to_path_buf()),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// The mode the engine reports at startup (its first `Status`).
+    async fn startup_mode(h: &mut Handle) -> Mode {
+        loop {
+            if let Event::Status(s) = h.events.recv().await.unwrap().event {
+                return s.mode;
+            }
+        }
+    }
+
+    fn logged_modes(dir: &Path, sid: &str) -> Vec<Mode> {
+        session::load(dir, sid)
+            .unwrap()
+            .events
+            .iter()
+            .filter_map(|e| match e.event {
+                Event::ModeChanged { mode } => Some(mode),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The okc manager's bug: a session StartSession began with `--auto` never logged its
+    /// mode, so when the app restarted its engine (resume, no mode flag) it ran in Default
+    /// and its next in-project Write asked. The starting mode is now logged with the first
+    /// turn, and the resumed engine keeps it.
+    #[tokio::test]
+    async fn a_flag_started_mode_survives_an_engine_restart() {
+        let dir = tmp_store();
+        let write = |id: &str, path: &str| Block::ToolUse {
+            id: id.into(),
+            name: "Write".into(),
+            input: json!({ "file_path": path, "content": "x\n" }),
+        };
+        let script = vec![
+            reply(vec![write("w1", "one.py")], Stop::ToolUse),
+            reply(vec![text("wrote it")], Stop::End),
+        ];
+        let mut h = engine_in_mode(script, Mode::Auto, &dir, None);
+        let evs = run(&mut h, "write one.py").await;
+        let sid = evs[0].session.clone();
+        let logged = evs
+            .iter()
+            .position(|e| matches!(e.event, Event::ModeChanged { mode: Mode::Auto }));
+        let turn = evs
+            .iter()
+            .position(|e| matches!(e.event, Event::TurnStarted { .. }));
+        assert!(
+            logged.is_some() && logged < turn,
+            "the starting mode is logged before turn 1"
+        );
+        shutdown(h).await;
+        assert_eq!(logged_modes(&dir, &sid), [Mode::Auto]);
+
+        // The app restarts the engine the way it resumes any session: no mode flag (Default).
+        let script = vec![
+            reply(vec![write("w2", "two.py")], Stop::ToolUse),
+            reply(vec![text("wrote it again")], Stop::End),
+        ];
+        let mut h = engine_in_mode(script, Mode::Default, &dir, Some(sid.clone()));
+        assert_eq!(startup_mode(&mut h).await, Mode::Auto, "resumed in auto");
+        let evs = tokio::time::timeout(Duration::from_secs(20), run(&mut h, "write two.py"))
+            .await
+            .expect("the in-project Write asked: the mode reverted");
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. }))
+        );
+        assert!(dir.join("two.py").exists());
+        shutdown(h).await;
+        // Nothing changed, so nothing more to log.
+        assert_eq!(logged_modes(&dir, &sid), [Mode::Auto]);
+    }
+
+    /// A log with no mode on record (written before modes were logged at start) resumed by
+    /// an engine with a mode flag: that start is a change from the log's implicit Default,
+    /// so it's logged, and the next flagless restart keeps it.
+    #[tokio::test]
+    async fn an_engine_start_that_differs_from_the_log_is_logged() {
+        let dir = tmp_store();
+        let script = vec![reply(vec![text("ok")], Stop::End)];
+        let mut h = engine_in_mode(script, Mode::Default, &dir, None);
+        let sid = run(&mut h, "hi").await[0].session.clone();
+        shutdown(h).await;
+        // A Default session logs no mode at all: no noise for the common case.
+        assert!(logged_modes(&dir, &sid).is_empty());
+
+        let mut h = engine_in_mode(Vec::new(), Mode::Auto, &dir, Some(sid.clone()));
+        assert_eq!(startup_mode(&mut h).await, Mode::Auto);
+        shutdown(h).await;
+        assert_eq!(
+            logged_modes(&dir, &sid),
+            [Mode::Auto],
+            "the auto start is logged"
+        );
+
+        let mut h = engine_in_mode(Vec::new(), Mode::Default, &dir, Some(sid.clone()));
+        assert_eq!(
+            startup_mode(&mut h).await,
+            Mode::Auto,
+            "a flagless restart keeps auto"
+        );
+        shutdown(h).await;
+        assert_eq!(logged_modes(&dir, &sid), [Mode::Auto]);
     }
 
     /// Every block the session log holds, in order.
@@ -6659,7 +9034,7 @@ for line in sys.stdin:
         assert!(
             notices
                 .iter()
-                .any(|n| n.contains("switching to text tool calls")),
+                .any(|n| n.contains("switching this session to text tool calls")),
             "{notices:?}"
         );
         let status = evs.iter().rev().find_map(|e| match &e.event {
@@ -6674,6 +9049,215 @@ for line in sys.stdin:
                 ..
             }
         )));
+    }
+
+    /// The session's fallback holds for its later turns (each turn re-applies the harness).
+    #[tokio::test]
+    async fn a_text_fallback_lasts_the_session() {
+        let text_call =
+            r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+        let script = vec![
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text("none found")], Stop::End),
+            reply(vec![text("still none")], Stop::End),
+        ];
+        let mut h = engine_mode(script, ToolMode::Auto);
+        let evs = run(&mut h, "find .nothing files").await;
+        assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
+        // The notice names the model and says why, and that it isn't saved.
+        let warned = notices(&evs);
+        assert!(
+            warned.iter().any(|n| n.starts_with("test (test): native tool calls failed twice")
+                && n.contains("wrote tool calls as text")
+                && n.contains("Not saved")),
+            "{warned:?}"
+        );
+        let evs = turn_again(&mut h, "and now?").await;
+        assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
+    }
+
+    /// The messages of a request as the scripted provider recorded it.
+    fn sent_messages(req: &str) -> Vec<Value> {
+        let at = req.find(r#"[{"role""#).expect("messages in the request");
+        serde_json::from_str(&req[at..]).unwrap()
+    }
+
+    /// The 400 that broke every Opus session: "messages.1.content.12: `thinking` or
+    /// `redacted_thinking` blocks in the latest assistant message cannot be modified". A text
+    /// mode reply with interleaved signed thinking and a `<tool_call>` comes back on the next
+    /// request with every thinking block byte-identical and at the index it had.
+    #[tokio::test]
+    async fn text_mode_leaves_signed_thinking_untouched() {
+        let thought = |t: &str, sig: &str| Block::Thinking {
+            text: t.into(),
+            signature: Some(sig.into()),
+        };
+        let first = vec![
+            thought("plan the search", "sig-one"),
+            text("Looking for them."),
+            thought("glob is enough", "sig-two"),
+            text(r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#),
+        ];
+        let script = vec![
+            reply(first.clone(), Stop::End),
+            reply(vec![thought("none", "sig-three"), text("none found")], Stop::End),
+        ];
+        let mut p = gateway_opus();
+        p.tool_mode = ToolMode::Text;
+        let (mut h, sent) = engine_profile(script, p);
+        let evs = run(&mut h, "find .nothing files").await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::ItemCompleted { item: Item::ToolCall { name, .. }, .. } if name == "Glob"
+        )));
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        let msgs = sent_messages(&sent[1]);
+        let latest = msgs
+            .iter()
+            .rev()
+            .find(|m| m["role"] == "assistant")
+            .expect("the reply is replayed");
+        let blocks = latest["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), first.len(), "{blocks:#?}");
+        for i in [0, 2] {
+            assert_eq!(blocks[i], serde_json::to_value(&first[i]).unwrap(), "block {i}");
+        }
+        assert_eq!(blocks[1]["text"], "Looking for them.");
+        assert!(blocks[3]["text"].as_str().unwrap().contains("<tool_call>"));
+        // The call's result follows as text, never as a native tool block.
+        assert!(!sent[1].contains(r#""type":"tool_use""#));
+    }
+
+    #[test]
+    fn recovered_calls_stay_where_the_model_wrote_them() {
+        let msg = Message {
+            role: Role::Assistant,
+            content: vec![
+                Block::Thinking {
+                    text: "a".into(),
+                    signature: Some("s".into()),
+                },
+                text("first"),
+                Block::Thinking {
+                    text: "b".into(),
+                    signature: Some("t".into()),
+                },
+                text(r#"then <tool_call>{"name":"Glob","arguments":{"pattern":"x"}}</tool_call>"#),
+            ],
+        };
+        let (out, recovered) = normalize(msg, true);
+        assert!(recovered);
+        let kinds: Vec<&str> = out
+            .content
+            .iter()
+            .map(|b| match b {
+                Block::Thinking { .. } => "thinking",
+                Block::Text { .. } => "text",
+                Block::ToolUse { .. } => "call",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["thinking", "text", "thinking", "text", "call"]);
+        let wire = prompt::to_text_mode(std::slice::from_ref(&out));
+        assert_eq!(wire[0].content.len(), 4);
+        assert!(matches!(&wire[0].content[2], Block::Thinking { signature: Some(s), .. } if s == "t"));
+        assert!(matches!(&wire[0].content[3], Block::Text { text } if text.starts_with("then\n<tool_call>")));
+    }
+
+    #[test]
+    fn only_a_finished_reply_with_a_bad_call_is_a_format_failure() {
+        assert!(format_failure(Stop::End, true, false, false).is_some());
+        assert!(format_failure(Stop::ToolUse, false, true, false).is_some());
+        assert!(format_failure(Stop::End, false, false, true).is_some());
+        assert_eq!(format_failure(Stop::End, false, false, false), None);
+        // Cut off at the output cap, half a call is the cap's fault.
+        assert_eq!(format_failure(Stop::Length, true, true, true), None);
+        assert_eq!(format_failure(Stop::Incomplete, true, true, true), None);
+    }
+
+    /// Provider trouble (a 429, a 503, a reset stream, the 400 for a modified thinking block)
+    /// and replies cut off mid-call at the output cap never count toward the text fallback.
+    #[tokio::test(start_paused = true)]
+    async fn provider_errors_and_truncated_calls_are_not_format_failures() {
+        let mut p = Profile::new(ProviderKind::Ollama, "test");
+        p.tool_mode = ToolMode::Auto;
+        let half = || Block::ToolUse {
+            id: new_id(),
+            name: "Glob".into(),
+            input: json!({ "_invalid_json": "{\"pattern\": \"*.no" }),
+        };
+        let fails = vec![
+            scripted::Fail::http(429, "rate limited"),
+            scripted::Fail::before("connection reset by peer"),
+            scripted::Fail::http(
+                400,
+                "messages.1.content.12: `thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified",
+            ),
+        ];
+        let script = vec![
+            reply(vec![half()], Stop::Length),
+            reply(vec![half()], Stop::Length),
+            reply(vec![half()], Stop::Length),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let (mut h, _) = engine_profile_failing(fails, script, p);
+        let first = run(&mut h, "find .no files").await;
+        assert!(first.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnEnded {
+                reason: EndReason::Error {
+                    error: EngineError::Provider { status: 400, .. }
+                },
+                ..
+            }
+        )));
+        let second = turn_again(&mut h, "try again").await;
+        for evs in [&first, &second] {
+            assert!(
+                !notices(evs).iter().any(|n| n.contains("text tool calls")),
+                "{:?}",
+                notices(evs)
+            );
+        }
+        assert_eq!(last_tool_mode(&second), Some(ToolMode::Native));
+    }
+
+    /// Claude through a gateway calls tools natively. When it writes `<tool_call>` in prose
+    /// (quoting frog's own text format, say), that's not a call and not a format failure: the
+    /// session stays native and nothing runs.
+    #[tokio::test]
+    async fn claude_on_a_gateway_never_falls_back_to_text_calls() {
+        let quoted = r#"text mode looks like <tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+        let script = vec![
+            reply(vec![text(quoted)], Stop::End),
+            reply(vec![text(quoted)], Stop::End),
+            reply(vec![text(quoted)], Stop::End),
+        ];
+        let (mut h, sent) = engine_profile(script, gateway_opus());
+        for i in 0..3 {
+            let evs = if i == 0 {
+                run(&mut h, "how does text mode look?").await
+            } else {
+                turn_again(&mut h, "and again?").await
+            };
+            assert!(
+                !notices(&evs).iter().any(|n| n.contains("text tool calls")),
+                "{:?}",
+                notices(&evs)
+            );
+            assert_eq!(last_tool_mode(&evs), Some(ToolMode::Native));
+            assert!(!evs.iter().any(|e| matches!(
+                &e.event,
+                Event::ItemCompleted { item: Item::ToolCall { .. }, .. }
+            )));
+        }
+        // Every request offered native tools, and none described the text format.
+        for req in sent.lock().unwrap().iter() {
+            assert!(req.contains("<tool Read>"), "native tools offered");
+            assert!(!req.contains("To call one, output a block"));
+        }
     }
 
     #[tokio::test]
@@ -6998,6 +9582,88 @@ for line in sys.stdin:
         }
     }
 
+    /// Item 2b (org reliability): a stop that clears the inbox leaves nothing queued to
+    /// restart the session — the messages queued behind the stopped turn never run — while
+    /// a message sent after the clear queues and runs as usual.
+    #[tokio::test]
+    async fn clear_inbox_drops_queued_messages_so_a_stop_stays_stopped() {
+        let script = vec![
+            reply(vec![list_sessions_call()], Stop::ToolUse),
+            reply(vec![text("got the later one")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "work".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let deliver = |h: &Handle, message: &str| {
+            h.ops
+                .send(Op::Deliver {
+                    from: "s2".into(),
+                    from_name: "Manager".into(),
+                    message: message.into(),
+                })
+                .unwrap();
+        };
+        let mut evs = Vec::new();
+        let mut cleared = false;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::SessionRequest { .. } = &env.event {
+                // Mid-turn: two messages queue behind it, then the stop clears them.
+                deliver(&h, "queued-one");
+                deliver(&h, "queued-two");
+                h.ops.send(Op::Interrupt).unwrap();
+                h.ops.send(Op::ClearInbox).unwrap();
+                cleared = true;
+            }
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle && cleared {
+                break;
+            }
+        }
+        // Nothing started after the stopped turn.
+        let started: Vec<String> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::TurnStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(started, ["work"], "a voided message started a turn");
+        // The loop takes the voided messages off the queue right after the stopped turn, says
+        // so, and starts nothing.
+        let notice = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match h.events.recv().await.unwrap().event {
+                    Event::Notice { message, .. } if message.contains("queued session message") => {
+                        break message;
+                    }
+                    Event::TurnStarted { input, .. } => panic!("a voided message ran: {input}"),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("no notice about the dropped messages");
+        assert!(notice.contains("dropped 2 queued session messages"), "{notice}");
+        // A message sent after the clear runs.
+        deliver(&h, "after-clear");
+        let input = loop {
+            if let Event::TurnStarted { input, .. } = h.events.recv().await.unwrap().event {
+                break input;
+            }
+        };
+        assert!(input.contains("after-clear") && !input.contains("queued-"), "{input}");
+        shutdown(h).await;
+    }
+
     #[tokio::test]
     async fn deliver_while_busy_waits_for_the_turn_boundary() {
         let script = vec![
@@ -7234,6 +9900,7 @@ for line in sys.stdin:
                         .send(Op::Permission {
                             id,
                             decision: Decision::Allow,
+                            note: None,
                         })
                         .unwrap();
                 }
@@ -7487,6 +10154,150 @@ for line in sys.stdin:
         assert!(saw_empty_error, "the missing id was refused");
     }
 
+    /// MoveSession round-trips through the client like the rest of the family: the engine
+    /// hands the call over, and the model sees the client's answer. The engine holds no
+    /// parentage (that's the app's), so a move the client refuses comes back as an error
+    /// and nothing else happens — no state of the engine's changes either way.
+    #[tokio::test]
+    async fn move_session_round_trips_through_the_client() {
+        // One turn, three moves: a good one, a nonexistent parent, and an unparent.
+        let call = |id: &str, parent: &str| {
+            Block::ToolUse {
+                id: id.into(),
+                name: "MoveSession".into(),
+                input: json!({ "id": "eng-0002", "parent": parent }),
+            }
+        };
+        let script = vec![
+            reply(vec![call("m1", "chief-0001")], Stop::ToolUse),
+            reply(vec![call("m2", "nobody-9999")], Stop::ToolUse),
+            reply(
+                vec![Block::ToolUse {
+                    id: "m3".into(),
+                    name: "MoveSession".into(),
+                    input: json!({ "id": "eng-0002", "parent": null }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("moved")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "re-file it".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut moves = 0;
+        let mut saw_refusal = false;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::SessionRequest { id, tool, input, .. } => {
+                    assert_eq!(tool, "MoveSession");
+                    moves += 1;
+                    // The client answers: a known parent moves, an unknown one refuses.
+                    let error = input["parent"].as_str() == Some("nobody-9999");
+                    if error { saw_refusal = true; }
+                    h.ops
+                        .send(Op::SessionReply {
+                            id,
+                            result: if error { None } else { Some(json!("moved")) },
+                            error: if error {
+                                Some("No session \"nobody-9999\"".into())
+                            } else {
+                                None
+                            },
+                        })
+                        .unwrap();
+                }
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, outcome, .. },
+                    ..
+                } if name == "MoveSession" => {
+                    if output.contains("nobody-9999") {
+                        assert_eq!(outcome, ToolOutcome::Error, "the refusal is an error result");
+                    } else {
+                        assert_eq!(outcome, ToolOutcome::Ok, "a move the client made: {output}");
+                    }
+                }
+                Event::TurnEnded { .. } => break,
+                _ => {}
+            }
+        }
+        assert_eq!(moves, 3, "every call reached the client");
+        assert!(saw_refusal, "the nonexistent parent was refused");
+    }
+
+    /// A move the client refuses leaves the engine exactly as it was: same turn count, no
+    /// extra events, the session's log untouched (parentage isn't the engine's to change).
+    #[tokio::test]
+    async fn a_refused_move_changes_no_engine_state() {
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "m1".into(),
+                    name: "MoveSession".into(),
+                    input: json!({ "id": "eng-0002", "parent": "nobody-9999" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("left it")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "try the move".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut refused = false;
+        let mut titled = false;
+        let mut turns = 0;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::SessionRequest { id, .. } => {
+                    h.ops
+                        .send(Op::SessionReply {
+                            id,
+                            result: None,
+                            error: Some("No session \"nobody-9999\"".into()),
+                        })
+                        .unwrap();
+                }
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "MoveSession" => {
+                    refused = true;
+                    assert!(output.contains("nobody-9999"), "the model sees the refusal");
+                }
+                Event::TurnEnded { .. } => {
+                    turns += 1;
+                    break;
+                }
+                Event::ModeChanged { .. } | Event::ModelChanged { .. } => {
+                    panic!("a refused move changed engine state");
+                }
+                Event::Titled { title } => {
+                    // Only the first input's auto-title (turn 1, no client named the
+                    // session) — never the move's doing.
+                    assert_eq!(title, "try the move");
+                    titled = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(refused);
+        assert!(titled, "the only title is the first input's own");
+        assert_eq!(turns, 1, "the turn carried on and ended once");
+    }
+
     #[tokio::test]
     async fn turn_timing_keeps_permission_waits_out_of_tool_time() {
         let bash = Block::ToolUse {
@@ -7515,6 +10326,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id,
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
                 break;
@@ -7617,6 +10429,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id,
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
                 break preview;
@@ -7719,6 +10532,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -7834,6 +10648,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Deny,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -7866,6 +10681,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -8045,6 +10861,7 @@ for line in sys.stdin:
                         .send(Op::Permission {
                             id: id.clone(),
                             decision: Decision::Allow,
+                            note: None,
                         })
                         .unwrap();
                 }
@@ -8353,6 +11170,8 @@ for line in sys.stdin:
         profile.tool_mode = tool_mode;
         let mut cfg = Config::default();
         cfg.early_tools = early;
+        // sandbox-exec can't nest inside the test process; leave it off for tool tests.
+        cfg.sandbox_shell = false;
         let opts = Options {
             cfg,
             profile_name: "test".into(),
@@ -8647,6 +11466,145 @@ for line in sys.stdin:
         assert!(results[0].1.contains("must Read"), "{}", results[0].1);
     }
 
+    /// An engine for parallel-read tests: no streamed `ToolReady` (so nothing starts while the
+    /// reply streams; only the batch's own parallel start can overlap calls), no shell sandbox.
+    fn engine_batch(script: Vec<Response>, dir: &Path) -> Handle {
+        let profile = Profile::new(ProviderKind::Ollama, "test");
+        let mut cfg = Config::default();
+        cfg.sandbox_shell = false;
+        let opts = Options {
+            cfg,
+            profile_name: "test".into(),
+            profile,
+            cwd: dir.to_path_buf(),
+            mode: Mode::AcceptEdits,
+            can_ask: false,
+            resume: None,
+            store: Some(dir.to_path_buf()),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// FIFOs whose readers each wait `hold` after opening before they get a byte: read one
+    /// at a time, `n` of them take `n * hold`; side by side, about one `hold`.
+    fn slow_fifos(dir: &Path, n: usize, hold: Duration) -> Vec<PathBuf> {
+        (0..n)
+            .map(|i| {
+                let p = dir.join(format!("fifo-{i}"));
+                let made = std::process::Command::new("mkfifo").arg(&p).status().unwrap();
+                assert!(made.success());
+                let q = p.clone();
+                std::thread::spawn(move || {
+                    use std::io::Write;
+                    // Blocks until the reader opens its end.
+                    let mut w = std::fs::OpenOptions::new().write(true).open(&q).unwrap();
+                    std::thread::sleep(hold);
+                    let _ = w.write_all(format!("fifo {i}\n").as_bytes());
+                });
+                p
+            })
+            .collect()
+    }
+
+    /// Parallel reads: four read-only calls in one reply run side by side, measurably faster
+    /// than one after another, and their results come back in the reply's order.
+    #[tokio::test]
+    async fn a_replys_read_only_calls_run_concurrently() {
+        let dir = tmp_store();
+        let hold = Duration::from_millis(1_000);
+        let fifos = slow_fifos(&dir, 4, hold);
+        let calls = fifos
+            .iter()
+            .enumerate()
+            .map(|(i, p)| call(&format!("c{i}"), "Bash", json!({"command": format!("cat {}", p.display())})))
+            .collect();
+        let script = vec![
+            reply(calls, Stop::ToolUse),
+            reply(vec![text("read all four")], Stop::End),
+        ];
+        let mut h = engine_batch(script, &dir);
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        let t0 = Instant::now();
+        submit(&h, "read them");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let took = t0.elapsed();
+        for i in 0..4 {
+            let out = tool_output(&evs, &format!("c{i}")).unwrap();
+            assert!(out.contains(&format!("fifo {i}")), "c{i}: {out}");
+        }
+        // One at a time would be >= 4s.
+        assert!(took < hold * 5 / 2, "the reads ran one at a time: {took:?}");
+        let order: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::ItemCompleted { id, item: Item::ToolCall { .. } } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(order, ["c0", "c1", "c2", "c3"]);
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A write closes the parallel run: the read before it finishes before the write starts,
+    /// and the read after it runs after the write (it sees the written file).
+    #[tokio::test]
+    async fn a_write_waits_for_the_reads_before_it_and_reads_after_wait_for_it() {
+        let dir = tmp_store();
+        let fifo = slow_fifos(&dir, 1, Duration::from_millis(700)).remove(0);
+        let out = dir.join("written.txt");
+        let script = vec![
+            reply(
+                vec![
+                    call("r", "Bash", json!({"command": format!("cat {}", fifo.display())})),
+                    call("w", "Write", json!({"file_path": out.display().to_string(), "content": "new\n"})),
+                    call("after", "Bash", json!({"command": format!("cat {}", out.display())})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine_batch(script, &dir);
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "read, write, read");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let at = |want: &str, started: bool| {
+            evs.iter()
+                .position(|e| match &e.event {
+                    Event::ItemStarted { id, .. } if started => id == want,
+                    Event::ItemCompleted { id, .. } if !started => id == want,
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("{want}"))
+        };
+        assert!(at("r", false) < at("w", true), "the read completes before the write starts");
+        assert!(at("w", false) < at("after", true), "the later read waits for the write");
+        assert!(tool_output(&evs, "after").unwrap().contains("new"));
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn parallel_read_follows_the_permission_layers() {
+        use crate::auto::parallel_read;
+        assert!(parallel_read("Read", &json!({"file_path": "a"})));
+        assert!(parallel_read("Grep", &json!({"pattern": "x"})));
+        assert!(parallel_read("WebSearch", &json!({"query": "x"})));
+        assert!(parallel_read("WebFetch", &json!({"url": "https://example.com/a"})));
+        assert!(!parallel_read("WebFetch", &json!({"url": "http://localhost:3000"})));
+        assert!(parallel_read("Bash", &json!({"command": "git status && wc -l src/*.rs"})));
+        assert!(!parallel_read("Bash", &json!({"command": "cd src && ls"})), "cd moves the session");
+        assert!(!parallel_read("Bash", &json!({"command": "cargo build"})));
+        assert!(!parallel_read("Bash", &json!({"command": "ls", "unsandboxed": true})));
+        assert!(!parallel_read("Bash", &json!({"command": "cat ~/.ssh/id_rsa"})));
+        assert!(!parallel_read("Write", &json!({"file_path": "a", "content": ""})));
+        assert!(!parallel_read("mcp__runpod__list-pods", &json!({})));
+    }
+
     #[tokio::test]
     async fn interrupting_cancels_early_tools() {
         let dir = tmp_store();
@@ -8715,6 +11673,101 @@ for line in sys.stdin:
         }
     }
 
+    /// Stop cancels a Bash tool mid-run: the sleeping command dies, its result is recorded
+    /// as interrupted, and the turn ends cancelled — all within about two seconds.
+    #[tokio::test]
+    async fn interrupt_cancels_a_running_bash_tool() {
+        let dir = tmp_store();
+        // Real work after the sleep keeps it inline (a bare long sleep becomes a job).
+        let bash = call(
+            "t1",
+            "Bash",
+            json!({ "command": "sleep 64 && touch /tmp/frog-never", "timeout": 120000 }),
+        );
+        let (mut h, _) = engine_early(
+            vec![
+                reply(vec![bash], Stop::ToolUse),
+                reply(vec![text("done")], Stop::End),
+            ],
+            false,
+            ToolMode::Native,
+            Duration::from_millis(500),
+            &dir,
+            &dir,
+        );
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        // Yolo so the sleeping command runs without a permission card nobody answers; the
+        // shell sandbox off because sandbox-exec can't nest inside the test process.
+        h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+        h.ops
+            .send(Op::Submit {
+                text: "sleep".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        // Wait for the tool to start (allowing its permission card), then stop the turn.
+        let started = std::time::Instant::now();
+        loop {
+            let env = tokio::time::timeout(Duration::from_secs(10), h.events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                        note: None,
+                    })
+                    .unwrap();
+            }
+            if matches!(
+                &env.event,
+                Event::ItemStarted { kind: ItemKind::ToolCall { name, .. }, .. } if name == "Bash"
+            ) {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        h.ops.send(Op::Interrupt).unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "interrupt took {:?}",
+            started.elapsed()
+        );
+        let reasons: Vec<String> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::TurnEnded { reason, .. } => Some(format!("{reason:?}")),
+                _ => None,
+            })
+            .collect();
+        eprintln!("reasons: {reasons:?}");
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Cancelled,
+                ..
+            }
+        )));
+        let sid = evs[0].session.clone();
+        let interrupted = logged_blocks(&dir, &sid).into_iter().any(|(_, b)| {
+            matches!(b, Block::ToolResult { content, .. } if content.contains("Interrupted"))
+        });
+        assert!(interrupted, "no interrupted tool result recorded");
+        // The sleeping child is gone.
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let alive = std::process::Command::new("pgrep")
+            .args(["-f", "sleep 64"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+        assert!(!alive, "a `sleep 64` from the interrupted turn is still running");
+        shutdown(h).await;
+    }
+
     /// Collect events until `done` matches one, allowing every permission request on the way.
     async fn drive(h: &mut Handle, done: impl Fn(&Event) -> bool) -> Vec<Envelope> {
         let mut out = Vec::new();
@@ -8728,6 +11781,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id: id.clone(),
                         decision: Decision::Allow,
+                        note: None,
                     })
                     .unwrap();
             }
@@ -8779,17 +11833,11 @@ for line in sys.stdin:
         let mut h = engine_with(script, true, None, None, None, dir.clone());
         drive(&mut h, |e| matches!(e, Event::Idle)).await;
         submit(&h, "find the parser in the background");
-        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
-        let result = evs.iter().find_map(|e| match &e.event {
-            Event::ItemCompleted {
-                item: Item::ToolCall { output, .. },
-                ..
-            } => Some(output.clone()),
-            _ => None,
-        });
-        assert!(result.unwrap().contains("task-1"));
-        // With nothing else queued, the report starts a turn of its own.
-        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        // Everything through the report turn's end (the task's done event may arrive
+        // before, during or after the notice turn — ordering is the registry's, not ours).
+        let mut evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { turn: 2, .. })).await;
+        let mut more = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        evs.append(&mut more);
         let input = woke_with(&evs).expect("a turn started by the notice");
         assert!(input.starts_with("<task-done id=task-1>"), "{input}");
         assert!(input.contains("src/parse.rs:12"), "{input}");
@@ -8887,6 +11935,7 @@ for line in sys.stdin:
                     .send(Op::Permission {
                         id,
                         decision: Decision::Deny,
+                        note: None,
                     })
                     .unwrap();
                 break;
@@ -8897,6 +11946,161 @@ for line in sys.stdin:
         shutdown(h).await;
     }
 
+    /// A background task's steps reach the client wrapped under its job id (`task-N`, not an
+    /// item of the parent's turn), so the client can show the agent's own progress; its
+    /// progress events still carry the same steps for the background list.
+    #[tokio::test]
+    async fn a_background_tasks_steps_arrive_under_its_job_id() {
+        let dir = tmp_store();
+        script_child(
+            &dir,
+            vec![
+                reply(vec![call("c1", "Grep", json!({"pattern": "x"}))], Stop::ToolUse),
+                reply(vec![text("found it in src/main.rs")], Stop::End),
+            ],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "bg research", "prompt": "find it", "background": true}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("started in background")], Stop::End),
+            reply(vec![text("thanks")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "research in the background");
+        let mut evs = drive(&mut h, |e| matches!(e, Event::BackgroundDone { .. })).await;
+        let mut more = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        evs.append(&mut more);
+        let step = evs.iter().find(|e| matches!(
+            &e.event,
+            Event::Subagent { item, inner } if item == "task-1"
+                && matches!(&**inner, Event::ItemCompleted { item: Item::ToolCall { name, .. }, .. } if name == "Grep")
+        ));
+        let step = step.expect("the background agent's Grep step, under task-1");
+        assert!(step.event.is_durable(), "its steps are kept for a reopen");
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::BackgroundProgress { id, .. } if id == "task-1"
+        )));
+        shutdown(h).await;
+    }
+
+    /// The agent-step log: a foreground Task's steps are in the session log, so a reopened
+    /// session replays them under the Task's item (not just its report).
+    #[tokio::test]
+    async fn a_reopened_session_replays_its_agents_steps() {
+        let dir = tmp_store();
+        script_child(
+            &dir,
+            vec![
+                reply(vec![call("c1", "Grep", json!({"pattern": "x"}))], Stop::ToolUse),
+                reply(vec![text("found it in src/main.rs")], Stop::End),
+            ],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "research", "prompt": "find it"}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("it's in main.rs")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, Some(dir.clone()), None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "research");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let sid = evs[0].session.clone();
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        shutdown(h).await;
+
+        let mut h = engine_with(Vec::new(), true, Some(dir.clone()), Some(sid), None, dir.clone());
+        until_idle(&mut h).await;
+        h.ops.send(Op::Subscribe { after: 0 }).unwrap();
+        let replay = until_idle(&mut h).await;
+        let steps: Vec<_> = replay
+            .iter()
+            .take_while(|e| !matches!(e.event, Event::Synced { .. }))
+            .filter_map(|e| match &e.event {
+                Event::Subagent { item, inner } if item == "t" => Some(&**inner),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            steps.iter().any(|e| matches!(e, Event::ItemStarted { kind: ItemKind::ToolCall { name, .. }, .. } if name == "Grep")),
+            "the Grep step started: {steps:?}"
+        );
+        assert!(
+            steps.iter().any(|e| matches!(e, Event::ItemCompleted { item: Item::Message { text }, .. } if text.contains("main.rs"))),
+            "its report completed: {steps:?}"
+        );
+        assert!(
+            !steps.iter().any(|e| matches!(e, Event::ItemDelta { .. })),
+            "deltas stay live-only"
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+
+    /// Integration: a parent drains while its `Task` subagent is mid-turn — the cascade
+    /// stops the child at its own safe point (its turn records `Suspended` too), the parent
+    /// reports the child's partial result as interrupted-by-update, and the resumed turn
+    /// can re-run the `Task`.
+    #[tokio::test]
+    async fn draining_the_parent_suspends_its_subagent_mid_turn_and_resume_reruns() {
+        let dir = tmp_store();
+        // The child is mid-turn when the parent's drain lands: a tool call in flight.
+        script_child(
+            &dir,
+            vec![
+                reply(vec![call("c1", "Bash", json!({"command": "sleep 30"}))], Stop::ToolUse),
+            ],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "long subagent", "prompt": "work on it", "mode": "write"}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("done anyway")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, Some(dir.clone()), None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "start the subagent");
+        // Drain the parent as soon as the child's tool call starts (the child's events
+        // stream through the parent's subagent item as `item_delta`s).
+        let mut parent_suspended = false;
+        let mut saw_ack = false;
+        let mut events = 0;
+        while !parent_suspended || !saw_ack {
+            let env = h.events.recv().await.unwrap();
+            match &env.event {
+                Event::Subagent { item, inner } if item == "t" => {
+                    events += 1;
+                    if matches!(&**inner, Event::ItemStarted { kind: crate::protocol::ItemKind::ToolCall { .. }, .. }) {
+                        h.ops
+                            .send(Op::Drain {
+                                deadline: now_ms() + 2_000,
+                            })
+                            .unwrap();
+                    }
+                }
+                Event::TurnEnded { reason: EndReason::Suspended, .. } => parent_suspended = true,
+                Event::Drained { .. } => saw_ack = true,
+                _ => {}
+            }
+            events += 0;
+            if events > 400 { panic!("the drain never landed; events exhausted"); }
+        }
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
     #[tokio::test]
     async fn a_finished_bash_job_reports_its_exit_and_output() {
         let dir = tmp_store();
@@ -8934,6 +12138,308 @@ for line in sys.stdin:
                 .iter()
                 .any(|e| matches!(e.event, Event::BackgroundDone { .. }))
         );
+    }
+
+    /// The sleep guard: a long bare wait (the specimen: `sleep 570; wc -l …; tail …`, a
+    /// 9.5-minute blocking turn) runs as a background job. The tool returns at once with a note
+    /// saying so, a Warn notice tells the user, and the turn's next step runs right away.
+    #[tokio::test]
+    async fn a_long_bare_sleep_becomes_a_background_job() {
+        let dir = tmp_store();
+        let wait = call(
+            "w",
+            "Bash",
+            json!({"command": "sleep 570; wc -l /dev/null; tail -1 /dev/null", "timeout": 590000}),
+        );
+        let script = vec![
+            reply(vec![wait], Stop::ToolUse),
+            reply(vec![text("doing other work meanwhile")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        let t0 = Instant::now();
+        submit(&h, "wait for the run, then count");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        assert!(
+            t0.elapsed() < Duration::from_secs(20),
+            "the turn must not block on the sleep"
+        );
+        assert!(matches!(
+            evs.iter().find_map(|e| match &e.event {
+                Event::TurnEnded { reason, .. } => Some(reason.clone()),
+                _ => None,
+            }),
+            Some(EndReason::Complete)
+        ));
+        assert!(
+            evs.iter().any(|e| matches!(&e.event,
+                Event::BackgroundStarted { id, kind, label, log } if id == "job-1" && log.as_deref().is_some_and(|l| l.ends_with("job-1.log")) && kind == "job" && label.starts_with("sleep 570"))),
+            "the wait runs as job-1"
+        );
+        let out = tool_output(&evs, "w").expect("the wait's result");
+        assert!(
+            out.contains("That wait is now a background job (job-1, 570s); continuing"),
+            "{out}"
+        );
+        assert!(out.contains("<job-done id=job-1>"), "{out}");
+        assert!(
+            notices(&evs)
+                .iter()
+                .any(|n| n.contains("570s sleep moved to background job job-1")),
+            "{:?}",
+            notices(&evs)
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Events never interrupt a turn: two timers that fire while a turn is busy (a 3s command)
+    /// are parked, the turn completes normally, and they run as the next turn, in the order
+    /// they fired, before the engine goes idle (no `Idle` between the two turns).
+    #[tokio::test]
+    async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m1", "Monitor", json!({"after_s": 1, "note": "first"})),
+                    call("m2", "Monitor", json!({"after_s": 2, "note": "second"})),
+                    call("b", "Bash", json!({"command": "sleep 3; echo slept"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("turn one done")], Stop::End),
+            reply(vec![text("both timers seen")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "set two timers and work");
+        let first = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        // Both fired during the turn; the turn still ran to its end.
+        let done = first
+            .iter()
+            .filter(|e| matches!(&e.event, Event::BackgroundDone { status, .. } if status == "done"))
+            .count();
+        assert_eq!(done, 2, "both timers fired mid-turn");
+        assert!(first.iter().any(|e| matches!(&e.event,
+            Event::TurnEnded { reason: EndReason::Complete, .. })));
+        assert!(tool_output(&first, "b").unwrap().contains("slept"));
+        assert_eq!(
+            first.iter().filter(|e| matches!(e.event, Event::TurnStarted { .. })).count(),
+            1,
+            "nothing started mid-turn"
+        );
+        let next = drive(&mut h, |e| matches!(e, Event::TurnStarted { .. })).await;
+        assert!(
+            !next.iter().any(|e| matches!(e.event, Event::Idle)),
+            "the wake runs before the engine goes idle"
+        );
+        let input = next
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let (a, b) = (input.find("first").unwrap(), input.find("second").unwrap());
+        assert!(input.starts_with("<wakeup id=mon-1") && a < b, "{input}");
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The no-response opt: an informational session message is logged as read and starts no
+    /// turn (and wakes nothing); the next turn carries it as context. A plain delivered message
+    /// still starts a turn.
+    #[tokio::test]
+    async fn an_informational_message_is_read_without_a_turn() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(vec![text("noted the status")], Stop::End),
+            reply(vec![text("answered")], Stop::End),
+        ];
+        let (mut h, sent) = engine_early(script, true, ToolMode::Native, Duration::ZERO, &dir, &dir);
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        h.ops
+            .send(Op::Inform {
+                from: "s9".into(),
+                from_name: "okc manager".into(),
+                message: "received, going idle".into(),
+            })
+            .unwrap();
+        let read = drive(&mut h, |e| matches!(e, Event::MessageRead { .. })).await;
+        let sid = read[0].session.clone();
+        let quiet = tokio::time::timeout(Duration::from_millis(800), async {
+            loop {
+                let env = h.events.recv().await.unwrap();
+                if matches!(env.event, Event::TurnStarted { .. }) {
+                    break;
+                }
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "an informational message started a turn");
+        assert!(sent.lock().unwrap().is_empty(), "no model call for it");
+        // Logged as read.
+        let logged = session::events_after(&dir, &sid, 0).unwrap();
+        assert!(logged.iter().any(|e| matches!(&e.event,
+            Event::MessageRead { from, message, .. } if from == "s9" && message == "received, going idle")));
+        // The next turn (a question) runs as usual and carries the status along.
+        h.ops
+            .send(Op::Deliver {
+                from: "s9".into(),
+                from_name: "okc manager".into(),
+                message: "is the pod up?".into(),
+            })
+            .unwrap();
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        assert!(evs.iter().any(|e| matches!(&e.event,
+            Event::TurnStarted { input, .. } if input.contains("is the pod up?"))));
+        let to_model = sent.lock().unwrap().join("\n");
+        assert!(to_model.contains("received, going idle"), "the status rides along as context");
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Everything waiting at a boundary goes as one batch: a wake that fired mid-turn and a
+    /// session message that arrived mid-turn open one turn together (wake as its input, the
+    /// message as `more`), and clients see the queue while it waits.
+    #[tokio::test]
+    async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m", "Monitor", json!({"after_s": 1, "note": "pod check"})),
+                    call("b", "Bash", json!({"command": "sleep 3; echo slept"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("turn one")], Stop::End),
+            reply(vec![text("saw both")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "work");
+        let parked = drive(&mut h, |e| matches!(e, Event::QueuedEvents { items } if !items.is_empty())).await;
+        assert!(!parked.iter().any(|e| matches!(e.event, Event::TurnEnded { .. })), "parked mid-turn");
+        h.ops
+            .send(Op::Deliver {
+                from: "s9".into(),
+                from_name: "okc manager".into(),
+                message: "serving:true".into(),
+            })
+            .unwrap();
+        drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let next = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let (input, more) = next
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnStarted { input, more, .. } => Some((input.clone(), more.clone())),
+                _ => None,
+            })
+            .unwrap();
+        assert!(input.starts_with("<wakeup id=mon-1") && input.contains("pod check"), "{input}");
+        assert_eq!(more.len(), 1, "{more:?}");
+        assert!(more[0].text.starts_with("<session-message from=\"s9\"") && more[0].text.contains("serving:true"));
+        assert!(
+            next.iter().any(|e| matches!(&e.event, Event::QueuedEvents { items } if items.is_empty())),
+            "the flush empties the queue clients see"
+        );
+        let turns = next.iter().filter(|e| matches!(e.event, Event::TurnStarted { .. })).count();
+        assert_eq!(turns, 1, "one batch, one turn");
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A stop stays stopped: a wake that came in during the turn the user stopped doesn't
+    /// start a turn of its own; it goes along with the user's next message.
+    #[tokio::test]
+    async fn a_stop_holds_wakes_for_the_next_turn() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m", "Monitor", json!({"after_s": 1, "note": "check"})),
+                    call("b", "Bash", json!({"command": "sleep 30"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "wait");
+        drive(&mut h, |e| matches!(e, Event::BackgroundDone { status, .. } if status == "done")).await;
+        h.ops.send(Op::Interrupt).unwrap();
+        let stopped = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        assert!(stopped.iter().any(|e| matches!(&e.event,
+            Event::TurnEnded { reason: EndReason::Cancelled, .. })));
+        // Nothing starts on its own.
+        let quiet = tokio::time::timeout(Duration::from_millis(1_500), async {
+            loop {
+                let env = h.events.recv().await.unwrap();
+                if matches!(env.event, Event::TurnStarted { .. }) {
+                    break env;
+                }
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "a held wake started a turn");
+        submit(&h, "next");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let input = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnStarted { input, .. } => Some(input.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(input, "next", "the user's message starts the turn; the wake rides along");
+        let rode = evs.iter().find_map(|e| match &e.event {
+            Event::WakesDelivered { wakes, .. } => Some(wakes.clone()),
+            _ => None,
+        });
+        assert!(
+            rode.is_some_and(|w| w.len() == 1 && w[0].starts_with("<wakeup id=mon-1")),
+            "the held wake is delivered with the turn, and says so"
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Short sleeps and sleeps with real work after them still run inline, as written.
+    #[tokio::test]
+    async fn a_short_sleep_or_real_work_runs_inline() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("s", "Bash", json!({"command": "sleep 1; echo short"})),
+                    call(
+                        "r",
+                        "Bash",
+                        json!({"command": "sleep 0 && echo real > /dev/null; echo real"}),
+                    ),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "go");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let s = tool_output(&evs, "s").unwrap();
+        assert!(s.contains("short"), "{s}");
+        assert!(tool_output(&evs, "r").unwrap().contains("real"));
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::BackgroundStarted { .. }))
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -8983,5 +12489,1560 @@ for line in sys.stdin:
         assert!(!bash_allowed("ls && rm -rf /", &[]));
         assert!(!bash_allowed("cat x > y", &[]));
         assert!(bash_allowed("cargo check --all", &["cargo check".into()]));
+    }
+
+    // ---- auto-compaction off the provider's real limit ----
+
+    /// An engine helper whose profile name the catalog can know.
+    fn engine_named(script: Vec<Response>, spec: &str, window: Option<u64>) -> Handle {
+        let (_, model) = spec.split_once('/').unwrap();
+        let mut profile = Profile::new(ProviderKind::Ollama, model);
+        profile.context_window = window;
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: spec.into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// An engine in a permission mode, with an optional classifier spec. The shell
+    /// sandbox is off so Bash calls reach the permission logic, not the sandbox's
+    /// blanket allow.
+    fn engine_perm(script: Vec<Response>, mode: Mode, classifier: Option<&str>) -> Handle {
+        let mut cfg = Config {
+            hermetic: true,
+            sandbox_shell: false,
+            ..Config::default()
+        };
+        cfg.auto_classifier = classifier.map(String::from);
+        engine_perm_cfg(script, mode, cfg)
+    }
+
+    fn engine_perm_cfg(script: Vec<Response>, mode: Mode, cfg: Config) -> Handle {
+        engine_perm_at(script, mode, cfg, std::env::temp_dir())
+    }
+
+    fn engine_perm_at(script: Vec<Response>, mode: Mode, cfg: Config, cwd: PathBuf) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg,
+            profile_name: "test".into(),
+            profile,
+            cwd,
+            mode,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    /// The window after startup resolved it: the last `Status` before the first `Idle`
+    /// (the engine emits `Status` before and after `resolve_window`, then `Idle`).
+    async fn resolved_window(h: &mut Handle) -> u64 {
+        let mut window = 0;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            match &env.event {
+                Event::Status(s) => window = s.context_window,
+                Event::Idle => return window,
+                _ => {}
+            }
+        }
+    }
+
+    /// (a) A window the config doesn't set comes from the catalog's context_length, not the
+    /// per-provider default.
+    #[tokio::test]
+    async fn an_unknown_window_uses_the_catalog_value() {
+        // Unknown to the catalog: the Ollama default.
+        let mut h = engine_named(vec![reply(vec![text("hi")], Stop::End)], "testprov/m", None);
+        assert_eq!(resolved_window(&mut h).await, 32_768);
+        shutdown(h).await;
+
+        // Known to the catalog: its context_length.
+        let spec = "testprov/m";
+        let model = crate::catalog::Model {
+            spec: spec.into(),
+            provider: "testprov".into(),
+            id: "m".into(),
+            name: "M".into(),
+            context: Some(100_000),
+            ..Default::default()
+        };
+        crate::catalog::TEST_CACHE
+            .lock()
+            .unwrap()
+            .get_or_insert_with(Default::default)
+            .insert(spec.into(), model);
+        let mut h = engine_named(vec![reply(vec![text("hi")], Stop::End)], spec, None);
+        assert_eq!(resolved_window(&mut h).await, 100_000);
+        shutdown(h).await;
+        crate::catalog::TEST_CACHE.lock().unwrap().take();
+    }
+
+    /// A successful compaction carries what it kept (the #53 receipt: files with +/−, turns
+    /// with their requests and outcomes, tests run), so the app can banner it; engines
+    /// without a session store emit the token counts alone.
+    #[tokio::test]
+    async fn a_compaction_emits_what_it_kept() {
+        let root = tmp_store();
+        let project = root.join("repo");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(project.join("src/auth.rs"), "pub fn login() {}\n").unwrap();
+        let read = Block::ToolUse {
+            id: "r1".into(),
+            name: "Read".into(),
+            input: json!({ "file_path": "src/auth.rs" }),
+        };
+        let edit = Block::ToolUse {
+            id: "e1".into(),
+            name: "Edit".into(),
+            input: json!({
+                "file_path": "src/auth.rs",
+                "old_string": "login() {}",
+                "new_string": "login() { check(); }"
+            }),
+        };
+        // A shell command the summary reads as a passing test run (`make test` matches
+        // `is_test`); with no Makefile here it fails fast and the `||` prints a passing
+        // result — nothing in it can hang the Bash tool.
+        let tests = Block::ToolUse {
+            id: "b1".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "make test || echo 'test result: ok. 3 passed; 0 failed'" }),
+        };
+        let script = vec![
+            reply(vec![read, edit, tests], Stop::ToolUse),
+            reply(vec![text("Fixed the login check.")], Stop::End),
+            reply(vec![text("Kept: the login fix and its tests.")], Stop::End),
+        ];
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            // The sandbox's `sandbox-exec` isn't available under the test runner's own sandbox.
+            cfg: Config {
+                hermetic: true,
+                sandbox_shell: false,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: project.clone(),
+            // Yolo: the Bash call needs no permission card (nothing answers one in a test —
+            // the card would sit out the whole 600s approval timeout, then deny).
+            mode: Mode::Yolo,
+            can_ask: true,
+            resume: None,
+            store: Some(root.join("sessions")),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+        until_idle(&mut h).await;
+        h.ops
+            .send(Op::Submit {
+                text: "fix the login bug".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let _ = until_idle(&mut h).await;
+        // The user's own compact: the reply above summarizes, the event carries the receipt.
+        h.ops.send(Op::Compact { focus: None }).unwrap();
+        let evs = until_idle(&mut h).await;
+        let kept = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::Compacted { summary, .. } => summary.clone(),
+                _ => None,
+            })
+            .expect("a Compacted event with its receipt");
+        assert_eq!(
+            kept.files,
+            vec![crate::protocol::KeptFile {
+                path: "src/auth.rs".into(),
+                added: 1,
+                removed: 1
+            }]
+        );
+        // The receipt names the session it summarized (the banner's lineage).
+        assert!(!kept.id.is_empty(), "the summary id rides along");
+        assert_eq!(kept.turns.len(), 1);
+        let t = &kept.turns[0];
+        assert_eq!(t.request, "fix the login bug");
+        assert!(t.tools.contains(&"Edit".to_string()));
+        assert_eq!(
+            t.tests,
+            vec![crate::protocol::KeptTest {
+                command: "make test || echo 'test result: ok. 3 passed; 0 failed'".to_string(),
+                passed: true
+            }]
+        );
+        assert_eq!(t.outcome, "complete");
+        assert_eq!(kept.outcome, "complete");
+
+        // Without a store (hermetic runs, some tests): the token counts stand alone, no
+        // receipt — the compact needs history, so a turn runs first.
+        let mut bare = engine(
+            vec![
+                reply(vec![text("Something to compact.")], Stop::End),
+                reply(vec![text("Kept.")], Stop::End),
+            ],
+            true,
+        );
+        let _ = run(&mut bare, "anything").await;
+        bare.ops.send(Op::Compact { focus: None }).unwrap();
+        let evs = until_idle(&mut bare).await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::Compacted { summary: None, .. }
+        )));
+        shutdown(h).await;
+        shutdown(bare).await;
+    }
+
+    /// (b) A prompt past the hard limit is compacted before the model call, not after a 400.
+    #[tokio::test]
+    async fn a_prompt_past_the_hard_limit_compacts_before_the_call() {
+        let script = vec![
+            reply(vec![text("Summary of the work so far.")], Stop::End),
+            reply(vec![text("Done.")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, None, None, Some(8192), std::env::temp_dir());
+        let evs = run(&mut h, &"Do the long thing. ".repeat(1600)).await;
+        assert_eq!(
+            evs.iter()
+                .filter(|e| matches!(e.event, Event::Compacted { .. }))
+                .count(),
+            1
+        );
+        let requests = sent.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        // The first request is the compaction call, so the second is the turn's only model call.
+        assert!(requests[0].contains("detailed summary"));
+        assert!(requests[1].contains("Summary of the work so far."));
+        drop(requests);
+        shutdown(h).await;
+    }
+
+    /// (c) One tool result can't blow the window: oversized output is capped on arrival.
+    #[tokio::test]
+    async fn an_oversized_tool_result_is_capped() {
+        let dir = tmp_store();
+        // ~82KB in 80 lines; the cap for an 8192-token window is 40_000 chars.
+        let line = "0123456789abcdef".repeat(64);
+        std::fs::write(dir.join("big.txt"), format!("{line}\n").repeat(80)).unwrap();
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "r1".into(),
+                    name: "Read".into(),
+                    input: json!({"file_path": "big.txt"}),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("Done.")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, None, None, Some(8192), dir);
+        let evs = run(&mut h, "read big.txt").await;
+        let output = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "Read" => Some(output.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(output.contains("Output capped"), "{output}");
+        assert!(output.len() < 50_000, "{}", output.len());
+        // The model never sees more than the cap either.
+        let requests = sent.lock().unwrap();
+        assert!(requests[1].len() < 120_000, "{}", requests[1].len());
+        drop(requests);
+        shutdown(h).await;
+    }
+
+    /// (d) A provider "maximum context length" 400 compacts and retries the step once.
+    #[tokio::test]
+    async fn a_context_overflow_compacts_and_retries_once() {
+        // Vercel's gateway wording from session 20261022-132854-96e9.
+        let overflow = scripted::Fail::http(
+            400,
+            "{\"error\":{\"message\":\"This model's maximum context length is 1048576 tokens. \
+However, your request has 1579729 input tokens. Please reduce the length of the input.\"}}",
+        );
+        let client = scripted::Client::new(vec![
+            reply(vec![text("Summary after overflow.")], Stop::End),
+            reply(vec![text("Recovered.")], Stop::End),
+        ]);
+        client.fails.lock().unwrap().push_back(overflow);
+        let sent = client.sent.clone();
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "testprov/m".into(),
+            profile: {
+                let mut p = Profile::new(ProviderKind::Ollama, "m");
+                p.tool_mode = ToolMode::Native;
+                p
+            },
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(opts, Provider::Scripted(client)).unwrap();
+        let evs = run(&mut h, "keep going").await;
+        assert_eq!(
+            evs.iter()
+                .filter(|e| matches!(e.event, Event::Compacted { .. }))
+                .count(),
+            1,
+            "{:?}",
+            names(&evs)
+        );
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+        let requests = sent.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        // The failed call, the compaction, then the retry — which carries the compacted history.
+        assert!(requests[1].contains("detailed summary"));
+        assert!(requests[2].contains("Summary after overflow"));
+        assert!(!requests[2].contains("keep going\"}]}]"));
+        drop(requests);
+        shutdown(h).await;
+    }
+
+    /// (d) If compaction can't fix it either, the turn ends with a clear error, not a raw 400.
+    #[tokio::test]
+    async fn a_context_overflow_twice_ends_the_turn_with_a_clear_error() {
+        let overflow = || {
+            scripted::Fail::http(
+                400,
+                "Input too long: 1579729 input tokens, limit is 1048576 for this model",
+            )
+        };
+        let client = scripted::Client::new(vec![reply(vec![text("Summary.")], Stop::End)]);
+        client
+            .fails
+            .lock()
+            .unwrap()
+            .extend([overflow(), overflow()]);
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "testprov/m".into(),
+            profile: {
+                let mut p = Profile::new(ProviderKind::Ollama, "m");
+                p.tool_mode = ToolMode::Native;
+                p
+            },
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: None,
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(opts, Provider::Scripted(client)).unwrap();
+        let evs = run(&mut h, "keep going").await;
+        // Turn failures arrive as TurnEnded(Error), with a message that says what happened.
+        let error = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::TurnEnded {
+                    reason: EndReason::Error { error },
+                    ..
+                } => Some(error.to_string()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(error.contains("context window"), "{error}");
+        // The rescue event: exactly one, carrying the provider's raw wording for the engine
+        // log — the transcript renders one line from it, never the payload itself.
+        let failed: Vec<&Event> = evs
+            .iter()
+            .map(|e| &e.event)
+            .filter(|e| matches!(e, Event::CompactionFailed { .. }))
+            .collect();
+        assert_eq!(failed.len(), 1, "{:?}", names(&evs));
+        assert!(evs.iter().any(|e| matches!(&e.event, Event::CompactionFailed { detail } if detail.contains("input tokens"))));
+        // The turn's error stays one line: no provider body in it.
+        assert!(!error.contains("1579729"), "{error}");
+        shutdown(h).await;
+    }
+
+    /// The rescue op is answered honestly: with session hosting on, the engine tells the
+    /// client to carry forward; without it, the op is refused, and either way the session
+    /// log's story (a stuck session, no rescue) is untouched.
+    #[tokio::test]
+    async fn the_continue_session_op_answers_and_leaves_the_session_alone() {
+        let mut h = engine(vec![reply(vec![text("stuck")], Stop::End)], true);
+        caps(&h, false);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        let ask = |h: &Handle| {
+            h.ops
+                .send(Op::ContinueSession {
+                    from: "old".into(),
+                    why: "overflow".into(),
+                })
+                .unwrap();
+        };
+        // What the op answers with: the notice that says `expect`, then the Idle that
+        // closes it — nothing more (no turn on the stuck history).
+        macro_rules! drain {
+            ($expect:expr) => {
+                loop {
+                    match h.events.recv().await.unwrap().event {
+                        Event::Notice { message, .. } => {
+                            assert!(message.contains($expect), "{message}")
+                        }
+                        Event::Idle => break,
+                        Event::Status(_) | Event::ModelChanged { .. } => {}
+                        other => panic!("unexpected {other:?}"),
+                    }
+                }
+            };
+        }
+        ask(&h);
+        drain!("can't start");
+        // And with hosting on: the ask is noticed, nothing more.
+        caps(&h, true);
+        ask(&h);
+        drain!("carried-forward");
+        shutdown(h).await;
+    }
+
+    #[tokio::test]
+    async fn read_only_compounds_run_without_asking_in_every_mode() {
+        for mode in [Mode::Default, Mode::AcceptEdits, Mode::Auto] {
+            // The sandbox is off in tests, so these go through the fast path.
+            let script = vec![
+                reply(
+                    vec![Block::ToolUse {
+                        id: "ro".into(),
+                        name: "Bash".into(),
+                        input: json!({ "command": "cd /tmp && git log --oneline | head -3; ls | wc -l" }),
+                    }],
+                    Stop::ToolUse,
+                ),
+                reply(vec![text("done")], Stop::End),
+            ];
+            let mut h = engine_perm(script, mode, Some("nonexistent/no-classifier"));
+            let evs = run(&mut h, "look around").await;
+            assert!(
+                !evs.iter().any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+                "{mode:?} asked for a read-only compound"
+            );
+            assert!(evs.iter().any(|e| matches!(
+                e.event,
+                Event::ItemCompleted { .. }
+            )));
+        }
+    }
+
+    #[tokio::test]
+    async fn writes_and_unknowns_still_ask_in_default_mode() {
+        for cmd in ["cat x > y", "cargo build", "echo $(rm -rf x)"] {
+            let script = vec![
+                reply(
+                    vec![Block::ToolUse {
+                        id: "w".into(),
+                        name: "Bash".into(),
+                        input: json!({ "command": cmd }),
+                    }],
+                    Stop::ToolUse,
+                ),
+                reply(vec![text("done")], Stop::End),
+            ];
+            let mut h = engine_perm(script, Mode::Default, None);
+            while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+            h.ops
+                .send(Op::Submit {
+                    text: "go".into(),
+                    images: Vec::new(),
+                    more: Vec::new(),
+                })
+                .unwrap();
+            let mut asked = false;
+            loop {
+                let env = h.events.recv().await.unwrap();
+                if let Event::PermissionRequest { id, .. } = &env.event {
+                    asked = true;
+                    h.ops
+                        .send(Op::Permission {
+                            id: id.clone(),
+                            decision: Decision::Deny,
+                            note: None,
+                        })
+                        .unwrap();
+                }
+                if matches!(env.event, Event::Idle) {
+                    break;
+                }
+            }
+            assert!(asked, "`{cmd}` didn't ask in default mode");
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_mode_falls_back_to_the_fast_path_when_the_classifier_fails() {
+        // A classifier spec that can't resolve: the classifier is down all turn.
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "ro".into(),
+                    name: "Bash".into(),
+                    input: json!({ "command": "git log --oneline | head -3" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(
+                vec![Block::ToolUse {
+                    id: "w".into(),
+                    name: "Bash".into(),
+                    // Not a routine build step: provenance can't pass it, so
+                    // with the classifier down it asks.
+                    input: json!({ "command": "python3 -c 'print(1)' > made-up-file" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Auto, Some("nonexistent/no-classifier"));
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        let mut asked = 0;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let idle = matches!(env.event, Event::Idle);
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                asked += 1;
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Deny,
+                        note: None,
+                    })
+                    .unwrap();
+            }
+            evs.push(env);
+            if idle {
+                break;
+            }
+        }
+        // The read-only command ran without asking: the fast path is checked
+        // before any model call, so a down classifier can't block it.
+        let read_only_ran = evs.iter().any(|e| matches!(
+            e.event,
+            Event::ItemCompleted { ref id, item: Item::ToolCall { outcome: ToolOutcome::Ok, .. }, .. } if id == "ro"
+        ));
+        assert!(read_only_ran, "the read-only call ran");
+        // …the write asked…
+        assert_eq!(asked, 1, "the write asked");
+        // …and the failure was logged once, not per call.
+        let notices = evs
+            .iter()
+            .filter(|e| matches!(&e.event, Event::Notice { message, .. } if message.contains("classifier") && message.contains("is down")))
+            .count();
+        assert_eq!(notices, 1, "one classifier-failure notice");
+    }
+
+    fn bash_call(id: &str, cmd: &str) -> Response {
+        reply(
+            vec![Block::ToolUse {
+                id: id.into(),
+                name: "Bash".into(),
+                input: json!({ "command": cmd }),
+            }],
+            Stop::ToolUse,
+        )
+    }
+
+    /// A stand-in classifier server on localhost: every chat completion gets `status`, and a
+    /// 200 streams `verdict` (a JSON answer) as the model's text. Counts the requests.
+    async fn fake_classifier(status: u16, verdict: &str) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let chunk = json!({"choices": [{"index": 0, "delta": {"content": verdict}, "finish_reason": null}]});
+        let done = json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]});
+        let body = format!("data: {chunk}\n\ndata: {done}\n\ndata: [DONE]\n\n");
+        let count = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let body = body.clone();
+                let count = count.clone();
+                tokio::spawn(async move {
+                    // Read the whole request (headers, then Content-Length of body).
+                    let mut received = Vec::new();
+                    loop {
+                        let mut buf = [0u8; 8192];
+                        let Ok(n) = socket.read(&mut buf).await else { return };
+                        if n == 0 {
+                            return;
+                        }
+                        received.extend_from_slice(&buf[..n]);
+                        if let Some(end) = received.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let headers = String::from_utf8_lossy(&received[..end]).to_ascii_lowercase();
+                            let len: usize = headers
+                                .lines()
+                                .find_map(|l| l.strip_prefix("content-length: ").map(str::to_owned))
+                                .and_then(|l| l.trim().parse().ok())
+                                .unwrap_or(0);
+                            if received.len() >= end + 4 + len {
+                                break;
+                            }
+                        }
+                    }
+                    count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let response = if status == 200 {
+                        format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                    } else {
+                        format!("HTTP/1.1 {status} Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    };
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        (base, hits)
+    }
+
+    /// A port nothing listens on: the classifier there is unreachable (connection refused).
+    fn unreachable_base() -> String {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        drop(l);
+        format!("http://{addr}/v1")
+    }
+
+    /// An auto-mode config whose classifier is the `classifier` profile at `base`, with an
+    /// optional `fallback` profile at its own base.
+    fn classifier_cfg(base: &str, fallback: Option<&str>) -> Config {
+        let mut cfg = Config {
+            hermetic: true,
+            sandbox_shell: false,
+            ..Config::default()
+        };
+        let profile = |base: &str| {
+            let mut p = Profile::new(ProviderKind::Openai, "judge");
+            p.base_url = Some(base.into());
+            p
+        };
+        cfg.models.insert("classifier".into(), profile(base));
+        cfg.auto_classifier = Some("classifier".into());
+        if let Some(fb) = fallback {
+            cfg.models.insert("backup".into(), profile(fb));
+            cfg.auto_classifier_fallback = Some("backup".into());
+        }
+        cfg
+    }
+
+    /// Item 1 (org reliability): with the classifier unreachable, a read-only call the
+    /// classifier would have judged runs on the built-in rules with no card, a delete of
+    /// scratch the session didn't make still cards, and the outage is one notice, not one
+    /// per call.
+    #[tokio::test]
+    async fn an_unreachable_classifier_falls_back_to_the_rules_not_to_cards() {
+        let script = vec![
+            // A capture of a public page: only the classifier judged it before. The viewport
+            // is invalid so the tool fails at once, after the permission check.
+            reply(
+                vec![Block::ToolUse {
+                    id: "shot".into(),
+                    name: "Screenshot".into(),
+                    input: json!({"url": "https://example.com/docs", "width": 10}),
+                }],
+                Stop::ToolUse,
+            ),
+            // Deletes a file the session didn't make, outside the project: no rule covers it.
+            bash_call("rm", "rm /private/tmp/frog-classifier-down-not-mine.txt"),
+            // Another call for the classifier: still one notice.
+            reply(
+                vec![Block::ToolUse {
+                    id: "shot2".into(),
+                    name: "Screenshot".into(),
+                    input: json!({"url": "https://example.org/", "width": 10}),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = classifier_cfg(&unreachable_base(), None);
+        let mut h = engine_perm_cfg(script, Mode::Auto, cfg);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let carded = |item: &str| {
+            evs.iter().any(|e| matches!(&e.event, Event::PermissionRequest { item: i, .. } if i == item))
+        };
+        assert!(!carded("shot") && !carded("shot2"), "a read-only call carded with the classifier down");
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::AutoApproved { item, reason } if item == "shot" && reason.contains("rules decided")
+        )));
+        assert!(carded("rm"), "a delete outside its own scratch must still card");
+        // The card says which rule gap made it ask, not just that the classifier is down.
+        let reason = evs.iter().find_map(|e| match &e.event {
+            Event::PermissionRequest { item, reason, .. } if item == "rm" => reason.clone(),
+            _ => None,
+        });
+        assert!(reason.unwrap_or_default().contains("no built-in rule covers it"));
+        let notices: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { message, .. } if message.contains("classifier") => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("built-in rules"), "{}", notices[0]);
+    }
+
+    /// Item 1: a configured `auto_classifier_fallback` judges when the classifier answers
+    /// 5xx; the down classifier is skipped (not retried per call) while it stays down.
+    #[tokio::test]
+    async fn a_configured_fallback_classifier_judges_when_the_classifier_is_down() {
+        let (down, down_hits) = fake_classifier(503, "").await;
+        let (backup, backup_hits) =
+            fake_classifier(200, r#"{"reason":"part of the task","decision":"allow"}"#).await;
+        let script = vec![
+            // Not a routine build step: only a classifier can pass it.
+            bash_call("w1", "python3 -c 'print(1)' > made-up-file"),
+            bash_call("w2", "python3 -c 'print(2)' > made-up-file"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = classifier_cfg(&down, Some(&backup));
+        let dir = tmp_store();
+        let mut h = engine_perm_at(script, Mode::Auto, cfg, dir);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        assert!(
+            !evs.iter().any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "the fallback approved both; nothing carded"
+        );
+        let approved = evs
+            .iter()
+            .filter(|e| matches!(&e.event, Event::AutoApproved { reason, .. } if reason == "part of the task"))
+            .count();
+        assert_eq!(approved, 2);
+        // One attempt and its one transport retry; the second call skipped it.
+        assert_eq!(down_hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(backup_hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let notices: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { message, .. } if message.contains("classifier") => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("fallback classifier (backup)"), "{}", notices[0]);
+    }
+
+    /// The `degraded` list of the last `Status` in `evs`.
+    fn last_degraded(evs: &[Envelope]) -> Vec<crate::protocol::Degraded> {
+        evs.iter()
+            .rev()
+            .find_map(|e| match &e.event {
+                Event::Status(s) => Some(s.degraded.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Item 3a (org reliability): a session that fell back to text tool calls says so in its
+    /// status, with why, and only then.
+    #[tokio::test]
+    async fn text_tool_calls_show_as_degraded_with_why() {
+        let text_call =
+            r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+        let script = vec![
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text(text_call)], Stop::End),
+            reply(vec![text("none found")], Stop::End),
+        ];
+        let mut h = engine_mode(script, ToolMode::Auto);
+        let boot = run(&mut h, "find .nothing files").await;
+        let d = last_degraded(&boot);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, crate::protocol::DegradedKind::TextTools);
+        assert_eq!(d[0].what, "text tool calls");
+        assert!(d[0].why.contains("instead of calling them"), "{}", d[0].why);
+        shutdown(h).await;
+        // A profile that asks for text calls isn't degraded.
+        let mut h = engine_mode(vec![reply(vec![text("hi")], Stop::End)], ToolMode::Text);
+        assert!(last_degraded(&run(&mut h, "hi").await).is_empty());
+        shutdown(h).await;
+    }
+
+    /// Item 3b: a session resumed on another model than the one it ran on (a resume with no
+    /// `-m` takes the default) shows the flip; switching on purpose clears it.
+    #[tokio::test]
+    async fn a_silent_model_flip_shows_as_degraded_until_switched_on_purpose() {
+        let dir = tmp_store();
+        let mut h = engine_at(vec![reply(vec![text("one")], Stop::End)], false, Some(dir.clone()), None);
+        let first = run(&mut h, "first").await;
+        let sid = first[0].session.clone();
+        assert!(last_degraded(&first).is_empty(), "no flip on its own model");
+        shutdown(h).await;
+        // Resumed on another model.
+        let mut profile = Profile::new(ProviderKind::Ollama, "glm-flash");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "ollama/glm-flash".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: false,
+            resume: Some(sid),
+            store: Some(dir),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(
+            opts,
+            Provider::Scripted(scripted::Client::new(vec![reply(vec![text("two")], Stop::End)])),
+        )
+        .unwrap();
+        let d = last_degraded(&run(&mut h, "carry on").await);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, crate::protocol::DegradedKind::Model);
+        assert_eq!(d[0].what, "on ollama/glm-flash");
+        assert!(d[0].why.contains("was on test"), "{}", d[0].why);
+        // Switched on purpose: it's the model the session is meant to be on now.
+        h.ops.send(Op::SetModel { spec: "ollama/other".into() }).unwrap();
+        let mut last = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let idle = matches!(env.event, Event::Idle);
+            last.push(env);
+            if idle {
+                break;
+            }
+        }
+        assert!(last_degraded(&last).is_empty(), "{:?}", last_degraded(&last));
+        shutdown(h).await;
+    }
+
+    /// Item 3c: while auto mode's classifier is down, the status says what decides instead.
+    #[tokio::test]
+    async fn a_down_classifier_shows_as_degraded() {
+        let script = vec![
+            bash_call("w", "python3 -c 'print(1)' > made-up-file"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = classifier_cfg(&unreachable_base(), None);
+        let mut h = engine_perm_cfg(script, Mode::Auto, cfg);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let d = last_degraded(&evs);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].kind, crate::protocol::DegradedKind::Classifier);
+        assert!(d[0].why.contains("classifier classifier is down"), "{}", d[0].why);
+        assert!(d[0].why.contains("built-in rules decide"), "{}", d[0].why);
+    }
+
+    #[tokio::test]
+    async fn web_reads_run_without_asking_in_every_mode() {
+        // Cam's decision 2026-10-23: WebSearch always; WebFetch of a public host —
+        // in default, accept-edits and auto alike, classifier or not.
+        for (name, input) in [
+            ("WebSearch", json!({ "query": "qwen3 coder next pricing" })),
+            ("WebFetch", json!({ "url": "https://example.com/docs" })),
+        ] {
+            for mode in [Mode::Default, Mode::AcceptEdits, Mode::Auto] {
+                let script = vec![
+                    reply(
+                        vec![Block::ToolUse { id: "web".into(), name: name.into(), input: input.clone() }],
+                        Stop::ToolUse,
+                    ),
+                    reply(vec![text("done")], Stop::End),
+                ];
+                let mut h = engine_perm(script, mode, Some("nonexistent/no-classifier"));
+                let evs = run(&mut h, "look it up").await;
+                assert!(
+                    !evs.iter().any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+                    "{mode:?} asked for {name}"
+                );
+                // The scripted provider can't actually fetch, so the call may end in a
+                // tool error — what matters is that it never surfaced a permission card.
+                assert!(
+                    evs.iter().any(|e| matches!(
+                        e.event,
+                        Event::ItemCompleted { ref id, item: Item::ToolCall { .. }, .. } if id == "web"
+                    )),
+                    "{name} ran in {mode:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_non_public_webfetch_still_asks_in_default_mode() {
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "web".into(),
+                    name: "WebFetch".into(),
+                    input: json!({ "url": "http://localhost:8080/admin" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let mut asked = false;
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit { text: "go".into(), images: Vec::new(), more: Vec::new() })
+            .unwrap();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                asked = true;
+                h.ops
+                    .send(Op::Permission { id: id.clone(), decision: Decision::Deny, note: None })
+                    .unwrap();
+            }
+            if matches!(env.event, Event::Idle) {
+                break;
+            }
+        }
+        shutdown(h).await;
+        assert!(asked, "a localhost WebFetch didn't ask in default mode");
+    }
+
+    /// Auto mode: a build writing its own scratch under /private/tmp runs without
+    /// asking (the provenance layer), an outside-project command still asks.
+    #[tokio::test]
+    async fn auto_mode_lets_a_build_touch_only_its_own_scratch() {
+        let script = vec![
+            // Its own fresh build dir under /private/tmp.
+            bash_call("build", "mkdir -p /private/tmp/skittish-test-target/debug"),
+            // Another user path: still asks (answered deny below).
+            bash_call("outside", "touch /Users/frog-test-nobody/not-mine.txt"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Auto, Some("nonexistent/no-classifier"));
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        // The scratch build ran…
+        assert!(
+            evs.iter().any(|e| matches!(
+                e.event,
+                Event::ItemCompleted { ref id, item: Item::ToolCall { outcome: ToolOutcome::Ok, .. }, .. } if id == "build"
+            )),
+            "the scratch build ran without asking"
+        );
+        assert!(
+            !evs.iter().any(|e| matches!(
+                e.event,
+                Event::PermissionRequest { ref item, .. } if item == "build"
+            )),
+            "the scratch build never asked"
+        );
+        // …and nothing else was permitted to run outside.
+        assert!(
+            evs.iter().any(|e| matches!(
+                e.event,
+                Event::PermissionRequest { ref item, .. } if item == "outside"
+            )),
+            "the outside command asked"
+        );
+        let _ = std::fs::remove_dir_all("/private/tmp/skittish-test-target");
+    }
+
+    /// Run one turn, answering each permission prompt with `answer` (None: leave it
+    /// unanswered). Returns every event up to the end of the turn.
+    async fn turn_answering(
+        h: &mut Handle,
+        mut answer: impl FnMut(&Event) -> Option<(Decision, Option<String>)>,
+    ) -> Vec<Envelope> {
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "go".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event
+                && let Some((decision, note)) = answer(&env.event)
+            {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision,
+                        note,
+                    })
+                    .unwrap();
+            }
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle {
+                return evs;
+            }
+        }
+    }
+
+    fn tool_output<'a>(evs: &'a [Envelope], call: &str) -> Option<&'a str> {
+        evs.iter().find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                id,
+                item: Item::ToolCall { output, .. },
+            } if id == call => Some(output.as_str()),
+            _ => None,
+        })
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("frog-{tag}-{}", session::new_id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[tokio::test]
+    async fn deny_with_a_note_goes_back_to_the_agent_and_the_turn_continues() {
+        let script = vec![
+            bash_call("w", "touch /usr/local/frog-not-here"),
+            bash_call("r", "ls"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let evs = turn_answering(&mut h, |_| {
+            Some((Decision::Deny, Some("write it under /private/tmp instead".into())))
+        })
+        .await;
+        let out = tool_output(&evs, "w").expect("the denied call has a result");
+        assert!(out.contains("write it under /private/tmp instead"), "{out}");
+        // Not a stop: the next call ran rather than being skipped.
+        let next = tool_output(&evs, "r").unwrap();
+        assert!(!next.contains("Skipped"), "{next}");
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_prompt_times_out_to_deny_and_the_agent_carries_on() {
+        let script = vec![
+            bash_call("w", "touch /usr/local/frog-not-here"),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let cfg = Config {
+            hermetic: true,
+            sandbox_shell: false,
+            approval_timeout_secs: 1,
+            ..Config::default()
+        };
+        let mut h = engine_perm_cfg(script, Mode::Default, cfg);
+        let evs = turn_answering(&mut h, |_| None).await;
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::PermissionResolved {
+                decision: Decision::Deny,
+                ..
+            }
+        )));
+        let out = tool_output(&evs, "w").unwrap();
+        assert!(out.contains("safe path"), "{out}");
+        assert!(evs.iter().any(|e| matches!(
+            e.event,
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                ..
+            }
+        )));
+    }
+
+    /// The prefix-allow scenario with commands naming `base` (spelled as given),
+    /// on an engine with no shell sandbox (Linux CI has none; these tests turn it off).
+    async fn prefix_allow_case(base: &str, real: &Path) {
+        let (a, b, c) = (format!("{base}/a"), format!("{base}/b"), format!("{base}/c"));
+        let script = vec![
+            bash_call("1", &format!("rm -rf {a} {b}")),
+            bash_call("2", &format!("rm -rf {c}")),
+            bash_call("3", &format!("mv {a} {c}")),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let expected = crate::approval::normalize(real);
+        let mut asked: Vec<String> = Vec::new();
+        let evs = turn_answering(&mut h, |e| {
+            let Event::PermissionRequest { arg, card, always, .. } = e else { return None };
+            asked.push(arg.clone());
+            if asked.len() == 1 {
+                let card = card.as_ref().expect("shell prompts carry a card");
+                assert_eq!(card.prefix.as_deref(), expected.to_str(), "{base}");
+                assert!(always.contains("under"), "{always}");
+                Some((Decision::AllowPrefix, None))
+            } else {
+                Some((Decision::Deny, Some("no".into())))
+            }
+        })
+        .await;
+        assert_eq!(asked.len(), 2, "the rm under the prefix didn't ask; the mv did: {asked:?}");
+        assert!(asked[1].starts_with("mv"), "{asked:?}");
+        assert!(tool_output(&evs, "2").is_some());
+    }
+
+    #[tokio::test]
+    async fn a_prefix_allow_covers_the_same_program_under_that_prefix_only() {
+        let dir = scratch("prefix");
+        prefix_allow_case(dir.to_str().unwrap(), &dir).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// What Linux CI sees: a shallow temp dir (`/tmp/frog-…`, three components)
+    /// and, on macOS, a spelling that isn't canonical (`/tmp` is `/private/tmp`).
+    #[tokio::test]
+    async fn a_prefix_allow_works_for_a_shallow_uncanonical_tmp_dir() {
+        let base = format!("/tmp/frog-prefix-{}", session::new_id());
+        std::fs::create_dir_all(&base).unwrap();
+        prefix_allow_case(&base, Path::new(&base)).await;
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn the_card_knows_what_this_session_created() {
+        let dir = scratch("prov");
+        let made = dir.join("build-out");
+        let script = vec![
+            bash_call("mk", &format!("mkdir -p {}", made.display())),
+            bash_call("rm", &format!("rm -rf {}", made.display())),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let mut cards = Vec::new();
+        turn_answering(&mut h, |e| {
+            if let Event::PermissionRequest { card: Some(c), .. } = e {
+                cards.push(c.clone());
+            }
+            Some((Decision::Allow, None))
+        })
+        .await;
+        let rm = cards.last().expect("the rm asked");
+        assert!(rm.touches[0].created_here, "{rm:?}");
+        assert!(rm.risk.contains("this session created"), "{}", rm.risk);
+        assert!(rm.recommendation.starts_with("allow"), "{}", rm.recommendation);
+        assert!(!made.exists(), "the allowed rm ran");
+        let _ = std::fs::remove_dir_all(dir);
+       }
+
+    // ---- approvals never stall (read verbs in every mode, mcp_trust, repeat denials) ----
+
+    /// A stdio MCP stand-in named `server` (the `.mcp.json` key, so tools are
+    /// `mcp__{server}__{tool}`) whose `initialize` waits for `gate`, and whose `tools/call`
+    /// answers `ran {tool}`.
+    fn named_mcp_server(dir: &Path, server: &str, tools: &[&str], gate: &Path) {
+        let tools = json!(
+            tools
+                .iter()
+                .map(|t| json!({"name": t, "description": "Test tool.",
+                    "inputSchema": {"type": "object", "properties": {}}}))
+                .collect::<Vec<_>>()
+        );
+        let script = format!(
+            r#"import json, os, sys, time
+GATE = {gate:?}
+for line in sys.stdin:
+    m = json.loads(line)
+    if "id" not in m:
+        continue
+    if m["method"] == "initialize":
+        while not os.path.exists(GATE):
+            time.sleep(0.01)
+        r = {{"protocolVersion": m["params"]["protocolVersion"], "capabilities": {{"tools": {{}}}},
+             "serverInfo": {{"name": "{server}", "version": "1"}}}}
+    elif m["method"] == "tools/list":
+        r = {{"tools": json.loads('{tools}')}}
+    elif m["method"] == "tools/call":
+        r = {{"content": [{{"type": "text", "text": "ran " + m["params"]["name"]}}]}}
+    else:
+        r = {{}}
+    print(json.dumps({{"jsonrpc": "2.0", "id": m["id"], "result": r}}), flush=True)
+"#,
+            gate = gate.display().to_string()
+        );
+        std::fs::write(dir.join(format!("{server}_mcp.py")), script).unwrap();
+        let cfg = json!({"mcpServers": {server: {
+            "command": "python3",
+            "args": [dir.join(format!("{server}_mcp.py")).display().to_string()],
+        }}});
+        std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+    }
+
+    fn mcp_call(id: &str, name: &str) -> Response {
+        reply(
+            vec![Block::ToolUse {
+                id: id.into(),
+                name: name.into(),
+                input: json!({}),
+            }],
+            Stop::ToolUse,
+        )
+    }
+
+    /// Submit `prompt` (the engine is already idle) and collect through the next `Idle`,
+    /// answering each permission prompt with `answer`.
+    async fn next_turn(
+        h: &mut Handle,
+        prompt: &str,
+        mut answer: impl FnMut(&Event) -> Option<(Decision, Option<String>)>,
+    ) -> Vec<Envelope> {
+        h.ops
+            .send(Op::Submit {
+                text: prompt.into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut evs = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event
+                && let Some((decision, note)) = answer(&env.event)
+            {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision,
+                        note,
+                    })
+                    .unwrap();
+            }
+            let idle = matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle {
+                return evs;
+            }
+        }
+    }
+
+    /// An engine in `mode` with `cfg`, in a fresh folder whose `.mcp.json` names a
+    /// `planetscale` server with `tools`, connected: a first turn runs before the server may
+    /// come up, then it joins (the `Status` the idle engine emits).
+    async fn engine_with_mcp(
+        mode: Mode,
+        cfg: Config,
+        tools: &[&str],
+        calls: Vec<Response>,
+    ) -> (Handle, PathBuf) {
+        let dir = tmp_store();
+        let gate = dir.join("mcp.gate");
+        named_mcp_server(&dir, "planetscale", tools, &gate);
+        let mut script = vec![reply(vec![text("warm")], Stop::End)];
+        script.extend(calls);
+        let mut h = engine_perm_at(script, mode, cfg, dir.clone());
+        run(&mut h, "warm up").await;
+        std::fs::write(&gate, "").unwrap();
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if matches!(h.events.recv().await.unwrap().event, Event::Status(_)) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("MCP server never connected");
+        (h, dir)
+    }
+
+    fn perm_cfg() -> Config {
+        Config {
+            hermetic: true,
+            sandbox_shell: false,
+            ..Config::default()
+        }
+    }
+
+    fn asked(evs: &[Envelope]) -> usize {
+        evs.iter()
+            .filter(|e| matches!(e.event, Event::PermissionRequest { .. }))
+            .count()
+    }
+
+    fn outcome_of(evs: &[Envelope], call: &str) -> Option<ToolOutcome> {
+        evs.iter().find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                id,
+                item: Item::ToolCall { outcome, .. },
+            } if id == call => Some(*outcome),
+            _ => None,
+        })
+    }
+
+    fn ended(evs: &[Envelope]) -> Option<EndReason> {
+        evs.iter().find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+    }
+
+    /// (1) A read-verb MCP tool runs without a card in DEFAULT mode, not just auto. The
+    /// server's repeated name (`planetscale_list_databases`) doesn't hide the verb.
+    #[tokio::test]
+    async fn read_verb_mcp_tools_never_card_in_default_mode() {
+        let (mut h, dir) = engine_with_mcp(
+            Mode::Default,
+            perm_cfg(),
+            &["planetscale_list_databases", "planetscale_list_organizations"],
+            vec![
+                mcp_call("r1", "mcp__planetscale__planetscale_list_databases"),
+                mcp_call("r2", "mcp__planetscale__planetscale_list_organizations"),
+                reply(vec![text("done")], Stop::End),
+            ],
+        )
+        .await;
+        let evs = next_turn(&mut h, "list them", |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(asked(&evs), 0, "a read-only MCP tool carded: {:?}", names(&evs));
+        assert_eq!(outcome_of(&evs, "r1"), Some(ToolOutcome::Ok));
+        assert_eq!(outcome_of(&evs, "r2"), Some(ToolOutcome::Ok));
+        assert_eq!(tool_output(&evs, "r1"), Some("ran planetscale_list_databases"));
+        assert_eq!(ended(&evs), Some(EndReason::Complete));
+    }
+
+    /// (2) A non-read MCP tool still cards without a trust grant, in default mode.
+    #[tokio::test]
+    async fn non_read_mcp_tools_still_card_without_a_grant() {
+        let (mut h, dir) = engine_with_mcp(
+            Mode::Default,
+            perm_cfg(),
+            &["planetscale_execute_read_query"],
+            vec![
+                mcp_call("q", "mcp__planetscale__planetscale_execute_read_query"),
+                reply(vec![text("done")], Stop::End),
+            ],
+        )
+        .await;
+        let evs = next_turn(&mut h, "query", |_| Some((Decision::Allow, None))).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(asked(&evs), 1, "a non-read MCP tool must card");
+        assert_eq!(outcome_of(&evs, "q"), Some(ToolOutcome::Ok));
+    }
+
+    /// (3) A write tool runs without a card WITH the server's write grant, and the run is on
+    /// the record (a notice naming server, tool and args, and a `trust` decision); WITHOUT the
+    /// grant the same call cards exactly as before.
+    #[tokio::test]
+    async fn a_write_grant_runs_writes_cardless_and_logged_and_cards_without_it() {
+        let tools = ["planetscale_execute_write_query"];
+        let write = "mcp__planetscale__planetscale_execute_write_query";
+        let mut cfg = perm_cfg();
+        cfg.mcp_trust
+            .insert("planetscale".into(), crate::config::McpTrust::Write);
+        let (mut h, dir) = engine_with_mcp(
+            Mode::Default,
+            cfg,
+            &tools,
+            vec![mcp_call("w", write), reply(vec![text("done")], Stop::End)],
+        )
+        .await;
+        let evs = next_turn(&mut h, "write it", |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(asked(&evs), 0, "a granted write carded");
+        assert_eq!(outcome_of(&evs, "w"), Some(ToolOutcome::Ok));
+        let audit = notices(&evs);
+        assert!(
+            audit.iter().any(|n| n.contains("mcp_trust")
+                && n.contains("planetscale")
+                && n.contains("execute_write_query")
+                && n.contains("args:")),
+            "no audit notice: {audit:?}"
+        );
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::PermissionDecision { item, layer, outcome, .. }
+                if item == "w" && layer == "trust" && outcome == "allow"
+        )));
+
+        // No grant: the same write cards (denied here, so it never runs).
+        let (mut h, dir) = engine_with_mcp(
+            Mode::Default,
+            perm_cfg(),
+            &tools,
+            vec![mcp_call("w", write), reply(vec![text("done")], Stop::End)],
+        )
+        .await;
+        let evs = next_turn(&mut h, "write it", |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(asked(&evs), 1, "an ungranted write must card");
+        assert_eq!(outcome_of(&evs, "w"), Some(ToolOutcome::Denied));
+        assert!(!notices(&evs).iter().any(|n| n.contains("mcp_trust")));
+    }
+
+    /// (4) An identical call already denied this turn doesn't ask again: the turn ends
+    /// `BlockedOnApproval`, carrying the denial text, with a notice saying so.
+    #[tokio::test]
+    async fn a_denied_call_retried_in_the_same_turn_ends_it_blocked() {
+        let cmd = "touch frog-blocked-retry.txt";
+        let script = vec![
+            bash_call("a", cmd),
+            bash_call("b", cmd),
+            reply(vec![text("unreachable")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let evs = turn_answering(&mut h, |_| {
+            Some((Decision::Deny, Some("not that file".into())))
+        })
+        .await;
+        shutdown(h).await;
+        assert_eq!(asked(&evs), 1, "the retry re-asked: {:?}", names(&evs));
+        assert_eq!(outcome_of(&evs, "a"), Some(ToolOutcome::Denied));
+        assert_eq!(outcome_of(&evs, "b"), Some(ToolOutcome::Denied));
+        match ended(&evs) {
+            Some(EndReason::BlockedOnApproval { denial }) => {
+                assert!(denial.contains("not that file"), "{denial}")
+            }
+            other => panic!("turn should end blocked on approval, got {other:?}"),
+        }
+        assert!(
+            notices(&evs)
+                .iter()
+                .any(|n| n.contains("Blocked on approval") && n.contains("not that file")),
+            "{:?}",
+            notices(&evs)
+        );
+        let out = tool_output(&evs, "b").unwrap();
+        assert!(out.contains("already denied"), "{out}");
+        // It round-trips as a tagged reason.
+        let v = serde_json::to_value(EndReason::BlockedOnApproval { denial: "x".into() }).unwrap();
+        assert_eq!(v, json!({"type": "blocked_on_approval", "denial": "x"}));
+    }
+
+    /// (5) An identical carded call denied twice in a session never asks again: the third
+    /// attempt (a later turn) is denied at once with the notice, and the agent carries on.
+    #[tokio::test]
+    async fn a_call_denied_twice_in_a_session_is_auto_denied_after() {
+        let cmd = "touch frog-denied-twice.txt";
+        let script = vec![
+            bash_call("t1", cmd),
+            bash_call("t2", cmd),
+            bash_call("t3", cmd),
+            reply(vec![text("routed around it")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Default, None);
+        let deny = |_: &Event| Some((Decision::Deny, None));
+        let first = turn_answering(&mut h, deny).await;
+        let second = next_turn(&mut h, "again", deny).await;
+        let third = next_turn(&mut h, "once more", deny).await;
+        shutdown(h).await;
+        assert_eq!(asked(&first), 1);
+        assert_eq!(ended(&first), Some(EndReason::Denied));
+        assert_eq!(asked(&second), 1, "a new turn may ask once more");
+        assert_eq!(asked(&third), 0, "denied twice: it must not ask again");
+        assert_eq!(outcome_of(&third, "t3"), Some(ToolOutcome::Denied));
+        assert!(
+            notices(&third)
+                .iter()
+                .any(|n| n.contains("denied twice and won't ask again this session")),
+            "{:?}",
+            notices(&third)
+        );
+        // A breaker deny is direction, not a stop: the turn carries on to an answer.
+        assert_eq!(ended(&third), Some(EndReason::Complete));
+        assert!(tool_output(&third, "t3").unwrap().contains("denied twice"));
+    }
+
+    /// (6) Auto mode: a Write to a fresh file under the shared temp dir is the session's own
+    /// scratch and runs without a card (it used to card as "writes outside the project");
+    /// overwriting a temp file someone else made still asks.
+    #[tokio::test]
+    async fn auto_mode_writes_its_own_fresh_temp_scratch_without_a_card() {
+        let fresh = std::path::Path::new("/private/tmp").join(format!("frog-scratch-{}.rs", new_id()));
+        let theirs = std::path::Path::new("/private/tmp").join(format!("frog-theirs-{}.rs", new_id()));
+        std::fs::write(&theirs, "someone else's\n").unwrap();
+        let write = |id: &str, p: &std::path::Path| {
+            reply(
+                vec![Block::ToolUse {
+                    id: id.into(),
+                    name: "Write".into(),
+                    input: json!({ "file_path": p.display().to_string(), "content": "mine\n" }),
+                }],
+                Stop::ToolUse,
+            )
+        };
+        let script = vec![
+            write("fresh", &fresh),
+            write("theirs", &theirs),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, Mode::Auto, None);
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, Some("no".into())))).await;
+        shutdown(h).await;
+        let fresh_ok = std::fs::read_to_string(&fresh).ok();
+        let theirs_now = std::fs::read_to_string(&theirs).ok();
+        let _ = std::fs::remove_file(&fresh);
+        let _ = std::fs::remove_file(&theirs);
+        assert_eq!(outcome_of(&evs, "fresh"), Some(ToolOutcome::Ok), "{:?}", names(&evs));
+        assert_eq!(fresh_ok.as_deref(), Some("mine\n"));
+        assert_eq!(asked(&evs), 1, "only the existing temp file should ask");
+        assert_eq!(outcome_of(&evs, "theirs"), Some(ToolOutcome::Denied));
+        assert_eq!(theirs_now.as_deref(), Some("someone else's\n"));
     }
 }

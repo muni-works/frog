@@ -75,8 +75,22 @@ fn write_cache(provider: &str, models: &[Model]) {
     }
 }
 
+/// Tests seed this instead of the on-disk cache, so they don't read (or write) the real one.
+#[cfg(test)]
+pub static TEST_CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, Model>>> =
+    std::sync::Mutex::new(None);
+
 /// What's known about one model, from the cache alone (no network): for `resolve`.
 pub fn cached(spec: &str) -> Option<Model> {
+    #[cfg(test)]
+    if let Some(m) = TEST_CACHE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|c| c.get(spec))
+    {
+        return Some(m.clone());
+    }
     let (provider, _) = spec.split_once('/')?;
     let found = read_cache(provider).and_then(|c| c.models.into_iter().find(|m| m.spec == spec));
     if provider == "cloudflare" {
@@ -84,12 +98,7 @@ pub fn cached(spec: &str) -> Option<Model> {
     }
     found.or_else(|| {
         (provider == providers::CLOUD)
-            .then(|| {
-                STATIC_CLOUD
-                    .iter()
-                    .map(static_model)
-                    .find(|m| m.spec == spec)
-            })
+            .then(|| built_in_cloud().into_iter().find(|m| m.spec == spec))
             .flatten()
     })
 }
@@ -117,12 +126,17 @@ fn static_model(
     }
 }
 
+/// frog cloud's built-in list, as models.
+fn built_in_cloud() -> Vec<Model> {
+    STATIC_CLOUD.iter().map(static_model).collect()
+}
+
 /// frog cloud's models, without the network: the last fetched list, else the built-in one.
 pub fn cloud_models() -> Vec<Model> {
     read_cache(providers::CLOUD)
         .map(|c| c.models)
         .filter(|m| !m.is_empty())
-        .unwrap_or_else(|| STATIC_CLOUD.iter().map(static_model).collect())
+        .unwrap_or_else(built_in_cloud)
 }
 
 /// Gateways whose model lists are public: browsable before you connect them, and fetched
@@ -164,7 +178,7 @@ pub async fn all(refresh: bool) -> Vec<Model> {
     let cloud_static = all
         .iter()
         .any(|p| p.id == providers::CLOUD && !p.connected)
-        .then(|| STATIC_CLOUD.iter().map(static_model).collect::<Vec<_>>())
+        .then(built_in_cloud)
         .unwrap_or_default();
     let cf_connected = all.iter().any(|p| p.id == "cloudflare" && p.connected);
     let remote: Vec<ProviderInfo> = all
@@ -192,7 +206,7 @@ pub async fn all(refresh: bool) -> Vec<Model> {
                     .filter(|m| !m.is_empty())
                     .unwrap_or_else(|| {
                         if p.id == providers::CLOUD {
-                            STATIC_CLOUD.iter().map(static_model).collect()
+                            built_in_cloud()
                         } else {
                             Vec::new()
                         }
@@ -504,9 +518,12 @@ mod tests {
 
     #[test]
     fn cloud_has_a_built_in_list() {
-        let m = cached("cloud/qwen3-coder-next").unwrap();
+        let m = built_in_cloud()
+            .into_iter()
+            .find(|m| m.spec == "cloud/qwen3-coder-next")
+            .unwrap();
         assert_eq!(m.context, Some(131_072));
-        let models = cloud_models();
+        let models = built_in_cloud();
         assert!(models.iter().any(|m| m.id == "qwen3-coder-next"));
         assert!(models.iter().any(|m| m.id == "qwen3-8b"));
         assert!(models.iter().any(|m| m.id == "qwen3-vl-8b"));

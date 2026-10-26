@@ -47,20 +47,34 @@ enum Mode: String, Codable, Sendable, CaseIterable, Identifiable {
 enum Decision: String, Codable, Sendable {
     case allow
     case allowAlways = "allow_always"
+    /// This program on paths under the card's prefix, for the rest of the session.
+    case allowPrefix = "allow_prefix"
     case deny
 }
 
+/// What `Op.continue` tells the model when an app update's drain suspended the turn and the
+/// relaunched app picks it back up (the engine's own default when `note` is nil).
+let SUSPENDED_NOTE =
+    "<resumed after the app updated; your previous turn was suspended; continue>"
+
 enum Op: Encodable, Sendable {
+    /// The rescue for a session whose context overflowed and compaction failed: start a
+    /// carried-forward session (its structured summary as the opening context, lineage from
+    /// `from`). The client that can host sessions carries it out.
+    case continueSession(from: String, why: String)
     /// `more`: further messages sent with this one (queued follow-ups), run as the same turn.
     case submit(String, images: [ToolImage] = [], more: [MessagePart] = [])
     case shell(String)
     /// A press on a `Present` actions button; runs a turn with `send` (or the label).
     case act(label: String, send: String)
     case interrupt
+    /// Drop the session messages queued in the engine's inbox (sent, not yet taken by a turn).
+    case clearInbox
     /// Pick up a turn the app's restart interrupted: the engine runs a turn on the repaired
     /// history with `note` (its own default when nil) as the message.
     case `continue`(note: String? = nil)
-    case permission(id: String, decision: Decision)
+    /// `note`, with a deny: the user's words, sent back to the agent.
+    case permission(id: String, decision: Decision, note: String? = nil)
     case setMode(Mode)
     case setModel(String)
     case compact(focus: String?)
@@ -91,18 +105,26 @@ enum Op: Encodable, Sendable {
     case sessionReply(id: String, result: JSONValue?, error: String?)
     /// A message from another session (`from` is its id, or "system"), queued like a submit.
     case deliver(from: String, fromName: String, message: String)
+    /// A status-only message from another session: read and logged, no turn starts for it.
+    case inform(from: String, fromName: String, message: String)
     /// Answer a `question`: the picked labels, or the user's own words. Neither dismisses it.
     case answer(id: String, choices: [String], other: String?)
     /// Have the model server prefill the conversation now (plus `draft`, the message being
     /// typed), so the next turn starts warm. Fire and forget: nothing comes back.
     case warm(draft: String?)
+    /// Graceful stop for an app update: the engine finishes the current step, ends the turn
+    /// suspended at the next safe point and acks with `drained`. `deadline` is unix ms.
+    case drain(deadline: Int64)
+    /// The update was called off; engines already suspended stay that way.
+    case drainAbort
     case shutdown
 
     private enum Key: String, CodingKey {
         case op, text, command, id, decision, mode, spec, focus, after, title
-        case action, content, server, tool, arguments, images
+        case action, content, server, tool, arguments, images, why
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
         case ask, choices, other, label, send, note, sessions, from, fromName = "from_name", more
+        case deadline
     }
 
     func encode(to encoder: Encoder) throws {
@@ -122,13 +144,16 @@ enum Op: Encodable, Sendable {
             try c.encode(command, forKey: .command)
         case .interrupt:
             try c.encode("interrupt", forKey: .op)
+        case .clearInbox:
+            try c.encode("clear_inbox", forKey: .op)
         case .continue(let note):
             try c.encode("continue", forKey: .op)
             try c.encodeIfPresent(note, forKey: .note)
-        case .permission(let id, let decision):
+        case .permission(let id, let decision, let note):
             try c.encode("permission", forKey: .op)
             try c.encode(id, forKey: .id)
             try c.encode(decision, forKey: .decision)
+            try c.encodeIfPresent(note, forKey: .note)
         case .setMode(let mode):
             try c.encode("set_mode", forKey: .op)
             try c.encode(mode, forKey: .mode)
@@ -138,6 +163,10 @@ enum Op: Encodable, Sendable {
         case .compact(let focus):
             try c.encode("compact", forKey: .op)
             try c.encode(focus, forKey: .focus)
+        case .continueSession(let from, let why):
+            try c.encode("continue_session", forKey: .op)
+            try c.encode(from, forKey: .from)
+            try c.encode(why, forKey: .why)
         case .subscribe(let after):
             try c.encode("subscribe", forKey: .op)
             try c.encode(after, forKey: .after)
@@ -212,6 +241,11 @@ enum Op: Encodable, Sendable {
             try c.encode(from, forKey: .from)
             try c.encode(fromName, forKey: .fromName)
             try c.encode(message, forKey: .message)
+        case .inform(let from, let fromName, let message):
+            try c.encode("inform", forKey: .op)
+            try c.encode(from, forKey: .from)
+            try c.encode(fromName, forKey: .fromName)
+            try c.encode(message, forKey: .message)
         case .answer(let id, let choices, let other):
             try c.encode("answer", forKey: .op)
             try c.encode(id, forKey: .id)
@@ -220,6 +254,11 @@ enum Op: Encodable, Sendable {
         case .warm(let draft):
             try c.encode("warm", forKey: .op)
             try c.encodeIfPresent(draft, forKey: .draft)
+        case .drain(let deadline):
+            try c.encode("drain", forKey: .op)
+            try c.encode(deadline, forKey: .deadline)
+        case .drainAbort:
+            try c.encode("drain_abort", forKey: .op)
         case .shutdown:
             try c.encode("shutdown", forKey: .op)
         }
@@ -274,7 +313,7 @@ struct Todo: Codable, Sendable, Hashable {
     var status: String
 }
 
-struct Status: Decodable, Sendable {
+struct Status: Decodable, Sendable, Equatable {
     var model: String
     var mode: Mode
     var cwd: String
@@ -287,6 +326,30 @@ struct Status: Decodable, Sendable {
     var todos: [Todo]
     /// The model can see images.
     var vision: Bool?
+    /// What runs degraded right now (text tool calls, a model nobody picked, auto mode's
+    /// classifier down), each with its why. Absent from older engines.
+    var degraded: [Degraded]?
+}
+
+/// One way a session runs degraded (the engine's `Status.degraded`).
+struct Degraded: Decodable, Sendable, Equatable {
+    /// "text_tools", "model" or "classifier".
+    var kind: String
+    /// What's degraded, short and lowercase.
+    var what: String
+    /// Why, in one line.
+    var why: String
+
+    /// The header badge's words: the first thing degraded, and how many more.
+    static func badge(_ list: [Degraded]) -> String? {
+        guard let first = list.first else { return nil }
+        return list.count > 1 ? "\(first.what) +\(list.count - 1)" : first.what
+    }
+
+    /// Every one, with its why, a line each (the badge's hover and popover).
+    static func detail(_ list: [Degraded]) -> String {
+        list.map { "\($0.what): \($0.why)" }.joined(separator: "\n")
+    }
 }
 
 struct TurnUsage: Decodable, Sendable {
@@ -335,7 +398,7 @@ struct TurnEnergy: Decodable, Sendable {
     var estimated: Bool { remoteWh != nil }
 }
 
-struct EngineError: Decodable, Sendable, CustomStringConvertible {
+struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
     var type: String
     var status: Int?
     var message: String?
@@ -350,11 +413,46 @@ struct EngineError: Decodable, Sendable, CustomStringConvertible {
     }
 }
 
-enum EndReason: Decodable, Sendable {
-    case complete, maxTokens, denied, looping, stepLimit, cancelled
+/// What a compaction kept, as a receipt (`Event.compacted`'s `summary`): the structured
+/// summary's fields, trimmed to what a banner's expander shows. Absent (nil) in older logs
+/// and in engines with no session store.
+struct KeptSummary: Decodable, Sendable, Equatable {
+    var id: String
+    var files: [KeptFile]
+    var turns: [KeptTurn]
+    /// How the last turn ended (`complete`, `cancelled`, …).
+    var outcome: String
+}
+
+/// One file the compaction kept: its path and the lines added and removed.
+struct KeptFile: Decodable, Sendable, Equatable {
+    var path: String
+    var added: UInt32
+    var removed: UInt32
+}
+
+/// One turn the compaction kept: what was asked, which tools ran, the tests run and whether
+/// each passed, and how it ended.
+struct KeptTurn: Decodable, Sendable, Equatable {
+    var request: String
+    var tools: [String]
+    var tests: [KeptTest]
+    var outcome: String
+}
+
+/// One test the compaction kept: the command and whether it passed.
+struct KeptTest: Decodable, Sendable, Equatable {
+    var command: String
+    var passed: Bool
+}
+
+enum EndReason: Decodable, Sendable, Equatable {
+    case complete, maxTokens, denied, looping, stepLimit, cancelled, suspended
+    /// A retry of a call already denied: frog didn't ask again and ended the turn with the denial.
+    case blockedOnApproval(String)
     case error(EngineError)
 
-    private enum Key: String, CodingKey { case type, error }
+    private enum Key: String, CodingKey { case type, error, denial }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
@@ -365,6 +463,8 @@ enum EndReason: Decodable, Sendable {
         case "looping": self = .looping
         case "step_limit": self = .stepLimit
         case "cancelled": self = .cancelled
+        case "suspended": self = .suspended
+        case "blocked_on_approval": self = .blockedOnApproval((try? c.decode(String.self, forKey: .denial)) ?? "")
         default: self = .error(try c.decode(EngineError.self, forKey: .error))
         }
     }
@@ -450,6 +550,21 @@ enum Delta: Decodable, Sendable {
     case reasoning(String)
     case output(String)
     case imagePreview(ToolImage, step: UInt64, of: UInt64, imageIndex: Int)
+
+    /// Text that's only appended (what `Conversation` batches).
+    var isText: Bool {
+        if case .imagePreview = self { false } else { true }
+    }
+
+    /// This delta and the next as one, when they're the same kind of text.
+    func joined(_ next: Delta) -> Delta? {
+        switch (self, next) {
+        case (.text(let a), .text(let b)): .text(a + b)
+        case (.reasoning(let a), .reasoning(let b)): .reasoning(a + b)
+        case (.output(let a), .output(let b)): .output(a + b)
+        default: nil
+        }
+    }
 
     private enum Key: String, CodingKey { case type, text, image, step, of, imageIndex }
 
@@ -571,6 +686,26 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
     var preview: FileDiff?
     /// Why this one asks when similar calls don't (a command leaving the sandbox).
     var reason: String?
+    /// For shell commands: the agent's reason, the trigger, what it touches, and advice.
+    var card: ApprovalCard?
+}
+
+/// What a shell command's permission prompt shows (engine `ApprovalCard`).
+struct ApprovalCard: Codable, Sendable, Equatable {
+    struct Touch: Codable, Sendable, Equatable {
+        var path: String
+        var exists: Bool?
+        var dir: Bool?
+        var bytes: UInt64?
+        var createdHere: Bool?
+    }
+    var agentReason: String?
+    var trigger: String
+    var touches: [Touch]?
+    var risk: String
+    var recommendation: String
+    var prefix: String?
+    var timeoutSecs: UInt64
 }
 
 enum Event: Decodable, Sendable {
@@ -579,11 +714,21 @@ enum Event: Decodable, Sendable {
     case turnEnded(turn: UInt64, reason: EndReason, usage: TurnUsage)
     case itemStarted(id: String, kind: ItemKind)
     case itemCompleted(id: String, item: Item)
+    /// A one-line gist of a finished `Bash` call's command, written by a small side-model
+    /// in one batched call per turn flush. Live only; the raw command stays the truth.
+    case commandGisted(item: String, command: String, gist: String)
+    /// A chapter's title from a small side-model, sent when the next chapter opened; it
+    /// replaces the rail's heuristic title for the chapter starting at `turn`. Durable.
+    case chapterTitled(turn: UInt64, title: String)
     /// A retried model call's partial items (message/reasoning that streamed before the
     /// stream failed); drop them from the turn.
     case itemsDiscarded(ids: [String])
     case permissionResolved(id: String, decision: Decision)
-    case compacted(tokensBefore: UInt64, tokensAfter: UInt64)
+    case compacted(tokensBefore: UInt64, tokensAfter: UInt64, kept: KeptSummary?)
+    /// Compaction failed and the history can't fit the window: the session is stuck; the
+    /// rescue is `Op.continueSession` (a carried-forward session). The raw payload is in the
+    /// engine log, never the transcript.
+    case compactionFailed(detail: String)
     case contextPruned(results: Int, tokensBefore: UInt64, tokensAfter: UInt64)
     case modelChanged(String)
     /// The conversation moved to another folder (the agent's `UseFolder`).
@@ -604,11 +749,30 @@ enum Event: Decodable, Sendable {
     case appResult(id: String, result: JSONValue?, error: String?)
     /// Auto mode's classifier let tool call `item` run without asking.
     case autoApproved(item: String, reason: String)
+    /// How one permission check was decided (rule, classifier, fallback, ask),
+    /// for measuring the ask rate; not shown in the transcript.
+    case permissionDecision(item: String, layer: String, outcome: String, reason: String, ms: UInt64)
     /// An event from the subagent running as tool call `item`.
     indirect case subagent(item: String, inner: Event)
     case notice(level: String, message: String)
     case error(EngineError)
     case status(Status)
+    /// How many background pieces (Monitors, jobs, Tasks) run in the engine now; sent on
+    /// every start and end. Live only, never in a log.
+    case background(running: Int)
+    /// A background piece started: a Task, a shell job (`log` is its output file), a Monitor
+    /// or a timer. Durable (logged), like `backgroundDone`.
+    case backgroundStarted(id: String, kind: String, label: String, log: String?)
+    /// Live output from one (a job's last line, a monitor's poll). Live only.
+    case backgroundProgress(id: String, text: String)
+    /// One ended: `status` is done, failed, stopped, matched, timeout or
+    /// interrupted_by_update; `summary` is the wake the model was given (empty when stopped).
+    case backgroundDone(id: String, kind: String, status: String, summary: String)
+    /// The wakes waiting for the next turn boundary, in order (each as the model will get
+    /// it). Sent when one is parked and when a turn takes them (then empty). Live only.
+    case queuedEvents(items: [String])
+    /// The wakes turn `turn` opened with, delivered with its input as one batch.
+    case wakesDelivered(turn: UInt64, wakes: [String])
     case synced(upto: UInt64)
     case idle
     case paneOpened(id: String, kind: PaneKind, title: String, cwd: String?, url: String?)
@@ -620,6 +784,10 @@ enum Event: Decodable, Sendable {
     /// A screenshot of the preview the engine kept for a turn (`panes/turn-N.png` in the session
     /// folder), for before/after. Recognized by shape, since its event name isn't fixed yet.
     case paneCheckpoint(turn: UInt64, path: String)
+    /// The engine stopped where `drain` asked: it's safe to relaunch. The stopped background
+    /// jobs (id, label) are listed for the resumed notice; `inbox` holds delivered messages
+    /// that never ran as a turn — re-send them after the restart.
+    case drained(stepsDone: Int, jobs: [String], jobLabels: [(String, String)], inbox: [(String, String, String)])
     case unknown(String)
 }
 
@@ -643,11 +811,16 @@ struct Envelope: Decodable, Sendable {
 extension Event {
     private enum Key: String, CodingKey {
         case event
-        case turn, input, reason, usage, id, kind, item, delta, decision, ids
+        case turn, input, reason, usage, id, kind, item, delta, decision, ids, detail, summary
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
+        case layer, outcome, ms
         case images, more
+        case stepsDone = "steps_done", jobs, jobLabels = "job_labels", inbox
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
+        case command, gist
+        case running
+        case status, text, log, items, wakes
     }
 
     init(from decoder: Decoder) throws {
@@ -669,6 +842,13 @@ extension Event {
             self = .itemStarted(id: try c.decode(String.self, forKey: .id), kind: try c.decode(ItemKind.self, forKey: .kind))
         case "item_completed":
             self = .itemCompleted(id: try c.decode(String.self, forKey: .id), item: try c.decode(Item.self, forKey: .item))
+        case "command_gisted":
+            self = .commandGisted(
+                item: try c.decode(String.self, forKey: .item),
+                command: try c.decode(String.self, forKey: .command),
+                gist: try c.decode(String.self, forKey: .gist))
+        case "chapter_titled":
+            self = .chapterTitled(turn: try c.decode(UInt64.self, forKey: .turn), title: try c.decode(String.self, forKey: .title))
         case "item_delta":
             self = .itemDelta(id: try c.decode(String.self, forKey: .id), delta: try c.decode(Delta.self, forKey: .delta))
         case "items_discarded":
@@ -678,7 +858,11 @@ extension Event {
         case "compacted":
             self = .compacted(
                 tokensBefore: try c.decode(UInt64.self, forKey: .tokensBefore),
-                tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter))
+                tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter),
+                kept: try c.decodeIfPresent(KeptSummary.self, forKey: .summary)  // old logs: nil
+            )
+        case "compaction_failed":
+            self = .compactionFailed(detail: try c.decodeIfPresent(String.self, forKey: .detail) ?? "")
         case "context_pruned":
             self = .contextPruned(
                 results: try c.decode(Int.self, forKey: .results),
@@ -715,6 +899,13 @@ extension Event {
                     message: try c.decodeIfPresent(String.self, forKey: .message)))
         case "auto_approved":
             self = .autoApproved(item: try c.decode(String.self, forKey: .item), reason: try c.decode(String.self, forKey: .reason))
+        case "permission_decision":
+            let item = try c.decode(String.self, forKey: .item)
+            let layer = try c.decode(String.self, forKey: .layer)
+            let outcome = try c.decode(String.self, forKey: .outcome)
+            let reason = try c.decode(String.self, forKey: .reason)
+            let ms: UInt64 = try c.decodeIfPresent(UInt64.self, forKey: .ms) ?? 0
+            self = .permissionDecision(item: item, layer: layer, outcome: outcome, reason: reason, ms: ms)
         case "subagent":
             self = .subagent(item: try c.decode(String.self, forKey: .item), inner: try c.decode(Event.self, forKey: .inner))
         case "app_result":
@@ -728,6 +919,30 @@ extension Event {
             self = .error(try c.decode(EngineError.self, forKey: .error))
         case "status":
             self = .status(try Status(from: decoder))
+        case "background":
+            self = .background(running: try c.decode(Int.self, forKey: .running))
+        case "background_started":
+            self = .backgroundStarted(
+                id: try c.decode(String.self, forKey: .id),
+                kind: try c.decode(String.self, forKey: .kind),
+                label: try c.decodeIfPresent(String.self, forKey: .label) ?? "",
+                log: try c.decodeIfPresent(String.self, forKey: .log))
+        case "background_progress":
+            self = .backgroundProgress(
+                id: try c.decode(String.self, forKey: .id),
+                text: try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+        case "queued_events":
+            self = .queuedEvents(items: try c.decodeIfPresent([String].self, forKey: .items) ?? [])
+        case "wakes_delivered":
+            self = .wakesDelivered(
+                turn: try c.decode(UInt64.self, forKey: .turn),
+                wakes: try c.decodeIfPresent([String].self, forKey: .wakes) ?? [])
+        case "background_done":
+            self = .backgroundDone(
+                id: try c.decode(String.self, forKey: .id),
+                kind: try c.decode(String.self, forKey: .kind),
+                status: try c.decode(String.self, forKey: .status),
+                summary: try c.decodeIfPresent(String.self, forKey: .summary) ?? "")
         case "synced":
             self = .synced(upto: try c.decode(UInt64.self, forKey: .upto))
         case "idle":
@@ -766,6 +981,33 @@ extension Event {
                 id: try c.decodeIfPresent(String.self, forKey: .id) ?? "",
                 level: try c.decodeIfPresent(String.self, forKey: .level) ?? "info",
                 message: try c.decode(String.self, forKey: .message))
+        case "drained":
+            func triples(_ raw: [JSONValue]) -> [(String, String, String)] {
+                raw.compactMap { v in
+                    if case .array(let parts) = v, parts.count >= 3,
+                       case .string(let a) = parts[0], case .string(let b) = parts[1], case .string(let c) = parts[2] {
+                        return (a, b, c)
+                    }
+                    return nil
+                }
+            }
+            func pairs(_ raw: [JSONValue]) -> [(String, String)] {
+                raw.compactMap { v in
+                    if case .array(let parts) = v, parts.count >= 2,
+                       case .string(let a) = parts[0], case .string(let b) = parts[1] {
+                        return (a, b)
+                    }
+                    return nil
+                }
+            }
+            func strings(_ raw: [JSONValue]) -> [String] {
+                raw.compactMap { v in if case .string(let s) = v { return s } else { return nil } }
+            }
+            self = .drained(
+                stepsDone: try c.decodeIfPresent(Int.self, forKey: .stepsDone) ?? 0,
+                jobs: (try? c.decodeIfPresent([JSONValue].self, forKey: .jobs)).flatMap(strings) ?? [],
+                jobLabels: (try? c.decodeIfPresent([JSONValue].self, forKey: .jobLabels)).flatMap(pairs) ?? [],
+                inbox: (try? c.decodeIfPresent([JSONValue].self, forKey: .inbox)).flatMap(triples) ?? [])
         default:
             // A checkpoint screenshot record, whatever it's called: a turn and a PNG path.
             if let turn = try? c.decodeIfPresent(UInt64.self, forKey: .turn),
