@@ -40,6 +40,9 @@ struct ActivityViewer: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = PillProbe.viewer()
+        #endif
         HStack(spacing: 10) {
             if let pane {
                 Text("\(pane.number)")
@@ -125,11 +128,12 @@ struct ActivityViewer: View {
         .animation(.snappy(duration: 0.2), value: others.count)
     }
 
-    /// The frog in the pill, or the plain symbol when the playful frog is off.
+    /// The frog in the pill, or the plain symbol when the playful frog is off. DEBUG churn
+    /// benchmarking holds its pose through `PillChurn.noFrog` (the Reduce Motion path).
     @ViewBuilder
     private func icon(_ mood: FrogMood, @ViewBuilder plain: () -> some View) -> some View {
         if playful {
-            FrogFace(mood: mood, size: 16).frame(width: 16)
+            FrogFace(mood: mood, size: 16, animating: !PillChurn.noFrog).frame(width: 16)
         } else {
             plain().frame(width: 14)
         }

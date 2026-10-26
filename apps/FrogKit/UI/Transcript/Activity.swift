@@ -9,6 +9,9 @@ struct ActivityLabel: View {
     var maxWidth: CGFloat = 300
 
     var body: some View {
+        #if DEBUG
+        let _ = PillProbe.label()
+        #endif
         if conversation.failure != nil {
             HStack(spacing: 7) {
                 icon { Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red) }
@@ -22,6 +25,9 @@ struct ActivityLabel: View {
             }
         } else if conversation.busy, let turn = conversation.turns.last, !turn.finished {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
+                #if DEBUG
+                let _ = PillProbe.tick()
+                #endif
                 HStack(spacing: 7) {
                     icon { Image(systemName: Self.symbol(turn)).foregroundStyle(.tint) }
                     // Hugs the text, up to `maxWidth`.
@@ -57,11 +63,12 @@ struct ActivityLabel: View {
         }
     }
 
-    /// The frog, or the plain symbol when the playful frog is off.
+    /// The frog, or the plain symbol when the playful frog is off. DEBUG churn benchmarking
+    /// holds its pose through `PillChurn.noFrog` (the Reduce Motion path).
     @ViewBuilder
     private func icon(@ViewBuilder plain: () -> some View) -> some View {
         if playful {
-            FrogFace(mood: conversation.failure != nil ? .sad : conversation.mood, size: 16).frame(width: 16)
+            FrogFace(mood: conversation.failure != nil ? .sad : conversation.mood, size: 16, animating: !PillChurn.noFrog).frame(width: 16)
         } else {
             plain().frame(width: 14)
         }
@@ -274,7 +281,13 @@ struct WorkingLine: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { ctx in
+        #if DEBUG
+        let _ = PillProbe.line()
+        #endif
+        TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion || PillChurn.noSweep)) { ctx in
+            #if DEBUG
+            let _ = PillProbe.line()
+            #endif
             GeometryReader { geo in
                 let w = geo.size.width
                 let t = ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
