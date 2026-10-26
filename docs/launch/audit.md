@@ -19,9 +19,9 @@ Status key: **DONE** = verified fixed. **STILL-OPEN** = still a gap (with the cu
 2. **frog.toys resolves now**, but it serves a 112-byte placeholder for every path. That includes
    `/appcast.xml` and `/signup`. `/install.sh` is an *older* script (3,883 B, pre-#43, vs 5,016 B in
    the repo). The real `site/` has never deployed because site.yml can't run (see 1).
-3. **`muni-works/tang` does not exist.** `setup.rs:15,22` now point at it, for both the prebuilt
-   download and the `cargo install --git` fallback, so `frog setup` has no working path. tang lives at
-   ecto/tang (public, zero releases).
+3. **`muni-works/tang` exists now (transfer DONE, public, 2110f3ba, old URL redirects).** `setup.rs:15,22`
+   is valid. What's still missing is the release asset (draft being built locally). tang lives at
+   muni-works/tang (public, zero releases).
 4. **release.yml would fail on its first run** for three independent reasons (details under Install
    path). install.sh's new macOS app branch installs a broken wrapper.
 5. **frog cloud accounts are live.** `/auth` (magic link + GitHub OAuth) works, and
@@ -46,7 +46,7 @@ Status key: **DONE** = verified fixed. **STILL-OPEN** = still a gap (with the cu
 | README accuracy | **partly DONE** | Cline context is now 131072 (README:70): **DONE**. "free, invite-only beta" + "get one at api.frog.toys/beta" (README:47,50,59-60) no longer matches the live `/auth` sign-in: **STILL-OPEN**. opencode snippet still has no `limit` block: **STILL-OPEN**. The install line works only once a release exists |
 | Install path | **STILL-OPEN, now with known bugs** | No release on ecto/frog, muni-works/frog or ecto/tang (`gh release list` empty). release.yml has never run. See "release.yml / install.sh defects" below |
 | Homebrew | **STILL-OPEN** | `muni-works/homebrew-tap` doesn't exist; no formula anywhere. Decision in migration.md |
-| tang-llm prebuilt | **STILL-OPEN, worse** | ecto/tang has zero releases. setup.rs targets `muni-works/tang`, which doesn't exist (`gh repo view`: could not resolve), so both the download and the git fallback fail. tang main CI is red (rustfmt + clippy unused vars) |
+| tang-llm prebuilt | **STILL-OPEN, transfer DONE** | ecto/tang → muni-works/tang transfer is DONE (chief, 2026-10-26; both URLs resolve to 2110f3ba, redirect works), so setup.rs:15,22's URLs are valid. Missing: the release itself — `releases/latest/download/tang-llm-aarch64-apple-darwin.tar.gz` 404s. CI can't build it (billing), so it's being built locally and staged as a **draft** release; publishing is Cam's. tang main CI is red (rustfmt + clippy unused vars) |
 | Linux | **N-A to verify** | CI can't run (billing), so there's no signal either way. GTK app is still a draft (#31) |
 | macOS app signing | **STILL-OPEN** | Apple org enrollment pending. release.yml builds ad-hoc (`CODE_SIGN_IDENTITY=-`) |
 | CI on main | **STILL-OPEN, new cause** | billing, above. The last green ci.yml runs were 2026-10-24 13:36Z (e.g. 40098903391). Every run in the last 60, back to at least 2026-10-25 21:20Z, is "job was not started… payments". The ruleset requires check/ubuntu, check/macos-14, macos-app and check-dco, so every merge since then has gone through the admin bypass. Two days of merges are untested: re-run the suite the moment billing clears |
