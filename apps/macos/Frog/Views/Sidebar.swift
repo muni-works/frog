@@ -26,15 +26,17 @@ struct SessionList: View {
     @State private var collapsedParents: Set<String> = []
     /// Folded project groups, by folder path (newline-separated).
     @AppStorage("foldedGroups") private var foldedRaw = ""
-    @AppStorage("sidebarGrouping") private var grouping = Grouping.project
+    /// Org (the attention tree) by default; the older project and date views stay a choice.
+    @AppStorage("sidebarGroup") private var grouping = Grouping.org
     @AppStorage("sidebarSort") private var sort = Sort.activity
     @AppStorage("compactSidebar") private var compactSidebar = false
 
     /// How rows are grouped: by project folder (pins, folders, chats), by day, or not at all.
     enum Grouping: String, CaseIterable {
-        case project, date, none
+        case org, project, date, none
         var title: String {
             switch self {
+            case .org: "Org"
             case .project: "Project"
             case .date: "Date"
             case .none: "None"
@@ -178,7 +180,11 @@ struct SessionList: View {
             header
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    if filtering {
+                    if showArchived {
+                        flat
+                    } else if grouping == .org {
+                        attention
+                    } else if filtering {
                         flat
                     } else {
                         chiefTile
@@ -186,7 +192,7 @@ struct SessionList: View {
                             compactTabs
                         } else {
                             switch grouping {
-                            case .project: tabs
+                            case .org, .project: tabs
                             case .date: pinTiles; dated(unpinned)
                             case .none:
                                 pinTiles
@@ -247,6 +253,154 @@ struct SessionList: View {
             .padding(.top, 6)
             .padding(.bottom, 2)
         }
+    }
+
+    // MARK: Attention tree
+
+    /// The tree's scope (Live · Today · All).
+    private var scope: AttentionTree.Scope { .live }
+
+    /// The org tree as the sidebar draws it, and each fold head's older branch sessions.
+    /// Shared with the quick-switch shortcuts (`WorkspaceView.sidebarOrder`), so ⌘1…9 count
+    /// the rows on screen.
+    static func attention(_ library: Library, sort: Sort, scope: AttentionTree.Scope, current: String?,
+                          openDone: Set<String> = [], collapsed: Set<String> = [],
+                          query: String = "") -> (layout: AttentionTree.Layout, folds: [String: SessionFolds.Fold]) {
+        var active = library.sessions.filter { !library.archived.contains($0.id) }
+        var scope = scope
+        if !query.isEmpty {
+            active = AttentionTree.matching(active, parent: { library.parents[$0] }) { AttentionTree.matches($0, query) }
+            scope = .all
+        }
+        let chief = library.chief
+        let others = active.filter { $0.id != chief }
+        let folds = SessionFolds.group(others, parent: { library.parents[$0] })
+        // A fold's parent is any member's (a resumed worker keeps its manager); a parent folded
+        // away under its newest session nests under that.
+        var alias: [String: String] = [:]
+        for f in folds { for o in f.older { alias[o.id] = f.session.id } }
+        var parentOf: [String: String] = [:]
+        for f in folds {
+            if let p = ([f.session] + f.older).lazy.compactMap({ library.parents[$0.id] }).first {
+                parentOf[f.session.id] = alias[p] ?? p
+            }
+        }
+        let heads = folds.map(\.session) + active.filter { $0.id == chief }
+        let pinned = library.pinned
+        let order = Self.order(sort)
+        let layout = AttentionTree.layout(
+            heads, parent: { parentOf[$0] }, chief: chief,
+            state: { SessionNesting.State(SessionEndGlyph.derive(live: library.live[$0.id], end: $0.end)) },
+            // Pins float to the top of their level.
+            before: { a, b in
+                let (pa, pb) = (pinned.contains(a.id), pinned.contains(b.id))
+                return pa != pb ? pa : order(a, b)
+            },
+            scope: scope,
+            recent: { Calendar.current.isDateInToday($0.modifiedDate) },
+            openDone: openDone,
+            keep: current.map { [alias[$0] ?? $0] } ?? [],
+            collapsed: collapsed)
+        return (layout, Dictionary(folds.map { ($0.session.id, $0) }, uniquingKeysWith: { a, _ in a }))
+    }
+
+    /// `before`, without the view.
+    static func order(_ sort: Sort) -> (SessionInfo, SessionInfo) -> Bool {
+        switch sort {
+        case .activity: { $0.modified > $1.modified }
+        case .created: { $0.created > $1.created }
+        case .name: { $0.displayTitle.localizedStandardCompare($1.displayTitle) == .orderedAscending }
+        }
+    }
+
+    @ViewBuilder
+    private var attention: some View {
+        let built = Self.attention(library, sort: sort, scope: scope, current: current,
+                                   openDone: openDone, collapsed: collapsedParents)
+        chiefTile
+        if !built.layout.org.isEmpty {
+            treeLabel("Org")
+            treeEntries(built.layout.org, folds: built.folds)
+        }
+        if !built.layout.yours.isEmpty {
+            treeEntries(built.layout.yours, folds: built.folds)
+        }
+        if built.layout.org.isEmpty && built.layout.yours.isEmpty && library.chiefSession == nil {
+            empty("No conversations yet")
+        }
+    }
+
+    /// A section's small caps label, with an accessory (the scope switch) on the right.
+    private func treeLabel<T: View>(_ title: String, count: Int? = nil, tint: Color = .secondary,
+                                    @ViewBuilder trailing: () -> T = { EmptyView() }) -> some View {
+        HStack(spacing: 5) {
+            Text(title.uppercased()).tracking(0.6)
+            if let count { Text("\(count)") }
+            Spacer(minLength: 4)
+            trailing()
+        }
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(tint)
+        .padding(.leading, 8)
+        .padding(.trailing, 4)
+        .padding(.top, 12)
+        .padding(.bottom, 3)
+    }
+
+    private func treeEntries(_ entries: [SessionNesting.Entry], folds: [String: SessionFolds.Fold],
+                             highlight: String = "") -> some View {
+        ForEach(entries) { entry in
+            switch entry {
+            case .row(let s, let depth, let counts, let collapsed):
+                TreeRow(
+                    session: s, depth: depth, counts: counts, collapsed: collapsed,
+                    state: rowState(s), selected: s.id == current,
+                    pinned: library.pinned.contains(s.id), pane: paneNumbers[s.id], highlight: highlight,
+                    onToggle: { toggleNode(s.id, collapsed: collapsed, counts: counts) }
+                ) { open(s) } menu: { rowMenu(s, older: folds[s.id]?.older ?? []) }
+            case .done(let parent, let depth, let count, let failed, let open):
+                foldRow(parent: parent, depth: depth, count: count, failed: failed, open: open)
+            }
+        }
+    }
+
+    /// A row's disclosure: a quiet manager (folded by the scope) opens its done row; one
+    /// opened that way folds back; anything else collapses to its counts or shows them again.
+    private func toggleNode(_ id: String, collapsed: Bool, counts: SessionNesting.Counts) {
+        let live = counts.waiting + counts.running + counts.unread
+        if collapsed && !collapsedParents.contains(id) {
+            toggleDone(id)
+        } else if !collapsed && live == 0 && scope != .all && openDone.contains(id) {
+            toggleDone(id)
+        } else {
+            toggleChildren(id)
+        }
+    }
+
+    /// Settled work folded into one line: "18 done · 1 failed", "12 earlier", "4 done by chief".
+    private func foldRow(parent: String, depth: Int, count: Int, failed: Int, open: Bool) -> some View {
+        let what = parent == AttentionTree.chiefFold ? "done by chief"
+            : scope == .today && parent != AttentionTree.yoursFold ? "earlier" : "done"
+        return Button { toggleDone(parent) } label: {
+            HStack(spacing: 0) {
+                Color.clear.frame(width: AttentionMetrics.leading(depth))
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                    .frame(width: AttentionMetrics.disclosure)
+                Text("\(count) \(what)")
+                if failed > 0 {
+                    Text(" · \(failed) failed").foregroundStyle(.red.opacity(0.8))
+                }
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+            .padding(.leading, 4)
+            .frame(height: 22)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help(open ? "Hide finished sessions" : "Show \(count) finished session\(count == 1 ? "" : "s")")
     }
 
     // MARK: Tabs
@@ -574,6 +728,7 @@ struct SessionList: View {
     private var viewOptions: some View {
         Menu {
             Toggle("Compact", isOn: $compactSidebar)
+                .disabled(grouping == .org)
             Divider()
             Picker("Show", selection: $showArchived) {
                 Text("Active").tag(false)
@@ -723,9 +878,18 @@ struct SessionList: View {
     }
 
     @ViewBuilder
-    private func rowMenu(_ s: SessionInfo) -> some View {
+    private func rowMenu(_ s: SessionInfo, older: [SessionInfo] = []) -> some View {
         if let openInSplit, paneNumbers[s.id] == nil {
             Button("Open in New Pane") { openInSplit(s) }
+            Divider()
+        }
+        // The tree shows a branch's newest session; the older ones stay a click away.
+        if !older.isEmpty {
+            Menu("Older on This Branch") {
+                ForEach(older) { o in
+                    Button("\(o.displayTitle) · \(SessionAgeShort.age(o.modifiedDate))") { open(o) }
+                }
+            }
             Divider()
         }
         Button("Rename…") {

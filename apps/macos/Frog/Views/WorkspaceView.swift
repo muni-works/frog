@@ -28,6 +28,10 @@ struct WorkspaceView: View {
     @State private var window: NSWindow?
     @State private var renamingTitle = false
     @State private var newTitle = ""
+    // The sidebar's view options, for the quick-switch shortcuts' reading of it.
+    @AppStorage("sidebarGroup") private var sidebarGroup = SessionList.Grouping.org
+    @AppStorage("sidebarSort") private var sidebarSort = SessionList.Sort.activity
+    @AppStorage("sidebarScope") private var sidebarScope = AttentionTree.Scope.live
 
     struct Docked: Equatable {
         var sessions = false
@@ -80,6 +84,12 @@ struct WorkspaceView: View {
     /// quick-switch shortcuts (⌘1…9, ⇧⌘]/⇧⌘[) step through.
     private var sidebarOrder: [SessionInfo] {
         let library = Library.shared
+        if sidebarGroup == .org {
+            // The attention tree: the chief, then its top-level org rows, then yours.
+            let current = workspace.opening ?? workspace.conversation?.sessionID
+            let tree = SessionList.attention(library, sort: sidebarSort, scope: sidebarScope, current: current)
+            return [library.chiefSession].compactMap(\.self) + tree.layout.topLevels
+        }
         let active = library.sessions.filter { !library.archived.contains($0.id) }
         let pins = active.filter { library.pinned.contains($0.id) }
         let unpinned = active.filter { !$0.isChat && !library.pinned.contains($0.id) && $0.folder != nil }
