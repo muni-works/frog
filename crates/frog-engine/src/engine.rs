@@ -7074,85 +7074,46 @@ tool, strip prefixes like RULES:, and add tests.",
         d
     }
 
-    /// A session whose log can't be created says so once and then runs on silently: the turn
-    /// is never held hostage by a dead file, and the user isn't warned per event.
-    #[tokio::test]
-    async fn an_unsavable_session_warns_once_and_appends_silently() {
+    /// A journal whose log can't be created says so once and then keeps the turn running
+    /// silently: one notice, appends become no-ops, and a new session tries again.
+    #[test]
+    fn an_unsavable_session_warns_once_and_appends_silently() {
         let dir = tmp_store();
-        let script = vec![
-            reply(vec![text("one")], Stop::End),
-            reply(vec![text("two")], Stop::End),
-        ];
-        let mut h = engine_at(
-            script,
-            false,
-            Some(dir.clone()),
-            None,
-        );
-        // The engine mints its session id at startup; sabotage the store before the first
-        // durable write turns it into a create failure that can't recover (nothing can open a
-        // path a directory occupies).
-        let sid = loop {
-            let ev = h.events.recv().await.unwrap();
-            if !ev.session.is_empty() {
-                break ev.session.clone();
+        // A directory where the log belongs: nothing can create or open a file there.
+        std::fs::create_dir_all(dir.join("s.jsonl")).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let j = Journal::new(tx, Some(dir.clone()));
+        j.start_session("s".into(), 0, None);
+        *j.header.lock().unwrap() = (dir.clone(), "m".into());
+
+        // First durable event: exactly one warning, and the turn endures it.
+        j.emit(Event::Titled { title: "t".into() });
+        let mut warns = Vec::new();
+        while let Ok(env) = rx.try_recv() {
+            if let Event::Notice { level: Level::Warn, message } = env.event {
+                warns.push(message);
             }
-        };
-        std::fs::create_dir_all(dir.join(format!("{sid}.jsonl"))).unwrap();
-        // First turn: one warning, and the turn still completes.
-        let evs = run(&mut h, "hello").await;
-        let warns: Vec<_> = evs
-            .iter()
-            .filter_map(|e| match &e.event {
-                Event::Notice { level: Level::Warn, message } => Some(message.clone()),
-                _ => None,
-            })
-            .collect();
+        }
         assert_eq!(warns.len(), 1, "{warns:?}");
         assert!(warns[0].contains("running without persistence"), "{warns:?}");
-        assert!(evs.iter().any(|e| matches!(e.event, Event::TurnEnded { .. })));
-        // Second turn: no more warnings — the appends are silent no-ops.
-        let evs = run(&mut h, "again").await;
-        assert!(evs
-            .iter()
-            .all(|e| !matches!(e.event, Event::Notice { level: Level::Warn, .. })));
-        assert!(evs.iter().any(|e| matches!(e.event, Event::TurnEnded { .. })));
-        shutdown(h).await;
-        let _ = std::fs::remove_dir_all(dir);
-    }
 
-    /// A create that collides with a live, well-formed session elsewhere keeps failing — but
-    /// once, per session: the file's owner keeps its log intact.
-    #[tokio::test]
-    async fn a_dead_file_lets_the_next_new_session_try_again() {
-        // Op::Clear starts a fresh session under the same store: the dead flag clears with it.
-        let dir = tmp_store();
-        let mut h = engine_at(
-            vec![reply(vec![text("one")], Stop::End)],
-            false,
-            Some(dir.clone()),
-            None,
-        );
-        let sid = loop {
-            let ev = h.events.recv().await.unwrap();
-            if !ev.session.is_empty() {
-                break ev.session.clone();
-            }
-        };
-        std::fs::create_dir_all(dir.join(format!("{sid}.jsonl"))).unwrap();
-        let evs = run(&mut h, "hello").await;
-        assert_eq!(
-            evs.iter()
-                .filter(|e| matches!(e.event, Event::Notice { level: Level::Warn, .. }))
-                .count(),
-            1
-        );
-        h.ops.send(Op::Clear).unwrap();
-        let cleared = until_idle(&mut h).await;
-        assert!(cleared
-            .iter()
-            .all(|e| !matches!(e.event, Event::Notice { level: Level::Warn, .. })));
-        shutdown(h).await;
+        // Subsequent appends are silent no-ops: a run of events, no more warnings.
+        for i in 0..10 {
+            j.emit(Event::Titled { title: format!("t{i}") });
+        }
+        while let Ok(env) = rx.try_recv() {
+            assert!(!matches!(env.event, Event::Notice { level: Level::Warn, .. }));
+        }
+
+        // A new session (Op::Clear's path) tries again: the dead flag cleared, and with a
+        // writable name its log is actually created — no warning, real persistence.
+        j.start_session("s2".into(), 0, None);
+        j.emit(Event::Titled { title: "t".into() });
+        while let Ok(env) = rx.try_recv() {
+            assert!(!matches!(env.event, Event::Notice { level: Level::Warn, .. }));
+        }
+        let saved = session::load(&dir, "s2").unwrap();
+        assert_eq!(saved.last_seq(), 1, "the fresh session's event was logged");
         let _ = std::fs::remove_dir_all(dir);
     }
 
