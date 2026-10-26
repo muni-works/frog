@@ -87,7 +87,7 @@ extension Event {
     var isDurable: Bool {
         switch self {
         case .turnStarted, .turnEnded, .itemStarted, .itemCompleted, .permissionResolved, .autoApproved,
-             .compacted, .contextPruned, .modelChanged, .folderChanged, .modeChanged, .titled:
+             .compacted, .compactionFailed, .contextPruned, .modelChanged, .folderChanged, .modeChanged, .titled:
             true
         default:
             false

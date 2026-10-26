@@ -1006,6 +1006,38 @@ async fn drain_pending(shared: &Shared) -> bool {
 }
 
 /// Map any failure onto the closed [`EngineError`] set.
+/// The receipt a compaction's banner shows: the structured summary as protocol types.
+fn kept(s: crate::summary::Summary) -> crate::protocol::KeptSummary {
+    use crate::protocol::{KeptFile, KeptSummary, KeptTest, KeptTurn};
+    KeptSummary {
+        id: s.id,
+        files: s
+            .files
+            .into_iter()
+            .map(|(path, added, removed)| KeptFile {
+                path,
+                added,
+                removed,
+            })
+            .collect(),
+        turns: s
+            .turns
+            .into_iter()
+            .map(|t| KeptTurn {
+                request: t.request,
+                tools: t.tools,
+                tests: t
+                    .tests
+                    .into_iter()
+                    .map(|(command, passed)| KeptTest { command, passed })
+                    .collect(),
+                outcome: t.outcome,
+            })
+            .collect(),
+        outcome: s.outcome,
+    }
+}
+
 fn classify(e: &anyhow::Error) -> EngineError {
     if let Some(h) = e.downcast_ref::<HttpError>() {
         return EngineError::Provider {
@@ -2908,22 +2940,12 @@ impl Agent {
 
     /// Write or update this session's summary from its log. No model call.
     fn write_summary(&self) {
-        let (Some(dir), Some(out)) = (
-            &self.store,
-            self.memory.as_ref().and_then(|m| m.sessions_dir()),
-        ) else {
+        let Some(summary) = self.build_summary() else {
             return;
         };
-        if !self.shared.journal.has_log() {
-            return;
-        }
-        let Ok(loaded) = session::load(dir, &self.session_id) else {
+        let Some(out) = self.memory.as_ref().and_then(|m| m.sessions_dir()) else {
             return;
         };
-        if loaded.events.is_empty() {
-            return;
-        }
-        let summary = crate::summary::build(&loaded.header, &loaded.events, None);
         if let Err(e) = crate::summary::write(&out, &summary) {
             self.notice(
                 Level::Warn,
@@ -2931,6 +2953,22 @@ impl Agent {
             );
         }
     }
+
+    /// This session's structured summary (the #53 fields: files with +/−, turns with their
+    /// requests/outcomes, tests run), built from the log without a model call. None when
+    /// there's nothing to summarize (no store, no log, no events).
+    fn build_summary(&self) -> Option<crate::summary::Summary> {
+        let dir = self.store.as_ref()?;
+        if !self.shared.journal.has_log() {
+            return None;
+        }
+        let loaded = session::load(dir, &self.session_id).ok()?;
+        if loaded.events.is_empty() {
+            return None;
+        }
+        Some(crate::summary::build(&loaded.header, &loaded.events, None))
+    }
+
 
     /// `/remember`, `/forget`, `/memory` and `/recall`: answered with a notice, no model call.
     /// Returns false if `text` isn't one of them.
@@ -5625,6 +5663,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         self.emit(Event::Compacted {
             tokens_before: before,
             tokens_after: resp.usage.output,
+            summary: self.build_summary().map(kept),
         });
         if let Some(closed) = self.chapters.compacted(self.active_turn.unwrap_or(self.turn)) {
             self.title_chapter(closed);
@@ -12279,6 +12318,130 @@ for line in sys.stdin:
         assert_eq!(resolved_window(&mut h).await, 100_000);
         shutdown(h).await;
         crate::catalog::TEST_CACHE.lock().unwrap().take();
+    }
+
+    /// A successful compaction carries what it kept (the #53 receipt: files with +/−, turns
+    /// with their requests and outcomes, tests run), so the app can banner it; engines
+    /// without a session store emit the token counts alone.
+    #[tokio::test]
+    async fn a_compaction_emits_what_it_kept() {
+        let root = tmp_store();
+        let project = root.join("repo");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(project.join("src/auth.rs"), "pub fn login() {}\n").unwrap();
+        let read = Block::ToolUse {
+            id: "r1".into(),
+            name: "Read".into(),
+            input: json!({ "file_path": "src/auth.rs" }),
+        };
+        let edit = Block::ToolUse {
+            id: "e1".into(),
+            name: "Edit".into(),
+            input: json!({
+                "file_path": "src/auth.rs",
+                "old_string": "login() {}",
+                "new_string": "login() { check(); }"
+            }),
+        };
+        // A shell command the summary reads as a passing test run (`make test` matches
+        // `is_test`); with no Makefile here it fails fast and the `||` prints a passing
+        // result — nothing in it can hang the Bash tool.
+        let tests = Block::ToolUse {
+            id: "b1".into(),
+            name: "Bash".into(),
+            input: json!({ "command": "make test || echo 'test result: ok. 3 passed; 0 failed'" }),
+        };
+        let script = vec![
+            reply(vec![read, edit, tests], Stop::ToolUse),
+            reply(vec![text("Fixed the login check.")], Stop::End),
+            reply(vec![text("Kept: the login fix and its tests.")], Stop::End),
+        ];
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            // The sandbox's `sandbox-exec` isn't available under the test runner's own sandbox.
+            cfg: Config {
+                hermetic: true,
+                sandbox_shell: false,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: project.clone(),
+            // Yolo: the Bash call needs no permission card (nothing answers one in a test —
+            // the card would sit out the whole 600s approval timeout, then deny).
+            mode: Mode::Yolo,
+            can_ask: true,
+            resume: None,
+            store: Some(root.join("sessions")),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+        until_idle(&mut h).await;
+        h.ops
+            .send(Op::Submit {
+                text: "fix the login bug".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let _ = until_idle(&mut h).await;
+        // The user's own compact: the reply above summarizes, the event carries the receipt.
+        h.ops.send(Op::Compact { focus: None }).unwrap();
+        let evs = until_idle(&mut h).await;
+        let kept = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::Compacted { summary, .. } => summary.clone(),
+                _ => None,
+            })
+            .expect("a Compacted event with its receipt");
+        assert_eq!(
+            kept.files,
+            vec![crate::protocol::KeptFile {
+                path: "src/auth.rs".into(),
+                added: 1,
+                removed: 1
+            }]
+        );
+        // The receipt names the session it summarized (the banner's lineage).
+        assert!(!kept.id.is_empty(), "the summary id rides along");
+        assert_eq!(kept.turns.len(), 1);
+        let t = &kept.turns[0];
+        assert_eq!(t.request, "fix the login bug");
+        assert!(t.tools.contains(&"Edit".to_string()));
+        assert_eq!(
+            t.tests,
+            vec![crate::protocol::KeptTest {
+                command: "make test || echo 'test result: ok. 3 passed; 0 failed'".to_string(),
+                passed: true
+            }]
+        );
+        assert_eq!(t.outcome, "complete");
+        assert_eq!(kept.outcome, "complete");
+
+        // Without a store (hermetic runs, some tests): the token counts stand alone, no
+        // receipt — the compact needs history, so a turn runs first.
+        let mut bare = engine(
+            vec![
+                reply(vec![text("Something to compact.")], Stop::End),
+                reply(vec![text("Kept.")], Stop::End),
+            ],
+            true,
+        );
+        let _ = run(&mut bare, "anything").await;
+        bare.ops.send(Op::Compact { focus: None }).unwrap();
+        let evs = until_idle(&mut bare).await;
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::Compacted { summary: None, .. }
+        )));
+        shutdown(h).await;
+        shutdown(bare).await;
     }
 
     /// (b) A prompt past the hard limit is compacted before the model call, not after a 400.

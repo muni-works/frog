@@ -134,6 +134,110 @@ struct OverflowRescueView: View {
     }
 }
 
+/// A successful compaction, at the transcript's top: "carried forward · everything important
+/// was saved", with what was kept one expander away — the receipt (files with +/−, turns
+/// with their requests and outcomes, tests run and whether each passed). Replayed sessions
+/// keep it; ones compacted before the receipt existed show nothing.
+struct CarriedForwardBanner: View {
+    let kept: KeptSummary
+    /// Tests open the receipt without clicking (an injected initial state).
+    var opened: Bool? = nil
+    @State private var open = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let isOpen = opened ?? open
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.uturn.forward").imageScale(.small)
+                Text("carried forward · everything important was saved")
+                    .fontWeight(.medium)
+                Spacer(minLength: 0)
+                Button {
+                    withAnimation(Motion.quick(reduced: reduceMotion)) { open.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("what was kept")
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .rotationEffect(.degrees(isOpen ? 180 : 0))
+                    }
+                    .foregroundStyle(.tint)
+                }
+                .buttonStyle(.plain)
+            }
+            if isOpen {
+                KeptSummaryReceipt(kept: kept)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.green)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.green.opacity(0.10), in: .rect(cornerRadius: 10, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The receipt itself: files with +/−, turns with requests and outcomes, tests with pass/fail.
+struct KeptSummaryReceipt: View {
+    let kept: KeptSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !kept.files.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Files")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(kept.files, id: \.path) { f in
+                        HStack(spacing: 6) {
+                            Text((f.path as NSString).lastPathComponent)
+                            Text("+\(f.added)").foregroundStyle(.green)
+                            Text("−\(f.removed)").foregroundStyle(.red)
+                            Spacer(minLength: 0)
+                        }
+                        .monospacedDigit()
+                    }
+                }
+            }
+            if !kept.turns.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Turns")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(Array(kept.turns.enumerated()), id: \.offset) { i, t in
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 5) {
+                                Text("\(i + 1).").foregroundStyle(.tertiary)
+                                Text(t.request).lineLimit(1)
+                                if !t.outcome.isEmpty && t.outcome != "complete" {
+                                    Text("(\(t.outcome))").foregroundStyle(.secondary)
+                                }
+                            }
+                            if !t.tests.isEmpty {
+                                ForEach(Array(t.tests.enumerated()), id: \.offset) { _, test in
+                                    HStack(spacing: 5) {
+                                        Image(systemName: test.passed ? "checkmark.circle" : "xmark.circle")
+                                            .foregroundStyle(test.passed ? .green : .red)
+                                        Text(test.command).lineLimit(1).truncationMode(.middle)
+                                    }
+                                    .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10, style: .continuous))
+        .textSelection(.enabled)
+    }
+}
+
 struct ToolCallView: View {
     @Environment(\.pinsQuestions) private var pinsQuestions
     let name: String

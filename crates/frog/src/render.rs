@@ -385,6 +385,7 @@ impl Renderer {
             Event::Compacted {
                 tokens_before,
                 tokens_after,
+                ..
             } => {
                 self.idle();
                 info(&format!(

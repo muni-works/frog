@@ -311,12 +311,23 @@ struct TranscriptView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 let footers = TurnFooter.pinned(conversation.turns) { ModelStats.shared.cost(of: $0) }
+<<<<<<< Updated upstream
                 let lastTurn = conversation.turns.last?.id
                 // A row per piece of each turn: only what's on screen is built (see `TurnPart`).
                 ForEach(rows) { row in
                     TurnView(turn: row.turn, conversation: conversation, actions: actions, part: row.part,
                              gap: row.gap, pinsFooter: footers.contains(row.turn.id))
                         .id(row.id)
+=======
+                // The transcript's first line: the last compaction's banner. Replay and
+                // reopen keep it (a durable event); sessions compacted before receipts
+                // existed show nothing.
+                if let kept = conversation.carriedForward {
+                    CarriedForwardBanner(kept: kept)
+                }
+                ForEach(conversation.turns) { turn in
+                    TurnView(turn: turn, conversation: conversation, actions: actions, pinsFooter: footers.contains(turn.id))
+>>>>>>> Stashed changes
                         .background {
                             if row.first, row.turn.id == lastTurn {
                                 Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.content)).minY }) {

@@ -413,6 +413,39 @@ struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
     }
 }
 
+/// What a compaction kept, as a receipt (`Event.compacted`'s `summary`): the structured
+/// summary's fields, trimmed to what a banner's expander shows. Absent (nil) in older logs
+/// and in engines with no session store.
+struct KeptSummary: Decodable, Sendable, Equatable {
+    var id: String
+    var files: [KeptFile]
+    var turns: [KeptTurn]
+    /// How the last turn ended (`complete`, `cancelled`, …).
+    var outcome: String
+}
+
+/// One file the compaction kept: its path and the lines added and removed.
+struct KeptFile: Decodable, Sendable, Equatable {
+    var path: String
+    var added: UInt32
+    var removed: UInt32
+}
+
+/// One turn the compaction kept: what was asked, which tools ran, the tests run and whether
+/// each passed, and how it ended.
+struct KeptTurn: Decodable, Sendable, Equatable {
+    var request: String
+    var tools: [String]
+    var tests: [KeptTest]
+    var outcome: String
+}
+
+/// One test the compaction kept: the command and whether it passed.
+struct KeptTest: Decodable, Sendable, Equatable {
+    var command: String
+    var passed: Bool
+}
+
 enum EndReason: Decodable, Sendable, Equatable {
     case complete, maxTokens, denied, looping, stepLimit, cancelled, suspended
     /// A retry of a call already denied: frog didn't ask again and ended the turn with the denial.
@@ -691,7 +724,7 @@ enum Event: Decodable, Sendable {
     /// stream failed); drop them from the turn.
     case itemsDiscarded(ids: [String])
     case permissionResolved(id: String, decision: Decision)
-    case compacted(tokensBefore: UInt64, tokensAfter: UInt64)
+    case compacted(tokensBefore: UInt64, tokensAfter: UInt64, kept: KeptSummary?)
     /// Compaction failed and the history can't fit the window: the session is stuck; the
     /// rescue is `Op.continueSession` (a carried-forward session). The raw payload is in the
     /// engine log, never the transcript.
@@ -778,7 +811,7 @@ struct Envelope: Decodable, Sendable {
 extension Event {
     private enum Key: String, CodingKey {
         case event
-        case turn, input, reason, usage, id, kind, item, delta, decision, ids, detail
+        case turn, input, reason, usage, id, kind, item, delta, decision, ids, detail, summary
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
         case layer, outcome, ms
@@ -825,7 +858,9 @@ extension Event {
         case "compacted":
             self = .compacted(
                 tokensBefore: try c.decode(UInt64.self, forKey: .tokensBefore),
-                tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter))
+                tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter),
+                kept: try c.decodeIfPresent(KeptSummary.self, forKey: .summary)  // old logs: nil
+            )
         case "compaction_failed":
             self = .compactionFailed(detail: try c.decodeIfPresent(String.self, forKey: .detail) ?? "")
         case "context_pruned":
