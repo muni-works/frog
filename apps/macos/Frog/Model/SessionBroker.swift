@@ -890,6 +890,7 @@ final class SessionBroker {
 
     /// A session's live state changed (from `Library.report`).
     func observe(_ id: String, running: Bool, waiting: Bool) {
+        if !unnamed.isEmpty { claimUnnamed(id) }
         // When the current permission card arrived, for its age in ListApprovals.
         if waiting {
             if waitingSince[id] == nil { waitingSince[id] = now() }
@@ -1049,19 +1050,42 @@ final class SessionBroker {
         return c
     }
 
-    /// A pane is letting go of `c`: keep it running in the background if it's busy and part of
-    /// a group of sessions, rather than stopping it mid-task. True if kept.
+    /// A pane is letting go of `c` (switched to another session or folder, closed): keep it
+    /// running in the background while it has work, rather than stopping it mid-task. Any
+    /// session, not only agents': what's on screen never decides whether a turn lives (a new
+    /// thread switched away from during its first answer was cancelled before anything
+    /// streamed). It lets go once settled, like any background engine. True if kept.
     func keep(_ c: Conversation) -> Bool {
-        // Busy includes a delivered message the engine hasn't started yet (between one turn's
-        // `idle` and the next's start): stopping then would cancel it. Live background work
-        // (a Monitor, a job, a Task) would die with the engine.
-        let working = c.busy || c.pendingDeliveries > 0 || c.backgroundRunning > 0
-            || c.turns.last.map { !$0.finished } == true
-        guard working, c.isLive, let id = c.sessionID, Library.shared.isAgentSession(id) else { return false }
+        // A delivered message the engine hasn't started yet (between one turn's `idle` and the
+        // next's start) or a message queued while it starts up would be cancelled. Live
+        // background work (a Monitor, a job, a Task) would die with the engine. `busy` alone is
+        // also an engine still starting up with nothing asked of it: that one can go.
+        let asked = !c.turns.isEmpty || !c.queue.isEmpty
+        let working = (c.busy && asked) || !c.queue.isEmpty || c.pendingDeliveries > 0
+            || c.backgroundRunning > 0 || c.turns.last.map { !$0.finished } == true
+        guard working, c.isLive else { return false }
+        guard let id = c.sessionID else {
+            // Its engine hasn't said which session it is yet: held until it does (`observe`).
+            unnamed.removeAll { !$0.isLive }
+            if !unnamed.contains(where: { $0 === c }) { unnamed.append(c) }
+            return true
+        }
         background[id] = c
         armedBackground.insert(id)
         touch(id)
         return true
+    }
+
+    /// Kept engines that hadn't named their session yet (see `keep`).
+    private var unnamed: [Conversation] = []
+
+    /// A kept engine just named its session `id`: it's that session's background engine now.
+    private func claimUnnamed(_ id: String) {
+        unnamed.removeAll { !$0.isLive }
+        guard let i = unnamed.firstIndex(where: { $0.sessionID == id }) else { return }
+        background[id] = unnamed.remove(at: i)
+        armedBackground.insert(id)
+        touch(id)
     }
 
     func track(_ c: Conversation, as id: String) {
