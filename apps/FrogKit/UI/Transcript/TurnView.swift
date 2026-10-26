@@ -103,7 +103,7 @@ struct TurnView: View {
     /// The turn's first row: what opened it (background work, a message from another session,
     /// or what you asked).
     private var head: some View {
-        VStack(alignment: .leading, spacing: space.inTurn) {
+        VStack(alignment: .leading, spacing: space.block) {
             let lead = TurnLead(turn)
             if !lead.wakes.isEmpty {
                 // Background work finished and the turn opened with it: event rows, not a bubble.
@@ -199,7 +199,7 @@ struct TurnView: View {
         let status = running && loading == nil ? liveStatus : nil
         let plan = running && !parts.plan.isEmpty
         if plan || loading != nil || status != nil || !parts.changes.isEmpty || turn.end != nil {
-            VStack(alignment: .leading, spacing: space.inTurn) {
+            VStack(alignment: .leading, spacing: space.block) {
                 if plan {
                     PlanView(todos: parts.plan)
                 }
@@ -220,7 +220,7 @@ struct TurnView: View {
                     EndView(reason: end, usage: turn.usage, answer: answer, hovering: hovering)
                         // Set off from the answer above it (see `TurnSpace`): the turn's last
                         // line reads as a caption, not as one more paragraph.
-                        .padding(.top, isFooter(end) ? space.beforeFooter : 0)
+                        .padding(.top, isFooter(end) ? space.footer : 0)
                         .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
                         .allowsHitTesting(pinsFooter || hovering)
                 }

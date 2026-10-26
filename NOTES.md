@@ -42,4 +42,22 @@ Command (from apps/FrogKit/UI/Transcript):
 TranscriptView 25, TurnView 11, ActivityLine 14, MessageText 4, ItemViews 35, Markdown 4 = 93
 
 ## Decisions
-(pending)
+- Baseline snapshots: /private/tmp/type-before + .snap/before (git-excluded). Fixture renders verbose
+  (activity lines open).
+- BUG seen in baseline: finished answer text indented 8pt right of activity lines — TypingBubble's
+  HStack(spacing: 8) keeps the gap when the frog collapses to width 0. Fix: spacing only while live.
+- Measure: column 720pt max (was 820), gutter 32 (was 28). With 14pt body ≈ 90–95 chars/line,
+  claude.ai's feel; code blocks still have room.
+- Body 14pt (was 13 = NSFont.systemFontSize), extra leading 5 (≈1.55 line height). Headings 18/16/14.
+  Prompt bubble uses the same body size so both sides of the conversation match. iOS unchanged (17pt body).
+- Scale (comfortable / compact), all in TurnSpace:
+  line 5/2 · list 6/3 · paragraph 14/8 (within a message, and text→text rows)
+  activity 6/4 (gap ABOVE an activity line: tight to the paragraph it follows)
+  block 16/10 (rows of other kinds: prompt→first row, cards, visuals, the tail)
+  turn 32/16 · footer 12/8 (above the model/speed caption)
+  Inset tokens (non-density): hair 2, tight 4, snug 6, row 8, card 10, roomy 12 — odd values
+  (5, 7, 9) in rows/cards snap to these.
+- Row gap = TurnSpace.Scale.gap(after:before:) computed once in TranscriptView.rows (no per-row work).
+- ActivityLine: .callout (smaller than 14pt body), .secondary, gist .tertiary. LiveStatus also .callout.
+- Inline code: rounded background (custom attribute drawn by MessageTextView's layout manager),
+  not the flat square NSAttributedString backgroundColor.

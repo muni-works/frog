@@ -184,7 +184,7 @@ struct TranscriptView: View {
             func add(_ part: TurnPart, _ key: String) {
                 let leads = out.count == start
                 out.append(TranscriptRow(turn: turn, part: part, first: leads,
-                                         gap: leads ? (out.isEmpty ? 0 : space.betweenTurns) : space.inTurn,
+                                         gap: space.gap(part, after: leads ? nil : out.last?.part, first: out.isEmpty),
                                          id: TranscriptRow.ID(turn: turn.id, part: key)))
             }
             if TurnView.hasHead(turn) { add(.head, "head") }
@@ -317,13 +317,13 @@ struct TranscriptView: View {
                 }
                 if let q = conversation.question {
                     QuestionCard(question: q, conversation: conversation)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                         .id(q.id)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 if let e = conversation.elicitation {
                     ElicitationCard(request: e, conversation: conversation)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                         .id(e.id)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
@@ -333,38 +333,38 @@ struct TranscriptView: View {
                 // (Not over the newest rows read from the log: they're the transcript already.)
                 if conversation.replaying, conversation.turns.isEmpty {
                     LoadingIndicator(since: conversation.opened)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                 } else if conversation.busy, conversation.engineAlive, conversation.permission == nil,
                    conversation.elicitation == nil, conversation.question == nil,
                    conversation.turns.last?.items.isEmpty ?? true {
                     WorkingIndicator(progress: conversation.progress, since: conversation.progressSince)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                 }
                 if let preview = conversation.presentPreview {
                     PresentCard(present: preview)
                         .opacity(0.85)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                         .transition(.opacity)
                 }
                 if let failure = conversation.failure {
                     Label(failure, systemImage: "exclamationmark.octagon")
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                 }
                 if conversation.overflowRescue {
                     OverflowRescueView(conversation: conversation)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-                Color.clear.frame(height: space.betweenTurns).id(Self.end)
+                Color.clear.frame(height: space.turn).id(Self.end)
             }
             .scrollTargetLayout()
             .coordinateSpace(.named(Self.content))
             .environment(\.turnSpace, space)
-            .frame(maxWidth: 820)
-            .padding(.horizontal, 28)
-            .padding(.top, 20)
-            .padding(.bottom, 12)
+            .frame(maxWidth: TurnSpace.measure)
+            .padding(.horizontal, TurnSpace.gutter)
+            .padding(.top, TurnSpace.top)
+            .padding(.bottom, TurnSpace.bottom)
             .frame(maxWidth: .infinity)
             .background(ScrollBackdropClear())
             // The canvas's margins are for this scroll view, not for ones inside it (code
@@ -403,9 +403,9 @@ struct UserPrompt: View {
 
     var body: some View {
         let (message, contexts) = PromptContext.split(text)
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: TurnSpace.Inset.snug) {
             if !images.isEmpty {
-                HStack(spacing: 6) {
+                HStack(spacing: TurnSpace.Inset.snug) {
                     ForEach(Array(images.enumerated()), id: \.offset) { i, img in
                         if let ns = img.image {
                             Image(platformImage: ns)
@@ -421,17 +421,18 @@ struct UserPrompt: View {
             }
             if !message.isEmpty {
                 Text(message)
+                    .font(.system(size: TurnType.body))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, TurnSpace.Inset.roomy + TurnSpace.Inset.hair)
+                    .padding(.vertical, TurnSpace.Inset.card)
                     // Solid, with white text, like iMessage (blue) and SMS (green).
                     .foregroundStyle(.white)
                     .background(tint, in: .rect(cornerRadius: 18))
             }
             ForEach(contexts) { ContextDisclosure(context: $0) }
         }
-        .frame(maxWidth: 560, alignment: .trailing)
+        .frame(maxWidth: TurnSpace.promptWidth, alignment: .trailing)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }

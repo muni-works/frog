@@ -319,16 +319,12 @@ extension NSAttributedString.Key {
 /// message reads with the transcript's rhythm: taller line height within a paragraph, more
 /// room between blocks, and list items tighter than blocks.
 enum MessageStyle {
-    /// The density setting, as `piece` is built on a text-queue (AppKit) thread at times.
-    static var compact: Bool {
-        UserDefaults.standard.string(forKey: "density") == Density.compact.rawValue
-    }
+    /// The density setting's scale, as `piece` is built on a text-queue (AppKit) thread at times.
+    static var blockGap: CGFloat { TurnSpace.current.paragraph }
+    static var listGap: CGFloat { TurnSpace.current.list }
+    static var lineHeight: CGFloat { TurnSpace.current.line }
 
-    static var blockGap: CGFloat { compact ? TurnSpace.blockCompact : TurnSpace.block }
-    static var listGap: CGFloat { compact ? TurnSpace.listItemCompact : TurnSpace.listItem }
-    static var lineHeight: CGFloat { compact ? TurnSpace.lineHeightCompact : TurnSpace.lineHeight }
-
-    static var body: NSFont { .systemFont(ofSize: NSFont.systemFontSize) }
+    static var body: NSFont { .systemFont(ofSize: TurnType.body) }
 
     static func paragraph(_ configure: (NSMutableParagraphStyle) -> Void = { _ in }) -> NSMutableParagraphStyle {
         let p = NSMutableParagraphStyle()
@@ -346,13 +342,13 @@ enum MessageStyle {
         case .paragraph(let s):
             out.append(inline(s, font: body, style: paragraph { $0.paragraphSpacingBefore = gap }))
         case .heading(let level, let s):
-            let size: CGFloat = level == 1 ? 17 : level == 2 ? 15 : 13
-            let font = NSFont.systemFont(ofSize: size, weight: .semibold)
-            out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap + 4 }))
+            let font = NSFont.systemFont(ofSize: TurnType.heading(level), weight: .semibold)
+            // More room above a heading than below it: it belongs to what follows.
+            out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap + TurnSpace.Inset.row }))
         case .bullet(let indent, let marker, let s):
-            let lead = CGFloat(indent) * 16
+            let lead = CGFloat(indent) * TurnType.body
             let markerWidth = (marker as NSString).size(withAttributes: [.font: body]).width
-            let head = lead + max(markerWidth, 10) + 8
+            let head = lead + max(markerWidth, TurnSpace.Inset.card) + TurnSpace.Inset.row
             let style = paragraph {
                 $0.paragraphSpacingBefore = gap
                 $0.paragraphSpacing = listGap
@@ -361,7 +357,7 @@ enum MessageStyle {
                 $0.tabStops = [NSTextTab(textAlignment: .left, location: head)]
             }
             out.append(NSAttributedString(string: "\(marker)\t", attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: TurnType.body, weight: .regular),
                 .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
             ]))
             out.append(inline(s, font: body, style: style))
@@ -370,7 +366,7 @@ enum MessageStyle {
             let block = QuoteTextBlock(gap: gap)
             block.setValue(100, type: .percentageValueType, for: .width)
             block.setWidth(gap, type: .absoluteValueType, for: .padding, edge: .minY)
-            block.setWidth(12, type: .absoluteValueType, for: .padding, edge: .minX)
+            block.setWidth(TurnSpace.Inset.roomy, type: .absoluteValueType, for: .padding, edge: .minX)
             let text = inline(s, font: body, style: paragraph { $0.textBlocks = [block] })
             text.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: 0, length: text.length))
             out.append(text)
