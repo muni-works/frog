@@ -454,6 +454,59 @@ impl Registry {
         out.into_iter().map(|(_, w)| w).collect()
     }
 
+    /// What compaction keeps about pending watches: a block for the summary message, or
+    /// empty. State, not a notice: it wakes nothing.
+    pub fn pending_block(&self) -> String {
+        let watches = self.watches();
+        if watches.is_empty() {
+            return String::new();
+        }
+        let lines: Vec<String> = watches.iter().map(|w| format!("- {}", w.line())).collect();
+        format!(
+            "Pending background (still set; Monitor {{\"cancel\": \"<id, subject or all>\"}} stops them):\n{}",
+            lines.join("\n")
+        )
+    }
+
+    /// A resumed session's ids continue past the ones its log used (`mon-7` → next is 8), so
+    /// a new piece never shares an id with an old one.
+    pub fn seed_ids<'a>(&self, used: impl IntoIterator<Item = &'a str>) {
+        let max = used
+            .into_iter()
+            .filter_map(|id| id.rsplit_once('-')?.1.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        self.next.fetch_max(max + 1, Ordering::Relaxed);
+    }
+
+    /// Pieces the log says were running when the engine before this one died: each is
+    /// recorded `lost` (so clients stop showing it running) and one line is left for the next
+    /// turn, waking nothing. Never re-armed: nothing here can tell the condition still holds.
+    pub fn lost_on_restart(&self, lost: &[(String, String, String)]) {
+        if lost.is_empty() {
+            return;
+        }
+        for (id, kind, _) in lost {
+            self.emit(Event::BackgroundDone {
+                id: id.clone(),
+                kind: kind.clone(),
+                status: "lost".into(),
+                summary: String::new(),
+            });
+        }
+        let names: Vec<String> = lost
+            .iter()
+            .map(|(id, _, label)| format!("{id} ({label})"))
+            .collect();
+        let n = lost.len();
+        self.park(format!(
+            "{n} background piece{} from before the engine restarted {} dropped, not re-armed: {}. Re-arm or re-run any that still matter.",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "was" } else { "were" },
+            names.join(", ")
+        ));
+    }
+
     /// Pending watches other than `id`.
     fn others(&self, id: &str) -> Vec<Watch> {
         self.watches().into_iter().filter(|w| w.id != id).collect()
