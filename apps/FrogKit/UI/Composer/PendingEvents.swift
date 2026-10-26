@@ -46,6 +46,8 @@ struct PendingEvents: Equatable {
     var visible: [Chip] { Array(chips.prefix(Self.shown)) }
     /// "+4 more" past the first three.
     var overflow: String? { chips.count > Self.shown ? "+\(chips.count - Self.shown) more" : nil }
+    /// Background wakes are queued (not only session messages): "Dismiss all" applies.
+    var hasWakes: Bool { chips.contains { $0.kind != "message" } }
 
     /// "2 pending results", plus where they go when nothing is running (after a stop).
     func caption(busy: Bool) -> String {
@@ -56,18 +58,29 @@ struct PendingEvents: Equatable {
 }
 
 /// The pending strip above the composer field: quiet chips (pending, not arrived), each
-/// expanding to its full payload on click; a "+N more" badge past three.
+/// expanding to its full payload on click; a "+N more" badge past three. "Dismiss all" drops
+/// the queued wakes and stops the pending timers and monitors in one click.
 struct PendingEventsStrip: View {
     let pending: PendingEvents
     let busy: Bool
+    var dismiss: (() -> Void)? = nil
     @State private var open: String?
     @State private var showAll = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(pending.caption(busy: busy))
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            HStack(spacing: 6) {
+                Text(pending.caption(busy: busy))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                if let dismiss, pending.hasWakes {
+                    Button("Dismiss all", action: dismiss)
+                        .buttonStyle(.plain)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .help("Drop these wakes and stop the pending timers and monitors")
+                }
+            }
             ForEach(showAll ? pending.chips : pending.visible) { chip in
                 VStack(alignment: .leading, spacing: 2) {
                     Button { open = open == chip.id ? nil : chip.id } label: {

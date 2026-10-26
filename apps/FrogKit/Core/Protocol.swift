@@ -70,6 +70,9 @@ enum Op: Encodable, Sendable {
     case interrupt
     /// Drop the session messages queued in the engine's inbox (sent, not yet taken by a turn).
     case clearInbox
+    /// The pending strip's "Dismiss all": the engine drops the parked wakes and stops every
+    /// pending timer and monitor (jobs and Tasks keep running).
+    case dismissWakes
     /// Pick up a turn the app's restart interrupted: the engine runs a turn on the repaired
     /// history with `note` (its own default when nil) as the message.
     case `continue`(note: String? = nil)
@@ -146,6 +149,8 @@ enum Op: Encodable, Sendable {
             try c.encode("interrupt", forKey: .op)
         case .clearInbox:
             try c.encode("clear_inbox", forKey: .op)
+        case .dismissWakes:
+            try c.encode("dismiss_wakes", forKey: .op)
         case .continue(let note):
             try c.encode("continue", forKey: .op)
             try c.encodeIfPresent(note, forKey: .note)

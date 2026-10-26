@@ -412,6 +412,14 @@ final class Conversation {
         link?.send(.clearInbox)
     }
 
+    /// The pending strip's "Dismiss all": the parked wakes never run, and the engine stops
+    /// every pending timer and monitor so the stale ones can't wake again. Session messages
+    /// and running jobs stay.
+    func dismissWakes() {
+        queuedEvents.removeAll()
+        link?.send(.dismissWakes)
+    }
+
     /// What an update drain saw: the engine stopped suspended, it had nothing running, or it
     /// never answered inside the budget (the app force-kills it and the turn resumes as a
     /// crash would).

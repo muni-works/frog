@@ -79,6 +79,73 @@ struct Entry {
     file: Option<PathBuf>,
     stop: CancellationToken,
     started: Instant,
+    /// When a timer fires, or a monitor gives up.
+    due: Option<Instant>,
+    /// What a timer or monitor is about (`b300-retry`): a re-arm with the same one replaces it.
+    subject: Option<String>,
+}
+
+/// Most timers pending at once. Wakeups cost a turn and maybe the user's attention, like an
+/// approval card: past this, re-arm with a `subject` (which replaces) or cancel one.
+pub const MAX_TIMERS: usize = 5;
+
+/// One pending timer or monitor, for lists the model reads.
+pub struct Watch {
+    pub id: String,
+    pub kind: Kind,
+    /// `sweep: wake in 1800s` (the subject leads when there is one).
+    pub label: String,
+    pub subject: Option<String>,
+    pub left: Option<Duration>,
+}
+
+/// A `subject` as one token the notice's `subject=` attribute can carry: lowercase,
+/// `[a-z0-9._-]`, at most 40 chars. None when nothing is left.
+pub fn subject_of(input: &Value) -> Option<String> {
+    let raw = input["subject"].as_str()?.trim().to_lowercase();
+    let mut s = String::new();
+    for c in raw.chars() {
+        let c = if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+            c
+        } else {
+            '-'
+        };
+        if !(c == '-' && s.ends_with('-')) {
+            s.push(c);
+        }
+    }
+    let s: String = s.trim_matches('-').chars().take(40).collect();
+    let s = s.trim_end_matches('-').to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// `Also pending: mon-3 sweep: wake in 1800s (in 12m); …`, or empty when nothing else is.
+fn also_pending(others: &[Watch]) -> String {
+    if others.is_empty() {
+        return String::new();
+    }
+    let lines: Vec<String> = others.iter().map(Watch::line).collect();
+    format!("Also pending: {}.", lines.join("; "))
+}
+
+impl Watch {
+    /// `mon-3 wake in 1800s (in 12m)`.
+    pub fn line(&self) -> String {
+        match self.left {
+            Some(left) => format!("{} {} (in {})", self.id, self.label, short_duration(left)),
+            None => format!("{} {}", self.id, self.label),
+        }
+    }
+}
+
+/// `45s`, `12m`, `3h`: rounded up, so a pending timer never reads `0s`.
+fn short_duration(d: Duration) -> String {
+    let s = d.as_secs() + u64::from(d.subsec_nanos() > 0);
+    match s {
+        0..60 => format!("{s}s"),
+        60..3_600 => format!("{}m", s.div_ceil(60)),
+        _ => format!("{}h", s.div_ceil(3_600)),
+    }
 }
 
 type Emit = Box<dyn Fn(Event) + Send + Sync>;
@@ -124,6 +191,18 @@ impl Registry {
     }
 
     fn begin(&self, id: &str, kind: Kind, label: &str, file: Option<PathBuf>) -> CancellationToken {
+        self.begin_until(id, kind, label, file, None, None)
+    }
+
+    fn begin_until(
+        &self,
+        id: &str,
+        kind: Kind,
+        label: &str,
+        file: Option<PathBuf>,
+        due: Option<Duration>,
+        subject: Option<String>,
+    ) -> CancellationToken {
         let stop = CancellationToken::new();
         let log = file.as_ref().map(|f| f.display().to_string());
         self.entries.lock().unwrap().insert(
@@ -137,6 +216,8 @@ impl Registry {
                 file,
                 stop: stop.clone(),
                 started: Instant::now(),
+                due: due.map(|d| Instant::now() + d),
+                subject,
             },
         );
         self.emit(Event::BackgroundStarted {
@@ -218,20 +299,25 @@ impl Registry {
     /// Stop one piece. Its end is recorded as `stopped`, with no notice (whoever stopped it
     /// knows). False if there's no such piece running.
     pub fn stop(&self, id: &str) -> bool {
+        self.stop_as(id, "stopped")
+    }
+
+    /// `stop`, recording `status` (`stopped`, `replaced`).
+    fn stop_as(&self, id: &str, status: &str) -> bool {
         let kind = {
             let mut entries = self.entries.lock().unwrap();
             let Some(e) = entries.get_mut(id).filter(|e| e.running) else {
                 return false;
             };
             e.running = false;
-            e.status = "stopped".into();
+            e.status = status.into();
             e.stop.cancel();
             e.kind
         };
         self.emit(Event::BackgroundDone {
             id: id.to_string(),
             kind: kind.as_str().into(),
-            status: "stopped".into(),
+            status: status.into(),
             summary: String::new(),
         });
         self.announce();
@@ -344,6 +430,119 @@ impl Registry {
             note,
         });
         true
+    }
+
+    /// Pending timers and monitors (not jobs or Tasks), oldest first.
+    pub fn watches(&self) -> Vec<Watch> {
+        let now = Instant::now();
+        let entries = self.entries.lock().unwrap();
+        let mut out: Vec<(Instant, Watch)> = entries
+            .iter()
+            .filter(|(_, e)| e.running && matches!(e.kind, Kind::Timer | Kind::Monitor))
+            .map(|(id, e)| {
+                let w = Watch {
+                    id: id.clone(),
+                    kind: e.kind,
+                    label: e.label.clone(),
+                    subject: e.subject.clone(),
+                    left: e.due.map(|d| d.saturating_duration_since(now)),
+                };
+                (e.started, w)
+            })
+            .collect();
+        out.sort_by_key(|(started, _)| *started);
+        out.into_iter().map(|(_, w)| w).collect()
+    }
+
+    /// What compaction keeps about pending watches: a block for the summary message, or
+    /// empty. State, not a notice: it wakes nothing.
+    pub fn pending_block(&self) -> String {
+        let watches = self.watches();
+        if watches.is_empty() {
+            return String::new();
+        }
+        let lines: Vec<String> = watches.iter().map(|w| format!("- {}", w.line())).collect();
+        format!(
+            "Pending background (still set; Monitor {{\"cancel\": \"<id, subject or all>\"}} stops them):\n{}",
+            lines.join("\n")
+        )
+    }
+
+    /// A resumed session's ids continue past the ones its log used (`mon-7` → next is 8), so
+    /// a new piece never shares an id with an old one.
+    pub fn seed_ids<'a>(&self, used: impl IntoIterator<Item = &'a str>) {
+        let max = used
+            .into_iter()
+            .filter_map(|id| id.rsplit_once('-')?.1.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        self.next.fetch_max(max + 1, Ordering::Relaxed);
+    }
+
+    /// Pieces the log says were running when the engine before this one died: each is
+    /// recorded `lost` (so clients stop showing it running) and one line is left for the next
+    /// turn, waking nothing. Never re-armed: nothing here can tell the condition still holds.
+    pub fn lost_on_restart(&self, lost: &[(String, String, String)]) {
+        if lost.is_empty() {
+            return;
+        }
+        for (id, kind, _) in lost {
+            self.emit(Event::BackgroundDone {
+                id: id.clone(),
+                kind: kind.clone(),
+                status: "lost".into(),
+                summary: String::new(),
+            });
+        }
+        let names: Vec<String> = lost
+            .iter()
+            .map(|(id, _, label)| format!("{id} ({label})"))
+            .collect();
+        let n = lost.len();
+        self.park(format!(
+            "{n} background piece{} from before the engine restarted {} dropped, not re-armed: {}. Re-arm or re-run any that still matter.",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "was" } else { "were" },
+            names.join(", ")
+        ));
+    }
+
+    /// "Dismiss all": stop every pending timer and monitor, then drop the parked wakes
+    /// (telling clients the queue is empty). Jobs and Tasks keep running.
+    pub fn dismiss(&self) {
+        self.cancel("all");
+        let mut notices = self.notices.lock().unwrap();
+        notices.clear();
+        self.emit(Event::QueuedEvents { items: Vec::new() });
+    }
+
+    /// Pending watches other than `id`.
+    fn others(&self, id: &str) -> Vec<Watch> {
+        self.watches().into_iter().filter(|w| w.id != id).collect()
+    }
+
+    /// Stop the pending timers and monitors `target` names: an id, a subject, or `all`.
+    /// Returns what it stopped, oldest first.
+    pub fn cancel(&self, target: &str) -> Vec<Watch> {
+        let target = target.trim();
+        let subject = subject_of(&json!({ "subject": target }));
+        let hit: Vec<Watch> = self
+            .watches()
+            .into_iter()
+            .filter(|w| target == "all" || w.id == target || (w.subject.is_some() && w.subject == subject))
+            .collect();
+        hit.into_iter().filter(|w| self.stop(&w.id)).collect()
+    }
+
+    /// A re-arm of `subject`: the pending watches already about it end as `replaced` (no
+    /// notice). Returns their ids.
+    fn replace(&self, subject: &str) -> Vec<String> {
+        self.watches()
+            .into_iter()
+            .filter(|w| w.subject.as_deref() == Some(subject))
+            .filter(|w| self.stop_as(&w.id, "replaced"))
+            .map(|w| w.id)
+            .collect()
     }
 
     /// Something running: none means nothing to wait for.
@@ -545,26 +744,57 @@ pub fn start_job(reg: &Arc<Registry>, input: &Value, ctx: &Ctx, dir: &Path) -> R
 
 /// `Monitor` (already permitted when it runs a command).
 pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Output> {
+    if let Some(target) = input["cancel"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(Output::text(cancel_text(reg, target)));
+    }
     let command = input["command"].as_str().map(str::trim).unwrap_or("");
     if command.is_empty() {
         let Some(after) = int_arg(input, "after_s") else {
-            bail!("give a `command` with `until_regex` or `until_exit`, or `after_s` for a timer");
+            bail!("give a `command` with `until_regex` or `until_exit`, `after_s` for a timer, or `cancel`");
         };
+        let subject = subject_of(input);
+        let replaced = subject.as_deref().map(|s| reg.replace(s)).unwrap_or_default();
+        if reg.running(Kind::Timer) >= MAX_TIMERS {
+            let pending: Vec<String> = reg
+                .watches()
+                .iter()
+                .filter(|w| w.kind == Kind::Timer)
+                .map(Watch::line)
+                .collect();
+            bail!(
+                "{MAX_TIMERS} timers are already pending (the limit): {}. Every wakeup costs a turn: re-arm one with the same `subject` (it replaces the old one), or cancel the ones that no longer matter with Monitor {{\"cancel\": \"<id or subject>\"}}.",
+                pending.join("; ")
+            );
+        }
         let id = reg.new_id(Kind::Timer);
         let note = input["note"].as_str().unwrap_or("").to_string();
-        let stop = reg.begin(&id, Kind::Timer, &format!("wake in {after}s"), None);
-        let (reg2, id2) = (reg.clone(), id.clone());
+        let label = match &subject {
+            Some(s) => format!("{s}: wake in {after}s"),
+            None => format!("wake in {after}s"),
+        };
+        let stop = reg.begin_until(
+            &id,
+            Kind::Timer,
+            &label,
+            None,
+            Some(Duration::from_secs(after)),
+            subject.clone(),
+        );
+        let (reg2, id2, attr) = (reg.clone(), id.clone(), subject_attr(&subject));
         tokio::spawn(async move {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(after)) => {}
                 _ = stop.cancelled() => return,
             }
-            let notice = format!("<wakeup id={id2} after_s={after}>{note}</wakeup>");
+            let others = also_pending(&reg2.others(&id2));
+            let sep = if note.is_empty() || others.is_empty() { "" } else { "\n" };
+            let notice = format!("<wakeup id={id2}{attr} after_s={after}>{note}{sep}{others}</wakeup>");
             reg2.finish(&id2, "done", String::new(), notice);
         });
-        return Ok(Output::text(format!(
-            "Timer {id} set: you'll get a <wakeup id={id}> message in {after}s."
-        )));
+        let head = format!(
+            "Timer {id} set: you'll get a <wakeup id={id}> message in {after}s. Monitor {{\"cancel\": \"{id}\"}} cancels it."
+        );
+        return Ok(Output::text(armed(reg, &id, head, &subject, &replaced)));
     }
     let regex = match input["until_regex"].as_str().filter(|s| !s.is_empty()) {
         Some(r) => Some(regex::Regex::new(r).map_err(|e| anyhow::anyhow!("bad until_regex: {e}"))?),
@@ -585,15 +815,22 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
     let interval = Duration::from_secs(int_arg(input, "interval_s").unwrap_or(5).clamp(1, 3_600));
     // Check the command can be built (the sandbox exists) before saying it started.
     crate::tools::bash::shell(input, &shell_ctx(ctx))?;
+    let subject = subject_of(input);
+    let replaced = subject.as_deref().map(|s| reg.replace(s)).unwrap_or_default();
     let id = reg.new_id(Kind::Monitor);
-    let label = command.lines().next().unwrap_or("").to_string();
-    let stop = reg.begin(&id, Kind::Monitor, &label, None);
-    let (reg2, id2, input2, ctx2, command) = (
+    let first = command.lines().next().unwrap_or("");
+    let label = match &subject {
+        Some(s) => format!("{s}: {first}"),
+        None => first.to_string(),
+    };
+    let stop = reg.begin_until(&id, Kind::Monitor, &label, None, Some(timeout), subject.clone());
+    let (reg2, id2, input2, ctx2, command, attr) = (
         reg.clone(),
         id.clone(),
         input.clone(),
         shell_ctx(ctx),
         command.to_string(),
+        subject_attr(&subject),
     );
     tokio::spawn(async move {
         let start = Instant::now();
@@ -620,15 +857,17 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
                     Some(m) => format!("matched {m:?}"),
                     None => format!("exit={}", code.unwrap_or(-1)),
                 };
+                let others = trailer(&reg2, &id2);
                 let notice = format!(
-                    "<monitor-done id={id2} status=matched polls={polls}>\n{why}\n{last}\n</monitor-done>"
+                    "<monitor-done id={id2}{attr} status=matched polls={polls}>\n{why}\n{last}{others}\n</monitor-done>"
                 );
                 reg2.finish(&id2, "matched", String::new(), notice);
                 return;
             }
             if start.elapsed() + interval > timeout {
+                let others = trailer(&reg2, &id2);
                 let notice = format!(
-                    "<monitor-done id={id2} status=timeout polls={polls}>\nno match after {}s. Last output:\n{last}\n</monitor-done>",
+                    "<monitor-done id={id2}{attr} status=timeout polls={polls}>\nno match after {}s. Last output:\n{last}{others}\n</monitor-done>",
                     timeout.as_secs()
                 );
                 reg2.finish(&id2, "timeout", String::new(), notice);
@@ -640,11 +879,58 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
             }
         }
     });
-    Ok(Output::text(format!(
-        "Monitor {id} started: polling every {}s for up to {}s. You'll get a <monitor-done id={id}> message on a match or at the timeout. JobStop {{\"id\": \"{id}\"}} stops it.",
+    let head = format!(
+        "Monitor {id} started: polling every {}s for up to {}s. You'll get a <monitor-done id={id}> message on a match or at the timeout. Monitor {{\"cancel\": \"{id}\"}} (or JobStop) stops it.",
         interval.as_secs(),
         timeout.as_secs()
-    )))
+    );
+    Ok(Output::text(armed(reg, &id, head, &subject, &replaced)))
+}
+
+/// ` subject=b300-retry` for a notice's tag, or empty.
+fn subject_attr(subject: &Option<String>) -> String {
+    subject.as_ref().map(|s| format!(" subject={s}")).unwrap_or_default()
+}
+
+/// `\nAlso pending: …` for a notice's body, or empty.
+fn trailer(reg: &Registry, id: &str) -> String {
+    let others = also_pending(&reg.others(id));
+    if others.is_empty() { others } else { format!("\n{others}") }
+}
+
+/// What a start says: `head`, what the subject replaced, and the other pending watches — so a
+/// model that re-arms sees what it already has.
+fn armed(reg: &Registry, id: &str, head: String, subject: &Option<String>, replaced: &[String]) -> String {
+    let mut text = head;
+    if !replaced.is_empty() {
+        let s = subject.as_deref().unwrap_or("");
+        text.push_str(&format!(" It replaced {} (same subject `{s}`).", replaced.join(", ")));
+    }
+    let others = also_pending(&reg.others(id));
+    if !others.is_empty() {
+        text.push_str(&format!("\n{others}"));
+        if subject.is_none() {
+            text.push_str(" Re-arming the same watch? Give it a `subject`: a re-arm with the same subject replaces the old one instead of stacking.");
+        }
+    }
+    text
+}
+
+/// `Monitor { cancel }`: what it stopped, or what's pending when nothing matched.
+fn cancel_text(reg: &Registry, target: &str) -> String {
+    let stopped = reg.cancel(target);
+    if !stopped.is_empty() {
+        let lines: Vec<String> = stopped.iter().map(Watch::line).collect();
+        return format!("Cancelled {}: {}.", stopped.len(), lines.join("; "));
+    }
+    let pending: Vec<String> = reg.watches().iter().map(Watch::line).collect();
+    if pending.is_empty() {
+        return format!("Nothing pending matches `{target}`: no timers or monitors are pending.");
+    }
+    format!(
+        "Nothing pending matches `{target}`. Pending: {}.",
+        pending.join("; ")
+    )
 }
 
 /// Run a monitor's command once: its output (stdout and stderr) and exit code.
@@ -776,7 +1062,7 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: MONITOR.into(),
-            description: "Watch for something in the background and get a message when it happens, instead of polling yourself. With `command`: run it every `interval_s` seconds until its output matches `until_regex` or it exits with code `until_exit` (true means 0), or `timeout_s` passes. The command runs like Bash (same sandbox and permissions). With only `after_s`: a timer that wakes you after that many seconds.".into(),
+            description: "Watch for something in the background and get a message when it happens, instead of polling yourself. With `command`: run it every `interval_s` seconds until its output matches `until_regex` or it exits with code `until_exit` (true means 0), or `timeout_s` passes. The command runs like Bash (same sandbox and permissions). With only `after_s`: a timer that wakes you after that many seconds. Give each a `subject` (`b300-retry`, `sweep`): re-arming the same subject replaces the pending one instead of stacking another, and the wakeup names it. At most 5 timers can be pending. With `cancel`: stop pending timers/monitors by id, subject, or `all`, as soon as what they watch stops mattering.".into(),
             schema: json!({"type": "object", "properties": {
                 "command": {"type": "string", "description": "Shell command to poll"},
                 "until_regex": {"type": "string", "description": "Stop when the command's output matches this regex"},
@@ -784,7 +1070,9 @@ pub fn specs() -> Vec<ToolSpec> {
                 "timeout_s": {"type": "integer", "description": "Give up after this many seconds (default 600)"},
                 "interval_s": {"type": "integer", "description": "Seconds between polls (default 5)"},
                 "after_s": {"type": "integer", "description": "Timer only: wake after this many seconds"},
-                "note": {"type": "string", "description": "Timer only: a reminder to include in the wakeup"}
+                "note": {"type": "string", "description": "Timer only: a reminder to include in the wakeup"},
+                "subject": {"type": "string", "description": "What this watches, one short token (e.g. `b300-retry`). A pending timer/monitor with the same subject is replaced"},
+                "cancel": {"type": "string", "description": "Stop pending timers/monitors instead of starting one: an id, a subject, or `all`"}
             }}),
         },
     ]
@@ -929,6 +1217,160 @@ mod tests {
             .filter(|e| matches!(e, Event::Background { .. }))
             .count();
         assert_eq!(counts, 4, "two starts, two ends");
+    }
+
+    /// A watch that stopped mattering is cancelled by id (or all at once) and never wakes.
+    #[tokio::test]
+    async fn cancel_by_id_kills_the_timer_and_it_never_wakes() {
+        let (reg, seen) = registry();
+        let ctx = Ctx::new(tmp());
+        let set = start_monitor(&reg, &json!({"after_s": 1, "note": "b300 retry"}), &ctx).unwrap();
+        assert!(set.content.contains(r#"{"cancel": "mon-1"}"#), "{}", set.content);
+        start_monitor(&reg, &json!({"after_s": 1}), &ctx).unwrap();
+        start_monitor(&reg, &json!({"after_s": 1}), &ctx).unwrap();
+        let out = start_monitor(&reg, &json!({"cancel": "mon-1"}), &ctx).unwrap();
+        assert!(out.content.starts_with("Cancelled 1: mon-1 wake in 1s"), "{}", out.content);
+        let out = start_monitor(&reg, &json!({"cancel": "mon-9"}), &ctx).unwrap();
+        assert!(
+            out.content.contains("Nothing pending matches `mon-9`. Pending: mon-2")
+                && out.content.contains("mon-3"),
+            "{}",
+            out.content
+        );
+        let out = start_monitor(&reg, &json!({"cancel": "all"}), &ctx).unwrap();
+        assert!(out.content.starts_with("Cancelled 2: mon-2"), "{}", out.content);
+        tokio::time::sleep(Duration::from_millis(1_500)).await;
+        assert!(!reg.has_notices(), "no wakeup after a cancel");
+        assert!(!reg.any_running());
+        let stopped = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, Event::BackgroundDone { status, .. } if status == "stopped"))
+            .count();
+        assert_eq!(stopped, 3);
+        let none = start_monitor(&reg, &json!({"cancel": "all"}), &ctx).unwrap();
+        assert!(none.content.contains("no timers or monitors are pending"));
+    }
+
+    /// The chief's pathology: the same watch re-armed every turn stacked N timers, one
+    /// waking every 1800/N s. With a subject, a re-arm replaces: one timer, one wakeup.
+    #[tokio::test]
+    async fn a_same_subject_re_arm_replaces_the_pending_timer() {
+        let (reg, seen) = registry();
+        let ctx = Ctx::new(tmp());
+        start_monitor(&reg, &json!({"after_s": 1, "subject": "B300 capacity retry", "note": "old"}), &ctx).unwrap();
+        start_monitor(&reg, &json!({"after_s": 3_600, "subject": "sweep"}), &ctx).unwrap();
+        let out = start_monitor(
+            &reg,
+            &json!({"after_s": 1, "subject": "b300-capacity-retry", "note": "retry the B300"}),
+            &ctx,
+        )
+        .unwrap();
+        assert!(
+            out.content.contains("It replaced mon-1 (same subject `b300-capacity-retry`)."),
+            "{}",
+            out.content
+        );
+        assert!(
+            out.content.contains("Also pending: mon-2 sweep: wake in 3600s (in 1h)."),
+            "{}",
+            out.content
+        );
+        assert_eq!(reg.running(Kind::Timer), 2, "replaced, not stacked");
+        assert!(seen.lock().unwrap().iter().any(
+            |e| matches!(e, Event::BackgroundDone { id, status, .. } if id == "mon-1" && status == "replaced")
+        ));
+        let n = wait_notice(&reg).await;
+        assert!(
+            n.starts_with("<wakeup id=mon-3 subject=b300-capacity-retry after_s=1>retry the B300\nAlso pending: mon-2 sweep"),
+            "{n}"
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!reg.has_notices(), "the replaced timer never wakes");
+        // Cancel by subject.
+        let out = start_monitor(&reg, &json!({"cancel": "sweep"}), &ctx).unwrap();
+        assert!(out.content.starts_with("Cancelled 1: mon-2"), "{}", out.content);
+    }
+
+    /// Unsubjected re-arms see what's pending and stop at the cap.
+    #[tokio::test]
+    async fn timers_list_the_others_and_cap_at_five() {
+        let (reg, _) = registry();
+        let ctx = Ctx::new(tmp());
+        let first = start_monitor(&reg, &json!({"after_s": 600}), &ctx).unwrap();
+        assert!(!first.content.contains("Also pending"), "{}", first.content);
+        let second = start_monitor(&reg, &json!({"after_s": 600}), &ctx).unwrap();
+        assert!(
+            second.content.contains("Also pending: mon-1 wake in 600s") && second.content.contains("Give it a `subject`"),
+            "{}",
+            second.content
+        );
+        for _ in 2..MAX_TIMERS {
+            start_monitor(&reg, &json!({"after_s": 600}), &ctx).unwrap();
+        }
+        let Err(err) = start_monitor(&reg, &json!({"after_s": 600}), &ctx) else {
+            panic!("a sixth timer is refused");
+        };
+        let err = err.to_string();
+        assert!(err.starts_with("5 timers are already pending (the limit): mon-1"), "{err}");
+        assert_eq!(reg.running(Kind::Timer), MAX_TIMERS);
+        // Command monitors aren't timers: not capped.
+        start_monitor(&reg, &json!({"command": "true", "until_regex": "never", "timeout_s": 60}), &ctx).unwrap();
+        reg.stop_all();
+    }
+
+    /// The pending strip's one click: parked wakes gone, watches stopped, real work untouched.
+    #[tokio::test]
+    async fn dismiss_drops_parked_wakes_and_stops_watches_but_not_jobs() {
+        let (reg, seen) = registry();
+        let dir = tmp();
+        let ctx = Ctx::new(dir.clone());
+        start_monitor(&reg, &json!({"after_s": 0, "note": "stale"}), &ctx).unwrap();
+        wait_until(|| reg.has_notices()).await;
+        start_monitor(&reg, &json!({"after_s": 1, "subject": "sweep"}), &ctx).unwrap();
+        start_monitor(&reg, &json!({"command": "true", "until_regex": "never", "timeout_s": 60}), &ctx).unwrap();
+        start_job(&reg, &json!({"command": "sleep 30"}), &ctx, &dir.join("jobs")).unwrap();
+        reg.dismiss();
+        assert!(!reg.has_notices(), "parked wakes dropped");
+        assert!(reg.watches().is_empty(), "timers and monitors stopped");
+        assert_eq!(reg.running(Kind::Job), 1, "the job keeps running");
+        assert!(matches!(
+            seen.lock().unwrap().iter().rev().find(|e| matches!(e, Event::QueuedEvents { .. })),
+            Some(Event::QueuedEvents { items }) if items.is_empty()
+        ));
+        tokio::time::sleep(Duration::from_millis(1_300)).await;
+        assert!(!reg.has_notices(), "the dismissed timer never wakes");
+        reg.stop_all();
+    }
+
+    async fn wait_until(f: impl Fn() -> bool) {
+        for _ in 0..200 {
+            if f() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("never");
+    }
+
+    #[test]
+    fn subjects_are_one_token() {
+        let s = |v: &str| subject_of(&json!({ "subject": v }));
+        assert_eq!(s("B300 capacity retry").as_deref(), Some("b300-capacity-retry"));
+        assert_eq!(s("  tree verdict: tang v2!! ").as_deref(), Some("tree-verdict-tang-v2"));
+        assert_eq!(s(" -- "), None);
+        assert_eq!(s(&"x".repeat(60)).map(|s| s.len()), Some(40));
+        assert_eq!(subject_of(&json!({})), None);
+    }
+
+    #[test]
+    fn short_durations_round_up() {
+        assert_eq!(short_duration(Duration::from_millis(200)), "1s");
+        assert_eq!(short_duration(Duration::from_secs(59)), "59s");
+        assert_eq!(short_duration(Duration::from_secs(61)), "2m");
+        assert_eq!(short_duration(Duration::from_secs(1_800)), "30m");
+        assert_eq!(short_duration(Duration::from_secs(7_200)), "2h");
     }
 
     #[tokio::test]

@@ -582,6 +582,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     let sent = router.inbox_sent.load(Ordering::SeqCst);
                     router.inbox_void.store(sent, Ordering::SeqCst);
                 }
+                Op::DismissWakes => router.bg.dismiss(),
                 op @ Op::Deliver { .. } => {
                     router.inbox_sent.fetch_add(1, Ordering::SeqCst);
                     if work_tx.send(op).is_err() {
@@ -1354,6 +1355,10 @@ impl Agent {
         // Panes open when the session was last saved, to close in the log (their shells died
         // with that process) so a resumed client doesn't expect them.
         let mut stale_panes: Vec<String> = Vec::new();
+        // Background ids the log used, and pieces it says were still running (the engine
+        // that ran them died with them): (id, kind, label).
+        let mut bg_ids: Vec<String> = Vec::new();
+        let mut lost_bg: Vec<(String, String, String)> = Vec::new();
         let mut resumed_map = None;
         // The mode the session last ran in (its last `mode_changed`): a resumed engine keeps
         // it, rather than silently reverting to whatever the flags say — the picker and the
@@ -1387,6 +1392,11 @@ impl Agent {
                         resumed_titled = true;
                     }
                     match &e.event {
+                        Event::BackgroundStarted { id, kind, label, .. } => {
+                            bg_ids.push(id.clone());
+                            lost_bg.push((id.clone(), kind.clone(), label.clone()));
+                        }
+                        Event::BackgroundDone { id, .. } => lost_bg.retain(|(b, ..)| b != id),
                         Event::PaneOpened { id, .. } => {
                             used.push(id.clone());
                             stale_panes.push(id.clone());
@@ -1436,6 +1446,8 @@ impl Agent {
         for id in stale_panes {
             shared.journal.emit(Event::PaneClosed { id, exit: None });
         }
+        shared.bg.seed_ids(bg_ids.iter().map(String::as_str));
+        shared.bg.lost_on_restart(&lost_bg);
         let skills = if o.subagent {
             Default::default()
         } else {
@@ -2145,6 +2157,7 @@ impl Agent {
             // Handled by the router, never queued.
             Op::Interrupt
             | Op::ClearInbox
+            | Op::DismissWakes
             | Op::Permission { .. }
             | Op::Answer { .. }
             | Op::SessionReply { .. }
@@ -5674,8 +5687,12 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             },
         );
         let compacted_label = format!("{}. Work continues from this alone.)", context::COMPACTION_LABEL);
+        // Timers and monitors outlive compaction (the Registry is untouched), but the calls
+        // that set them are summarized away: keep what's pending, or the model re-arms them.
+        let pending = self.shared.bg.pending_block();
+        let pending = if pending.is_empty() { pending } else { format!("\n\n{pending}") };
         let mut compacted = Message::user(format!(
-            "{compacted_label}\n\nSummary:\n{summary}\n\n{record}"
+            "{compacted_label}\n\nSummary:\n{summary}\n\n{record}{pending}"
         ));
         compacted.content.extend(visual);
         self.reset(vec![compacted]);
@@ -8976,6 +8993,92 @@ for line in sys.stdin:
         let text = loaded.messages[0].text();
         assert!(text.contains("They are refactoring the parser."));
         assert!(text.contains("NEVER touch main.rs"));
+    }
+
+    /// A timer outlives compaction (same process), and so does the model's knowledge of it:
+    /// the summary keeps the pending list, so the model doesn't re-arm what it already has.
+    #[tokio::test]
+    async fn compaction_keeps_pending_timers_in_the_summary() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![call("m", "Monitor", json!({"after_s": 3_600, "subject": "sweep"}))],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("armed")], Stop::End),
+            reply(vec![text("They watch the pod.")], Stop::End),
+        ];
+        let mut h = engine_at(script, true, Some(dir.clone()), None);
+        let evs = run(&mut h, "watch the pod").await;
+        let sid = evs[0].session.clone();
+        h.ops.send(Op::Compact { focus: None }).unwrap();
+        let evs = until_idle(&mut h).await;
+        assert!(evs.iter().any(|e| matches!(e.event, Event::Compacted { .. })));
+        assert!(
+            !evs.iter().any(|e| matches!(e.event, Event::TurnStarted { .. })),
+            "the pending list wakes nothing"
+        );
+        shutdown(h).await;
+        let loaded = session::load(&dir, &sid).unwrap();
+        let text = loaded.messages[0].text();
+        assert!(text.contains("Pending background (still set;"), "{text}");
+        assert!(text.contains("- mon-1 sweep: wake in 3600s (in 1h)"), "{text}");
+    }
+
+    /// An engine that died with timers live: on resume they're recorded `lost`, one line
+    /// waits for the next turn (nothing wakes, nothing re-arms), and new ids don't collide.
+    #[tokio::test]
+    async fn a_resume_drops_timers_the_dead_engine_had_with_one_line() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![call("m", "Monitor", json!({"after_s": 3_600, "subject": "b300-retry"}))],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("armed")], Stop::End),
+        ];
+        let mut h = engine_at(script, true, Some(dir.clone()), None);
+        let sid = run(&mut h, "watch the pod").await[0].session.clone();
+        shutdown(h).await;
+        // A crash, not a clean stop: the log never got the timer's end.
+        let log = dir.join(format!("{sid}.jsonl"));
+        let kept: Vec<String> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.contains("\"background_done\""))
+            .map(String::from)
+            .collect();
+        std::fs::write(&log, kept.join("\n") + "\n").unwrap();
+
+        let script = vec![
+            reply(vec![call("t", "Monitor", json!({"after_s": 600}))], Stop::ToolUse),
+            reply(vec![text("ok")], Stop::End),
+        ];
+        let mut h = engine_at(script, true, Some(dir.clone()), Some(sid.clone()));
+        let boot = until_idle(&mut h).await;
+        assert!(
+            boot.iter().any(|e| matches!(&e.event,
+                Event::BackgroundDone { id, status, .. } if id == "mon-1" && status == "lost")),
+            "the dead timer is recorded lost"
+        );
+        assert!(!boot.iter().any(|e| matches!(e.event, Event::TurnStarted { .. })), "no wake");
+        submit(&h, "carry on");
+        let evs = until_idle(&mut h).await;
+        let wakes = evs
+            .iter()
+            .find_map(|e| match &e.event {
+                Event::WakesDelivered { wakes, .. } => Some(wakes.join("\n")),
+                _ => None,
+            })
+            .expect("the note goes with the next turn");
+        assert!(
+            wakes.starts_with("1 background piece from before the engine restarted was dropped, not re-armed: mon-1 (b300-retry: wake in 3600s)."),
+            "{wakes}"
+        );
+        let out = tool_output(&evs, "t").unwrap();
+        assert!(out.starts_with("Timer mon-2 set"), "ids continue: {out}");
+        assert!(!out.contains("Also pending"), "nothing re-armed: {out}");
+        shutdown(h).await;
     }
 
     #[tokio::test]
@@ -12479,6 +12582,54 @@ for line in sys.stdin:
         assert_eq!(stopped, 2);
         tokio::time::sleep(Duration::from_millis(2_500)).await;
         assert!(!marker.exists(), "the job was killed");
+    }
+
+    /// A timer set inside a turn the user stops dies with it: no wakeup turn afterwards.
+    #[tokio::test]
+    async fn an_interrupted_turn_kills_its_timers() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m", "Monitor", json!({"after_s": 1, "subject": "b300-retry"})),
+                    call("s", "Bash", json!({"command": "sleep 5"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("never")], Stop::End),
+            reply(vec![text("woke")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "watch the pod");
+        let mut stopped = false;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::BackgroundStarted { .. } => h.ops.send(Op::Interrupt).unwrap(),
+                Event::BackgroundDone { status, .. } => stopped |= status == "stopped",
+                Event::TurnEnded { reason, .. } => {
+                    assert_eq!(reason, EndReason::Cancelled);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let quiet = tokio::time::timeout(Duration::from_millis(2_000), async {
+            while let Some(env) = h.events.recv().await {
+                if let Event::BackgroundDone { status, .. } = &env.event {
+                    stopped |= status == "stopped";
+                }
+                assert!(
+                    !matches!(env.event, Event::TurnStarted { .. }),
+                    "no wakeup after the stop"
+                );
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "the engine stays up, just quiet");
+        assert!(stopped, "the timer ended as stopped");
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

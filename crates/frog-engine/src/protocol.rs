@@ -338,6 +338,10 @@ pub enum Op {
     /// `ArchiveSession`), or the queued message starts the next turn. Messages sent after it
     /// queue as usual.
     ClearInbox,
+    /// The pending strip's "Dismiss all": drop every background wake parked for the next turn
+    /// and stop every pending timer and monitor (stale watches). Jobs and Tasks are real
+    /// work and keep running. Immediate, like `Interrupt`; the running turn is untouched.
+    DismissWakes,
     /// Re-file session `session` under `parent` in the client's sidebar — the nesting its
     /// rows derive from. `None` unparents (a top-level row again). Parentage is the client's
     /// (the engine never reads it), so the move travels as a `MoveSession` tool call: the

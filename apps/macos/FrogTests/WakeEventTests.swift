@@ -180,12 +180,32 @@ final class WakeEventTests: XCTestCase {
         XCTAssertEqual(lead.wakes.map(\.id), ["mon-1"], "into the turn as event rows")
         XCTAssertEqual(lead.opener, .prompt)
     }
+
+    /// The chief dismissed 15+ stale wakes one by one: "Dismiss all" is one click. The strip
+    /// empties now, and the engine is told to drop the parked wakes and stop the watches.
+    @MainActor
+    func testDismissAllDropsTheQueuedWakesInOneAction() throws {
+        let link = QuietLink()
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: false, session: "s")
+        link.onEvent(try decode(#""event":"idle""#))
+        link.onEvent(try decode(#""event":"queued_events","items":["<wakeup id=mon-3 subject=b300-retry after_s=1800>retry\nAlso pending: mon-4 sweep: wake in 1800s (in 12m).</wakeup>","<wakeup id=mon-4 subject=sweep after_s=1800>sweep</wakeup>"]"#))
+        let before = PendingEvents(queued: c.queuedEvents, messages: c.pendingMessages)
+        XCTAssertTrue(before.hasWakes)
+        XCTAssertEqual(WakeEvent.parse(c.queuedEvents[0])?.first?.attribute("subject"), "b300-retry")
+        XCTAssertFalse(PendingEvents(queued: [], messages: [SessionMessage(from: "s9", name: "m", body: "hi")]).hasWakes,
+                       "session messages alone: nothing to dismiss")
+        c.dismissWakes()
+        XCTAssertTrue(c.queuedEvents.isEmpty)
+        let json = try XCTUnwrap(String(data: JSONEncoder().encode(try XCTUnwrap(link.sent.last)), encoding: .utf8))
+        XCTAssertEqual(json, #"{"op":"dismiss_wakes"}"#)
+    }
 }
 
 @MainActor
 private final class QuietLink: ConversationLink {
     var onEvent: (Envelope?) -> Void = { _ in }
-    func send(_ op: Op) {}
+    var sent: [Op] = []
+    func send(_ op: Op) { sent.append(op) }
     func stop() {}
     var endDescription: String { "" }
     var isAlive: Bool { true }
