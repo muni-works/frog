@@ -20,8 +20,14 @@ enum TranscriptProbe {
     static var peakMountedRows = 0
     /// Times the transcript built more rows above (`showEarlier`).
     static var earlier = 0
+    /// Fills that have settled: the fill's last keep-scroll ran and its reentrancy guard
+    /// released (see `showEarlier`), so its kept row is where it ends up. For the scroll-up
+    /// benchmark, which must not sample a fill before this.
+    static var fillSettles = 0
     /// The row kept in place the last time (its segment id, or "head"/"tail").
     static var kept = ""
+    /// Why the last `showEarlier` did nothing (the guard it stopped at), or "" when it ran.
+    static var fillBlocked = ""
     private static var mounted: Set<String> = []
 
     static func reset() {
@@ -33,6 +39,8 @@ enum TranscriptProbe {
         mounted = []
         peakMountedRows = 0
         earlier = 0
+        fillSettles = 0
+        fillBlocked = ""
     }
 
     static var mountedKeys: Set<String> { mounted }

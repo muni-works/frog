@@ -232,7 +232,12 @@ struct TranscriptView: View {
     private func showEarlier(_ proxy: ScrollViewProxy) {
         let first = firstShown
         guard first > 0, !growingAbove,
-              let id = Self.start(of: conversation.turns, rows: Self.earlierRows, before: first) else { return }
+              let id = Self.start(of: conversation.turns, rows: Self.earlierRows, before: first) else {
+            #if DEBUG
+            TranscriptProbe.fillBlocked = first == 0 ? "at first turn" : (growingAbove ? "growing" : "no turns above")
+            #endif
+            return
+        }
         let keep = firstRow(of: conversation.turns[first])
         #if DEBUG
         TranscriptProbe.earlier += 1
@@ -248,6 +253,11 @@ struct TranscriptView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 proxy.scrollTo(keep, anchor: .top)
                 growingAbove = false
+                #if DEBUG
+                // The fill is settled (its last keep-scroll ran): this is the signal the
+                // scroll-up benchmark waits on before it samples what stayed on screen.
+                TranscriptProbe.fillSettles += 1
+                #endif
             }
         }
     }
