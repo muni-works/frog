@@ -46,6 +46,7 @@ final class Library {
     func refresh() {
         #if DEBUG
         dispatchPrecondition(condition: .onQueue(.main))  // see Conversation.apply
+        if staged { return }
         #endif
         refreshing?.cancel()
         refreshing = Task {
@@ -55,6 +56,9 @@ final class Library {
             lastListed = .now
             let home = FileManager.default.homeDirectoryForCurrentUser
             if let all = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--all", "--json"], cwd: home) {
+                #if DEBUG
+                if staged { return }  // a listing already in flight when a snapshot staged its own
+                #endif
                 // A conversation whose folder is gone can't be reopened.
                 // Race attempts live in their own worktrees and are shown in the race, not here.
                 // Worker worktrees (`<repo>/.frog/worktrees/`, `<repo>/.claude/worktrees/`) are
@@ -261,6 +265,54 @@ final class Library {
     var open: [Conversation] {
         conversations.values.compactMap(\.value)
     }
+
+    /// What session `id` is waiting on you for, in a line: its question, the tool it wants
+    /// to run, or the server's request. Nil when it isn't open here or isn't asking.
+    func asking(_ id: String) -> String? {
+        #if DEBUG
+        if let staged = stagedAsks[id] { return staged }
+        #endif
+        guard let c = conversation(id) else { return nil }
+        if let q = c.question { return q.question }
+        if let p = c.permission {
+            let arg = p.arg.split(separator: "\n").first.map(String.init) ?? ""
+            return arg.isEmpty ? p.name : "\(p.name) \(arg)"
+        }
+        if let e = c.elicitation { return e.message }
+        return nil
+    }
+
+    #if DEBUG
+    @ObservationIgnored private var stagedAsks: [String: String] = [:]
+    @ObservationIgnored private var staged = false
+
+    /// Snapshot tests: replace the listing with fixtures (nothing persisted, no refresh).
+    func stage(sessions: [SessionInfo], live: [String: Live] = [:], parents: [String: String] = [:],
+               chief: String? = nil, pinned: Set<String> = [], archived: Set<String> = [],
+               asks: [String: String] = [:]) {
+        if !staged { backup = (self.sessions, self.live, self.parents, self.chief, self.pinned, self.archived) }
+        staged = true
+        refreshing?.cancel()
+        self.sessions = sessions
+        self.live = live
+        self.parents = parents
+        self.chief = chief
+        self.pinned = pinned
+        self.archived = archived
+        stagedAsks = asks
+    }
+
+    @ObservationIgnored private var backup: ([SessionInfo], [String: Live], [String: String], String?, Set<String>, Set<String>)?
+
+    /// Back to the real listing after `stage`.
+    func unstage() {
+        guard staged, let b = backup else { return }
+        (sessions, live, parents, chief, pinned, archived) = b
+        stagedAsks = [:]
+        staged = false
+        backup = nil
+    }
+    #endif
 
     /// An open conversation's state; called as its events arrive. The one truth for the
     /// sidebar's dot and every list: a session is running when a turn is open OR messages
