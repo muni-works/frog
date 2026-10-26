@@ -42,7 +42,13 @@ Group rows aggregate (sum of children).
   subagent-visibility merged earlier and now 2 ahead again, non-frog branch names (muse_*), a main checkout
   on a feature branch (home: adr-006…).
 
-## Decisions
+## Decisions (design, pending Cam)
+- badge = branch glyph (purple) + ahead · dirty dot on the glyph (settled only) · merge glyph (green; N on
+  aggregates only) · amber on trouble. Ahead wins over landed. No git → nothing (no Claude dot).
+- aggregates dedupe by tree, are scope-invariant, trouble/dirty only from settled children.
+- data: repo batch (2× for-each-ref) on FSEvents ref changes; status per tree on settle; cherry cached by
+  sha; gh only on Refresh / Workers detail. CompactPRCache + SessionMetaCache go away.
+- badge click → Workers scope, tree expanded. tornDown gains `landed`.
 
 ## Progress
-- 6badefc checkpoint 0
+- 6badefc checkpoint 0 · fac2fb0 survey · 048e656 spec · mockup (next commit)

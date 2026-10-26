@@ -95,7 +95,8 @@ nothing else moves.
 - Dedupe by **tree path** first. Two sessions in one tree count once, and so do a manager and its
   worker if they somehow share a tree.
 - `ahead` = the sum over unlanded trees. `landed` = the number of distinct trees (or torn-down trees,
-  §4) that landed. `dirty` = any settled tree dirty. `trouble` = any.
+  §4) that landed. `dirty` = any settled tree dirty. `trouble` = any *settled* tree in trouble. A
+  rebase in a running worker is normal. One left behind by a finished worker is not.
 - **The scope never changes a number.** Live, Today and All show or hide rows, but the manager's
   aggregate is always over all its non-archived children. A count that moved when you flipped the
   scope would read as work happening.
