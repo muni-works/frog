@@ -46,9 +46,10 @@ pub fn new_id() -> String {
 }
 
 /// The counter a process mints salts from: its first salt (the clock's sub-second reading)
-/// with the pid folded into the low bits the salt keeps.
+/// with the pid hashed into the low bits the salt keeps (a multiplicative mix, so every bit of
+/// the pid reaches the salt, not just its low half).
 fn salt_base(nanos: u32, pid: u32) -> u32 {
-    nanos.rotate_left(8) ^ pid
+    nanos ^ pid.wrapping_mul(0x9E37_79B9).rotate_left(16)
 }
 
 /// The salt an already-counted value yields.
