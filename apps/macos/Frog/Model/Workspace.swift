@@ -244,7 +244,7 @@ final class Workspace {
     /// are in), or after `limit` if that's slow.
     func settled(within limit: Duration) async {
         let deadline = ContinuousClock.now + limit
-        while !gitChecked || conversation?.replaying == true, ContinuousClock.now < deadline {
+        while !gitChecked || conversation?.showable == false, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(5))
         }
     }
@@ -255,12 +255,13 @@ final class Workspace {
 
     func refresh() async {
         Library.shared.refresh()
-        if !isChat { git = await Git.status(folder) }
+        // Written only when it changed: every view of it would rebuild for nothing.
+        if !isChat, case let g = await Git.status(folder), g != git { git = g }
         gitChecked = true
         if skills.isEmpty, let k = try? await Frog.json([SkillInfo].self, args: ["--skills", "--json"], cwd: folder) {
             skills = k
         }
-        if let s = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--json"], cwd: folder) {
+        if let s = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--json"], cwd: folder), s != sessions {
             sessions = s
         }
         if !modelsLoaded, let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {
@@ -389,7 +390,7 @@ final class Workspace {
         incoming?.stop(reason: "open superseded")
         incoming = c
         // Nothing to cut from, or nothing to wait for: straight on screen.
-        guard conversation != nil, c.replaying else {
+        guard conversation != nil, !c.showable else {
             show(c)
             return c
         }

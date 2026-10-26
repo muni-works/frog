@@ -21,6 +21,24 @@ struct TimelineRail: View {
 
     private var turns: [TurnState] { conversation.turns }
 
+    /// Where the chapters start (see `Chapter`), as turn indices, and the one on screen.
+    private var chapters: [Chapter] { Chapter.of(turns) }
+    private var chapterStarts: [Int] { Chapter.starts(of: chapters, in: turns) }
+
+    private func currentChapter(_ starts: [Int]) -> Int? {
+        guard let lo = turns.firstIndex(where: { visible.contains($0.id) }) else { return nil }
+        return Chapter.index(of: lo, in: starts)
+    }
+
+    private var accessibility: String {
+        var label = "Timeline, \(turns.count) turns"
+        if let c = turns.firstIndex(where: { visible.contains($0.id) }),
+           let ch = Chapter.index(of: c, in: chapterStarts) {
+            label += ", in chapter \(ch + 1) of \(chapters.count)"
+        }
+        return label
+    }
+
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height
@@ -69,7 +87,7 @@ struct TimelineRail: View {
             Text("Files frog edited in this turn and later go back to how they were, and the conversation continues on a new branch from here. The current session is kept.")
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Timeline, \(turns.count) turns")
+        .accessibilityLabel(accessibility)
     }
 
     // MARK: Geometry
@@ -101,7 +119,7 @@ struct TimelineRail: View {
         case .error: .red
         case .looping, .stepLimit, .maxTokens: .orange
         case .cancelled: .secondary
-        default: TurnParts(t).changes.isEmpty ? .primary : .green
+        default: conversation.changes(of: t).isEmpty ? .primary : .green
         }
     }
 
@@ -135,12 +153,43 @@ struct TimelineRail: View {
                 ctx.draw(image, in: badge)
             }
         }
+        drawChapters(ctx, size, h)
+    }
+
+    /// Chapter markers: a notch on the rail's leading edge at each chapter's first turn —
+    /// taller and solid for the chapter on screen, a faint dash for the rest. A compaction
+    /// boundary draws as a small gap in the rail (the summarized break), not a notch.
+    private func drawChapters(_ ctx: GraphicsContext, _ size: CGSize, _ h: CGFloat) {
+        // Each of these folds every turn: once per draw, not once per chapter.
+        let chapters = self.chapters
+        let starts = Chapter.starts(of: chapters, in: turns)
+        let current = currentChapter(starts)
+        for (c, start) in starts.enumerated() {
+            let y = y(of: start, in: h)
+            let here = c == current
+            let kind = chapters[c].kind
+            if kind == .compacted {
+                // A summarized break: the rail itself steps back, then resumes.
+                ctx.fill(Path(CGRect(x: 4, y: y - 0.75, width: size.width - 8, height: 1.5)),
+                         with: .color(.secondary.opacity(here ? 0.6 : 0.3)))
+                continue
+            }
+            let height: CGFloat = kind == .prompt ? 9 : 6
+            let rect = CGRect(x: 0, y: y - height / 2, width: 2.5, height: height)
+            ctx.fill(Path(roundedRect: rect, cornerRadius: 1.25),
+                     with: .color(.primary.opacity(here ? 0.55 : 0.22)))
+        }
     }
 
     // MARK: Hover label and menu
 
     private func label(_ t: TurnState) -> some View {
         HStack(spacing: 6) {
+            if let i = turns.firstIndex(where: { $0.id == t.id }),
+               let c = Chapter.index(of: i, in: chapterStarts), chapters[c].turn == t.id {
+                Text(chapters[c].kind == .compacted ? "Summarized" : chapters[c].kind == .run ? "Autonomous run" : "Chapter \(c + 1)")
+                    .foregroundStyle(.secondary)
+            }
             if let n = t.number { Text("\(n)").foregroundStyle(.secondary).monospacedDigit() }
             Text(t.input.isEmpty ? "(no prompt)" : t.request)
                 .lineLimit(1)

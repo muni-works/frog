@@ -110,6 +110,11 @@ final class Conversation {
     /// When the last event arrived; a busy conversation whose engine has gone quiet for this
     /// long reconciles from the session log (see `watchdog`).
     @ObservationIgnored private var lastEventAt = Date.now
+    /// Streamed text waiting to be folded in, a frame's worth at a time: each write to `turns`
+    /// invalidates every view that reads it, and a fast model streams hundreds of deltas a
+    /// second (see `flushDeltas`).
+    @ObservationIgnored private var pendingDeltas: [(id: String, delta: Delta)] = []
+    @ObservationIgnored private var deltaFlush: DispatchWorkItem?
     /// Reads a session log's durable events after a seq (the Mac reads `~/.local/share/frog/`
     /// itself; tests feed a fixture). Nil means there's nothing to reconcile from.
     @ObservationIgnored static var logReader: ((String, UInt64) async -> [Envelope])?
@@ -128,10 +133,19 @@ final class Conversation {
     /// The engine queues them behind whatever it's doing; between a turn's `idle` and the
     /// next delivered turn's `turn_started`, this is the only sign the engine has work.
     @ObservationIgnored private(set) var pendingDeliveries = 0
+    /// Those messages themselves, oldest first, for the composer's pending strip.
+    private(set) var pendingMessages: [SessionMessage] = []
+    /// Background wakes the engine parked for the next turn boundary, in order (its
+    /// `queued_events`): they flush with the next turn, whatever starts it.
+    private(set) var queuedEvents: [String] = []
     /// Background work running in the engine (Monitors, background jobs and Tasks), as its last
     /// `background` event said. It outlives the turn that started it and dies with the engine,
     /// so an engine with any is never let go.
     @ObservationIgnored private(set) var backgroundRunning = 0
+    /// Background work by id, from its durable start and end events (replayed with the log):
+    /// what a wake's event row names and links to. Live progress isn't kept here, so a job's
+    /// output never re-renders the transcript.
+    private(set) var jobs: [String: BackgroundJob] = [:]
 
     /// Queued messages taken back out (their "x"), for the composer to put back in its field.
     var restored: [Queued] = []
@@ -182,7 +196,13 @@ final class Conversation {
     /// A conversation over `link`. `replay`: a session with history, which the link replays on
     /// `subscribe` up to a `synced`; until then nothing shows busy and anything sent waits.
     /// `failure`: the link couldn't start.
-    init(folder: URL, link: ConversationLink?, replay: Bool, session: String? = nil, failure: String? = nil) {
+    ///
+    /// `history`: the session's log, read here (see `SessionHistory`). Its newest rows are
+    /// folded in now, before the engine has started, so the transcript is on screen at once; the
+    /// engine is asked only for what came after them, and older turns fill in from the log
+    /// off the main thread (`olderPending` until they have).
+    init(folder: URL, link: ConversationLink?, replay: Bool, session: String? = nil, failure: String? = nil,
+         history: SessionHistory? = nil) {
         self.folder = folder
         openedLive = Date()
         replayOnStart = replay
@@ -201,9 +221,71 @@ final class Conversation {
             // shown busy meanwhile; anything sent waits for the transcript (see `submit`).
             replaying = true
             busy = false
-            link.send(.subscribe(after: 0))
+            if let history {
+                (history.meta + history.tail).forEach(apply)
+                self.history = history
+                olderEnd = history.tailStart
+                olderPending = olderEnd > 0
+            }
+            link.send(.subscribe(after: lastSeq))
+            if olderPending { fillOlder() }
         }
     }
+
+    /// Where older turns come from: the log the newest rows were read from, and how far back
+    /// they've been folded in (an index into its events; 0 once all of it is).
+    @ObservationIgnored private var history: SessionHistory?
+    /// Finished turns' file changes, by turn (see `sessionChanges`).
+    @ObservationIgnored var changesCache: [TurnState.ID: (count: Int, changes: [FileChange])] = [:]
+    @ObservationIgnored private var olderEnd = 0
+    @ObservationIgnored private var olderFill: Task<Void, Never>?
+    /// Older turns are still being read from the log (the transcript's top shows it).
+    private(set) var olderPending = false
+    /// Rows per chunk of older history: each is decoded off the main thread and folded in at
+    /// once, before the turns already here.
+    static var olderChunkRows = 400
+    /// How long after opening older turns start folding in.
+    static var olderDelayMs = 250
+
+    /// Read the rest of the history, newest first, a chunk at a time.
+    private func fillOlder() {
+        guard olderFill == nil, let history else { return }
+        olderFill = Task { [weak self] in
+            // After the transcript has opened on the newest rows: folding in older turns is
+            // main-thread work too, and it isn't what you're looking at.
+            try? await Task.sleep(for: .milliseconds(Self.olderDelayMs))
+            while let end = self?.olderEnd, end > 0 {
+                let rows = Self.olderChunkRows
+                let chunk = await Task.detached(priority: .userInitiated) {
+                    history.olderChunk(before: end, rows: rows)
+                }.value
+                guard let self, !Task.isCancelled else { return }
+                self.prepend(chunk.events)
+                self.olderEnd = chunk.start
+            }
+            self?.olderPending = false
+            self?.olderFill = nil
+        }
+    }
+
+    /// Fold older turns' events and put them before the turns here. Folded apart (they're whole
+    /// turns, and history: nothing in them is news), so nothing here changes but the list.
+    private func prepend(_ events: [Envelope]) {
+        // Replaying, so it reports nothing anywhere (the sidebar, the watchdog).
+        let older = Conversation(preview: folder, reopened: true)
+        events.forEach(older.apply)
+        guard !older.turns.isEmpty else { return }
+        if title == nil { title = older.title }
+        if movedTo == nil { movedTo = older.movedTo }
+        turns.insert(contentsOf: older.turns, at: 0)
+        itemAt = [:]
+        for t in turns.indices {
+            for i in turns[t].items.indices { itemAt[turns[t].items[i].id] = (t, i) }
+        }
+    }
+
+    /// Something to show: the history is in, or its newest rows are.
+    var showable: Bool { !replaying || !turns.isEmpty }
 
     /// An engine-less conversation that only renders events fed to `ingest` (previews, snapshots).
     /// `reopened`: as if resuming a session, whose history is fed in up to a `synced`.
@@ -314,6 +396,7 @@ final class Conversation {
     /// back, like their "x", never lost). A stop that should stay stopped, and an archive.
     func clearInbox() {
         pendingDeliveries = 0
+        pendingMessages.removeAll()
         restored.append(contentsOf: queue)
         queue.removeAll()
         continuePending = false
@@ -495,7 +578,7 @@ final class Conversation {
         guard failure == nil else { return }
         failure = why
         busy = false
-        progress = nil
+        if progress != nil { progress = nil }
     }
 
     /// Answer a `sessionRequest`.
@@ -503,9 +586,16 @@ final class Conversation {
         link?.send(.sessionReply(id: id, result: result, error: error))
     }
 
+    /// A status-only message from another session: the engine records it as read and keeps it
+    /// for the next turn; no turn starts, so nothing waits on it here.
+    func inform(from: String, name: String, message: String) {
+        link?.send(.inform(from: from, fromName: name, message: message))
+    }
+
     /// A message from another session: the engine queues it and runs it as a turn.
     func deliver(from: String, name: String, message: String) {
         pendingDeliveries += 1
+        pendingMessages.append(SessionMessage(from: from, name: name, body: message))
         link?.send(.deliver(from: from, fromName: name, message: message))
     }
 
@@ -541,10 +631,11 @@ final class Conversation {
         link?.forceKill(reason: reason)
     }
 
-    /// Returns once a reopened session's history is in, or after `limit` if that's slow.
+    /// Returns once a reopened session's history is in (or its newest rows), or after `limit`
+    /// if that's slow.
     func loaded(within limit: Duration) async {
         let deadline = ContinuousClock.now + limit
-        while replaying, ContinuousClock.now < deadline {
+        while !showable, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(5))
         }
     }
@@ -584,12 +675,23 @@ final class Conversation {
             }
             // Whatever its inbox held, and its background work, went with it.
             pendingDeliveries = 0
+            pendingMessages.removeAll()
+            queuedEvents.removeAll()
             backgroundRunning = 0
             busy = false
-            progress = nil
+            if progress != nil { progress = nil }
             stopWatchdog()
             return
         }
+        // Anything else lands after the text streamed before it.
+        if case .itemDelta(let id, let delta) = env.event, link != nil, !replaying, delta.isText {
+            lastSeq = max(lastSeq, env.seq)
+            lastEventAt = .now
+            pendingDeltas.append((id, delta))
+            scheduleDeltaFlush()
+            return
+        }
+        flushDeltas()
         lastSeq = max(lastSeq, env.seq)
         lastEventAt = .now
         if sessionID != env.session {
@@ -602,7 +704,11 @@ final class Conversation {
         switch env.event {
         case .turnStarted(let n, let input, let images, let more):
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
-            if let i = turns.lastIndex(where: { $0.number == nil && !$0.finished && $0.input == input }) {
+            if turns.contains(where: { $0.number == n }) {
+                // Seen already (a replay or reconnect re-sent it): appending would duplicate it,
+                // and a local echo of the same input is that turn too.
+                turns.removeAll { $0.number == nil && !$0.finished && $0.input == input }
+            } else if let i = turns.lastIndex(where: { $0.number == nil && !$0.finished && $0.input == input }) {
                 turns[i].number = n
                 turns[i].startedAt = at
             } else {
@@ -611,8 +717,11 @@ final class Conversation {
             panes.currentTurn = n
             // A delivered turn takes every message waiting in the engine's inbox (the first as
             // its input, the rest as `more`).
-            if !replaying, input.hasPrefix("<session-message ") {
-                pendingDeliveries = max(0, pendingDeliveries - 1 - more.count)
+            // A wake turn takes the messages queued behind it too, as `more`.
+            let taken = ([input] + more.map(\.text)).filter { $0.hasPrefix("<session-message ") }.count
+            if !replaying, taken > 0 {
+                pendingDeliveries = max(0, pendingDeliveries - taken)
+                pendingMessages.removeFirst(min(taken, pendingMessages.count))
             }
             if !replaying { userStopped = false }
             // A replayed turn ran long ago — unless it's still open, when another frog
@@ -636,12 +745,12 @@ final class Conversation {
                     Conversation.effects?.turnEnded(self, turn: turns[i])
                 }
             }
-            progress = nil
-            presentPreview = nil
+            if progress != nil { progress = nil }
+            if presentPreview != nil { presentPreview = nil }
             // Replayed turns are old news; the sidebar hears once, when the history is in.
             if !replaying { onSessionChange?() }
         case .itemStarted(let id, let kind):
-            presentPreview = nil
+            if presentPreview != nil { presentPreview = nil }
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             upsert(id) { item in
                 item.kind = Self.kind(kind)
@@ -655,7 +764,7 @@ final class Conversation {
                 case .imagePreview(let image, _, _, _): item.imagePreview = image
                 }
             }
-            progress = nil
+            if progress != nil { progress = nil }
         case .itemCompleted(let id, let item):
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             upsert(id) { state in
@@ -683,7 +792,8 @@ final class Conversation {
             if let i = turns.lastIndex(where: { !$0.finished }) {
                 turns[i].items.removeAll { ids.contains($0.id) }
             }
-            presentPreview = nil
+            for id in ids { itemAt[id] = nil }
+            if presentPreview != nil { presentPreview = nil }
         case .permissionRequest(let req):
             permission = req
             if isNews(env) {
@@ -692,18 +802,18 @@ final class Conversation {
                 Conversation.permissionRequests?(self, req)
             }
             upsert(req.item) { $0.needsPermission = true }
-            progress = nil
+            if progress != nil { progress = nil }
         case .permissionResolved:
             permission = nil
         case .elicitation(let e):
             elicitation = e
-            progress = nil
+            if progress != nil { progress = nil }
         case .elicitationDone(let id):
             if elicitation?.id == id { elicitation = nil }
         case .question(let q):
             question = q
             if isNews(env) { FrogSounds.shared.play(.drip) }
-            progress = nil
+            if progress != nil { progress = nil }
         case .questionResolved(let id):
             if question?.id == id { question = nil }
         case .toolProgress(let id, let p):
@@ -718,7 +828,7 @@ final class Conversation {
                 if state.subagent == nil { state.subagent = SubagentRun() }
                 state.subagent?.apply(inner)
             }
-            progress = nil
+            if progress != nil { progress = nil }
         case .appResult(let id, let result, let error):
             appCalls.removeValue(forKey: id)?(result, error)
         case .progress(let update):
@@ -749,9 +859,23 @@ final class Conversation {
             // coordinator reads it through the drain's wait below, nothing to fold here.
             break
         case .status(let s):
-            status = s
+            // Written only when it changed: every view of it rebuilds on a write.
+            if status != s { status = s }
         case .background(let running):
             backgroundRunning = running
+        case .backgroundStarted(let id, let kind, let label, let log):
+            jobs[id] = BackgroundJob(id: id, kind: kind, label: label, log: log)
+        case .backgroundDone(let id, let kind, let status, _):
+            jobs[id, default: BackgroundJob(id: id, kind: kind, label: "")].status = status
+        case .backgroundProgress:
+            break
+        case .queuedEvents(let items):
+            // Live only: a replayed log has no queue.
+            if !replaying { queuedEvents = items }
+        case .wakesDelivered(let n, let wakes):
+            if let i = turns.lastIndex(where: { $0.number == n }) {
+                turns[i].wakes = wakes
+            }
         case .synced:
             replaying = false
             // A turn the history ended in the middle of is running in another frog process:
@@ -782,7 +906,7 @@ final class Conversation {
             }
             busy = false
             awaitingCommand = false
-            progress = nil
+            if progress != nil { progress = nil }
             permission = nil
             elicitation = nil
             question = nil
@@ -814,6 +938,41 @@ final class Conversation {
     }
 
     /// Tell the sidebar whether this conversation is running or waiting on the user.
+    private func scheduleDeltaFlush() {
+        guard deltaFlush == nil else { return }
+        let work = DispatchWorkItem { [weak self] in self?.flushDeltas() }
+        deltaFlush = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 30, execute: work)
+    }
+
+    /// Fold in the streamed text: consecutive deltas to one item, of one kind, as one write.
+    private func flushDeltas() {
+        deltaFlush?.cancel()
+        deltaFlush = nil
+        guard !pendingDeltas.isEmpty else { return }
+        let deltas = pendingDeltas
+        pendingDeltas = []
+        var merged: [(id: String, delta: Delta)] = []
+        for d in deltas {
+            if let last = merged.last, last.id == d.id, let joined = last.delta.joined(d.delta) {
+                merged[merged.count - 1].delta = joined
+            } else {
+                merged.append(d)
+            }
+        }
+        for d in merged {
+            upsert(d.id) { item in
+                switch d.delta {
+                case .text(let t), .reasoning(let t): item.text += t
+                case .output(let t): item.output += t
+                case .imagePreview: break
+                }
+            }
+        }
+        if progress != nil { progress = nil }
+        reportLive()
+    }
+
     private func reportLive() {
         guard let id = sessionID, !replaying else { return }
         _ = id
@@ -884,13 +1043,13 @@ final class Conversation {
         guard !events.isEmpty else {
             // Nothing new was logged. With the engine gone that means the turn it was on
             // never finished: it's over either way.
-            if link?.isAlive != true { busy = false; progress = nil }
+            if link?.isAlive != true { busy = false; if progress != nil { progress = nil } }
             return
         }
         Motion.cut { events.forEach { self.ingest($0) } }
         if let last = events.last, case .turnEnded = last.event {
             busy = false
-            progress = nil
+            if progress != nil { progress = nil }
         }
         reportLive()
     }
@@ -919,12 +1078,26 @@ final class Conversation {
         }
     }
 
+    /// Where each item is (turn, then item index), so an event finds its row without scanning:
+    /// a scan copies every item it passes, and a reopened session's history folds an event per
+    /// row, quadratic in its length. Every upserted item is in it, so an id that isn't is new;
+    /// the place is a hint, checked on use (a discarded item shifts the ones after it).
+    @ObservationIgnored private var itemAt: [String: (turn: Int, item: Int)] = [:]
+
     /// Update the item with this id, creating it in the current turn if needed.
     private func upsert(_ id: String, _ update: (inout ItemState) -> Void) {
-        for t in turns.indices.reversed() {
-            if let i = turns[t].items.firstIndex(where: { $0.id == id }) {
+        if let (t, i) = itemAt[id] {
+            if turns.indices.contains(t), turns[t].items.indices.contains(i), turns[t].items[i].id == id {
                 update(&turns[t].items[i])
                 return
+            }
+            // Moved: find it the slow way.
+            for t in turns.indices.reversed() {
+                if let i = turns[t].items.indices.first(where: { turns[t].items[$0].id == id }) {
+                    itemAt[id] = (t, i)
+                    update(&turns[t].items[i])
+                    return
+                }
             }
         }
         if turns.isEmpty {
@@ -932,6 +1105,7 @@ final class Conversation {
         }
         var item = ItemState(id: id, kind: .message)
         update(&item)
+        itemAt[id] = (turns.count - 1, turns[turns.count - 1].items.count)
         turns[turns.count - 1].items.append(item)
     }
 
