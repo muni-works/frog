@@ -446,7 +446,7 @@ mod tests {
         let env = |seq, event| Record::Event { env: Envelope { seq, session: "c".into(), created: 0, event } };
         log.append(&env(1, Event::TurnStarted { turn: 1, input: "one".into(), images: vec![], more: vec![] })).unwrap();
         log.append(&env(2, event)).unwrap();
-        log.append(&env(3, Event::Compacted { tokens_before: 100, tokens_after: 10 })).unwrap();
+        log.append(&env(3, Event::Compacted { tokens_before: 100, tokens_after: 10, summary: None })).unwrap();
         log.sync().unwrap();
         drop(log);
         let loaded = session::load(&dir, "c").unwrap();
