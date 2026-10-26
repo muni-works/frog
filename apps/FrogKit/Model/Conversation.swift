@@ -654,7 +654,11 @@ final class Conversation {
         switch env.event {
         case .turnStarted(let n, let input, let images, let more):
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
-            if let i = turns.lastIndex(where: { $0.number == nil && !$0.finished && $0.input == input }) {
+            if turns.contains(where: { $0.number == n }) {
+                // Seen already (a replay or reconnect re-sent it): appending would duplicate it,
+                // and a local echo of the same input is that turn too.
+                turns.removeAll { $0.number == nil && !$0.finished && $0.input == input }
+            } else if let i = turns.lastIndex(where: { $0.number == nil && !$0.finished && $0.input == input }) {
                 turns[i].number = n
                 turns[i].startedAt = at
             } else {
