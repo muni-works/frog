@@ -46,13 +46,21 @@ private struct BlocksView: View {
     @Environment(\.turnSpace) private var space
 
     var body: some View {
-        VStack(alignment: .leading, spacing: space.paragraph) {
-            ForEach(Array(placed.enumerated()), id: \.offset) { _, p in
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(placed.enumerated()), id: \.offset) { i, p in
                 block(p.block, from: p.start)
+                    .padding(.top, gap(at: i))
             }
         }
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The same gaps as the Mac (see `TurnSpace.Scale.gap`). SwiftUI's line spacing stops at
+    /// a block's last line, where TextKit's doesn't, so it's added here to look the same.
+    private func gap(at i: Int) -> CGFloat {
+        guard i > 0 else { return 0 }
+        return space.gap(blocks[i], after: blocks[i - 1]) + space.line
     }
 
     private var placed: [(block: MarkdownBlock, start: Int)] {
@@ -86,11 +94,14 @@ private struct BlocksView: View {
             CodeBlock(language: language, code: code)
                 .opacity(ink.map { $0.revealed > start ? 1 : 0 } ?? 1)
         case .bullet(let indent, let marker, let s):
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(marker).foregroundStyle(.secondary).monospacedDigit()
+            // A fixed marker column, the marker right-aligned in it (see `TurnType.markerColumn`).
+            HStack(alignment: .firstTextBaseline, spacing: TurnType.markerGap) {
+                Text(TurnType.marker(marker, indent: indent)).monospacedDigit()
+                    .foregroundStyle(marker == "•" ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                    .frame(minWidth: TurnType.markerColumn - TurnType.markerGap, alignment: .trailing)
                 Text(inked(Markdown.inline(s), from: start)).lineSpacing(space.line)
             }
-            .padding(.leading, CGFloat(indent) * 16)
+            .padding(.leading, CGFloat(indent) * TurnType.markerColumn)
         case .quote(let s):
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 1.5).fill(.quaternary).frame(width: 3)

@@ -79,3 +79,55 @@ TranscriptView 25, TurnView 11, ActivityLine 14, MessageText 4, ItemViews 35, Ma
   sessions' worktrees; a full-suite render got overwritten by main's look. Render SnapshotTests alone and
   check md5 vs baseline. The scroll-up flake probably comes from concurrent suites (CPU contention).
 - Cleaned: /private/tmp/type-dd, type-dd-base, type-base worktree, .snap.
+
+## Round 2 — more vertical space, bullet lists (Cam)
+- BUG: bullets got paragraphSpacingBefore = paragraph gap AND paragraphSpacing = list gap; TextKit adds
+  them, so items sat 20pt apart (5 leading +14 +6), MORE than paragraphs (14). Inverted hierarchy.
+- Fix: every gap comes from paragraphSpacingBefore only, chosen from (previous block, this block):
+  heading → section; after a heading → afterHeading; bullet after bullet → list; else paragraph.
+  `TurnSpace.Scale.gap(_ block:, after:)` (cross-platform, used by AppKit MessageStyle and iOS BlocksView).
+- Values (comfortable/compact): line 6/2, paragraph 16/8, list 6/3, section 28/16, afterHeading 6/3.
+  Visible gap = leading + gap (TextKit adds lineSpacing under every line): paragraph ≈22, item ≈12,
+  wrap 6, above a heading ≈34, under it ≈12.
+- Bullets: fixed marker column (TurnType.markerColumn = 22) so text of "1." and "10." items lines up;
+  marker right-aligned to the column (right tab stop) 8pt before the text; nested lists indent by one
+  column so a child's marker sits under the parent's text. Unordered markers by depth: • ◦ ▪.
+- Cam's density is COMPACT (defaults eco.frog / eco.frog.dev density=compact); SnapshotTests read it too.
+  Compact used to squeeze prose (line 2, paragraph 8, list 3). New stance: density tightens the chrome, and the
+  prose only a notch: compact line 5, list 5, paragraph 14, section 24, heading 5.
+- Bullets in label color (a small glyph needs it), numbers secondary. Marker right-aligned by its measured width
+  (firstLineHeadIndent), no leading tab, so copying a list still gives "• item".
+- STOP: frog manager says testScrollUpFillsOlderRowsInOrder is flaky-bench (4371)'s job. Don't instrument
+  TranscriptView or that test. Finding handed over: `jump` in the harness isn't observed (Binding over a plain property).
+- Rule from manager: Swift source edits via the Edit tool only (no python string replace).
+- Round 3 (Cam): align out-of-transcript elements (tool rows, subagent/task cards, restart banner, ...) to the column.
+
+## Round 3: everything that isn't prose, aligned to the column
+Survey (before):
+- Lines inset 6pt from the column edge: ToolCallView, ReasoningView, OverflowRescueView (.padding(.horizontal, 6)
+  so their hover/expanded plate has room). Text sits 6pt right of the paragraphs.
+- Box radii all over: code 10, plan 10, opened activity 10, subagent 12, present 12, diagram 14,
+  permission/question/elicitation 14 (pad 14), session message 12 (maxWidth 560).
+- Composer: .padding(.horizontal, 20).frame(maxWidth: 860), so its inner width is 820 (the OLD column); the
+  transcript is now 720, so the composer is wider than the text above it.
+- ResumedBanner (graceful restart), BiggerModelLine, PingLine: full pane width in the bottom inset, padding 14,
+  not tied to the column.
+Stance:
+1. One column for the whole page: transcript, the banners above the composer, the composer. Defined once by
+   `View.turnColumn()` (TurnSpace.measure + gutter). The composer's box edges = the column's edges.
+2. Two kinds of things in the column:
+   - LINES (activity, tool rows, thoughts, notices, event lines, live status, footer, banners): content flush on
+     the column's left edge. A hover/expanded plate BLEEDS outward into the gutter (pad then negative pad) and
+     doesn't push the text in. (claude.ai's hover plates do the same.)
+   - BOXES (code, diagram, subagent, plan, present, opened activity, permission/question/elicitation, MCP apps):
+     edges on the column's edges, one radius (TurnSpace.Card.radius 12) and one inner padding (Card.padding 12),
+     so content in any box starts at column + 12. Boxes nested in a row or card: Card.nestedRadius 8.
+   - Exceptions: your prompt (right-aligned bubble, promptWidth) and the live typing bubble.
+- Round 3 done in the tree: View.turnColumn() (composer + ResumedBanner), linePlate (tool rows and thoughts flush, plate
+  bleeds), Card.radius/padding/nestedRadius on every box, one icon column (18 + 8) for tool rows, thoughts, event lines.
+- Opened thoughts capped at 12 lines + "Show all" (CappedThought in ActivityLine.swift; the name ThoughtText is taken
+  by Thinking/ThinkingStepView.swift). This also FIXED the blank fix-python-test-done render: a 78s thought opened
+  whole made the view land past the end of the content.
+- Snapshot isolation: SnapshotTests/MessageTextTests honor FROG_SNAPSHOT_DIR; run with
+  TEST_RUNNER_FROG_SNAPSHOT_DIR=/private/tmp/snap-x. (TEST_RUNNER_TMPDIR doesn't reach app-hosted tests.)
+- The earlier "bisect" (a8ba5c3 blank / 7169d8b fine) was contaminated by the shared folder. Disregard it.

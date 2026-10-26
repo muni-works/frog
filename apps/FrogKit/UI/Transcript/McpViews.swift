@@ -102,8 +102,8 @@ struct ElicitationCard: View {
                     .help("Cancel the tool call (⌘.)")
             }
         }
-        .padding(14)
-        .glassEffect(.regular.tint(.blue.opacity(0.10)), in: .rect(cornerRadius: 14))
+        .padding(TurnSpace.Card.padding)
+        .glassEffect(.regular.tint(.blue.opacity(0.10)), in: .rect(cornerRadius: TurnSpace.Card.radius))
         .onAppear(perform: fillDefaults)
     }
 
@@ -234,7 +234,7 @@ struct McpAppCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: ToolIcon.symbol(name)).foregroundStyle(.secondary).frame(width: 18)
+                Image(systemName: ToolIcon.symbol(name)).foregroundStyle(.secondary).frame(width: TurnSpace.Inset.icon)
                 Text(ToolIcon.title(name)).fontWeight(.medium).font(.callout)
                 if let arg = item.result?.arg, !arg.isEmpty {
                     Text(arg)
@@ -248,8 +248,8 @@ struct McpAppCard: View {
             if FileManager.default.fileExists(atPath: app.html) {
                 AppWebView(app: app, input: item.result?.input ?? .object([:]), conversation: conversation, height: $height)
                     .frame(height: height)
-                    .clipShape(.rect(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+                    .clipShape(.rect(cornerRadius: TurnSpace.Card.radius))
+                    .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.separator))
             } else {
                 Text("This app's view is no longer available.")
                     .font(.callout)

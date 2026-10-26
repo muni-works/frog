@@ -445,9 +445,9 @@ struct PlanView: View {
                 .font(.callout)
             }
         }
-        .padding(TurnSpace.Inset.card)
+        .padding(TurnSpace.Card.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.opacity(0.5), in: .rect(cornerRadius: 10))
+        .background(.background.opacity(0.5), in: .rect(cornerRadius: TurnSpace.Card.radius))
         .animation(.smooth, value: todos)
     }
 

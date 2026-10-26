@@ -127,6 +127,39 @@ struct ActivityText {
     }
 }
 
+/// A finished thought, opened: its first `cap` lines, then "Show all". A model can think for
+/// minutes; opened whole, a thought outweighs the answer it led to.
+struct CappedThought: View {
+    let text: String
+    static let cap = 12
+    @State private var all = false
+
+    /// More than fits under the cap, by lines or by characters (a long unbroken paragraph
+    /// wraps to many lines in the measure).
+    private var long: Bool {
+        text.split(separator: "\n", omittingEmptySubsequences: true).count > Self.cap || text.count > Self.cap * 100
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
+            Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(all ? nil : Self.cap)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if long {
+                Button(all ? "Show less" : "Show all") {
+                    withAnimation(.snappy(duration: 0.2)) { all.toggle() }
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(.tint)
+            }
+        }
+    }
+}
+
 /// A long thought as it streams: its latest lines, muted, until it folds into its line.
 struct LiveThought: View {
     let text: String
@@ -200,11 +233,7 @@ struct ActivitySteps: View {
             if steps.count == 1, let thought = steps.first, thought.kind == .reasoning {
                 // A lone thought's line already says "Thought for 12s"; open, it's the thought,
                 // set off like a quote rather than boxed.
-                Text(thought.text.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                CappedThought(text: thought.text)
                     .padding(.leading, TurnSpace.Inset.roomy)
                     .overlay(alignment: .leading) {
                         Rectangle().fill(.separator).frame(width: 2)
@@ -218,7 +247,7 @@ struct ActivitySteps: View {
                     }
                 }
                 .padding(.vertical, TurnSpace.Inset.hair)
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
+                .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.nestedRadius).strokeBorder(.separator, lineWidth: 0.5))
             }
         }
     }
@@ -307,11 +336,7 @@ struct ActivityStepRow: View {
     private var detail: some View {
         switch item.kind {
         case .reasoning:
-            Text(item.text)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            CappedThought(text: item.text)
         case .tool("Task", let arg):
             SubagentCard(arg: arg, item: item, conversation: conversation)
         case .tool(let name, _):

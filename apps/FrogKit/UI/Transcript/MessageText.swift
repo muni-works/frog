@@ -96,7 +96,7 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         let tail = NSMutableAttributedString()
         var newRanges = Array(ranges.prefix(keep))
         for (i, block) in blocks.enumerated().dropFirst(keep) {
-            let piece = MessageStyle.piece(block, first: i == 0)
+            let piece = MessageStyle.piece(block, after: i == 0 ? nil : blocks[i - 1])
             newRanges.append(NSRange(location: from + tail.length, length: piece.length))
             tail.append(piece)
         }
@@ -276,7 +276,7 @@ struct CodeOverlay: View {
             .textSelection(.enabled)
             .overlay {
                 if selected {
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: TurnSpace.Card.radius)
                         .fill(Color(nsColor: .selectedTextBackgroundColor).opacity(0.45))
                         .allowsHitTesting(false)
                 }
@@ -357,12 +357,10 @@ final class InlineCodeLayoutManager: NSLayoutManager {
 }
 
 /// How each markdown block looks as attributed text. Spacing comes from `TurnSpace`, so a
-/// message reads with the transcript's rhythm: taller line height within a paragraph, more
-/// room between blocks, and list items tighter than blocks.
+/// message reads with the transcript's rhythm: taller line height within a paragraph, room
+/// between paragraphs, more above a heading, and list items tighter than paragraphs.
 enum MessageStyle {
     /// The density setting's scale, as `piece` is built on a text-queue (AppKit) thread at times.
-    static var blockGap: CGFloat { TurnSpace.current.paragraph }
-    static var listGap: CGFloat { TurnSpace.current.list }
     static var lineHeight: CGFloat { TurnSpace.current.line }
 
     static var body: NSFont { .systemFont(ofSize: TurnType.body) }
@@ -374,32 +372,40 @@ enum MessageStyle {
         return p
     }
 
-    /// One block, preceded by the newline that separates it from the last (unless it's first).
-    static func piece(_ block: MarkdownBlock, first: Bool) -> NSAttributedString {
+    /// One block, preceded by the newline that separates it from the one before (nil: it's
+    /// first). Its gap depends on that block (see `TurnSpace.Scale.gap`); streaming rebuilds
+    /// from the first block that changed, so a block is never left with a stale neighbor.
+    static func piece(_ block: MarkdownBlock, after previous: MarkdownBlock?) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        if !first { out.append(NSAttributedString(string: "\n", attributes: [.font: body])) }
-        let gap: CGFloat = first ? 0 : blockGap
+        if previous != nil { out.append(NSAttributedString(string: "\n", attributes: [.font: body])) }
+        let gap = TurnSpace.current.gap(block, after: previous)
         switch block {
         case .paragraph(let s):
             out.append(inline(s, font: body, style: paragraph { $0.paragraphSpacingBefore = gap }))
         case .heading(let level, let s):
             let font = NSFont.systemFont(ofSize: TurnType.heading(level), weight: .semibold)
-            // More room above a heading than below it: it belongs to what follows.
-            out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap + TurnSpace.Inset.row }))
+            out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap }))
         case .bullet(let indent, let marker, let s):
-            let lead = CGFloat(indent) * TurnType.body
-            let markerWidth = (marker as NSString).size(withAttributes: [.font: body]).width
-            let head = lead + max(markerWidth, TurnSpace.Inset.card) + TurnSpace.Inset.row
+            // A fixed marker column: the marker right-aligned to it, the text after it, wrapped
+            // lines hanging under the text. A nested list steps in by one column.
+            let lead = CGFloat(indent) * TurnType.markerColumn
+            let mark = TurnType.marker(marker, indent: indent)
+            let markFont = NSFont.monospacedDigitSystemFont(ofSize: TurnType.body, weight: .regular)
+            let markWidth = ceil((mark as NSString).size(withAttributes: [.font: markFont]).width)
+            let head = lead + max(TurnType.markerColumn, markWidth + TurnType.markerGap)
             let style = paragraph {
                 $0.paragraphSpacingBefore = gap
-                $0.paragraphSpacing = listGap
-                $0.firstLineHeadIndent = lead
+                // The marker starts where it ends flush with the column (right-aligned by its
+                // measured width, not a leading tab, so a copied list reads "• item").
+                $0.firstLineHeadIndent = head - TurnType.markerGap - markWidth
                 $0.headIndent = head
                 $0.tabStops = [NSTextTab(textAlignment: .left, location: head)]
             }
-            out.append(NSAttributedString(string: "\(marker)\t", attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: TurnType.body, weight: .regular),
-                .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
+            // A bullet is a small glyph: in the text's own color it weighs what a number does in
+            // secondary.
+            let markColor: NSColor = marker == "•" ? .labelColor : .secondaryLabelColor
+            out.append(NSAttributedString(string: "\(mark)\t", attributes: [
+                .font: markFont, .foregroundColor: markColor, .paragraphStyle: style,
             ]))
             out.append(inline(s, font: body, style: style))
         case .quote(let s):

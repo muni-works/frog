@@ -71,11 +71,12 @@ struct SessionMessageCard: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
-        .frame(maxWidth: 560, alignment: .leading)
+        .padding(.horizontal, TurnSpace.Card.padding)
+        .padding(.vertical, TurnSpace.Inset.card)
+        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: TurnSpace.Card.radius))
+        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.separator))
+        // As wide as your own prompt at most: it's a message, mirrored to the left.
+        .frame(maxWidth: TurnSpace.promptWidth, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
