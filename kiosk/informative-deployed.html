@@ -17,7 +17,8 @@
   }
   html, body {
     margin: 0; height: 100%;
-    background: #0b0d0e;
+    /* the icon's glow layer: green rising from the bottom (glow.svg stops) */
+    background: radial-gradient(120% 85% at 50% 108%, rgba(54,194,76,0.40) 0%, rgba(54,194,76,0.12) 38%, rgba(11,13,14,0) 68%) #0b0d0e;
     overflow: hidden;
     cursor: none;
   }
@@ -61,6 +62,11 @@
        box 160,200 704x704; this file extends the box 44 units for the indicator). -->
   <svg id="frog" viewBox="160 200 704 748" aria-label="frog">
     <defs>
+      <linearGradient id="skin-grad" gradientUnits="userSpaceOnUse" x1="0" y1="230" x2="0" y2="800">
+        <stop offset="0" stop-color="#63e372"/>
+        <stop offset="0.55" stop-color="#51da60"/>
+        <stop offset="1" stop-color="#3fc952"/>
+      </linearGradient>
       <clipPath id="cliphead">
         <path d="M216 568 A296 224 0 0 1 808 568 A296 234 0 0 1 216 568 Z"/>
         <circle cx="360" cy="352" r="120"/>
@@ -69,7 +75,7 @@
     </defs>
     <g id="body">
       <g id="head">
-        <g fill="var(--skin)">
+        <g fill="url(#skin-grad)">
           <path id="silhouette" d="M216 568 A296 224 0 0 1 808 568 A296 234 0 0 1 216 568 Z"/>
           <circle cx="360" cy="352" r="120"/>
           <circle cx="664" cy="352" r="120"/>
