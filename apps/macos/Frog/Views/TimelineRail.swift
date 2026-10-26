@@ -11,6 +11,9 @@ struct TimelineRail: View {
     var marked: Set<TurnState.ID> = []
     /// Turns with a preview screenshot: badged with a camera, and comparable in the preview.
     var checkpoints: Set<UInt64> = []
+    /// Free width beside the rail (between the transcript's column and it): chapter names
+    /// show there when there's enough of it.
+    var labelRoom: CGFloat = 0
     let actions: TurnActions
     let jump: (TurnState.ID) -> Void
 
@@ -25,6 +28,22 @@ struct TimelineRail: View {
     /// Where the chapters start (see `Chapter`), as turn indices, and the one on screen.
     private var chapters: [Chapter] { Chapter.cached(turns).chapters }
     private var chapterStarts: [Int] { Chapter.cached(turns).starts }
+    private var chapterTitles: [String] { Chapter.cached(turns).titles }
+
+    /// The chapter dots drawn, as (chapter, y): each clear of the last by `gap`, and the
+    /// current chapter always.
+    private func landmarks(in h: CGFloat, gap: CGFloat, current: Int?) -> [(chapter: Int, y: CGFloat)] {
+        var out: [(chapter: Int, y: CGFloat)] = []
+        var last = -CGFloat.infinity
+        for (c, start) in chapterStarts.enumerated() {
+            let y = y(of: start, in: h)
+            guard c == current || y - last >= gap else { continue }
+            if c == current, let prev = out.last, y - prev.y < gap, prev.chapter != current { out.removeLast() }
+            last = y
+            out.append((c, y))
+        }
+        return out
+    }
 
     /// The rail's height for a conversation: by its chapters, not its turns, so a long session
     /// is a short list of topics rather than a wall of ticks.
@@ -52,6 +71,9 @@ struct TimelineRail: View {
             let h = geo.size.height
             ZStack(alignment: .topLeading) {
                 Canvas { ctx, size in draw(ctx, size) }
+                if labelRoom >= 90 {
+                    labels(in: h)
+                }
                 if let i = hovered, turns.indices.contains(i) {
                     // Hangs off the rail's leading edge, over the transcript.
                     label(turns[i])
@@ -161,17 +183,12 @@ struct TimelineRail: View {
         }
 
         let chapters = self.chapters
-        let starts = Chapter.starts(of: chapters, in: turns)
-        let current = currentChapter(starts)
+        let current = currentChapter(chapterStarts)
         // A long session has more chapters than the rail has room for: a dot only where it
         // stands clear of the last one drawn (the one you're in always shows), so the line
         // reads as a few landmarks rather than a solid bar.
-        var last = -CGFloat.infinity
-        for (c, start) in starts.enumerated() {
-            let y = y(of: start, in: h)
+        for (c, y) in landmarks(in: h, gap: 7, current: current) {
             let here = c == current
-            guard here || y - last >= 7 else { continue }
-            last = y
             switch chapters[c].kind {
             case .compacted:
                 // The summarized break: the line steps out for a moment.
@@ -212,11 +229,29 @@ struct TimelineRail: View {
 
     // MARK: Hover label and menu
 
+    /// Chapter names beside their dots, where there's height between them for a line.
+    private func labels(in h: CGFloat) -> some View {
+        let current = currentChapter(chapterStarts)
+        let titles = chapterTitles
+        return ForEach(landmarks(in: h, gap: 18, current: current), id: \.chapter) { mark in
+            Text(titles[mark.chapter])
+                .font(.caption)
+                .foregroundStyle(mark.chapter == current ? .primary : .tertiary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: min(labelRoom, 180) - 8, alignment: .trailing)
+                .frame(width: 0, alignment: .trailing)
+                .offset(x: -6, y: mark.y - 8)
+                .allowsHitTesting(false)
+                .opacity(hovered == nil ? 1 : 0.35)
+        }
+    }
+
     private func label(_ t: TurnState) -> some View {
         HStack(spacing: 6) {
             if let i = turns.firstIndex(where: { $0.id == t.id }),
                let c = Chapter.index(of: i, in: chapterStarts), chapters[c].turn == t.id {
-                Text(chapters[c].kind == .compacted ? "Summarized" : chapters[c].kind == .run ? "Autonomous run" : "Chapter \(c + 1)")
+                Text(chapterTitles[c])
                     .foregroundStyle(.secondary)
             }
             if let n = t.number { Text("\(n)").foregroundStyle(.secondary).monospacedDigit() }

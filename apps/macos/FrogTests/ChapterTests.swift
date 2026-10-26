@@ -51,4 +51,14 @@ final class ChapterTests: XCTestCase {
         let chapters = Chapter.of([turn("one"), warn, turn(), turn(), turn(), turn()])
         XCTAssertEqual(chapters.map(\.kind), [.prompt])
     }
+
+    func testChapterTitlesAreTheFirstClauseInAFewWords() {
+        XCTAssertEqual(Chapter.words("build named chapters on the rail: a short title per chapter"), "build named chapters")
+        XCTAssertEqual(Chapter.words("let's go middle ground, and push"), "go middle ground")
+        XCTAssertEqual(Chapter.words("can you please profile the frog.app and figure out"), "profile the frog.app")
+        XCTAssertEqual(Chapter.words("nope. i feel like it's a frontend bug"), "nope")
+        XCTAssertEqual(Chapter.words("Install the new build and restart frog"), "install the new build")
+        XCTAssertEqual(Chapter.title(Chapter(turn: UUID(), number: 1, kind: .prompt), TurnState(input: "?"), turns: 1), "?")
+        XCTAssertEqual(Chapter.title(Chapter(turn: UUID(), number: 1, kind: .prompt), TurnState(input: "<session-message from=\"x\">hi</session-message>"), turns: 3), "on its own · 3 turns")
+    }
 }

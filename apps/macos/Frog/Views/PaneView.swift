@@ -49,10 +49,12 @@ struct PaneView: View {
 
             GeometryReader { geo in
                 let room = max(120, geo.size.height - margin * 2)
+                // The transcript is a centered 820 pt column: what's right of it, short of the rail.
+                let gutter = max(0, (geo.size.width - insets.leading - insets.trailing - 820) / 2 + insets.trailing - TimelineRail.width - margin - 12)
                 GlassEffectContainer(spacing: 20) {
                     HStack(alignment: .top, spacing: 0) {
                         Spacer(minLength: 0)
-                        instruments(room: room)
+                        instruments(room: room, gutter: gutter)
                     }
                 }
                 .padding(margin)
@@ -191,7 +193,7 @@ struct PaneView: View {
 
     /// Changes (card or pill) above the timeline rail.
     @ViewBuilder
-    private func instruments(room: CGFloat) -> some View {
+    private func instruments(room: CGFloat, gutter: CGFloat = 0) -> some View {
         let top = number == nil ? 0 : WorkspaceView.headerClearance
         if let conversation, pane.hasTabs || pane.hasRail {
             VStack(alignment: .trailing, spacing: 8) {
@@ -238,6 +240,7 @@ struct PaneView: View {
                         conversation: conversation,
                         visible: ui.visibleTurns,
                         marked: ui.findShown ? Set(ui.matches(in: conversation.turns)) : [],
+                        labelRoom: gutter,
                         actions: turnActions,
                         jump: { ui.jumpTo = $0 }
                     )
