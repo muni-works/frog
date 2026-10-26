@@ -342,6 +342,10 @@ struct Inner {
     preloaded: BTreeSet<String>,
     /// A model with a small window: no instructions, no tools until the model loads them.
     compact: AtomicBool,
+    /// True once any server has ever been configured for this engine, so `McpTools` stays
+    /// offered from the first turn (before any server finishes connecting) even though the
+    /// catalog is empty.
+    servers_expected: AtomicBool,
 }
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -366,6 +370,7 @@ impl Hub {
                 loaded: Mutex::new(Vec::new()),
                 preloaded: BTreeSet::new(),
                 compact: AtomicBool::new(false),
+                servers_expected: AtomicBool::new(false),
             }),
         }
     }
@@ -445,6 +450,7 @@ impl Hub {
                 loaded: Mutex::new(loaded.iter().cloned().collect()),
                 preloaded: loaded,
                 compact: AtomicBool::new(false),
+                servers_expected: AtomicBool::new(true),
             }),
         }
     }
@@ -504,6 +510,7 @@ impl Hub {
                 loaded: Mutex::new(Vec::new()),
                 preloaded: BTreeSet::new(),
                 compact: AtomicBool::new(false),
+                servers_expected: AtomicBool::new(true),
             }),
         };
         hub.connect_one_into(name.clone(), cfg).await;
@@ -515,6 +522,16 @@ impl Hub {
         let other = Arc::try_unwrap(other.inner)
             .ok()
             .expect("unique MCP delta hub");
+        if other
+            .servers_expected
+            .load(Ordering::Relaxed)
+            || !other.servers.read().unwrap().is_empty()
+            || !other.failed.read().unwrap().is_empty()
+        {
+            self.inner
+                .servers_expected
+                .store(true, Ordering::Relaxed);
+        }
         self.inner
             .servers
             .write()
@@ -525,10 +542,38 @@ impl Hub {
             .write()
             .unwrap()
             .extend(other.failed.into_inner().unwrap());
+        // `loaded` is left alone on purpose: the tools a session picked stay selected across a
+        // server reconnecting (a fresh delta merged in), so they're offered again as soon as
+        // the server's tools are back in the catalog — no new `McpTools` call needed.
     }
 
     pub fn host(&self) -> &Arc<Host> {
         &self.inner.host
+    }
+
+    /// Servers are configured for this engine, even if none has connected yet: `McpTools` is
+    /// offered from the first turn, and a call on it reports the connection state instead of
+    /// failing. Called before the background connects start.
+    pub fn expect_servers(&self) {
+        self.inner.servers_expected.store(true, Ordering::Relaxed);
+    }
+
+    /// True when any MCP server is configured for this engine, connected or not.
+    pub fn expected(&self) -> bool {
+        self.inner.servers_expected.load(Ordering::Relaxed)
+    }
+
+    /// Return the list of tools that were loaded via `McpTools`.
+    pub fn loaded(&self) -> Vec<String> {
+        self.inner.loaded.lock().unwrap().clone()
+    }
+
+    /// Restore tools that were previously loaded via `McpTools`.
+    /// This is called when resuming a session to restore the loaded tools.
+    pub fn restore_loaded(&self, tools: &[String]) {
+        let mut loaded = self.inner.loaded.lock().unwrap();
+        loaded.clear();
+        loaded.extend(tools.iter().cloned());
     }
 
     pub fn status(&self) -> Vec<ServerStatus> {
@@ -586,10 +631,11 @@ impl Hub {
     }
 
     /// True when there are too many tools to send them all; the model loads them through
-    /// `McpTools`.
+    /// `McpTools`. Also true while servers are configured but not yet connected: the search
+    /// tool is offered regardless, and the catalog fills in once they are.
     pub fn deferred(&self) -> bool {
         let n = self.catalog().len();
-        n > DEFER_OVER || (n > 0 && self.compact())
+        n > DEFER_OVER || (n > 0 && self.compact()) || (n == 0 && self.expected())
     }
 
     /// For a model with a small window: server instructions and every tool schema stay out of
@@ -687,6 +733,24 @@ impl Hub {
     fn search(&self, input: &Value) -> Result<Output> {
         let query = input["query"].as_str().unwrap_or("").trim().to_lowercase();
         let catalog = self.catalog();
+        // Servers are configured but none has connected yet (still connecting, or all failed):
+        // say so instead of a misleading "no match".
+        if catalog.is_empty() && self.expected() {
+            let failed = self.inner.failed.read().unwrap();
+            if !failed.is_empty() {
+                let summary = failed
+                    .iter()
+                    .map(|f| format!("`{}` ({})", f.name, f.error.as_deref().unwrap_or("failed")))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Ok(Output::text(format!(
+                    "No MCP tools are available: {summary}. Try again once the server is reachable."
+                )));
+            }
+            return Ok(Output::text(
+                "MCP servers are still connecting; call `McpTools` again in a moment.",
+            ));
+        }
         let picked: Vec<&Entry> = if let Some(names) = query.strip_prefix("select:") {
             let want: Vec<&str> = names.split(',').map(str::trim).collect();
             catalog
@@ -1356,6 +1420,45 @@ mod tests {
             "mcp__git_hub__list_issues"
         );
         assert!(exposed_name(&"s".repeat(80), "t").len() <= 64);
+    }
+
+    /// Merging a reconnecting server's delta into a live hub keeps the tools the session had
+    /// loaded, so they're offered again as soon as the server's catalog is back — no new
+    /// `McpTools` call needed.
+    #[test]
+    fn a_reconnecting_server_keeps_its_loaded_tools() {
+        let host = Host::headless(Path::new("."));
+        let live = Hub {
+            inner: Arc::new(Inner {
+                servers: RwLock::new(BTreeMap::new()),
+                failed: RwLock::new(Vec::new()),
+                host: host.clone(),
+                loaded: Mutex::new(vec!["mcp__slow__ping".into()]),
+                preloaded: BTreeSet::new(),
+                compact: AtomicBool::new(false),
+                servers_expected: AtomicBool::new(true),
+            }),
+        };
+        // While the server is down the selection still counts as deferred: the search tool
+        // stays offered.
+        assert!(live.deferred());
+        assert_eq!(live.specs().first().map(|s| s.name.to_string()), Some("McpTools".into()));
+
+        // A fresh delta (the server reconnected) merges in; the delta has no loaded tools.
+        let delta = Hub {
+            inner: Arc::new(Inner {
+                servers: RwLock::new(BTreeMap::new()),
+                failed: RwLock::new(Vec::new()),
+                host,
+                loaded: Mutex::new(Vec::new()),
+                preloaded: BTreeSet::new(),
+                compact: AtomicBool::new(false),
+                servers_expected: AtomicBool::new(true),
+            }),
+        };
+        live.merge(delta);
+        assert_eq!(live.loaded(), ["mcp__slow__ping"]);
+        assert!(live.deferred());
     }
 
     #[test]

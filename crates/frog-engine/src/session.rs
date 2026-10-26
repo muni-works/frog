@@ -107,6 +107,10 @@ pub enum Record {
     RepoMap {
         map: crate::repomap::Map,
     },
+    /// MCP tools that were loaded via `McpTools` and should be restored on resume.
+    LoadedTools {
+        tools: Vec<String>,
+    },
 }
 
 fn path(dir: &Path, id: &str) -> PathBuf {
@@ -233,6 +237,8 @@ pub struct Loaded {
     pub checkpoints: Vec<(u64, PathBuf, String)>,
     /// The repo map last sent, if one was logged.
     pub repo_map: Option<crate::repomap::Map>,
+    /// MCP tools that were loaded via `McpTools` and should be restored on resume.
+    pub loaded: Vec<String>,
 }
 
 impl Loaded {
@@ -285,6 +291,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
     let mut snapshots = Vec::new();
     let mut checkpoints = Vec::new();
     let mut repo_map = None;
+    let mut loaded: Vec<String> = Vec::new();
     for r in records {
         match r {
             Record::Header(_) => bail!("session {id} has a second header"),
@@ -299,6 +306,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
             Record::Checkpoint { turn, root, commit } => checkpoints.push((turn, root, commit)),
             Record::Reset { messages: m } => messages = m,
             Record::RepoMap { map } => repo_map = Some(map),
+            Record::LoadedTools { tools } => loaded = tools,
         }
     }
     Ok(Loaded {
@@ -308,6 +316,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
         snapshots,
         checkpoints,
         repo_map,
+        loaded,
     })
 }
 

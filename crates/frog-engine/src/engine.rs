@@ -726,6 +726,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             agent.emit_status();
         }
         agent.connect_mcp();
+        // Restore MCP tools that were loaded in a previous session
+        if !agent.loaded_tools.is_empty() {
+            agent.mcp.restore_loaded(&agent.loaded_tools);
+            agent.loaded_tools.clear();
+        }
         agent.resolve_window().await;
         agent.note_text_mode_from_probe();
         agent.emit_status();
@@ -1240,6 +1245,8 @@ struct Agent {
     mcp_pending: Option<tokio::sync::mpsc::UnboundedReceiver<(String, crate::mcp::Hub)>>,
     /// Completed MCP deltas queued until the next turn boundary.
     mcp_ready_queue: Vec<(String, crate::mcp::Hub)>,
+    /// MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
+    loaded_tools: Vec<String>,
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
     skills_loaded: HashSet<String>,
@@ -1352,6 +1359,8 @@ impl Agent {
         // it, rather than silently reverting to whatever the flags say — the picker and the
         // engine must agree on the effective mode.
         let mut resumed_mode = None;
+        // MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
+        let mut loaded_tools: Vec<String> = Vec::new();
         let mut resumed_titled = false;
         let mut resumed_model: Option<String> = None;
         let mut resumed_chapters = crate::chapter::Tracker::default();
@@ -1362,6 +1371,7 @@ impl Agent {
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let (seq, turn) = (l.last_seq(), l.last_turn());
                 resumed_map = l.repo_map.clone();
+                loaded_tools = l.loaded;
                 resumed_chapters = crate::chapter::Tracker::from_events(&l.events);
                 let inputs = l
                     .events
@@ -1520,6 +1530,7 @@ impl Agent {
             mcp: crate::mcp::Hub::empty(),
             mcp_pending: None,
             mcp_ready_queue: Vec::new(),
+            loaded_tools,
             skills,
             skills_loaded: HashSet::new(),
             memory,
@@ -3417,6 +3428,8 @@ Not saved: the next session starts on {from} again"
         if servers.is_empty() {
             return;
         }
+        // Mark that MCP servers are configured, so McpTools is offered even before they connect
+        self.mcp.expect_servers();
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let emit = {
             let journal = self.shared.journal.clone();
@@ -3878,7 +3891,17 @@ Not saved: the next session starts on {from} again"
         }
         if self.mcp.handles(name) {
             let hub = self.mcp.clone();
-            return hub.call(id, name, input).await;
+            let out = hub.call(id, name, input).await;
+            // Record loaded tools if McpTools was called
+            if name == crate::mcp::SEARCH_TOOL {
+                if out.is_ok() {
+                    let loaded = hub.loaded();
+                    if !loaded.is_empty() {
+                        self.record(crate::session::Record::LoadedTools { tools: loaded });
+                    }
+                }
+            }
+            return out;
         }
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         self.ctx.progress = Some(tx);
@@ -8631,6 +8654,8 @@ for line in sys.stdin:
              "instructions": "SLOW_MCP_READY: call `ping` to check in."}}
     elif m["method"] == "tools/list":
         r = {{"tools": json.loads('{tools}')}}
+    elif m["method"] == "tools/call":
+        r = {{"content": [{{"type": "text", "text": "SLOW_MCP_PINGED"}}]}}
     else:
         r = {{}}
     print(json.dumps({{"jsonrpc": "2.0", "id": m["id"], "result": r}}), flush=True)
@@ -8771,6 +8796,161 @@ for line in sys.stdin:
         let sent = sent.lock().unwrap().clone();
         assert_eq!(sent.len(), 2);
         assert!(sent[1].contains("SLOW_MCP_READY"), "MCP never joined");
+    }
+
+    /// A server listing enough tools that loading goes through `McpTools` (`DEFER_OVER`),
+    /// staying down until the gate file exists.
+    fn deferred_server_gated(dir: &Path, gate: Option<&Path>) {
+        let names: Vec<String> = (0..45).map(|i| format!("tool{i}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        mcp_server_gated(dir, 0.0, &refs, gate);
+    }
+
+    fn mcp_use(id: &str, name: &str, input: serde_json::Value) -> Block {
+        Block::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }
+    }
+
+    /// Tool names the model was offered, in order, from the last sent request.
+    fn offered_tools(sent: &[String]) -> Vec<String> {
+        let last = sent.last().cloned().unwrap_or_default();
+        last.match_indices("<tool ")
+            .map(|(i, _)| last[i + 6..].split('>').next().unwrap().to_string())
+            .collect()
+    }
+
+    /// Submit without waiting for an `Idle` first (the engine is already idle), and collect
+    /// through the next one.
+    async fn run_now(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
+        h.ops
+            .send(Op::Submit {
+                text: prompt.into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut out = Vec::new();
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let idle = matches!(env.event, Event::Idle);
+            out.push(env);
+            if idle {
+                return out;
+            }
+        }
+    }
+
+    /// Wait for the next `Status` (an idle engine only emits one when an MCP server's
+    /// connection attempt lands).
+    async fn next_status(h: &mut Handle) {
+        loop {
+            if matches!(h.events.recv().await.unwrap().event, Event::Status(_)) {
+                return;
+            }
+        }
+    }
+
+    /// Loading a tool through `McpTools` survives an engine respawn: the resumed session's
+    /// first turn offers `McpTools` and the loaded tool again, and the loaded tool runs
+    /// without a new `McpTools` call.
+    #[tokio::test]
+    async fn loaded_mcp_tools_survive_an_engine_respawn() {
+        let dir = tmp_store();
+        // The server stays down until the gate file exists, so the session starts (and turn 1
+        // runs) with zero tools connected.
+        let gate = dir.join("mcp.gate");
+        deferred_server_gated(&dir, Some(&gate));
+        let select = mcp_use("r1", "McpTools", json!({"query": "select:mcp__slow__tool7"}));
+        let call7 = mcp_use("r2", "mcp__slow__tool7", json!({}));
+        let script = vec![
+            // Turn 1, before the server connects: McpTools is still offered, and a call on it
+            // says the servers are connecting rather than failing as unknown.
+            reply(vec![select.clone()], Stop::ToolUse),
+            reply(vec![text("waiting then")], Stop::End),
+            // Turn 2, after the server connects: load the tool, call it, end the turn.
+            reply(vec![select], Stop::ToolUse),
+            reply(vec![call7], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+            // After the respawn: the loaded tool directly, no McpTools call.
+            reply(vec![text("resumed ok")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, Some(dir.clone()), None, None, dir.clone());
+        h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+        while !matches!(h.events.recv().await.unwrap().event, Event::ModeChanged { .. }) {}
+        let evs = run(&mut h, "check in over MCP").await;
+        let outs = tool_outputs(&evs);
+        assert!(
+            outs.iter()
+                .any(|o| o.contains("MCP servers are still connecting")),
+            "McpTools didn't report the pending connection: {outs:?}"
+        );
+        // The server comes up; the idle engine says so with a Status.
+        std::fs::write(&gate, "").unwrap();
+        next_status(&mut h).await;
+        let evs = run_now(&mut h, "load and call it").await;
+        let outs = tool_outputs(&evs);
+        assert!(
+            outs.iter().any(|o| o.contains("Loaded these tools")),
+            "McpTools didn't load the tool: {outs:?}"
+        );
+        assert!(
+            evs.iter().any(|e| matches!(&e.event,
+                Event::ItemCompleted { item: Item::ToolCall { name, outcome: ToolOutcome::Ok, .. }, .. } if name == "mcp__slow__tool7")),
+            "the loaded tool didn't run: {outs:?}"
+        );
+        let sid = evs[0].session.clone();
+        shutdown(h).await;
+        // The selection is in the session log.
+        let loaded = session::load(&dir, &sid).unwrap().loaded;
+        assert_eq!(loaded, ["mcp__slow__tool7"]);
+
+        // A fresh engine (the app respawned it) resumes the same session: the loaded tool is
+        // in the first turn's tool list and runs.
+        let script = vec![
+            reply(vec![mcp_use("r3", "mcp__slow__tool7", json!({}))], Stop::ToolUse),
+            reply(vec![text("resumed ok")], Stop::End),
+        ];
+        let (mut h, sent) = engine_sent(script, Some(dir.clone()), Some(sid), None, dir);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        next_status(&mut h).await;
+        let evs = run_now(&mut h, "and again").await;
+        let tools = offered_tools(&sent.lock().unwrap());
+        assert!(
+            tools.contains(&"McpTools".to_string()),
+            "McpTools wasn't offered after the respawn: {tools:?}"
+        );
+        assert!(
+            tools.contains(&"mcp__slow__tool7".to_string()),
+            "the loaded tool wasn't restored on resume: {tools:?}"
+        );
+        assert!(
+            evs.iter().any(|e| matches!(&e.event,
+                Event::ItemCompleted { item: Item::ToolCall { name, outcome: ToolOutcome::Ok, .. }, .. } if name == "mcp__slow__tool7")),
+            "the restored tool didn't run"
+        );
+        shutdown(h).await;
+    }
+
+    /// With a server configured but not yet connected, `McpTools` is still offered from the
+    /// first turn (the search tool never depends on a connection having finished).
+    #[tokio::test]
+    async fn mcp_tools_is_offered_before_any_server_connects() {
+        let dir = tmp_store();
+        // The server stays down until the gate file exists, so turn 1 runs with zero tools.
+        let gate = dir.join("mcp.gate");
+        mcp_server_gated(&dir, 0.0, &["ping"], Some(&gate));
+        let script = vec![reply(vec![text("done")], Stop::End)];
+        let (mut h, sent) = engine_sent(script, None, None, None, dir);
+        run(&mut h, "first").await;
+        let tools = offered_tools(&sent.lock().unwrap());
+        assert!(
+            tools.contains(&"McpTools".to_string()),
+            "McpTools wasn't offered before the server connected: {tools:?}"
+        );
+        shutdown(h).await;
     }
 
     #[tokio::test]
