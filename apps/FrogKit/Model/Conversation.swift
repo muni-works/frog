@@ -95,6 +95,10 @@ final class Conversation {
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     /// Cloud fallback is important enough to stay visible above the composer for the turn.
     private(set) var fallbackNotice: String?
+    /// The context overflowed and compaction failed (the engine's `compaction_failed`): the
+    /// session can't go on as it is. True until the rescue op is answered — one line with a
+    /// "start a carried-forward session" action until then.
+    private(set) var overflowRescue = false
     /// Messages sent while a turn was running; they go out in order as the engine frees up.
     private(set) var queue: [Queued] = []
 
@@ -532,6 +536,36 @@ final class Conversation {
         link?.send(.compact(focus: nil))
     }
 
+    /// The rescue for a context that overflowed and couldn't be compacted: start a new
+    /// session carried forward from this one. The op goes to the engine (it logs the ask);
+    /// the client that knows how to carry forward — the Mac's `SessionBroker`, installed as
+    /// `Conversation.rescues` — starts the session with this one's structured summary as its
+    /// opening context and answers with `rescueAnswered`.
+    func startCarriedForward() {
+        guard overflowRescue else { return }
+        let id = sessionID ?? ""
+        link?.send(.continueSession(from: id, why: "the context overflowed and compaction failed"))
+        if let rescue = Self.rescues {
+            rescue(self, id)
+        } else {
+            rescueAnswered(from: "no session host (this build can't start sessions)", started: false)
+        }
+    }
+
+    /// The broker's answer to the rescue op: the carried-forward session is open (`from` is
+    /// its id), or why it couldn't be. One line either way; the old session is done.
+    func rescueAnswered(from: String, started: Bool) {
+        guard overflowRescue else { return }
+        overflowRescue = false
+        note(started
+             ? "carried forward into a new session (\(from))"
+             : "couldn't start a carried-forward session: \(from)", warning: !started)
+    }
+
+    /// Carries out a rescue's carried-forward start (the Mac's `SessionBroker`); it answers by
+    /// calling `rescueAnswered` on the conversation. Without one, the rescue line stays.
+    @ObservationIgnored static var rescues: ((Conversation, String) -> Void)?
+
     /// Let the engine go. `reason` is logged with its exit (pane closed, background idle…).
     func stop(reason: String = "unspecified") {
         stopping = true
@@ -817,6 +851,10 @@ final class Conversation {
             } else if level == "warn" { note(message, warning: true) } else { show(message) }
         case .error(let e):
             note(e.description, warning: true)
+        case .compactionFailed:
+            // The raw provider payload is in the engine log, never here: one line and a way
+            // out. The rescue action (the banner's button) sends the op.
+            overflowRescue = true
         case .compacted(let before, let after):
             note("Summarized the conversation to save context (\(before.tokens) → \(after.tokens) tokens)", warning: false)
         case .contextPruned(let n, let before, let after):

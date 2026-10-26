@@ -1347,6 +1347,14 @@ extension SessionBroker {
         }
         starter = { [unowned self] req, parent in try await start(req, parent: parent) }
         Conversation.sessionRequests = { [unowned self] c, r in handle(r, from: c) }
+        // TODO(item 3, carried forward): the rescue op's broker half — start a session whose
+        // opening context is `from`'s structured Summary (files w/ +/−, turns with requests
+        // and outcomes, tests run) plus "continued from <from>" lineage, then
+        // `c.rescueAnswered(from: <new id>, started: true)`. Until then the op emission and
+        // the one-line render are live; pressing the button answers "couldn't start" honestly.
+        Conversation.rescues = { c, from in
+            c.rescueAnswered(from: "not wired yet (item 3)", started: false)
+        }
         Conversation.userActivity = { [unowned self] c in if let id = c.sessionID { userActivity(id) } }
         parentOf = { id in Library.shared.parents[id] }
         Conversation.permissionRequests = { [unowned self] c, req in

@@ -111,6 +111,34 @@ struct NoticeView: View {
     }
 }
 
+/// Compaction failed and the history can't fit the window (the engine's `compaction_failed`):
+/// one line and a way out. The raw provider payload is in the engine log, never the
+/// transcript. Styled like the degraded-mode badge: small, warm, lowercase.
+struct OverflowRescueView: View {
+    let conversation: Conversation
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").imageScale(.small)
+            Text("compaction failed")
+                .fontWeight(.medium)
+            Button {
+                conversation.startCarriedForward()
+            } label: {
+                Text("start a carried-forward session")
+                    .underline()
+            }
+            .buttonStyle(.plain)
+        }
+        .font(.caption)
+        .foregroundStyle(.orange)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(.orange.opacity(0.14), in: .capsule)
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+}
+
 struct ToolCallView: View {
     @Environment(\.pinsQuestions) private var pinsQuestions
     let name: String

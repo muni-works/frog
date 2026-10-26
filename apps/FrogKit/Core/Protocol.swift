@@ -58,6 +58,10 @@ let SUSPENDED_NOTE =
     "<resumed after the app updated; your previous turn was suspended; continue>"
 
 enum Op: Encodable, Sendable {
+    /// The rescue for a session whose context overflowed and compaction failed: start a
+    /// carried-forward session (its structured summary as the opening context, lineage from
+    /// `from`). The client that can host sessions carries it out.
+    case continueSession(from: String, why: String)
     /// `more`: further messages sent with this one (queued follow-ups), run as the same turn.
     case submit(String, images: [ToolImage] = [], more: [MessagePart] = [])
     case shell(String)
@@ -117,7 +121,7 @@ enum Op: Encodable, Sendable {
 
     private enum Key: String, CodingKey {
         case op, text, command, id, decision, mode, spec, focus, after, title
-        case action, content, server, tool, arguments, images
+        case action, content, server, tool, arguments, images, why
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
         case ask, choices, other, label, send, note, sessions, from, fromName = "from_name", more
         case deadline
@@ -159,6 +163,10 @@ enum Op: Encodable, Sendable {
         case .compact(let focus):
             try c.encode("compact", forKey: .op)
             try c.encode(focus, forKey: .focus)
+        case .continueSession(let from, let why):
+            try c.encode("continue_session", forKey: .op)
+            try c.encode(from, forKey: .from)
+            try c.encode(why, forKey: .why)
         case .subscribe(let after):
             try c.encode("subscribe", forKey: .op)
             try c.encode(after, forKey: .after)
@@ -681,6 +689,10 @@ enum Event: Decodable, Sendable {
     case itemsDiscarded(ids: [String])
     case permissionResolved(id: String, decision: Decision)
     case compacted(tokensBefore: UInt64, tokensAfter: UInt64)
+    /// Compaction failed and the history can't fit the window: the session is stuck; the
+    /// rescue is `Op.continueSession` (a carried-forward session). The raw payload is in the
+    /// engine log, never the transcript.
+    case compactionFailed(detail: String)
     case contextPruned(results: Int, tokensBefore: UInt64, tokensAfter: UInt64)
     case modelChanged(String)
     /// The conversation moved to another folder (the agent's `UseFolder`).
@@ -763,7 +775,7 @@ struct Envelope: Decodable, Sendable {
 extension Event {
     private enum Key: String, CodingKey {
         case event
-        case turn, input, reason, usage, id, kind, item, delta, decision, ids
+        case turn, input, reason, usage, id, kind, item, delta, decision, ids, detail
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
         case layer, outcome, ms
@@ -809,6 +821,8 @@ extension Event {
             self = .compacted(
                 tokensBefore: try c.decode(UInt64.self, forKey: .tokensBefore),
                 tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter))
+        case "compaction_failed":
+            self = .compactionFailed(detail: try c.decodeIfPresent(String.self, forKey: .detail) ?? "")
         case "context_pruned":
             self = .contextPruned(
                 results: try c.decode(Int.self, forKey: .results),

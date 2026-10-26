@@ -352,6 +352,10 @@ struct TranscriptView: View {
                         .textSelection(.enabled)
                         .padding(.top, space.betweenTurns)
                 }
+                if conversation.overflowRescue {
+                    OverflowRescueView(conversation: conversation)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
                 Color.clear.frame(height: space.betweenTurns).id(Self.end)
             }
             .scrollTargetLayout()
