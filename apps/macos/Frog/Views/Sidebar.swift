@@ -275,7 +275,8 @@ struct SessionList: View {
     /// the rows on screen.
     static func attention(_ library: Library, sort: Sort, scope: AttentionTree.Scope, current: String?,
                           openDone: Set<String> = [], collapsed: Set<String> = [],
-                          query: String = "") -> (layout: AttentionTree.Layout, folds: [String: SessionFolds.Fold]) {
+                          query: String = "") -> (layout: AttentionTree.Layout, folds: [String: SessionFolds.Fold],
+                                                  parentOf: [String: String], heads: [SessionInfo]) {
         var active = library.sessions.filter { !library.archived.contains($0.id) }
         var scope = scope
         if !query.isEmpty {
@@ -311,7 +312,7 @@ struct SessionList: View {
             openDone: openDone,
             keep: current.map { [alias[$0] ?? $0] } ?? [],
             collapsed: collapsed)
-        return (layout, Dictionary(folds.map { ($0.session.id, $0) }, uniquingKeysWith: { a, _ in a }))
+        return (layout, Dictionary(folds.map { ($0.session.id, $0) }, uniquingKeysWith: { a, _ in a }), parentOf, heads)
     }
 
     /// `before`, without the view.
@@ -331,6 +332,8 @@ struct SessionList: View {
         let q = needle
         let built = Self.attention(library, sort: sort, scope: scope, current: current,
                                    openDone: openDone, collapsed: collapsedParents, query: q)
+        let git = GitTreeBadges.build(built.layout.org + built.layout.yours, heads: built.heads, parentOf: built.parentOf,
+                                      folds: built.folds, chief: library.chief, state: rowState) { open($0) }
         if q.isEmpty || library.chiefSession.map({ AttentionTree.matches($0, q) }) == true {
             chiefTile
         }
@@ -346,13 +349,13 @@ struct SessionList: View {
         // Searching filters the tree in place (scope set aside): matches keep their ancestors.
         if !built.layout.org.isEmpty {
             treeLabel("Org") { if q.isEmpty { scopePicker } }
-            treeEntries(built.layout.org, folds: built.folds, highlight: q)
+            treeEntries(built.layout.org, folds: built.folds, git: git, highlight: q)
         }
         if !built.layout.yours.isEmpty {
             treeLabel("Yours") {
                 if q.isEmpty, built.layout.org.isEmpty { scopePicker }
             }
-            treeEntries(built.layout.yours, folds: built.folds, highlight: q)
+            treeEntries(built.layout.yours, folds: built.folds, git: git, highlight: q)
         }
         if !q.isEmpty {
             let archived = archiveMatches(q)
@@ -420,7 +423,7 @@ struct SessionList: View {
     }
 
     private func treeEntries(_ entries: [SessionNesting.Entry], folds: [String: SessionFolds.Fold],
-                             highlight: String = "") -> some View {
+                             git: GitTreeBadges, highlight: String = "") -> some View {
         ForEach(entries) { entry in
             switch entry {
             case .row(let s, let depth, let counts, let collapsed):
@@ -428,14 +431,15 @@ struct SessionList: View {
                     session: s, depth: depth, counts: counts, collapsed: collapsed,
                     state: rowState(s), selected: s.id == current,
                     pinned: library.pinned.contains(s.id), pane: paneNumbers[s.id], highlight: highlight,
-                    onToggle: { toggleNode(s.id, collapsed: collapsed, counts: counts) }
-                ) { open(s) } menu: { rowMenu(s, older: folds[s.id]?.older ?? []) }
+                    onToggle: { toggleNode(s.id, collapsed: collapsed, counts: counts) },
+                    git: git.rows[s.id]
+                ) { open(s) } menu: { rowMenu(s, older: folds[s.id]?.older ?? [], git: git.rows[s.id]) }
                 if let c = library.conversation(s.id), !collapsed {
                     // Its own view: only it watches the conversation's turns as they stream.
                     SessionAgents(conversation: c, depth: depth + 1) { open(s) }
                 }
             case .done(let parent, let depth, let count, let failed, let open):
-                foldRow(parent: parent, depth: depth, count: count, failed: failed, open: open)
+                foldRow(parent: parent, depth: depth, count: count, failed: failed, open: open, git: git.folds[parent])
             }
         }
     }
@@ -454,29 +458,37 @@ struct SessionList: View {
     }
 
     /// Settled work folded into one line: "18 done · 1 failed", "12 earlier", "4 done by chief".
-    private func foldRow(parent: String, depth: Int, count: Int, failed: Int, open: Bool) -> some View {
+    private func foldRow(parent: String, depth: Int, count: Int, failed: Int, open: Bool,
+                         git: GitRowBadge? = nil) -> some View {
         let what = parent == AttentionTree.chiefFold ? "done by chief"
             : scope == .today && parent != AttentionTree.yoursFold ? "earlier" : "done"
-        return Button { toggleDone(parent) } label: {
-            HStack(spacing: 0) {
-                Color.clear.frame(width: AttentionMetrics.leading(depth))
-                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
-                    .rotationEffect(.degrees(open ? 90 : 0))
-                    .frame(width: AttentionMetrics.disclosure)
-                Text("\(count) \(what)")
-                if failed > 0 {
-                    Text(" · \(failed) failed").foregroundStyle(.red.opacity(0.8))
+        return HStack(spacing: 0) {
+            Button { toggleDone(parent) } label: {
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: AttentionMetrics.leading(depth))
+                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                        .frame(width: AttentionMetrics.disclosure)
+                    Text("\(count) \(what)")
+                    if failed > 0 {
+                        Text(" · \(failed) failed").foregroundStyle(.red.opacity(0.8))
+                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 4)
+                .frame(height: 22)
+                .contentShape(.rect)
             }
-            .font(.system(size: 11))
-            .foregroundStyle(.tertiary)
-            .padding(.leading, 4)
-            .frame(height: 22)
-            .contentShape(.rect)
+            .buttonStyle(.plain)
+            .help(open ? "Hide finished sessions" : "Show \(count) finished session\(count == 1 ? "" : "s")")
+            // Did the finished work land? The fold's sum, without opening it.
+            if let git {
+                GitBadgeView(display: git.display, muted: true, help: git.help, card: git.card)
+                    .padding(.trailing, 26)
+            }
         }
-        .buttonStyle(.plain)
-        .help(open ? "Hide finished sessions" : "Show \(count) finished session\(count == 1 ? "" : "s")")
     }
 
     // MARK: Tabs
@@ -963,7 +975,7 @@ struct SessionList: View {
     }
 
     @ViewBuilder
-    private func rowMenu(_ s: SessionInfo, older: [SessionInfo] = []) -> some View {
+    private func rowMenu(_ s: SessionInfo, older: [SessionInfo] = [], git: GitRowBadge? = nil) -> some View {
         if let openInSplit, paneNumbers[s.id] == nil {
             Button("Open in New Pane") { openInSplit(s) }
             Divider()
@@ -990,6 +1002,10 @@ struct SessionList: View {
         }
         if let folder = s.folder, !s.isChat {
             Button("Reveal Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+        }
+        // The network, for badges, only from here or the card: fetch the base, ask GitHub.
+        if let card = git?.card {
+            Button("Refresh Git") { card.refresh() }
         }
         if s.id == current {
             Button("Session Tree…") { showTree = true }

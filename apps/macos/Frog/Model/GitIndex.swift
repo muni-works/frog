@@ -88,9 +88,34 @@ final class GitIndex {
 
     /// The badge for `session`'s tree; nil for no git (or not read yet).
     func badge(_ session: SessionInfo) -> GitBadge? {
+        #if DEBUG
+        if let staged { return staged.badges[session.id].flatMap { badges[$0.tree] } }
+        #endif
         guard let top = sessionTree[session.id] else { return nil }
         return badges[top]
     }
+
+    #if DEBUG
+    /// Snapshot tests: badges by session id, and the card every row shows.
+    @ObservationIgnored private var staged: (badges: [String: GitBadge], card: Card?)?
+
+    func stage(_ bySession: [String: GitBadge], card: Card? = nil, stats: [String: GitParse.DiffStat] = [:],
+               commits: [String: [Commit]] = [:]) {
+        staged = (bySession, card)
+        badges = Dictionary(bySession.values.map { ($0.tree, $0) }, uniquingKeysWith: { a, _ in a })
+        self.stats = stats
+        self.commits = commits
+    }
+
+    func unstage() {
+        staged = nil
+        badges = [:]
+        stats = [:]
+        commits = [:]
+    }
+
+    var stagedCard: Card? { staged?.card }
+    #endif
 
     /// A row is on screen: read its tree's status if it hasn't been (at most once a minute).
     func wantStatus(_ session: SessionInfo) {
@@ -204,18 +229,30 @@ final class GitIndex {
         }
     }
 
-    /// Explicit refresh (the row menu, the hover card): fetch the base, re-read the repo, and
-    /// ask gh about this tree's branch. The only place frog reaches the network for badges.
-    func refreshFromRemote(_ session: SessionInfo) {
-        guard let top = sessionTree[session.id], let t = trees[top], let repo = repos[t.ref.common] else { return }
-        let base = repo.base, dir = top, common = t.ref.common
-        let branch = Self.headFile(t.ref).branch
+    /// Explicit refresh (the row menu, the hover card): fetch each repo's base once, re-read
+    /// them, and (for one session's card) ask gh about its branch. The only place frog reaches
+    /// the network for badges.
+    func refreshFromRemote(_ sessions: [SessionInfo], askGitHub: Bool) {
+        var tops: [String] = []
+        for s in sessions { if let top = sessionTree[s.id], !tops.contains(top) { tops.append(top) } }
+        var fetched: Set<String> = []
+        for top in tops {
+            guard let t = trees[top], let repo = repos[t.ref.common] else { continue }
+            let fetch = fetched.insert(t.ref.common).inserted
+            guard fetch || askGitHub else { enqueueStatus(top); continue }
+            refresh(top, ref: t.ref, base: repo.base, fetch: fetch, askGitHub: askGitHub && tops.count == 1)
+        }
+    }
+
+    private func refresh(_ top: String, ref: TreeRef, base: String?, fetch: Bool, askGitHub: Bool) {
+        let dir = top, common = ref.common
+        let branch = Self.headFile(ref).branch
         Task {
             let pr = await Task.detached(priority: .userInitiated) { () -> (tip: String, n: Int)? in
-                if let base, let slash = base.firstIndex(of: "/") {
+                if fetch, let base, let slash = base.firstIndex(of: "/") {
                     _ = Self.git(dir, ["fetch", "--quiet", String(base[..<slash]), String(base[base.index(after: slash)...])], timeout: 30)
                 }
-                guard let branch, let gh = Self.gh(),
+                guard askGitHub, let branch, let gh = Self.gh(),
                       let out = Self.run(gh, ["pr", "view", branch, "--json", "number,state,headRefOid"], in: dir, timeout: 15),
                       let json = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any],
                       json["state"] as? String == "MERGED", let n = json["number"] as? Int,
@@ -438,6 +475,7 @@ final class GitIndex {
         var env = ProcessInfo.processInfo.environment
         env["GIT_OPTIONAL_LOCKS"] = "0"
         env["GIT_TERMINAL_PROMPT"] = "0"
+        if env["GIT_SSH_COMMAND"] == nil { env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes" }
         p.environment = env
         let pipe = Pipe()
         p.standardOutput = pipe
@@ -488,12 +526,12 @@ extension GitIndex {
         var id: String
         var title: String
         /// The session's title, when the pull request's differs.
-        var session: String?
-        var slug: String?
-        var pr: Int?
-        var sha: String?
-        var url: URL?
-        var statKey: String?
+        var session: String? = nil
+        var slug: String? = nil
+        var pr: Int? = nil
+        var sha: String? = nil
+        var url: URL? = nil
+        var statKey: String? = nil
         var date: Date
     }
 
@@ -501,13 +539,13 @@ extension GitIndex {
     struct Pending: Identifiable, Equatable {
         var id: String
         var title: String
-        var branch: String?
+        var branch: String? = nil
         var ahead: Int
-        var statKey: String?
-        var commitsKey: String?
-        var url: URL?
-        var trouble: GitBadge.Trouble?
-        var dirty: Int?
+        var statKey: String? = nil
+        var commitsKey: String? = nil
+        var url: URL? = nil
+        var trouble: GitBadge.Trouble? = nil
+        var dirty: Int? = nil
     }
 
     struct Card: Equatable {
@@ -521,6 +559,9 @@ extension GitIndex {
     /// The card for `sessions` (a group's subtree, or one session): landed newest first, then
     /// what hasn't landed, most ahead first. Built from the index alone; stats load lazily.
     func card(_ sessions: [SessionInfo], landedLimit: Int = 8, pendingLimit: Int = 5) -> Card {
+        #if DEBUG
+        if let c = stagedCard { return c }
+        #endif
         var byTree: [String: SessionInfo] = [:]
         for s in sessions {
             guard let top = sessionTree[s.id], badges[top] != nil else { continue }

@@ -31,6 +31,8 @@ struct TreeRow<Menu: View>: View {
     /// Top-level rows show their monogram; a flat list (archive matches) doesn't.
     var monogram = true
     var onToggle: (() -> Void)? = nil
+    /// Its git badge (its own tree, or its subtree's sum), when there's one to show.
+    var git: GitRowBadge? = nil
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
     @State private var hovering = false
@@ -64,6 +66,9 @@ struct TreeRow<Menu: View>: View {
         .contextMenu { menu() }
         .paneDraggable(.session(session), title: session.displayTitle)
         .help(helpText)
+        // A row on screen asks for its tree's status (queued off the main thread, at most once
+        // a minute); drawing it never runs git.
+        .task(id: session.id) { GitIndex.shared.wantStatus(session) }
     }
 
     @ViewBuilder
@@ -120,6 +125,9 @@ struct TreeRow<Menu: View>: View {
     @ViewBuilder
     private var trailing: some View {
         HStack(spacing: 6) {
+            if let git {
+                GitBadgeView(display: git.display, muted: !liveUnder && !selected, help: git.help, card: git.card)
+            }
             if let pane {
                 Text("\(pane)").font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary).help("In pane \(pane)")
