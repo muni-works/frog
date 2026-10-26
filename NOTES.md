@@ -1,37 +1,55 @@
-# ci-green — notes
+# stale-session-id — notes
 
-Branch frog/ci-green, base a3f1f8f (main). Commit per fix (`git commit -s`), push + PR to main
-(PR #108 Beat 1 waits on green CI). Targets: CARGO_TARGET_DIR=/private/tmp/cig-target,
--derivedDataPath /private/tmp/cig-dd; delete both at the end.
+Branch frog/stale-session-id, base 9478753 (main). Commit per piece (`git commit -s`), never push.
+Edit tool only for Rust source. Engine suite: CARGO_TARGET_DIR=/private/tmp/ssi-target
+cargo test -q -p frog-engine; delete the target dir when done (disk ~12G free).
 
-## Brief (CI run 40375001059 on bd211fd)
-1. macos-app: GitIndex.swift:342:43 "failed to produce diagnostic" — split the expression.
-2. both: bash.rs timeout_still_ends_a_stuck_command — machine-wide `pgrep -f "sleep 30"`.
-3. ubuntu: engine.rs auto_mode_writes_its_own_fresh_temp_scratch_without_a_card — /private/tmp.
+## Brief (from Cam's live session, via the chief)
+A frog session spammed dozens of identical warning rows all night:
+"session won't be saved: creating session 20261026-081219-1b08: File exists (os error 17)",
+one per event, while the turn kept running. Two bugs, one root.
+1. `new_id()` (session.rs:28): salt = counter from a base = `subsec_nanos ^ pid.rotate_left(16)`;
+   `& 0xffff` keeps only the low 16 bits = nanos only — the pid is masked away by the salt mask
+   (pids < 2^16 rotate into bits 16+). So two engines started the same second with similar
+   nanos can mint the same id. Format `YYYYMMDD-HHMMSS-xxxx`, 4 hex chars.
+2. `Log::create` uses `create_new(true)` → on collision `File exists (os error 17)`, once per event
+   (`Journal::record`, engine.rs:393-401): create failure leaves `log=None` (retried next event);
+   append failure drops the log (`*log=None`) and also retries create next event. Either way the
+   turn keeps running, one WARN per durable event, forever, and nothing persists. Subagents
+   (store=None) never log.
+
+## Fix plan (3 pieces, smallest first)
+a. salt: fold the pid into the low 16 bits, e.g. `next.fetch_add(1) ^ (pid & 0xffff)` … keep
+   counter monotonic within a process; keep the format `YYYYMMDD-HHMMSS-xxxx`.
+b. `Log::create` on `AlreadyExists`: try `open()` + flock (`Log::locked` retries 200ms, then
+   errors once — genuinely in use). Take-over must not write a second header: use
+   `append-position > 0` ⇒ existing log (append only), else write header. Skip the header when
+   the file has content, and check for a torn tail? — smallest: skip header iff size>0;
+   a nonzero file always has its first line header already (fold() rejects a second header).
+c. `Journal::record` create failure → set a `dead` flag, emit ONE `Event::Notice` level Warn
+   "session log unavailable, running without persistence"; subsequent appends are silent no-ops.
+   Clear the `dead` flag in `start_session` (new session or Op::Clear retry-fresh). Notice is not
+   durable so emit()'s fallback can't recurse.
+
+## Consumers of the id format (verified)
+- Nothing in-app parses id shape (no DateFormatter/regex/split on id in apps/*); Swift side uses
+  ids opaquely (file lookup `<id>.jsonl` via header/list), `SessionBroker` uses full ids only.
+- Engine: `path()` = `<id>.jsonl`, `live_path` = `<id>.live`, header/list/fork re-home full ids;
+  `fold` rejects a second header (b must not append one).
+- Other `new_id()` callers (tempdirs, image ids, compare tmp) just need uniqueness; keeping
+  shape is fine and preferred.
+
+## Tests (engine, in session.rs + engine.rs test mods)
+1. two `Log::create` same id same dir: drop first log → second create opens (flock take-over),
+   appends without a second header; while held → clean error once.
+2. forced create failure (dir named `<id>.jsonl` in the store): engine emits exactly ONE Warn
+   notice; later durable events append silently (assert no repeated warnings).
+3. salt: fresh salt derivation reads the pid — assert `salt() ^ (pid & 0xffff)`-style test: two
+   ids in one process differ; and expose the salt fn to assert pid mix (unit assert that salt
+   for different pid inputs differs, via a `#[cfg(test)]` helper taking pid).
 
 ## Progress
-- 5ac067e checkpoint 0 · 5ed1f59 GitIndex.swift: local `created` used in its own initializer
-  (self-shadowing → CI Xcode "failed to produce diagnostic"); renamed to madeAt, Self.created,
-  typed intermediates.
-- da298f3 bash tests: sleeper() records the child's own pid in ws/pid; sleeper_gone() polls that
-  exact pid (zombie = gone), replacing machine-wide `pgrep -f "sleep N"` in 4 tests.
-- 0b0e6f2 engine scratch test: std::env::temp_dir() (the rules key on it; /private/tmp is
-  macOS-only).
-- d207539 bash tests: until_sleeping() polls the pid file while polling run — the 300ms fixed
-  sleeps raced the spawn (ws/pid missing → panic). Found by the local run itself.
-- 9eb7538 engine scratch test: project rooted AT the temp dir made scratch in-project, never
-  asked. Project now in its own dir under temp_dir (the case the rule exists for).
-- Verified locally: 5 targeted tests green (2 runs), `** BUILD SUCCEEDED **` for the macOS app
-  (xcodegen + xcodebuild, deleted). Decoy-sleep stress run was denied by the user.
-- Pushed frog/ci-green → PR #109 (ecto/frog, base main). Targets /private/tmp/{cig-target,cig-dd}
-  deleted.
-- Remaining red on #109: InkReveal slow-stream + TranscriptSwitch 400/5000/scroll-up; the set
-  varies run to run on CI (a2e6fc5: 5000 passed). Locally (load ~9) they flake too: 5000 ready
-  432/508 ms vs 250, scroll-up 0 fills 2/7 (jump lands late, keeps following), pass alone 4/4.
-- ece0319: TestRunner.isCI (CI env; workflow sets TEST_RUNNER_CI) → ×4 paint/ready/p50 budgets,
-  jump settle 0.5→2 s, ink test polls catch-up/settle ≤5 s; CI xcodebuild
-  -retry-tests-on-failure -test-iterations 3. Local asserts unchanged. Verified the env reaches
-  the test process ("on CI, budgets ×4.0").
-- CI on ece0319: 400/5000 green; ink + scroll-up still failed all 3 iterations (runner-dependent;
-  -quiet hides the assert text). Next commit: XCTSkipIf(TestRunner.isCI) on those two (local
-  unchanged, scroll-up CI slack reverted as dead). Local: CI mode 4 pass/2 skip, plain mode pass.
+- (checkpoint 0)
+
+## Suite
+- (pending)
