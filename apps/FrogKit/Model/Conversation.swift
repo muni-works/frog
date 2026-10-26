@@ -907,8 +907,12 @@ final class Conversation {
         case .background(let running):
             backgroundRunning = running
         case .backgroundStarted(let id, let kind, let label, let log):
-            jobs[id] = BackgroundJob(id: id, kind: kind, label: label, log: log,
-                                     turn: turns.last?.number, startedAt: at(env))
+            jobs[id] = BackgroundJob(id: id, kind: kind, label: label, log: log)
+            // A background agent's row groups with the turn that started it, and counts its time.
+            if kind == "task" {
+                jobs[id]?.turn = turns.last?.number
+                jobs[id]?.startedAt = at(env)
+            }
         case .backgroundDone(let id, let kind, let status, let summary):
             jobs[id, default: BackgroundJob(id: id, kind: kind, label: "")].status = status
             if kind == "task" {

@@ -437,7 +437,11 @@ extension SnapshotTests {
     /// failed) and waits on a third with a plan; its steps opened; the sidebar's agent rows
     /// while it runs, and the fold once it ends.
     func testRenderAgentsCalm() throws {
-        func env(_ s: String) throws -> Envelope { try JSONDecoder.frog.decode(Envelope.self, from: Data(s.utf8)) }
+        // Sent 42s ago, so the running clocks read like a real run.
+        let created = #""created":\#(UInt64(Date().addingTimeInterval(-42).timeIntervalSince1970 * 1000))"#
+        func env(_ s: String) throws -> Envelope {
+            try JSONDecoder.frog.decode(Envelope.self, from: Data(s.replacingOccurrences(of: #""created":0"#, with: created).utf8))
+        }
         func sub(_ item: String, _ inner: String) -> String {
             #"{"seq":0,"session":"s","created":0,"event":"subagent","item":"\#(item)","inner":\#(inner)}"#
         }
