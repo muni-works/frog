@@ -25,6 +25,10 @@ final class Library {
     @ObservationIgnored private var windows: [ObjectIdentifier: WeakWindow] = [:]
     @ObservationIgnored private var conversations: [String: WeakConversation] = [:]
     @ObservationIgnored private var refreshing: Task<Void, Never>?
+    /// When the last `frog --sessions --all` started. A listing costs about a second of CPU
+    /// with a thousand sessions, and a streaming session asks for one every second.
+    @ObservationIgnored private var lastListed = ContinuousClock.now - .seconds(60)
+    static let listInterval = Duration.seconds(3)
 
     private init() {
         pinned = Set(UserDefaults.standard.stringArray(forKey: "pinnedSessions") ?? [])
@@ -42,18 +46,23 @@ final class Library {
         #endif
         refreshing?.cancel()
         refreshing = Task {
-            try? await Task.sleep(for: .milliseconds(150))
+            let due = lastListed + Self.listInterval - .now
+            try? await Task.sleep(for: max(.milliseconds(150), due))
             guard !Task.isCancelled else { return }
+            lastListed = .now
             let home = FileManager.default.homeDirectoryForCurrentUser
             if let all = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--all", "--json"], cwd: home) {
                 // A conversation whose folder is gone can't be reopened.
                 // Race attempts live in their own worktrees and are shown in the race, not here.
                 // Worker worktrees (`<repo>/.frog/worktrees/`, `<repo>/.claude/worktrees/`) are
                 // shown under their repo (see `Sidebar.home`).
-                sessions = all.filter { s in
+                let listed = all.filter { s in
                     guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/") else { return false }
                     return FileManager.default.fileExists(atPath: cwd)
                 }
+                // Unchanged, it isn't written: every view of the list would rebuild for nothing.
+                guard listed != sessions else { return }
+                sessions = listed
                 archiveQuietChats()
                 RemoteBridge.shared.listChanged()
             }

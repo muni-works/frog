@@ -119,7 +119,7 @@ struct TimelineRail: View {
         case .error: .red
         case .looping, .stepLimit, .maxTokens: .orange
         case .cancelled: .secondary
-        default: TurnParts(t).changes.isEmpty ? .primary : .green
+        default: conversation.changes(of: t).isEmpty ? .primary : .green
         }
     }
 

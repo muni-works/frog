@@ -255,12 +255,13 @@ final class Workspace {
 
     func refresh() async {
         Library.shared.refresh()
-        if !isChat { git = await Git.status(folder) }
+        // Written only when it changed: every view of it would rebuild for nothing.
+        if !isChat, case let g = await Git.status(folder), g != git { git = g }
         gitChecked = true
         if skills.isEmpty, let k = try? await Frog.json([SkillInfo].self, args: ["--skills", "--json"], cwd: folder) {
             skills = k
         }
-        if let s = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--json"], cwd: folder) {
+        if let s = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--json"], cwd: folder), s != sessions {
             sessions = s
         }
         if !modelsLoaded, let m = try? await Frog.json([ModelEntry].self, args: ["--models", "--json"], cwd: folder) {

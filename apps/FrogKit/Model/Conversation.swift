@@ -226,6 +226,8 @@ final class Conversation {
     /// Where older turns come from: the log the newest rows were read from, and how far back
     /// they've been folded in (an index into its events; 0 once all of it is).
     @ObservationIgnored private var history: SessionHistory?
+    /// Finished turns' file changes, by turn (see `sessionChanges`).
+    @ObservationIgnored var changesCache: [TurnState.ID: (count: Int, changes: [FileChange])] = [:]
     @ObservationIgnored private var olderEnd = 0
     @ObservationIgnored private var olderFill: Task<Void, Never>?
     /// Older turns are still being read from the log (the transcript's top shows it).
