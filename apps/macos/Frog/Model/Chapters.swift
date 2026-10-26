@@ -25,6 +25,19 @@ struct Chapter {
     /// A run breaks into a chapter after this many turns with no prompt.
     static let runAfter = 6
 
+    /// `of`, kept for the turns it was last asked about: the rail lays out, hovers and drags by
+    /// chapter, and folding a thousand turns per mouse move adds up.
+    @MainActor private static var memo: (key: [AnyHashable], chapters: [Chapter], starts: [Int])?
+
+    @MainActor static func cached(_ turns: [TurnState]) -> (chapters: [Chapter], starts: [Int]) {
+        let key: [AnyHashable] = [turns.count, turns.first?.id, turns.last?.id, turns.last?.items.count]
+        if let memo, memo.key == key { return (memo.chapters, memo.starts) }
+        let chapters = of(turns)
+        let starts = starts(of: chapters, in: turns)
+        memo = (key, chapters, starts)
+        return (chapters, starts)
+    }
+
     static func of(_ turns: [TurnState]) -> [Chapter] {
         guard !turns.isEmpty else { return [] }
         var out: [Chapter] = []

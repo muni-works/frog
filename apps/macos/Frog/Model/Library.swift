@@ -15,7 +15,10 @@ final class Library {
     private(set) var sessions: [SessionInfo] = []
     private(set) var pinned: Set<String>
     private(set) var archived: Set<String>
-    private(set) var live: [String: Live] = [:]
+    private(set) var live: [String: Live] = [:] {
+        // The Dock frog wants you exactly when some session is waiting on you.
+        didSet { DockActivity.shared.attention = live.values.contains(.waiting) }
+    }
     /// The chief of staff: one session, as a tile above the pins. It keeps its pin.
     private(set) var chief: String?
     /// Sessions started by another session (`StartSession`): child id → parent id.

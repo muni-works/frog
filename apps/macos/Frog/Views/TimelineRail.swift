@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// The conversation as a strip: one tick per turn, top to bottom, as long as the turn did work
-/// and colored by how it ended. The turns on screen sit in a lit window. Hover to see a turn's
+/// The conversation as a line, top to bottom: a dot where each chapter starts (solid for your
+/// prompts, hollow for an autonomous run, a gap where it was summarized), a soft thumb over the
+/// turns on screen, and color only on a turn that needs you (failed, stopped, running). Hover to see a turn's
 /// prompt, click or drag to scrub the transcript to it, right-click to fork or rewind there.
 struct TimelineRail: View {
     let conversation: Conversation
@@ -22,8 +23,15 @@ struct TimelineRail: View {
     private var turns: [TurnState] { conversation.turns }
 
     /// Where the chapters start (see `Chapter`), as turn indices, and the one on screen.
-    private var chapters: [Chapter] { Chapter.of(turns) }
-    private var chapterStarts: [Int] { Chapter.starts(of: chapters, in: turns) }
+    private var chapters: [Chapter] { Chapter.cached(turns).chapters }
+    private var chapterStarts: [Int] { Chapter.cached(turns).starts }
+
+    /// The rail's height for a conversation: by its chapters, not its turns, so a long session
+    /// is a short list of topics rather than a wall of ticks.
+    @MainActor static func height(for turns: [TurnState], room: CGFloat) -> CGFloat {
+        let n = CGFloat(max(1, Chapter.cached(turns).chapters.count))
+        return min(room, 360, n * 18 + 28)
+    }
 
     private func currentChapter(_ starts: [Int]) -> Int? {
         guard let lo = turns.firstIndex(where: { visible.contains($0.id) }) else { return nil }
@@ -94,90 +102,111 @@ struct TimelineRail: View {
 
     private let pad: CGFloat = 12
 
+    /// Where turn `i` sits: each chapter gets an equal share of the rail and its turns share
+    /// that, so an autonomous stretch of 200 turns is as tall as a one-turn question.
     private func y(of i: Int, in h: CGFloat) -> CGFloat {
         guard turns.count > 1 else { return h / 2 }
-        return pad + (h - 2 * pad) * CGFloat(i) / CGFloat(turns.count - 1)
+        let starts = chapterStarts
+        guard !starts.isEmpty, let c = Chapter.index(of: i, in: starts) else {
+            return pad + (h - 2 * pad) * CGFloat(i) / CGFloat(turns.count - 1)
+        }
+        let end = c + 1 < starts.count ? starts[c + 1] : turns.count
+        let within = CGFloat(i - starts[c]) / CGFloat(max(1, end - starts[c]))
+        let t = (CGFloat(c) + within) / CGFloat(starts.count)
+        return pad + (h - 2 * pad) * t
     }
 
     private func index(at y: CGFloat, in h: CGFloat) -> Int? {
         guard !turns.isEmpty else { return nil }
         guard turns.count > 1 else { return 0 }
-        let t = (y - pad) / max(1, h - 2 * pad)
-        return min(turns.count - 1, max(0, Int((t * CGFloat(turns.count - 1)).rounded())))
+        let starts = chapterStarts
+        let t = min(1, max(0, (y - pad) / max(1, h - 2 * pad)))
+        guard !starts.isEmpty else { return min(turns.count - 1, Int((t * CGFloat(turns.count - 1)).rounded())) }
+        let slot = t * CGFloat(starts.count)
+        let c = min(starts.count - 1, Int(slot))
+        let end = c + 1 < starts.count ? starts[c + 1] : turns.count
+        let i = starts[c] + Int((slot - CGFloat(c)) * CGFloat(end - starts[c]))
+        return min(turns.count - 1, max(0, i))
     }
 
     // MARK: Drawing
 
-    /// How much a turn did: steps, plus changed files counting double.
-    private func weight(_ t: TurnState) -> Double {
-        Double(t.items.count) + 2 * Double(TurnParts(t).changes.count)
-    }
-
-    private func color(_ t: TurnState) -> Color {
+    /// A turn's mark when it needs one: how it went wrong, or that it's running. Everything
+    /// else is quiet; the chapters carry the shape of the conversation.
+    private func signal(_ t: TurnState) -> Color? {
         switch t.end {
-        case nil: .accentColor
+        case nil: conversation.busy ? .accentColor : nil
         case .error: .red
         case .looping, .stepLimit, .maxTokens: .orange
-        case .cancelled: .secondary
-        default: conversation.changes(of: t).isEmpty ? .primary : .green
+        default: nil
         }
     }
 
+    /// One vocabulary, dots on a line: a hairline for the conversation, a soft thumb over the
+    /// turns on screen, a dot per chapter, and color only where a turn needs you.
     private func draw(_ ctx: GraphicsContext, _ size: CGSize) {
         guard !turns.isEmpty else { return }
         let h = size.height
-        let maxW = max(1, turns.map(weight).max() ?? 1)
+        let mid = size.width / 2
+
+        ctx.fill(Path(CGRect(x: mid - 0.5, y: pad, width: 1, height: max(0, h - 2 * pad))),
+                 with: .color(.primary.opacity(0.14)))
 
         // The window of turns on screen.
-        let shown = turns.indices.filter { visible.contains(turns[$0].id) }
-        if let lo = shown.min(), let hi = shown.max() {
-            let top = y(of: lo, in: h) - 6, bottom = y(of: hi, in: h) + 6
-            ctx.fill(
-                Path(roundedRect: CGRect(x: 4, y: top, width: size.width - 8, height: bottom - top), cornerRadius: 6),
-                with: .color(.primary.opacity(0.10))
-            )
+        if let lo = turns.firstIndex(where: { visible.contains($0.id) }),
+           let hi = turns.lastIndex(where: { visible.contains($0.id) }) {
+            let top = y(of: lo, in: h) - 7, bottom = y(of: hi, in: h) + 7
+            ctx.fill(Path(roundedRect: CGRect(x: mid - 6, y: top, width: 12, height: bottom - top), cornerRadius: 6),
+                     with: .color(.primary.opacity(0.09)))
         }
-        for (i, t) in turns.enumerated() {
-            let len = 5 + (size.width - 14) * CGFloat(weight(t) / maxW)
-            let rect = CGRect(x: (size.width - len) / 2, y: y(of: i, in: h) - 1.25, width: len, height: 2.5)
-            let lit = visible.contains(t.id) || hovered == i
-            ctx.fill(Path(roundedRect: rect, cornerRadius: 1.25), with: .color(color(t).opacity(lit ? 0.95 : 0.45)))
-            if marked.contains(t.id) {
-                let dot = CGRect(x: 3, y: y(of: i, in: h) - 2.5, width: 5, height: 5)
-                ctx.fill(Path(ellipseIn: dot), with: .color(.yellow))
-            }
-            if let n = t.number, checkpoints.contains(n) {
-                let badge = CGRect(x: size.width - 10, y: y(of: i, in: h) - 4, width: 8, height: 8)
-                var image = ctx.resolve(Image(systemName: "camera.fill"))
-                image.shading = .color(.secondary)
-                ctx.draw(image, in: badge)
-            }
-        }
-        drawChapters(ctx, size, h)
-    }
 
-    /// Chapter markers: a notch on the rail's leading edge at each chapter's first turn —
-    /// taller and solid for the chapter on screen, a faint dash for the rest. A compaction
-    /// boundary draws as a small gap in the rail (the summarized break), not a notch.
-    private func drawChapters(_ ctx: GraphicsContext, _ size: CGSize, _ h: CGFloat) {
-        // Each of these folds every turn: once per draw, not once per chapter.
         let chapters = self.chapters
         let starts = Chapter.starts(of: chapters, in: turns)
         let current = currentChapter(starts)
+        // A long session has more chapters than the rail has room for: a dot only where it
+        // stands clear of the last one drawn (the one you're in always shows), so the line
+        // reads as a few landmarks rather than a solid bar.
+        var last = -CGFloat.infinity
         for (c, start) in starts.enumerated() {
             let y = y(of: start, in: h)
             let here = c == current
-            let kind = chapters[c].kind
-            if kind == .compacted {
-                // A summarized break: the rail itself steps back, then resumes.
-                ctx.fill(Path(CGRect(x: 4, y: y - 0.75, width: size.width - 8, height: 1.5)),
-                         with: .color(.secondary.opacity(here ? 0.6 : 0.3)))
-                continue
+            guard here || y - last >= 7 else { continue }
+            last = y
+            switch chapters[c].kind {
+            case .compacted:
+                // The summarized break: the line steps out for a moment.
+                ctx.fill(Path(CGRect(x: mid - 1, y: y - 3, width: 2, height: 6)),
+                         with: .color(Color(nsColor: .windowBackgroundColor)))
+                ctx.fill(Path(CGRect(x: mid - 4, y: y - 3.5, width: 8, height: 1)), with: .color(.secondary.opacity(0.5)))
+                ctx.fill(Path(CGRect(x: mid - 4, y: y + 2.5, width: 8, height: 1)), with: .color(.secondary.opacity(0.5)))
+            case .run:
+                let r: CGFloat = here ? 3 : 2.25
+                ctx.stroke(Path(ellipseIn: CGRect(x: mid - r, y: y - r, width: 2 * r, height: 2 * r)),
+                           with: .color(.primary.opacity(here ? 0.7 : 0.35)), lineWidth: 1)
+            case .prompt:
+                let r: CGFloat = here ? 3.5 : 2.5
+                ctx.fill(Path(ellipseIn: CGRect(x: mid - r, y: y - r, width: 2 * r, height: 2 * r)),
+                         with: .color(.primary.opacity(here ? 0.85 : 0.4)))
             }
-            let height: CGFloat = kind == .prompt ? 9 : 6
-            let rect = CGRect(x: 0, y: y - height / 2, width: 2.5, height: height)
-            ctx.fill(Path(roundedRect: rect, cornerRadius: 1.25),
-                     with: .color(.primary.opacity(here ? 0.55 : 0.22)))
+        }
+
+        for (i, t) in turns.enumerated() {
+            let y = y(of: i, in: h)
+            if let color = signal(t) {
+                ctx.fill(Path(ellipseIn: CGRect(x: mid - 2, y: y - 2, width: 4, height: 4)), with: .color(color))
+            }
+            if hovered == i {
+                ctx.stroke(Path(ellipseIn: CGRect(x: mid - 5, y: y - 5, width: 10, height: 10)),
+                           with: .color(.primary.opacity(0.6)), lineWidth: 1)
+            }
+            if marked.contains(t.id) {
+                ctx.fill(Path(ellipseIn: CGRect(x: 3, y: y - 2.5, width: 5, height: 5)), with: .color(.yellow))
+            }
+            if let n = t.number, checkpoints.contains(n) {
+                var image = ctx.resolve(Image(systemName: "camera.fill"))
+                image.shading = .color(.secondary)
+                ctx.draw(image, in: CGRect(x: size.width - 10, y: y - 4, width: 8, height: 8))
+            }
         }
     }
 

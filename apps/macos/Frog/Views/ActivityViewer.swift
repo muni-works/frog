@@ -280,23 +280,20 @@ struct DegradedBadge: View {
     }
 }
 
-/// The Dock tile while any window has a turn running: the icon's frog, working (its throat
-/// pumps), instead of a spinner; the plain icon when everything is idle.
+/// The Dock tile: the plain icon while frog works (it nearly always is), and its frog alive,
+/// head tilted and wide-eyed, while a session waits on you (an approval, a question).
 @MainActor
 final class DockActivity {
     static let shared = DockActivity()
 
-    private var busy: Set<ObjectIdentifier> = []
+    var attention = false {
+        didSet { if attention != oldValue { update() } }
+    }
     private var timer: Timer?
     private lazy var view = NSHostingView(rootView: DockFrog(at: .now))
 
-    func set(_ id: ObjectIdentifier, busy isBusy: Bool) {
-        if isBusy { busy.insert(id) } else { busy.remove(id) }
-        update()
-    }
-
     private func update() {
-        if busy.isEmpty {
+        guard attention else {
             timer?.invalidate()
             timer = nil
             NSApp.dockTile.contentView = nil
@@ -306,8 +303,9 @@ final class DockActivity {
         guard timer == nil else { return }
         view.frame = NSRect(x: 0, y: 0, width: 128, height: 128)
         NSApp.dockTile.contentView = view
-        // The Dock takes a snapshot per display(): 20 a second: smooth there, at a third less of its work than 30.
-        timer = Timer.scheduledTimer(withTimeInterval: 1 / 20, repeats: true) { [weak self] _ in
+        // The Dock takes a snapshot per display(): at the frog's own 30 a second, as in the
+        // app. Only while it wants you, so it costs nothing the rest of the time.
+        timer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.view.rootView = DockFrog(at: .now)
@@ -332,7 +330,7 @@ private struct DockFrog: View {
                                          startPoint: .top, endPoint: .bottom))
                     .frame(width: side, height: side)
                     .shadow(color: .black.opacity(0.35), radius: geo.size.width * 0.02, y: geo.size.width * 0.01)
-                FrogFace(mood: .working, size: side * 0.78, at: at)
+                FrogFace(mood: .waiting, size: side * 0.78, at: at)
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }

@@ -112,10 +112,6 @@ struct PaneView: View {
         } message: {
             Text("Files frog edited in that turn go back to how they were, and the conversation continues from just before it. The current session is kept, so you can go back to it.")
         }
-        .onChange(of: workspace.conversation?.busy ?? false, initial: true) { _, busy in
-            DockActivity.shared.set(ObjectIdentifier(workspace), busy: busy)
-        }
-        .onDisappear { DockActivity.shared.set(ObjectIdentifier(workspace), busy: false) }
         // A new workspace in this pane starts its views fresh.
         .id(ObjectIdentifier(workspace))
     }
@@ -246,7 +242,7 @@ struct PaneView: View {
                         jump: { ui.jumpTo = $0 }
                     )
                     // Grows with the conversation instead of standing full height from turn one.
-                    .frame(height: min(room - top, CGFloat(conversation.turns.count) * 22 + 28))
+                    .frame(height: TimelineRail.height(for: conversation.turns, room: room - top))
                     .glassEffect(.regular, in: .capsule)
                     .glassEffectID("timeline", in: glass)
                     .transition(.opacity)
