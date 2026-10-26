@@ -791,6 +791,13 @@ final class Conversation {
             // call per turn flush (live only). Cached by command hash so identical rows share
             // it and later turns reuse it; rows read the cache (an @Observable) and rebuild.
             CommandGists.shared.record(command: command, gist: gist)
+        case .chapterTitled(let n, let title):
+            // The model's name for the chapter starting at turn `n`: the rail shows it over
+            // its heuristic one (which it showed meanwhile).
+            if !title.isEmpty, let i = turns.lastIndex(where: { $0.number == n }), turns[i].chapterTitle != title {
+                turns[i].chapterTitle = title
+                TurnState.chapterTitles += 1
+            }
         case .itemsDiscarded(let ids):
             // A retried model call streamed a partial reply before the stream failed; drop it
             // so the re-run starts clean.

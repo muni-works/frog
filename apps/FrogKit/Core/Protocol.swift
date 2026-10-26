@@ -684,6 +684,9 @@ enum Event: Decodable, Sendable {
     /// A one-line gist of a finished `Bash` call's command, written by a small side-model
     /// in one batched call per turn flush. Live only; the raw command stays the truth.
     case commandGisted(item: String, command: String, gist: String)
+    /// A chapter's title from a small side-model, sent when the next chapter opened; it
+    /// replaces the rail's heuristic title for the chapter starting at `turn`. Durable.
+    case chapterTitled(turn: UInt64, title: String)
     /// A retried model call's partial items (message/reasoning that streamed before the
     /// stream failed); drop them from the turn.
     case itemsDiscarded(ids: [String])
@@ -811,6 +814,8 @@ extension Event {
                 item: try c.decode(String.self, forKey: .item),
                 command: try c.decode(String.self, forKey: .command),
                 gist: try c.decode(String.self, forKey: .gist))
+        case "chapter_titled":
+            self = .chapterTitled(turn: try c.decode(UInt64.self, forKey: .turn), title: try c.decode(String.self, forKey: .title))
         case "item_delta":
             self = .itemDelta(id: try c.decode(String.self, forKey: .id), delta: try c.decode(Delta.self, forKey: .delta))
         case "items_discarded":

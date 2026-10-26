@@ -30,7 +30,7 @@ struct Chapter {
     @MainActor private static var memo: (key: [AnyHashable], chapters: [Chapter], starts: [Int], titles: [String])?
 
     @MainActor static func cached(_ turns: [TurnState]) -> (chapters: [Chapter], starts: [Int], titles: [String]) {
-        let key: [AnyHashable] = [turns.count, turns.first?.id, turns.last?.id, turns.last?.items.count]
+        let key: [AnyHashable] = [turns.count, turns.first?.id, turns.last?.id, turns.last?.items.count, TurnState.chapterTitles]
         if let memo, memo.key == key { return (memo.chapters, memo.starts, memo.titles) }
         let chapters = of(turns)
         let starts = starts(of: chapters, in: turns)
@@ -42,9 +42,11 @@ struct Chapter {
         return (chapters, starts, titles)
     }
 
-    /// A chapter's name, a few lowercase words: what you asked, the first clause of it with the
-    /// lead-in dropped ("let's", "can you"), or what kind of stretch it is.
+    /// A chapter's name, a few lowercase words: the model's title once the engine wrote one
+    /// (`chapter_titled`, when the chapter closed), else, at once, what you asked — the first
+    /// clause of it with the lead-in dropped ("let's", "can you") — or what kind of stretch it is.
     static func title(_ chapter: Chapter, _ turn: TurnState, turns: Int) -> String {
+        if let titled = turn.chapterTitle, !titled.isEmpty { return titled }
         switch chapter.kind {
         case .compacted: return "summarized"
         case .run: return "on its own · \(turns) turn\(turns == 1 ? "" : "s")"
