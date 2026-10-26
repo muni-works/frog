@@ -21,6 +21,7 @@ final class SidebarSnapshotTests: XCTestCase {
 
     override func tearDown() {
         Library.shared.unstage()
+        GitIndex.shared.unstage()
         for k in keys {
             if let v = saved[k] { UserDefaults.standard.set(v, forKey: k) } else { UserDefaults.standard.removeObject(forKey: k) }
         }
@@ -102,6 +103,79 @@ final class SidebarSnapshotTests: XCTestCase {
         Library.shared.stage(sessions: sessions, live: live, parents: parents, chief: "chief",
                              archived: [], asks: ["bf16": "pod past its 2h cap · $3.50/hr · extend?",
                                                   "batch": "Bash git push origin gateway-batching"])
+    }
+
+    /// Git badges (docs/design/sidebar-git): sidebar-git-{today,live}-{light,dark}.png, and the
+    /// two hover cards, git-card-{group,session}-{light,dark}.png.
+    func testRenderGitBadges() throws {
+        stage()
+        func b(_ id: String, ahead: Int = 0, dirty: Int = 0, landed: GitBadge.Landed = .no,
+               trouble: GitBadge.Trouble? = nil, repo: String = "frog") -> GitBadge {
+            GitBadge(tree: "/Users/cam/Developer/\(repo)/.frog/worktrees/\(id)", branch: "frog/\(id)", base: "origin/main",
+                     ahead: ahead, behind: 12, dirty: dirty, landed: landed, trouble: trouble)
+        }
+        let badges: [String: GitBadge] = [
+            "grace": b("grace", ahead: 4, dirty: 6), "drill": b("drill", ahead: 1), "gdesign": b("gdesign", landed: .ancestor),
+            "deleg": b("deleg", ahead: 10), "orgrel": b("orgrel", landed: .ancestor), "opus": b("opus", landed: .pr(97)),
+            "perf": b("perf", landed: .ancestor), "ux": b("ux", ahead: 17), "revert": b("revert", ahead: 2, trouble: .rebasing),
+            "old1": b("old1", landed: .ancestor), "old2": b("old2", landed: .ancestor),
+            "decode": b("decode", ahead: 6, dirty: 19, repo: "okc"), "bf16": b("bf16", ahead: 2, repo: "okc"),
+            "prefill": b("prefill", ahead: 3, dirty: 2, repo: "okc"), "attn": b("attn", ahead: 1, dirty: 1, repo: "okc"),
+            "serve": b("serve", landed: .ancestor, repo: "okc"),
+            "keys": b("keys", ahead: 12, repo: "zest"), "batch": b("batch", ahead: 8, repo: "zest"),
+            "t1": b("t1", landed: .ancestor, repo: "tang"), "t2": b("t2", ahead: 5, repo: "tang"),
+            "cd1": b("cd1", ahead: 4, repo: "home"),
+        ]
+        let now = Date()
+        let card = GitIndex.Card(
+            landed: [
+                .init(id: "77b5f8c", title: "main conflict fix", slug: "ecto/frog", sha: "77b5f8c", url: nil, statKey: "m:1", date: now),
+                .init(id: "b36d033", title: "subagent visibility", slug: "ecto/frog", sha: "b36d033", url: nil, statKey: "m:2", date: now),
+                .init(id: "ef41cd7", title: "worktree ux", slug: "ecto/frog", sha: "ef41cd7", url: nil, statKey: "m:3", date: now),
+                .init(id: "92fabc4", title: "transcript: instant session switch + virtualization", session: "transcript perf batch",
+                      slug: "ecto/frog", pr: 104, url: nil, statKey: "m:4", date: now),
+                .init(id: "c7aad00", title: "engine: never persist native→text downgrades", session: "opus text-mode fix",
+                      slug: "ecto/frog", pr: 97, url: nil, statKey: "m:5", date: now),
+            ],
+            pending: [
+                .init(id: "ux", title: "accounts ux spec v3", branch: "frog/accounts-ux-spec", ahead: 17, statKey: "d:1"),
+                .init(id: "deleg", title: "delegation pipeline v4", branch: "frog/delegation-pipeline", ahead: 10, statKey: "d:2"),
+                .init(id: "revert", title: "mode silently reverts", branch: "frog/revert", ahead: 2, trouble: .rebasing),
+            ],
+            moreLanded: 6, morePending: 1)
+        let stats: [String: GitParse.DiffStat] = [
+            "m:1": .init(files: 2, added: 6, removed: 11), "m:2": .init(files: 21, added: 1751, removed: 378),
+            "m:3": .init(files: 3, added: 653, removed: 1), "m:4": .init(files: 10, added: 1165, removed: 38),
+            "m:5": .init(files: 3, added: 751, removed: 78), "d:1": .init(files: 23, added: 1241, removed: 0),
+            "d:2": .init(files: 14, added: 2611, removed: 51),
+        ]
+        GitIndex.shared.stage(badges, card: card, stats: stats)
+        for scope in [AttentionTree.Scope.today, .live] {
+            UserDefaults.standard.set("org", forKey: "sidebarGroup")
+            UserDefaults.standard.set(scope.rawValue, forKey: "sidebarScope")
+            UserDefaults.standard.set("activity", forKey: "sidebarSort")
+            for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+                let ws = Workspace(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog/.frog/worktrees/grace"), resume: "grace")
+                try render(SessionList(workspace: ws, maxHeight: 900).background(.background),
+                           size: CGSize(width: 300, height: 900), to: "sidebar-git-\(scope.rawValue)-\(name)", appearance: look)
+            }
+        }
+        let group = GitCardController.Request(id: "g", title: "frog manager", sessions: [], single: false,
+                                              counts: "11 landed · 33 ahead", open: { _ in }, refresh: {})
+        let one = GitCardController.Request(id: "s", title: "subagent visibility v2", sessions: [], single: true,
+                                            counts: "2 ahead", open: { _ in }, refresh: {})
+        let ownCard = GitIndex.Card(
+            landed: [.init(id: "b36d033", title: "subagent visibility", slug: "ecto/frog", sha: "b36d033", url: nil, statKey: "m:2", date: now)],
+            pending: [.init(id: "sv", title: "subagent visibility v2", branch: "frog/subagent-visibility", ahead: 2,
+                            statKey: "d:3", commitsKey: "c:1", dirty: 0)])
+        for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            GitIndex.shared.stage(badges, card: card, stats: stats)
+            try render(GitCard(request: group).padding(20), size: CGSize(width: 460, height: 420), to: "git-card-group-\(name)", appearance: look)
+            GitIndex.shared.stage(badges, card: ownCard, stats: stats.merging(["d:3": .init(files: 1, added: 13, removed: 0)]) { a, _ in a },
+                                  commits: ["c:1": [.init(sha: "fa29b9a", subject: "notes: rebase onto the fixed main; local fix superseded"),
+                                                    .init(sha: "a4237cb", subject: "notes: main's broken merge (c816903) and the resolution")]])
+            try render(GitCard(request: one, pinned: true).padding(20), size: CGSize(width: 460, height: 240), to: "git-card-session-\(name)", appearance: look)
+        }
     }
 
     func testRenderAttentionTree() throws {

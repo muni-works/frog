@@ -17,7 +17,11 @@ final class Library {
     private(set) var archived: Set<String>
     private(set) var live: [String: Live] = [:] {
         // The Dock frog wants you exactly when some session is waiting on you.
-        didSet { DockActivity.shared.attention = live.values.contains(.waiting) }
+        didSet {
+            DockActivity.shared.attention = live.values.contains(.waiting)
+            // A session that stops running settles its tree: the git badge re-reads it.
+            if live != oldValue { GitIndex.shared.liveChanged(from: oldValue, to: live) }
+        }
     }
     /// The chief of staff: one session, as a tile above the pins. It keeps its pin.
     private(set) var chief: String?
@@ -70,6 +74,7 @@ final class Library {
                 // Unchanged, it isn't written: every view of the list would rebuild for nothing.
                 guard listed != sessions else { return }
                 sessions = listed
+                GitIndex.shared.listingChanged(listed)
                 archiveQuietChats()
                 RemoteBridge.shared.listChanged()
             }
