@@ -2055,6 +2055,10 @@ impl Agent {
             | Op::PaneMention { .. }
             | Op::Warm { .. }
             | Op::Shutdown => {}
+            // Parentage is the client's: a move arrives as a `MoveSession` tool call the
+            // client answers, never as this op. Sent anyway, it names nothing the engine
+            // could change.
+            Op::MoveSession { .. } => {}
         }
         Ok(())
     }
@@ -9843,6 +9847,150 @@ for line in sys.stdin:
             }
         }
         assert!(saw_empty_error, "the missing id was refused");
+    }
+
+    /// MoveSession round-trips through the client like the rest of the family: the engine
+    /// hands the call over, and the model sees the client's answer. The engine holds no
+    /// parentage (that's the app's), so a move the client refuses comes back as an error
+    /// and nothing else happens — no state of the engine's changes either way.
+    #[tokio::test]
+    async fn move_session_round_trips_through_the_client() {
+        // One turn, three moves: a good one, a nonexistent parent, and an unparent.
+        let call = |id: &str, parent: &str| {
+            Block::ToolUse {
+                id: id.into(),
+                name: "MoveSession".into(),
+                input: json!({ "id": "eng-0002", "parent": parent }),
+            }
+        };
+        let script = vec![
+            reply(vec![call("m1", "chief-0001")], Stop::ToolUse),
+            reply(vec![call("m2", "nobody-9999")], Stop::ToolUse),
+            reply(
+                vec![Block::ToolUse {
+                    id: "m3".into(),
+                    name: "MoveSession".into(),
+                    input: json!({ "id": "eng-0002", "parent": null }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("moved")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "re-file it".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut moves = 0;
+        let mut saw_refusal = false;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::SessionRequest { id, tool, input, .. } => {
+                    assert_eq!(tool, "MoveSession");
+                    moves += 1;
+                    // The client answers: a known parent moves, an unknown one refuses.
+                    let error = input["parent"].as_str() == Some("nobody-9999");
+                    if error { saw_refusal = true; }
+                    h.ops
+                        .send(Op::SessionReply {
+                            id,
+                            result: if error { None } else { Some(json!("moved")) },
+                            error: if error {
+                                Some("No session \"nobody-9999\"".into())
+                            } else {
+                                None
+                            },
+                        })
+                        .unwrap();
+                }
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, outcome, .. },
+                    ..
+                } if name == "MoveSession" => {
+                    if output.contains("nobody-9999") {
+                        assert_eq!(outcome, ToolOutcome::Error, "the refusal is an error result");
+                    } else {
+                        assert_eq!(outcome, ToolOutcome::Ok, "a move the client made: {output}");
+                    }
+                }
+                Event::TurnEnded { .. } => break,
+                _ => {}
+            }
+        }
+        assert_eq!(moves, 3, "every call reached the client");
+        assert!(saw_refusal, "the nonexistent parent was refused");
+    }
+
+    /// A move the client refuses leaves the engine exactly as it was: same turn count, no
+    /// extra events, the session's log untouched (parentage isn't the engine's to change).
+    #[tokio::test]
+    async fn a_refused_move_changes_no_engine_state() {
+        let script = vec![
+            reply(
+                vec![Block::ToolUse {
+                    id: "m1".into(),
+                    name: "MoveSession".into(),
+                    input: json!({ "id": "eng-0002", "parent": "nobody-9999" }),
+                }],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("left it")], Stop::End),
+        ];
+        let mut h = engine(script, true);
+        caps(&h, true);
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops
+            .send(Op::Submit {
+                text: "try the move".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let mut refused = false;
+        let mut titled = false;
+        let mut turns = 0;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::SessionRequest { id, .. } => {
+                    h.ops
+                        .send(Op::SessionReply {
+                            id,
+                            result: None,
+                            error: Some("No session \"nobody-9999\"".into()),
+                        })
+                        .unwrap();
+                }
+                Event::ItemCompleted {
+                    item: Item::ToolCall { name, output, .. },
+                    ..
+                } if name == "MoveSession" => {
+                    refused = true;
+                    assert!(output.contains("nobody-9999"), "the model sees the refusal");
+                }
+                Event::TurnEnded { .. } => {
+                    turns += 1;
+                    break;
+                }
+                Event::ModeChanged { .. } | Event::ModelChanged { .. } => {
+                    panic!("a refused move changed engine state");
+                }
+                Event::Titled { title } => {
+                    // Only the first input's auto-title (turn 1, no client named the
+                    // session) — never the move's doing.
+                    assert_eq!(title, "try the move");
+                    titled = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(refused);
+        assert!(titled, "the only title is the first input's own");
+        assert_eq!(turns, 1, "the turn carried on and ended once");
     }
 
     #[tokio::test]

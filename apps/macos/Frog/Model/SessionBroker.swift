@@ -168,6 +168,13 @@ final class SessionBroker {
     var directoryIncludingArchived: () -> [Entry] = { [] }
     /// Hide (or show) a session in the sidebar, exactly like the sidebar's own archive.
     var archiver: (_ id: String, _ on: Bool) -> Void = { _, _ in }
+    /// `MoveSession`: re-file a session under a new parent (nil unparents; a top-level row
+    /// again). Parentage is the app's (Library's `sessionParents`), so the move is a closure
+    /// like the archiver; refusal (a session nested under its own descendant) comes back as
+    /// the error the model sees. The recorded parent on success.
+    var mover: (_ id: String, _ parent: String?) -> Result<String?, BrokerError> = { _, _ in
+        .failure(BrokerError("moving sessions isn't available"))
+    }
     /// Deliver an op to session `id`, starting its engine if needed. False if it can't be reached.
     var reach: (_ id: String, _ from: String, _ fromName: String, _ message: String) -> Bool = { _, _, _, _ in false }
     /// Hand session `id` a status-only message (read, no turn). False if it can't be reached.
@@ -528,6 +535,38 @@ final class SessionBroker {
                         await Library.shared.rename(e.id, to: trimmed)
                         c?.replySession(r.id, result: .string("Renamed \(e.id) to \"\(trimmed)\"."))
                     }
+                }
+            case .failure(let e):
+                c.replySession(r.id, error: e.message)
+            }
+        case "MoveSession":
+            // Re-file a session under a new parent — the nesting the sidebar derives from.
+            // Sidebar organization only: the log, model, mode and history stay the session's
+            // own (a mis-filed session stops being stuck). nil/absent parent unparents.
+            switch resolve(input["id"]?.string ?? "", includeArchived: true) {
+            case .success(let e):
+                let asked = (input["parent"]?.string ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                var parent: Entry?
+                if !asked.isEmpty {
+                    switch resolve(asked, includeArchived: true) {
+                    case .success(let p): parent = p
+                    case .failure(let err): return c.replySession(r.id, error: err.message)
+                    }
+                }
+                // Moving under itself would erase its own parentage (a cycle).
+                if let p = parent, p.id == e.id {
+                    return c.replySession(r.id, error: "That's \(e.name) itself; a session can't be its own parent.")
+                }
+                switch mover(e.id, parent?.id) {
+                case .failure(let err):
+                    c.replySession(r.id, error: err.message)
+                case .success(nil):
+                    c.replySession(r.id, result: .string("Unparented \(e.name) (\(e.id)): it's a top-level row again."))
+                case .success:
+                    // The resolved entry, not the recorded id, so the model sees a name.
+                    let who = parent.map { "\($0.name) (\($0.id))" } ?? "its new parent"
+                    c.replySession(r.id, result: .string("Moved \(e.name) (\(e.id)) under \(who); the sidebar regroups."))
                 }
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
@@ -1233,6 +1272,14 @@ extension SessionBroker {
         archiver = { id, on in
             Library.shared.setArchived(id, on)
             Library.shared.refresh()
+        }
+        mover = { id, parent in
+            // No refresh: parentage isn't part of the sessions listing. `parents` is
+            // observed, so the sidebar's grouping re-derives from the mutation itself.
+            switch Library.shared.move(id, to: parent) {
+            case .success(let recorded): return .success(recorded)
+            case .failure(let refusal): return .failure(BrokerError(refusal.message))
+            }
         }
         reach = { [unowned self] id, from, name, message in
             guard let c = conversation(for: id) else { return false }

@@ -324,6 +324,19 @@ pub enum Op {
     /// `ArchiveSession`), or the queued message starts the next turn. Messages sent after it
     /// queue as usual.
     ClearInbox,
+    /// Re-file session `session` under `parent` in the client's sidebar — the nesting its
+    /// rows derive from. `None` unparents (a top-level row again). Parentage is the client's
+    /// (the engine never reads it), so the move travels as a `MoveSession` tool call: the
+    /// engine emits [`Event::SessionRequest`] and the client that owns the sessions answers
+    /// with [`Op::SessionReply`]. This op exists as the protocol shape of that move (the
+    /// app-side enum mirrors it); sent by a client it's a no-op — the engine has no parentage
+    /// to change. A mis-filed session stops being stuck.
+    MoveSession {
+        session: String,
+        /// The new parent's id or name; `None` unparents.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+    },
     /// The user picked an element in a preview pane. `context` (tag, text, selector, source
     /// location) is inlined the next time `mention` (e.g. `@button.submit`) appears in a message.
     PaneMention {
@@ -1336,6 +1349,24 @@ mod tests {
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["event"], "session_request");
         assert!(!e.is_durable());
+        // The move's op shape: session + parent, parent omitted when unparenting.
+        let m: Op = serde_json::from_str(
+            r#"{"op":"move_session","session":"eng-0002","parent":"chief-0001"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            m,
+            Op::MoveSession {
+                ref session,
+                ref parent
+            } if session == "eng-0002" && parent.as_deref() == Some("chief-0001")
+        ));
+        let unparented: Op =
+            serde_json::from_str(r#"{"op":"move_session","session":"eng-0002"}"#).unwrap();
+        assert!(matches!(
+            unparented,
+            Op::MoveSession { ref session, parent: None } if session == "eng-0002"
+        ));
     }
 
     #[test]

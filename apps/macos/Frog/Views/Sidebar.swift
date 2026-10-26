@@ -504,6 +504,34 @@ struct SessionList: View {
         foldedRaw = f.sorted().joined(separator: "\n")
     }
 
+    /// "Move to…": re-file a session under another (the sidebar's own MoveSession), or back
+    /// to top level. Candidates are the sessions that head a nesting today — current parents
+    /// and pinned/manager rows — alphabetical, never the session itself (the cycle guard
+    /// refuses its descendants anyway; the menu just doesn't offer them).
+    @ViewBuilder
+    private func moveMenu(_ s: SessionInfo) -> some View {
+        let current = library.parents[s.id]
+        let heads = active
+            .filter { $0.id != s.id && (library.parents.values.contains($0.id) || library.pinned.contains($0.id)) }
+            .sorted { $0.displayTitle.localizedStandardCompare($1.displayTitle) == .orderedAscending }
+        if !heads.isEmpty || current != nil {
+            Menu("Move to…") {
+                ForEach(heads) { head in
+                    Button(head.displayTitle) {
+                        _ = Library.shared.move(s.id, to: head.id)
+                    }
+                    .disabled(head.id == current)
+                }
+                if current != nil {
+                    Divider()
+                    Button("Top Level") {
+                        _ = Library.shared.move(s.id, to: nil)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: Search and archive
 
     private var visible: [SessionInfo] {
@@ -722,6 +750,7 @@ struct SessionList: View {
                 toggleChildren(s.id)
             }
         }
+        moveMenu(s)
         Divider()
         if library.archived.contains(s.id) {
             Button("Unarchive") { library.setArchived(s.id, false) }

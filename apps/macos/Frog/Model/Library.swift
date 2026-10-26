@@ -138,6 +138,54 @@ final class Library {
         UserDefaults.standard.set(parents, forKey: "sessionParents")
     }
 
+    /// Why a [`Library.move`] was refused; the message is the tool's error.
+    enum MoveRefusal: Error, Equatable {
+        /// The new parent sits under the session being moved (or is it).
+        case nestsWithinItself
+
+        var message: String {
+            switch self {
+            case .nestsWithinItself:
+                "That would nest the session under itself or one of its descendants."
+            }
+        }
+    }
+
+    /// `MoveSession`: re-file `child` under `parent` (nil unparents; a top-level row
+    /// again). Sidebar nesting only — the log, model, mode and history are the session's
+    /// own. Refuses a move that would nest a session under itself or a descendant (the
+    /// sidebar's tree walks tolerate a cycle, but one must never be recorded). Unparenting
+    /// an unparented session is a successful no-op. `parents` is observed, so the sidebar's
+    /// grouping re-derives on the change.
+    @discardableResult
+    func move(_ child: String, to parent: String?) -> Result<String?, MoveRefusal> {
+        if let parent {
+            guard !Self.wouldCycle(child, parent: parent, in: parents) else {
+                return .failure(.nestsWithinItself)
+            }
+            parents[child] = parent
+        } else {
+            guard parents.removeValue(forKey: child) != nil else { return .success(nil) }
+        }
+        UserDefaults.standard.set(parents, forKey: "sessionParents")
+        return .success(parent)
+    }
+
+    /// Whether moving `child` under `parent` would close a loop: its own descendant. The
+    /// walk is bounded by the recorded parents, so it terminates even on an existing cycle.
+    static func wouldCycle(_ child: String, parent: String?, in parents: [String: String]) -> Bool {
+        guard let parent else { return false }  // unparenting can't cycle
+        // Walk up from the proposed parent: if the child is anywhere above it (or is it),
+        // the move would nest the session under its own subtree.
+        var seen: Set<String> = []
+        var at: String? = parent
+        while let current = at, seen.insert(current).inserted {
+            if current == child { return true }
+            at = parents[current]
+        }
+        return false
+    }
+
     /// Part of a group of sessions: started by one, or started one.
     func isAgentSession(_ id: String) -> Bool {
         parents[id] != nil || parents.values.contains(id)

@@ -1073,6 +1073,107 @@ final class SessionBrokerTests: XCTestCase {
                                 input: .object(["id": .string(eng.id), "title": .string("  ")])), from: probe)
     }
 
+    // MARK: MoveSession
+
+    /// A scratch parentage store, so broker tests never touch the app's defaults.
+    private final class Parentage {
+        var map: [String: String] = [:]
+    }
+
+    /// A broker whose mover records into `store`, mirroring `Library.move`'s contract
+    /// (nil unparents, a cycle within the moved session's own subtree is refused).
+    private func brokerWithMover(_ store: Parentage) -> SessionBroker {
+        let b = broker([chief, eng, ops])
+        b.directoryIncludingArchived = { [self.chief, self.eng, self.ops] }
+        b.mover = { id, parent in
+            guard !Library.wouldCycle(id, parent: parent, in: store.map) else {
+                return .failure(SessionBroker.BrokerError("cycle"))
+            }
+            if let parent { store.map[id] = parent } else { store.map.removeValue(forKey: id) }
+            return .success(parent)
+        }
+        return b
+    }
+
+    /// MoveSession end to end: the target resolves (by id or name), the parent resolves,
+    /// the mover re-files it, and the unparent form clears the record. The reply names
+    /// the new parent, not the raw id.
+    @MainActor
+    func testMoveSessionReparentsAndUnparents() throws {
+        let store = Parentage()
+        let b = brokerWithMover(store)
+        let probe = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-move"))
+
+        // By id; a nil parent unparents. Move under the chief by name.
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .string("Chief of Staff")])), from: probe)
+        XCTAssertEqual(store.map[ops.id], chief.id, "re-filed under the chief")
+
+        // Reparent by id: ops moves under eng.
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .string(eng.id)])), from: probe)
+        XCTAssertEqual(store.map[ops.id], eng.id)
+
+        // Unparent: explicit null.
+        b.handle(SessionRequest(id: "r3", item: "t3", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .null])), from: probe)
+        XCTAssertNil(store.map[ops.id], "a top-level row again")
+
+        // Absent parent is the same unparent.
+        b.handle(SessionRequest(id: "r4", item: "t4", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id)])), from: probe)
+        XCTAssertNil(store.map[ops.id])
+    }
+
+    /// Failure cases leave everything untouched: a target that doesn't resolve, a parent
+    /// that doesn't resolve, itself as parent, and a cycle (a session under its own
+    /// descendant) all refuse without touching the store.
+    @MainActor
+    func testMoveSessionFailuresLeaveStateUntouched() throws {
+        let store = Parentage()
+        // ops under the chief, eng under ops: moving ops under eng would nest it in its
+        // own subtree (eng is ops' descendant).
+        store.map[ops.id] = chief.id
+        store.map[eng.id] = ops.id
+        let before = store.map
+        let b = brokerWithMover(store)
+        let probe = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-move2"))
+
+        // An unknown target doesn't resolve.
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "MoveSession",
+                                input: .object(["id": .string("nobody-9999"), "parent": .string(chief.id)])), from: probe)
+        // An unknown parent doesn't resolve either.
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .string("nobody-9999")])), from: probe)
+        // A session can't be its own parent.
+        b.handle(SessionRequest(id: "r3", item: "t3", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .string(ops.id)])), from: probe)
+        // A cycle: eng sits under ops, so ops can't move under eng.
+        b.handle(SessionRequest(id: "r4", item: "t4", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .string(eng.id)])), from: probe)
+        XCTAssertEqual(store.map, before, "no move recorded on any refusal")
+    }
+
+    /// `Library.wouldCycle` is the guard the recording half relies on: a session under
+    /// itself, under its own descendant (any depth), never; an unparent never cycles; an
+    /// existing cycle in the map still terminates the walk.
+    @MainActor
+    func testWouldCycleWalksTheParentChain() {
+        // chief -> eng -> ops (eng's parent is chief, ops' parent is eng).
+        let chain: [String: String] = [eng.id: chief.id, ops.id: eng.id]
+        XCTAssertTrue(Library.wouldCycle(chief.id, parent: ops.id, in: chain),
+                      "ops is chief's descendant: would close the loop")
+        XCTAssertTrue(Library.wouldCycle(chief.id, parent: eng.id, in: chain),
+                      "eng already sits under chief")
+        XCTAssertTrue(Library.wouldCycle(eng.id, parent: eng.id, in: chain), "itself, one step in")
+        XCTAssertFalse(Library.wouldCycle(ops.id, parent: chief.id, in: chain), "downward is fine")
+        XCTAssertFalse(Library.wouldCycle(eng.id, parent: nil, in: chain), "unparenting never cycles")
+        XCTAssertFalse(Library.wouldCycle(ops.id, parent: "stranger-9999", in: chain), "a fresh parent can't cycle")
+        // An existing loop (a -> b -> a) doesn't hang the walk.
+        let loop: [String: String] = ["a": "b", "b": "a"]
+        XCTAssertFalse(Library.wouldCycle("c", parent: "a", in: loop), "a stranger escapes the loop")
+    }
+
     /// SetSessionMode / SetSessionModel with no engine running: persisted (not refused), said
     /// so in the reply, and applied by the next engine start — the model as its `-m`, the
     /// mode as the op it takes at its first boundary — once, then forgotten. The mode
