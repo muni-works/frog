@@ -103,3 +103,41 @@ agents as real sessions is a scoped follow-on, stays design-only.
 5. transcript as steps ("ran N agents", "Agent: X · failed", "Waiting on 1 agent · 2 done…");
    SubagentCard only until the replacement renders
 6. pill live text "Waiting on N agents"
+
+## Session 2 (fresh start, Opus) — review of the rushed commits + the build
+The previous session (glm flash) left 6 quick commits after bbe17b6 (e637fe0…0fd22bb) that NOTES didn't
+record. Kept and built on, with fixes (no history rewritten):
+- e637fe0 made the ENGINE drop every background agent's `Subagent` event (`item.starts_with("task-")`).
+  That hid bg agents' steps from the app, which the sidebar rows need. Reverted in 2fd18bd; the fix
+  lives in the app's fold path instead (that was the ask). The faac212 test was racy (asserted progress
+  before the bg task ran) and asserted the drop; replaced.
+- `TurnState.agents` counted the Task call that *starts* a bg agent as a finished agent; `.waiting`
+  was never set; the sidebar showed only running rows (no failed/done, no fold); "Waiting on 2 agents"
+  could never happen (foreground Tasks run one at a time); permission requests from bg agents also made
+  a phantom item; the Task's needsPermission flag outlived the prompt (the real "Here: <folder>" cause
+  after an approval). All fixed below.
+
+Commits (this session):
+- 2fd18bd engine: bg agents' steps reach the client under their job id (`task-N`); tests: bg steps
+  arrive wrapped + durable; a reopened session replays a Task's steps (no deltas). Piece 1 done.
+- 96953a2 app (bug a): any `subagent` event (or permission request) with no parent item folds into
+  `Conversation.agentRuns[jobId]` (steps only: no deltas/status, so rows don't rebuild per token).
+  Replayed runs start on the Task's clock (`SubagentRun(startedAt: item.startedAt)`; the 29883095m bug).
+  `BackgroundJob` gains turn/startedAt/head. Model: `Conversation.agents` (last turn's Tasks + bg jobs;
+  a bg job counts only while `backgroundRunning > 0`, so a log-stale "running" job has no row — that
+  property is now observed), `AgentList` (rows/fold rules), `waitingOnAgents`, `agentStatus`.
+- 742331a app (bug b): liveActivity checks Task before needsPermission; an answered prompt clears its
+  Task item's flag. Tile: "Subagent: <activity>" / "Subagent: Starting".
+- 62900c6 sidebar: `SessionAgents` (own view, so only it observes the streaming turns) under each open
+  session row: rows while the turn runs (waiting ✋ › running › failed red › done ✓), plan "3/5" +
+  hairline else "N steps · 42s"; on turn end finished agents fold into "› N done · M failed" (opens to
+  them); fold kept through a bg agent's wake turn (latest agent turn ≥ last−1). Row click opens the
+  session. "Needs you" bubbles through the parent's own live state (the request is the parent's).
+- 203eaca transcript + pill: steps read "Agent: X · failed" / "· 3/5"; opened → report + "Show its N
+  steps" (run sheet). Live line "Waiting on 1 agent · 2 done · 1 failed…". Pill "Waiting on N agents"
+  (bg agents at work count). Snapshot `testRenderAgentsCalm` (agents-calm-{live,steps,sidebar,folded}).
+
+Design-only / not built: agents as real child sessions (row click opens the parent instead), ⌘-click
+split, rail spans, iOS rows. The run sheet stays as the way into a finished agent's steps until then.
+Known limits: an app quit with bg agents running leaves them "running" in the log; they show no row
+(hidden, not marked failed). Durable subagent steps grow the log by the agent's tool results.
