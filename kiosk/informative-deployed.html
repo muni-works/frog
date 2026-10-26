@@ -67,20 +67,44 @@
         <stop offset="0.55" stop-color="#51da60"/>
         <stop offset="1" stop-color="#3fc952"/>
       </linearGradient>
+      <filter id="bevel" x="-5%" y="-5%" width="110%" height="110%">
+        <!-- inner highlight along top edges: blurred white, only inside, biased up -->
+        <feOffset in="SourceAlpha" dx="0" dy="-7" result="up"/>
+        <feGaussianBlur in="up" stdDeviation="9" result="upBlur"/>
+        <feComposite in="upBlur" in2="SourceAlpha" operator="in" result="upIn"/>
+        <feComposite in="upIn" in2="SourceAlpha" operator="out" result="topEdge"/>
+        <feFlood flood-color="#f2fff2" flood-opacity="0.7" result="hlCol"/>
+        <feComposite in="hlCol" in2="topEdge" operator="in" result="highlight"/>
+        <!-- inner shadow along bottom edges: blurred black, biased down -->
+        <feOffset in="SourceAlpha" dx="0" dy="10" result="down"/>
+        <feGaussianBlur in="down" stdDeviation="12" result="downBlur"/>
+        <feComposite in="downBlur" in2="SourceAlpha" operator="in" result="downIn"/>
+        <feComposite in="downIn" in2="SourceAlpha" operator="out" result="botEdge"/>
+        <feFlood flood-color="#1c5c28" flood-opacity="0.5" result="shCol"/>
+        <feComposite in="shCol" in2="botEdge" operator="in" result="shadow"/>
+        <feMerge>
+          <feMergeNode in="SourceGraphic"/>
+          <feMergeNode in="highlight"/>
+          <feMergeNode in="shadow"/>
+        </feMerge>
+      </filter>
+      <filter id="dropf" x="-15%" y="-15%" width="130%" height="135%">
+        <feDropShadow dx="0" dy="18" stdDeviation="26" flood-color="#000000" flood-opacity="0.5"/>
+      </filter>
       <clipPath id="cliphead">
         <path d="M216 568 A296 224 0 0 1 808 568 A296 234 0 0 1 216 568 Z"/>
         <circle cx="360" cy="352" r="120"/>
         <circle cx="664" cy="352" r="120"/>
       </clipPath>
     </defs>
-    <g id="body">
+    <g id="body" filter="url(#dropf)">
       <g id="head">
-        <g fill="url(#skin-grad)">
+        <g fill="url(#skin-grad)" filter="url(#bevel)">
           <path id="silhouette" d="M216 568 A296 224 0 0 1 808 568 A296 234 0 0 1 216 568 Z"/>
           <circle cx="360" cy="352" r="120"/>
           <circle cx="664" cy="352" r="120"/>
         </g>
-        <g clip-path="url(#cliphead)" id="spots-clipped" fill="var(--spot)">
+        <g clip-path="url(#cliphead)" id="spots-clipped" fill="var(--spot)" opacity="0.92">
           <circle cx="290" cy="469" r="18"/>
           <circle cx="262" cy="523" r="11"/>
           <circle cx="742" cy="463" r="16"/>
