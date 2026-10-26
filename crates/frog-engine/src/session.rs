@@ -15,7 +15,7 @@ use crate::protocol::{EndReason, Envelope, Event};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Seek, Write};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
@@ -26,22 +26,34 @@ pub fn default_dir() -> PathBuf {
 }
 
 pub fn new_id() -> String {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    // A per-process random start plus a counter: unique within a process, and unlikely to
-    // collide across processes started in the same second.
-    static NEXT: std::sync::OnceLock<AtomicU32> = std::sync::OnceLock::new();
+    // The counter mixes the pid into the bits the salt keeps, so two processes started in the
+    // same second (with the same sub-second clock reading) still mint different ids; the
+    // counter then keeps ids unique within a process. A collision is still possible — handled
+    // by `Log::create` taking over the file — just vanishingly rare.
+    static NEXT: std::sync::OnceLock<std::sync::atomic::AtomicU32> = std::sync::OnceLock::new();
     let next = NEXT.get_or_init(|| {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .subsec_nanos();
-        AtomicU32::new(nanos ^ std::process::id().rotate_left(16))
+        std::sync::atomic::AtomicU32::new(salt_base(nanos, std::process::id()))
     });
-    let salt = next.fetch_add(1, Ordering::Relaxed) & 0xffff;
+    let salt = salt_of(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     format!(
         "{}-{salt:04x}",
         chrono::Local::now().format("%Y%m%d-%H%M%S")
     )
+}
+
+/// The counter a process mints salts from: its first salt (the clock's sub-second reading)
+/// with the pid folded into the low bits the salt keeps.
+fn salt_base(nanos: u32, pid: u32) -> u32 {
+    nanos.rotate_left(8) ^ pid
+}
+
+/// The salt an already-counted value yields.
+fn salt_of(n: u32) -> u32 {
+    n & 0xffff
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -139,13 +151,27 @@ pub struct Log {
 impl Log {
     pub fn create(dir: &Path, header: Header) -> Result<Self> {
         std::fs::create_dir_all(dir)?;
-        let file = OpenOptions::new()
-            .append(true)
-            .create_new(true)
-            .open(path(dir, &header.id))
-            .with_context(|| format!("creating session {}", header.id))?;
+        let path = path(dir, &header.id);
+        let file = match OpenOptions::new().append(true).create_new(true).open(&path) {
+            Ok(f) => f,
+            // Two engines minted the same id (the same second and salt) or the previous holder
+            // died without cleaning up. Try to take the file over: the flock in `locked`
+            // arbitrates — acquiring it means the previous holder is gone and this process may
+            // continue the log; failing it means the session genuinely is in use.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .with_context(|| format!("creating session {}", header.id))?,
+            Err(e) => return Err(e).with_context(|| format!("creating session {}", header.id)),
+        };
         let mut log = Self::locked(file, &header.id)?;
-        log.append(&Record::Header(header))?;
+        // A taken-over log already has its header; a fresh one — including a truncated file
+        // left by a crash before the header landed — starts with it. An offset of 0 on a
+        // non-empty file would mean someone truncated it under us; appending nevertheless
+        // keeps `fold` happy (its first record must be the header, and it has one).
+        if log.file.seek(std::io::SeekFrom::End(0))? == 0 {
+            log.append(&Record::Header(header))?;
+        }
         Ok(log)
     }
 
@@ -897,6 +923,72 @@ mod tests {
         assert!(t.elapsed() >= std::time::Duration::from_millis(150));
         release.join().unwrap();
         assert!(Log::open(&dir, "w").is_ok());
+    }
+
+    #[test]
+    fn creates_with_the_same_id_take_over_a_released_log() {
+        let dir = tmp();
+        // Two engines minted the same id: the second `create` finds the file there, but the
+        // first holder is gone, so the flock lets it continue the log — no second header.
+        let mut first = Log::create(&dir, header("a")).unwrap();
+        first.append(&ev(1, Event::Titled { title: "one".into() })).unwrap();
+        first.sync().unwrap();
+        drop(first);
+        let mut second = Log::create(&dir, header("a")).unwrap();
+        second.append(&ev(2, Event::Titled { title: "two".into() })).unwrap();
+        second.sync().unwrap();
+        drop(second);
+        let l = load(&dir, "a").unwrap();
+        assert_eq!(
+            l.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+
+        // But a live holder means the session genuinely is in use: one clean error, no
+        // take-over, and the file is left as the holder had it.
+        let held = Log::open(&dir, "a").unwrap();
+        let err = match Log::create(&dir, header("a")) {
+            Err(e) => e,
+            Ok(_) => panic!("a held log was taken over"),
+        };
+        assert!(err.to_string().contains("open in another frog process"), "{err:#}");
+        drop(held);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_empty_file_left_behind_gets_a_header_on_create() {
+        let dir = tmp();
+        // A crash between creating the file and writing the header: the takeover appends one.
+        std::fs::write(path(&dir, "a"), "").unwrap();
+        let mut log = Log::create(&dir, header("a")).unwrap();
+        log.append(&ev(1, Event::Titled { title: "one".into() })).unwrap();
+        drop(log);
+        let l = load(&dir, "a").unwrap();
+        assert_eq!(l.events.len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ids_mix_the_pid_into_the_salt_and_stay_well_formed() {
+        let before = [
+            salt_of(salt_base(1, 100)),
+            salt_of(salt_base(1, 101)),
+            salt_of(salt_base(1, 100 << 16 | 100)),
+        ];
+        // The pid must reach the bits the salt keeps: different pids, same clock, different
+        // salts — in either half of the counter.
+        assert_ne!(before[0], before[1]);
+        assert_ne!(before[0], before[2]);
+        // And the id keeps its shape: YYYYMMDD-HHMMSS-xxxx.
+        let (a, b) = (new_id(), new_id());
+        assert_ne!(a, b);
+        let salt = a.rsplit('-').next().unwrap();
+        assert_eq!(salt.len(), 4);
+        assert!(salt.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(a.len(), b.len());
+        let dashes = a.matches('-').count();
+        assert_eq!(dashes, 2, "{a}");
     }
 
     #[test]
