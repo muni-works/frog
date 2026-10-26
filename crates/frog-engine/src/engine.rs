@@ -14165,8 +14165,11 @@ for line in sys.stdin:
     /// overwriting a temp file someone else made still asks.
     #[tokio::test]
     async fn auto_mode_writes_its_own_fresh_temp_scratch_without_a_card() {
-        let fresh = std::path::Path::new("/private/tmp").join(format!("frog-scratch-{}.rs", new_id()));
-        let theirs = std::path::Path::new("/private/tmp").join(format!("frog-theirs-{}.rs", new_id()));
+        // The OS temp dir, which is what the scratch rules key on everywhere (`/private/tmp`
+        // is only an extra macOS spelling, and doesn't exist on Linux).
+        let tmp = std::env::temp_dir();
+        let fresh = tmp.join(format!("frog-scratch-{}.rs", new_id()));
+        let theirs = tmp.join(format!("frog-theirs-{}.rs", new_id()));
         std::fs::write(&theirs, "someone else's\n").unwrap();
         let write = |id: &str, p: &std::path::Path| {
             reply(
