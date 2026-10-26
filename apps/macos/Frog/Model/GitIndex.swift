@@ -141,7 +141,8 @@ final class GitIndex {
             }
             let was = seen[s.id]
             seen[s.id] = (s.modified, s.end)
-            if let was, was.modified != s.modified, !busy.contains(s.id), !ref.main { enqueueStatus(ref.top) }
+            // (A session this app doesn't have open moves on with every listing: 10 s apart at most.)
+            if let was, was.modified != s.modified, !busy.contains(s.id), !ref.main { enqueueStatus(ref.top, every: 10) }
         }
         for common in newRepos {
             watch(common)
@@ -269,8 +270,9 @@ final class GitIndex {
         sessionTree.contains { $0.value == top && busy.contains($0.key) }
     }
 
-    private func enqueueStatus(_ top: String) {
+    private func enqueueStatus(_ top: String, every: TimeInterval = 0) {
         if let t = trees[top], let b = t.backoff, b > Date() { return }
+        if every > 0, let at = trees[top]?.statusAt, Date().timeIntervalSince(at) < every { return }
         guard !statusQueue.contains(top) else { return }
         statusQueue.append(top)
         guard !statusRunning else { return }

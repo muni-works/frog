@@ -62,6 +62,32 @@ Group rows aggregate (sum of children).
 - Changed: badge click now pins the card; "Show in Workers" moves to the card footer + row menu.
 - Merged capsule green, not GitHub purple (purple = ahead here).
 
+## Build (Cam: "perfect, lets implement" — all open questions take the recommended answer)
+Tests: `xcodegen -q`, then `FROG_PREBUILT_DIR=/private/tmp/sbgit-prebuilt xcodebuild test -project
+Frog.xcodeproj -scheme Frog -derivedDataPath /private/tmp/sbgit-dd -only-testing:FrogTests/<Suite>`
+(unsandboxed; the prebuilt dir holds copies of ~/Developer/frog's frog, frog-apple, frog-desktop so no cargo
+build). Renders: docs/design/sidebar-git/renders/ (git-excluded; view.html / cards.html beside them).
+- 6c01996 FrogKit GitBadge: display(settled:), GitSummary.of (tree dedupe, settled-only dirty/trouble),
+  GitRollup (subtree, fold members = parent's children not drawn before the fold), GitParse, GitLinks.
+- 00a2b4c GitIndex (mac): resolve tree from `.git` file/dir (replaces the path-substring test); repo batch =
+  base (origin/HEAD → origin/main|master → main|master), `%(ahead-behind)` for-each-ref (old-git fallback),
+  remote branches, merge index (first-parent, 200), git cherry for unproven tips; FSEvents on the common dir
+  (refs/, packed-refs, */HEAD, rebase-*), 1 s debounce; status queue (on settle, row on screen ≤1/min,
+  listing moves ≤1/10 s, 2 s timeout → 10 min backoff); GIT_OPTIONAL_LOCKS=0, ssh BatchMode.
+  Landed = ahead 0 AND (a merge brought the tip OR the branch moved since its reflog creation) — a fresh
+  branch off main isn't "landed". Patch-equivalent / gh-merged set ahead 0.
+- fe45786 badges on TreeRow (all weights) + done folds; GitCardController (NSPanel, nonactivating, key only
+  when pinned; 500 ms / 300 ms grace / 250 ms card leave / 1 s warm); GitCard (landed, not landed, own
+  commits, Refresh); row menu "Refresh Git".
+- dfaaf4d compact rows + project headers on the shared badge; CompactPRCache + SessionMetaCache deleted.
+- 0e70af1 GitIndexTests (real temp repo incl. the FSEvents path); close on scroll; refit on size change.
+- next: GitCardTests (open delay, grace, warm move, pin, rowGone); listing-driven status throttle.
+Not built (README "Implementation"): Space-to-open (rows have no keyboard focus), safe triangle, Show in
+Workers + tornDown.landed (no Workers/teardown yet), ListSessions ahead vs base, iOS.
+Suites green: GitBadge, GitIndex, GitCard, SidebarSnapshot, AttentionTree, SessionNesting, SidebarOrder,
+SessionFolds, SessionState, AgentRow (78 tests). The full suite was started but interrupted at
+TranscriptSwitchBenchmark (unrelated, slow); not re-run.
+
 ## Progress
 - 6badefc checkpoint 0 · fac2fb0 survey · 048e656 spec · 4edc4de mockup · 47d0463 hover-card spec ·
-  hover-card mockup (next commit)
+  afef4c0 hover-card mockup · build commits above

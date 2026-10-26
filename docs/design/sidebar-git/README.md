@@ -1,6 +1,8 @@
 # Sidebar git badges — design
 
-Status: **design for review** (Cam). No code yet. Base: `77b5f8c` (main).
+Status: **built** on `frog/sidebar-git`. Cam approved the design ("perfect, lets implement"), which
+took the recommended answer to every open question. What was built and what wasn't is listed at
+the end, under "Implementation". Base: `77b5f8c` (main).
 Mockup: [mockup.html](mockup.html) (the org tree with badges, light and dark; the hover cards for a
 group row and a session row; the anatomy strip; the Workers scope fed by the same data).
 
@@ -337,3 +339,32 @@ same Refresh as in §3, and it's the only network action reachable from the card
    draft's jump straight into Workers?
 6. Should a local-merge row link to the **merge commit** (recommended; it always exists on GitHub once
    pushed), or to the branch's compare page (which breaks once the branch is deleted)?
+
+## Implementation
+
+The questions above took their recommended answers, with one exception. Q2's "today only in the
+done fold" was dropped: in the Today scope the fold is "N earlier", which holds nothing from today.
+So every landed count is all-time.
+
+| Piece | Where |
+|---|---|
+| The model: display rules, tree-deduped sums, fold members, parsing, GitHub links | `apps/FrogKit/Core/GitBadge.swift`, tests `GitBadgeTests` |
+| The index: tree resolution from `.git`, the per-repo batch on FSEvents, status on settle and on first sight (once a minute), the merge index, lazy diffstats and commits, Refresh (fetch + gh) | `apps/macos/Frog/Model/GitIndex.swift`, test `GitIndexTests` (a real repo: ahead/behind, merged, fresh, dirty, the card, the ref watcher) |
+| Hooks | `Library.refresh` → `listingChanged`, `Library.live` → `liveChanged` |
+| The badge, the tree's sums, the hover card and its controller (an `NSPanel` that takes key only when pinned) | `apps/macos/Frog/Views/GitBadges.swift` |
+| Placement | `TreeRow` (all weights), done folds, compact rows, project headers (compact and regular), the row menu's "Refresh Git" |
+| Removed | `CompactPRCache` (gh per row), `SessionMetaCache` |
+| Snapshots | `SidebarSnapshotTests.testRenderGitBadges` → `sidebar-git-{today,live}-{light,dark}.png`, `git-card-{group,session}-{light,dark}.png` |
+
+Not built, and why:
+- **Space on a focused row** opens nothing, because sidebar rows have no keyboard focus today. The
+  keyboard works once the card is pinned by a click: ↑/↓, Return, ⌥Return, ⌘C, ⌘R, Esc.
+  VoiceOver's "Show landed work" action also pins the card.
+- **The safe triangle.** Only the 300 ms grace is there. The card opens right under the badge, so
+  the pointer crosses the gap well within it.
+- **"Show in Workers"** and `tornDown.landed`. The Workers scope and teardown (worktree-ux §3–4)
+  aren't built yet. The card footer has Refresh.
+- **ListSessions/SessionStatus `ahead` against base.** It goes in with the worktree-ux manifest.
+- **iOS rows.**
+- **Hover-card placement** is below the badge, or above it near the screen's bottom edge. The card
+  doesn't move away from the row horizontally.
