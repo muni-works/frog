@@ -338,6 +338,10 @@ struct Journal {
     store: Option<PathBuf>,
     /// Opened lazily on the first durable write, so idle launches leave no files behind.
     log: Mutex<Option<Log>>,
+    /// The log couldn't be created for this session (the id's file is unwritable, say), and
+    /// the one notice saying so has been sent. Appends stay silent no-ops rather than a
+    /// warning per event. Cleared when the session switches (a new conversation or `Op::Clear`).
+    dead: AtomicBool,
     /// For the header: cwd and model name.
     header: Mutex<(PathBuf, String)>,
     /// The current turn's streaming events (text as it arrives, progress), beside the log as
@@ -353,6 +357,7 @@ impl Journal {
             session: Mutex::new(String::new()),
             store,
             log: Mutex::new(None),
+            dead: AtomicBool::new(false),
             header: Mutex::new((PathBuf::new(), String::new())),
             live: Mutex::new(None),
         }
@@ -367,6 +372,7 @@ impl Journal {
         *self.session.lock().unwrap() = id;
         self.seq.store(seq, Ordering::Relaxed);
         *self.log.lock().unwrap() = log;
+        self.dead.store(false, Ordering::SeqCst);
     }
 
     fn has_log(&self) -> bool {
@@ -374,12 +380,17 @@ impl Journal {
     }
 
     /// Append a record to the session log, creating the log on first use. An error means the
-    /// session is no longer being saved.
+    /// session can't be saved, and that the caller should relay the error to the user once.
     fn record(&self, rec: Record) -> std::result::Result<(), String> {
         let Some(dir) = &self.store else {
             return Ok(());
         };
         let mut log = self.log.lock().unwrap();
+        // The log already failed for this session: nothing more to say, and nothing to retry —
+        // the error was a dead file, not a transient one.
+        if log.is_none() && self.dead.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         if log.is_none() {
             let (cwd, model) = self.header.lock().unwrap().clone();
             let header = Header {
@@ -392,11 +403,16 @@ impl Journal {
             };
             match Log::create(dir, header) {
                 Ok(l) => *log = Some(l),
-                Err(e) => return Err(format!("session won't be saved: {e:#}")),
+                Err(e) => {
+                    // Once per session, never per event — the turn endures without a log.
+                    self.dead.store(true, Ordering::SeqCst);
+                    return Err(format!("session log unavailable, running without persistence: {e:#}"));
+                }
             }
         }
         if let Some(Err(e)) = log.as_mut().map(|l| l.append(&rec)) {
             *log = None;
+            self.dead.store(true, Ordering::SeqCst);
             return Err(format!("session log write failed, no longer saving: {e:#}"));
         }
         Ok(())
@@ -7056,6 +7072,88 @@ tool, strip prefixes like RULES:, and add tests.",
         let d = std::env::temp_dir().join(format!("frog-engine-test-{}", session::new_id()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// A session whose log can't be created says so once and then runs on silently: the turn
+    /// is never held hostage by a dead file, and the user isn't warned per event.
+    #[tokio::test]
+    async fn an_unsavable_session_warns_once_and_appends_silently() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(vec![text("one")], Stop::End),
+            reply(vec![text("two")], Stop::End),
+        ];
+        let mut h = engine_at(
+            script,
+            false,
+            Some(dir.clone()),
+            None,
+        );
+        // The engine mints its session id at startup; sabotage the store before the first
+        // durable write turns it into a create failure that can't recover (nothing can open a
+        // path a directory occupies).
+        let sid = loop {
+            let ev = h.events.recv().await.unwrap();
+            if !ev.session.is_empty() {
+                break ev.session.clone();
+            }
+        };
+        std::fs::create_dir_all(dir.join(format!("{sid}.jsonl"))).unwrap();
+        // First turn: one warning, and the turn still completes.
+        let evs = run(&mut h, "hello").await;
+        let warns: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { level: Level::Warn, message } => Some(message.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(warns.len(), 1, "{warns:?}");
+        assert!(warns[0].contains("running without persistence"), "{warns:?}");
+        assert!(evs.iter().any(|e| matches!(e.event, Event::TurnEnded { .. })));
+        // Second turn: no more warnings — the appends are silent no-ops.
+        let evs = run(&mut h, "again").await;
+        assert!(evs
+            .iter()
+            .all(|e| !matches!(e.event, Event::Notice { level: Level::Warn, .. })));
+        assert!(evs.iter().any(|e| matches!(e.event, Event::TurnEnded { .. })));
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A create that collides with a live, well-formed session elsewhere keeps failing — but
+    /// once, per session: the file's owner keeps its log intact.
+    #[tokio::test]
+    async fn a_dead_file_lets_the_next_new_session_try_again() {
+        // Op::Clear starts a fresh session under the same store: the dead flag clears with it.
+        let dir = tmp_store();
+        let mut h = engine_at(
+            vec![reply(vec![text("one")], Stop::End)],
+            false,
+            Some(dir.clone()),
+            None,
+        );
+        let sid = loop {
+            let ev = h.events.recv().await.unwrap();
+            if !ev.session.is_empty() {
+                break ev.session.clone();
+            }
+        };
+        std::fs::create_dir_all(dir.join(format!("{sid}.jsonl"))).unwrap();
+        let evs = run(&mut h, "hello").await;
+        assert_eq!(
+            evs.iter()
+                .filter(|e| matches!(e.event, Event::Notice { level: Level::Warn, .. }))
+                .count(),
+            1
+        );
+        h.ops.send(Op::Clear).unwrap();
+        let cleared = until_idle(&mut h).await;
+        assert!(cleared
+            .iter()
+            .all(|e| !matches!(e.event, Event::Notice { level: Level::Warn, .. })));
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Collect events through the next `Idle`.
