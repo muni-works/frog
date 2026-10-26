@@ -843,6 +843,26 @@ mod tests {
         format!("sleep {secs} & echo $! > '{}'; wait", ws.join("pid").display())
     }
 
+    /// Drives `run` until the sleeper has recorded its pid (up to 10s), so a test cancels a
+    /// command that really started. (A fixed sleep while `run` sits pinned and unpolled
+    /// never spawns it at all.)
+    async fn until_sleeping<F: std::future::Future + Unpin>(run: &mut F, ws: &std::path::Path) {
+        let pid = ws.join("pid");
+        let started = async {
+            for _ in 0..200 {
+                if std::fs::read_to_string(&pid).is_ok_and(|s| !s.trim().is_empty()) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            panic!("the sleeper never started");
+        };
+        tokio::select! {
+            _ = run => panic!("the command finished before it was interrupted"),
+            _ = started => {}
+        }
+    }
+
     /// Polls up to 2s for the sleeper's recorded pid to be gone (a zombie counts as gone).
     async fn sleeper_gone(ws: &std::path::Path) -> bool {
         let pid = std::fs::read_to_string(ws.join("pid")).expect("the sleeper never recorded its pid");
@@ -1488,8 +1508,8 @@ mod tests {
         let input = json!({ "command": cmd, "timeout": 120000 });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
-        // Give the command time to spawn and start sleeping.
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // Drive the command until it has spawned and is sleeping.
+        until_sleeping(&mut run, &ws).await;
         let started = std::time::Instant::now();
         token.cancel();
         let out = tokio::time::timeout(Duration::from_secs(2), run).await;
@@ -1521,7 +1541,7 @@ mod tests {
         let input = json!({ "command": cmd });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        until_sleeping(&mut run, &ws).await;
         token.cancel();
         let err = match tokio::time::timeout(Duration::from_secs(2), run).await {
             // Elapsed without finishing, or finished as an error: both prove the interrupt
@@ -1552,7 +1572,7 @@ mod tests {
         let input = json!({ "command": sleeper(&ws, 63) });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        until_sleeping(&mut run, &ws).await;
         token.cancel();
         let out = tokio::time::timeout(Duration::from_secs(2), run)
             .await
