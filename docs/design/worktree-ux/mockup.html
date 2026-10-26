@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>frog — worktree UX mockup</title>
+<style>
+  :root {
+    --bg: #ececec; --win: #fff; --side: #f4f3f2; --line: #e2e0de; --text: #1d1d1f;
+    --sec: #6e6e73; --ter: #a1a1a6; --tint: #2f9e5b; --orange: #e8890c; --amber: #c98a12;
+    --red: #d6453d; --sel: #dcdad7; --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px; background: var(--bg); color: var(--text);
+         font: 13px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .lede { color: var(--sec); margin: 0 0 24px; max-width: 900px; }
+  .stage { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+  .caption { font-size: 11px; color: var(--sec); margin: 8px 2px 0; max-width: 300px; }
+  .caption b { color: var(--text); }
+
+  /* window */
+  .window { background: var(--win); border-radius: 10px; overflow: hidden; display: flex;
+            box-shadow: 0 0 0 .5px rgba(0,0,0,.18), 0 12px 40px rgba(0,0,0,.14); }
+  .sidebar { width: 300px; background: var(--side); border-right: .5px solid var(--line);
+             padding: 10px 6px 14px; height: 730px; overflow: hidden; }
+  .lights { display: flex; gap: 8px; padding: 2px 8px 12px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights i:nth-child(1){background:#ff5f57} .lights i:nth-child(2){background:#febc2e} .lights i:nth-child(3){background:#28c840}
+  .search { margin: 0 4px 6px; background: rgba(0,0,0,.05); border-radius: 6px; padding: 4px 8px; color: var(--ter); font-size: 12px; }
+
+  .label { display: flex; align-items: center; gap: 5px; padding: 12px 4px 3px 8px;
+           font-size: 10px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--sec); }
+  .label .sp { flex: 1; }
+  .label .count { font-weight: 600; }
+  .seg { display: inline-flex; background: rgba(0,0,0,.07); border-radius: 5px; padding: 1px; gap: 1px;
+         text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 10px; }
+  .seg span { padding: 1px 6px; border-radius: 4px; color: var(--text); }
+  .seg span.on { background: #fff; box-shadow: 0 .5px 1.5px rgba(0,0,0,.2); }
+  .seg span.new { position: relative; }
+  .seg span.new::after { content: ""; position: absolute; top: -2px; right: -1px; width: 5px; height: 5px;
+                         border-radius: 50%; background: var(--tint); }
+
+  .repo { display: flex; align-items: center; gap: 6px; padding: 8px 8px 2px; font-size: 11px; font-weight: 600; color: var(--sec); }
+  .repo .sw { width: 8px; height: 8px; border-radius: 2px; }
+  .repo .sp { flex: 1; }
+  .repo .clean { font-weight: 500; font-size: 10.5px; color: var(--tint); background: rgba(47,158,91,.1);
+                 border-radius: 4px; padding: 1px 6px; cursor: default; }
+
+  .row { display: grid; grid-template-columns: 18px 1fr auto 16px; gap: 6px; align-items: center;
+         padding: 4px 6px 4px 8px; border-radius: 6px; }
+  .row.sel { background: var(--sel); }
+  .row .who { width: 16px; height: 16px; border-radius: 50%; color: #fff; font-size: 9px; font-weight: 700;
+              display: grid; place-items: center; }
+  .row .who.you { background: #fff; color: var(--sec); box-shadow: inset 0 0 0 1px var(--ter); font-size: 6.5px; letter-spacing: -.2px; }
+  .row .who.none { background: none; box-shadow: inset 0 0 0 1px var(--ter); border: 1px dashed transparent; }
+  .row .main { min-width: 0; }
+  .row .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .title.dim { color: var(--sec); }
+  .chip { display: inline-block; font: 10.5px/1.3 var(--mono); color: var(--sec); background: rgba(0,0,0,.05);
+          border-radius: 4px; padding: 0 5px; margin-top: 1px; max-width: 100%; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+  .chip.div { color: var(--amber); background: rgba(201,138,18,.12); }
+  .meta { font: 10.5px var(--mono); color: var(--sec); white-space: nowrap; text-align: right; }
+  .meta .up { color: var(--text); } .meta .down { color: var(--ter); } .meta .d { color: var(--orange); }
+  .badge { font: 9.5px -apple-system, system-ui; font-weight: 600; color: var(--amber); background: rgba(201,138,18,.12);
+           border-radius: 3px; padding: 0 4px; margin-left: 3px; }
+
+  /* state dots */
+  .st { width: 14px; height: 14px; display: grid; place-items: center; }
+  .spin { width: 11px; height: 11px; border-radius: 50%; border: 1.6px solid rgba(0,0,0,.12); border-top-color: var(--sec);
+          animation: r 0.9s linear infinite; }
+  @keyframes r { to { transform: rotate(360deg); } }
+  .hand { font-size: 11px; filter: saturate(1.4); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .dot.idle { background: var(--ter); }
+  .dot.parked { background: none; box-shadow: inset 0 0 0 1.6px var(--amber); width: 8px; height: 8px; }
+  .dot.orphan { background: none; border: 1.4px dashed var(--ter); width: 9px; height: 9px; }
+  .ok { color: var(--tint); font-size: 11px; font-weight: 700; }
+  .miss { color: var(--red); font-size: 11px; font-weight: 700; }
+
+  /* expanded row */
+  .detail { margin: 0 6px 4px 32px; padding: 6px 8px; border-radius: 6px; background: #fff;
+            box-shadow: 0 0 0 .5px var(--line); font-size: 11px; color: var(--sec); }
+  .detail dl { display: grid; grid-template-columns: 52px 1fr; gap: 2px 6px; margin: 0; }
+  .detail dt { color: var(--ter); } .detail dd { margin: 0; font-family: var(--mono); font-size: 10.5px; color: var(--text);
+                                                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .detail .acts { display: flex; gap: 6px; margin-top: 6px; }
+  .btn { font-size: 11px; padding: 2px 8px; border-radius: 5px; background: rgba(0,0,0,.05); color: var(--text); }
+  .btn.warn { color: var(--red); }
+
+  .content { width: 560px; height: 730px; position: relative; background: #fff; }
+  .content .ghost { padding: 48px 56px; color: var(--ter); }
+  .ghost .p { height: 10px; background: #f0efee; border-radius: 4px; margin: 10px 0; }
+  .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.18); }
+
+  /* teardown sheet */
+  .sheet { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); width: 440px;
+           background: #fbfbfb; border-radius: 12px; padding: 18px 20px 16px;
+           box-shadow: 0 0 0 .5px rgba(0,0,0,.25), 0 20px 50px rgba(0,0,0,.3); }
+  .sheet h2 { font-size: 14px; margin: 0 0 2px; }
+  .sheet .sub { color: var(--sec); font-size: 12px; margin: 0 0 12px; }
+  .sheet .sub code { font: 11.5px var(--mono); color: var(--text); }
+  .box { border-radius: 8px; background: #fff; box-shadow: 0 0 0 .5px var(--line); padding: 8px 10px; margin-bottom: 10px; }
+  .box h3 { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--sec); margin: 0 0 4px; font-weight: 600; }
+  .box .f { font: 11.5px/1.55 var(--mono); }
+  .box .f .m { color: var(--orange); } .box .f .a { color: var(--tint); } .box .f .u { color: var(--sec); }
+  .box .f .sha { color: var(--ter); }
+  .arrow { font-size: 11.5px; color: var(--sec); margin: 2px 0 12px; line-height: 1.6; }
+  .arrow code { font: 11px var(--mono); color: var(--text); background: rgba(0,0,0,.05); padding: 0 4px; border-radius: 3px; }
+  .choices { display: flex; flex-direction: column; gap: 6px; }
+  .choice { display: grid; grid-template-columns: 16px 1fr; gap: 8px; padding: 7px 10px; border-radius: 8px;
+            box-shadow: 0 0 0 .5px var(--line); background: #fff; }
+  .choice.on { box-shadow: 0 0 0 1.5px var(--tint); }
+  .radio { width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--ter); margin-top: 1px; }
+  .choice.on .radio { box-shadow: inset 0 0 0 4px var(--tint); }
+  .choice b { font-weight: 600; } .choice .why { color: var(--sec); font-size: 11.5px; }
+  .choice.danger b { color: var(--red); }
+  .foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  .foot .sp { flex: 1; }
+  .foot .note { color: var(--ter); font-size: 11px; }
+  .pbtn { white-space: nowrap; padding: 4px 14px; border-radius: 6px; font-size: 12.5px; background: #fff; box-shadow: 0 0 0 .5px rgba(0,0,0,.25), 0 .5px 1px rgba(0,0,0,.1); }
+  .pbtn.def { background: var(--tint); color: #fff; box-shadow: none; }
+
+  /* refusal card */
+  .refusal { width: 880px; background: #fff; border-radius: 10px; padding: 16px 18px;
+             box-shadow: 0 0 0 .5px rgba(0,0,0,.18), 0 12px 40px rgba(0,0,0,.1); }
+  .tool { display: flex; gap: 8px; align-items: center; color: var(--sec); font-size: 12.5px; margin-bottom: 8px; }
+  .tool .x { color: var(--red); font-weight: 700; }
+  pre { margin: 0; font: 11.5px/1.55 var(--mono); background: #f7f6f5; border-radius: 8px; padding: 10px 12px;
+        white-space: pre; overflow-x: auto; color: var(--text); }
+  pre .k { color: var(--tint); } pre .c { color: var(--sec); }
+
+  .legend { display: grid; grid-template-columns: 16px auto; gap: 5px 8px; align-items: center; font-size: 11.5px;
+            color: var(--sec); background: #fff; border-radius: 10px; padding: 12px 14px; width: 300px;
+            box-shadow: 0 0 0 .5px rgba(0,0,0,.12); }
+  .legend .st { justify-self: center; }
+  .legend b { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>Worktree UX: mockup</h1>
+<p class="lede">Left: the sidebar's new <b>Workers</b> scope (a fourth segment beside Live · Today · All).
+  It lists one row per worktree, grouped by repo. Right: the teardown sheet shown when a session that
+  owns a dirty tree is archived or torn down. Below: the named refusal a manager gets back when
+  StartSession hits a name that already exists. See <code>README.md</code> §2–§4.</p>
+
+<div class="stage">
+  <div>
+    <div class="window">
+      <div class="sidebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="search">Search</div>
+
+        <div class="label">Org <span class="sp"></span>
+          <span class="seg"><span>Live</span><span>Today</span><span>All</span><span class="on new">Workers</span></span>
+        </div>
+
+        <!-- repo: frog -->
+        <div class="repo"><span class="sw" style="background:#5b9e72"></span>frog <span class="count">· 6</span><span class="sp"></span>
+          <span class="clean">Clean up 2 merged</span></div>
+
+        <div class="row sel">
+          <span class="who" style="background:#3f8f63">f</span>
+          <div class="main"><div class="title">worktree ux</div><span class="chip">frog/worktree-ux</span></div>
+          <span class="meta"><span class="up">↑3</span></span>
+          <span class="st"><span class="spin"></span></span>
+        </div>
+        <div class="detail">
+          <dl>
+            <dt>path</dt><dd>~/Developer/frog/.frog/worktrees/worktree-ux</dd>
+            <dt>base</dt><dd>origin/main @ 115b40d · 0 behind</dd>
+            <dt>engine</dt><dd>pid 48211 · local_9c1e…</dd>
+            <dt>owner</dt><dd>frog (local_8f7ba70b)</dd>
+          </dl>
+          <div class="acts"><span class="btn">Open</span><span class="btn">Reveal</span><span class="btn warn">Tear down…</span></div>
+        </div>
+
+        <div class="row">
+          <span class="who" style="background:#3f8f63">f</span>
+          <div class="main"><div class="title">flaky bench</div><span class="chip">frog/flaky-bench</span></div>
+          <span class="meta"><span class="up">↑1</span> <span class="d">●4</span></span>
+          <span class="st"><span class="hand">✋</span></span>
+        </div>
+        <div class="row">
+          <span class="who" style="background:#3f8f63">f</span>
+          <div class="main"><div class="title">subagent visibility<span class="badge">stale 9d</span></div><span class="chip div">frog/subagent-visibility</span></div>
+          <span class="meta"><span class="up">↑2</span> <span class="down">↓41</span> <span class="d">●2</span></span>
+          <span class="st"><span class="dot parked"></span></span>
+        </div>
+        <div class="row">
+          <span class="who you">you</span>
+          <div class="main"><div class="title dim">continuity ux followup</div><span class="chip">frog/continuity-ux-followup</span></div>
+          <span class="meta"></span>
+          <span class="st"><span class="ok">✓</span></span>
+        </div>
+        <div class="row">
+          <span class="who" style="background:#3f8f63">f</span>
+          <div class="main"><div class="title dim">typography pass</div><span class="chip">frog/typography-pass</span></div>
+          <span class="meta"></span>
+          <span class="st"><span class="ok">✓</span></span>
+        </div>
+        <div class="row">
+          <span class="who none"></span>
+          <div class="main"><div class="title dim">scratch</div><span class="chip">detached @ 9e02a1c</span></div>
+          <span class="meta"><span class="d">●1</span></span>
+          <span class="st"><span class="dot orphan"></span></span>
+        </div>
+
+        <!-- repo: tang -->
+        <div class="repo"><span class="sw" style="background:#b4793f"></span>tang <span class="count">· 4</span><span class="sp"></span>
+          <span class="clean" style="color:var(--sec);background:rgba(0,0,0,.05)">Prune 1 missing</span></div>
+        <div class="row">
+          <span class="who" style="background:#c0862f">z</span>
+          <div class="main"><div class="title">h200 fixes</div><span class="chip">frog/h200-fixes</span></div>
+          <span class="meta"><span class="up">↑7</span> <span class="d">●3</span></span>
+          <span class="st"><span class="spin"></span></span>
+        </div>
+        <div class="row">
+          <span class="who" style="background:#c0862f">z</span>
+          <div class="main"><div class="title">kv ttl</div><span class="chip">frog/kv-ttl</span></div>
+          <span class="meta"><span class="up">↑2</span></span>
+          <span class="st"><span class="dot idle"></span></span>
+        </div>
+        <div class="row">
+          <span class="who" style="background:#c0862f">z</span>
+          <div class="main"><div class="title">gpt oss</div><span class="chip">frog/gpt-oss</span></div>
+          <span class="meta"><span class="up">↑5</span> <span class="d">●6</span></span>
+          <span class="st"><span class="dot parked"></span></span>
+        </div>
+        <div class="row">
+          <span class="who" style="background:#c0862f">z</span>
+          <div class="main"><div class="title dim">kernel registry</div><span class="chip">frog/kernel-registry</span></div>
+          <span class="meta" style="color:var(--red)">dir gone</span>
+          <span class="st"><span class="miss">✕</span></span>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="ghost"><div class="p" style="width:70%"></div><div class="p"></div><div class="p" style="width:85%"></div>
+          <div class="p" style="width:40%"></div><div class="p" style="width:90%"></div><div class="p" style="width:60%"></div></div>
+        <div class="scrim"></div>
+
+        <div class="sheet">
+          <h2>Tear down “subagent visibility”?</h2>
+          <p class="sub">Its engine is stopped. The tree <code>frog/subagent-visibility</code> still holds work that isn't anywhere else.</p>
+
+          <div class="box">
+            <h3>Uncommitted · 2 files</h3>
+            <div class="f"><span class="m">M</span> apps/FrogKit/UI/Transcript/SubagentCard.swift<br>
+              <span class="u">?</span> docs/design/subagent-visibility/notes.md</div>
+          </div>
+          <div class="box">
+            <h3>Commits not on origin/main · 2</h3>
+            <div class="f"><span class="sha">a41c0e2</span> subagent card: live step list<br>
+              <span class="sha">77d9b13</span> subagent card: collapse when done</div>
+          </div>
+
+          <div class="arrow">Parked as <code>refs/frog/parked/subagent-visibility/1</code>. A fresh tree can pick it up with
+            <code>StartSession { from_parked: "subagent-visibility/1" }</code>. The branch is kept (2 unmerged).</div>
+
+          <div class="choices">
+            <div class="choice on"><span class="radio"></span><div><b>Park &amp; remove</b>
+              <div class="why">Save the 2 files to the parked ref, remove the tree, keep the branch. Recommended.</div></div></div>
+            <div class="choice"><span class="radio"></span><div><b>Keep the tree</b>
+              <div class="why">Archive the session only. The tree stays listed as parked.</div></div></div>
+            <div class="choice danger"><span class="radio"></span><div><b>Remove and discard changes</b>
+              <div class="why">Delete the 2 files with the tree. Needs a second click. The branch is still kept.</div></div></div>
+          </div>
+
+          <div class="foot"><span class="note">Asked in the app only. A relayed approval can't answer it.</span><span class="sp"></span>
+            <span class="pbtn">Cancel</span><span class="pbtn def">Park &amp; remove</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="caption"><b>Workers scope.</b> Rows show the owner glyph (who spawned it; “you” when you did), the title,
+      the branch chip (amber when it's far behind its base), ↑ahead ↓behind ●dirty against the base, and the state.
+      Click a row to expand it (shown on the selected row).</p>
+  </div>
+
+  <div class="legend">
+    <span class="st"><span class="spin"></span></span><span><b>running</b> · lock held, turn active</span>
+    <span class="st"><span class="hand">✋</span></span><span><b>waiting</b> · lock held, needs you</span>
+    <span class="st"><span class="dot idle"></span></span><span><b>idle</b> · lock held, no turn</span>
+    <span class="st"><span class="dot parked"></span></span><span><b>parked</b> · no engine (exited or crashed), has work. Resume or tear down. Amber <i>stale</i> badge after 7 days.</span>
+    <span class="st"><span class="ok">✓</span></span><span><b>merged</b> · no engine, clean, branch in base. Auto teardown after 24 h.</span>
+    <span class="st"><span class="dot orphan"></span></span><span><b>orphan</b> · no frog session or manifest. Flagged only.</span>
+    <span class="st"><span class="miss">✕</span></span><span><b>missing</b> · git has the entry, the dir is gone. <code>git worktree prune</code>, auto.</span>
+  </div>
+</div>
+
+<h1 style="margin-top:36px">Named refusal (StartSession collision)</h1>
+<p class="lede">What a manager gets back when it restarts a task under a title whose tree already exists. Today it gets a silent <code>feat-x-2</code> instead.</p>
+<div class="refusal">
+  <div class="tool"><span class="x">✕</span> StartSession · “subagent visibility”</div>
+<pre>worktree "subagent-visibility" already exists:
+  path    ~/Developer/frog/.frog/worktrees/subagent-visibility
+  branch  frog/subagent-visibility  (2 ahead of origin/main, 41 behind, 2 dirty)
+  owner   local_4c27… "subagent visibility" (started by frog) · engine: not running · last active 9d ago
+Pick one:
+  <span class="k">on_collision: "reuse"</span>    <span class="c">continue in this tree (its work stays; you become its owner)</span>
+  <span class="k">on_collision: "new"</span>      <span class="c">a fresh tree "subagent-visibility-2" from origin/main (the old one is left as it is)</span>
+  <span class="k">on_collision: "replace"</span>  <span class="c">park 2 files → refs/frog/parked/subagent-visibility/1, remove, recreate
+                           (the app asks Cam first: 2 dirty, 2 unmerged)</span>
+Or resume the owner: SendMessage to local_4c27….</pre>
+</div>
+
+</body>
+</html>

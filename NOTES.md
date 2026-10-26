@@ -54,6 +54,10 @@ Sandbox (bash.rs):
   index, HEAD, frog-engine.lock), `git worktree remove/prune` admin entries. Reads: allow default (all but secrets).
 - Engine also: Write/Edit outside the session root (e.g. main checkout) asks, denied headless (engine.rs:4965).
 
+## Progress
+- e8d1e26 checkpoint 0 · c5009a3 survey · ccaa3f8 README spec · mockup commit (workers scope + teardown sheet
+  + named refusal card; screenshot-checked at 1360w). DESIGN DONE — awaiting Cam's review before any code.
+
 ---
 
 # typography pass — notes (previous task, kept)
