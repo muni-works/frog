@@ -109,7 +109,6 @@ struct GitTreeBadges {
                       folds: [String: SessionFolds.Fold], chief: String?,
                       state: (SessionInfo) -> SessionNesting.State,
                       open: @escaping (SessionInfo) -> Void) -> GitTreeBadges {
-        let index = GitIndex.shared
         let byId = Dictionary(heads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var kids: [String: [String]] = [:]
         for h in heads { if let p = parentOf[h.id], byId[p] != nil { kids[p, default: []].append(h.id) } }
@@ -124,22 +123,10 @@ struct GitTreeBadges {
             guard let s = byId[id] else { return [] }
             return [s] + (folds[id]?.older ?? [])
         }
-        func settled(_ s: SessionInfo) -> Bool { let st = state(s); return st != .running && st != .waiting }
+        func settled(_ s: SessionInfo) -> Bool { Self.settled(state(s)) }
         func group(_ ids: [String], title: String) -> GitRowBadge? {
-            let sessions = ids.flatMap { GitRollup.subtree($0, children: children) }.flatMap(members)
-            let items = sessions.compactMap { s in index.badge(s).map { (badge: $0, settled: settled(s)) } }
-            let sum = GitSummary.of(items)
-            guard let d = sum.display else { return nil }
-            var counts: [String] = []
-            if sum.landed > 0 { counts.append("\(sum.landed) landed") }
-            if sum.ahead > 0 { counts.append("\(sum.ahead) ahead") }
-            var help = counts
-            if sum.dirty { help.append("uncommitted work left behind") }
-            if sum.trouble { help.append("a rebase or merge is stuck") }
-            let refresh = { index.refreshFromRemote(sessions, askGitHub: false) }
-            return GitRowBadge(display: d, help: help.joined(separator: " · "),
-                               card: .init(id: "git:" + title + ids.joined(), title: title, sessions: sessions, single: false,
-                                           counts: counts.joined(separator: " · "), open: open, refresh: refresh))
+            Self.group(ids.flatMap { GitRollup.subtree($0, children: children) }.flatMap(members),
+                       id: "git:" + title + ids.joined(), title: title, settled: settled, open: open)
         }
 
         var out = GitTreeBadges()
@@ -148,17 +135,8 @@ struct GitTreeBadges {
             case .row(let s, _, let counts, _):
                 if counts.total > 0 {
                     out.rows[s.id] = group([s.id], title: s.displayTitle)
-                } else if let b = index.badge(s), let d = b.display(settled: settled(s)) {
-                    let all = members(s.id)
-                    var counts: [String] = []
-                    if let a = b.ahead, a > 0 { counts.append("\(a) ahead") }
-                    if b.isLanded { counts.append("landed") }
-                    if let t = b.trouble { counts.append(t.words) }
-                    out.rows[s.id] = GitRowBadge(
-                        display: d, help: b.summary,
-                        card: .init(id: "git:" + s.id, title: s.displayTitle, sessions: all, single: true,
-                                    counts: counts.joined(separator: " · "), open: open,
-                                    refresh: { index.refreshFromRemote(all, askGitHub: true) }))
+                } else {
+                    out.rows[s.id] = leaf(s, members: members(s.id), settled: settled(s), open: open)
                 }
             case .done:
                 break
@@ -172,6 +150,44 @@ struct GitTreeBadges {
         }
         return out
     }
+
+    /// One session's badge: its own tree (older sessions of its branch included in the card).
+    static func leaf(_ s: SessionInfo, members: [SessionInfo], settled: Bool,
+                     open: @escaping (SessionInfo) -> Void) -> GitRowBadge? {
+        let index = GitIndex.shared
+        guard let b = index.badge(s), let d = b.display(settled: settled) else { return nil }
+        var counts: [String] = []
+        if let a = b.ahead, a > 0 { counts.append("\(a) ahead") }
+        if b.isLanded { counts.append("landed") }
+        if let t = b.trouble { counts.append(t.words) }
+        return GitRowBadge(
+            display: d, help: b.summary,
+            card: .init(id: "git:" + s.id, title: s.displayTitle, sessions: members, single: true,
+                        counts: counts.joined(separator: " · "), open: open,
+                        refresh: { index.refreshFromRemote(members, askGitHub: true) }))
+    }
+
+    /// A group's badge: the sum over `sessions` (a subtree, a fold, a repo), one tree once.
+    static func group(_ sessions: [SessionInfo], id: String, title: String, settled: (SessionInfo) -> Bool,
+                      open: @escaping (SessionInfo) -> Void) -> GitRowBadge? {
+        let index = GitIndex.shared
+        let items = sessions.compactMap { s in index.badge(s).map { (badge: $0, settled: settled(s)) } }
+        let sum = GitSummary.of(items)
+        guard let d = sum.display else { return nil }
+        var counts: [String] = []
+        if sum.landed > 0 { counts.append("\(sum.landed) landed") }
+        if sum.ahead > 0 { counts.append("\(sum.ahead) ahead") }
+        var help = counts
+        if sum.dirty { help.append("uncommitted work left behind") }
+        if sum.trouble { help.append("a rebase or merge is stuck") }
+        return GitRowBadge(display: d, help: help.joined(separator: " · "),
+                           card: .init(id: id, title: title, sessions: sessions, single: false,
+                                       counts: counts.joined(separator: " · "), open: open,
+                                       refresh: { index.refreshFromRemote(sessions, askGitHub: false) }))
+    }
+
+    /// Whether a session counts as settled for its badge: not running, not mid-turn on you.
+    static func settled(_ state: SessionNesting.State) -> Bool { state != .running && state != .waiting }
 }
 
 /// The badge's view, for placing the card (a weak box: SwiftUI owns the view).
