@@ -103,7 +103,7 @@ struct TurnView: View {
     /// The turn's first row: what opened it (background work, a message from another session,
     /// or what you asked).
     private var head: some View {
-        VStack(alignment: .leading, spacing: space.inTurn) {
+        VStack(alignment: .leading, spacing: space.block) {
             let lead = TurnLead(turn)
             if !lead.wakes.isEmpty {
                 // Background work finished and the turn opened with it: event rows, not a bubble.
@@ -138,9 +138,9 @@ struct TurnView: View {
     }
 
     private var prompt: some View {
-        VStack(alignment: .trailing, spacing: 2) {
+        VStack(alignment: .trailing, spacing: TurnSpace.Inset.hair) {
             // Messages queued while the last turn ran go together: a bubble each.
-            VStack(alignment: .trailing, spacing: 6) {
+            VStack(alignment: .trailing, spacing: TurnSpace.Inset.snug) {
                 UserPrompt(text: turn.input, images: turn.images, tint: promptTint)
                 ForEach(Array(turn.more.enumerated()), id: \.offset) { _, part in
                     UserPrompt(text: part.text, images: part.images, tint: promptTint)
@@ -199,7 +199,7 @@ struct TurnView: View {
         let status = running && loading == nil ? liveStatus : nil
         let plan = running && !parts.plan.isEmpty
         if plan || loading != nil || status != nil || !parts.changes.isEmpty || turn.end != nil {
-            VStack(alignment: .leading, spacing: space.inTurn) {
+            VStack(alignment: .leading, spacing: space.block) {
                 if plan {
                     PlanView(todos: parts.plan)
                 }
@@ -220,7 +220,7 @@ struct TurnView: View {
                     EndView(reason: end, usage: turn.usage, answer: answer, hovering: hovering)
                         // Set off from the answer above it (see `TurnSpace`): the turn's last
                         // line reads as a caption, not as one more paragraph.
-                        .padding(.top, isFooter(end) ? space.beforeFooter : 0)
+                        .padding(.top, isFooter(end) ? space.footer : 0)
                         .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
                         .allowsHitTesting(pinsFooter || hovering)
                 }
@@ -432,9 +432,9 @@ struct PlanView: View {
     let todos: [Todo]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
             ForEach(Array(todos.enumerated()), id: \.offset) { _, todo in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.row) {
                     icon(todo.status)
                         .frame(width: 14)
                     Text(todo.content)
@@ -445,7 +445,7 @@ struct PlanView: View {
                 .font(.callout)
             }
         }
-        .padding(10)
+        .padding(TurnSpace.Inset.card)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background.opacity(0.5), in: .rect(cornerRadius: 10))
         .animation(.smooth, value: todos)
@@ -479,22 +479,22 @@ struct ChangesStrip: View, Equatable {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: TurnSpace.Inset.snug) {
                     ForEach(changes) { change in
                         Button {
                             withAnimation(.snappy) { open = open == change.path ? nil : change.path }
                         } label: {
-                            HStack(spacing: 6) {
+                            HStack(spacing: TurnSpace.Inset.snug) {
                                 Image(systemName: change.created ? "doc.badge.plus" : "doc.text")
                                 Text(change.name).fontWeight(.medium)
                                 Text("+\(change.added)").foregroundStyle(.green)
                                 Text("−\(change.removed)").foregroundStyle(.red)
                             }
                             .font(.caption.monospacedDigit())
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
+                            .padding(.horizontal, TurnSpace.Inset.card)
+                            .padding(.vertical, TurnSpace.Inset.tight)
                             .background(
                                 open == change.path ? AnyShapeStyle(.tint.opacity(0.18)) : AnyShapeStyle(.quaternary.opacity(0.5)),
                                 in: .capsule
@@ -507,7 +507,7 @@ struct ChangesStrip: View, Equatable {
                 }
             }
             if let path = open, let change = changes.first(where: { $0.path == path }) {
-                VStack(spacing: 8) {
+                VStack(spacing: TurnSpace.Inset.row) {
                     ForEach(Array(change.diffs.enumerated()), id: \.offset) { _, diff in
                         DiffView(diff: diff)
                     }

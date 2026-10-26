@@ -13,6 +13,8 @@ struct MessageText: NSViewRepresentable {
 
     func makeNSView(context: Context) -> MessageTextView {
         let view = MessageTextView(usingTextLayoutManager: false)
+        // Draws inline code's rounded backgrounds (see `InlineCodeLayoutManager`).
+        view.textContainer?.replaceLayoutManager(InlineCodeLayoutManager())
         view.isEditable = false
         view.isSelectable = true
         view.isRichText = true
@@ -313,22 +315,57 @@ final class CodeAttachmentCell: NSTextAttachmentCell {
 extension NSAttributedString.Key {
     /// Marks a code block's attachment with its code, for copying.
     static let frogCode = NSAttributedString.Key("frogCode")
+    /// Inline code: a rounded tint behind it, hugging the glyphs rather than the line.
+    static let frogInlineCode = NSAttributedString.Key("frogInlineCode")
+}
+
+/// Inline code sits on a small rounded tint, like claude.ai's: around the glyphs' own height,
+/// not the line's (which includes the leading and a paragraph's space above). A plain
+/// `.backgroundColor` can only fill the line fragment, square. Drawn under the selection.
+final class InlineCodeLayoutManager: NSLayoutManager {
+    static let pad: CGFloat = 2
+    static let radius: CGFloat = 4
+
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        if let storage = textStorage, let container = textContainers.first {
+            let chars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+            NSColor.labelColor.withAlphaComponent(0.09).setFill()
+            storage.enumerateAttribute(.frogInlineCode, in: chars) { value, range, _ in
+                guard value != nil, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
+                // Not written in yet (see `InkReveal`): no tint ahead of the pen.
+                if temporaryAttribute(.foregroundColor, atCharacterIndex: range.location, effectiveRange: nil) as? NSColor == .clear { return }
+                let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                var g = glyphs.location
+                // One rounded rect per line the code wraps across.
+                while g < NSMaxRange(glyphs) {
+                    var line = NSRange()
+                    let fragment = lineFragmentRect(forGlyphAt: g, effectiveRange: &line)
+                    let run = NSIntersectionRange(line, glyphs)
+                    guard run.length > 0 else { break }
+                    let span = boundingRect(forGlyphRange: run, in: container)
+                    let baseline = fragment.minY + location(forGlyphAt: run.location).y
+                    let rect = NSRect(x: span.minX - Self.pad, y: baseline - font.ascender - 1,
+                                      width: span.width + Self.pad * 2, height: font.ascender - font.descender + 2)
+                    NSBezierPath(roundedRect: rect.offsetBy(dx: origin.x, dy: origin.y),
+                                 xRadius: Self.radius, yRadius: Self.radius).fill()
+                    g = NSMaxRange(run)
+                }
+            }
+        }
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+    }
 }
 
 /// How each markdown block looks as attributed text. Spacing comes from `TurnSpace`, so a
 /// message reads with the transcript's rhythm: taller line height within a paragraph, more
 /// room between blocks, and list items tighter than blocks.
 enum MessageStyle {
-    /// The density setting, as `piece` is built on a text-queue (AppKit) thread at times.
-    static var compact: Bool {
-        UserDefaults.standard.string(forKey: "density") == Density.compact.rawValue
-    }
+    /// The density setting's scale, as `piece` is built on a text-queue (AppKit) thread at times.
+    static var blockGap: CGFloat { TurnSpace.current.paragraph }
+    static var listGap: CGFloat { TurnSpace.current.list }
+    static var lineHeight: CGFloat { TurnSpace.current.line }
 
-    static var blockGap: CGFloat { compact ? TurnSpace.blockCompact : TurnSpace.block }
-    static var listGap: CGFloat { compact ? TurnSpace.listItemCompact : TurnSpace.listItem }
-    static var lineHeight: CGFloat { compact ? TurnSpace.lineHeightCompact : TurnSpace.lineHeight }
-
-    static var body: NSFont { .systemFont(ofSize: NSFont.systemFontSize) }
+    static var body: NSFont { .systemFont(ofSize: TurnType.body) }
 
     static func paragraph(_ configure: (NSMutableParagraphStyle) -> Void = { _ in }) -> NSMutableParagraphStyle {
         let p = NSMutableParagraphStyle()
@@ -346,13 +383,13 @@ enum MessageStyle {
         case .paragraph(let s):
             out.append(inline(s, font: body, style: paragraph { $0.paragraphSpacingBefore = gap }))
         case .heading(let level, let s):
-            let size: CGFloat = level == 1 ? 17 : level == 2 ? 15 : 13
-            let font = NSFont.systemFont(ofSize: size, weight: .semibold)
-            out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap + 4 }))
+            let font = NSFont.systemFont(ofSize: TurnType.heading(level), weight: .semibold)
+            // More room above a heading than below it: it belongs to what follows.
+            out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap + TurnSpace.Inset.row }))
         case .bullet(let indent, let marker, let s):
-            let lead = CGFloat(indent) * 16
+            let lead = CGFloat(indent) * TurnType.body
             let markerWidth = (marker as NSString).size(withAttributes: [.font: body]).width
-            let head = lead + max(markerWidth, 10) + 8
+            let head = lead + max(markerWidth, TurnSpace.Inset.card) + TurnSpace.Inset.row
             let style = paragraph {
                 $0.paragraphSpacingBefore = gap
                 $0.paragraphSpacing = listGap
@@ -361,7 +398,7 @@ enum MessageStyle {
                 $0.tabStops = [NSTextTab(textAlignment: .left, location: head)]
             }
             out.append(NSAttributedString(string: "\(marker)\t", attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: TurnType.body, weight: .regular),
                 .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
             ]))
             out.append(inline(s, font: body, style: style))
@@ -370,7 +407,7 @@ enum MessageStyle {
             let block = QuoteTextBlock(gap: gap)
             block.setValue(100, type: .percentageValueType, for: .width)
             block.setWidth(gap, type: .absoluteValueType, for: .padding, edge: .minY)
-            block.setWidth(12, type: .absoluteValueType, for: .padding, edge: .minX)
+            block.setWidth(TurnSpace.Inset.roomy, type: .absoluteValueType, for: .padding, edge: .minX)
             let text = inline(s, font: body, style: paragraph { $0.textBlocks = [block] })
             text.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: 0, length: text.length))
             out.append(text)
@@ -405,7 +442,7 @@ enum MessageStyle {
         table.numberOfColumns = max(columns, 1)
         table.collapsesBorders = true
         table.setWidth(gap, type: .absoluteValueType, for: .margin, edge: .minY)
-        let font = NSFont.systemFont(ofSize: 12)
+        let font = NSFont.systemFont(ofSize: TurnType.small)
         let out = NSMutableAttributedString()
         for (r, row) in ([header] + rows).enumerated() {
             for c in 0..<columns {
@@ -421,7 +458,7 @@ enum MessageStyle {
                 let style = NSMutableParagraphStyle()
                 style.textBlocks = [cell]
                 style.alignment = a == .center ? .center : a == .trailing ? .right : .left
-                let text = inline(row[safe: c] ?? "", font: r == 0 ? .systemFont(ofSize: 12, weight: .semibold) : font, style: style)
+                let text = inline(row[safe: c] ?? "", font: r == 0 ? .systemFont(ofSize: TurnType.small, weight: .semibold) : font, style: style)
                 out.append(text)
                 // Every cell is its own paragraph; the message's last cell ends the table.
                 if !(r == rows.count && c == columns - 1) { out.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style])) }
@@ -444,7 +481,7 @@ enum MessageStyle {
                 if intent.contains(.emphasized) { traits.insert(.italic) }
                 if intent.contains(.code) {
                     f = .monospacedSystemFont(ofSize: font.pointSize - 1, weight: .regular)
-                    attrs[.backgroundColor] = NSColor.labelColor.withAlphaComponent(0.08)
+                    attrs[.frogInlineCode] = true
                 }
                 if intent.contains(.strikethrough) { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
                 if !traits.isEmpty {

@@ -184,7 +184,7 @@ struct TranscriptView: View {
             func add(_ part: TurnPart, _ key: String) {
                 let leads = out.count == start
                 out.append(TranscriptRow(turn: turn, part: part, first: leads,
-                                         gap: leads ? (out.isEmpty ? 0 : space.betweenTurns) : space.inTurn,
+                                         gap: space.gap(part, after: leads ? nil : out.last?.part, first: out.isEmpty),
                                          id: TranscriptRow.ID(turn: turn.id, part: key)))
             }
             if TurnView.hasHead(turn) { add(.head, "head") }
@@ -317,13 +317,13 @@ struct TranscriptView: View {
                 }
                 if let q = conversation.question {
                     QuestionCard(question: q, conversation: conversation)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                         .id(q.id)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 if let e = conversation.elicitation {
                     ElicitationCard(request: e, conversation: conversation)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                         .id(e.id)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
@@ -333,38 +333,38 @@ struct TranscriptView: View {
                 // (Not over the newest rows read from the log: they're the transcript already.)
                 if conversation.replaying, conversation.turns.isEmpty {
                     LoadingIndicator(since: conversation.opened)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                 } else if conversation.busy, conversation.engineAlive, conversation.permission == nil,
                    conversation.elicitation == nil, conversation.question == nil,
                    conversation.turns.last?.items.isEmpty ?? true {
                     WorkingIndicator(progress: conversation.progress, since: conversation.progressSince)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                 }
                 if let preview = conversation.presentPreview {
                     PresentCard(present: preview)
                         .opacity(0.85)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                         .transition(.opacity)
                 }
                 if let failure = conversation.failure {
                     Label(failure, systemImage: "exclamationmark.octagon")
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
-                        .padding(.top, space.betweenTurns)
+                        .padding(.top, space.turn)
                 }
                 if conversation.overflowRescue {
                     OverflowRescueView(conversation: conversation)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-                Color.clear.frame(height: space.betweenTurns).id(Self.end)
+                Color.clear.frame(height: space.turn).id(Self.end)
             }
             .scrollTargetLayout()
             .coordinateSpace(.named(Self.content))
             .environment(\.turnSpace, space)
-            .frame(maxWidth: 820)
-            .padding(.horizontal, 28)
-            .padding(.top, 20)
-            .padding(.bottom, 12)
+            .frame(maxWidth: TurnSpace.measure)
+            .padding(.horizontal, TurnSpace.gutter)
+            .padding(.top, TurnSpace.top)
+            .padding(.bottom, TurnSpace.bottom)
             .frame(maxWidth: .infinity)
             .background(ScrollBackdropClear())
             // The canvas's margins are for this scroll view, not for ones inside it (code
@@ -403,9 +403,9 @@ struct UserPrompt: View {
 
     var body: some View {
         let (message, contexts) = PromptContext.split(text)
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: TurnSpace.Inset.snug) {
             if !images.isEmpty {
-                HStack(spacing: 6) {
+                HStack(spacing: TurnSpace.Inset.snug) {
                     ForEach(Array(images.enumerated()), id: \.offset) { i, img in
                         if let ns = img.image {
                             Image(platformImage: ns)
@@ -421,17 +421,18 @@ struct UserPrompt: View {
             }
             if !message.isEmpty {
                 Text(message)
+                    .font(.system(size: TurnType.body))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, TurnSpace.Inset.roomy + TurnSpace.Inset.hair)
+                    .padding(.vertical, TurnSpace.Inset.card)
                     // Solid, with white text, like iMessage (blue) and SMS (green).
                     .foregroundStyle(.white)
                     .background(tint, in: .rect(cornerRadius: 18))
             }
             ForEach(contexts) { ContextDisclosure(context: $0) }
         }
-        .frame(maxWidth: 560, alignment: .trailing)
+        .frame(maxWidth: TurnSpace.promptWidth, alignment: .trailing)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
@@ -444,11 +445,11 @@ private struct ContextDisclosure: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: TurnSpace.Inset.snug) {
             Button {
                 withAnimation(Motion.quick(reduced: reduceMotion)) { open.toggle() }
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: TurnSpace.Inset.tight) {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
                         .rotationEffect(.degrees(open ? 90 : 0))
@@ -456,7 +457,7 @@ private struct ContextDisclosure: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 10)
+                .padding(.horizontal, TurnSpace.Inset.card)
                 .frame(height: 24)
                 .contentShape(.capsule)
             }
@@ -469,7 +470,7 @@ private struct ContextDisclosure: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                    .padding(TurnSpace.Inset.roomy)
                     .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topTrailing)))
             }
@@ -490,7 +491,7 @@ struct EndView: View {
         switch reason {
         case .complete, .denied:
             if let usage, usage.modelCalls > 0 {
-                HStack(spacing: 10) {
+                HStack(spacing: TurnSpace.Inset.card) {
                     // Where it ran, then what it cost (cloud) or how fast it wrote.
                     if let spec = usage.model {
                         ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
@@ -559,7 +560,7 @@ struct WorkingIndicator: View {
         if let progress, let completed = progress.completed, let total = progress.total, total > 0 {
             ProbeProgress(progress: progress, completed: completed, total: total, since: since ?? .now)
         } else {
-            HStack(spacing: 8) {
+            HStack(spacing: TurnSpace.Inset.row) {
                 ProgressView().controlSize(.small)
                 Text(progress.map { Self.title($0.label) } ?? "Working…")
                     .font(.callout)
@@ -586,8 +587,8 @@ private struct ProbeProgress: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.08)) { timeline in
             let elapsed = max(0, timeline.date.timeIntervalSince(since))
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.snug) {
+                HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.card) {
                     Text(Self.probeTitle(for: progress.label))
                         .font(.callout.weight(.medium))
                         .foregroundStyle(.secondary)
@@ -702,7 +703,7 @@ struct EmptyTranscript: View {
     }
 
     private func content(details: Bool, card: Bool) -> some View {
-        VStack(spacing: 10) {
+        VStack(spacing: TurnSpace.Inset.card) {
             if !details {
                 EmptyView()
             } else if playful {
@@ -720,7 +721,7 @@ struct EmptyTranscript: View {
             #if os(macOS)
             if card {
                 EmptyPageExtras(conversation: conversation)
-                    .padding(.top, 6)
+                    .padding(.top, TurnSpace.Inset.snug)
             }
             #endif
         }
@@ -732,7 +733,7 @@ struct EmptyTranscript: View {
 
     /// The frog on its lily pad. Hover and it says something; drop a file and it hops.
     private var mascot: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: TurnSpace.Inset.tight) {
             ZStack(alignment: .bottom) {
                 LilyPad()
                     .fill(Color.accentColor.opacity(0.22))
@@ -741,7 +742,7 @@ struct EmptyTranscript: View {
                 FrogFace(mood: .idle, size: 48, hop: hop)
                     .anchorPreference(key: FrogAnchorKey.self, value: .bounds) { $0 }
             }
-            .padding(.top, 4)
+            .padding(.top, TurnSpace.Inset.tight)
             .contentShape(.rect)
             .onHover { hovering = $0 }
             Text(FrogCopy.hovers[line % FrogCopy.hovers.count])
@@ -923,14 +924,14 @@ private struct NewBelow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
+            HStack(spacing: TurnSpace.Inset.snug) {
                 Image(systemName: "arrow.down")
                     .symbolEffect(.pulse, options: .repeating, isActive: writing)
                 Text("New message")
             }
             .font(.callout.weight(.medium))
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, TurnSpace.Inset.row)
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)

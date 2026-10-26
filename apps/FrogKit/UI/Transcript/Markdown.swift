@@ -265,13 +265,13 @@ struct CodeBlock: View {
                 .buttonStyle(.borderless)
                 .help("Copy")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, TurnSpace.Inset.roomy)
+            .padding(.vertical, TurnSpace.Inset.snug)
             Divider().opacity(0.5)
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(Highlight.block(code, Highlight.lang(fence: language)))
                     .font(.system(.callout, design: .monospaced))
-                    .padding(12)
+                    .padding(TurnSpace.Inset.roomy)
                     .fixedSize(horizontal: true, vertical: true)
             }
         }
