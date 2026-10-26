@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 import XCTest
 @testable import Frog
@@ -126,8 +127,21 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
     // MARK: The window
 
     private var window: NSWindow!
-    /// The transcript's jump (the rail's): a jump is what stops it following the end.
-    private var jump: TurnState.ID?
+    /// The transcript's jump (the rail's): a jump is what stops it following the end. Backed by
+    /// an observable box: a plain property behind the binding is invisible to SwiftUI's
+    /// observation, so the view's `onChange(of: jump)` only fired when some other state
+    /// happened to re-evaluate the body — mid-climb, or never, and the transcript kept
+    /// following the end (snapping back over rows a fill had just placed). The rail binds
+    /// through observed state; the test must too.
+    @Observable
+    fileprivate final class JumpBox {
+        var id: TurnState.ID?
+    }
+    private let jumpBox = JumpBox()
+    private var jump: TurnState.ID? {
+        get { jumpBox.id }
+        set { jumpBox.id = newValue }
+    }
     private var host: NSHostingView<AnyView>!
 
     override func setUp() async throws {
@@ -341,13 +355,27 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
             frames.append(Date().timeIntervalSince(frame))
             pump(0.05)
             heights.append(doc.bounds.height)
-            // Rows went in above: the row that was at the top is still on screen.
+            // Rows went in above: the row that was at the top is still on screen. A fill's
+            // rows land and are held in place over a few run-loop turns, the last keep-scroll
+            // 50 ms after the rest; `fillSettles` counts a fill once that ran, so it reaches
+            // `earlier` (fills built) exactly when every fill under way has settled. Wait for
+            // that rather than a fixed sleep: a sleep sampled a fill mid-flight — a slow frame
+            // stretched one past it — and read the next fill's row as this one's, reporting a
+            // move that never happened.
             if TranscriptProbe.earlier > built {
-                pump(0.12)
-                kept.append(TranscriptProbe.isMounted(suffix: "-" + TranscriptProbe.kept) ? 1 : 0)
+                let keepRow = TranscriptProbe.kept
+                let deadline = Date().addingTimeInterval(5)
+                while TranscriptProbe.fillSettles < TranscriptProbe.earlier, Date() < deadline { pump(0.02) }
+                // Let the settled fill's last keep-scroll lay out and draw before sampling.
+                pump(0.02)
+                host.layoutSubtreeIfNeeded()
+                host.displayIfNeeded()
+                let keptNow = TranscriptProbe.isMounted(suffix: "-" + keepRow)
+                if !keptNow { print("switch: a fill settled without its kept row \(keepRow) on screen (fills \(TranscriptProbe.fillSettles)/\(TranscriptProbe.earlier))") }
+                kept.append(keptNow ? 1 : 0)
             }
         }
-        print("switch: scroll-up \(heights.count) steps, document \(Int(heights.first ?? 0)) → \(Int(heights.last ?? 0)) pt, \(kept.count) fills, the top row still on screen after \(Int(kept.reduce(0, +))), built above \(TranscriptProbe.earlier) times, peak mounted \(TranscriptProbe.peakMountedRows)")
+        print("switch: scroll-up \(heights.count) steps, document \(Int(heights.first ?? 0)) → \(Int(heights.last ?? 0)) pt, \(kept.count) fills, the top row still on screen after \(Int(kept.reduce(0, +))), built above \(TranscriptProbe.earlier) times, last fill blocked by \(TranscriptProbe.fillBlocked.isEmpty ? "nothing" : "'\(TranscriptProbe.fillBlocked)'"), follows \(TranscriptProbe.follows), peak mounted \(TranscriptProbe.peakMountedRows)")
         let sorted = frames.sorted()
         let p50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2], p95 = sorted.isEmpty ? 0 : sorted[sorted.count * 95 / 100]
         print("switch: scroll-up frames p50 \(String(format: "%.1f", p50 * 1000)) ms, p95 \(String(format: "%.1f", p95 * 1000)) ms, max \(String(format: "%.1f", (sorted.last ?? 0) * 1000)) ms")
