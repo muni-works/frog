@@ -75,3 +75,18 @@ strip below), 2 peek (hover/space), 3 rail spans per agent colored by outcome, 4
 5 sidebar pie+count on the parent, agents fold under it and unfold only while running or failed, failed
 puts the parent in Needs you, 6 thread pane = the agent's real transcript as a tab of the right card,
 opened at the failing step, with Retry / Continue as session / Show in turn.
+
+## Brainstorm round 2 — "a bit overwhelming, make it elegant" (Cam)
+Diagnosis: the first mock said "3 agents · 1 failed" in 8 places. Rule now: each fact has ONE home;
+everywhere else stays quiet.
+Cam's answers (clicked):
+- Glancing, he asks: needs me? / doing now? / how far along?  (NOT "what did it find": the parent quotes it)
+- Home = the SIDEBAR. Agents are one-line rows under their session.
+- Progress = the agent's own TodoWrite plan (done/total, a hairline + "3/5"), else steps+time, no bar.
+- "Needs me" = only blocked on you (approval/question) bubbles up; failure stays red on the agent row.
+- Click an agent = opens like any session (⌘-click splits). No peek, thread pane or run sheet.
+- Finished agents fold into the existing "› N done · M failed" line when the parent's turn ENDS.
+- Transcript: an agent is just a step ("ran 3 agents ›"; step rows "Agent: X · failed"; live status
+  "Waiting on 1 agent · 2 done…"). SubagentCard goes away.
+- Rail and pill: no new UI. The pill's live text says "Waiting on N agents".
+Render: docs/design/agents/calm.html (section 1).
