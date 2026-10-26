@@ -23,7 +23,7 @@ final class RemotePush {
 
     /// Where pushes for real phones go.
     static var relay: URL {
-        URL(string: ProcessInfo.processInfo.environment["FROG_PUSH_RELAY"] ?? "https://frog.eco/api/push")!
+        URL(string: ProcessInfo.processInfo.environment["FROG_PUSH_RELAY"] ?? "https://frog.toys/api/push")!
     }
 
     private(set) var devices: [Device]
