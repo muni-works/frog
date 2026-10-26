@@ -23,7 +23,7 @@ struct ItemView: View {
         case .tool("Diagram", _) where item.result?.diagram != nil:
             DiagramCard(diagram: item.result!.diagram!)
         case .tool("Diagram", let arg) where !item.done:
-            HStack(spacing: 8) {
+            HStack(spacing: TurnSpace.Inset.row) {
                 ProgressView().controlSize(.small)
                 Text(arg.isEmpty ? "Drawing a diagram…" : "Drawing \(arg)…").font(.callout).foregroundStyle(.secondary)
             }
@@ -34,7 +34,7 @@ struct ItemView: View {
         case .tool(let name, _) where item.result?.app != nil && showsApp:
             McpAppCard(name: name, item: item, app: item.result!.app!, conversation: conversation)
         case .tool(let name, let arg) where !item.displayImages.isEmpty:
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
                 ToolCallView(name: name, arg: arg, item: item, conversation: conversation)
                 ToolImages(images: item.displayImages, preview: !item.done)
                 if !item.done { Text("Approximate step preview").font(.caption).foregroundStyle(.secondary) }
@@ -53,11 +53,11 @@ struct ReasoningView: View {
     @State private var expanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.snug) {
             Button {
                 withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: TurnSpace.Inset.row) {
                     Image(systemName: "sparkles")
                         .frame(width: 18)
                         .symbolEffect(.pulse, isActive: !done)
@@ -85,12 +85,12 @@ struct ReasoningView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 26)
+                    .padding(.leading, TurnSpace.Inset.iconColumn)
                     .transition(.opacity)
             }
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
+        .padding(.vertical, TurnSpace.Inset.tight)
+        .padding(.horizontal, TurnSpace.Inset.snug)
     }
 
     /// The latest line while streaming (what it's thinking now), the first line once done.
@@ -107,7 +107,7 @@ struct NoticeView: View {
     /// Collapsed to its first line, like the other system rows; a longer one expands.
     var body: some View {
         EventLineView(event: EventLine(notice: text, warning: warning))
-            .padding(.vertical, 2)
+            .padding(.vertical, TurnSpace.Inset.hair)
     }
 }
 
@@ -118,7 +118,7 @@ struct OverflowRescueView: View {
     let conversation: Conversation
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: TurnSpace.Inset.row) {
             Image(systemName: "exclamationmark.triangle.fill").imageScale(.small)
             Text("compaction failed")
                 .fontWeight(.medium)
@@ -132,8 +132,8 @@ struct OverflowRescueView: View {
         }
         .font(.caption)
         .foregroundStyle(.orange)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
+        .padding(.horizontal, TurnSpace.Inset.snug)
+        .padding(.vertical, TurnSpace.Inset.tight)
         .background(.orange.opacity(0.14), in: .capsule)
         .frame(maxWidth: .infinity, alignment: .center)
     }
@@ -157,11 +157,11 @@ struct ToolCallView: View {
     private var gist: String? { isShell ? CommandGists.shared.gist(for: arg) : nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
             Button {
                 withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: TurnSpace.Inset.row) {
                     Image(systemName: ToolIcon.symbol(name))
                         .frame(width: 18)
                         .foregroundStyle(failed ? .red : .secondary)
@@ -203,15 +203,15 @@ struct ToolCallView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                    .padding(.leading, 26)
+                    .padding(.leading, TurnSpace.Inset.iconColumn)
                     .help("Auto mode's classifier let this run without asking")
             }
             if !pinsQuestions, item.needsPermission, let p = conversation.permission, p.item == item.id {
                 PermissionCard(request: p, conversation: conversation)
             }
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
+        .padding(.vertical, TurnSpace.Inset.tight)
+        .padding(.horizontal, TurnSpace.Inset.snug)
         .background(.quaternary.opacity(expanded ? 0.3 : 0), in: .rect(cornerRadius: 8))
     }
 
@@ -224,7 +224,7 @@ struct ToolCallView: View {
             case .error: Text(r.display?.hasPrefix("refused") == true ? "Repeated call refused" : "Failed").font(.caption).foregroundStyle(.red)
             case .ok:
                 if let d = r.diff {
-                    HStack(spacing: 4) {
+                    HStack(spacing: TurnSpace.Inset.tight) {
                         Text("+\(d.added)").foregroundStyle(.green)
                         Text("−\(d.removed)").foregroundStyle(.red)
                     }
@@ -265,7 +265,7 @@ struct ToolDetail: View {
             } else if name == "Task", result.outcome == .ok {
                 // A subagent's report reads like an answer.
                 MarkdownView(text: result.display ?? result.output)
-                    .padding(10)
+                    .padding(TurnSpace.Inset.card)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
             } else if name == "Bash" || name == "!" {
@@ -275,7 +275,7 @@ struct ToolDetail: View {
                 TerminalView(text: result.display ?? result.output)
             }
         } else if !item.done, let p = item.progress {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
                 if let total = p.total, total > 0 {
                     ProgressView(value: min(p.progress, total), total: total)
                 } else {
@@ -285,7 +285,7 @@ struct ToolDetail: View {
                     Text(m).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
-            .padding(.leading, 26)
+            .padding(.leading, TurnSpace.Inset.iconColumn)
             .transition(.opacity)
         } else if !item.done, !item.output.isEmpty {
             // Live tail of a running command.
@@ -319,8 +319,8 @@ struct CommandDetail: View {
                 Text(CommandElision.elide(command, from: root))
                     .font(.system(.callout, design: .monospaced))
                     .textSelection(.enabled)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, TurnSpace.Inset.card)
+                    .padding(.vertical, TurnSpace.Inset.snug)
             }
             if !output.isEmpty {
                 Divider().opacity(0.5)
@@ -344,7 +344,7 @@ struct CommandDetail: View {
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
+                    .padding(TurnSpace.Inset.card)
             }
             .frame(maxHeight: 280)
             if all.count > shown.count {
@@ -358,7 +358,7 @@ struct CommandDetail: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .padding(.vertical, 4)
+                .padding(.vertical, TurnSpace.Inset.tight)
             }
         }
     }
@@ -371,12 +371,12 @@ struct PermissionCard: View {
     @State private var note = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.card) {
             QuestionBody(request: request)
             if let card = request.card { ApprovalDetails(card: card) }
             #if os(iOS)
             // For a thumb: two big answers side by side, the standing one as a line below.
-            HStack(spacing: 10) {
+            HStack(spacing: TurnSpace.Inset.card) {
                 Button { conversation.answer(.deny) } label: { Text("Deny").frame(maxWidth: .infinity) }
                     .buttonStyle(.glass)
                 Button { conversation.answer(.allow) } label: {
@@ -393,7 +393,7 @@ struct PermissionCard: View {
             }
             #else
             if noting {
-                HStack(spacing: 8) {
+                HStack(spacing: TurnSpace.Inset.row) {
                     TextField("Tell the agent why, or what to do instead", text: $note)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { conversation.answer(.deny, note: note) }
@@ -402,7 +402,7 @@ struct PermissionCard: View {
                         .disabled(note.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: TurnSpace.Inset.row) {
                 Button {
                     conversation.answer(.allow)
                 } label: {
@@ -442,13 +442,13 @@ struct ApprovalDetails: View {
     let card: ApprovalCard
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
             if let why = card.agentReason {
                 Label(why, systemImage: "text.bubble").lineLimit(3)
             }
             Label(card.trigger, systemImage: "exclamationmark.shield")
             ForEach(card.touches ?? [], id: \.path) { t in
-                HStack(spacing: 6) {
+                HStack(spacing: TurnSpace.Inset.snug) {
                     Image(systemName: t.dir == true ? "folder" : "doc")
                     Text(t.path).lineLimit(1).truncationMode(.middle)
                     if let b = t.bytes {

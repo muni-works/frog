@@ -35,6 +35,8 @@ enum TurnSpace {
         static let row: CGFloat = 8
         static let card: CGFloat = 10
         static let roomy: CGFloat = 12
+        /// A tool row's detail, indented under its title past the row's icon.
+        static let iconColumn: CGFloat = 26
     }
 
     /// The values for the density setting (see `Density`).
@@ -88,6 +90,8 @@ enum TurnType {
     #else
     static let body: CGFloat = 17
     #endif
+    /// Tables in a message: a step down, so a wide one fits the measure.
+    static let small: CGFloat = body - 2
     /// Headings in a message, by level (1, 2, 3+).
     static func heading(_ level: Int) -> CGFloat {
         level == 1 ? body + 4 : level == 2 ? body + 2 : body

@@ -442,7 +442,7 @@ enum MessageStyle {
         table.numberOfColumns = max(columns, 1)
         table.collapsesBorders = true
         table.setWidth(gap, type: .absoluteValueType, for: .margin, edge: .minY)
-        let font = NSFont.systemFont(ofSize: 12)
+        let font = NSFont.systemFont(ofSize: TurnType.small)
         let out = NSMutableAttributedString()
         for (r, row) in ([header] + rows).enumerated() {
             for c in 0..<columns {
@@ -458,7 +458,7 @@ enum MessageStyle {
                 let style = NSMutableParagraphStyle()
                 style.textBlocks = [cell]
                 style.alignment = a == .center ? .center : a == .trailing ? .right : .left
-                let text = inline(row[safe: c] ?? "", font: r == 0 ? .systemFont(ofSize: 12, weight: .semibold) : font, style: style)
+                let text = inline(row[safe: c] ?? "", font: r == 0 ? .systemFont(ofSize: TurnType.small, weight: .semibold) : font, style: style)
                 out.append(text)
                 // Every cell is its own paragraph; the message's last cell ends the table.
                 if !(r == rows.count && c == columns - 1) { out.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style])) }

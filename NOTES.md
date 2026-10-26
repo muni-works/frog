@@ -61,3 +61,17 @@ TranscriptView 25, TurnView 11, ActivityLine 14, MessageText 4, ItemViews 35, Ma
 - ActivityLine: .callout (smaller than 14pt body), .secondary, gist .tertiary. LiveStatus also .callout.
 - Inline code: rounded background (custom attribute drawn by MessageTextView's layout manager),
   not the flat square NSAttributedString backgroundColor.
+
+## Progress
+- c77f439 checkpoint 0 (notes/survey)
+- a8ba5c3 scale + 720 measure + 14pt body (snapshots .snap/s1)
+- 5b8dd4a activity callout, bubble alignment fix, rounded inline code (InlineCodeLayoutManager; snapshots .snap/s2)
+- next: snap per-view spacing/padding literals to TurnSpace.Inset (2/4/6/8/10/12; 5→4, 7→6, 9→8,
+  14→roomy+hair kept literal-free only where it's rhythm). Leave icon-column offsets (26) & frame sizes.
+- snap commit: per-view spacing/padding literals → TurnSpace.Inset; 26 → Inset.iconColumn; table font → TurnType.small.
+  Count 93 → 16 (6 of them are `spacing: 0`; left: 14×3 pill/card paddings, ofSize 4 for rule line, lineSpacing 0 for code).
+- PERF: mountedBudget 30 green everywhere (switch tests 14; scroll-up peak 26 base → 27–29 now: shorter
+  activity rows/tighter gaps fit more rows on screen; still ≤30 but thin margin).
+- FLAKE: testScrollUpFillsOlderRowsInOrder "no rows went in above" (0 fills, built above 0) failed 2/3 on the
+  snap binary in-suite, passed alone and on re-run; base/a8ba5c3/5b8dd4a each passed 1/1. Base worktree at
+  /private/tmp/type-base (dd /private/tmp/type-dd-base) — delete at end.

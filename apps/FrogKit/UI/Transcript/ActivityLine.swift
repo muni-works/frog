@@ -205,11 +205,11 @@ struct ActivitySteps: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 12)
+                    .padding(.leading, TurnSpace.Inset.roomy)
                     .overlay(alignment: .leading) {
                         Rectangle().fill(.separator).frame(width: 2)
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, TurnSpace.Inset.hair)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(steps.enumerated()), id: \.element.id) { i, step in
@@ -217,7 +217,7 @@ struct ActivitySteps: View {
                         ActivityStepRow(item: step, conversation: conversation)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, TurnSpace.Inset.hair)
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
             }
         }
@@ -236,11 +236,11 @@ struct ActivityStepRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
             Button {
                 withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: TurnSpace.Inset.snug) {
                     Text(rowTitle)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -260,8 +260,8 @@ struct ActivityStepRow: View {
                 ToolDetail(name: name, item: item, expanded: false, root: conversation.folder.path)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, TurnSpace.Inset.card)
+        .padding(.vertical, TurnSpace.Inset.snug)
     }
 
     /// The row's words. A shell row running now says the intent ("Running git log…" from the
@@ -286,7 +286,7 @@ struct ActivityStepRow: View {
     private var runningClock: some View {
         if !item.done, let since = item.startedAt {
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                HStack(spacing: 6) {
+                HStack(spacing: TurnSpace.Inset.snug) {
                     if !item.output.isEmpty {
                         Image(systemName: "text.alignleft")
                             .font(.caption2)
@@ -315,7 +315,7 @@ struct ActivityStepRow: View {
         case .tool("Task", let arg):
             SubagentCard(arg: arg, item: item, conversation: conversation)
         case .tool(let name, _):
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
                 if !item.displayImages.isEmpty {
                     ToolImages(images: item.displayImages, preview: !item.done)
                     if !item.done { Text("Approximate step preview").font(.caption).foregroundStyle(.secondary) }
@@ -417,8 +417,8 @@ struct ModelLoadingStatus: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.08)) { timeline in
             let elapsed = max(0, timeline.date.timeIntervalSince(since))
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.snug) {
+                HStack(spacing: TurnSpace.Inset.row) {
                     Image(systemName: "cpu")
                         .foregroundStyle(.tint)
                     Text("Loading \(model) into memory")

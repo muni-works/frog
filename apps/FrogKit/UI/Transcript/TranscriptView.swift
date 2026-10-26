@@ -445,11 +445,11 @@ private struct ContextDisclosure: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: TurnSpace.Inset.snug) {
             Button {
                 withAnimation(Motion.quick(reduced: reduceMotion)) { open.toggle() }
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: TurnSpace.Inset.tight) {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
                         .rotationEffect(.degrees(open ? 90 : 0))
@@ -457,7 +457,7 @@ private struct ContextDisclosure: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 10)
+                .padding(.horizontal, TurnSpace.Inset.card)
                 .frame(height: 24)
                 .contentShape(.capsule)
             }
@@ -470,7 +470,7 @@ private struct ContextDisclosure: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                    .padding(TurnSpace.Inset.roomy)
                     .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topTrailing)))
             }
@@ -491,7 +491,7 @@ struct EndView: View {
         switch reason {
         case .complete, .denied:
             if let usage, usage.modelCalls > 0 {
-                HStack(spacing: 10) {
+                HStack(spacing: TurnSpace.Inset.card) {
                     // Where it ran, then what it cost (cloud) or how fast it wrote.
                     if let spec = usage.model {
                         ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
@@ -560,7 +560,7 @@ struct WorkingIndicator: View {
         if let progress, let completed = progress.completed, let total = progress.total, total > 0 {
             ProbeProgress(progress: progress, completed: completed, total: total, since: since ?? .now)
         } else {
-            HStack(spacing: 8) {
+            HStack(spacing: TurnSpace.Inset.row) {
                 ProgressView().controlSize(.small)
                 Text(progress.map { Self.title($0.label) } ?? "Working…")
                     .font(.callout)
@@ -587,8 +587,8 @@ private struct ProbeProgress: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.08)) { timeline in
             let elapsed = max(0, timeline.date.timeIntervalSince(since))
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.snug) {
+                HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.card) {
                     Text(Self.probeTitle(for: progress.label))
                         .font(.callout.weight(.medium))
                         .foregroundStyle(.secondary)
@@ -703,7 +703,7 @@ struct EmptyTranscript: View {
     }
 
     private func content(details: Bool, card: Bool) -> some View {
-        VStack(spacing: 10) {
+        VStack(spacing: TurnSpace.Inset.card) {
             if !details {
                 EmptyView()
             } else if playful {
@@ -721,7 +721,7 @@ struct EmptyTranscript: View {
             #if os(macOS)
             if card {
                 EmptyPageExtras(conversation: conversation)
-                    .padding(.top, 6)
+                    .padding(.top, TurnSpace.Inset.snug)
             }
             #endif
         }
@@ -733,7 +733,7 @@ struct EmptyTranscript: View {
 
     /// The frog on its lily pad. Hover and it says something; drop a file and it hops.
     private var mascot: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: TurnSpace.Inset.tight) {
             ZStack(alignment: .bottom) {
                 LilyPad()
                     .fill(Color.accentColor.opacity(0.22))
@@ -742,7 +742,7 @@ struct EmptyTranscript: View {
                 FrogFace(mood: .idle, size: 48, hop: hop)
                     .anchorPreference(key: FrogAnchorKey.self, value: .bounds) { $0 }
             }
-            .padding(.top, 4)
+            .padding(.top, TurnSpace.Inset.tight)
             .contentShape(.rect)
             .onHover { hovering = $0 }
             Text(FrogCopy.hovers[line % FrogCopy.hovers.count])
@@ -924,14 +924,14 @@ private struct NewBelow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
+            HStack(spacing: TurnSpace.Inset.snug) {
                 Image(systemName: "arrow.down")
                     .symbolEffect(.pulse, options: .repeating, isActive: writing)
                 Text("New message")
             }
             .font(.callout.weight(.medium))
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, TurnSpace.Inset.row)
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
