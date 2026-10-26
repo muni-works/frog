@@ -11766,6 +11766,55 @@ for line in sys.stdin:
         shutdown(h).await;
     }
 
+    /// A background task's own items must not reach the parent turn as subagent events: the
+    /// Task call returned at once, so there's no parent item to fold them into (folding one
+    /// used to create a message row that never finished). They ride BackgroundProgress.
+    #[tokio::test]
+    async fn a_background_tasks_events_do_not_wrapped_subagent_to_the_parent() {
+        let dir = tmp_store();
+        script_child(
+            &dir,
+            vec![
+                reply(vec![call("c1", "Grep", json!({"pattern": "x"}))], Stop::ToolUse),
+                reply(vec![text("found it in src/main.rs")], Stop::End),
+            ],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "bg research", "prompt": "find it", "background": true}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("started in background")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "research in the background");
+        let mut evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let mut more = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        evs.append(&mut more);
+        // No parent-turn subagent events for the background id...
+        assert!(
+            !evs.iter().any(|e| matches!(
+                &e.event,
+                Event::Subagent { item, .. } if item.starts_with("task-")
+            )),
+            "background task events must not wrap as parent subagent events"
+        );
+        // ...but the parent's own Task call item streamed as usual.
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::ItemStarted { kind: ItemKind::ToolCall { name, .. }, .. } if name == "Task"
+        )));
+        // And progress carries the child's activity.
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::BackgroundProgress { id, .. } if id.starts_with("task-")
+        )));
+        shutdown(h).await;
+    }
+
 
     /// Integration: a parent drains while its `Task` subagent is mid-turn — the cascade
     /// stops the child at its own safe point (its turn records `Suspended` too), the parent
