@@ -41,6 +41,13 @@ and say plainly where ours differs (engine vs API, our box vs their probes).
 One line on what this page is, the date of the last update, and the build (frog sha, tang sha,
 edge deploy id). Link the method doc and the raw-log bucket.
 
+**Host: `site/bench/index.html` in the frog repo** (the site deploys from `site/`, and the energy
+card already reads a `data/` export, so this follows the same pattern). Static HTML + a
+`site/data/bench-v2.json` export per update; the post links to `frog.toys/bench` only after this
+page is deployed — a link to a 404 is a self-own. Build it Oct 29 against the filled numbers; if
+numbers are still landing at the go/no-go, publish the page with the sections that have receipts
+and mark the rest "measuring now".
+
 ### 1. frog cloud: Qwen3-Coder-Next (what users get)
 
 | metric (through api.frog.toys) | value | range | n | date |
