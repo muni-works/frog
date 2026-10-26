@@ -1,93 +1,59 @@
-# sidebar git badges — notes
+# sidebar-git — notes
 
-Branch frog/sidebar-git, base 77b5f8c (main). Worktree /Users/cam/Developer/frog/.frog/worktrees/sidebar-git.
-DESIGN-ONLY: Cam judges before build. Commit per piece (`git commit -s`), never push. Source edits via the
-Edit tool only. (Previous branch's notes — subagent visibility — live in git history at 77b5f8c:NOTES.md.)
+Branch frog/sidebar-git, base 77b5f8c-era main. Commit per piece (`git commit -s`), never push.
+Edit tool only for Swift/Rust source.
 
-## Goal (Cam: per-row git badges in the sidebar, Claude's style)
-Reference: Claude's sidebar — each row's right side carries small badges: a branch glyph (purple) + commits
-ahead, a merged glyph (green) + merged-PR count, a plain dot for sessions with no git activity.
-Group rows aggregate (sum of children).
+## Design (committed, Cam approved in-session)
+docs/design/sidebar-git/README.md (anatomy, placement, data flow, refresh, failure modes,
+hover cards, popover lifecycle) + docs/design/sidebar-git/mockup.html (org tree light+dark,
+hover cards).
 
-## Deliverables
-- docs/design/sidebar-git/README.md: anatomy, per-row-type placement, data flow, workers-scope integration,
-  failure modes, cheap-data-source spec + refresh story
-- docs/design/sidebar-git/mockup.html: light + dark, realistic tree
+## Design decisions (Cam approved all 6 recommended, except Q2 all-time note)
+- Badge click pins the hover card (macOS popovers open on click); "Show in Workers" moved to
+  the card footer + row menu.
+- Local-merge rows link to the merge commit (compare pages 404 when the branch is deleted).
+- Merged capsule green (purple already means "commits ahead").
+- Q2: done-fold landed counts are ALL-TIME (the Today scope's fold is "N earlier", so
+  every landed count is all-time — the today-only variant doesn't fit).
 
-## Constraints
-- integrate with the merged worktree-ux spec (docs/design/worktree-ux/README.md), don't duplicate
-- data sources cheap first: lock/manifest → engine merge events → gh only on explicit open/refresh
+## Data honesty (the brief's assumption was false, corrected in design)
+The engine logs NO merge events and NO diffstats (only checkpoint.rs numstat = race diffs;
+the pond fetches open PRs only). The cards read git locally:
+- Merge index: `git log <base> --first-parent --merges -n 200` (17ms), rebuilt when base moves.
+  Parses "Merge pull request #N" + body title (58/116 frog merges); "Merge branch '<x>'" for
+  local merges (session title as the title).
+- +N −M: `diff --shortstat M^1...M^2` (~40ms each), lazy on first hover, ≤13 visible rows only,
+  cached by sha forever. No prefetch, no gh.
+- Links from remote.origin.url (/pull/N, /commit/sha, /compare only if pushed); non-GitHub
+  remotes get no links.
 
-## Survey (verified at 77b5f8c)
-- Two sidebar row types. Org grouping (default) = `TreeRow` (AttentionRows.swift): manager / live worker /
-  settled weights, trailing = pane number · age (settled) · state glyph. **No git info at all today.**
-  Project/Date grouping = `CompactSessionRow` (Sidebar.swift:1109): PR glyph (merge green / open purple) +
-  `changedFiles`, then `3↑` (SessionMetaCache), age, glyph.
-- `CompactPRCache` (Sidebar.swift:1330): **per row** `git branch --show-current` + `gh pr view <branch>` in a
-  row `.task`, 60 s throttle, re-runs each time a row reappears. This is the gh-per-render spam to remove.
-- `SessionMetaCache` (SessionMeta.swift): `rev-list --count main..HEAD` per worktree, 60 s; `isWorktree` is
-  a path-substring test (`/.frog/worktrees/`, `/.claude/worktrees/`) so okc's `.worktrees/` trees miss.
-- `Git.quick` (ListSessions/SessionStatus): ahead vs **upstream** → nil for unpushed `frog/*`. (worktree-ux F12.)
-- worktree-ux manifest `frog-worktree.json`, header `worktree`, `frog --worktrees --json`, Workers scope:
-  **none built yet**. Lock file today holds only `"<session> <pid>"` (worktree.rs). Base = `worktreeBase`
-  rule (origin/HEAD → origin/main|master → current).
-- Merge events: **the engine logs none.** Pond's GitHub read (pond/github.rs) is OPEN PRs only (review,
-  failing, ready). So "merged" must come from local git (branch ⊂ base, or `git cherry` patch-equivalent).
-  Merges here are mostly local `git merge origin/frog/x` + push, not GitHub PRs — local git sees them.
-- Cost (frog repo, 103 frog/* branches, 115 worktrees, git 2.54): `for-each-ref --format=%(ahead-behind:origin/main)`
-  all branches **16 ms**; `for-each-ref --merged origin/main` **11 ms**; `worktree list --porcelain` 25 ms;
-  per-tree rev-list+status+cherry 65 ms. → batch per repo, not per tree.
-- Real cases in the live list: shared trees (delegation pipeline v4+v5, accounts ux spec v1+v3), managers in
-  main checkouts with dirty 15–40 (shared, not theirs), a session in a worktree subfolder (quad00),
-  subagent-visibility merged earlier and now 2 ahead again, non-frog branch names (muse_*), a main checkout
-  on a feature branch (home: adr-006…).
+## Build (6 commits past the design)
+- 6c01996 GitBadge model — row display, tree-deduped group sums, fold members, git output parsing
+- 00a2b4c GitIndex — per-repo ref batch on FSEvents, per-tree status on settle, merge index,
+  lazy card stats
+- fe45786 badges on the attention tree (leaf, manager sum, done fold) + the hover card
+  (lifecycle, links, keyboard when pinned)
+- dfaaf4d compact rows + project headers use the shared badge; CompactPRCache (gh per row) and
+  SessionMetaCache REMOVED
+- 0e70af1 GitIndex tested against a real temp repo (ahead/behind, merged, fresh, dirty, card,
+  ref watcher); card closes on scroll, refits as stats arrive
+- 964b251 hover-card lifecycle tests; listing-driven status reads at most every 10s; README
+  implementation notes
 
-## Decisions (design, pending Cam)
-- badge = branch glyph (purple) + ahead · dirty dot on the glyph (settled only) · merge glyph (green; N on
-  aggregates only) · amber on trouble. Ahead wins over landed. No git → nothing (no Claude dot).
-- aggregates dedupe by tree, are scope-invariant, trouble/dirty only from settled children.
-- data: repo batch (2× for-each-ref) on FSEvents ref changes; status per tree on settle; cherry cached by
-  sha; gh only on Refresh / Workers detail. CompactPRCache + SessionMetaCache go away.
-- badge click → Workers scope, tree expanded. tornDown gains `landed`.
-
-## Round 2 (relayed by frog manager): hover cards
-- Brief assumed "merge events + diffstats the engine already logs". **They don't exist** (checked: no
-  merge logging; the only numstat is checkpoint.rs:205 for race diffs). Spec sources them from git instead:
-  first-parent merge index (17 ms/200 merges, parse `Merge pull request #N` + body title, or
-  `Merge … branch '<x>'`), lazy `diff --shortstat M^1...M^2` (~40 ms) on first hover, cached by sha forever.
-- Cards: group (Landed ≤8 newest + Not landed ≤5) and session (its merges + its own commits). Links from
-  remote URL: /pull/N, /commit/sha, /compare (only if pushed). No gh for the card.
-- Lifecycle: 500 ms rest, 300 ms grace + safe triangle, warm move between badges, click pins (takes focus),
-  Space on a focused row = pinned (Quick Look), ↑↓ Return ⌘C Esc; closes on scroll/resign/row gone.
-- Changed: badge click now pins the card; "Show in Workers" moves to the card footer + row menu.
-- Merged capsule green, not GitHub purple (purple = ahead here).
-
-## Build (Cam: "perfect, lets implement" — all open questions take the recommended answer)
-Tests: `xcodegen -q`, then `FROG_PREBUILT_DIR=/private/tmp/sbgit-prebuilt xcodebuild test -project
-Frog.xcodeproj -scheme Frog -derivedDataPath /private/tmp/sbgit-dd -only-testing:FrogTests/<Suite>`
-(unsandboxed; the prebuilt dir holds copies of ~/Developer/frog's frog, frog-apple, frog-desktop so no cargo
-build). Renders: docs/design/sidebar-git/renders/ (git-excluded; view.html / cards.html beside them).
-- 6c01996 FrogKit GitBadge: display(settled:), GitSummary.of (tree dedupe, settled-only dirty/trouble),
-  GitRollup (subtree, fold members = parent's children not drawn before the fold), GitParse, GitLinks.
-- 00a2b4c GitIndex (mac): resolve tree from `.git` file/dir (replaces the path-substring test); repo batch =
-  base (origin/HEAD → origin/main|master → main|master), `%(ahead-behind)` for-each-ref (old-git fallback),
-  remote branches, merge index (first-parent, 200), git cherry for unproven tips; FSEvents on the common dir
-  (refs/, packed-refs, */HEAD, rebase-*), 1 s debounce; status queue (on settle, row on screen ≤1/min,
-  listing moves ≤1/10 s, 2 s timeout → 10 min backoff); GIT_OPTIONAL_LOCKS=0, ssh BatchMode.
-  Landed = ahead 0 AND (a merge brought the tip OR the branch moved since its reflog creation) — a fresh
-  branch off main isn't "landed". Patch-equivalent / gh-merged set ahead 0.
-- fe45786 badges on TreeRow (all weights) + done folds; GitCardController (NSPanel, nonactivating, key only
-  when pinned; 500 ms / 300 ms grace / 250 ms card leave / 1 s warm); GitCard (landed, not landed, own
-  commits, Refresh); row menu "Refresh Git".
-- dfaaf4d compact rows + project headers on the shared badge; CompactPRCache + SessionMetaCache deleted.
-- 0e70af1 GitIndexTests (real temp repo incl. the FSEvents path); close on scroll; refit on size change.
-- next: GitCardTests (open delay, grace, warm move, pin, rowGone); listing-driven status throttle.
-Not built (README "Implementation"): Space-to-open (rows have no keyboard focus), safe triangle, Show in
-Workers + tornDown.landed (no Workers/teardown yet), ListSessions ahead vs base, iOS.
-Suites green: GitBadge, GitIndex, GitCard, SidebarSnapshot, AttentionTree, SessionNesting, SidebarOrder,
-SessionFolds, SessionState, AgentRow (78 tests). The full suite was started but interrupted at
-TranscriptSwitchBenchmark (unrelated, slow); not re-run.
+Not built (README "Implementation"): Space-to-open (rows have no keyboard focus), safe triangle,
+Show in Workers + tornDown.landed (no Workers/teardown yet), ListSessions ahead vs base, iOS.
+Suites green: GitBadge, GitIndex, GitCard, SidebarSnapshot, AttentionTree, SessionNesting,
+SidebarOrder, SessionFolds, SessionState, AgentRow (78 tests). The full suite was started but
+interrupted at TranscriptSwitchBenchmark (unrelated, slow); not re-run.
 
 ## Progress
 - 6badefc checkpoint 0 · fac2fb0 survey · 048e656 spec · 4edc4de mockup · 47d0463 hover-card spec ·
   afef4c0 hover-card mockup · build commits above
+- origin/main history that touched the same files (merge context, from the switch-tab-kill
+  branch's notes, merged here): SwitchAwayTests repro (f41d393) — new thread switched away
+  mid-first-answer killed the engine (red on base at 0.5/2/5s + same-folder 2s); fix ad05e31 —
+  `SessionBroker.keep` keeps any session with work (not just agents'), an idle startup still
+  goes, a kept session waits in `unnamed` until its first `observe`; window/pane close goes
+  through the same keep. Suspects 1 (watchdog/reconcile) and 2 (engine-start race) ruled out:
+  the engine was stopped by the app, by name, at the switch. App 325 tests, 4 failures all
+  TranscriptSwitchBenchmarkTests (wall-clock perf). Engine cargo 467/0 (unsandboxed).

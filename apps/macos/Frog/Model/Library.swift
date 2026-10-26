@@ -198,11 +198,6 @@ final class Library {
         return false
     }
 
-    /// Part of a group of sessions: started by one, or started one.
-    func isAgentSession(_ id: String) -> Bool {
-        parents[id] != nil || parents.values.contains(id)
-    }
-
     // MARK: Stored model and mode
 
     /// Durable per-session overrides, applied by the next engine start (SetSessionModel /

@@ -59,8 +59,12 @@ enum Frog {
         let extra = ["\(home)/.cargo/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
         let current = env["PATH", default: "/usr/bin:/bin:/usr/sbin:/sbin"]
         env["PATH"] = (extra + [current]).joined(separator: ":")
-        return env
+        return env.merging(overrides) { $1 }
     }
+
+    /// Variables every `frog` this app runs gets on top of its own (tests point an engine at a
+    /// stand-in model and a scratch HOME). Empty in the app.
+    nonisolated(unsafe) static var overrides: [String: String] = [:]
 
     /// Run a one-shot `frog` command for its effect.
     static func run(args: [String], cwd: URL) async throws {
