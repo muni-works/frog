@@ -1,4 +1,21 @@
-# typography pass — notes
+# worktree UX — notes
+
+Branch frog/worktree-ux, base 115b40d, path /Users/cam/Developer/frog/.frog/worktrees/worktree-ux.
+DESIGN-ONLY (docs + mockup). Commit per piece (`git commit -s`), never push. Edit tool for source.
+
+## Plan
+0. NOTES.md (this) — checkpoint 0
+1. survey: worktree creation (SessionBroker/StartSession), flock (session.rs), git_dirs (bash.rs), #107
+2. docs/design/worktree-ux/README.md — spec, five areas, failure modes, #107 guard
+3. docs/design/worktree-ux/mockup.html — workers sidebar scope + teardown prompt
+4. report (≤30 lines, shas, open questions)
+
+## Survey
+(pending)
+
+---
+
+# typography pass — notes (previous task, kept)
 
 Branch frog/typography-pass, base 1dbd91f. Commit per piece (`git commit -s`), never push.
 
