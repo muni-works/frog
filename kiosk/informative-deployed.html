@@ -61,15 +61,28 @@
        box 160,200 704x704; this file extends the box 44 units for the indicator). -->
   <svg id="frog" viewBox="160 200 704 748" aria-label="frog">
     <defs>
-      <clipPath id="clip-silhouette">
-        <path id="silhouette-path" d=""/>
+      <clipPath id="cliphead">
+        <path d="M216 568 A296 224 0 0 1 808 568 A296 234 0 0 1 216 568 Z"/>
+        <circle cx="360" cy="352" r="120"/>
+        <circle cx="664" cy="352" r="120"/>
       </clipPath>
     </defs>
     <g id="body">
       <g id="head">
-        <path id="silhouette" fill="var(--skin)"/>
-        <g clip-path="url(#clip-silhouette)">
-          <g id="spots" fill="var(--spot)"></g>
+        <g fill="var(--skin)">
+          <path id="silhouette" d="M216 568 A296 224 0 0 1 808 568 A296 234 0 0 1 216 568 Z"/>
+          <circle cx="360" cy="352" r="120"/>
+          <circle cx="664" cy="352" r="120"/>
+        </g>
+        <g clip-path="url(#cliphead)" id="spots-clipped" fill="var(--spot)">
+          <circle cx="290" cy="469" r="18"/>
+          <circle cx="262" cy="523" r="11"/>
+          <circle cx="742" cy="463" r="16"/>
+          <circle cx="772" cy="510" r="10"/>
+        </g>
+        <g id="cheeks" fill="var(--spot)">
+          <circle cx="323" cy="541" r="30"/>
+          <circle cx="701" cy="541" r="30"/>
         </g>
         <g id="eyes">
           <g id="pupil-l">
@@ -83,7 +96,9 @@
             <circle class="glint-b" fill="var(--paper)"/>
           </g>
         </g>
-        <path id="mouth" fill="var(--ink)"/>
+        <g id="mouth-g">
+          <path id="mouth" fill="var(--ink)" d=""/>
+        </g>
       </g>
     </g>
     <!-- voice furniture under the chin (grid y 904..948) -->
@@ -102,32 +117,15 @@
 <script>
 "use strict";
 
-// ---- geometry (grid units, from FrogMark) ---------------------------------
-const BOX = { x: 160, y: 200, w: 704, h: 704 };
-const FEET = { x: 512, y: 802 };
-const PUPIL_R = 68;
+// ---- geometry (the Mac app icon's mark, from AppIcon.icon/Assets/*.svg) ----
+const FEET = { x: 512, y: 802 };       // body pivot (head bottom 568 + 234)
 const PUPILS = [{ x: 360, y: 344 }, { x: 664, y: 344 }];
-
-function headPath() {
-  return (
-    `M 216 568 ` +
-    `A 296 224 0 0 1 808 568 ` +
-    `A 296 234 0 0 1 216 568 Z ` +
-    `M 240 352 a 120 120 0 1 0 240 0 a 120 120 0 1 0 -240 0 ` +
-    `M 544 352 a 120 120 0 1 0 240 0 a 120 120 0 1 0 -240 0`
-  );
+const PUPIL_R = 68;
+const SMILE_D = 'M411.6 584.4 L415.5 587.1 L419.6 589.8 L423.7 592.3 L427.8 594.8 L431.9 597.1 L436.1 599.3 L440.2 601.4 L444.4 603.4 L448.5 605.3 L452.7 607.0 L456.9 608.6 L461.1 610.2 L465.3 611.6 L469.5 612.9 L473.7 614.0 L477.9 615.1 L482.2 616.0 L486.4 616.8 L490.7 617.5 L494.9 618.0 L499.2 618.4 L503.5 618.8 L507.7 618.9 L512.0 619.0 L516.3 618.9 L520.5 618.8 L524.8 618.4 L529.1 618.0 L533.3 617.5 L537.6 616.8 L541.8 616.0 L546.1 615.1 L550.3 614.0 L554.5 612.9 L558.7 611.6 L562.9 610.2 L567.1 608.6 L571.3 607.0 L575.5 605.3 L579.6 603.4 L583.8 601.4 L587.9 599.3 L592.1 597.1 L596.2 594.8 L600.3 592.3 L604.4 589.8 L608.5 587.1 L612.4 584.4 L615.9 581.2 L618.1 577.1 L619.0 572.5 L618.4 567.8 L616.4 563.6 L613.2 560.1 L609.1 557.9 L604.5 557.0 L599.8 557.6 L595.6 559.6 L591.8 562.1 L588.3 564.5 L584.7 566.7 L581.1 568.8 L577.6 570.8 L574.1 572.7 L570.5 574.5 L567.0 576.2 L563.5 577.7 L560.0 579.2 L556.5 580.6 L553.1 581.8 L549.6 583.0 L546.2 584.0 L542.7 585.0 L539.3 585.8 L535.9 586.6 L532.4 587.2 L529.0 587.8 L525.6 588.2 L522.2 588.6 L518.8 588.8 L515.4 589.0 L512.0 589.0 L508.6 589.0 L505.2 588.8 L501.8 588.6 L498.4 588.2 L495.0 587.8 L491.6 587.2 L488.1 586.6 L484.7 585.8 L481.3 585.0 L477.8 584.0 L474.4 583.0 L470.9 581.8 L467.5 580.6 L464.0 579.2 L460.5 577.7 L457.0 576.2 L453.5 574.5 L449.9 572.7 L446.4 570.8 L442.9 568.8 L439.3 566.7 L435.7 564.5 L432.2 562.1 L428.4 559.6 L424.2 557.6 L419.5 557.0 L414.9 557.9 L410.8 560.1 L407.6 563.6 L405.6 567.8 L405.0 572.5 L405.9 577.1 L408.1 581.2 Z';
+// frown = the smile flipped about its middle (y 588) and dropped 18: y -> 1194 - y
+function mouthTransform(frown) {
+  return frown ? "translate(0,1194) scale(1,-1)" : "";
 }
-
-const SPOTS = [
-  [290, 469, 18], [262, 523, 11], [742, 463, 16], [772, 510, 10], [323, 541, 30], [701, 541, 30],
-];
-
-function mouthPath(frown) {
-  const y1 = frown ? 1194 - 572 : 572;
-  const yc = frown ? 1194 - 636 : 636;
-  return `M 420 ${y1} Q 512 ${yc} 604 ${y1}`;
-}
-
 // ---- Move tracks (from FrogPose) ------------------------------------------
 function mix(a, b, f) { return a + (b - a) * f; }
 function mixMove(a, b, f) {
@@ -241,22 +239,7 @@ const MOODS = {
 };
 
 // ---- SVG setup -------------------------------------------------------------
-const svg = document.getElementById("frog");
-document.getElementById("silhouette-path").setAttribute("d", headPath());
-document.getElementById("silhouette").setAttribute("d", headPath());
-
-const spotsG = document.getElementById("spots");
-for (const [x, y, r] of SPOTS) {
-  const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  c.setAttribute("cx", x); c.setAttribute("cy", y); c.setAttribute("r", r);
-  spotsG.appendChild(c);
-}
-
-const mouth = document.getElementById("mouth");
-mouth.setAttribute("stroke", "var(--ink)");
-mouth.setAttribute("stroke-width", "30");
-mouth.setAttribute("stroke-linecap", "round");
-mouth.setAttribute("fill", "none");
+document.getElementById("mouth").setAttribute("d", SMILE_D);
 
 const pupils = [
   { g: document.getElementById("pupil-l"), c: PUPILS[0] },
@@ -271,14 +254,6 @@ for (const p of pupils) {
   set(".glint-a", p.c.x + 22, p.c.y - 22, 22);
   set(".glint-b", p.c.x - 24, p.c.y + 24, 9);
 }
-
-function applyMove(g, m, pivot) {
-  const t = `translate(${pivot.x + m.tx},${pivot.y + m.ty}) ` +
-            `rotate(${m.rot || 0}) scale(${m.sx},${m.sy}) ` +
-            `translate(${-pivot.x},${-pivot.y})`;
-  g.setAttribute("transform", t);
-}
-
 // ---- voice indicator: ring when listening, bars when speaking --------------
 const ring = document.getElementById("ring");
 const waveG = document.getElementById("wave");
@@ -350,7 +325,7 @@ function frame() {
   }
   applyMove(document.getElementById("body"), bodyMove, FEET);
   for (const p of pupils) applyMove(p.g, eyesMove, p.c);
-  mouth.setAttribute("d", mouthPath(spec.frown));
+  document.getElementById("mouth-g").setAttribute("transform", mouthTransform(spec.frown));
 
   ringAmp += (ringTarget - ringAmp) * 0.06;
   barAmp += (barTarget - barAmp) * 0.1;
