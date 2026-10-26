@@ -1,177 +1,100 @@
 import SwiftUI
 
-/// A `Task` call: the subagent working live (what it's doing, its recent steps, its report as
-/// it's written), then its report. Stop ends just the subagent; Open shows its whole run.
-struct SubagentCard: View {
+/// A `Task` call as a quiet step row: the agent's name, what it's doing right now (or how it
+/// went), and Stop while it runs. Clicking it opens the agent's whole run (the same views the
+/// main transcript uses). This replaces the big subagent card (see NOTES.md, the calm-agent
+/// direction) — removed only once this row renders everywhere the card did.
+struct AgentStepRow: View {
     let arg: String
     let item: ItemState
     let conversation: Conversation
-    @State private var showSteps = false
     @State private var showRun = false
-    @State private var expanded = false
 
     private var run: SubagentRun? { item.subagent }
     private var running: Bool { !item.done }
     private var failed: Bool { item.result.map { $0.outcome != .ok } ?? false }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            if running {
-                live
-            } else if let r = item.result {
-                report(r)
-            }
-        }
-        .padding(TurnSpace.Card.padding)
-        .background(.quaternary.opacity(running ? 0.45 : 0.3), in: .rect(cornerRadius: TurnSpace.Card.radius))
-        .overlay {
-            if running {
-                RoundedRectangle(cornerRadius: TurnSpace.Card.radius)
-                    .strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 1)
-            }
-        }
-        .animation(.snappy(duration: 0.25), value: run?.items.count)
-        .animation(.snappy(duration: 0.25), value: item.done)
-        .sheet(isPresented: $showRun) {
-            SubagentRunSheet(title: arg, run: run, conversation: conversation)
-        }
+    /// The agent's own TodoWrite plan: done and total, when it wrote one.
+    private var planProgress: (done: Int, total: Int)? {
+        guard let todos = run?.items.last(where: { step in
+            if case .tool("TodoWrite", _) = step.kind { return step.done }
+            return false
+        })?.result?.input?["todos"]?.array,
+           !todos.isEmpty else { return nil }
+        let done = todos.filter { $0["status"]?.string == "completed" }.count
+        return (done, todos.count)
     }
 
-    // MARK: Header
-
-    private var header: some View {
-        HStack(spacing: 8) {
+    var body: some View {
+        HStack(spacing: TurnSpace.Inset.snug) {
             Image(systemName: "person.2.fill")
+                .font(.caption)
                 .foregroundStyle(running ? AnyShapeStyle(.tint) : AnyShapeStyle(failed ? .red : .secondary))
                 .symbolEffect(.pulse, isActive: running)
                 .frame(width: TurnSpace.Inset.icon)
-            Text("Subagent").fontWeight(.semibold).font(.callout)
-            Text(arg.isEmpty ? "Task" : arg)
+            Text(arg.isEmpty ? "Agent" : arg)
                 .font(.callout)
-                .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Spacer(minLength: 8)
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                Text(stats)
-                    .font(.caption.monospacedDigit())
+            if running, let activity = run?.activity {
+                Text("· \(activity)")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if failed, let head = item.result?.output.split(separator: "\n").first {
+                Text("· failed: \(String(head.prefix(60)))")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if let r = item.result, r.outcome == .ok {
+                Text("· reported")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 8)
+            if let (done, total) = planProgress {
+                Text("\(done)/\(total)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .fixedSize()
             }
             if running {
+                if let since = item.startedAt {
+                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                        Text(ActivityWords.duration(ctx.date.timeIntervalSince(since)))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                            .fixedSize()
+                    }
+                }
                 Button {
                     conversation.stopSubagent(item.id)
                 } label: {
-                    Label(run?.stopping == true ? "Stopping" : "Stop", systemImage: "stop.fill")
-                        .labelStyle(.titleAndIcon)
+                    Image(systemName: run?.stopping == true ? "hourglass" : "stop.fill")
                         .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .contentShape(.rect)
                 }
-                .buttonStyle(.glass)
-                .controlSize(.small)
+                .buttonStyle(.plain)
                 .disabled(run?.stopping == true)
-                .help("Stop the subagent; the turn continues with what it found so far")
-            }
-            if run != nil {
-                Button {
-                    showRun = true
-                } label: {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                }
-                .buttonStyle(.borderless)
-                .help("Open the subagent's full run")
+                .help(run?.stopping == true ? "Stopping…" : "Stop the agent; the turn continues with what it found so far")
+            } else {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(showRun ? 90 : 0))
             }
         }
-    }
-
-    private var stats: String {
-        var parts: [String] = []
-        if let run {
-            if running { parts.append(run.activity) }
-            let n = run.steps
-            if n > 0 { parts.append("\(n) step\(n == 1 ? "" : "s")") }
-            let secs = Int((run.endedAt ?? Date()).timeIntervalSince(run.startedAt))
-            parts.append(secs < 60 ? "\(secs)s" : "\(secs / 60)m \(secs % 60)s")
-            if running, let tps = run.tokensPerSec, tps > 0 { parts.append(ModelStats.speedText(tps * ModelStats.wordsPerToken)) }
-        } else if running {
-            parts.append("Starting")
+        .contentShape(.rect)
+        .onTapGesture {
+            guard !running else { return }
+            showRun = true
         }
-        return parts.joined(separator: " · ")
-    }
-
-    // MARK: Live
-
-    @ViewBuilder
-    private var live: some View {
-        let items = run?.items ?? []
-        let steps = items.filter { if case .tool = $0.kind { true } else { false } }
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(steps.suffix(3)) { step in
-                StepRow(item: step)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-            if let last = items.last, !last.done {
-                switch last.kind {
-                case .reasoning:
-                    Text(tail(last.text, lines: 2))
-                        .font(.callout.italic())
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(2)
-                        .transition(.opacity)
-                case .message where !last.text.isEmpty:
-                    MarkdownView(text: last.text)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .transition(.opacity)
-                default:
-                    EmptyView()
-                }
-            }
+        .sheet(isPresented: $showRun) {
+            SubagentRunSheet(title: arg, run: run, conversation: conversation)
         }
-        .padding(.leading, TurnSpace.Inset.iconColumn)
-    }
-
-    // MARK: Done
-
-    @ViewBuilder
-    private func report(_ r: Item.ToolResult) -> some View {
-        let text = r.output
-        VStack(alignment: .leading, spacing: 8) {
-            MarkdownView(text: text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(maxHeight: expanded ? nil : 220, alignment: .top)
-                .clipped()
-                .mask {
-                    if expanded || text.count < 900 {
-                        Color.black
-                    } else {
-                        LinearGradient(stops: [.init(color: .black, location: 0.75), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom)
-                    }
-                }
-            HStack(spacing: 12) {
-                if text.count >= 900 {
-                    Button(expanded ? "Show less" : "Show more") { withAnimation(.snappy) { expanded.toggle() } }
-                        .linkButton()
-                }
-                if let run, run.steps > 0 {
-                    Button(showSteps ? "Hide steps" : "Show \(run.steps) step\(run.steps == 1 ? "" : "s")") {
-                        withAnimation(.snappy) { showSteps.toggle() }
-                    }
-                    .linkButton()
-                }
-            }
-            .font(.caption)
-            if showSteps, let run {
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(run.items.filter { if case .tool = $0.kind { true } else { false } }) { StepRow(item: $0) }
-                }
-                .transition(.opacity)
-            }
-        }
-        .padding(.leading, TurnSpace.Inset.iconColumn)
-    }
-
-    private func tail(_ s: String, lines: Int) -> String {
-        s.split(separator: "\n", omittingEmptySubsequences: true).suffix(lines).joined(separator: " ")
     }
 }
 

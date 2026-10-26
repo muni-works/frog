@@ -8,6 +8,7 @@ struct AgentRow: View {
     var depth: Int = 0
     var highlight = ""
 
+    @ViewBuilder
     private var glyph: some View {
         switch agent.state {
         case .running:

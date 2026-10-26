@@ -845,7 +845,7 @@ final class Conversation {
             // phantom message row that never finishes (the pill then reads "Writing the
             // answer"). Backstop for older engines; newer ones skip `task-` ids themselves.
             if item.hasPrefix("task-") && itemAt[item] == nil {
-                if case .status = inner {} else { break }
+                break
             }
             upsert(item) { state in
                 if state.subagent == nil { state.subagent = SubagentRun() }
@@ -1019,6 +1019,10 @@ final class Conversation {
             if case .tool("Task", _) = current.kind {
                 // The subagent's own activity ("Reading main.rs"), so lists that watch this
                 // conversation don't show a bare "Here: <folder>" while it works.
+                let agents = last.agents
+                if agents.filter({ $0.state == .running || $0.state == .waiting }).count > 1 {
+                    return "Waiting on \(agents.filter { $0.state == .running || $0.state == .waiting }.count) agents…"
+                }
                 return current.subagent.map { "Subagent: \($0.activity)" } ?? "Running a subagent…"
             }
             if case .tool(let name, _) = current.kind, name == "Diagram" { return nil }

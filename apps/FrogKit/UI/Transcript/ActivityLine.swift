@@ -100,8 +100,8 @@ struct ActivityLine: View {
                 LiveThought(text: item.text)
             }
         case .tool("Task", let arg):
-            // A subagent works for a while; show it working, with its Stop button.
-            SubagentCard(arg: arg, item: item, conversation: conversation)
+            // An agent works for a while; show its step row, with its Stop button.
+            AgentStepRow(arg: arg, item: item, conversation: conversation)
         default:
             EmptyView()
         }
@@ -338,7 +338,7 @@ struct ActivityStepRow: View {
         case .reasoning:
             CappedThought(text: item.text)
         case .tool("Task", let arg):
-            SubagentCard(arg: arg, item: item, conversation: conversation)
+            AgentStepRow(arg: arg, item: item, conversation: conversation)
         case .tool(let name, _):
             VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
                 if !item.displayImages.isEmpty {
