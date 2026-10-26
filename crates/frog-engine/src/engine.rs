@@ -12481,6 +12481,54 @@ for line in sys.stdin:
         assert!(!marker.exists(), "the job was killed");
     }
 
+    /// A timer set inside a turn the user stops dies with it: no wakeup turn afterwards.
+    #[tokio::test]
+    async fn an_interrupted_turn_kills_its_timers() {
+        let dir = tmp_store();
+        let script = vec![
+            reply(
+                vec![
+                    call("m", "Monitor", json!({"after_s": 1, "subject": "b300-retry"})),
+                    call("s", "Bash", json!({"command": "sleep 5"})),
+                ],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("never")], Stop::End),
+            reply(vec![text("woke")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "watch the pod");
+        let mut stopped = false;
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::BackgroundStarted { .. } => h.ops.send(Op::Interrupt).unwrap(),
+                Event::BackgroundDone { status, .. } => stopped |= status == "stopped",
+                Event::TurnEnded { reason, .. } => {
+                    assert_eq!(reason, EndReason::Cancelled);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let quiet = tokio::time::timeout(Duration::from_millis(2_000), async {
+            while let Some(env) = h.events.recv().await {
+                if let Event::BackgroundDone { status, .. } = &env.event {
+                    stopped |= status == "stopped";
+                }
+                assert!(
+                    !matches!(env.event, Event::TurnStarted { .. }),
+                    "no wakeup after the stop"
+                );
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "the engine stays up, just quiet");
+        assert!(stopped, "the timer ended as stopped");
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn bash_allowlist() {
         assert!(bash_allowed("git status", &[]));
