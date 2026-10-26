@@ -518,6 +518,12 @@ pub enum Event {
     Compacted {
         tokens_before: u64,
         tokens_after: u64,
+        /// What the compaction kept, as a receipt (the structured summary's fields: files
+        /// with +/−, turns with their requests and outcomes, tests run and whether each
+        /// passed). Absent in older logs and in engines with no session store, so the token
+        /// counts stand alone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<KeptSummary>,
     },
     /// Compaction failed and the history can't be shrunk to fit the window: the session is
     /// stuck until something changes. The rescue is [`Op::ContinueSession`] (a new session
@@ -1088,6 +1094,53 @@ pub struct TurnUsage {
     /// What the turn cost in energy, when it was measured (`--energy`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub energy: Option<TurnEnergy>,
+}
+
+/// What a compaction kept, as a receipt ([`Event::Compacted`]'s `summary`): the structured
+/// summary's fields, trimmed to what a banner's expander shows. Built from the session log
+/// without a model call (see `summary::build`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KeptSummary {
+    /// The session it summarizes (the one compacted).
+    pub id: String,
+    /// Files edited, with lines added and removed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<KeptFile>,
+    /// Turns as one line each: what was asked, and how it ended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub turns: Vec<KeptTurn>,
+    /// How the last turn ended (`complete`, `cancelled`, …), for the banner's tail.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub outcome: String,
+}
+
+/// One file the compaction kept: its path and the lines added and removed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KeptFile {
+    pub path: String,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// One turn the compaction kept: what was asked, which tools ran, the tests run and whether
+/// each passed, and how the turn ended.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KeptTurn {
+    pub request: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    /// Test commands run, and whether each passed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<KeptTest>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub outcome: String,
+}
+
+/// One test the compaction kept: the command and whether it passed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KeptTest {
+    pub command: String,
+    pub passed: bool,
 }
 
 /// A turn's energy in watt-hours: the whole Mac above its idle power just before, and for a

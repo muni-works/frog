@@ -99,6 +99,10 @@ final class Conversation {
     /// session can't go on as it is. True until the rescue op is answered — one line with a
     /// "start a carried-forward session" action until then.
     private(set) var overflowRescue = false
+    /// The last successful compaction's receipt (the engine's `compacted` event): what was
+    /// kept, for the carried-forward banner at the transcript's top. Nil until one runs, or
+    /// in engines with no session store (older logs replay without it too).
+    private(set) var carriedForward: KeptSummary?
     /// Messages sent while a turn was running; they go out in order as the engine frees up.
     private(set) var queue: [Queued] = []
 
@@ -862,7 +866,8 @@ final class Conversation {
             // The raw provider payload is in the engine log, never here: one line and a way
             // out. The rescue action (the banner's button) sends the op.
             overflowRescue = true
-        case .compacted(let before, let after):
+        case .compacted(let before, let after, let kept):
+            carriedForward = kept
             note("Summarized the conversation to save context (\(before.tokens) → \(after.tokens) tokens)", warning: false)
         case .contextPruned(let n, let before, let after):
             note("Trimmed \(n) old tool result\(n == 1 ? "" : "s") to save context (\(before.tokens) → \(after.tokens) tokens)", warning: false)
