@@ -468,6 +468,15 @@ pub enum Event {
         /// The gist, one line; empty never arrives (the event is only sent when there is one).
         gist: String,
     },
+    /// A chapter's title, written by a small side-model when the next chapter opened (see
+    /// `chapter`). The app derives chapters and a heuristic title itself; this one, when it
+    /// arrives, wins. Durable, so a replaying client shows it too.
+    ChapterTitled {
+        /// The turn the chapter starts at.
+        turn: u64,
+        /// A few lowercase words; empty never arrives.
+        title: String,
+    },
     /// A retryable model call failed after its reply had started streaming; the client should
     /// drop these partial items (and their deltas) — the step is re-run from scratch. Durable,
     /// so a replaying client also sees the partials come and go.
@@ -806,6 +815,7 @@ impl Event {
                 | Self::ShellCwd { .. }
                 | Self::ModeChanged { .. }
                 | Self::Titled { .. }
+                | Self::ChapterTitled { .. }
                 | Self::PaneOpened { .. }
                 | Self::PaneClosed { .. }
                 | Self::PaneCheckpoint { .. }
