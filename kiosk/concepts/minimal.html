@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>frog — minimal face concept</title>
+<style>
+  /* Concept 1: the face is the whole UI. Centered, as large as the screen
+     allows, on the deepest paper-black. No furniture, no labels, no state. */
+  :root {
+    --skin: #51da60;
+    --spot: #36b347;
+    --ink: #15171a;
+    --paper: #fbfbf9;
+  }
+  html, body {
+    margin: 0; height: 100%;
+    background: #0b0d0e;
+    overflow: hidden;
+    cursor: none;
+  }
+  #stage {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+  }
+  svg { width: min(92vmin, 92vw); height: min(92vmin, 92vw); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <!-- FrogMark transcribed from apps/FrogKit/UI/Basics/FrogFace.swift (1024 grid,
+       box 160,200 704x704). Body moves pivot about feet (512,802); pupils at
+       (360,344) and (664,344), r68, two glints each. Face + tracks shared with
+       ../frogface.html. -->
+  <svg id="frog" viewBox="160 200 704 704" aria-label="frog">
+    <defs>
+      <clipPath id="clip-silhouette">
+        <path id="silhouette-path" d=""/>
+      </clipPath>
+    </defs>
+    <g id="body">
+      <g id="head">
+        <path id="silhouette" fill="var(--skin)"/>
+        <g clip-path="url(#clip-silhouette)">
+          <g id="spots" fill="var(--spot)"></g>
+        </g>
+        <g id="eyes">
+          <g id="pupil-l">
+            <circle class="pupil" fill="var(--ink)"/>
+            <circle class="glint-a" fill="var(--paper)"/>
+            <circle class="glint-b" fill="var(--paper)"/>
+          </g>
+          <g id="pupil-r">
+            <circle class="pupil" fill="var(--ink)"/>
+            <circle class="glint-a" fill="var(--paper)"/>
+            <circle class="glint-b" fill="var(--paper)"/>
+          </g>
+        </g>
+        <path id="mouth" fill="var(--ink)"/>
+      </g>
+    </g>
+  </svg>
+</div>
+<script>
+"use strict";
+
+// ---- geometry (grid units, from FrogMark) ---------------------------------
+const BOX = { x: 160, y: 200, w: 704, h: 704 };
+const FEET = { x: 512, y: 802 };
+const PUPIL_R = 68;
+const PUPILS = [{ x: 360, y: 344 }, { x: 664, y: 344 }];
+
+function headPath() {
+  return (
+    `M 216 568 ` +
+    `A 296 224 0 0 1 808 568 ` +
+    `A 296 234 0 0 1 216 568 Z ` +
+    `M 240 352 a 120 120 0 1 0 240 0 a 120 120 0 1 0 -240 0 ` +
+    `M 544 352 a 120 120 0 1 0 240 0 a 120 120 0 1 0 -240 0`
+  );
+}
+
+const SPOTS = [
+  [290, 469, 18], [262, 523, 11], [742, 463, 16], [772, 510, 10], [323, 541, 30], [701, 541, 30],
+];
+
+function mouthPath(frown) {
+  const y1 = frown ? 1194 - 572 : 572;
+  const yc = frown ? 1194 - 636 : 636;
+  return `M 420 ${y1} Q 512 ${yc} 604 ${y1}`;
+}
+
+// ---- Move tracks (from FrogPose) ------------------------------------------
+function mix(a, b, f) { return a + (b - a) * f; }
+function mixMove(a, b, f) {
+  const nx = m => ({ tx: m.tx || 0, ty: m.ty || 0, sx: m.sx ?? 1, sy: m.sy ?? 1, rot: m.rot || 0 });
+  a = nx(a); b = nx(b);
+  return {
+    tx: mix(a.tx, b.tx, f), ty: mix(a.ty, b.ty, f),
+    sx: mix(a.sx, b.sx, f), sy: mix(a.sy, b.sy, f),
+    rot: mix(a.rot, b.rot, f),
+  };
+}
+const REST = { tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 };
+
+function easeFn(x1, y1, x2, y2) {
+  return function (x) {
+    const bez = (s, a, b) => { const u = 1 - s; return 3*u*u*s*a + 3*u*s*s*b + s*s*s; };
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 24; i++) {
+      const s = (lo + hi) / 2;
+      if (bez(s, x1, x2) < x) lo = s; else hi = s;
+    }
+    return bez((lo + hi) / 2, y1, y2);
+  };
+}
+const EASE = easeFn(0.25, 0.1, 0.25, 1);
+const IN_OUT = easeFn(0.42, 0, 0.58, 1);
+const OUT = easeFn(0, 0, 0.58, 1);
+const hopMidA = easeFn(0.2, 0.8, 0.3, 1);
+const hopMidB = easeFn(0.6, 0, 0.8, 0.4);
+
+function makeTrack(period, alternate, stops) {
+  return function (t) {
+    const p = Math.max(t, 0) / period;
+    let f = p % 1;
+    if (alternate && Math.floor(p) % 2 === 1) f = 1 - f;
+    let i = stops.length - 1;
+    while (i > 0 && stops[i][0] > f) i--;
+    if (i + 1 >= stops.length) return stops[stops.length - 1][1];
+    const [fa, ma, ea] = stops[i];
+    const [fb, mb] = stops[i + 1];
+    const local = fb > fa ? (f - fa) / (fb - fa) : 1;
+    return mixMove(ma, mb, ea(local));
+  };
+}
+
+const breathe = makeTrack(3.2, false, [
+  [0, REST, IN_OUT], [0.5, { ...REST, sx: 1.012, sy: 0.982 }, IN_OUT], [1, REST, IN_OUT],
+]);
+const pump = makeTrack(1.1, false, [
+  [0, REST, IN_OUT], [0.45, { ...REST, sx: 1.05, sy: 0.94 }, IN_OUT], [1, REST, IN_OUT],
+]);
+const blink = (period) => makeTrack(period, false, [
+  [0, REST, EASE], [0.92, REST, EASE], [0.95, { ...REST, sy: 0.08 }, EASE], [1, REST, EASE],
+]);
+const ponder = makeTrack(4, false, [
+  [0, { tx: 22, ty: -44, sx: 1, sy: 0.8 }, IN_OUT],
+  [0.33, { tx: 44, ty: -30, sx: 1, sy: 0.8 }, IN_OUT],
+  [0.66, { tx: -10, ty: -48, sx: 1, sy: 0.8 }, IN_OUT],
+  [1, { tx: 22, ty: -44, sx: 1, sy: 0.8 }, IN_OUT],
+]);
+const scan = makeTrack(2.4, false, [
+  [0, { tx: -46, ty: 12 }, EASE], [0.25, { tx: -16, ty: 12 }, EASE],
+  [0.5, { tx: 16, ty: 12 }, EASE], [0.75, { tx: 46, ty: 12 }, EASE],
+  [0.88, { tx: -46, ty: 22 }, EASE], [1, { tx: -46, ty: 12 }, EASE],
+]);
+const hopTrack = makeTrack(2.4, false, [
+  [0, REST, OUT],
+  [0.08, { sx: 1.1, sy: 0.86 }, hopMidA],
+  [0.20, { ty: -120, sx: 0.94, sy: 1.08 }, hopMidB],
+  [0.31, { sx: 1.12, sy: 0.84 }, OUT],
+  [0.36, { sx: 0.98, sy: 1.02 }, EASE],
+  [0.40, REST, OUT], [1, REST, OUT],
+]);
+const tilt = makeTrack(1.8, false, [
+  [0, { rot: -7 }, IN_OUT], [0.5, { rot: 7 }, IN_OUT], [1, { rot: -7 }, IN_OUT],
+]);
+const wide = makeTrack(1.8, false, [
+  [0, { sx: 1.12, sy: 1.12 }, IN_OUT], [0.5, { sx: 1.04, sy: 1.04 }, IN_OUT],
+  [1, { sx: 1.12, sy: 1.12 }, IN_OUT],
+]);
+const droop = makeTrack(3, true, [
+  [0, { ty: 14, sy: 0.5 }, IN_OUT], [1, { ty: 18, sy: 0.42 }, IN_OUT],
+]);
+const sink = makeTrack(3, true, [
+  [0, REST, IN_OUT], [1, { ty: 12 }, IN_OUT],
+]);
+
+const MOODS = {
+  idle:     { body: breathe, eyes: blink(5),   frown: false },
+  reading:  { body: null,    eyes: scan,       frown: false },
+  thinking: { body: breathe, eyes: ponder,     frown: false },
+  working:  { body: pump,    eyes: blink(3.3), frown: false },
+  done:     { body: hopTrack, eyes: null,      frown: false },
+  waiting:  { body: tilt,    eyes: wide,       frown: false },
+  sad:      { body: sink,    eyes: droop,      frown: true },
+};
+
+// ---- SVG setup -------------------------------------------------------------
+const svg = document.getElementById("frog");
+document.getElementById("silhouette-path").setAttribute("d", headPath());
+document.getElementById("silhouette").setAttribute("d", headPath());
+
+const spotsG = document.getElementById("spots");
+for (const [x, y, r] of SPOTS) {
+  const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  c.setAttribute("cx", x); c.setAttribute("cy", y); c.setAttribute("r", r);
+  spotsG.appendChild(c);
+}
+
+const mouth = document.getElementById("mouth");
+mouth.setAttribute("stroke", "var(--ink)");
+mouth.setAttribute("stroke-width", "30");
+mouth.setAttribute("stroke-linecap", "round");
+mouth.setAttribute("fill", "none");
+
+const pupils = [
+  { g: document.getElementById("pupil-l"), c: PUPILS[0] },
+  { g: document.getElementById("pupil-r"), c: PUPILS[1] },
+];
+for (const p of pupils) {
+  const set = (cls, x, y, r) => {
+    const el = p.g.querySelector(cls);
+    el.setAttribute("cx", x); el.setAttribute("cy", y); el.setAttribute("r", r);
+  };
+  set(".pupil", p.c.x, p.c.y, PUPIL_R);
+  set(".glint-a", p.c.x + 22, p.c.y - 22, 22);
+  set(".glint-b", p.c.x - 24, p.c.y + 24, 9);
+}
+
+function applyMove(g, m, pivot) {
+  const t = `translate(${pivot.x + m.tx},${pivot.y + m.ty}) ` +
+            `rotate(${m.rot || 0}) scale(${m.sx},${m.sy}) ` +
+            `translate(${-pivot.x},${-pivot.y})`;
+  g.setAttribute("transform", t);
+}
+
+// ---- render loop -----------------------------------------------------------
+let mood = "idle";
+let since = performance.now() / 1000;
+
+function setMood(name) {
+  if (!MOODS[name]) return false;
+  mood = name; since = performance.now() / 1000;
+  return true;
+}
+
+function frame() {
+  const t = performance.now() / 1000 - since;
+  const spec = MOODS[mood];
+  const bodyMove = spec.body ? spec.body(t) : REST;
+  const eyesMove = spec.eyes ? spec.eyes(t) : REST;
+  applyMove(document.getElementById("body"), bodyMove, FEET);
+  for (const p of pupils) applyMove(p.g, eyesMove, p.c);
+  mouth.setAttribute("d", mouthPath(spec.frown));
+  requestAnimationFrame(frame);
+}
+frame();
+
+// kiosk demo driver: cycle moods every 6 s (real driver replaces this);
+// #mood in the URL pins the starting mood for screenshots / testing.
+const names = Object.keys(MOODS);
+if (decodeURIComponent(location.hash.slice(1)) in MOODS) {
+  setMood(decodeURIComponent(location.hash.slice(1)));
+}
+setInterval(() => {
+  setMood(names[(names.indexOf(mood) + 1) % names.length]);
+}, 6000);
+
+window.setFrogMood = setMood;
+</script>
+</body>
+</html>
