@@ -840,6 +840,13 @@ final class Conversation {
             // Bookkeeping for the ask rate; nothing to show.
             break
         case .subagent(let item, let inner):
+            // A background task's events name its `task-N` id, which has no item of its own in
+            // the parent's turn (the Task call returned at once): folding it would create a
+            // phantom message row that never finishes (the pill then reads "Writing the
+            // answer"). Its steps stream as background progress, not rows.
+            if item.hasPrefix("task-") && itemAt[item] == nil {
+                if case .status = inner {} else { break }
+            }
             upsert(item) { state in
                 if state.subagent == nil { state.subagent = SubagentRun() }
                 state.subagent?.apply(inner)
@@ -1009,7 +1016,10 @@ final class Conversation {
         guard permission == nil, elicitation == nil, question == nil else { return nil }
         if let current = last.items.last(where: { !$0.done && $0.kind != .message }) {
             if current.needsPermission { return nil }
-            if case .tool(let name, _) = current.kind, name == "Task" || name == "Diagram" { return nil }
+            if case .tool("Task", _) = current.kind {
+                return current.subagent.map { "Subagent: \($0.activity)" } ?? "Running a subagent…"
+            }
+            if case .tool(let name, _) = current.kind, name == "Diagram" { return nil }
             return ActivityWords.now(current)
         }
         if let m = last.items.last, m.kind == .message, !m.done, !m.text.isEmpty { return "Writing…" }
