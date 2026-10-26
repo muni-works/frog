@@ -30,6 +30,9 @@ struct FrogFace: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion || !animating || at != nil)) { timeline in
+            #if DEBUG
+            let _ = PillProbe.frog()
+            #endif
             let now = at ?? timeline.date
             let pose = FrogPose(
                 mood: mood,

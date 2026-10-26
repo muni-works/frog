@@ -40,6 +40,9 @@ struct ActivityViewer: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = PillProbe.viewer()
+        #endif
         HStack(spacing: 10) {
             if let pane {
                 Text("\(pane.number)")
