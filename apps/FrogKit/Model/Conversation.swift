@@ -843,7 +843,7 @@ final class Conversation {
             // A background task's events name its `task-N` id, which has no item of its own in
             // the parent's turn (the Task call returned at once): folding it would create a
             // phantom message row that never finishes (the pill then reads "Writing the
-            // answer"). Its steps stream as background progress, not rows.
+            // answer"). Backstop for older engines; newer ones skip `task-` ids themselves.
             if item.hasPrefix("task-") && itemAt[item] == nil {
                 if case .status = inner {} else { break }
             }
@@ -1017,6 +1017,8 @@ final class Conversation {
         if let current = last.items.last(where: { !$0.done && $0.kind != .message }) {
             if current.needsPermission { return nil }
             if case .tool("Task", _) = current.kind {
+                // The subagent's own activity ("Reading main.rs"), so lists that watch this
+                // conversation don't show a bare "Here: <folder>" while it works.
                 return current.subagent.map { "Subagent: \($0.activity)" } ?? "Running a subagent…"
             }
             if case .tool(let name, _) = current.kind, name == "Diagram" { return nil }
