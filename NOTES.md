@@ -90,3 +90,16 @@ Cam's answers (clicked):
   "Waiting on 1 agent · 2 done…"). SubagentCard goes away.
 - Rail and pill: no new UI. The pill's live text says "Waiting on N agents".
 Render: docs/design/agents/calm.html (section 1).
+
+## Decision (morning, relayed by frog manager)
+Cam picked (a) LIVE-ONLY: agent rows from the open conversation's live state + the agent-step log;
+agents as real sessions is a scoped follow-on, stays design-only.
+
+## Build order
+1. engine: `Subagent{itemStarted|itemCompleted}` durable (serde shape unchanged) — done, test in protocol.rs
+2. bug 1: background Task events must not create an open message item in the parent's turn
+3. bug 2: liveActivity surfaces the subagent's activity
+4. sidebar agent rows under their session (progress from the agent's plan, ✋ bubbles, fold on turn end)
+5. transcript as steps ("ran N agents", "Agent: X · failed", "Waiting on 1 agent · 2 done…");
+   SubagentCard only until the replacement renders
+6. pill live text "Waiting on N agents"
