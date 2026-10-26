@@ -50,5 +50,18 @@ Group rows aggregate (sum of children).
   sha; gh only on Refresh / Workers detail. CompactPRCache + SessionMetaCache go away.
 - badge click → Workers scope, tree expanded. tornDown gains `landed`.
 
+## Round 2 (relayed by frog manager): hover cards
+- Brief assumed "merge events + diffstats the engine already logs". **They don't exist** (checked: no
+  merge logging; the only numstat is checkpoint.rs:205 for race diffs). Spec sources them from git instead:
+  first-parent merge index (17 ms/200 merges, parse `Merge pull request #N` + body title, or
+  `Merge … branch '<x>'`), lazy `diff --shortstat M^1...M^2` (~40 ms) on first hover, cached by sha forever.
+- Cards: group (Landed ≤8 newest + Not landed ≤5) and session (its merges + its own commits). Links from
+  remote URL: /pull/N, /commit/sha, /compare (only if pushed). No gh for the card.
+- Lifecycle: 500 ms rest, 300 ms grace + safe triangle, warm move between badges, click pins (takes focus),
+  Space on a focused row = pinned (Quick Look), ↑↓ Return ⌘C Esc; closes on scroll/resign/row gone.
+- Changed: badge click now pins the card; "Show in Workers" moves to the card footer + row menu.
+- Merged capsule green, not GitHub purple (purple = ahead here).
+
 ## Progress
-- 6badefc checkpoint 0 · fac2fb0 survey · 048e656 spec · mockup (next commit)
+- 6badefc checkpoint 0 · fac2fb0 survey · 048e656 spec · 4edc4de mockup · 47d0463 hover-card spec ·
+  hover-card mockup (next commit)

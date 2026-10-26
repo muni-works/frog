@@ -183,15 +183,15 @@ badge's tooltip. The row's own tooltip (title, tree, model) stays on the rest of
 ```
  ┌ frog manager ─────────────────────────── 12 landed · 37 ahead ┐
  │ LANDED                                                        │
- │ subagent visibility v2          [Merged] ecto/frog · b36d033  │
+ │ subagent visibility v2          [Merged] ecto/frog@b36d033    │
  │                                              +1751  −378      │
- │ worktree ux                     [Merged] ecto/frog · ef41cd7  │
+ │ worktree ux                     [Merged] ecto/frog@ef41cd7    │
  │                                               +653    −1      │
- │ engine: never persist native→…  [Merged] ecto/frog #97        │
+ │ engine: never persist native→…  [Merged] ecto/frog#97         │
  │                                               +751   −78      │
  │ … 9 more                                                      │
  │ NOT LANDED                                                    │
- │ accounts ux spec v3   frog/accounts-ux-spec   ↑17  +2210 −40  │
+ │ accounts ux spec v3   frog/accounts-ux-spec   ↑17  +1241  −0  │
  │ delegation pipeline v5 …                                      │
  │ ───────────────────────────────────────────────────────────── │
  │ Show in Workers                                   Refresh  ⌘R │
@@ -201,8 +201,10 @@ badge's tooltip. The row's own tooltip (title, tree, model) stays on the rest of
 **Group card** (manager, done fold, repo header). The rows come from all the children, deduped by
 tree, in two sections:
 - **Landed**, newest merge first, at most 8 rows, then "… N more" (which opens Workers filtered to
-  that owner). Each row shows the title, a green **Merged** capsule, the repo, `#N` for a PR merge or
-  the short merge sha for a local merge, and `+N −M` in green and red. The child's session title
+  that owner). Each row shows the title, a **Merged** capsule, then `ecto/frog#97` for a PR merge or
+  `ecto/frog@b36d033` for a local merge (GitHub's own reference forms), then `+N −M` in green and
+  red. The capsule is **green, not GitHub's purple**: in this sidebar purple already means "ahead",
+  and one color keeps one meaning. The child's session title
   sits under it in tertiary when it differs from the PR title.
 - **Not landed** (only when ahead > 0), most ahead first, at most 5 rows: the session title, the
   branch chip, `↑N`, and `+N −M` against base. A row in trouble shows its amber reason

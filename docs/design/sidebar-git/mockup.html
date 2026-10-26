@@ -25,7 +25,7 @@
   .window { background:var(--win); color:var(--text); border-radius:10px; overflow:hidden; display:flex;
             box-shadow:0 0 0 .5px rgba(0,0,0,.25), 0 14px 40px rgba(0,0,0,.18); }
   .sidebar { width:300px; background:var(--side); border-right:.5px solid var(--line); padding:10px 6px 14px; height:850px; overflow:visible; position:relative; }
-  .ghost { width:240px; padding:44px 28px; }
+  .ghost { width:300px; padding:44px 28px; }
   .ghost i { display:block; height:9px; background:var(--chip); border-radius:4px; margin:11px 0; }
   .lights { display:flex; gap:8px; padding:2px 8px 12px; }
   .lights i { width:12px; height:12px; border-radius:50%; display:block; }
@@ -85,6 +85,40 @@
   .tip .s { color:var(--sec); }
   .note { position:absolute; z-index:4; font:500 10.5px -apple-system; color:#fff; background:#d0368a; border-radius:9px; padding:1px 7px; white-space:nowrap; }
 
+  /* hovered badge + hover card (a transient popover) */
+  .row.hov { background:var(--hover); }
+  .gbhot { border-radius:5px; padding:1px 4px; margin:-1px -4px; background:var(--quat); }
+  .card { position:absolute; z-index:5; background:var(--tip); color:var(--text); border-radius:10px; padding:8px 0 0;
+          box-shadow:0 0 0 .5px rgba(0,0,0,.28), 0 12px 32px rgba(0,0,0,.24); font-size:12px; text-align:left; cursor:default; }
+  .card .arrow { position:absolute; top:-6px; width:12px; height:12px; background:var(--tip); transform:rotate(45deg);
+                 box-shadow:-.5px -.5px 0 rgba(0,0,0,.2); }
+  .ch { display:flex; justify-content:space-between; align-items:baseline; padding:0 12px 4px; }
+  .ch b { font-weight:600; } .ch span { font-size:11px; color:var(--sec); font-variant-numeric:tabular-nums; }
+  .csec { font:600 9.5px -apple-system; letter-spacing:.6px; text-transform:uppercase; color:var(--ter); padding:7px 12px 2px; }
+  .cr { display:grid; grid-template-columns:1fr auto 74px; gap:8px; align-items:center; padding:4px 12px; }
+  .cr:hover, .cr.focus { background:color-mix(in srgb, var(--accent) 14%, transparent); }
+  .cr.focus { box-shadow:inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); border-radius:5px; margin:0 4px; padding:4px 8px; }
+  .cl { min-width:0; } .ct { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cs { font-size:10.5px; color:var(--ter); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cm { display:flex; align-items:center; gap:5px; white-space:nowrap; }
+  .cap-m { display:inline-flex; align-items:center; gap:3px; font:600 10px -apple-system; color:#fff; background:var(--green);
+           border-radius:9px; padding:1px 6px 1px 4px; }
+  .cap-m svg { width:10px; height:10px; fill:none; stroke:#fff; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+  .cref { font:10.5px var(--mono); color:var(--sec); }
+  .cchip { font:10px var(--mono); color:var(--sec); background:var(--chip); border-radius:4px; padding:0 5px; max-width:130px;
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cup { font:10.5px var(--mono); color:var(--text); }
+  .cd { font:10.5px var(--mono); text-align:right; white-space:nowrap; }
+  .add { color:var(--green); } .del { color:var(--red); margin-left:5px; }
+  .cmore { font-size:11px; color:var(--ter); padding:2px 12px; }
+  .cc { padding:3px 12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:11.5px; }
+  .cc .sha { font:10.5px var(--mono); color:var(--ter); margin-right:7px; }
+  .cc.tot { font:10.5px var(--mono); color:var(--sec); padding-top:5px; }
+  .cf { display:flex; gap:6px; align-items:center; margin-top:6px; padding:6px 12px 7px; border-top:.5px solid var(--line);
+        font-size:11px; color:var(--accent); } .cf .sp { flex:1; } .cf .k { color:var(--ter); }
+  .url { position:absolute; left:0; bottom:-24px; font:10.5px var(--mono); color:var(--sec); background:var(--tip);
+         border-radius:4px; padding:2px 6px; box-shadow:0 0 0 .5px rgba(0,0,0,.2); }
+
   /* anatomy strip */
   .strip { display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; max-width:1180px; }
   .cell { border-radius:10px; padding:12px 14px; background:var(--win); color:var(--text); box-shadow:0 0 0 .5px rgba(0,0,0,.15); }
@@ -127,11 +161,15 @@
 
 <div class="stage">
   <div><div class="window light" id="w-light"></div>
-    <p class="cap">Light. Hovering <b>accounts ux spec v3</b> shows the tooltip. The manager rows read their whole
+    <p class="cap">Light. The <b>group card</b>: the pointer has rested 500 ms on frog manager's badge. Landed rows
+      (title, <b>Merged</b> + ecto/frog and a sha for a local merge or #N for a PR, then +N −M) come from all the children,
+      newest first, followed by what hasn't landed. The focused row (keyboard ↓) opens github.com/ecto/frog/commit/b36d033.
+      The manager rows read their whole
       subtree whatever the scope: <b>frog manager</b> ⎇ 37 = 1 + 2 + 10 + 17 + 7, and its ⇡ 12 includes the 11 in
       “11 earlier”.</p></div>
   <div><div class="window dark" id="w-dark"></div>
-    <p class="cap">Dark. <b>frog cloud manager</b> is collapsed (“· 2 running · 1 waiting”), and its aggregate stays
+    <p class="cap">Dark. The <b>session card</b> on subagent visibility v2: it landed once (b36d033), then gained 2
+      commits that aren't in main yet (the badge shows ⎇ 2, because ahead wins). <b>frog cloud manager</b> is collapsed (“· 2 running · 1 waiting”), and its aggregate stays
       the same (⎇ 20). <b>okc decode layer</b> finished with 19 files uncommitted (the dot). That dot also rides up to
       okc manager. <b>kv quant sweep</b> stopped mid-rebase (amber), so tang manager v2 turns amber too.</p></div>
 </div>
@@ -182,8 +220,9 @@ const G = {
   mg: '<svg viewBox="0 0 12 12"><path d="M8 11V1.6M6.3 3.3 8 1.5l1.7 1.8M2.5 11V9.2c0-1.9 1.4-2.9 5.5-3.6"/></svg>',
 };
 // badge: a = ahead, l = landed (true on a leaf, number on a group), d = dirty dot, t = trouble, det = detached
-function badge(b, muted) {
+function badge(b, muted, hot) {
   if (!b) return '';
+  if (hot) return `<span class="gbhot">${badge(b, false)}</span>`;
   const parts = [];
   if (b.a !== undefined || b.d || b.t || b.det) {
     const cls = b.t ? 'amber' : b.det ? 'det' : 'br';
@@ -201,9 +240,9 @@ const TREE = [
   ['label', 'Org', null, '', true],
   ['mgr', 'F', '#30d158', 'frog manager', { a:37, l:12 }, 'open', null, 'spin'],
   ['row', 1, 'sidebar git', { a:1 }, { sel:true, st:'spin' }],
-  ['row', 1, 'subagent visibility v2', { a:2 }, { st:'chk', age:'3h', settled:true }],
+  ['row', 1, 'subagent visibility v2', { a:2 }, { st:'chk', age:'3h', settled:true, card:true }],
   ['row', 1, 'delegation pipeline v5', { a:10 }, { st:'chk', age:'1d', settled:true, folded:true }],
-  ['row', 1, 'accounts ux spec v3', { a:17 }, { st:'chk', age:'1d', settled:true, tip:true }],
+  ['row', 1, 'accounts ux spec v3', { a:17 }, { st:'chk', age:'1d', settled:true }],
   ['row', 1, 'pr viral spec', { a:7 }, { st:'chk', age:'1d', settled:true }],
   ['row', 1, 'freedom analysis v2', { l:true }, { st:'chk', age:'2h', settled:true }],
   ['fold', 1, '11 earlier', 0, { l:11 }],
@@ -212,7 +251,7 @@ const TREE = [
   ['row', 1, 'kv quant sweep', { a:5, t:true, d:true }, { st:'fail', age:'40m', settled:true }],
   ['row', 1, 'mtp draft', { l:true }, { st:'chk', age:'5h', settled:true }],
   ['fold', 1, '4 earlier', 0, { l:4 }],
-  ['mgr', 'Z', '#64d2ff', 'frog cloud manager', { a:20, l:6 }, 'closed', '· 2 running · 1 waiting', 'ring'],
+  ['mgr', 'Z', '#64d2ff', 'frog cloud manager', { a:20, l:6 }, 'closed', '@2 running · 1 waiting', 'ring'],
   ['mgr', 'O', '#bf5af2', 'okc manager', { a:31, l:2, d:true }, 'open', null, 'ring'],
   ['row', 1, 'okc decode layer', { a:6, d:true }, { st:'chk', age:'1d', settled:true }],
   ['row', 1, 'okc attn decode', { a:2 }, { st:'wait' }],
@@ -225,6 +264,47 @@ const TREE = [
   ['row', 0, 'challenges spec', null, { st:'ring', age:'1d', top:true }],
   ['fold', 0, '6 done', 0, { l:3 }],
 ];
+
+// Hover cards: real merges from ecto/frog's origin/main (local merges show the sha, PR merges #N).
+const mergedCap = '<span class="cap-m">' + '<svg viewBox="0 0 12 12"><path d="M8 11V1.6M6.3 3.3 8 1.5l1.7 1.8M2.5 11V9.2c0-1.9 1.4-2.9 5.5-3.6"/></svg>Merged</span>';
+const landedRow = (t, ref, add, del, sub, focus) => `<div class="cr ${focus ? 'focus' : ''}">
+  <div class="cl"><div class="ct">${t}</div>${sub ? `<div class="cs">${sub}</div>` : ''}</div>
+  <div class="cm">${mergedCap}<span class="cref">ecto/frog${ref}</span></div>
+  <div class="cd"><span class="add">+${add}</span><span class="del">−${del}</span></div></div>`;
+const aheadRow = (t, chip, n, add, del, trouble) => `<div class="cr">
+  <div class="cl"><div class="ct">${t}</div></div>
+  <div class="cm"><span class="cchip">${chip}</span><span class="cup">↑${n}</span></div>
+  <div class="cd">${trouble ? `<span style="color:var(--amber)">${trouble}</span>` : `<span class="add">+${add}</span><span class="del">−${del}</span>`}</div></div>`;
+function groupCard() {
+  return `<div class="card" style="left:150px;top:22px;width:440px"><span class="arrow" style="left:84px"></span>
+    <div class="ch"><b>frog manager</b><span>12 landed · 37 ahead</span></div>
+    <div class="csec">Landed</div>
+    ${landedRow('main conflict fix', '@77b5f8c', 6, 11)}
+    ${landedRow('subagent visibility', '@b36d033', '1,751', 378, '', true)}
+    ${landedRow('worktree ux', '@ef41cd7', 653, 1)}
+    ${landedRow('freedom analysis v2', '@12c3672', 310, 0)}
+    ${landedRow('transcript: instant session switch + virtualization', '#104', '1,165', 38, 'transcript perf batch')}
+    ${landedRow('engine: never persist native→text downgrades', '#97', 751, 78, 'opus text-mode fix')}
+    <div class="cmore">… 6 more</div>
+    <div class="csec">Not landed</div>
+    ${aheadRow('accounts ux spec v3', 'frog/accounts-ux-spec', 17, '1,241', 0)}
+    ${aheadRow('delegation pipeline v5', 'frog/delegation-pipeline', 10, '2,611', 51)}
+    ${aheadRow('pr viral spec', 'frog/pr-viral-spec', 7, 362, 0)}
+    <div class="cmore">… 2 more</div>
+    <div class="cf"><span>Show in Workers</span><span class="sp"></span><span class="k">↩ open · ⌘C copy · Esc</span></div>
+    <div class="url">github.com/ecto/frog/commit/b36d033</div></div>`;
+}
+function sessionCard() {
+  return `<div class="card" style="left:120px;top:22px;width:440px"><span class="arrow" style="left:118px"></span>
+    <div class="ch"><b>subagent visibility v2</b><span>2 ahead · landed once</span></div>
+    <div class="csec">Landed</div>
+    ${landedRow('subagent visibility', '@b36d033', '1,751', 378)}
+    <div class="csec">Not landed · frog/subagent-visibility</div>
+    <div class="cc"><span class="sha">fa29b9a</span>notes: rebase onto the fixed main; local fix superseded</div>
+    <div class="cc"><span class="sha">a4237cb</span>notes: main’s broken merge (c816903) and the resolution</div>
+    <div class="cc tot"><span class="add">+13</span> <span class="del">−0</span> · 1 file vs origin/main · clean</div>
+    <div class="cf"><span>Show in Workers</span><span class="sp"></span><span class="k">⌘R refresh</span></div></div>`;
+}
 
 function sidebar(dark) {
   let h = `<div class="sidebar"><div class="lights"><i></i><i></i><i></i></div><div class="search">Search</div>
@@ -241,19 +321,18 @@ function sidebar(dark) {
     } else if (k === 'mgr') {
       const [, m, tint, title, b, disc, sum, st] = r;
       const live = st === 'spin';
-      h += `<div class="row"><span class="disc ${disc === 'open' ? 'open' : ''}">›</span>
+      const card = !dark && title === 'frog manager' ? groupCard() : '';
+      h += `<div class="row ${card ? 'hov' : ''}"><span class="disc ${disc === 'open' ? 'open' : ''}">›</span>
         <span class="mg" style="background:color-mix(in srgb, ${tint} 20%, transparent);color:${tint}">${m}</span>
         <span class="t ${live ? 'mgr' : 'top'}">${title}${sum ? `<span class="sum">${sum}</span>` : ''}</span>
-        <span class="tr">${badge(b, !live)}<span class="st">${glyph(st)}</span></span></div>`;
+        <span class="tr">${badge(b, !live, !!card)}<span class="st">${glyph(st)}</span></span>${card}</div>`;
     } else if (k === 'row') {
       const [, depth, title, b, o] = r;
-      const tip = o.tip && !dark ? `<div class="tip" style="left:40px;top:24px"><span class="m">frog/accounts-ux-spec</span><br>
-        <span class="s">17 ahead · 133 behind origin/main</span><br><span class="s">clean · PR not asked</span><br><span class="s">also: accounts ux spec (same tree)</span><br>
-        <span class="s">Click to show in Workers</span></div>` : '';
-      h += `<div class="row ${o.sel ? 'sel' : ''}"><span style="width:${depth * 14}px;flex:none"></span>
+      const tip = o.card && dark ? sessionCard() : '';
+      h += `<div class="row ${o.sel ? 'sel' : ''} ${tip ? 'hov' : ''}"><span style="width:${depth * 14}px;flex:none"></span>
         <span class="disc">${o.folded ? '›' : ''}</span>
         <span class="t ${o.settled ? 'settled' : ''} ${o.top ? 'top' : ''}">${title}</span>
-        <span class="tr">${badge(b, o.settled || o.top)}${o.pane ? `<span class="pane">${o.pane}</span>` : ''}${o.age ? `<span class="age">${o.age}</span>` : ''}<span class="st">${glyph(o.st)}</span></span>${tip}</div>`;
+        <span class="tr">${badge(b, (o.settled || o.top) && !tip, !!tip)}${o.pane ? `<span class="pane">${o.pane}</span>` : ''}${o.age ? `<span class="age">${o.age}</span>` : ''}<span class="st">${glyph(o.st)}</span></span>${tip}</div>`;
     } else if (k === 'fold') {
       const [, depth, text, failed, b] = r;
       const [main, fail] = text.split(' · ');
