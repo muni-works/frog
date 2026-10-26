@@ -144,8 +144,12 @@ final class Conversation {
     private(set) var queuedEvents: [String] = []
     /// Background work running in the engine (Monitors, background jobs and Tasks), as its last
     /// `background` event said. It outlives the turn that started it and dies with the engine,
-    /// so an engine with any is never let go.
-    @ObservationIgnored private(set) var backgroundRunning = 0
+    /// so an engine with any is never let go. Observed: the sidebar's background agent rows
+    /// show only while it's above zero (it changes only when a piece starts or ends).
+    private(set) var backgroundRunning = 0
+    /// Background agents' runs (`Task {background: true}`) by job id, folded from their
+    /// `subagent` events: they have no item in the parent's turn. For their sidebar rows.
+    private(set) var agentRuns: [String: SubagentRun] = [:]
     /// Background work by id, from its durable start and end events (replayed with the log):
     /// what a wake's event row names and links to. Live progress isn't kept here, so a job's
     /// output never re-renders the transcript.
@@ -523,6 +527,7 @@ final class Conversation {
     /// Stop one subagent; the turn goes on with what it found so far.
     func stopSubagent(_ item: String) {
         link?.send(.stopSubagent(id: item))
+        guard itemAt[item] != nil else { return }
         upsert(item) { $0.subagent?.stopping = true }
     }
 
@@ -817,9 +822,16 @@ final class Conversation {
                 Conversation.effects?.asked(self, req)
                 Conversation.permissionRequests?(self, req)
             }
-            upsert(req.item) { $0.needsPermission = true }
+            // A background agent's request names its job, not an item of the turn.
+            if itemAt[req.item] != nil { upsert(req.item) { $0.needsPermission = true } }
             if progress != nil { progress = nil }
         case .permissionResolved:
+            // An agent goes on working once answered: it isn't waiting on you any more.
+            if let item = permission?.item, itemAt[item] != nil {
+                upsert(item) { state in
+                    if case .tool("Task", _) = state.kind { state.needsPermission = false }
+                }
+            }
             permission = nil
         case .elicitation(let e):
             elicitation = e
@@ -840,8 +852,22 @@ final class Conversation {
             // Bookkeeping for the ask rate; nothing to show.
             break
         case .subagent(let item, let inner):
+            // A background agent's events name its job (`task-N`), which has no item in the
+            // parent's turn: they fold into its own run. (Upserting would add a message item
+            // that never finishes, and the pill would read "Writing the answer".)
+            // Steps only: its rows say what it's doing, never its text, so deltas and status
+            // don't rebuild them.
+            guard itemAt[item] != nil else {
+                switch inner {
+                case .itemStarted, .itemCompleted, .itemsDiscarded:
+                    agentRuns[item, default: SubagentRun(startedAt: jobs[item]?.startedAt ?? at(env))].apply(inner)
+                default: break
+                }
+                break
+            }
             upsert(item) { state in
-                if state.subagent == nil { state.subagent = SubagentRun() }
+                // Started when its Task did (a replay's clock would be now, not then).
+                if state.subagent == nil { state.subagent = SubagentRun(startedAt: state.startedAt ?? at(env)) }
                 state.subagent?.apply(inner)
             }
             if progress != nil { progress = nil }
@@ -882,8 +908,17 @@ final class Conversation {
             backgroundRunning = running
         case .backgroundStarted(let id, let kind, let label, let log):
             jobs[id] = BackgroundJob(id: id, kind: kind, label: label, log: log)
-        case .backgroundDone(let id, let kind, let status, _):
+            // A background agent's row groups with the turn that started it, and counts its time.
+            if kind == "task" {
+                jobs[id]?.turn = turns.last?.number
+                jobs[id]?.startedAt = at(env)
+            }
+        case .backgroundDone(let id, let kind, let status, let summary):
             jobs[id, default: BackgroundJob(id: id, kind: kind, label: "")].status = status
+            if kind == "task" {
+                if status != "done" { jobs[id]?.head = agentFailureHead(summary) }
+                agentRuns[id]?.endedAt = at(env)
+            }
         case .backgroundProgress:
             break
         case .queuedEvents(let items):
@@ -1008,8 +1043,14 @@ final class Conversation {
         guard busy, let last = turns.last, !last.finished else { return nil }
         guard permission == nil, elicitation == nil, question == nil else { return nil }
         if let current = last.items.last(where: { !$0.done && $0.kind != .message }) {
+            if case .tool("Task", _) = current.kind {
+                // The subagent's own activity ("Reading main.rs"), so lists that watch this
+                // conversation don't show a bare "Here: <folder>" while it works (also after
+                // an approval it asked for: its item's flag outlives the prompt).
+                return "Subagent: \(current.subagent?.activity ?? "Starting")"
+            }
             if current.needsPermission { return nil }
-            if case .tool(let name, _) = current.kind, name == "Task" || name == "Diagram" { return nil }
+            if case .tool(let name, _) = current.kind, name == "Diagram" { return nil }
             return ActivityWords.now(current)
         }
         if let m = last.items.last, m.kind == .message, !m.done, !m.text.isEmpty { return "Writing…" }
@@ -1100,6 +1141,11 @@ final class Conversation {
     /// row, quadratic in its length. Every upserted item is in it, so an id that isn't is new;
     /// the place is a hint, checked on use (a discarded item shifts the ones after it).
     @ObservationIgnored private var itemAt: [String: (turn: Int, item: Int)] = [:]
+
+    /// When the engine sent it.
+    private func at(_ env: Envelope) -> Date {
+        Date(timeIntervalSince1970: Double(env.created) / 1000)
+    }
 
     /// Update the item with this id, creating it in the current turn if needed.
     private func upsert(_ id: String, _ update: (inout ItemState) -> Void) {

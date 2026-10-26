@@ -11766,6 +11766,106 @@ for line in sys.stdin:
         shutdown(h).await;
     }
 
+    /// A background task's steps reach the client wrapped under its job id (`task-N`, not an
+    /// item of the parent's turn), so the client can show the agent's own progress; its
+    /// progress events still carry the same steps for the background list.
+    #[tokio::test]
+    async fn a_background_tasks_steps_arrive_under_its_job_id() {
+        let dir = tmp_store();
+        script_child(
+            &dir,
+            vec![
+                reply(vec![call("c1", "Grep", json!({"pattern": "x"}))], Stop::ToolUse),
+                reply(vec![text("found it in src/main.rs")], Stop::End),
+            ],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "bg research", "prompt": "find it", "background": true}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("started in background")], Stop::End),
+            reply(vec![text("thanks")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "research in the background");
+        let mut evs = drive(&mut h, |e| matches!(e, Event::BackgroundDone { .. })).await;
+        let mut more = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        evs.append(&mut more);
+        let step = evs.iter().find(|e| matches!(
+            &e.event,
+            Event::Subagent { item, inner } if item == "task-1"
+                && matches!(&**inner, Event::ItemCompleted { item: Item::ToolCall { name, .. }, .. } if name == "Grep")
+        ));
+        let step = step.expect("the background agent's Grep step, under task-1");
+        assert!(step.event.is_durable(), "its steps are kept for a reopen");
+        assert!(evs.iter().any(|e| matches!(
+            &e.event,
+            Event::BackgroundProgress { id, .. } if id == "task-1"
+        )));
+        shutdown(h).await;
+    }
+
+    /// The agent-step log: a foreground Task's steps are in the session log, so a reopened
+    /// session replays them under the Task's item (not just its report).
+    #[tokio::test]
+    async fn a_reopened_session_replays_its_agents_steps() {
+        let dir = tmp_store();
+        script_child(
+            &dir,
+            vec![
+                reply(vec![call("c1", "Grep", json!({"pattern": "x"}))], Stop::ToolUse),
+                reply(vec![text("found it in src/main.rs")], Stop::End),
+            ],
+        );
+        let task = call(
+            "t",
+            "Task",
+            json!({"description": "research", "prompt": "find it"}),
+        );
+        let script = vec![
+            reply(vec![task], Stop::ToolUse),
+            reply(vec![text("it's in main.rs")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, Some(dir.clone()), None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "research");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let sid = evs[0].session.clone();
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        shutdown(h).await;
+
+        let mut h = engine_with(Vec::new(), true, Some(dir.clone()), Some(sid), None, dir.clone());
+        until_idle(&mut h).await;
+        h.ops.send(Op::Subscribe { after: 0 }).unwrap();
+        let replay = until_idle(&mut h).await;
+        let steps: Vec<_> = replay
+            .iter()
+            .take_while(|e| !matches!(e.event, Event::Synced { .. }))
+            .filter_map(|e| match &e.event {
+                Event::Subagent { item, inner } if item == "t" => Some(&**inner),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            steps.iter().any(|e| matches!(e, Event::ItemStarted { kind: ItemKind::ToolCall { name, .. }, .. } if name == "Grep")),
+            "the Grep step started: {steps:?}"
+        );
+        assert!(
+            steps.iter().any(|e| matches!(e, Event::ItemCompleted { item: Item::Message { text }, .. } if text.contains("main.rs"))),
+            "its report completed: {steps:?}"
+        );
+        assert!(
+            !steps.iter().any(|e| matches!(e, Event::ItemDelta { .. })),
+            "deltas stay live-only"
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
 
     /// Integration: a parent drains while its `Task` subagent is mid-turn — the cascade
     /// stops the child at its own safe point (its turn records `Suspended` too), the parent

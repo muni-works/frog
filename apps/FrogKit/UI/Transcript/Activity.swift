@@ -97,9 +97,9 @@ struct ActivityLabel: View {
     static func live(_ turn: TurnState, in c: Conversation) -> String {
         if c.permission != nil { return "Waiting for your permission" }
         guard let last = turn.items.last else { return "Thinking" }
+        // A Task in hand: the agents say what they're doing in the sidebar; here, how many.
+        if let waiting = c.waitingOnAgents(turn) { return waiting }
         switch last.kind {
-        case .tool("Task", _):
-            return "Subagent: \(last.subagent?.activity ?? "Starting")"
         case .tool(let name, let arg):
             let verb = ["Bash": "Running", "Read": "Reading", "Edit": "Editing", "Write": "Writing",
                         "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "CodeMap": "Mapping",

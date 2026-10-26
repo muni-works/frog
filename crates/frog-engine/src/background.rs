@@ -403,6 +403,8 @@ pub fn forward(
                     _ => {}
                 }
             }
+            // A background task's `item` is its job id (`task-N`), not an item of the parent's
+            // turn: clients fold those into the agent's own run, not into the turn.
             reg.emit(Event::Subagent {
                 item: item.clone(),
                 inner: Box::new(inner),

@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>frog — agents, calm</title>
+<style>
+  :root { --bg:#1e1e1e; --side:#262627; --text:#ececec; --sec:rgba(235,235,245,.6); --ter:rgba(235,235,245,.32);
+          --quat:rgba(235,235,245,.16); --sep:rgba(255,255,255,.09); --accent:#30d158; --red:#ff453a; --orange:#ff9f0a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#111; font:13px -apple-system, system-ui, sans-serif; color:var(--text); -webkit-font-smoothing:antialiased; }
+  .page { padding:28px 32px; display:flex; gap:28px; align-items:flex-start; }
+  .cap { font:600 11px -apple-system; letter-spacing:.04em; text-transform:uppercase; color:var(--ter); margin:0 0 10px; }
+  .win { border-radius:12px; overflow:hidden; background:var(--bg); box-shadow:0 30px 80px rgba(0,0,0,.6), 0 0 0 .5px rgba(255,255,255,.12); }
+
+  .side { width:300px; height:560px; background:var(--side); padding:14px 8px; }
+  .sec-h { font:600 10.5px -apple-system; letter-spacing:.04em; color:var(--ter); padding:12px 10px 4px; text-transform:uppercase; }
+  .row { display:flex; align-items:center; gap:8px; padding:5px 10px; border-radius:8px; position:relative; height:28px; }
+  .row .t { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row .now { color:var(--sec); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0; }
+  .row .r { color:var(--ter); font-variant-numeric:tabular-nums; font-size:11.5px; flex:none; }
+  .row.sel { background:rgba(48,209,88,.16); }
+  .l1 { padding-left:26px; } .l2 { padding-left:44px; }
+  .chev { color:var(--ter); font-size:9px; width:8px; flex:none; }
+  .g { width:12px; flex:none; display:inline-flex; justify-content:center; font-size:11px; }
+  .spin { width:10px; height:10px; border-radius:5px; border:1.5px solid var(--quat); border-top-color:var(--sec); animation:s 1s linear infinite; }
+  @keyframes s { to { transform:rotate(360deg); } }
+  .ok { color:var(--accent); } .no { color:var(--red); } .wait { color:var(--orange); }
+  .bar { position:absolute; left:64px; right:12px; bottom:2px; height:1.5px; background:var(--quat); border-radius:1px; }
+  .bar i { display:block; height:100%; width:60%; background:var(--sec); border-radius:1px; }
+  .folded { color:var(--ter); font-size:11.5px; padding:4px 10px 4px 44px; }
+  .mono { width:18px; height:18px; border-radius:5px; font:600 9px -apple-system; display:inline-flex; align-items:center; justify-content:center; flex:none; }
+
+  .main { width:720px; height:560px; padding:28px 36px; }
+  .bubble { margin-left:auto; width:fit-content; max-width:520px; background:#2fb350; color:#fff; padding:8px 14px; border-radius:18px; font-size:14px; line-height:1.45; margin-bottom:20px; }
+  .act { color:var(--sec); font-size:12.5px; margin:0 0 14px; }
+  .act .c { color:var(--ter); font-size:9px; margin-left:3px; }
+  p { font-size:14px; line-height:1.55; margin:0 0 14px; }
+  code { font:12.5px ui-monospace, Menlo, monospace; background:rgba(255,255,255,.08); border-radius:4px; padding:1px 4px; }
+  .live { display:flex; gap:8px; align-items:center; color:var(--sec); font-size:12.5px; }
+  .steps { border:.5px solid var(--sep); border-radius:8px; margin:-6px 0 16px; }
+  .steps .s { display:flex; gap:6px; padding:6px 10px; color:var(--sec); font-size:12.5px; border-top:.5px solid rgba(255,255,255,.05); }
+  .steps .s:first-child { border-top:0; }
+  .steps .s .m { margin-left:auto; color:var(--ter); }
+  .label { position:absolute; font:500 11px -apple-system; color:#ffd60a; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div>
+    <div class="cap">Sidebar: the home (while the turn runs)</div>
+    <div class="win side">
+      <div class="sec-h">Org</div>
+      <div class="row"><span class="chev">⌄</span><span class="mono" style="background:rgba(48,209,88,.18);color:var(--accent)">F</span><span class="t" style="font-weight:600">frog manager</span><span style="flex:1"></span><span class="spin"></span></div>
+      <div class="row l1 sel"><span class="chev">⌄</span><span class="t" style="flex:1">subagent visibility</span><span class="spin"></span></div>
+      <div class="row l2"><span class="g"><span class="spin" style="border-top-color:var(--accent)"></span></span><span class="t">audit run sheet</span><span class="now">· Reading SubagentView.swift</span><span class="r">3/5</span><span class="bar"><i></i></span></div>
+      <div class="row l2"><span class="g no">✕</span><span class="t">survey bg tasks</span><span class="now">· rate limited (429)</span></div>
+      <div class="row l2"><span class="g ok">✓</span><span class="t" style="color:var(--sec)">map the rail code</span></div>
+      <div class="row l1"><span class="chev">⌄</span><span class="t" style="flex:1">gateway batching</span><span class="g wait">✋</span></div>
+      <div class="row l2"><span class="g wait">✋</span><span class="t">run the bench</span><span class="now" style="color:var(--orange)">· needs approval</span></div>
+      <div class="row l1"><span class="chev">›</span><span class="t" style="flex:1">graceful restart</span><span class="r">12m</span></div>
+      <div class="folded">› 2 done · 1 failed</div>
+
+      <div class="cap" style="margin:26px 10px 8px">after the turn ends</div>
+      <div class="row l1"><span class="chev">⌄</span><span class="t" style="flex:1">subagent visibility</span><span class="r">now</span></div>
+      <div class="folded">› 2 done · 1 failed</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="cap">Transcript: agents are just steps</div>
+    <div class="win main">
+      <div class="bubble">Audit how the sidebar, the rail and the pill show subagents. Use agents for the three areas.</div>
+      <div class="act">Thought, then read 4 files, ran 3 agents <span class="c">⌄</span></div>
+      <div class="steps">
+        <div class="s">Read TimelineRail.swift <span class="m">›</span></div>
+        <div class="s">Agent: map the rail code <span class="m">›</span></div>
+        <div class="s">Agent: survey bg tasks <span style="color:var(--red)">· failed</span><span class="m">›</span></div>
+        <div class="s">Agent: audit run sheet <span style="color:var(--ter)">· 3/5</span><span class="m"><span class="spin" style="display:inline-block"></span></span></div>
+      </div>
+      <p>The rail draws per turn: chapter dots come from <code>Chapter.cached</code>, and jumps go to a turn, not an item.</p>
+      <div class="live"><span class="spin"></span>Waiting on 1 agent · 2 done… 42s</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

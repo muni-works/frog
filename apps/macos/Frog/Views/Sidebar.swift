@@ -430,6 +430,10 @@ struct SessionList: View {
                     pinned: library.pinned.contains(s.id), pane: paneNumbers[s.id], highlight: highlight,
                     onToggle: { toggleNode(s.id, collapsed: collapsed, counts: counts) }
                 ) { open(s) } menu: { rowMenu(s, older: folds[s.id]?.older ?? []) }
+                if let c = library.conversation(s.id), !collapsed {
+                    // Its own view: only it watches the conversation's turns as they stream.
+                    SessionAgents(conversation: c, depth: depth + 1) { open(s) }
+                }
             case .done(let parent, let depth, let count, let failed, let open):
                 foldRow(parent: parent, depth: depth, count: count, failed: failed, open: open)
             }

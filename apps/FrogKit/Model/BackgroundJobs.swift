@@ -11,6 +11,11 @@ struct BackgroundJob: Equatable, Sendable {
     var log: String?
     /// `running` until it ends: done, failed, stopped, matched, timeout, interrupted_by_update.
     var status: String = "running"
+    /// The turn that started it (a Task's agent row groups with that turn).
+    var turn: UInt64?
+    var startedAt: Date?
+    /// A failed one's first line, for its agent row.
+    var head: String?
 }
 
 /// One background wake the engine handed the model (`<job-done …>`, `<monitor-done …>`,

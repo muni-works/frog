@@ -248,7 +248,7 @@ enum ActivityWords {
         case "WebSearch":
             return [.text(args.count == 1 ? "searched the web for “\(args[0])”" : "searched the web \(args.count) times")]
         case "Task":
-            return [.text(calls.count == 1 ? "ran a subagent" : "ran \(count(calls.count, "subagent"))")]
+            return [.text(calls.count == 1 ? "ran an agent" : "ran \(count(calls.count, "agent"))")]
         case "TodoWrite": return [.text("updated the plan")]
         case "Image": return [.text("generated images")]
         case "Screenshot": return [.text("captured the page")]
@@ -290,7 +290,7 @@ enum ActivityWords {
             case "Bash", "!": return "Ran \(arg)"
             case "WebFetch": return "Fetched \(arg)"
             case "WebSearch": return "Searched the web for “\(arg)”"
-            case "Task": return arg.isEmpty ? "Ran a subagent" : "Subagent: \(arg)"
+            case "Task": return arg.isEmpty ? "Ran an agent" : "Agent: \(arg)"
             case "TodoWrite": return "Updated the plan"
             case "Diagram": return arg.isEmpty ? "Drew a diagram" : "Drew \(arg)"
             case "Present": return "Showed results"
@@ -319,7 +319,8 @@ enum ActivityWords {
             case "Bash", "!": return isTest(arg) ? "Running the tests…" : "Running \(arg)…"
             case "WebFetch": return "Fetching \(host(arg))…"
             case "WebSearch": return "Searching the web for “\(arg)”…"
-            case "Task": return item.subagent?.activity.appending("…") ?? "Starting a subagent…"
+            case "Task":
+                return item.subagent.map { "Agent: \($0.activity)…" } ?? "Starting an agent…"
             case "TodoWrite": return "Updating the plan…"
             case "Image": return "Generating images…"
             case "Screenshot": return "Capturing the page…"

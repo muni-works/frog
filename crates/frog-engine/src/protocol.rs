@@ -829,6 +829,14 @@ impl Event {
                 | Self::BackgroundDone { .. }
                 | Self::WakesDelivered { .. }
                 | Self::MessageRead { .. }
+        ) || matches!(
+            // A subagent's steps are worth keeping: without them a reopened session shows
+            // only the Task's report. Text deltas stay live-only, as in the main transcript.
+            self,
+            Self::Subagent {
+                inner,
+                ..
+            } if matches!(**inner, Event::ItemStarted { .. } | Event::ItemCompleted { .. })
         )
     }
 }
@@ -1388,6 +1396,43 @@ mod tests {
             r#"{"event":"question","id":"q1","item":"t1","question":"Which?","options":[{"label":"A"}],"allow_other":true}"#
         );
         assert!(!asked.is_durable());
+    }
+
+    /// A subagent's steps survive a reopen: started/completed items inside a `subagent`
+    /// wrapper are durable (the log keeps them), while its deltas stay live-only.
+    #[test]
+    fn subagent_steps_are_durable_and_deltas_are_not() {
+        let started = Event::Subagent {
+            item: "t1".into(),
+            inner: Box::new(Event::ItemStarted {
+                id: "s1".into(),
+                kind: ItemKind::ToolCall {
+                    name: "Read".into(),
+                    arg: "main.rs".into(),
+                },
+            }),
+        };
+        assert!(started.is_durable());
+        let completed = Event::Subagent {
+            item: "t1".into(),
+            inner: Box::new(Event::ItemCompleted {
+                id: "s1".into(),
+                item: Item::Message { text: "done".into() },
+            }),
+        };
+        assert!(completed.is_durable());
+        let delta = Event::Subagent {
+            item: "t1".into(),
+            inner: Box::new(Event::ItemDelta {
+                id: "s1".into(),
+                delta: Delta::Text { text: "hi".into() },
+            }),
+        };
+        assert!(!delta.is_durable());
+        // Round-trip: the serde shape is unchanged.
+        let json = serde_json::to_string(&started).unwrap();
+        let back: Event = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, Event::Subagent { .. }));
     }
 
     #[test]

@@ -433,6 +433,62 @@ extension SnapshotTests {
         print("snapshots: \(outDir.path)")
     }
 
+    /// Agents as calm steps (docs/design/agents/calm.html): a turn that ran two agents (one
+    /// failed) and waits on a third with a plan; its steps opened; the sidebar's agent rows
+    /// while it runs, and the fold once it ends.
+    func testRenderAgentsCalm() throws {
+        // Sent 42s ago, so the running clocks read like a real run.
+        let created = #""created":\#(UInt64(Date().addingTimeInterval(-42).timeIntervalSince1970 * 1000))"#
+        func env(_ s: String) throws -> Envelope {
+            try JSONDecoder.frog.decode(Envelope.self, from: Data(s.replacingOccurrences(of: #""created":0"#, with: created).utf8))
+        }
+        func sub(_ item: String, _ inner: String) -> String {
+            #"{"seq":0,"session":"s","created":0,"event":"subagent","item":"\#(item)","inner":\#(inner)}"#
+        }
+        func task(_ id: String, _ arg: String, _ outcome: String, _ output: String) -> [String] {[
+            #"{"seq":0,"session":"s","created":0,"event":"item_started","id":"\#(id)","kind":{"type":"tool_call","name":"Task","arg":"\#(arg)"}}"#,
+            sub(id, #"{"event":"item_completed","id":"\#(id)a","item":{"type":"tool_call","name":"Grep","arg":"rail","input":{},"outcome":"ok","output":"","display":null}}"#),
+            #"{"seq":0,"session":"s","created":0,"event":"item_completed","id":"\#(id)","item":{"type":"tool_call","name":"Task","arg":"\#(arg)","input":{},"outcome":"\#(outcome)","output":"\#(output)","display":null}}"#,
+        ]}
+        let todos = #"{"todos":[{"content":"a","status":"completed"},{"content":"b","status":"completed"},{"content":"c","status":"completed"},{"content":"d","status":"in_progress"},{"content":"e","status":"pending"}]}"#
+        let lines = [
+            #"{"seq":1,"session":"s","created":0,"event":"turn_started","turn":1,"input":"Audit how the sidebar, the rail and the pill show subagents. Use agents for the three areas."}"#,
+            #"{"seq":2,"session":"s","created":0,"event":"item_started","id":"r","kind":{"type":"tool_call","name":"Read","arg":"apps/FrogKit/UI/Transcript/TimelineRail.swift"}}"#,
+            #"{"seq":3,"session":"s","created":0,"event":"item_completed","id":"r","item":{"type":"tool_call","name":"Read","arg":"apps/FrogKit/UI/Transcript/TimelineRail.swift","input":{},"outcome":"ok","output":"","display":null}}"#,
+        ] + task("t1", "map the rail code", "ok", "The rail draws per turn.")
+          + task("t2", "survey bg tasks", "error", "rate limited (429)")
+          + [
+            #"{"seq":0,"session":"s","created":0,"event":"item_started","id":"t3","kind":{"type":"tool_call","name":"Task","arg":"audit run sheet"}}"#,
+            sub("t3", #"{"event":"item_completed","id":"p","item":{"type":"tool_call","name":"TodoWrite","arg":"","input":\#(todos),"outcome":"ok","output":"","display":null}}"#),
+            sub("t3", #"{"event":"item_started","id":"q","kind":{"type":"tool_call","name":"Read","arg":"apps/FrogKit/UI/Transcript/SubagentView.swift"}}"#),
+          ]
+        let live = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        try lines.map(env).forEach(live.ingest)
+        try render(transcript(live), size: CGSize(width: 760, height: 420), to: "agents-calm-live")
+        let steps = try XCTUnwrap(live.turns.last?.items)
+        try render(ActivitySteps(steps: steps, conversation: live).padding(24).frame(maxHeight: .infinity, alignment: .top)
+                    .background(Color(nsColor: .windowBackgroundColor)),
+                   size: CGSize(width: 600, height: 200), to: "agents-calm-steps")
+        let sidebar = VStack(alignment: .leading, spacing: 0) {
+            SessionAgents(conversation: live, depth: 1) {}
+        }
+        try render(sidebar.padding(8).frame(maxHeight: .infinity, alignment: .top).background(Color(nsColor: .underPageBackgroundColor)),
+                   size: CGSize(width: 300, height: 120), to: "agents-calm-sidebar")
+
+        try [
+            #"{"seq":0,"session":"s","created":0,"event":"item_completed","id":"t3","item":{"type":"tool_call","name":"Task","arg":"audit run sheet","input":{},"outcome":"ok","output":"done","display":null}}"#,
+            #"{"seq":0,"session":"s","created":0,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#,
+        ].map(env).forEach(live.ingest)
+        XCTAssertEqual(live.agentList.done, 2)
+        XCTAssertEqual(live.agentList.failed, 1)
+        let folded = VStack(alignment: .leading, spacing: 0) {
+            SessionAgents(conversation: live, depth: 1) {}
+        }
+        try render(folded.padding(8).frame(maxHeight: .infinity, alignment: .top).background(Color(nsColor: .underPageBackgroundColor)),
+                   size: CGSize(width: 300, height: 60), to: "agents-calm-folded")
+        print("snapshots: \(outDir.path)")
+    }
+
     /// The terminal pane from a sample grid, and the preview pane on a local page: what the
     /// engine's side will drive.
     func testRenderPanes() throws {
