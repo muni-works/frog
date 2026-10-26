@@ -1290,6 +1290,12 @@ struct Agent {
     /// This turn's finished `Bash` calls (item id, command, output head) awaiting a gist,
     /// flushed in one side-model call when the turn ends (see `gist`).
     pending_gists: Vec<(String, String, String)>,
+    /// The open chapter, followed so the turn that closes it can have it titled (see
+    /// `chapter`).
+    chapters: crate::chapter::Tracker,
+    /// Chapter titles written this session, by content hash: the same chapter never asks
+    /// twice. Shared with the title task.
+    chapter_titles: Arc<Mutex<HashMap<u64, String>>>,
     shared: Arc<Shared>,
 }
 
@@ -1316,6 +1322,7 @@ impl Agent {
         let mut resumed_mode = None;
         let mut resumed_titled = false;
         let mut resumed_model: Option<String> = None;
+        let mut resumed_chapters = crate::chapter::Tracker::default();
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
@@ -1323,6 +1330,7 @@ impl Agent {
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let (seq, turn) = (l.last_seq(), l.last_turn());
                 resumed_map = l.repo_map.clone();
+                resumed_chapters = crate::chapter::Tracker::from_events(&l.events);
                 let inputs = l
                     .events
                     .iter()
@@ -1518,6 +1526,8 @@ impl Agent {
             session_allow: HashSet::new(),
             pending: Vec::new(),
             pending_gists: Vec::new(),
+            chapters: resumed_chapters,
+            chapter_titles: Default::default(),
             shared,
         };
         if resumed {
@@ -1792,6 +1802,40 @@ impl Agent {
         }
     }
 
+    /// Title a chapter that just closed, in the background: one bounded side-model call
+    /// (see `chapter`), then a durable [`Event::ChapterTitled`]. Never awaited — the new turn
+    /// doesn't wait on a display flourish — and best effort: no usable model, a timeout or
+    /// an unreadable answer sends nothing, and the app keeps its heuristic title. A chapter
+    /// already titled this session (same content) re-sends its title without a call.
+    fn title_chapter(&self, closed: crate::chapter::Closed) {
+        if self.subagent || closed.turns.is_empty() {
+            return;
+        }
+        let key = closed.key();
+        let cached = self.chapter_titles.lock().unwrap().get(&key).cloned();
+        if let Some(title) = cached {
+            self.emit(Event::ChapterTitled { turn: closed.start, title });
+            return;
+        }
+        if self.cfg.hermetic {
+            return;
+        }
+        let (cfg, root) = (self.cfg.clone(), self.root.clone());
+        let (journal, cache) = (self.shared.journal.clone(), self.chapter_titles.clone());
+        let session = journal.session();
+        tokio::spawn(async move {
+            let Some(title) = crate::chapter::write(&cfg, &root, &closed).await else {
+                return;
+            };
+            cache.lock().unwrap().insert(key, title.clone());
+            // The session moved on (cleared, switched) while the model thought: drop it.
+            if journal.session() != session {
+                return;
+            }
+            journal.emit(Event::ChapterTitled { turn: closed.start, title });
+        });
+    }
+
     fn end_turn(&mut self, turn: u64, reason: EndReason) {
         self.auto_title(turn);
         let timing = self.turn_clock.map(|start| {
@@ -1980,6 +2024,7 @@ impl Agent {
                 self.write_summary();
                 self.messages.clear();
                 self.inputs.clear();
+                self.chapters = Default::default();
                 self.skills_loaded.clear();
                 self.rules_seen.clear();
                 self.edited.clear();
@@ -2305,6 +2350,10 @@ impl Agent {
         self.shared.panes.set_in_turn(true);
         self.inputs.push(input.to_string());
         self.inputs.extend(more.iter().map(|p| p.text.clone()));
+        let texts: Vec<String> = more.iter().map(|p| p.text.clone()).collect();
+        if let Some(closed) = self.chapters.started(turn, input, &texts) {
+            self.title_chapter(closed);
+        }
         self.turn_clock = Some(Instant::now());
         if let Some(m) = &self.meter {
             // Idle from the seconds spent waiting before this turn (the op loop marked it busy).
@@ -2568,6 +2617,7 @@ impl Agent {
                 .then(|| self.file_nudge(&answer, &named))
                 .flatten();
             if !answer.is_empty() {
+                self.chapters.replied(&answer);
                 self.complete_item(
                     streamed.message,
                     ItemKind::Message,
@@ -5576,6 +5626,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             tokens_before: before,
             tokens_after: resp.usage.output,
         });
+        if let Some(closed) = self.chapters.compacted(self.active_turn.unwrap_or(self.turn)) {
+            self.title_chapter(closed);
+        }
         self.rebased();
         Ok(())
     }
