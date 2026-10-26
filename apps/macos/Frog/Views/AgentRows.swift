@@ -29,19 +29,33 @@ struct AgentRow: View {
         }
     }
 
-    /// "· Reading main.rs" while it runs, or the failure's first line, secondary color.
-    private var activityLine: String? {
+    /// After the name: what it's doing, "needs approval", or the failure's first line.
+    private var detail: (text: String, color: Color?)? {
         switch agent.state {
-        case .running, .failed: agent.activity
-        case .waiting: nil
+        case .running: agent.activity.map { ($0, nil) }
+        case .waiting: ("needs approval", .orange)
+        case .failed: (agent.activity ?? "failed", .red)
         case .done: nil
         }
     }
 
-    /// The failure's head, shortened for one line.
-    private var failureHead: String? {
-        guard case .failed = agent.state, let a = agent.activity else { return nil }
-        return a.split(separator: "\n").first.map { String($0).prefix(60) }.map(String.init)
+    /// Words for the row's right edge: the plan's "3/5", else steps and time ("4 steps · 42s").
+    static func progress(_ agent: AgentRowInfo, now: Date) -> String? {
+        guard !agent.finished else { return nil }
+        if let plan = plan(agent) { return "\(plan.done)/\(plan.total)" }
+        var parts: [String] = []
+        if agent.steps > 0 { parts.append("\(agent.steps) step\(agent.steps == 1 ? "" : "s")") }
+        if let since = agent.startedAt {
+            let secs = now.timeIntervalSince(since)
+            // Over an hour usually means a stale clock (a replayed start), not a real run.
+            if secs >= 1, secs < 3600 { parts.append(ActivityWords.duration(secs)) }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    static func plan(_ agent: AgentRowInfo) -> (done: Int, total: Int)? {
+        guard let d = agent.planDone, let t = agent.planTotal, t > 0, d <= t else { return nil }
+        return (d, t)
     }
 
     var body: some View {
@@ -52,55 +66,119 @@ struct AgentRow: View {
             HStack(spacing: 5) {
                 Text(agent.title)
                     .font(.system(size: 12))
-                    .foregroundStyle(agent.state == .running ? Color.primary : Color.primary.opacity(0.75))
+                    .foregroundStyle(agent.finished ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
                     .lineLimit(1)
-                    .truncationMode(.tail)
-                if let activity = agent.state == .failed ? failureHead : activityLine {
-                    Text("· " + activity)
-                        .font(.system(size: 11))
-                        .foregroundStyle(agent.state == .failed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                    .layoutPriority(1)
+                if let detail {
+                    Text("· " + detail.text)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(detail.color.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                if agent.state == .waiting {
-                    Text("· needs approval")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(.rect)
-            if case .running = agent.state {
-                if let (done, total) = planProgress {
-                    Text("\(done)/\(total)")
-                        .font(.system(size: 11, design: .rounded).monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                        .fixedSize()
-                    // The hairline: the agent's own plan, as a 2 pt line under the row.
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(.quaternary.opacity(0.5))
-                            Capsule().fill(.secondary.opacity(0.7))
-                                .frame(width: total > 0 ? geo.size.width * CGFloat(done) / CGFloat(total) : 0)
-                        }
-                    }
-                    .frame(width: 34, height: 2)
-                } else if let startedAt = agent.startedAt {
-                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                        Text(ActivityWords.duration(ctx.date.timeIntervalSince(startedAt)))
-                            .font(.system(size: 11, design: .rounded).monospacedDigit())
+            if !agent.finished {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    if let words = Self.progress(agent, now: ctx.date) {
+                        Text(words)
+                            .font(.system(size: 11.5).monospacedDigit())
                             .foregroundStyle(.tertiary)
                             .fixedSize()
                     }
                 }
             }
         }
-        .frame(height: AttentionMetrics.rowHeight - 2)
+        .padding(.trailing, 6)
+        .frame(height: AttentionMetrics.rowHeight)
+        .overlay(alignment: .bottomLeading) {
+            // The hairline: the agent's own plan, under the row from its name to the edge.
+            if let plan = Self.plan(agent), !agent.finished {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.quaternary)
+                        Capsule().fill(.secondary)
+                            .frame(width: geo.size.width * CGFloat(plan.done) / CGFloat(plan.total))
+                    }
+                }
+                .frame(height: 1.5)
+                .padding(.leading, AttentionMetrics.leading(depth) + AttentionMetrics.disclosure + 5)
+                .padding(.trailing, 6)
+                .padding(.bottom, 2)
+                .allowsHitTesting(false)
+            }
+        }
         .contentShape(.rect)
+        .help(help)
     }
 
-    private var planProgress: (done: Int, total: Int)? {
-        guard let d = agent.planDone, let t = agent.planTotal, t > 0, d <= t else { return nil }
-        return (d, t)
+    private var help: String {
+        switch agent.state {
+        case .running: "\(agent.title): \(agent.activity ?? "working")"
+        case .waiting: "\(agent.title) needs your approval"
+        case .failed: "\(agent.title) failed: \(agent.activity ?? "")"
+        case .done: "\(agent.title) reported back"
+        }
+    }
+}
+
+/// An open conversation's agents (its Task calls) as one-line rows under its sidebar row:
+/// working, waiting on you, or finished during the turn that's running. Once that turn ends,
+/// the finished ones fold into "› N done · M failed". A row opens the session (agents aren't
+/// sessions of their own yet: live-only, see NOTES.md).
+struct SessionAgents: View {
+    let conversation: Conversation
+    let depth: Int
+    let open: () -> Void
+    @State private var foldOpen = false
+
+    var body: some View {
+        let list = conversation.agentList
+        let depth = min(depth, SessionNesting.maxDepth)
+        ForEach(list.rows) { agent in
+            AgentRow(agent: agent, depth: depth).onTapGesture(perform: open)
+        }
+        if !list.folded.isEmpty {
+            AgentFoldRow(list: list, depth: depth, open: foldOpen) {
+                withAnimation(.snappy(duration: 0.2)) { foldOpen.toggle() }
+            }
+            if foldOpen {
+                ForEach(list.folded) { agent in
+                    AgentRow(agent: agent, depth: depth).onTapGesture(perform: open)
+                }
+            }
+        }
+    }
+}
+
+/// A session's finished agents folded into one line once the turn that ran them ended:
+/// "› 2 done · 1 failed". It opens to their rows.
+struct AgentFoldRow: View {
+    let list: AgentList
+    let depth: Int
+    let open: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 0) {
+                Color.clear.frame(width: AttentionMetrics.leading(depth))
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                    .frame(width: AttentionMetrics.disclosure)
+                if list.done > 0 { Text("\(list.done) done") }
+                if list.failed > 0 {
+                    Text("\(list.done > 0 ? " · " : "")\(list.failed) failed").foregroundStyle(.red.opacity(0.8))
+                }
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+            .padding(.leading, 4)
+            .frame(height: 22)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help(open ? "Hide finished agents" : "Show \(list.folded.count) finished agent\(list.folded.count == 1 ? "" : "s")")
     }
 }

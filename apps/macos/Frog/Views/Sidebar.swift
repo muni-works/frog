@@ -431,23 +431,11 @@ struct SessionList: View {
                     onToggle: { toggleNode(s.id, collapsed: collapsed, counts: counts) }
                 ) { open(s) } menu: { rowMenu(s, older: folds[s.id]?.older ?? []) }
                 if let c = library.conversation(s.id), !collapsed {
-                    agentRows(c, depth: depth + 1)
+                    // Its own view: only it watches the conversation's turns as they stream.
+                    SessionAgents(conversation: c, depth: depth + 1) { open(s) }
                 }
             case .done(let parent, let depth, let count, let failed, let open):
                 foldRow(parent: parent, depth: depth, count: count, failed: failed, open: open)
-            }
-        }
-    }
-
-    /// The agents (Task calls) of a conversation's running turn, as one-line rows under it.
-    /// Shown while the turn runs; once it ends they fold into the counts (the parent's row).
-    @ViewBuilder
-    private func agentRows(_ c: Conversation, depth: Int) -> some View {
-        let agents = c.turns.last?.agents ?? []
-        let active = agents.filter { $0.state == .running || $0.state == .waiting }
-        if !active.isEmpty {
-            ForEach(active.sorted { $0.state.rank < $1.state.rank }) { agent in
-                AgentRow(agent: agent, depth: min(depth, SessionNesting.maxDepth))
             }
         }
     }
