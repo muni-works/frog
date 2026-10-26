@@ -11,7 +11,14 @@ struct SessionList: View {
     let maxHeight: CGFloat
     var collapse: (() -> Void)?
     @State private var library = Library.shared
-    @State private var query = ""
+    @State private var query: String
+
+    init(workspace: Workspace, maxHeight: CGFloat, query: String = "", collapse: (() -> Void)? = nil) {
+        self.workspace = workspace
+        self.maxHeight = maxHeight
+        self.collapse = collapse
+        _query = State(initialValue: query)
+    }
     @State private var showArchived = false
     @State private var showTree = false
     @State private var renaming: SessionInfo?
@@ -313,13 +320,19 @@ struct SessionList: View {
         }
     }
 
+    /// The search text as the tree matches it.
+    private var needle: String { query.trimmingCharacters(in: .whitespaces).lowercased() }
+
     @ViewBuilder
     private var attention: some View {
+        let q = needle
         let built = Self.attention(library, sort: sort, scope: scope, current: current,
-                                   openDone: openDone, collapsed: collapsedParents)
-        chiefTile
+                                   openDone: openDone, collapsed: collapsedParents, query: q)
+        if q.isEmpty || library.chiefSession.map({ AttentionTree.matches($0, q) }) == true {
+            chiefTile
+        }
         // A lens, not a move: each also keeps its place in the tree, with its orange dot.
-        if !built.layout.needsYou.isEmpty {
+        if q.isEmpty, !built.layout.needsYou.isEmpty {
             treeLabel("Needs you", count: built.layout.needsYou.count, tint: .orange)
             ForEach(built.layout.needsYou) { s in
                 NeedsYouRow(session: s, ask: library.asking(s.id) ?? "Waiting on you", selected: s.id == current) {
@@ -327,19 +340,51 @@ struct SessionList: View {
                 } menu: { rowMenu(s) }
             }
         }
+        // Searching filters the tree in place (scope set aside): matches keep their ancestors.
         if !built.layout.org.isEmpty {
-            treeLabel("Org") { scopePicker }
-            treeEntries(built.layout.org, folds: built.folds)
+            treeLabel("Org") { if q.isEmpty { scopePicker } }
+            treeEntries(built.layout.org, folds: built.folds, highlight: q)
         }
         if !built.layout.yours.isEmpty {
             treeLabel("Yours") {
-                if built.layout.org.isEmpty { scopePicker }
+                if q.isEmpty, built.layout.org.isEmpty { scopePicker }
             }
-            treeEntries(built.layout.yours, folds: built.folds)
+            treeEntries(built.layout.yours, folds: built.folds, highlight: q)
         }
-        if built.layout.org.isEmpty && built.layout.yours.isEmpty && library.chiefSession == nil {
+        if !q.isEmpty {
+            let archived = archiveMatches(q)
+            if !archived.isEmpty {
+                treeLabel("In archive", count: archived.count)
+                ForEach(archived) { s in
+                    TreeRow(session: s, depth: 0, counts: .init(), collapsed: false, state: rowState(s),
+                            selected: s.id == current, highlight: q, monogram: false) { open(s) } menu: { rowMenu(s) }
+                }
+            }
+            if built.layout.org.isEmpty && built.layout.yours.isEmpty && archived.isEmpty {
+                empty("No matches")
+            }
+        } else if built.layout.org.isEmpty && built.layout.yours.isEmpty && library.chiefSession == nil {
             empty("No conversations yet")
         }
+    }
+
+    /// Archived sessions the search matches, newest first.
+    private func archiveMatches(_ q: String) -> [SessionInfo] {
+        library.sessions.filter { library.archived.contains($0.id) && AttentionTree.matches($0, q) }.sorted(by: before)
+    }
+
+    /// Return in the search field: open the first match, the tree's then the archive's.
+    private func jumpToFirstMatch() {
+        let q = needle
+        guard !q.isEmpty, grouping == .org else { return }
+        let built = Self.attention(library, sort: sort, scope: scope, current: current, query: q)
+        let rows = (built.layout.org + built.layout.yours).compactMap { e -> SessionInfo? in
+            if case .row(let s, _, _, _) = e { return s } else { return nil }
+        }
+        let first = rows.first { AttentionTree.matches($0, q) } ?? archiveMatches(q).first
+        guard let first else { return }
+        open(first)
+        query = ""
     }
 
     /// Live · Today · All: how much settled work the tree shows.
@@ -851,8 +896,10 @@ struct SessionList: View {
         HStack(spacing: 6) {
             HStack(spacing: 5) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
-                TextField("Search", text: $query)
+                TextField(grouping == .org ? "Search or jump" : "Search", text: $query)
                     .textFieldStyle(.plain)
+                    .onSubmit(jumpToFirstMatch)
+                    .onExitCommand { query = "" }
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain)

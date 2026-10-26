@@ -116,5 +116,12 @@ final class SidebarSnapshotTests: XCTestCase {
                            size: CGSize(width: 288, height: 900), to: "sidebar-\(scope.rawValue)-\(name)", appearance: look)
             }
         }
+        // Search filters the tree in place: "okc" keeps its manager, and the archive below.
+        Library.shared.stage(sessions: Library.shared.sessions + [Self.s("okc-old", "okc dyno plan", ago: 9000, repo: "okc")],
+                             live: Library.shared.live, parents: Library.shared.parents, chief: "chief",
+                             archived: ["okc-old"])
+        let ws = Workspace(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog/.frog/worktrees/grace"), resume: "grace")
+        try render(SessionList(workspace: ws, maxHeight: 900, query: "okc").background(.background),
+                   size: CGSize(width: 288, height: 600), to: "sidebar-search-light", appearance: .aqua)
     }
 }

@@ -28,6 +28,8 @@ struct TreeRow<Menu: View>: View {
     var pane: Int? = nil
     /// Search text to highlight in the title (lowercased).
     var highlight = ""
+    /// Top-level rows show their monogram; a flat list (archive matches) doesn't.
+    var monogram = true
     var onToggle: (() -> Void)? = nil
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
@@ -42,7 +44,7 @@ struct TreeRow<Menu: View>: View {
         HStack(spacing: 0) {
             Color.clear.frame(width: AttentionMetrics.leading(depth))
             disclosure
-            if depth == 0 {
+            if depth == 0 && monogram {
                 Monogram(session: session, size: AttentionMetrics.monogram, selected: false, live: nil)
                     .padding(.trailing, 7)
             }
