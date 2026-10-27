@@ -14165,8 +14165,15 @@ for line in sys.stdin:
     /// overwriting a temp file someone else made still asks.
     #[tokio::test]
     async fn auto_mode_writes_its_own_fresh_temp_scratch_without_a_card() {
-        let fresh = std::path::Path::new("/private/tmp").join(format!("frog-scratch-{}.rs", new_id()));
-        let theirs = std::path::Path::new("/private/tmp").join(format!("frog-theirs-{}.rs", new_id()));
+        // Scratch in the OS temp dir, which is what the scratch rules key on everywhere
+        // (`/private/tmp` is only an extra macOS spelling, and doesn't exist on Linux). The
+        // project is its own dir under it: `engine_perm` roots the session *at* the temp dir,
+        // which would make the scratch in-project.
+        let tmp = std::env::temp_dir();
+        let project = tmp.join(format!("frog-proj-{}", new_id()));
+        std::fs::create_dir_all(&project).unwrap();
+        let fresh = tmp.join(format!("frog-scratch-{}.rs", new_id()));
+        let theirs = tmp.join(format!("frog-theirs-{}.rs", new_id()));
         std::fs::write(&theirs, "someone else's\n").unwrap();
         let write = |id: &str, p: &std::path::Path| {
             reply(
@@ -14183,13 +14190,15 @@ for line in sys.stdin:
             write("theirs", &theirs),
             reply(vec![text("done")], Stop::End),
         ];
-        let mut h = engine_perm(script, Mode::Auto, None);
+        let cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+        let mut h = engine_perm_at(script, Mode::Auto, cfg, project.clone());
         let evs = turn_answering(&mut h, |_| Some((Decision::Deny, Some("no".into())))).await;
         shutdown(h).await;
         let fresh_ok = std::fs::read_to_string(&fresh).ok();
         let theirs_now = std::fs::read_to_string(&theirs).ok();
         let _ = std::fs::remove_file(&fresh);
         let _ = std::fs::remove_file(&theirs);
+        let _ = std::fs::remove_dir_all(&project);
         assert_eq!(outcome_of(&evs, "fresh"), Some(ToolOutcome::Ok), "{:?}", names(&evs));
         assert_eq!(fresh_ok.as_deref(), Some("mine\n"));
         assert_eq!(asked(&evs), 1, "only the existing temp file should ask");

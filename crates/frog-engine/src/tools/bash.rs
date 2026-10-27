@@ -835,6 +835,53 @@ fn bubblewrap(
 mod tests {
     use super::*;
 
+    /// A command that runs `sleep <secs>` as a child of the tool's shell and records that
+    /// child's own pid in `ws/pid`, so a test can check exactly the process it started.
+    /// (Matching `pgrep -f "sleep N"` machine-wide also catches any other `sleep N` on the
+    /// box: another session's, a CI neighbour's.)
+    fn sleeper(ws: &std::path::Path, secs: u32) -> String {
+        format!("sleep {secs} & echo $! > '{}'; wait", ws.join("pid").display())
+    }
+
+    /// Drives `run` until the sleeper has recorded its pid (up to 10s), so a test cancels a
+    /// command that really started. (A fixed sleep while `run` sits pinned and unpolled
+    /// never spawns it at all.)
+    async fn until_sleeping<F: std::future::Future + Unpin>(run: &mut F, ws: &std::path::Path) {
+        let pid = ws.join("pid");
+        let started = async {
+            for _ in 0..200 {
+                if std::fs::read_to_string(&pid).is_ok_and(|s| !s.trim().is_empty()) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            panic!("the sleeper never started");
+        };
+        tokio::select! {
+            _ = run => panic!("the command finished before it was interrupted"),
+            _ = started => {}
+        }
+    }
+
+    /// Polls up to 2s for the sleeper's recorded pid to be gone (a zombie counts as gone).
+    async fn sleeper_gone(ws: &std::path::Path) -> bool {
+        let pid = std::fs::read_to_string(ws.join("pid")).expect("the sleeper never recorded its pid");
+        let pid = pid.trim().to_string();
+        assert!(pid.parse::<u32>().is_ok(), "bad pid {pid:?}");
+        for _ in 0..20 {
+            let stat = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+            if stat.is_empty() || stat.starts_with('Z') {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        false
+    }
+
     /// A commit inside a linked worktree works (index.lock, refs, objects live outside the
     /// worktree); a write elsewhere in the main checkout still fails.
     #[tokio::test]
@@ -1457,12 +1504,12 @@ mod tests {
         ctx.cancel = Some(token.clone());
         let marker = ws.join("done");
         let _ = std::fs::remove_file(&marker);
-        let cmd = format!("sleep 61; touch '{}'", marker.display());
+        let cmd = format!("{} && touch '{}'", sleeper(&ws, 61), marker.display());
         let input = json!({ "command": cmd, "timeout": 120000 });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
-        // Give the command time to spawn and start sleeping.
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // Drive the command until it has spawned and is sleeping.
+        until_sleeping(&mut run, &ws).await;
         let started = std::time::Instant::now();
         token.cancel();
         let out = tokio::time::timeout(Duration::from_secs(2), run).await;
@@ -1475,23 +1522,7 @@ mod tests {
         );
         assert!(!marker.exists(), "the cancelled command must not finish");
         // The whole process group is gone: nothing sleeps on.
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let alive = std::process::Command::new("pgrep")
-                .args(["-f", "sleep 61"])
-                .output()
-                .map(|o| o.stdout.is_empty())
-                .unwrap_or(true);
-            if alive {
-                break;
-            }
-        }
-        let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 61"])
-            .output()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false);
-        assert!(!alive, "a `sleep 61` from the cancelled group is still running");
+        assert!(sleeper_gone(&ws).await, "the `sleep 61` from the cancelled group is still running");
         let _ = std::fs::remove_dir_all(&ws);
     }
 
@@ -1506,11 +1537,11 @@ mod tests {
         ctx.cancel = Some(token.clone());
         let marker = ws.join("bg");
         let _ = std::fs::remove_file(&marker);
-        let cmd = format!("sleep 62 & echo bg > '{}'; wait", marker.display());
+        let cmd = format!("{} & echo bg > '{}'; wait", sleeper(&ws, 62), marker.display());
         let input = json!({ "command": cmd });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        until_sleeping(&mut run, &ws).await;
         token.cancel();
         let err = match tokio::time::timeout(Duration::from_secs(2), run).await {
             // Elapsed without finishing, or finished as an error: both prove the interrupt
@@ -1520,23 +1551,7 @@ mod tests {
             Ok(Ok(o)) => panic!("expected an interrupted result, got {:?}", o.content),
         };
         assert!(err.to_string().contains("interrupted"), "{err}");
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let alive = std::process::Command::new("pgrep")
-                .args(["-f", "sleep 62"])
-                .output()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
-            if !alive {
-                break;
-            }
-        }
-        let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 62"])
-            .output()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false);
-        assert!(!alive, "a backgrounded `sleep 62` escaped the group kill");
+        assert!(sleeper_gone(&ws).await, "the backgrounded `sleep 62` escaped the group kill");
         let _ = std::fs::remove_dir_all(&ws);
     }
 
@@ -1554,10 +1569,10 @@ mod tests {
         ctx.shell_sandbox = Some(ws.canonicalize().unwrap());
         let token = tokio_util::sync::CancellationToken::new();
         ctx.cancel = Some(token.clone());
-        let input = json!({ "command": "sleep 63" });
+        let input = json!({ "command": sleeper(&ws, 63) });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        until_sleeping(&mut run, &ws).await;
         token.cancel();
         let out = tokio::time::timeout(Duration::from_secs(2), run)
             .await
@@ -1567,12 +1582,7 @@ mod tests {
             "expected an interrupted result, got {:?}",
             out.as_ref().map(|o| &o.content)
         );
-        let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 63"])
-            .output()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false);
-        assert!(!alive, "a sandboxed `sleep 63` survived the interrupt");
+        assert!(sleeper_gone(&ws).await, "the sandboxed `sleep 63` survived the interrupt");
         let _ = std::fs::remove_dir_all(&ws);
     }
 
@@ -1583,7 +1593,7 @@ mod tests {
         std::fs::create_dir_all(&ws).unwrap();
         let mut ctx = Ctx::new(ws.clone());
         let started = std::time::Instant::now();
-        let err = match run(&json!({ "command": "sleep 30", "timeout": 1000 }), &mut ctx).await {
+        let err = match run(&json!({ "command": sleeper(&ws, 30), "timeout": 1000 }), &mut ctx).await {
             Err(e) => e,
             Ok(o) => panic!("expected a timeout, got {:?}", o.content),
         };
@@ -1593,12 +1603,7 @@ mod tests {
             started.elapsed()
         );
         assert!(err.to_string().contains("timed out"), "{err}");
-        let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 30"])
-            .output()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false);
-        assert!(!alive, "a timed-out `sleep 30` is still running");
+        assert!(sleeper_gone(&ws).await, "the timed-out `sleep 30` is still running");
         let _ = std::fs::remove_dir_all(&ws);
     }
 }
