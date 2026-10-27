@@ -25,4 +25,4 @@ anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 minifb = { version = "0.28", optional = true }
-rodio = { version = "0.20", optional = true, default-features = false }
+rodio = { version = "0.20", optional = true, default-features = false, features = ["wav"] }

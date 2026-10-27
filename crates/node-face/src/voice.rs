@@ -94,6 +94,8 @@ pub struct Voice {
     child: Child,
     stdin: ChildStdin,
     _stream: OutputStream,
+    /// Short sounds (the wake chirp), on their own sink so they don't move the voice's counters.
+    cues: Sink,
     /// Samples handed to the speaker, and the loudness of each 20 ms block of them.
     queued: Arc<AtomicUsize>,
     played: Arc<AtomicUsize>,
@@ -139,6 +141,7 @@ impl Voice {
         let mut stdout = child.stdout.take().context("ribt stdout")?;
         let (stream, handle) = OutputStream::try_default().context("no audio output")?;
         let sink = Sink::try_new(&handle)?;
+        let cues = Sink::try_new(&handle)?;
         let (queued, played) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
         let levels = Arc::new(Mutex::new(Vec::new()));
         let pcm = Arc::new(Mutex::new((0usize, Vec::new())));
@@ -211,6 +214,7 @@ impl Voice {
             child,
             stdin,
             _stream: stream,
+            cues,
             queued,
             played,
             levels,
@@ -245,6 +249,13 @@ impl Voice {
             self.open = false;
         }
         Ok(self.stdin.flush()?)
+    }
+
+    /// Play a short sound (a WAV) over whatever else is playing.
+    pub fn cue(&self, wav: &'static [u8]) {
+        if let Ok(d) = rodio::Decoder::new(std::io::Cursor::new(wav)) {
+            self.cues.append(d.convert_samples::<f32>());
+        }
     }
 
     /// How loud the face is right now (0..1), or `None` when nothing is playing.

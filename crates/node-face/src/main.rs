@@ -55,6 +55,9 @@ struct Args {
     /// Speak with ribt (needs the `voice` feature; see RIBT_* in src/voice.rs for model paths).
     #[arg(long)]
     voice: bool,
+    /// Log what the ears hear and what the face does, on stderr.
+    #[arg(long)]
+    verbose: bool,
     /// The hear binary (default: $HEAR_BIN, else hear on PATH).
     #[arg(long, value_name = "PATH")]
     hear: Option<String>,
@@ -124,6 +127,17 @@ fn sheet(path: &Path, panel: Panel) -> Result<()> {
         }
     }
     out.save_png(path)
+}
+
+/// --verbose: say what's heard and what the face does, on stderr.
+static VERBOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+macro_rules! log {
+    ($($t:tt)*) => {
+        if VERBOSE.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!($($t)*);
+        }
+    };
 }
 
 // ---- frog ----
@@ -265,6 +279,7 @@ fn run(args: &Args) -> Result<()> {
     // When the face last made a sound: its own voice mustn't be heard as yours.
     let mut spoke = f64::NEG_INFINITY;
     let mut turn_end: Option<f64> = None;
+    let (mut last_mode, mut last_mic_log) = (sim.puck.mode, 0.0f64);
 
     while win.is_open() {
         let dt = last.elapsed().as_secs_f64().min(0.1);
@@ -290,6 +305,22 @@ fn run(args: &Args) -> Result<()> {
             ops.extend(listen(e, &mut sim.puck, now, spoke, &mut turn_end));
         }
         face.mic = mic.as_ref().map_or(0.0, |m| m.level());
+        if sim.puck.mode != last_mode {
+            log!("{:?} -> {:?}", last_mode, sim.puck.mode);
+            last_mode = sim.puck.mode;
+        }
+        if now - last_mic_log > 2.0 && VERBOSE.load(std::sync::atomic::Ordering::Relaxed) {
+            last_mic_log = now;
+            log!("mic {:.2}", face.mic);
+        }
+        // The puck model's cues: on the face, only the wake chirp, so you know it's listening.
+        for c in sim.puck.take_cues() {
+            if c == puck::sound::Cue::Wake
+                && let Some(v) = voice.as_ref()
+            {
+                v.cue(c.wav());
+            }
+        }
         for op in ops {
             if let Some(f) = frog.as_mut()
                 && f.send(&op).is_err()
@@ -330,6 +361,8 @@ const PAUSE_SECS: f64 = 3.0;
 const FOLLOW_SECS: f64 = 6.0;
 /// After Smart Turn's `[turn end]`, wait this long for the last word to finish decoding.
 const END_GRACE_SECS: f64 = 0.4;
+/// After waking with nothing said yet, how long it keeps paying attention.
+const ATTENTION_SECS: f64 = 8.0;
 /// The wake word.
 const WAKE: &str = "frog";
 
@@ -392,10 +425,15 @@ fn listen(
     // Wake on the word while it's still being heard: hear only finishes a word when the next one
     // starts, and "frog" is often the last thing said before a pause.
     if idle && is_wake(&e.partial().0) {
+        log!("wake (partial {:?})", e.partial().0);
         e.take_partial();
         p.wake(now);
     }
     for h in heard {
+        match &h {
+            node_face::ears::Heard::Word(w) => log!("heard {w:?} ({:?})", p.mode),
+            node_face::ears::Heard::TurnEnd => log!("turn end ({:?})", p.mode),
+        }
         let Heard::Word(w) = h else {
             // Smart Turn says you're done; the decoder may still be finishing the last word.
             if p.mode == Mode::Listening {
@@ -419,12 +457,24 @@ fn listen(
             Mode::Thinking | Mode::Running | Mode::Ask => {}
             Mode::Listening => p.hear(&format!("{w} "), now),
             // idle: the wake word, or a follow-up right after the face spoke
-            _ if is_wake(&w) => p.wake(now),
+            _ if is_wake(&w) => {
+                log!("wake ({w:?})");
+                p.wake(now)
+            }
             _ if now - spoke < FOLLOW_SECS => p.hear(&format!("{w} "), now),
             _ => {}
         }
     }
     let (partial, quiet) = e.partial();
+    // Woken but nothing said: keep listening a while, then let it go.
+    if p.mode == Mode::Listening
+        && p.draft.trim().is_empty()
+        && partial.is_empty()
+        && now - p.since > ATTENTION_SECS
+    {
+        log!("nothing said after waking; back to idle");
+        ops.extend(p.submit(now));
+    }
     if p.mode != Mode::Listening {
         *end = None;
     }
@@ -492,6 +542,7 @@ impl Silent {
     fn wave(&self, _: usize) -> Vec<f32> {
         Vec::new()
     }
+    fn cue(&self, _: &[u8]) {}
     fn level(&self) -> Option<f32> {
         None
     }
@@ -506,6 +557,7 @@ fn run(_: &Args) -> Result<()> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    VERBOSE.store(args.verbose, std::sync::atomic::Ordering::Relaxed);
     if let Some(p) = &args.sheet {
         return sheet(p, args.panel());
     }
