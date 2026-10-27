@@ -11,6 +11,8 @@ struct ActivityViewer: View {
     var jump: (TurnState.ID) -> Void = { _ in }
     /// In a split window: the pane's number leads the pill and a close button ends it.
     var pane: PaneBadge? = nil
+    /// How wide the activity words may get before truncating (narrower in a split pane).
+    var labelWidth: CGFloat = 300
 
     struct PaneBadge {
         let number: Int
@@ -191,7 +193,7 @@ struct ActivityViewer: View {
     // MARK: Left: what's happening
 
     private var activity: some View {
-        ActivityLabel(conversation: conversation, playful: playful)
+        ActivityLabel(conversation: conversation, playful: playful, maxWidth: labelWidth)
     }
 
     // MARK: Right: the readout

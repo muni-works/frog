@@ -10,12 +10,20 @@ struct ResumedBanner: View {
         if conversation.resumedAfterRestart, let id = conversation.sessionID {
             HStack(spacing: 8) {
                 Image(systemName: conversation.suspendedByUpdate ? "arrow.down.circle" : "arrow.clockwise.circle")
+                // Gives way in a narrow split pane: a line that couldn't shrink widened the whole
+                // pane past its frame, pushing its rail into the next pane and text over text.
                 Text(conversation.suspendedByUpdate ? "Resumed after app update" : "Resumed after restart")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer(minLength: 8)
-                Toggle("Resume automatically", isOn: $autoContinue)
-                    .toggleStyle(.checkbox)
-                    .help("Pick this conversation's running turn back up after frog restarts")
-                    .onChange(of: autoContinue) { _, on in SessionRegistry.shared.setAutoContinue(id, on) }
+                ViewThatFits(in: .horizontal) {
+                    Toggle("Resume automatically", isOn: $autoContinue)
+                    Toggle("Auto", isOn: $autoContinue)
+                }
+                .toggleStyle(.checkbox)
+                .fixedSize()
+                .help("Pick this conversation's running turn back up after frog restarts")
+                .onChange(of: autoContinue) { _, on in SessionRegistry.shared.setAutoContinue(id, on) }
                 if conversation.busy {
                     Button("Stop") { conversation.interrupt() }
                         .buttonStyle(.link)

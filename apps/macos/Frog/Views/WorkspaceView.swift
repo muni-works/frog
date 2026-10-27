@@ -376,7 +376,10 @@ struct WorkspaceView: View {
                     toggleChanges: { toggleChanges(pane) },
                     window: window
                 )
-                .frame(width: max(0, place.frame.width), height: max(0, place.frame.height))
+                // Exactly its frame: content that wants more is cut at the pane's own edge, never
+                // centered out over its neighbors (the rail and text of one pane over the next).
+                .frame(width: max(0, place.frame.width), height: max(0, place.frame.height), alignment: .topLeading)
+                .clipped()
                 .offset(x: place.frame.minX, y: place.frame.minY)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
