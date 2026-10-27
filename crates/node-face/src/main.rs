@@ -223,6 +223,7 @@ fn run(args: &Args) -> Result<()> {
     let mut last = Instant::now();
     // When the face last made a sound: its own voice mustn't be heard as yours.
     let mut spoke = f64::NEG_INFINITY;
+    let mut turn_end: Option<f64> = None;
 
     while win.is_open() {
         let dt = last.elapsed().as_secs_f64().min(0.1);
@@ -245,7 +246,7 @@ fn run(args: &Args) -> Result<()> {
             spoke = now;
         }
         if let Some(e) = &ears {
-            ops.extend(listen(e, &mut sim.puck, now, spoke));
+            ops.extend(listen(e, &mut sim.puck, now, spoke, &mut turn_end));
         }
         face.mic = mic.as_ref().map_or(0.0, |m| m.level());
         for op in ops {
@@ -281,11 +282,13 @@ fn run(args: &Args) -> Result<()> {
 
 /// After the face stops making sound, how long its ears stay shut (the room's echo of its voice).
 const MUTE_SECS: f64 = 0.6;
-/// A pause this long after some words ends your turn. hear only finishes a word when the next one
-/// starts, so this has to cover the pause and the last word's tail.
-const PAUSE_SECS: f64 = 1.8;
+/// Smart Turn in hear decides when you're done (`[turn end]`); a pause this long ends the turn
+/// anyway, in case it never says so (a trailing "um", a noisy room).
+const PAUSE_SECS: f64 = 3.0;
 /// After the face finishes speaking you can answer without the wake word for this long.
 const FOLLOW_SECS: f64 = 6.0;
+/// After Smart Turn's `[turn end]`, wait this long for the last word to finish decoding.
+const END_GRACE_SECS: f64 = 0.4;
 /// Words that wake the face ("hey frog").
 const WAKE: &[&str] = &["frog"];
 
@@ -293,7 +296,13 @@ const WAKE: &[&str] = &["frog"];
 /// after it spoke); then words go into the turn and a pause sends it. Yes / no answers a request to
 /// run something, "stop" stops it working. `spoke` is when the face last made a sound. Returns ops.
 #[cfg(feature = "window")]
-fn listen(e: &node_face::ears::Ears, p: &mut Puck, now: f64, spoke: f64) -> Vec<Value> {
+fn listen(
+    e: &node_face::ears::Ears,
+    p: &mut Puck,
+    now: f64,
+    spoke: f64,
+    end: &mut Option<f64>,
+) -> Vec<Value> {
     use node_face::ears::Heard;
     let mut ops = Vec::new();
     let heard = e.poll();
@@ -308,8 +317,9 @@ fn listen(e: &node_face::ears::Ears, p: &mut Puck, now: f64, spoke: f64) -> Vec<
     let is = |w: &str, set: &[&str]| set.contains(&bare(w).as_str());
     for h in heard {
         let Heard::Word(w) = h else {
+            // Smart Turn says you're done; the decoder may still be finishing the last word.
             if p.mode == Mode::Listening {
-                ops.extend(p.submit(now));
+                end.get_or_insert(now);
             }
             continue;
         };
@@ -335,7 +345,13 @@ fn listen(e: &node_face::ears::Ears, p: &mut Puck, now: f64, spoke: f64) -> Vec<
         }
     }
     let (partial, quiet) = e.partial();
-    if p.mode == Mode::Listening && quiet > PAUSE_SECS {
+    if p.mode != Mode::Listening {
+        *end = None;
+    }
+    if p.mode == Mode::Listening
+        && (quiet > PAUSE_SECS || end.is_some_and(|t| now - t > END_GRACE_SECS))
+    {
+        *end = None;
         if !partial.is_empty() {
             p.hear(&e.take_partial(), now);
         }

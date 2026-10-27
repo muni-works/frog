@@ -1,8 +1,8 @@
 //! The face's ears: ipse's `hear mic`, streaming speech recognition in tang's tensor IR.
 //!
-//! `hear mic` prints one recognized word per line as it's heard (`[t | wall] word`, its pieces
-//! arriving on that line as the decoder commits them), and `[turn end]` lines when its turn heads
-//! are loaded. A reader thread turns that into finished words plus the word still being heard, so
+//! `hear mic --smart-turn` prints one recognized word per line as it's heard (`[t | wall] word`, its
+//! pieces arriving on that line as the decoder commits them), and a `[turn end]` line when Smart
+//! Turn (a small model of how people sound when they've finished) says the speaker is done. A reader thread turns that into finished words plus the word still being heard, so
 //! the host can end the turn after a pause even when no heads say so.
 
 use anyhow::{Context, Result};
@@ -35,7 +35,7 @@ impl Ears {
             .or_else(|| std::env::var("HEAR_BIN").ok())
             .unwrap_or_else(|| "hear".into());
         let mut child = Command::new(&bin)
-            .arg("mic")
+            .args(["mic", "--smart-turn"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
