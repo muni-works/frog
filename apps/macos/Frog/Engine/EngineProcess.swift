@@ -264,8 +264,9 @@ final class EngineProcess {
     nonisolated static func log(_ line: String) {
         guard let data = "\(Date.now.ISO8601Format()) \(line)\n".data(using: .utf8) else { return }
         if let h = try? FileHandle(forWritingTo: logURL) {
-            h.seekToEndOfFile()
-            h.write(data)
+            // The throwing APIs: the legacy ones raise an ObjC exception (e.g. disk full) and abort the app.
+            _ = try? h.seekToEnd()
+            try? h.write(contentsOf: data)
             try? h.close()
         } else {
             try? data.write(to: logURL)

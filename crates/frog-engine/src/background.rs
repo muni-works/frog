@@ -220,7 +220,7 @@ impl Registry {
                 file,
                 stop: stop.clone(),
                 started: Instant::now(),
-                due: due.map(|d| Instant::now() + d),
+                due: due.and_then(|d| Instant::now().checked_add(d)),
                 subject,
             },
         );
