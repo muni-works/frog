@@ -1113,7 +1113,7 @@ private struct ChiefTile: View {
         case .running:
             ProgressView().controlSize(.mini)
         case .waiting:
-            Image(systemName: "ellipsis.bubble").foregroundStyle(.orange).symbolEffect(.pulse)
+            Image(systemName: "ellipsis.bubble").foregroundStyle(.orange).symbolEffect(.pulse, options: .repeat(3))
         case .unread:
             Circle().fill(.tint).frame(width: 7, height: 7)
         case nil:
