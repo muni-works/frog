@@ -435,12 +435,17 @@ fn listen(
             node_face::ears::Heard::TurnEnd => log!("turn end ({:?})", p.mode),
         }
         let Heard::Word(w) = h else {
-            // Smart Turn says you're done; the decoder may still be finishing the last word.
-            if p.mode == Mode::Listening {
+            // Smart Turn says you're done; the decoder may still be finishing the last word. Not
+            // before anything's been said: that was the pause after the wake word.
+            if p.mode == Mode::Listening && !p.draft.trim().is_empty() {
                 end.get_or_insert(now);
             }
             continue;
         };
+        // Still talking: whatever ended the turn a moment ago was a pause, not the end.
+        if end.take().is_some() {
+            log!("turn end cancelled: still talking");
+        }
         match p.mode {
             Mode::Ask
                 if is(
