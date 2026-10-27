@@ -23,3 +23,11 @@ Context popover reads "0% · 0 of 1000.0k tokens" on a glm-5.3-flash (vercel/zai
 2. Hardening (brief): openai read_usage merges so a later `"usage": {}` chunk can't zero counts.
 
 ## Progress
+- d022916 engine: resume seeds `usage.input` from the log's newest TurnEnded.context_tokens /
+  Compacted.tokens_after. Test a_resumed_session_reports_its_context_before_the_next_call
+  (fails without the fix: None vs Some(110)).
+- f91adb9 openai: `take_usage` keeps the newest usage that has nonzero prompt/completion counts;
+  `null`, `{}` and all-zero objects are skipped. Test empty_usage_chunks_never_zero_the_real_counts
+  (612,263 in / 609,024 cached / 254 out, glm call 135's counts). Not the root cause: the log
+  shows glm usage parsed fine; this is defense only.
+- Popover untouched (nil → "0" display is downstream of the engine's None).
