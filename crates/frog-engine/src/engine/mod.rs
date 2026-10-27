@@ -532,7 +532,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     };
     let mut agent = Agent::new(opts, provider, shared.clone())?;
     if let Some(mut lock) = worktree_lock {
-        lock.set_owner(&agent.session_id);
+        lock.set_owner(&agent.conv.session_id);
         agent.worktree_lock = Some(lock);
     }
     // What's running, before anything slow (MCP servers, a local model loading, probing the
@@ -543,7 +543,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     let bus = shared.irc.clone();
     // A resumed session's log, for answering `Subscribe` while the engine starts up.
     let resumed = match (&agent.store, shared.journal.has_log()) {
-        (Some(dir), true) => Some((dir.clone(), agent.session_id.clone())),
+        (Some(dir), true) => Some((dir.clone(), agent.conv.session_id.clone())),
         _ => None,
     };
 
@@ -1188,12 +1188,47 @@ fn reuse(prev: &str, cur: &str) -> (Option<bool>, Option<f64>) {
     (Some(extends), Some(shared as f64 / cur.len() as f64))
 }
 
+/// The state of one conversation. `/clear` replaces it whole (see `Conversation::fresh`),
+/// so nothing from the old conversation can leak into the new one.
+#[derive(Default)]
+struct Conversation {
+    messages: Vec<Message>,
+    usage: Usage,
+    session_id: String,
+    turn: u64,
+    /// Everything the user has typed this session, kept verbatim through compaction.
+    inputs: Vec<String>,
+    skills_loaded: HashSet<String>,
+    rules_seen: HashSet<PathBuf>,
+    /// Files edited this session, relative to the root, for ranking the map.
+    edited: Vec<String>,
+    /// The session has a title (from the model's `SetTitle`, a client, or a resumed log), so
+    /// the headless fallback shouldn't add one.
+    titled: bool,
+    /// Context from `Op::Shell`, attached to the next message.
+    pending: Vec<String>,
+    /// The open chapter, followed so the turn that closes it can have it titled (see
+    /// `chapter`).
+    chapters: crate::chapter::Tracker,
+}
+
+impl Conversation {
+    /// A new, empty conversation with a new session id.
+    fn fresh() -> Self {
+        Conversation {
+            session_id: session::new_id(),
+            ..Default::default()
+        }
+    }
+}
+
 struct Agent {
+    /// Everything that belongs to one conversation; `/clear` starts a fresh one.
+    conv: Conversation,
     cfg: Config,
     profile_name: String,
     profile: Profile,
     provider: Provider,
-    messages: Vec<Message>,
     ctx: Ctx,
     mode: Mode,
     /// The mode the session log has on record (its last `mode_changed`; none means Default).
@@ -1205,16 +1240,11 @@ struct Agent {
     subagent: bool,
     chat: bool,
     store: Option<PathBuf>,
-    usage: Usage,
     last_call: Duration,
-    session_id: String,
-    turn: u64,
     active_turn: Option<u64>,
     /// The context window actually in effect (config, bounded by what the server reports).
     window: u64,
     est: Estimator,
-    /// Everything the user has typed this session, kept verbatim through compaction.
-    inputs: Vec<String>,
     /// Tool-call mode, tier and capabilities for the current model, and what it fell back to.
     harness: harness::Harness,
     /// A Tang sidecar loads its weights on its first completion request. Keep that visible until
@@ -1247,7 +1277,6 @@ struct Agent {
     loaded_tools: Vec<String>,
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
-    skills_loaded: HashSet<String>,
     /// The user's memory notes (none for subagents or in-memory engines), loaded when the
     /// session starts and after `/remember` or `/forget`, so the system prompt stays put.
     memory: Option<crate::memory::Store>,
@@ -1256,7 +1285,6 @@ struct Agent {
     notes_omitted: usize,
     /// Rule files for this project, and the scoped ones already shown this session.
     rules: Vec<crate::rules::Rule>,
-    rules_seen: HashSet<PathBuf>,
     /// The ranked repo map in the system prompt (small and mid-size models only), rebuilt
     /// between turns when files change.
     repo_map: crate::repomap::Map,
@@ -1265,11 +1293,6 @@ struct Agent {
     map_building: bool,
     /// Whether the session log holds the current `repo_map`.
     map_logged: bool,
-    /// Files edited this session, relative to the root, for ranking the map.
-    edited: Vec<String>,
-    /// The session has a title (from the model's `SetTitle`, a client, or a resumed log), so
-    /// the headless fallback shouldn't add one.
-    titled: bool,
     /// The model can see images (probed, or `vision` in the profile).
     vision: bool,
     /// The server takes a per-call reasoning budget (probed).
@@ -1320,14 +1343,9 @@ struct Agent {
     /// Set by `permit` when it refused a repeat of a call denied this turn: the batch stops
     /// and the turn ends with this denial.
     blocked: Option<String>,
-    /// Context from `Op::Shell`, attached to the next message.
-    pending: Vec<String>,
     /// This turn's finished `Bash` calls (item id, command, output head) awaiting a gist,
     /// flushed in one side-model call when the turn ends (see `gist`).
     pending_gists: Vec<(String, String, String)>,
-    /// The open chapter, followed so the turn that closes it can have it titled (see
-    /// `chapter`).
-    chapters: crate::chapter::Tracker,
     /// Chapter titles written this session, by content hash: the same chapter never asks
     /// twice. Shared with the title task.
     chapter_titles: Arc<Mutex<HashMap<u64, String>>>,
@@ -1480,11 +1498,23 @@ impl Agent {
         shared.panes.configure(o.cwd.clone());
         let (map_build_tx, map_build_rx) = std::sync::mpsc::channel();
         let mut agent = Self {
+            conv: Conversation {
+                messages,
+                usage: Usage::default(),
+                session_id,
+                turn,
+                inputs,
+                skills_loaded: HashSet::new(),
+                rules_seen: HashSet::new(),
+                edited: Vec::new(),
+                titled: resumed_titled,
+                pending: Vec::new(),
+                chapters: resumed_chapters,
+            },
             cfg: o.cfg,
             profile_name: o.profile_name,
             profile: o.profile,
             provider,
-            messages,
             ctx: {
                 let mut ctx = Ctx::new(o.cwd.clone());
                 ctx.web = web;
@@ -1507,14 +1537,10 @@ impl Agent {
             subagent: o.subagent,
             chat: o.chat,
             store: o.store,
-            usage: Usage::default(),
             last_call: Duration::ZERO,
-            session_id,
-            turn,
             active_turn: None,
             window,
             est: Estimator::default(),
-            inputs,
             harness,
             model_ready: false,
             quiet: 0,
@@ -1532,19 +1558,15 @@ impl Agent {
             mcp_ready_queue: Vec::new(),
             loaded_tools,
             skills,
-            skills_loaded: HashSet::new(),
             memory,
             notes,
             notes_omitted: 0,
             rules,
-            rules_seen: HashSet::new(),
             repo_map: Default::default(),
             map_build_tx,
             map_build_rx: Mutex::new(map_build_rx),
             map_building: false,
             map_logged: false,
-            edited: Vec::new(),
-            titled: resumed_titled,
             intended_model,
             model_flip_why: None,
             worktree_lock: None,
@@ -1566,9 +1588,7 @@ impl Agent {
             prefill_ok: false,
             warming: Default::default(),
             session_allow: HashSet::new(),
-            pending: Vec::new(),
             pending_gists: Vec::new(),
-            chapters: resumed_chapters,
             chapter_titles: Default::default(),
             shared,
         };
@@ -1618,14 +1638,14 @@ impl Agent {
         self.record(Record::Push {
             message: message.clone(),
         });
-        self.messages.push(message);
+        self.conv.messages.push(message);
     }
 
     fn extend_last(&mut self, blocks: Vec<Block>) {
         self.record(Record::Extend {
             blocks: blocks.clone(),
         });
-        if let Some(m) = self.messages.last_mut() {
+        if let Some(m) = self.conv.messages.last_mut() {
             m.content.extend(blocks);
         }
     }
@@ -1650,7 +1670,7 @@ impl Agent {
         self.record(Record::Reset {
             messages: messages.clone(),
         });
-        self.messages = messages;
+        self.conv.messages = messages;
     }
 
     // ---- events ----
@@ -1668,19 +1688,20 @@ impl Agent {
 
     /// Unknown (`None`) when the provider didn't report usage, rather than a misleading zero.
     fn context_tokens(&self) -> Option<u64> {
-        let c = self.usage.context();
+        let c = self.conv.usage.context();
         (c > 0).then_some(c)
     }
 
     fn tokens_per_sec(&self) -> Option<f64> {
         let secs = self.last_call.as_secs_f64();
-        (secs > 0.0 && self.usage.output > 0).then(|| self.usage.output as f64 / secs)
+        (secs > 0.0 && self.conv.usage.output > 0).then(|| self.conv.usage.output as f64 / secs)
     }
 
     /// The conversation's current title, as the client set it (`Op::SetTitle`); part of the
     /// IRC nick (a short title reads better on the bus).
     fn title(&self) -> String {
-        self.inputs
+        self.conv
+            .inputs
             .first()
             .map(|s| s.trim().chars().take(80).collect())
             .unwrap_or_default()
@@ -1710,7 +1731,7 @@ impl Agent {
             model: self.profile_name.clone(),
             mode: self.mode,
             cwd: self.ctx.root.clone(),
-            messages: self.messages.len(),
+            messages: self.conv.messages.len(),
             context_tokens: self.context_tokens(),
             context_window: self.window,
             tool_mode: self.harness.tool_mode,
@@ -1807,10 +1828,10 @@ impl Agent {
     /// (rich), the model may call `SetTitle`, and a user may; when none of that happened by
     /// the end of the first turn, the first input stands in, with wrapper boilerplate stripped.
     fn auto_title(&mut self, turn: u64) {
-        if self.titled || self.rich || turn != 1 {
+        if self.conv.titled || self.rich || turn != 1 {
             return;
         }
-        if let Some(input) = self.inputs.first() {
+        if let Some(input) = self.conv.inputs.first() {
             let title = crate::title::derive(input);
             if !title.is_empty() {
                 self.set_title(title);
@@ -1944,9 +1965,9 @@ impl Agent {
     /// Record the session's title and remember it's named. A client's `Op::SetTitle` and the
     /// model's `SetTitle` tool both land here.
     fn set_title(&mut self, title: String) {
-        self.titled = true;
+        self.conv.titled = true;
         if let Some(bus) = self.irc() {
-            bus.set_session(&self.session_id, &title);
+            bus.set_session(&self.conv.session_id, &title);
         }
         self.emit(Event::Titled { title });
     }
@@ -2058,7 +2079,7 @@ impl Agent {
             Op::Subscribe { after } => {
                 let replay = match &self.store {
                     Some(dir) if self.shared.journal.has_log() => {
-                        session::events_after(dir, &self.session_id, after)?
+                        session::events_after(dir, &self.conv.session_id, after)?
                     }
                     _ => Vec::new(),
                 };
@@ -2074,13 +2095,13 @@ impl Agent {
                 self.shared.bg.take_notices();
                 self.sync_log();
                 self.write_summary();
-                self.messages.clear();
-                self.inputs.clear();
-                self.chapters = Default::default();
-                self.skills_loaded.clear();
-                self.rules_seen.clear();
-                self.edited.clear();
-                self.titled = false;
+                self.conv.messages.clear();
+                self.conv.inputs.clear();
+                self.conv.chapters = Default::default();
+                self.conv.skills_loaded.clear();
+                self.conv.rules_seen.clear();
+                self.conv.edited.clear();
+                self.conv.titled = false;
                 let sandbox = self.ctx.sandbox.take();
                 let shell_sandbox = self.ctx.shell_sandbox.take();
                 let web = self.ctx.web.clone();
@@ -2094,15 +2115,15 @@ impl Agent {
                     Some(model) => self.cfg.resolve(Some(model))?.1,
                     None => self.profile.clone(),
                 });
-                self.usage = Usage::default();
-                self.session_id = session::new_id();
+                self.conv.usage = Usage::default();
+                self.conv.session_id = session::new_id();
                 self.shared
                     .journal
-                    .start_session(self.session_id.clone(), 0, None);
+                    .start_session(self.conv.session_id.clone(), 0, None);
                 if let Some(lock) = self.worktree_lock.as_mut() {
-                    lock.set_owner(&self.session_id);
+                    lock.set_owner(&self.conv.session_id);
                 }
-                self.turn = 0;
+                self.conv.turn = 0;
                 self.notes = self.memory.as_ref().map(|m| m.load()).unwrap_or_default();
                 self.refresh_repo_map(&[]);
                 self.apply_harness();
@@ -2142,7 +2163,7 @@ impl Agent {
                     let mut slot = self.shared.irc.lock().unwrap();
                     if slot.is_none() {
                         let bus = Arc::new(crate::irc::Bus::default());
-                        bus.set_session(&self.session_id, &self.title());
+                        bus.set_session(&self.conv.session_id, &self.title());
                         *slot = Some(bus);
                     }
                 } else {
@@ -2182,7 +2203,7 @@ impl Agent {
 
     /// Append user text, merging into a trailing user message so roles always alternate.
     fn push_user(&mut self, text: String) {
-        match self.messages.last() {
+        match self.conv.messages.last() {
             Some(m) if m.role == Role::User => self.extend_last(vec![Block::Text { text }]),
             _ => self.push_msg(Message::user(text)),
         }
@@ -2329,7 +2350,8 @@ impl Agent {
             from_name: from_name.to_string(),
             message: message.to_string(),
         });
-        self.pending
+        self.conv
+            .pending
             .push(crate::tools::sessions::wrap(from, from_name, message));
     }
 
@@ -2379,8 +2401,8 @@ impl Agent {
                 Part { text, images }
             })
             .collect();
-        self.turn += 1;
-        let turn = self.turn;
+        self.conv.turn += 1;
+        let turn = self.conv.turn;
         // The first turn creates a new session's log: its starting mode goes in first.
         self.log_mode();
         // Background work that finished while this turn was queued: delivered with it, as one
@@ -2402,10 +2424,10 @@ impl Agent {
         // A draft still waiting to warm is stale now; the turn itself leaves the cache warm.
         self.warming.lock().unwrap().1 = None;
         self.shared.panes.set_in_turn(true);
-        self.inputs.push(input.to_string());
-        self.inputs.extend(more.iter().map(|p| p.text.clone()));
+        self.conv.inputs.push(input.to_string());
+        self.conv.inputs.extend(more.iter().map(|p| p.text.clone()));
         let texts: Vec<String> = more.iter().map(|p| p.text.clone()).collect();
-        if let Some(closed) = self.chapters.started(turn, input, &texts) {
+        if let Some(closed) = self.conv.chapters.started(turn, input, &texts) {
             self.title_chapter(closed);
         }
         self.turn_clock = Some(Instant::now());
@@ -2423,7 +2445,7 @@ impl Agent {
         // Wakes a stop held go along with this turn (below); later ones start turns again.
         self.shared.wake_hold.store(false, Ordering::SeqCst);
 
-        let mut text = std::mem::take(&mut self.pending).join("\n");
+        let mut text = std::mem::take(&mut self.conv.pending).join("\n");
         for notice in wakes {
             if !text.is_empty() {
                 text.push('\n');
@@ -2437,7 +2459,7 @@ impl Agent {
         // `/skill-name ...` loads that skill ahead of the request.
         let input = match crate::skills::expand_command(&self.skills, input) {
             Some((expanded, name)) => {
-                self.skills_loaded.insert(name);
+                self.conv.skills_loaded.insert(name);
                 expanded
             }
             None => input.to_string(),
@@ -2465,7 +2487,7 @@ impl Agent {
         // The map is part of the system prompt, so after the first turn it's rebuilt only where
         // the history is rewritten anyway (`rebased`): rebuilding it whenever a file changed
         // would re-prefill the whole conversation on the turn after every edit.
-        if self.messages.is_empty() {
+        if self.conv.messages.is_empty() {
             self.refresh_repo_map(&mentioned);
         }
         self.log_map();
@@ -2477,7 +2499,7 @@ impl Agent {
         for part in more {
             let input = match crate::skills::expand_command(&self.skills, &part.text) {
                 Some((expanded, name)) => {
-                    self.skills_loaded.insert(name);
+                    self.conv.skills_loaded.insert(name);
                     expanded
                 }
                 None => part.text.clone(),
@@ -2548,8 +2570,8 @@ impl Agent {
                 context::COMPACT_AT
             };
             self.fit_context(&mut compacted, start).await?;
-            let sent = self.fixed_chars() + context::history_chars(&self.messages);
-            let think = self.think_switch(thinking::wanted(&self.messages, self.quiet));
+            let sent = self.fixed_chars() + context::history_chars(&self.conv.messages);
+            let think = self.think_switch(thinking::wanted(&self.conv.messages, self.quiet));
             self.quiet = if think == Some(false) {
                 self.quiet + 1
             } else {
@@ -2563,7 +2585,7 @@ impl Agent {
                 "thinking".into()
             };
             let (resp, streamed) = match self
-                .call(&activity, &self.messages, false, true, think, budget)
+                .call(&activity, &self.conv.messages, false, true, think, budget)
                 .await
             {
                 Ok(r) => r,
@@ -2615,7 +2637,7 @@ impl Agent {
             };
             self.model_ready = true;
             self.last_call = started.elapsed();
-            self.usage = resp.usage.clone();
+            self.conv.usage = resp.usage.clone();
             self.count_call(resp.usage.clone(), &streamed, false);
             for (id, name, input) in self.provider.take_codex_items() {
                 let arg = input.to_string();
@@ -2677,7 +2699,7 @@ impl Agent {
                 .then(|| self.file_nudge(&answer, &named))
                 .flatten();
             if !answer.is_empty() {
-                self.chapters.replied(&answer);
+                self.conv.chapters.replied(&answer);
                 self.complete_item(
                     streamed.message,
                     ItemKind::Message,
@@ -2886,7 +2908,7 @@ impl Agent {
         let root = self.root.clone();
         let cache = cache.clone();
         let mentioned = mentioned.to_vec();
-        let edited = self.edited.clone();
+        let edited = self.conv.edited.clone();
         let tx = self.map_build_tx.clone();
         self.map_building = true;
         std::thread::spawn(move || {
@@ -2960,7 +2982,7 @@ impl Agent {
         let Some(rel) = self.rel(path) else {
             return String::new();
         };
-        let due = crate::rules::due(&self.rules, &rel, &mut self.rules_seen);
+        let due = crate::rules::due(&self.rules, &rel, &mut self.conv.rules_seen);
         crate::rules::block(&due, &rel, crate::rules::inject_budget(self.harness.tier))
     }
 
@@ -2988,7 +3010,7 @@ impl Agent {
         if !self.shared.journal.has_log() {
             return None;
         }
-        let loaded = session::load(dir, &self.session_id).ok()?;
+        let loaded = session::load(dir, &self.conv.session_id).ok()?;
         if loaded.events.is_empty() {
             return None;
         }
@@ -3056,7 +3078,7 @@ impl Agent {
             .profile
             .thinking_budget
             .unwrap_or(self.cfg.thinking_budget);
-        thinking::budget(base, think, &self.messages)
+        thinking::budget(base, think, &self.conv.messages)
     }
 
     /// Measure the model again when its cached probe is older than `harness::PROBE_TTL_MS`,
@@ -3226,13 +3248,16 @@ Not saved: the next session starts on {from} again"
     /// so the next turn starts warm instead of re-reading everything. In the background, one
     /// at a time: newer drafts replace a queued one. A failure only costs the head start.
     fn warm(&self, draft: Option<&str>) {
-        if !self.prefill_ok || !self.cache_key_ok || (self.messages.is_empty() && draft.is_none()) {
+        if !self.prefill_ok
+            || !self.cache_key_ok
+            || (self.conv.messages.is_empty() && draft.is_none())
+        {
             return;
         }
-        let mut messages = self.messages.clone();
+        let mut messages = self.conv.messages.clone();
         if let Some(draft) = draft {
             // As `turn` will send it: shell output waiting to go along, then the words.
-            let mut text = self.pending.join("\n");
+            let mut text = self.conv.pending.join("\n");
             if !text.is_empty() {
                 text.push('\n');
             }
@@ -3251,7 +3276,7 @@ Not saved: the next session starts on {from} again"
             format: wire.format.as_ref(),
             think: None,
             think_budget: None,
-            cache_key: Some(&self.session_id),
+            cache_key: Some(&self.conv.session_id),
         };
         let Some(prefill) = self.provider.prefill(&req) else {
             return;
@@ -3291,7 +3316,7 @@ Not saved: the next session starts on {from} again"
 
     fn estimate(&self) -> u64 {
         self.est
-            .tokens(self.fixed_chars() + context::history_chars(&self.messages))
+            .tokens(self.fixed_chars() + context::history_chars(&self.conv.messages))
     }
 
     /// The most chars one tool result may carry: [`context::MAX_RESULT_SHARE`] of the window,
@@ -3311,7 +3336,7 @@ Not saved: the next session starts on {from} again"
         let hard = (self.window as f64 * context::HARD_LIMIT) as u64;
         if self.estimate() > hard
             || ((self.estimate() as f64) > self.window as f64 * context::COMPACT_AT
-                && compacted.is_none_or(|len| self.messages.len() > len))
+                && compacted.is_none_or(|len| self.conv.messages.len() > len))
         {
             self.notice(
                 Level::Warn,
@@ -3330,7 +3355,7 @@ Not saved: the next session starts on {from} again"
                 });
                 anyhow::bail!("compaction failed; the history can't fit the context window");
             }
-            *compacted = Some(self.messages.len());
+            *compacted = Some(self.conv.messages.len());
         } else if pruned {
             self.rebased();
         }
@@ -3346,7 +3371,10 @@ Not saved: the next session starts on {from} again"
             return false;
         }
         let target = self.est.chars((window * context::PRUNE_TO) as u64);
-        let plan = context::plan_prune(&self.messages, target.saturating_sub(self.fixed_chars()));
+        let plan = context::plan_prune(
+            &self.conv.messages,
+            target.saturating_sub(self.fixed_chars()),
+        );
         if plan.is_empty() {
             return false;
         }
@@ -3355,7 +3383,7 @@ Not saved: the next session starts on {from} again"
                 id: id.clone(),
                 content: content.clone(),
             });
-            context::apply(&mut self.messages, id, content);
+            context::apply(&mut self.conv.messages, id, content);
         }
         self.emit(Event::ContextPruned {
             results: plan.len(),
@@ -3382,7 +3410,7 @@ Not saved: the next session starts on {from} again"
         let Some(root) = crate::checkpoint::repo_root(&self.root) else {
             return;
         };
-        match crate::checkpoint::snapshot(&root, &format!("{}/{turn}", self.session_id)) {
+        match crate::checkpoint::snapshot(&root, &format!("{}/{turn}", self.conv.session_id)) {
             Ok(commit) => self.record(Record::Checkpoint { turn, root, commit }),
             Err(e) => self.notice(
                 Level::Warn,
@@ -3391,7 +3419,9 @@ Not saved: the next session starts on {from} again"
         }
         // A picture of the preview to go with it, if there is one (doesn't hold the turn up).
         if let Some(dir) = &self.store {
-            self.shared.panes.checkpoint(&self.session_id, turn, dir);
+            self.shared
+                .panes
+                .checkpoint(&self.conv.session_id, turn, dir);
         }
     }
 
@@ -3413,7 +3443,7 @@ Not saved: the next session starts on {from} again"
             Err(_) => None,
         };
         self.record(Record::Snapshot {
-            turn: self.turn,
+            turn: self.conv.turn,
             path,
             before,
         });
@@ -3628,7 +3658,7 @@ Not saved: the next session starts on {from} again"
         if let Some(dir) = self.store.clone() {
             let header = Header {
                 version: session::VERSION,
-                id: self.session_id.clone(),
+                id: self.conv.session_id.clone(),
                 cwd: root.clone(),
                 model: self.profile_name.clone(),
                 created: now_ms(),
@@ -3637,7 +3667,9 @@ Not saved: the next session starts on {from} again"
             self.shared.journal.header.lock().unwrap().0 = root.clone();
             let mut log = self.shared.journal.log.lock().unwrap();
             if let Some(l) = log.as_mut() {
-                let created = session::load(&dir, &self.session_id).map(|l| l.header).ok();
+                let created = session::load(&dir, &self.conv.session_id)
+                    .map(|l| l.header)
+                    .ok();
                 let header = Header {
                     created: created.as_ref().map_or(header.created, |h| h.created),
                     forked_from: created.and_then(|h| h.forked_from),
@@ -3667,9 +3699,9 @@ Not saved: the next session starts on {from} again"
             self.ctx.shell_sandbox = Some(root.clone());
         }
         self.rules = crate::rules::discover(&root);
-        self.rules_seen.clear();
+        self.conv.rules_seen.clear();
         self.skills = crate::skills::discover(&root);
-        self.skills_loaded.clear();
+        self.conv.skills_loaded.clear();
         if let Some(store) = &self.store {
             let memory = crate::memory::Store::new(&memory_root(store), Some(root.as_path()));
             self.notes = memory.load();
@@ -3679,7 +3711,7 @@ Not saved: the next session starts on {from} again"
         self.session_allow.clear();
         self.classifier = None;
         self.repo_map = Default::default();
-        self.edited.clear();
+        self.conv.edited.clear();
         self.refresh_repo_map(&[]);
         // MCP servers are configured per project.
         self.mcp.shutdown();
@@ -3770,8 +3802,8 @@ Not saved: the next session starts on {from} again"
     /// Where background jobs write their output: next to the session log.
     fn jobs_dir(&self) -> PathBuf {
         match &self.store {
-            Some(dir) => dir.join(format!("{}.jobs", self.session_id)),
-            None => std::env::temp_dir().join(format!("frog-jobs-{}", self.session_id)),
+            Some(dir) => dir.join(format!("{}.jobs", self.conv.session_id)),
+            None => std::env::temp_dir().join(format!("frog-jobs-{}", self.conv.session_id)),
         }
     }
 
@@ -3824,7 +3856,7 @@ Not saved: the next session starts on {from} again"
             );
         }
         if name == crate::skills::TOOL {
-            return crate::skills::run(&self.skills, &mut self.skills_loaded, input);
+            return crate::skills::run(&self.skills, &mut self.conv.skills_loaded, input);
         }
         if name == crate::recall::TOOL && self.has_recall() {
             let sessions = self.recall_sources();
@@ -4295,9 +4327,9 @@ Don't repeat it. Change the arguments or try a different approach.",
             };
             if let Some(d) = &out.diff
                 && let Some(rel) = self.rel(Path::new(&d.path))
-                && !self.edited.contains(&rel)
+                && !self.conv.edited.contains(&rel)
             {
-                self.edited.push(rel);
+                self.conv.edited.push(rel);
             }
 
             self.extend_last(vec![Block::ToolResult {
@@ -4579,7 +4611,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             format,
             think,
             think_budget,
-            cache_key: self.cache_key_ok.then_some(self.session_id.as_str()),
+            cache_key: self.cache_key_ok.then_some(self.conv.session_id.as_str()),
         };
         let (extends, reusable) = {
             let flat = flatten(&system, tools, messages);
@@ -5257,7 +5289,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         if let Some(bus) = self.irc() {
             bus.post_notice(
                 crate::irc::NoticeKind::WaitingOnUser,
-                &crate::irc::approval_notice(&self.session_id, item, name),
+                &crate::irc::approval_notice(&self.conv.session_id, item, name),
             );
         }
         let asked = Instant::now();
@@ -5323,6 +5355,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
     /// What the agent said just before this call, for the approval card.
     fn agent_reason(&self) -> Option<String> {
         let text = self
+            .conv
             .messages
             .iter()
             .rev()
@@ -5595,7 +5628,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             completed: None,
             total: None,
         });
-        let inputs = self.inputs.clone();
+        let inputs = self.conv.inputs.clone();
         let slot = if fallback {
             &mut self.classifier_fallback
         } else {
@@ -5667,7 +5700,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
 
     /// Summarize the conversation and continue from the summary.
     async fn compact(&mut self, focus: Option<&str>) -> Result<()> {
-        if self.messages.is_empty() {
+        if self.conv.messages.is_empty() {
             return Ok(());
         }
         // If the history itself is over the window (one huge result that no cap caught), the
@@ -5675,24 +5708,24 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // deterministically, recent ones included, so the summary request fits.
         if self.estimate() > self.window {
             let per_result = (self.result_cap() / 2).max(1_000);
-            let plan = context::plan_emergency(&self.messages, per_result);
+            let plan = context::plan_emergency(&self.conv.messages, per_result);
             for (id, content) in &plan {
                 self.record(Record::Replace {
                     id: id.clone(),
                     content: content.clone(),
                 });
-                context::apply(&mut self.messages, id, content);
+                context::apply(&mut self.conv.messages, id, content);
             }
             if !plan.is_empty() {
                 self.emit(Event::ContextPruned {
                     results: plan.len(),
-                    tokens_before: self.usage.context(),
+                    tokens_before: self.conv.usage.context(),
                     tokens_after: self.estimate(),
                 });
                 self.rebased();
             }
         }
-        let mut msgs = self.messages.clone();
+        let mut msgs = self.conv.messages.clone();
         let mut instr = COMPACT_PROMPT.to_string();
         if let Some(f) = focus {
             instr.push_str(&format!("\nFocus especially on: {f}"));
@@ -5723,18 +5756,19 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         if summary.trim().is_empty() {
             anyhow::bail!("compaction produced an empty summary; keeping the full history");
         }
-        let before = self.usage.context();
+        let before = self.conv.usage.context();
         // Loaded skills' instructions are summarized away; let them load again.
-        self.skills_loaded.clear();
+        self.conv.skills_loaded.clear();
         // The structured record, recovered verbatim across repeated compactions: user
         // inputs, files, the latest todos, commands and significant tool calls.
-        let record = context::pinned_record(&self.inputs, &self.ctx.todos, &self.messages);
+        let record =
+            context::pinned_record(&self.conv.inputs, &self.ctx.todos, &self.conv.messages);
         // A record that filled the window would leave nothing for the summary it follows,
         // so it scales to the window, capped: small models get the essentials.
         let budget = (self.est.chars(self.window) / 8).clamp(1_000, 16_000);
         let record = context::render_record(&record, budget);
         let visual = context::pinned_visual_context(
-            &self.messages,
+            &self.conv.messages,
             if self.vision {
                 if self.small_window() { 1 } else { 2 }
             } else {
@@ -5758,7 +5792,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         ));
         compacted.content.extend(visual);
         self.reset(vec![compacted]);
-        self.usage = Usage {
+        self.conv.usage = Usage {
             input: resp.usage.output,
             ..Default::default()
         };
@@ -5768,8 +5802,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             summary: self.build_summary().map(kept),
         });
         if let Some(closed) = self
+            .conv
             .chapters
-            .compacted(self.active_turn.unwrap_or(self.turn))
+            .compacted(self.active_turn.unwrap_or(self.conv.turn))
         {
             self.title_chapter(closed);
         }
@@ -5780,19 +5815,20 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
     /// After an interrupt or error: give every dangling tool call a result so the history stays valid.
     fn repair(&mut self) {
         if let Some(ai) = self
+            .conv
             .messages
             .iter()
             .rposition(|m| m.role == Role::Assistant)
         {
-            let uses = self.messages[ai].tool_uses();
+            let uses = self.conv.messages[ai].tool_uses();
             if !uses.is_empty() {
-                if ai + 1 == self.messages.len() {
+                if ai + 1 == self.conv.messages.len() {
                     self.push_msg(Message {
                         role: Role::User,
                         content: Vec::new(),
                     });
                 }
-                let done: HashSet<String> = self.messages[ai + 1]
+                let done: HashSet<String> = self.conv.messages[ai + 1]
                     .content
                     .iter()
                     .filter_map(|b| match b {
@@ -5816,7 +5852,12 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 }
             }
         }
-        if self.messages.last().is_some_and(|m| m.role == Role::User) {
+        if self
+            .conv
+            .messages
+            .last()
+            .is_some_and(|m| m.role == Role::User)
+        {
             self.push_user("[Request interrupted by user]".into());
         }
     }
@@ -5844,7 +5885,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             Ok(o) => (ToolOutcome::Ok, o.content, o.display),
             Err(e) => (ToolOutcome::Error, format!("{e:#}"), None),
         };
-        self.pending.push(format!(
+        self.conv.pending.push(format!(
             "<bash-input>{cmd}</bash-input>\n<bash-output>{output}</bash-output>"
         ));
         self.emit(Event::ItemCompleted {
