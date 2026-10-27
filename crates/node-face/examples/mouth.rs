@@ -9,7 +9,7 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "mouth.png".into());
     let (w, h, n) = (720usize, 720usize, 6usize);
-    let (top, rows) = (430usize, 220usize); // the band of the frame the mouth is in
+    let (top, rows) = (500usize, 220usize); // the band of the frame the mouth is in
     let mut sheet = Canvas::new(w * 3 / 2, rows * 2);
     let mut cv = Canvas::new(w, h);
     for i in 0..n {

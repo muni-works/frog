@@ -380,7 +380,10 @@ fn voice_light(
     col: Rgb,
     size: f32,
 ) {
-    let (cx, cy) = u(0.5, 0.49 + 0.29 * size);
+    // Human proportions: the mouth sits well below the eyes, about a third of the way from them to
+    // the chin; the tall portrait panel has room to drop it further.
+    let below = if cv.h > cv.w { 0.43 } else { 0.33 };
+    let (cx, cy) = u(0.5, 0.49 + below * size);
     let t32 = t as f32;
     let speak = face.talk.clamp(0.0, 1.0);
     let listen = (face.listen * (1.0 - speak)).clamp(0.0, 1.0);
