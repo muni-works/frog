@@ -22,6 +22,8 @@ pub struct Ears {
     heard: Receiver<Heard>,
     /// The word on the line now, and when anything last arrived.
     partial: Arc<Mutex<(String, Instant)>>,
+    /// A half-heard word the host already took: hear finishes it later, and that copy is dropped.
+    taken: Mutex<Option<String>>,
 }
 
 impl Ears {
@@ -78,12 +80,37 @@ impl Ears {
             child,
             heard,
             partial,
+            taken: Mutex::new(None),
         })
     }
 
     /// Everything finished since the last call.
     pub fn poll(&self) -> Vec<Heard> {
-        self.heard.try_iter().collect()
+        let mut taken = self.taken.lock().unwrap();
+        self.heard
+            .try_iter()
+            .filter(|h| match (h, taken.as_deref()) {
+                (Heard::Word(w), Some(t)) if w.starts_with(t) => {
+                    *taken = None;
+                    false
+                }
+                (Heard::Word(_), _) => {
+                    *taken = None;
+                    true
+                }
+                _ => true,
+            })
+            .collect()
+    }
+
+    /// Take the half-heard word now (the speaker paused on it), so it isn't heard again when hear
+    /// finishes it.
+    pub fn take_partial(&self) -> String {
+        let w = std::mem::take(&mut self.partial.lock().unwrap().0);
+        if !w.is_empty() {
+            *self.taken.lock().unwrap() = Some(w.clone());
+        }
+        w
     }
 
     /// The word being heard right now (empty between words), and seconds since hear last printed.

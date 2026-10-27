@@ -10,7 +10,8 @@
 //! node-face --sheet out.png           # headless: the face through a whole turn, one PNG
 //! ```
 //!
-//! With --voice it's voice only: talk and Pip listens; pause and it answers out loud. When it asks
+//! With --voice it's voice only: say "hey frog" (or "pip") and Pip listens; pause and it answers
+//! out loud, and you can answer back without the wake word for a few seconds. When it asks
 //! to run something, say yes or no; while it works, "stop" stops it. Until the stereo camera can
 //! say where you are, Pip looks at the pointer while listening.
 
@@ -284,7 +285,7 @@ fn run(args: &Args) -> Result<()> {
             spoke = now;
         }
         if let Some(e) = &ears {
-            ops.extend(listen(e, &mut sim.puck, now, now - spoke < MUTE_SECS));
+            ops.extend(listen(e, &mut sim.puck, now, spoke));
         }
         for op in ops {
             if let Some(f) = frog.as_mut()
@@ -318,50 +319,63 @@ fn run(args: &Args) -> Result<()> {
 
 /// After Pip stops making sound, how long its ears stay shut (the room's echo of its voice).
 const MUTE_SECS: f64 = 0.6;
-/// A pause this long after some words ends your turn.
-const PAUSE_SECS: f64 = 1.1;
+/// A pause this long after some words ends your turn. hear only finishes a word when the next one
+/// starts, so this has to cover the pause and the last word's tail.
+const PAUSE_SECS: f64 = 1.8;
+/// After Pip finishes speaking you can answer without the wake word for this long.
+const FOLLOW_SECS: f64 = 6.0;
+/// Words that wake Pip ("hey frog", "pip, …").
+const WAKE: &[&str] = &["frog", "pip"];
 
-/// What you said, into frog: words while it listens (starting a turn), a pause to send, yes / no
-/// to a request to run something, "stop" while it works. Returns ops for frog.
+/// What you said, into frog. While Pip is idle only the wake word starts a turn (or anything, just
+/// after it spoke); then words go into the turn and a pause sends it. Yes / no answers a request to
+/// run something, "stop" stops it working. `spoke` is when Pip last made a sound. Returns ops.
 #[cfg(feature = "window")]
-fn listen(e: &node_face::ears::Ears, p: &mut Puck, now: f64, muted: bool) -> Vec<Value> {
+fn listen(e: &node_face::ears::Ears, p: &mut Puck, now: f64, spoke: f64) -> Vec<Value> {
     use node_face::ears::Heard;
     let mut ops = Vec::new();
     let heard = e.poll();
-    if muted {
-        e.clear();
+    if now - spoke < MUTE_SECS {
+        e.take_partial(); // its own voice
         return ops;
     }
-    let is = |w: &str, set: &[&str]| set.contains(&w.trim_matches(|c: char| !c.is_alphanumeric()));
+    let bare = |w: &str| {
+        w.trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase()
+    };
+    let is = |w: &str, set: &[&str]| set.contains(&bare(w).as_str());
     for h in heard {
-        match h {
-            Heard::Word(w) => match p.mode {
-                Mode::Ask
-                    if is(
-                        &w,
-                        &["yes", "yeah", "yep", "sure", "okay", "ok", "go", "do"],
-                    ) =>
-                {
-                    ops.extend(p.approve())
-                }
-                Mode::Ask if is(&w, &["no", "nope", "don't", "stop", "cancel"]) => {
-                    ops.extend(p.deny())
-                }
-                Mode::Thinking | Mode::Running if is(&w, &["stop", "wait", "cancel"]) => {
-                    ops.extend(p.interrupt())
-                }
-                Mode::Thinking | Mode::Running | Mode::Ask => {}
-                _ => p.hear(&format!("{w} "), now),
-            },
-            Heard::TurnEnd if p.mode == Mode::Listening => ops.extend(p.submit(now)),
-            Heard::TurnEnd => {}
+        let Heard::Word(w) = h else {
+            if p.mode == Mode::Listening {
+                ops.extend(p.submit(now));
+            }
+            continue;
+        };
+        match p.mode {
+            Mode::Ask
+                if is(
+                    &w,
+                    &["yes", "yeah", "yep", "sure", "okay", "ok", "go", "do"],
+                ) =>
+            {
+                ops.extend(p.approve())
+            }
+            Mode::Ask if is(&w, &["no", "nope", "don't", "stop", "cancel"]) => ops.extend(p.deny()),
+            Mode::Thinking | Mode::Running if is(&w, &["stop", "wait", "cancel"]) => {
+                ops.extend(p.interrupt())
+            }
+            Mode::Thinking | Mode::Running | Mode::Ask => {}
+            Mode::Listening => p.hear(&format!("{w} "), now),
+            // idle: the wake word, or a follow-up right after Pip spoke
+            _ if is(&w, WAKE) => p.wake(now),
+            _ if now - spoke < FOLLOW_SECS => p.hear(&format!("{w} "), now),
+            _ => {}
         }
     }
     let (partial, quiet) = e.partial();
     if p.mode == Mode::Listening && quiet > PAUSE_SECS {
         if !partial.is_empty() {
-            p.hear(&partial, now);
-            e.clear();
+            p.hear(&e.take_partial(), now);
         }
         if !p.draft.trim().is_empty() {
             ops.extend(p.submit(now));
