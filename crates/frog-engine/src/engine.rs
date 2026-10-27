@@ -3871,7 +3871,18 @@ Not saved: the next session starts on {from} again"
     /// A long bare wait ([`crate::auto::long_wait`]) run as a background job (the same path as
     /// `Bash { run_in_background }`, already permitted): the tool returns at once, telling the
     /// model what happened, and the job's `<job-done>` wake brings the output when it ends.
+    ///
+    /// One at a time: a model that ignores the advice and sleeps again (quad00, GLM 5.3 Flash:
+    /// 1,334 sleeps in one turn, a new one every 3 s, ~200 running at once, then 1,300 wakes)
+    /// is told it's already waiting instead of getting another job.
     fn background_wait(&self, input: &Value, secs: u64) -> Result<tools::Output> {
+        if let Some(id) = self.shared.bg.long_wait.lock().unwrap().clone()
+            && self.shared.bg.is_running(&id)
+        {
+            anyhow::bail!(
+                "Not started: you're already waiting on {id}, and sleeping again doesn't make it come sooner. End your turn now; the <job-done id={id}> wake starts your next one."
+            );
+        }
         let started =
             crate::background::start_job(&self.shared.bg, input, &self.ctx, &self.jobs_dir())?;
         let id = started
@@ -3880,6 +3891,7 @@ Not saved: the next session starts on {from} again"
             .find(|w| w.starts_with("job-"))
             .map(|w| w.trim_end_matches([',', '.']).to_string())
             .unwrap_or_else(|| "a background job".into());
+        *self.shared.bg.long_wait.lock().unwrap() = Some(id.clone());
         self.notice(
             Level::Warn,
             format!("a {secs}s sleep moved to background job {id}; the turn goes on"),
@@ -12743,6 +12755,39 @@ for line in sys.stdin:
             "{:?}",
             notices(&evs)
         );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The quad00 storm: a model that ignores the guard's advice and sleeps again, and again,
+    /// gets one job, not one per sleep. The repeats are refused while the first wait runs.
+    #[tokio::test]
+    async fn a_second_long_sleep_while_one_waits_is_refused() {
+        let dir = tmp_store();
+        // Each a little different, as quad00's were (`echo tick41`, `still-waiting48`): the
+        // identical-call guard never fired.
+        let sleep = |id: &str| {
+            call(id, "Bash", json!({"command": format!("sleep 595; echo {id}; tail -c 500 /dev/null")}))
+        };
+        let script = vec![
+            reply(vec![sleep("w1")], Stop::ToolUse),
+            reply(vec![sleep("w2")], Stop::ToolUse),
+            reply(vec![sleep("w3")], Stop::ToolUse),
+            reply(vec![text("ending my turn")], Stop::End),
+        ];
+        let mut h = engine_with(script, true, None, None, None, dir.clone());
+        drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        submit(&h, "wait for the export");
+        let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+        let started = evs
+            .iter()
+            .filter(|e| matches!(e.event, Event::BackgroundStarted { .. }))
+            .count();
+        assert_eq!(started, 1, "one wait, however often it's asked for");
+        for id in ["w2", "w3"] {
+            let out = tool_output(&evs, id).expect("the repeat's result");
+            assert!(out.contains("already waiting on job-1"), "{out}");
+        }
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(dir);
     }
