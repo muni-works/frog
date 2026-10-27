@@ -1,4 +1,4 @@
-//! Pip as a character: what the face wants (a target) and where it is (springs chasing it).
+//! The face as a character: what the face wants (a target) and where it is (springs chasing it).
 //!
 //! Every face is a point in one continuous emotion space, valence (unhappy..happy) by arousal
 //! (calm..excited), plus a gaze, a glyph the eyes may morph into, and three levels that make the
@@ -126,7 +126,7 @@ pub struct Face {
     pub talk: f32,
     /// A flash of attention when a word is heard.
     pub hear: f32,
-    /// The loudness (0..1) of Pip's own voice playing right now, set by the host each frame when
+    /// The loudness (0..1) of its own voice playing right now, set by the host each frame when
     /// it speaks with ribt. `None` while silent.
     pub voice: Option<f32>,
     /// The host has a voice: talking follows the audio rather than the words arriving.

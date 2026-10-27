@@ -1,4 +1,4 @@
-//! node-face: Pip's face on the frog node's screen, driven by `frog --serve`.
+//! node-face: The face on the frog node's screen, driven by `frog --serve`.
 //!
 //! ```text
 //! node-face                           # the mini head's 720×720 panel, talking to frog in this directory
@@ -10,10 +10,10 @@
 //! node-face --sheet out.png           # headless: the face through a whole turn, one PNG
 //! ```
 //!
-//! With --voice it's voice only: say "hey frog" (or "pip") and Pip listens; pause and it answers
+//! With --voice it's voice only: say "hey frog" and it listens; pause and it answers
 //! out loud, and you can answer back without the wake word for a few seconds. When it asks
 //! to run something, say yes or no; while it works, "stop" stops it. Until the stereo camera can
-//! say where you are, Pip looks at the pointer while listening.
+//! say where you are, the face looks at the pointer while listening.
 
 #![cfg_attr(not(feature = "window"), allow(dead_code, unused_imports))]
 
@@ -39,7 +39,7 @@ enum PanelArg {
 }
 
 #[derive(Parser)]
-#[command(about = "Pip's face on the frog node's screen")]
+#[command(about = "The face on the frog node's screen")]
 struct Args {
     /// Which head's panel to draw for.
     #[arg(long, value_enum, default_value = "mini")]
@@ -261,7 +261,7 @@ fn run(args: &Args) -> Result<()> {
     let mut win = Window::new("frog node", w, h, opts)?;
     win.set_target_fps(60);
     let mut last = Instant::now();
-    // When Pip last made a sound: its own voice mustn't be heard as yours.
+    // When the face last made a sound: its own voice mustn't be heard as yours.
     let mut spoke = f64::NEG_INFINITY;
 
     while win.is_open() {
@@ -317,19 +317,19 @@ fn run(args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// After Pip stops making sound, how long its ears stay shut (the room's echo of its voice).
+/// After the face stops making sound, how long its ears stay shut (the room's echo of its voice).
 const MUTE_SECS: f64 = 0.6;
 /// A pause this long after some words ends your turn. hear only finishes a word when the next one
 /// starts, so this has to cover the pause and the last word's tail.
 const PAUSE_SECS: f64 = 1.8;
-/// After Pip finishes speaking you can answer without the wake word for this long.
+/// After the face finishes speaking you can answer without the wake word for this long.
 const FOLLOW_SECS: f64 = 6.0;
-/// Words that wake Pip ("hey frog", "pip, …").
-const WAKE: &[&str] = &["frog", "pip"];
+/// Words that wake the face ("hey frog").
+const WAKE: &[&str] = &["frog"];
 
-/// What you said, into frog. While Pip is idle only the wake word starts a turn (or anything, just
+/// What you said, into frog. While the face is idle only the wake word starts a turn (or anything, just
 /// after it spoke); then words go into the turn and a pause sends it. Yes / no answers a request to
-/// run something, "stop" stops it working. `spoke` is when Pip last made a sound. Returns ops.
+/// run something, "stop" stops it working. `spoke` is when the face last made a sound. Returns ops.
 #[cfg(feature = "window")]
 fn listen(e: &node_face::ears::Ears, p: &mut Puck, now: f64, spoke: f64) -> Vec<Value> {
     use node_face::ears::Heard;
@@ -366,7 +366,7 @@ fn listen(e: &node_face::ears::Ears, p: &mut Puck, now: f64, spoke: f64) -> Vec<
             }
             Mode::Thinking | Mode::Running | Mode::Ask => {}
             Mode::Listening => p.hear(&format!("{w} "), now),
-            // idle: the wake word, or a follow-up right after Pip spoke
+            // idle: the wake word, or a follow-up right after the face spoke
             _ if is(&w, WAKE) => p.wake(now),
             _ if now - spoke < FOLLOW_SECS => p.hear(&format!("{w} "), now),
             _ => {}

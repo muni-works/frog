@@ -1,4 +1,4 @@
-//! Pip's ears: ipse's `hear mic`, streaming speech recognition in tang's tensor IR.
+//! The face's ears: ipse's `hear mic`, streaming speech recognition in tang's tensor IR.
 //!
 //! `hear mic` prints one recognized word per line as it's heard (`[t | wall] word`, its pieces
 //! arriving on that line as the decoder commits them), and `[turn end]` lines when its turn heads
@@ -119,7 +119,7 @@ impl Ears {
         (p.0.clone(), p.1.elapsed().as_secs_f64())
     }
 
-    /// Forget a half-heard word (Pip's own voice, say).
+    /// Forget a half-heard word (its own voice, say).
     pub fn clear(&self) {
         self.partial.lock().unwrap().0.clear();
     }

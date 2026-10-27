@@ -1,4 +1,4 @@
-//! Pip's voice: ribt, streaming.
+//! The face's voice: ribt, streaming.
 //!
 //! `ribt-tts stream --stdin --pcm -` stays running for the whole session (its model compiles once,
 //! a few seconds). Frog's reply goes in word by word as it streams, an empty line ends the turn, and
@@ -20,7 +20,7 @@ const SR: u32 = 24_000;
 /// Loudness is noted per block of this many samples (20 ms).
 const BLOCK: usize = 480;
 
-/// Which ribt voice, and where its checkpoints are. The default is Pip's voice: RIBT-2's af_heart
+/// Which ribt voice, and where its checkpoints are. The default is the face's voice: RIBT-2's af_heart
 /// speaker with the Minnesota accent, laid out as the Claude Code announce hook keeps it
 /// (`~/.claude/voice/run2`). Each piece can be overridden with an environment variable.
 pub struct Paths {
@@ -226,7 +226,7 @@ impl Voice {
         Ok(self.stdin.flush()?)
     }
 
-    /// How loud Pip is right now (0..1), or `None` when nothing is playing.
+    /// How loud the face is right now (0..1), or `None` when nothing is playing.
     pub fn level(&self) -> Option<f32> {
         let (q, p) = (
             self.queued.load(Ordering::Relaxed),

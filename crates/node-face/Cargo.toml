@@ -1,6 +1,6 @@
 [package]
 name = "node-face"
-description = "The frog node's face: Pip's Soft Blocks eyes on the head's screen, driven by frog's state"
+description = "The frog node's face: the Soft Blocks eyes on the head's screen, driven by frog's state"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,7 +14,7 @@ path = "src/main.rs"
 default = []
 # A window on the head's panel (X11/Wayland/macOS). Off by default so `cargo build --workspace` needs no GUI libraries.
 window = ["dep:minifb"]
-# Pip speaks with ribt (ipse's streaming TTS), through the host's audio device.
+# the face speaks with ribt (ipse's streaming TTS), through the host's audio device.
 voice = ["window", "dep:rodio"]
 
 [dependencies]
