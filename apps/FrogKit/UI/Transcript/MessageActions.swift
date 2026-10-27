@@ -71,14 +71,13 @@ struct PromptActions: View {
     var body: some View {
         HStack(spacing: 2) {
             if let at = turn.startedAt {
-                // Refreshes each minute, like "10 minutes ago" should.
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    Text(Self.ago(at, now: context.date))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .help(at.formatted(date: .abbreviated, time: .shortened))
-                        .padding(.trailing, 6)
-                }
+                // Refreshes each minute, like "10 minutes ago" should: from the one shared clock,
+                // not a timeline per message (each re-checked on every animation frame).
+                Text(Self.ago(at, now: MinuteClock.shared.now))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .help(at.formatted(date: .abbreviated, time: .shortened))
+                    .padding(.trailing, 6)
             }
             MessageAction(title: "Copy message", symbol: "doc.on.doc", action: copy)
             if turn.number != nil, turn.finished {
@@ -102,5 +101,22 @@ struct PromptActions: View {
 
     static func ago(_ date: Date, now: Date = .now) -> String {
         now.timeIntervalSince(date) < 60 ? "Just now" : relative.localizedString(for: date, relativeTo: now)
+    }
+}
+
+/// One clock for every "N minutes ago" label. A `TimelineView` per message footer was
+/// re-checked on every frame anything animated (hundreds of footers, 30 a second while a
+/// session worked); labels reading this redraw once a minute.
+@MainActor
+@Observable
+final class MinuteClock {
+    static let shared = MinuteClock()
+    private(set) var now = Date()
+    @ObservationIgnored private var timer: Timer?
+
+    private init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            MainActor.assumeIsolated { MinuteClock.shared.now = Date() }
+        }
     }
 }
