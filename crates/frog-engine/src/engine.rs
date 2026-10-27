@@ -338,6 +338,10 @@ struct Journal {
     store: Option<PathBuf>,
     /// Opened lazily on the first durable write, so idle launches leave no files behind.
     log: Mutex<Option<Log>>,
+    /// The log couldn't be created for this session (the id's file is unwritable, say), and
+    /// the one notice saying so has been sent. Appends stay silent no-ops rather than a
+    /// warning per event. Cleared when the session switches (a new conversation or `Op::Clear`).
+    dead: AtomicBool,
     /// For the header: cwd and model name.
     header: Mutex<(PathBuf, String)>,
     /// The current turn's streaming events (text as it arrives, progress), beside the log as
@@ -353,6 +357,7 @@ impl Journal {
             session: Mutex::new(String::new()),
             store,
             log: Mutex::new(None),
+            dead: AtomicBool::new(false),
             header: Mutex::new((PathBuf::new(), String::new())),
             live: Mutex::new(None),
         }
@@ -367,6 +372,7 @@ impl Journal {
         *self.session.lock().unwrap() = id;
         self.seq.store(seq, Ordering::Relaxed);
         *self.log.lock().unwrap() = log;
+        self.dead.store(false, Ordering::SeqCst);
     }
 
     fn has_log(&self) -> bool {
@@ -374,12 +380,17 @@ impl Journal {
     }
 
     /// Append a record to the session log, creating the log on first use. An error means the
-    /// session is no longer being saved.
+    /// session can't be saved, and that the caller should relay the error to the user once.
     fn record(&self, rec: Record) -> std::result::Result<(), String> {
         let Some(dir) = &self.store else {
             return Ok(());
         };
         let mut log = self.log.lock().unwrap();
+        // The log already failed for this session: nothing more to say, and nothing to retry —
+        // the error was a dead file, not a transient one.
+        if log.is_none() && self.dead.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         if log.is_none() {
             let (cwd, model) = self.header.lock().unwrap().clone();
             let header = Header {
@@ -392,11 +403,16 @@ impl Journal {
             };
             match Log::create(dir, header) {
                 Ok(l) => *log = Some(l),
-                Err(e) => return Err(format!("session won't be saved: {e:#}")),
+                Err(e) => {
+                    // Once per session, never per event — the turn endures without a log.
+                    self.dead.store(true, Ordering::SeqCst);
+                    return Err(format!("session log unavailable, running without persistence: {e:#}"));
+                }
             }
         }
         if let Some(Err(e)) = log.as_mut().map(|l| l.append(&rec)) {
             *log = None;
+            self.dead.store(true, Ordering::SeqCst);
             return Err(format!("session log write failed, no longer saving: {e:#}"));
         }
         Ok(())
@@ -7056,6 +7072,49 @@ tool, strip prefixes like RULES:, and add tests.",
         let d = std::env::temp_dir().join(format!("frog-engine-test-{}", session::new_id()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// A journal whose log can't be created says so once and then keeps the turn running
+    /// silently: one notice, appends become no-ops, and a new session tries again.
+    #[test]
+    fn an_unsavable_session_warns_once_and_appends_silently() {
+        let dir = tmp_store();
+        // A directory where the log belongs: nothing can create or open a file there.
+        std::fs::create_dir_all(dir.join("s.jsonl")).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let j = Journal::new(tx, Some(dir.clone()));
+        j.start_session("s".into(), 0, None);
+        *j.header.lock().unwrap() = (dir.clone(), "m".into());
+
+        // First durable event: exactly one warning, and the turn endures it.
+        j.emit(Event::Titled { title: "t".into() });
+        let mut warns = Vec::new();
+        while let Ok(env) = rx.try_recv() {
+            if let Event::Notice { level: Level::Warn, message } = env.event {
+                warns.push(message);
+            }
+        }
+        assert_eq!(warns.len(), 1, "{warns:?}");
+        assert!(warns[0].contains("running without persistence"), "{warns:?}");
+
+        // Subsequent appends are silent no-ops: a run of events, no more warnings.
+        for i in 0..10 {
+            j.emit(Event::Titled { title: format!("t{i}") });
+        }
+        while let Ok(env) = rx.try_recv() {
+            assert!(!matches!(env.event, Event::Notice { level: Level::Warn, .. }));
+        }
+
+        // A new session (Op::Clear's path) tries again: the dead flag cleared, and with a
+        // writable name its log is actually created — no warning, real persistence.
+        j.start_session("s2".into(), 0, None);
+        j.emit(Event::Titled { title: "t".into() });
+        while let Ok(env) = rx.try_recv() {
+            assert!(!matches!(env.event, Event::Notice { level: Level::Warn, .. }));
+        }
+        let saved = session::load(&dir, "s2").unwrap();
+        assert_eq!(saved.last_seq(), 1, "the fresh session's event was logged");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Collect events through the next `Idle`.
