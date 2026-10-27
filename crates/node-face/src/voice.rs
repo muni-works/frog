@@ -98,6 +98,8 @@ pub struct Voice {
     queued: Arc<AtomicUsize>,
     played: Arc<AtomicUsize>,
     levels: Arc<Mutex<Vec<f32>>>,
+    /// The samples themselves, from absolute sample `.0` on, for the waveform.
+    pcm: Arc<Mutex<(usize, Vec<i16>)>>,
     /// How much of this turn's reply has been sent, and whether the turn is still open.
     sent: usize,
     open: bool,
@@ -139,7 +141,8 @@ impl Voice {
         let sink = Sink::try_new(&handle)?;
         let (queued, played) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
         let levels = Arc::new(Mutex::new(Vec::new()));
-        let (q, pl, lv) = (queued.clone(), played.clone(), levels.clone());
+        let pcm = Arc::new(Mutex::new((0usize, Vec::new())));
+        let (q, pl, lv, pc) = (queued.clone(), played.clone(), levels.clone(), pcm.clone());
         std::thread::spawn(move || {
             let mut buf = vec![0u8; BLOCK * 2];
             let mut carry: Vec<i16> = Vec::new();
@@ -180,6 +183,23 @@ impl Voice {
                 if sink.empty() {
                     pl.store(q.load(Ordering::Relaxed), Ordering::Relaxed);
                 }
+                {
+                    // Keep ~10 s behind the playhead for the waveform; drop the rest.
+                    let mut p = pc.lock().unwrap();
+                    let behind = pl.load(Ordering::Relaxed).saturating_sub(p.0);
+                    if behind > 10 * SR as usize {
+                        let cut = behind - 5 * SR as usize;
+                        let cut = cut.min(p.1.len());
+                        p.1.drain(..cut);
+                        p.0 += cut;
+                    }
+                    if p.0 + p.1.len() < q.load(Ordering::Relaxed) {
+                        // the counter jumped over a silence: pad, so indices stay absolute
+                        let gap = q.load(Ordering::Relaxed) - p.0 - p.1.len();
+                        p.1.extend(std::iter::repeat_n(0, gap));
+                    }
+                    p.1.extend_from_slice(&chunk);
+                }
                 q.fetch_add(chunk.len(), Ordering::Relaxed);
                 sink.append(Counted {
                     samples: chunk.into_iter(),
@@ -194,6 +214,7 @@ impl Voice {
             queued,
             played,
             levels,
+            pcm,
             sent: 0,
             open: false,
         })
@@ -236,6 +257,70 @@ impl Voice {
             return None;
         }
         self.levels.lock().unwrap().get(p / BLOCK).copied()
+    }
+}
+
+impl Voice {
+    /// `n` points of the voice under the playhead (the last ~40 ms), -1..1; empty when silent.
+    pub fn wave(&self, n: usize) -> Vec<f32> {
+        const SPAN: usize = 960;
+        let played = self.played.load(Ordering::Relaxed);
+        if played >= self.queued.load(Ordering::Relaxed) {
+            return Vec::new();
+        }
+        let p = self.pcm.lock().unwrap();
+        let end = played.saturating_sub(p.0).min(p.1.len());
+        let start = end.saturating_sub(SPAN);
+        let s = &p.1[start..end];
+        if s.len() < n {
+            return Vec::new();
+        }
+        (0..n)
+            .map(|i| s[i * s.len() / n] as f32 / 32768.0)
+            .collect()
+    }
+}
+
+/// How loud the room is at the microphone (the default input), 0..1: fast to rise, slow to fall.
+pub struct Mic {
+    _stream: rodio::cpal::Stream,
+    level: Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl Mic {
+    pub fn open() -> Result<Self> {
+        use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        let dev = rodio::cpal::default_host()
+            .default_input_device()
+            .context("no microphone")?;
+        let cfg = dev.default_input_config()?;
+        let level = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let l = level.clone();
+        let stream = dev.build_input_stream(
+            &cfg.into(),
+            move |d: &[f32], _: &rodio::cpal::InputCallbackInfo| {
+                let rms = (d.iter().map(|x| x * x).sum::<f32>() / d.len().max(1) as f32).sqrt();
+                let now = (rms * 8.0).min(1.0);
+                let was = f32::from_bits(l.load(Ordering::Relaxed));
+                let next = if now > was {
+                    now
+                } else {
+                    was * 0.9 + now * 0.1
+                };
+                l.store(next.to_bits(), Ordering::Relaxed);
+            },
+            |_| {},
+            None,
+        )?;
+        stream.play()?;
+        Ok(Self {
+            _stream: stream,
+            level,
+        })
+    }
+
+    pub fn level(&self) -> f32 {
+        f32::from_bits(self.level.load(Ordering::Relaxed))
     }
 }
 

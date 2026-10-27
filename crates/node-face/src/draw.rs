@@ -1,13 +1,13 @@
 //! Drawing the face into the panel's framebuffer.
 //!
 //! Faces are laid out in unit coordinates (1 = the panel's width); on the portrait panel the unit
-//! square sits a little above centre and the lower third carries one line of status. Each eye is a
+//! square sits a little above centre. There is no text: under the eyes one small light says what's
+//! happening (a breathing dot, your voice as dots, a thinking bob, its own voice as a waveform). Each eye is a
 //! 64-point outline: a soft superellipse with its lids and cheek pressed in, which can morph point
 //! for point into a glyph. The glow is the frame itself, blurred and added back.
 
 use crate::face::{Face, Glyph};
 use puck::canvas::{Canvas, Rgb, hex};
-use puck::text::{Anchor, Face as Font, Fonts};
 use std::f32::consts::{PI, TAU};
 
 const N: usize = 64;
@@ -256,9 +256,8 @@ fn blink(t: f64) -> f32 {
     }
 }
 
-/// Draw `face` at time `t` (seconds) over the whole canvas, and `status` in the portrait panel's
-/// lower third.
-pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64, status: &str, fonts: &Fonts) {
+/// Draw `face` at time `t` (seconds) over the whole canvas.
+pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64) {
     cv.clear(BG);
     let w = cv.w as f32;
     let yoff = (cv.h as f32 - w) * 0.32;
@@ -354,35 +353,7 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64, status: &str, font
         }
     }
 
-    // Thinking, loudly: three motes orbit above the eyes.
-    if face.think > 0.02 {
-        for i in 0..3 {
-            let a = (t * 1000.0 / 420.0) as f32 + i as f32 * 2.094;
-            let (mx, my) = u(0.5 + a.cos() * 0.112, 0.2 + a.sin() * 0.035);
-            let alpha = face.think * (0.45 + 0.4 * ((t * 1000.0 / 300.0) as f32 + i as f32).sin());
-            cv.circle(mx, my, (0.012 + 0.006 * a.sin()) * w, col, alpha);
-        }
-    }
-
-    if !status.is_empty() && cv.h > cv.w {
-        let size = w * 0.055;
-        let lines = fonts.wrap(Font::Mono, size, status, w * 0.84);
-        let n = lines.len().min(3);
-        for (i, l) in lines[lines.len() - n..].iter().enumerate() {
-            fonts.draw(
-                cv,
-                Font::Mono,
-                size,
-                w / 2.0,
-                cv.h as f32 * 0.8 + i as f32 * size * 1.35,
-                l,
-                Anchor::Middle,
-                col,
-                0.8,
-                0.0,
-            );
-        }
-    }
+    voice_light(cv, face, t, &u, w, col, st.size);
 
     if st.glow {
         // Louder while listening and thinking: the glow pulses.
@@ -391,6 +362,73 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64, status: &str, font
             + face.hear * 0.4
             + face.think * (0.35 + 0.35 * (t * 1000.0 / 260.0).sin() as f32);
         bloom(cv, (0.55 * loud).min(1.0), (w * 0.025) as usize);
+    }
+}
+
+/// The voice light, under the eyes: a breathing dot at rest; while listening, a row of dots that
+/// bounce with your voice; while thinking, three dots bobbing; while speaking, the waveform of what
+/// it's actually saying, tapered at the ends like a mouth. The states cross-fade on their springs.
+fn voice_light(
+    cv: &mut Canvas,
+    face: &Face,
+    t: f64,
+    u: &dyn Fn(f32, f32) -> (f32, f32),
+    w: f32,
+    col: Rgb,
+    size: f32,
+) {
+    let (cx, cy) = u(0.5, 0.49 + 0.29 * size);
+    let t32 = t as f32;
+    let speak = face.talk.clamp(0.0, 1.0);
+    let listen = (face.listen * (1.0 - speak)).clamp(0.0, 1.0);
+    let think = (face.think * (1.0 - speak) * (1.0 - listen)).clamp(0.0, 1.0);
+    let rest = (1.0 - speak - listen - think).clamp(0.0, 1.0);
+    let dot = 0.012 * w;
+
+    if rest > 0.02 {
+        cv.circle(cx, cy, dot, col, rest * (0.35 + 0.25 * (t32 / 1.4).sin()));
+    }
+    if listen > 0.02 {
+        // Your voice: seven dots, tallest in the middle, each with its own wobble.
+        for i in -3i32..=3 {
+            let shape = 1.0 - i.abs() as f32 / 4.0;
+            let wob = 0.6 + 0.4 * (t32 * 7.0 + i as f32 * 1.3).sin();
+            let h = dot * 2.0 + face.mic * shape * wob * 0.09 * w;
+            let x = cx + i as f32 * 0.04 * w;
+            cv.rrect(x - dot, cy - h / 2.0, dot * 2.0, h, dot, col, listen * 0.9);
+        }
+    }
+    if think > 0.02 {
+        for i in 0..3 {
+            let y = cy - (t32 * 6.0 - i as f32 * 0.9).sin().max(0.0) * 0.014 * w;
+            cv.circle(cx + (i as f32 - 1.0) * 0.04 * w, y, dot, col, think * 0.9);
+        }
+    }
+    if speak > 0.02 {
+        // Its own voice: the waveform under the speaker's playhead, tapered at both ends.
+        let n = 96;
+        let half = 0.2 * w;
+        let amp = 0.09 * w;
+        let fallback = face.voice.unwrap_or(0.3); // no voice engine: a stand-in wave
+        let pts: Vec<(f32, f32)> = (0..n)
+            .map(|i| {
+                let f = i as f32 / (n - 1) as f32;
+                let taper = (f * std::f32::consts::PI).sin().powf(1.5);
+                let s = if face.wave.is_empty() {
+                    fallback * (f * 19.0 + t32 * 14.0).sin()
+                } else {
+                    face.wave[i * face.wave.len() / n]
+                };
+                (
+                    cx - half + 2.0 * half * f,
+                    cy + (s * 2.5).clamp(-1.0, 1.0) * amp * taper,
+                )
+            })
+            .collect();
+        for k in 1..n {
+            let (a, b) = (pts[k - 1], pts[k]);
+            cv.line(a.0, a.1, b.0, b.1, 0.008 * w, col, speak);
+        }
     }
 }
 

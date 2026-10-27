@@ -131,6 +131,10 @@ pub struct Face {
     pub voice: Option<f32>,
     /// The host has a voice: talking follows the audio rather than the words arriving.
     pub voiced: bool,
+    /// The last few tens of milliseconds of its voice under the playhead (-1..1), for the waveform.
+    pub wave: Vec<f32>,
+    /// How loud you are right now (0..1), from the microphone.
+    pub mic: f32,
     vv: f32,
     va: f32,
     vg: f32,
@@ -169,6 +173,8 @@ impl Face {
             hear: 0.0,
             voice: None,
             voiced: false,
+            wave: Vec::new(),
+            mic: 0.0,
             vv: 0.0,
             va: 0.0,
             vg: 0.0,

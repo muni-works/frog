@@ -25,7 +25,6 @@ use node_face::face::Face;
 use puck::canvas::Canvas;
 use puck::demo::{self, Player, Sim};
 use puck::model::{Mode, Puck};
-use puck::text::Fonts;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -79,38 +78,6 @@ impl Args {
     }
 }
 
-/// One line for the portrait panel's lower third.
-fn status(p: &Puck) -> String {
-    // The reply's last sentence, with its own punctuation.
-    let last = |s: &str| {
-        let s = s.trim();
-        let body = s.trim_end_matches(['.', '!', '?']);
-        let start = body.rfind(['.', '!', '?']).map_or(0, |i| i + 1);
-        s[start..].trim().to_string()
-    };
-    match p.mode {
-        Mode::Boot => String::new(),
-        Mode::Idle => p
-            .cwd
-            .rsplit('/')
-            .find(|s| !s.is_empty())
-            .unwrap_or("")
-            .to_string(),
-        Mode::Listening if p.draft.is_empty() => "listening…".into(),
-        Mode::Listening => p.draft.clone(),
-        Mode::Thinking if !p.reply.is_empty() => last(&p.reply),
-        Mode::Thinking => "thinking…".into(),
-        Mode::Running => p.command.clone(),
-        Mode::Ask => p
-            .ask
-            .as_ref()
-            .map(|a| format!("ok to run {}?", a.arg))
-            .unwrap_or_default(),
-        Mode::Done => last(&p.reply),
-        Mode::Error => p.error.clone(),
-    }
-}
-
 fn new_sim() -> Sim {
     let cwd = std::env::current_dir()
         .map(|d| d.display().to_string())
@@ -129,7 +96,6 @@ fn sheet(path: &Path, panel: Panel) -> Result<()> {
     let (tw, th) = (w / scale, h / scale);
     let rows = times.len().div_ceil(cols);
     let mut out = Canvas::new(tw * cols, th * rows);
-    let fonts = Fonts::new();
     let (mut sim, mut face, mut player) = (new_sim(), Face::new(), Player::new(demo::script()));
     let mut cv = Canvas::new(w, h);
     let dt = 1.0 / 60.0;
@@ -139,14 +105,7 @@ fn sheet(path: &Path, panel: Panel) -> Result<()> {
             sim.step(dt);
             face.step(&sim.puck, sim.t, dt, None);
         }
-        draw::draw(
-            &mut cv,
-            &face,
-            &Style::default(),
-            sim.t,
-            &status(&sim.puck),
-            &fonts,
-        );
+        draw::draw(&mut cv, &face, &Style::default(), sim.t);
         let (ox, oy) = ((i % cols) * tw, (i / cols) * th);
         for y in 0..th {
             for x in 0..tw {
@@ -243,8 +202,7 @@ fn run(args: &Args) -> Result<()> {
     } else {
         Vec::new()
     });
-    let (mut sim, mut face, style, fonts) =
-        (new_sim(), Face::new(), Style::default(), Fonts::new());
+    let (mut sim, mut face, style) = (new_sim(), Face::new(), Style::default());
     let (mut cv, mut buf) = (Canvas::new(w, h), Vec::new());
 
     let opts = WindowOptions {
@@ -258,6 +216,8 @@ fn run(args: &Args) -> Result<()> {
     } else {
         None
     };
+    // Your loudness at the mic, for the listening dots (hear has the mic for the words).
+    let mic = mic(args);
     let mut win = Window::new("frog node", w, h, opts)?;
     win.set_target_fps(60);
     let mut last = Instant::now();
@@ -287,6 +247,7 @@ fn run(args: &Args) -> Result<()> {
         if let Some(e) = &ears {
             ops.extend(listen(e, &mut sim.puck, now, spoke));
         }
+        face.mic = mic.as_ref().map_or(0.0, |m| m.level());
         for op in ops {
             if let Some(f) = frog.as_mut()
                 && f.send(&op).is_err()
@@ -306,11 +267,12 @@ fn run(args: &Args) -> Result<()> {
                 voice = None; // ribt stopped: carry on silent
             } else {
                 face.voice = v.level();
+                face.wave = v.wave(96);
             }
         }
         face.voiced = voice.is_some();
         face.step(&sim.puck, sim.t, dt, look);
-        draw::draw(&mut cv, &face, &style, sim.t, &status(&sim.puck), &fonts);
+        draw::draw(&mut cv, &face, &style, sim.t);
         cv.to_u32(&mut buf);
         win.update_with_buffer(&buf, w, h)?;
     }
@@ -385,6 +347,27 @@ fn listen(e: &node_face::ears::Ears, p: &mut Puck, now: f64, spoke: f64) -> Vec<
 }
 
 #[cfg(feature = "voice")]
+fn mic(args: &Args) -> Option<node_face::voice::Mic> {
+    (args.voice && !args.demo)
+        .then(node_face::voice::Mic::open)
+        .and_then(Result::ok)
+}
+
+#[cfg(all(feature = "window", not(feature = "voice")))]
+fn mic(_: &Args) -> Option<NoMic> {
+    None
+}
+
+#[cfg(all(feature = "window", not(feature = "voice")))]
+struct NoMic;
+#[cfg(all(feature = "window", not(feature = "voice")))]
+impl NoMic {
+    fn level(&self) -> f32 {
+        0.0
+    }
+}
+
+#[cfg(feature = "voice")]
 fn voice(args: &Args) -> Result<Option<node_face::voice::Voice>> {
     use node_face::voice::{Paths, Voice};
     Ok(if args.voice {
@@ -409,6 +392,9 @@ struct Silent;
 impl Silent {
     fn feed(&mut self, _: &Puck) -> Result<()> {
         Ok(())
+    }
+    fn wave(&self, _: usize) -> Vec<f32> {
+        Vec::new()
     }
     fn level(&self) -> Option<f32> {
         None
