@@ -1,0 +1,286 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>frog — insides mockup</title>
+<style>
+  :root {
+    --bg: #1e1e1e; --side: #262627; --card: #2a2a2b; --raise: #333335;
+    --text: #ececec; --sec: rgba(235,235,245,.60); --ter: rgba(235,235,245,.32); --quat: rgba(235,235,245,.16);
+    --sep: rgba(255,255,255,.09); --accent: #30d158; --red: #ff453a; --orange: #ff9f0a; --blue: #0a84ff; --purple: #bf5af2;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #111; font: 13px -apple-system, "SF Pro Text", system-ui, sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; }
+  .page { padding: 28px 32px 48px; }
+  h1 { font: 600 20px -apple-system; margin: 0 0 4px; }
+  .lede { color: var(--sec); margin: 0 0 20px; max-width: 920px; line-height: 1.5; }
+  .n { display: inline-flex; width: 18px; height: 18px; border-radius: 9px; background: #ffd60a; color: #000; font: 700 11px -apple-system; align-items: center; justify-content: center; flex: none; }
+
+  .win { width: 1440px; height: 860px; border-radius: 12px; overflow: hidden; display: flex; background: var(--bg); box-shadow: 0 30px 80px rgba(0,0,0,.6), 0 0 0 .5px rgba(255,255,255,.12); }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .toolbar { height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: .5px solid var(--sep); }
+  .lights { display: flex; gap: 8px; margin-right: 10px; }
+  .lights i { width: 12px; height: 12px; border-radius: 6px; background: #ff5f57; } .lights i:nth-child(2){background:#febc2e} .lights i:nth-child(3){background:#28c840}
+  .pill { display: inline-flex; align-items: center; gap: 9px; height: 30px; padding: 0 14px; border-radius: 15px; background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.12); }
+  .pill .sec { color: var(--sec); }
+  .toggle { margin-left: auto; display: inline-flex; gap: 2px; background: rgba(255,255,255,.06); border-radius: 8px; padding: 2px; }
+  .toggle button { all: unset; cursor: pointer; padding: 4px 10px; border-radius: 6px; color: var(--sec); font-size: 12px; }
+  .toggle button.on { background: rgba(255,255,255,.12); color: var(--text); }
+
+  .scroll { flex: 1; overflow: auto; display: flex; justify-content: center; }
+  .col { width: 760px; padding: 24px 0 40px; }
+  .prompt { display: flex; justify-content: flex-end; margin-bottom: 18px; }
+  .prompt span { background: rgba(255,255,255,.08); padding: 8px 12px; border-radius: 14px; max-width: 520px; line-height: 1.45; }
+  .say { line-height: 1.6; margin: 0 0 14px; }
+
+  /* confidence shading */
+  .tk { border-radius: 2px; cursor: default; position: relative; }
+  .show .tk[data-p] { background: rgba(255,159,10, var(--a)); }
+  .show .tk.fork { box-shadow: inset 0 -1.5px 0 var(--orange); }
+  .show .tk.cliff { box-shadow: inset 0 -1.5px 0 var(--red); background: rgba(255,69,58,.22); }
+
+  .tool { background: var(--card); border-radius: 10px; margin: 0 0 14px; overflow: hidden; box-shadow: 0 0 0 .5px var(--sep); }
+  .tool-h { display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--sec); font-size: 12px; border-bottom: .5px solid var(--sep); }
+  .tool-h b { color: var(--text); font-weight: 500; }
+  .tool-h .badge { margin-left: auto; font-size: 11px; color: var(--orange); background: rgba(255,159,10,.12); padding: 1px 7px; border-radius: 9px; display: none; }
+  .show .tool-h .badge { display: inline-block; }
+  .code { font: 12px/1.65 var(--mono); padding: 8px 0; }
+  .ln { display: flex; padding-right: 12px; }
+  .ln .g { width: 34px; text-align: right; padding-right: 10px; color: var(--ter); flex: none; }
+  .ln .m { width: 14px; flex: none; text-align: center; }
+  .ln.add { background: rgba(48,209,88,.08); } .ln.add .m { color: var(--accent); }
+  .ln.del { background: rgba(255,69,58,.07); color: var(--sec); } .ln.del .m { color: var(--red); }
+  .ln .u { display: none; }
+  .show .ln.unsure .u { display: inline-block; width: 6px; height: 6px; border-radius: 3px; background: var(--orange); margin: 0 4px 1px 0; vertical-align: middle; }
+  .kw { color: #ff7ab2; } .ty { color: #6bdfff; } .st { color: #fc6a5d; } .cm { color: #7f8c98; } .nu { color: #d9c97c; }
+
+  .note { display: none; gap: 10px; align-items: flex-start; background: rgba(255,159,10,.08); border-radius: 10px; padding: 10px 12px; margin: 0 0 14px; font-size: 12.5px; line-height: 1.5; color: var(--sec); box-shadow: inset 0 0 0 .5px rgba(255,159,10,.25); }
+  .show .note { display: flex; }
+  .note b { color: var(--text); font-weight: 500; }
+  .note .chips { margin-top: 6px; display: flex; gap: 6px; }
+  .note .chips span { font: 11px var(--mono); background: rgba(255,255,255,.07); padding: 2px 7px; border-radius: 6px; color: var(--text); }
+  .note .chips span i { color: var(--ter); font-style: normal; margin-left: 4px; }
+
+  /* tooltip */
+  #tip { position: fixed; pointer-events: none; background: #2c2c2e; border-radius: 9px; padding: 8px 10px; font-size: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5), 0 0 0 .5px rgba(255,255,255,.14); display: none; min-width: 200px; z-index: 9; }
+  #tip .h { color: var(--ter); font-size: 11px; margin-bottom: 6px; }
+  #tip .r { display: flex; align-items: center; gap: 8px; font: 12px var(--mono); margin: 3px 0; }
+  #tip .r .bar { flex: 1; height: 5px; border-radius: 3px; background: var(--quat); overflow: hidden; }
+  #tip .r .bar i { display: block; height: 100%; background: var(--orange); }
+  #tip .r.pick .bar i { background: var(--accent); }
+  #tip .r .pct { width: 34px; text-align: right; color: var(--sec); }
+  #tip .f { color: var(--ter); font-size: 11px; margin-top: 6px; }
+
+  /* insides pane */
+  .pane { width: 380px; border-left: .5px solid var(--sep); background: var(--side); display: flex; flex-direction: column; }
+  .pane-h { height: 52px; display: flex; align-items: center; padding: 0 16px; gap: 8px; border-bottom: .5px solid var(--sep); font-weight: 600; }
+  .pane-h .live { width: 7px; height: 7px; border-radius: 4px; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .pane-h .sec { margin-left: auto; color: var(--ter); font-weight: 400; font-size: 11.5px; }
+  .pane-b { padding: 14px 16px; overflow: auto; display: flex; flex-direction: column; gap: 18px; }
+  .sect h3 { margin: 0 0 8px; font: 600 10.5px -apple-system; letter-spacing: .04em; color: var(--ter); text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+  .sect h3 .n { width: 15px; height: 15px; font-size: 9.5px; }
+  .sect p { margin: 6px 0 0; color: var(--ter); font-size: 11.5px; line-height: 1.45; }
+  canvas { display: block; width: 100%; border-radius: 6px; background: rgba(0,0,0,.25); }
+  .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .stat { background: rgba(255,255,255,.04); border-radius: 8px; padding: 8px 10px; }
+  .stat .v { font: 600 17px -apple-system; font-variant-numeric: tabular-nums; }
+  .stat .l { color: var(--ter); font-size: 11px; }
+  .layers { display: flex; flex-direction: column; gap: 3px; }
+  .lay { display: flex; align-items: center; gap: 6px; font: 10.5px var(--mono); color: var(--ter); }
+  .lay .kind { width: 30px; }
+  .lay .bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,.05); overflow: hidden; }
+  .lay .bar i { display: block; height: 100%; border-radius: 3px; }
+  .legend { display: flex; gap: 12px; color: var(--ter); font-size: 11px; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+
+  .notes { margin-top: 28px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 1440px; }
+  .notes div { background: #1a1a1a; border-radius: 10px; padding: 14px; line-height: 1.5; color: var(--sec); box-shadow: 0 0 0 .5px var(--sep); }
+  .notes b { color: var(--text); display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Insides: show what the model was thinking, token by token</h1>
+  <p class="lede">Only frog can do this, because frog owns its inference. tang already computes per-token probabilities, MoE expert routing and draft acceptance, then throws them away. This mockup shows them in the transcript (where the model hesitated) and in a live pane (what the model is doing right now). Hover any shaded token. Toggle <b>Insides</b> off and the transcript looks exactly like today.</p>
+
+  <div class="win">
+    <div class="main show" id="main">
+      <div class="toolbar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="pill"><span>fix flaky timeout test</span><span class="sec">local/qwen3-coder-next</span></div>
+        <div class="toggle"><button class="on" data-v="1">Insides</button><button data-v="0">Off</button></div>
+      </div>
+      <div class="scroll"><div class="col">
+        <div class="prompt"><span>the bash timeout test is flaky under cargo test, can you fix it?</span></div>
+
+        <p class="say" id="s1"></p>
+
+        <div class="note"><span class="n">1</span><div><b>The model hesitated on the fix itself.</b> At <code>31.7</code> it gave 38% to keeping <code>30</code> and 21% to <code>"sleep 30 #frog-test"</code>. A different, also-valid fix was close. Not wrong, just a fork worth a glance.
+          <div class="chips"><span>31.7<i>41%</i></span><span>30<i>38%</i></span><span>"sleep 30 #…"<i>21%</i></span></div></div></div>
+
+        <div class="tool">
+          <div class="tool-h"><span>Edit</span><b>crates/frog-engine/src/tools/bash.rs</b><span class="badge">2 unsure lines</span></div>
+          <div class="code" id="diff"></div>
+        </div>
+
+        <p class="say" id="s2"></p>
+      </div></div>
+    </div>
+
+    <aside class="pane">
+      <div class="pane-h"><span class="live"></span>Insides<span class="sec">tang · Metal · turn 4</span></div>
+      <div class="pane-b">
+        <div class="stats">
+          <div class="stat"><div class="v" id="tps">41</div><div class="l">tok/s</div></div>
+          <div class="stat"><div class="v" id="acc">72%</div><div class="l">drafts accepted</div></div>
+          <div class="stat"><div class="v" id="ent">0.61</div><div class="l">mean entropy</div></div>
+        </div>
+
+        <div class="sect">
+          <h3><span class="n">2</span>Certainty over the turn</h3>
+          <canvas id="spark" height="70"></canvas>
+          <p>Entropy per token. Spikes are forks: places the model weighed several answers. Click a spike to jump there.</p>
+        </div>
+
+        <div class="sect">
+          <h3><span class="n">3</span>Experts firing</h3>
+          <canvas id="heat" height="150"></canvas>
+          <div class="legend" style="margin-top:6px"><span><i style="background:#30d158"></i>this token</span><span><i style="background:rgba(48,209,88,.3)"></i>last 64 tokens</span></div>
+          <p>48 layers × 512 experts, top-10 per token. Writing Rust and writing prose light up different neighborhoods. Watch it shift as the model moves from explanation to code.</p>
+        </div>
+
+        <div class="sect">
+          <h3><span class="n">4</span>Layer memory</h3>
+          <div class="layers" id="layers"></div>
+          <p>Hybrid model: 3 in 4 layers are recurrent (DeltaNet), 1 in 4 are full attention. Bar = how hard each layer's state changed on this token.</p>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="notes">
+    <div><b><span class="n">1</span>Forks, not errors</b>Low probability doesn't mean wrong. We only flag a <i>fork</i>: when the runner-up was close (gap under 25 points) on a token that changes meaning. Whitespace and punctuation never flag. One note per turn at most.</div>
+    <div><b><span class="n">2</span>Cheap by default</b>Logprobs (top-5) stream with every token. That's about 60 bytes per token, compressed. Experts and layer state are sampled at 4 Hz only while the pane is open, so a closed pane costs nothing.</div>
+    <div><b><span class="n">3</span>Degrades honestly</b>OpenAI, llama.cpp and vLLM give logprobs, so shading works there. Experts and layer memory are tang-only; on other providers those sections say why they're empty. Anthropic gives none, so Insides is hidden.</div>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+// deterministic fake data
+let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+// [text, p, alts] — p<1 shades; alts shown on hover
+const S1 = [
+  ["The test greps for ", 1], ["`sleep 30`", .55, [["`sleep 30`",55],["leftover",28],["any",17]]],
+  [" with ", 1], ["pgrep", .93], [", but four other engine tests also run ", 1],
+  ["`sleep 30`", .81], [", so under parallel ", 1], ["cargo test", 1], [" it ", 1],
+  ["sees", .47, [["sees",47],["finds",31],["matches",22]]], [" their processes. ", 1],
+  ["I'll", .9], [" give this test a duration ", 1], ["nothing else", .62, [["nothing else",62],["no other test",29],["a unique",9]]], [" uses.", 1]
+];
+const S2 = [
+  ["Ran ", 1], ["`cargo test -p frog-engine`", 1], [" twice: ", 1], ["479", .99], [" passed both times. The ", 1],
+  ["concurrency", .44, [["concurrency",44],["timing",40],["read-only",16]]], [" test that failed once looks ", 1],
+  ["load-sensitive", .36, [["load-sensitive",36],["flaky",34],["fine",30]], "cliff"], ["; I left it alone.", 1]
+];
+function render(el, parts) {
+  el.innerHTML = parts.map(([t, p, alts, cls]) => {
+    if (p >= .95) return t;
+    const a = Math.min(.42, (1 - p) * .55).toFixed(2);
+    const fork = alts && alts[1] && alts[0][1] - alts[1][1] < 25;
+    return `<span class="tk ${cls || (fork ? 'fork' : '')}" data-p="${p}" style="--a:${a}" data-alts='${JSON.stringify(alts || [[t.trim(), Math.round(p*100)]])}'>${t.replace(/`([^`]+)`/g,'<code>$1</code>')}</span>`;
+  }).join("");
+}
+render(document.getElementById("s1"), S1);
+render(document.getElementById("s2"), S2);
+
+const diff = [
+  ["1584", " ", "    #[tokio::test]"],
+  ["1585", " ", "    <span class='kw'>async fn</span> timeout_still_ends_a_stuck_command() {"],
+  ["1586", "-", "        <span class='kw'>let</span> err = run(&amp;json!({ <span class='st'>\"command\"</span>: <span class='st'>\"sleep 30\"</span>, ..."],
+  ["1586", "+", "        <span class='kw'>let</span> err = run(&amp;json!({ <span class='st'>\"command\"</span>: <span class='st'>\"sleep <span class='tk fork' data-p='.41' style='--a:.32' data-alts='[[\"31.7\",41],[\"30\",38],[\"30 #frog-test\",21]]'>31.7</span>\"</span>, ...", 1],
+  ["1597", "-", "            .args([<span class='st'>\"-f\"</span>, <span class='st'>\"sleep 30\"</span>])"],
+  ["1597", "+", "            .args([<span class='st'>\"-f\"</span>, <span class='st'>\"sleep 31.7\"</span>])"],
+  ["1601", "+", "        assert!(!alive, <span class='st'>\"a timed-out `sleep 31.7` is still <span class='tk' data-p='.58' style='--a:.23' data-alts='[[\"running\",58],[\"alive\",42]]'>running</span>\"</span>);", 1],
+];
+document.getElementById("diff").innerHTML = diff.map(([g, m, c, u]) =>
+  `<div class="ln ${m === '+' ? 'add' : m === '-' ? 'del' : ''} ${u ? 'unsure' : ''}"><span class="g">${g}</span><span class="m">${m.trim()}</span><span><span class="u"></span>${c}</span></div>`).join("");
+
+// tooltip
+const tip = document.getElementById("tip"), main = document.getElementById("main");
+document.addEventListener("mousemove", e => {
+  const t = e.target.closest(".tk");
+  if (!t || !main.classList.contains("show")) { tip.style.display = "none"; return; }
+  const alts = JSON.parse(t.dataset.alts);
+  tip.innerHTML = `<div class="h">model's top choices here</div>` + alts.map(([w, p], i) =>
+    `<div class="r ${i ? '' : 'pick'}"><span style="width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${w}</span><span class="bar"><i style="width:${p}%"></i></span><span class="pct">${p}%</span></div>`).join("")
+    + `<div class="f">${alts.length > 1 && alts[0][1] - alts[1][1] < 25 ? "a fork: the runner-up was close" : "picked with reasonable confidence"}</div>`;
+  tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - 240) + "px";
+  tip.style.top = e.clientY + 16 + "px";
+});
+
+// toggle
+document.querySelectorAll(".toggle button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".toggle button").forEach(x => x.classList.toggle("on", x === b));
+  main.classList.toggle("show", b.dataset.v === "1");
+});
+
+// sparkline
+const ents = Array.from({ length: 160 }, (_, i) => {
+  let v = .25 + rnd() * .5;
+  if ([22, 58, 59, 97, 131, 148].includes(i)) v = 1.6 + rnd() * .9;
+  return v;
+});
+function spark() {
+  const c = document.getElementById("spark"), x = c.getContext("2d");
+  c.width = c.clientWidth * 2; c.height = 140; x.scale(2, 2);
+  const w = c.clientWidth, h = 70;
+  x.strokeStyle = "rgba(235,235,245,.12)"; x.setLineDash([2, 3]);
+  x.beginPath(); x.moveTo(0, h - 1.5 / 2.6 * h); x.lineTo(w, h - 1.5 / 2.6 * h); x.stroke(); x.setLineDash([]);
+  x.beginPath();
+  ents.forEach((v, i) => { const px = i / (ents.length - 1) * w, py = h - v / 2.6 * h; i ? x.lineTo(px, py) : x.moveTo(px, py); });
+  x.strokeStyle = "rgba(48,209,88,.9)"; x.lineWidth = 1.3; x.stroke();
+  ents.forEach((v, i) => { if (v > 1.5) { x.fillStyle = "#ff9f0a"; x.beginPath(); x.arc(i / (ents.length - 1) * w, h - v / 2.6 * h, 2.5, 0, 7); x.fill(); } });
+}
+
+// expert heatmap: 48 layers x 512 experts, binned 128 cols
+const L = 48, E = 128, recent = new Float32Array(L * E);
+let phase = 0;
+function heat() {
+  const c = document.getElementById("heat"), x = c.getContext("2d");
+  c.width = c.clientWidth * 2; c.height = 300;
+  const cw = c.width / E, ch = c.height / L;
+  for (let i = 0; i < recent.length; i++) recent[i] *= .93;
+  const hot = new Set();
+  phase += .02;
+  const center = (Math.sin(phase) * .35 + .5) * E;          // "code" vs "prose" neighborhood drifts
+  for (let l = 0; l < L; l++) for (let k = 0; k < 3; k++) {
+    const e = Math.max(0, Math.min(E - 1, Math.round(center + (rnd() - .5) * 46 + Math.sin(l * .7) * 10)));
+    recent[l * E + e] = Math.min(1, recent[l * E + e] + .6); hot.add(l * E + e);
+  }
+  x.clearRect(0, 0, c.width, c.height);
+  for (let i = 0; i < recent.length; i++) {
+    const v = recent[i]; if (v < .02 && !hot.has(i)) continue;
+    x.fillStyle = hot.has(i) ? "#30d158" : `rgba(48,209,88,${(v * .45).toFixed(3)})`;
+    x.fillRect((i % E) * cw, Math.floor(i / E) * ch, cw - .5, ch - .5);
+  }
+}
+
+// layer memory bars
+const layersEl = document.getElementById("layers");
+const LAY = Array.from({ length: 12 }, (_, i) => ({ attn: i % 4 === 3, el: null }));
+layersEl.innerHTML = LAY.map((l, i) => `<div class="lay"><span class="kind">${l.attn ? "attn" : "Δnet"}</span><span>L${String(i * 4).padStart(2, "0")}</span><span class="bar"><i style="width:30%;background:${l.attn ? "var(--blue)" : "var(--purple)"}"></i></span></div>`).join("");
+const bars = [...layersEl.querySelectorAll(".bar i")];
+
+function tick() {
+  heat();
+  bars.forEach((b, i) => b.style.width = (15 + rnd() * (LAY[i].attn ? 70 : 45)).toFixed(0) + "%");
+  document.getElementById("tps").textContent = (38 + Math.round(rnd() * 7));
+  document.getElementById("acc").textContent = (66 + Math.round(rnd() * 12)) + "%";
+}
+spark(); tick(); setInterval(tick, 250);
+</script>
+</body>
+</html>
