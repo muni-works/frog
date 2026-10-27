@@ -140,6 +140,62 @@ impl Drop for Ears {
     }
 }
 
+/// The wake-word spotter: ipse's `wake listen` (a small time-delay network trained on ribt-made
+/// speech), fed the microphone at 16 kHz, one `[wake] p 0.97` line per wake.
+pub struct Wake {
+    child: Child,
+    woke: Receiver<f32>,
+}
+
+impl Wake {
+    /// `bin` defaults to $WAKE_BIN, else `wake` on PATH. Returns the spotter and the pipe to feed it.
+    pub fn spawn(
+        bin: Option<&str>,
+        model: &str,
+        threshold: f32,
+    ) -> Result<(Self, std::process::ChildStdin)> {
+        let bin = bin
+            .map(str::to_string)
+            .or_else(|| std::env::var("WAKE_BIN").ok())
+            .unwrap_or_else(|| "wake".into());
+        let mut child = Command::new(&bin)
+            .args(["listen", "--model", model, "--th", &threshold.to_string()])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .with_context(|| format!("couldn't start `{bin} listen`; set WAKE_BIN to its path"))?;
+        let input = child.stdin.take().context("wake stdin")?;
+        let out = child.stdout.take().context("wake stdout")?;
+        let (tx, woke) = channel();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                let p = line
+                    .rsplit(' ')
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(1.0);
+                if line.starts_with("[wake]") && tx.send(p).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok((Self { child, woke }, input))
+    }
+
+    /// Did it hear the wake word since the last call?
+    pub fn heard(&self) -> Option<f32> {
+        self.woke.try_iter().last()
+    }
+}
+
+impl Drop for Wake {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

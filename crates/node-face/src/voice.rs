@@ -326,17 +326,38 @@ pub struct Mic {
 }
 
 impl Mic {
-    pub fn open() -> Result<Self> {
+    /// Open the default input. With `tap`, also write it there as 16 kHz s16le mono (the wake-word
+    /// spotter's input).
+    pub fn open(mut tap: Option<std::process::ChildStdin>) -> Result<Self> {
         use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
         let dev = rodio::cpal::default_host()
             .default_input_device()
             .context("no microphone")?;
         let cfg = dev.default_input_config()?;
+        let (rate, ch) = (cfg.sample_rate().0 as f64, cfg.channels() as usize);
         let level = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let l = level.clone();
+        // linear-interpolated down to 16 kHz for the tap
+        let (mut phase, mut prev, step) = (0.0f64, 0.0f32, rate / 16_000.0);
         let stream = dev.build_input_stream(
             &cfg.into(),
             move |d: &[f32], _: &rodio::cpal::InputCallbackInfo| {
+                if let Some(t) = tap.as_mut() {
+                    let mut bytes = Vec::with_capacity(d.len() / ch * 2);
+                    for f in d.chunks(ch) {
+                        let x = f.iter().sum::<f32>() / ch as f32;
+                        while phase < 1.0 {
+                            let s = prev + (x - prev) * phase as f32;
+                            bytes.extend(((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+                            phase += step;
+                        }
+                        phase -= 1.0;
+                        prev = x;
+                    }
+                    if t.write_all(&bytes).is_err() {
+                        tap = None; // the spotter went away
+                    }
+                }
                 let rms = (d.iter().map(|x| x * x).sum::<f32>() / d.len().max(1) as f32).sqrt();
                 let now = (rms * 8.0).min(1.0);
                 let was = f32::from_bits(l.load(Ordering::Relaxed));

@@ -58,6 +58,16 @@ struct Args {
     /// Log what the ears hear and what the face does, on stderr.
     #[arg(long)]
     verbose: bool,
+    /// A wake-word model from ipse's `wake` (default: $WAKE_MODEL). Without one, the wake word is
+    /// matched in hear's text.
+    #[arg(long, value_name = "PATH")]
+    wake_model: Option<String>,
+    /// The wake binary (default: $WAKE_BIN, else wake on PATH).
+    #[arg(long, value_name = "PATH")]
+    wake_bin: Option<String>,
+    /// How sure the wake model must be (0..1).
+    #[arg(long, default_value_t = 0.9)]
+    wake_th: f32,
     /// The hear binary (default: $HEAR_BIN, else hear on PATH).
     #[arg(long, value_name = "PATH")]
     hear: Option<String>,
@@ -272,7 +282,7 @@ fn run(args: &Args) -> Result<()> {
         None
     };
     // Your loudness at the mic, for the listening dots (hear has the mic for the words).
-    let mic = mic(args);
+    let (wake, mic) = mic(args)?;
     let mut win = Window::new("frog node", w, h, opts)?;
     win.set_target_fps(60);
     let mut last = Instant::now();
@@ -304,6 +314,7 @@ fn run(args: &Args) -> Result<()> {
         }
         if let Some(e) = &ears {
             let mut barge = false;
+            let kws = wake.as_ref().map(|w| w.heard());
             ops.extend(listen(
                 e,
                 &mut sim.puck,
@@ -312,6 +323,7 @@ fn run(args: &Args) -> Result<()> {
                 &mut turn_end,
                 &mut barge,
                 &mut wake_after,
+                kws,
             ));
             if barge {
                 if let Some(v) = voice.as_mut() {
@@ -393,12 +405,22 @@ fn is_wake(w: &str) -> bool {
         .filter(|c| c.is_alphanumeric())
         .collect::<String>()
         .to_lowercase();
-    w.contains(WAKE)
-        || (w.len() >= 3 && edit_distance(&w, WAKE) <= 1 && !NEAR_MISSES.contains(&w.as_str()))
+    if w.contains(WAKE) || NEAR_MISSES.iter().any(|m| w.starts_with(m)) {
+        return w.contains(WAKE);
+    }
+    let close = |s: &str| s.len() >= 3 && edit_distance(s, WAKE) <= 1;
+    // The whole word, or the wake word run together with its neighbour ("fragos" for "frog what's"):
+    // its first or last four letters.
+    let n = w.len();
+    close(&w)
+        || (n > 4 && w.is_char_boundary(4) && close(&w[..4]))
+        || (n > 4 && w.is_char_boundary(n - 4) && close(&w[n - 4..]))
 }
 
-/// Everyday words one letter from the wake word: too common to wake on.
-const NEAR_MISSES: &[&str] = &["from", "fog"];
+/// Everyday words (and word starts) one letter from the wake word: too common to wake on.
+const NEAR_MISSES: &[&str] = &[
+    "from", "fog", "front", "frost", "froth", "frock", "fram", "frig",
+];
 
 fn edit_distance(a: &str, b: &str) -> usize {
     let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
@@ -430,6 +452,8 @@ fn listen(
     end: &mut Option<f64>,
     barge: &mut bool,
     wake_after: &mut bool,
+    // With a wake model: whether it heard the wake word this frame (Some(None) = a model, no wake).
+    kws: Option<Option<f32>>,
 ) -> Vec<Value> {
     use node_face::ears::Heard;
     let mut ops = Vec::new();
@@ -460,7 +484,9 @@ fn listen(
                 Heard::TurnEnd => None,
             })
             .chain(std::iter::once(partial.as_str()))
-            .find(|w| (is_wake(w) || is(w, STOP)) && !own.contains(&bare(w)));
+            .find(|w| ((kws.is_none() && is_wake(w)) || is(w, STOP)) && !own.contains(&bare(w)))
+            .map(str::to_string)
+            .or_else(|| kws.flatten().map(|p| format!("the wake word (p {p:.2})")));
         if let Some(w) = cut {
             log!("interrupted by {w:?} ({:?}, talking {talking})", p.mode);
             *barge = true;
@@ -481,7 +507,11 @@ fn listen(
     }
     // Wake on the word while it's still being heard: hear only finishes a word when the next one
     // starts, and "frog" is often the last thing said before a pause.
-    if idle && is_wake(&e.partial().0) {
+    if idle && kws.flatten().is_some() {
+        log!("wake (model)");
+        p.wake(now);
+    }
+    if idle && kws.is_none() && is_wake(&e.partial().0) {
         log!("wake (partial {:?})", e.partial().0);
         e.take_partial();
         p.wake(now);
@@ -514,9 +544,13 @@ fn listen(
             }
             Mode::Ask if is(&w, &["no", "nope", "don't", "stop", "cancel"]) => ops.extend(p.deny()),
             Mode::Thinking | Mode::Running | Mode::Ask => {}
+            // the wake phrase itself, finished by hear just after the model woke: not part of the request
+            Mode::Listening
+                if now - p.since < 2.0
+                    && (is_wake(&w) || is(&w, &["hey", "hi", "okay", "ok", "hay"])) => {}
             Mode::Listening => p.hear(&format!("{w} "), now),
             // idle: the wake word, or a follow-up right after the face spoke
-            _ if is_wake(&w) => {
+            _ if kws.is_none() && is_wake(&w) => {
                 log!("wake ({w:?})");
                 p.wake(now)
             }
@@ -552,15 +586,38 @@ fn listen(
 }
 
 #[cfg(feature = "voice")]
-fn mic(args: &Args) -> Option<node_face::voice::Mic> {
-    (args.voice && !args.demo)
-        .then(node_face::voice::Mic::open)
-        .and_then(Result::ok)
+fn mic(args: &Args) -> Result<(Option<node_face::ears::Wake>, Option<node_face::voice::Mic>)> {
+    if !args.voice || args.demo {
+        return Ok((None, None));
+    }
+    let model = args
+        .wake_model
+        .clone()
+        .or_else(|| std::env::var("WAKE_MODEL").ok());
+    let (wake, tap) = match model {
+        Some(m) => {
+            let (w, tap) =
+                node_face::ears::Wake::spawn(args.wake_bin.as_deref(), &m, args.wake_th)?;
+            log!("wake word: model {m}");
+            (Some(w), Some(tap))
+        }
+        None => (None, None),
+    };
+    Ok((wake, node_face::voice::Mic::open(tap).ok()))
 }
 
 #[cfg(all(feature = "window", not(feature = "voice")))]
-fn mic(_: &Args) -> Option<NoMic> {
-    None
+fn mic(_: &Args) -> Result<(Option<NoWake>, Option<NoMic>)> {
+    Ok((None, None))
+}
+
+#[cfg(all(feature = "window", not(feature = "voice")))]
+struct NoWake;
+#[cfg(all(feature = "window", not(feature = "voice")))]
+impl NoWake {
+    fn heard(&self) -> Option<f32> {
+        None
+    }
 }
 
 #[cfg(all(feature = "window", not(feature = "voice")))]
@@ -630,10 +687,16 @@ fn main() -> Result<()> {
 mod tests {
     #[test]
     fn wake_word_as_heard() {
-        for w in ["frog", "Frog,", "frogs", "fro", "frok", "cafrog", "hayfrog"] {
+        for w in [
+            "frog", "Frog,", "frogs", "fro", "frok", "cafrog", "hayfrog", "fragos", "frag",
+            "heyfrag",
+        ] {
             assert!(super::is_wake(w), "{w}");
         }
-        for w in ["from", "for", "fog", "free", "front", "f", "dog", "a"] {
+        for w in [
+            "from", "for", "fog", "free", "front", "frost", "frosty", "frame", "f", "dog", "a",
+            "prague",
+        ] {
             assert!(!super::is_wake(w), "{w}");
         }
     }
