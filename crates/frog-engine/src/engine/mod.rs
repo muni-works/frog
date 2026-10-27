@@ -2095,13 +2095,8 @@ impl Agent {
                 self.shared.bg.take_notices();
                 self.sync_log();
                 self.write_summary();
-                self.conv.messages.clear();
-                self.conv.inputs.clear();
-                self.conv.chapters = Default::default();
-                self.conv.skills_loaded.clear();
-                self.conv.rules_seen.clear();
-                self.conv.edited.clear();
-                self.conv.titled = false;
+                self.conv = Conversation::fresh();
+                self.shared.wake_hold.store(false, Ordering::SeqCst);
                 let sandbox = self.ctx.sandbox.take();
                 let shell_sandbox = self.ctx.shell_sandbox.take();
                 let web = self.ctx.web.clone();
@@ -2115,15 +2110,12 @@ impl Agent {
                     Some(model) => self.cfg.resolve(Some(model))?.1,
                     None => self.profile.clone(),
                 });
-                self.conv.usage = Usage::default();
-                self.conv.session_id = session::new_id();
                 self.shared
                     .journal
                     .start_session(self.conv.session_id.clone(), 0, None);
                 if let Some(lock) = self.worktree_lock.as_mut() {
                     lock.set_owner(&self.conv.session_id);
                 }
-                self.conv.turn = 0;
                 self.notes = self.memory.as_ref().map(|m| m.load()).unwrap_or_default();
                 self.refresh_repo_map(&[]);
                 self.apply_harness();

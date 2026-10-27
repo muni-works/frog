@@ -1395,6 +1395,64 @@ async fn a_tool_that_was_not_offered_does_not_run() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// `/clear` starts a new conversation: `!cmd` output queued for the old one doesn't ride
+/// along on the new one's first message.
+#[tokio::test]
+async fn clear_drops_queued_shell_output() {
+    let dir = std::env::temp_dir().join(format!("frog-clear-pending-{}", new_id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = vec![reply(vec![text("hi")], Stop::End)];
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.clone());
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Shell {
+            command: "echo old-conversation-secret".into(),
+        })
+        .unwrap();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if let Event::PermissionRequest { id, .. } = &env.event {
+            h.ops
+                .send(Op::Permission {
+                    id: id.clone(),
+                    decision: Decision::Allow,
+                    note: None,
+                })
+                .unwrap();
+        }
+        if matches!(env.event, Event::ItemCompleted { .. }) {
+            break;
+        }
+    }
+    h.ops.send(Op::Clear).unwrap();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if notices(std::slice::from_ref(&env))
+            .iter()
+            .any(|n| n.contains("new conversation"))
+        {
+            break;
+        }
+    }
+    h.ops
+        .send(Op::Submit {
+            text: "hello".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    while !matches!(
+        h.events.recv().await.unwrap().event,
+        Event::TurnEnded { .. }
+    ) {}
+    let reqs = sent.lock().unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert!(!reqs[0].contains("old-conversation-secret"), "{}", reqs[0]);
+    drop(reqs);
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// `!cmd` in a chat says it needs a folder instead of running.
 #[tokio::test]
 async fn a_chat_refuses_shell_commands() {
