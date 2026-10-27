@@ -158,8 +158,12 @@ impl Wake {
             .map(str::to_string)
             .or_else(|| std::env::var("WAKE_BIN").ok())
             .unwrap_or_else(|| "wake".into());
-        let mut child = Command::new(&bin)
-            .args(["listen", "--model", model, "--th", &threshold.to_string()])
+        let mut cmd = Command::new(&bin);
+        cmd.args(["listen", "--model", model, "--th", &threshold.to_string()]);
+        if let Ok(r) = std::env::var("WAKE_RECORD") {
+            cmd.args(["--record", &r]); // keep what the spotter heard, to replay offline
+        }
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
