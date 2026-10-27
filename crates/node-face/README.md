@@ -2,6 +2,8 @@
 
 ![the face through a turn, full panel](sheet.png)
 
+![the speaking mouth, quiet to loud](mouth.png)
+
 The face on the frog node's screen: the Soft Blocks eyes, kawaii and glowing, at the head's panel resolution. It reuses [`puck`](../puck) to fold `frog --serve` into what frog is doing, and to draw anti-aliased shapes and text into a framebuffer.
 
 ```

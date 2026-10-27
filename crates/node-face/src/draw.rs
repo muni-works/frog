@@ -365,9 +365,12 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64) {
     }
 }
 
-/// The voice light, under the eyes: a breathing dot at rest; while listening, a row of dots that
-/// bounce with your voice; while thinking, three dots bobbing; while speaking, the waveform of what
-/// it's actually saying, tapered at the ends like a mouth. The states cross-fade on their springs.
+/// The mouth, under the eyes: a mouth made of light, never a readout. At rest a short soft capsule
+/// that breathes; while listening, soft pills that bounce with your voice; while thinking, three
+/// dots bobbing; while speaking, three translucent ribbons that open with the voice's loudness and
+/// drift against each other, added together so their overlaps glow, around a bright core. The
+/// states cross-fade on their springs.
+#[allow(clippy::too_many_arguments)]
 fn voice_light(
     cv: &mut Canvas,
     face: &Face,
@@ -383,53 +386,125 @@ fn voice_light(
     let listen = (face.listen * (1.0 - speak)).clamp(0.0, 1.0);
     let think = (face.think * (1.0 - speak) * (1.0 - listen)).clamp(0.0, 1.0);
     let rest = (1.0 - speak - listen - think).clamp(0.0, 1.0);
-    let dot = 0.012 * w;
+    let dot = 0.011 * w;
 
     if rest > 0.02 {
-        cv.circle(cx, cy, dot, col, rest * (0.35 + 0.25 * (t32 / 1.4).sin()));
+        // A closed mouth: a short capsule, breathing.
+        let b = 0.5 + 0.5 * (t32 / 1.4).sin();
+        let len = (0.05 + 0.006 * b) * w;
+        soft_capsule(cv, cx, cy, len, dot * 0.9, col, rest * (0.5 + 0.3 * b));
     }
     if listen > 0.02 {
-        // Your voice: seven dots, tallest in the middle, each with its own wobble.
-        for i in -3i32..=3 {
-            let shape = 1.0 - i.abs() as f32 / 4.0;
-            let wob = 0.6 + 0.4 * (t32 * 7.0 + i as f32 * 1.3).sin();
-            let h = dot * 2.0 + face.mic * shape * wob * 0.09 * w;
-            let x = cx + i as f32 * 0.04 * w;
-            cv.rrect(x - dot, cy - h / 2.0, dot * 2.0, h, dot, col, listen * 0.9);
+        // Your voice: five soft pills, tallest in the middle, each with its own wobble.
+        for i in -2i32..=2 {
+            let shape = 1.0 - i.abs() as f32 / 3.2;
+            let wob = 0.65 + 0.35 * (t32 * 6.0 + i as f32 * 1.7).sin();
+            let h = dot * 2.0 + face.mic * shape * wob * 0.08 * w;
+            pill(
+                cv,
+                cx + i as f32 * 0.035 * w,
+                cy,
+                dot * 1.6,
+                h,
+                col,
+                listen * 0.85,
+            );
         }
     }
     if think > 0.02 {
         for i in 0..3 {
             let y = cy - (t32 * 6.0 - i as f32 * 0.9).sin().max(0.0) * 0.014 * w;
-            cv.circle(cx + (i as f32 - 1.0) * 0.04 * w, y, dot, col, think * 0.9);
+            soft_dot(
+                cv,
+                cx + (i as f32 - 1.0) * 0.035 * w,
+                y,
+                dot,
+                col,
+                think * 0.9,
+            );
         }
     }
     if speak > 0.02 {
-        // Its own voice: the waveform under the speaker's playhead, tapered at both ends.
-        let n = 96;
-        let half = 0.2 * w;
-        let amp = 0.09 * w;
-        let fallback = face.voice.unwrap_or(0.3); // no voice engine: a stand-in wave
-        let pts: Vec<(f32, f32)> = (0..n)
-            .map(|i| {
-                let f = i as f32 / (n - 1) as f32;
-                let taper = (f * std::f32::consts::PI).sin().powf(1.5);
-                let s = if face.wave.is_empty() {
-                    fallback * (f * 19.0 + t32 * 14.0).sin()
-                } else {
-                    face.wave[i * face.wave.len() / n]
-                };
-                (
-                    cx - half + 2.0 * half * f,
-                    cy + (s * 2.5).clamp(-1.0, 1.0) * amp * taper,
-                )
-            })
-            .collect();
-        for k in 1..n {
-            let (a, b) = (pts[k - 1], pts[k]);
-            cv.line(a.0, a.1, b.0, b.1, 0.008 * w, col, speak);
+        ribbon(cv, cx, cy, w, t32, face.mouth, col, speak);
+    }
+}
+
+/// The speaking mouth: three lens-shaped ribbons, opening with `open` (0..1), drifting at their own
+/// speeds and summed as light, around a thin bright core.
+#[allow(clippy::too_many_arguments)]
+fn ribbon(cv: &mut Canvas, cx: f32, cy: f32, w: f32, t: f32, open: f32, col: Rgb, a: f32) {
+    let half = 0.17 * w;
+    let amp = (0.004 + 0.075 * open.clamp(0.0, 1.0).powf(0.8)) * w;
+    let warm = puck::canvas::lerp(col, BLUSH, 0.35);
+    let white = puck::canvas::lerp(col, [1.0; 3], 0.5);
+    // (cycles across, drift speed, phase, height, colour, alpha)
+    let layers = [
+        (1.0f32, 1.3f32, 0.0f32, 1.0f32, col, 0.3f32),
+        (1.6, -2.1, 1.7, 0.75, warm, 0.24),
+        (2.4, 3.2, 4.1, 0.55, white, 0.18),
+    ];
+    let (x0, x1) = ((cx - half).floor() as i32, (cx + half).ceil() as i32);
+    for x in x0..=x1 {
+        let f = ((x as f32 + 0.5 - (cx - half)) / (2.0 * half)).clamp(0.0, 1.0);
+        let env = (f * PI).sin().powf(1.4);
+        for &(cyc, speed, ph, hk, c, ak) in &layers {
+            let h = amp * hk * env * (0.55 + 0.45 * (f * cyc * TAU + t * speed + ph).sin());
+            if h < 0.5 {
+                continue;
+            }
+            for y in (cy - h - 1.0) as i32..=(cy + h + 1.0) as i32 {
+                let d = ((y as f32 + 0.5 - cy).abs() / h).min(1.2);
+                // denser toward the middle, a soft edge outside
+                let v = (1.0 - d * d).max(0.0).powf(0.6)
+                    + (1.0 - (d - 1.0).abs() * 6.0).max(0.0) * 0.25;
+                cv.add(x, y, c, a * ak * v);
+            }
+        }
+        // the core: a thin bright line, thickest where the mouth is open
+        let core = (0.0035 * w) * (0.6 + 0.4 * env);
+        for y in (cy - core - 1.0) as i32..=(cy + core + 1.0) as i32 {
+            let v = (1.0 - ((y as f32 + 0.5 - cy).abs() - core).max(0.0)).clamp(0.0, 1.0);
+            cv.add(x, y, white, a * 0.55 * v * env.powf(0.5));
         }
     }
+}
+
+/// A horizontal capsule with a soft, glowing edge (added as light).
+fn soft_capsule(cv: &mut Canvas, cx: f32, cy: f32, len: f32, r: f32, c: Rgb, a: f32) {
+    let hx = len / 2.0;
+    for y in (cy - r * 2.0) as i32..=(cy + r * 2.0) as i32 {
+        for x in (cx - hx - r * 2.0) as i32..=(cx + hx + r * 2.0) as i32 {
+            let dx = ((x as f32 + 0.5 - cx).abs() - hx).max(0.0);
+            let d = dx.hypot(y as f32 + 0.5 - cy) / r;
+            let v = if d < 1.0 {
+                1.0
+            } else {
+                (-(d - 1.0) * (d - 1.0) * 3.0).exp() * 0.5
+            };
+            cv.add(x, y, c, a * v);
+        }
+    }
+}
+
+/// A vertical pill `h` tall, soft-edged.
+fn pill(cv: &mut Canvas, cx: f32, cy: f32, wd: f32, h: f32, c: Rgb, a: f32) {
+    let (r, hy) = (wd / 2.0, (h / 2.0 - wd / 2.0).max(0.0));
+    for y in (cy - h / 2.0 - r) as i32..=(cy + h / 2.0 + r) as i32 {
+        for x in (cx - r * 2.0) as i32..=(cx + r * 2.0) as i32 {
+            let dy = ((y as f32 + 0.5 - cy).abs() - hy).max(0.0);
+            let d = (x as f32 + 0.5 - cx).hypot(dy) / r;
+            let v = if d < 1.0 {
+                1.0
+            } else {
+                (-(d - 1.0) * (d - 1.0) * 3.0).exp() * 0.5
+            };
+            cv.add(x, y, c, a * v);
+        }
+    }
+}
+
+fn soft_dot(cv: &mut Canvas, cx: f32, cy: f32, r: f32, c: Rgb, a: f32) {
+    pill(cv, cx, cy, r * 2.0, r * 2.0, c, a);
 }
 
 /// Add a blurred copy of the frame back onto itself. The blur runs at quarter resolution (three box

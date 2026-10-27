@@ -135,6 +135,9 @@ pub struct Face {
     pub wave: Vec<f32>,
     /// How loud you are right now (0..1), from the microphone.
     pub mic: f32,
+    /// How open the mouth is (0..1): the voice's loudness, snapping open on syllables and easing
+    /// shut.
+    pub mouth: f32,
     vv: f32,
     va: f32,
     vg: f32,
@@ -175,6 +178,7 @@ impl Face {
             voiced: false,
             wave: Vec::new(),
             mic: 0.0,
+            mouth: 0.0,
             vv: 0.0,
             va: 0.0,
             vg: 0.0,
@@ -252,6 +256,14 @@ impl Face {
         self.hear = (self.hear - dt32 * 2.5).max(0.0);
         let talk_to = if talking { 1.0 } else { 0.0 };
         self.talk += (talk_to - self.talk) * (dt32 * 8.0).min(1.0);
+        // Without a voice engine (the demo), a stand-in syllable rhythm while words arrive.
+        let open = if self.voiced {
+            self.voice.unwrap_or(0.0)
+        } else {
+            self.talk * (0.35 + 0.35 * ((now * 9.0).sin() * (now * 3.7).sin()).abs() as f32)
+        };
+        let rate = if open > self.mouth { 30.0 } else { 9.0 };
+        self.mouth += (open - self.mouth) * (dt32 * rate).min(1.0);
     }
 }
 
