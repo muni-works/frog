@@ -856,6 +856,9 @@ final class Conversation {
             upsert(id) { $0.progress = p }
         case .autoApproved(let item, let reason):
             upsert(item) { $0.autoReason = reason }
+        case .egressBlocked(let host, _, _, let tool, let command, let enforced):
+            // The tripwire: a row in the transcript, warning-styled when it was blocked.
+            note(Self.egressNotice(host: host, tool: tool, command: command, enforced: enforced), warning: enforced)
         case .permissionDecision:
             // Bookkeeping for the ask rate; nothing to show.
             break
@@ -1198,6 +1201,14 @@ final class Conversation {
     func flash(_ text: String, warning: Bool = false) {
         pendingFlash = (text, warning)
         if !turns.isEmpty { note(text, warning: warning); pendingFlash = nil }
+    }
+
+    /// The transcript row for an `egress_blocked` event.
+    nonisolated static func egressNotice(host: String, tool: String, command: String, enforced: Bool) -> String {
+        let what = command.isEmpty ? tool : "\(tool): `\(command)`"
+        return enforced
+            ? "Blocked a connection to \(host): it isn't on this session's network allow-list (\(what))."
+            : "A command reached \(host), which isn't on the network allow-list (\(what))."
     }
 
     func note(_ text: String, warning: Bool) {

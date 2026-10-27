@@ -12,6 +12,7 @@ pub mod config;
 pub mod context;
 pub mod diagram;
 pub mod early;
+pub mod egress;
 pub mod energy;
 pub mod engine;
 pub mod folder;

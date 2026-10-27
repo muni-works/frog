@@ -41,6 +41,9 @@ pub struct Ctx {
     pub shell_sandbox: Option<PathBuf>,
     /// Extra reads the shell sandbox allows (config `[sandbox]`).
     pub sandbox_extra: crate::config::SandboxConfig,
+    /// The session's egress allow-list, when it has one: sandboxed commands reach only its
+    /// hosts (`enforce`) or are recorded going elsewhere (`flag`). Shared with subagents.
+    pub egress: Option<std::sync::Arc<crate::egress::Egress>>,
     /// Writes outside the session's checkout that the user approved, by resolved path. The
     /// engine adds one when it asks and the user allows; the tools never go elsewhere silently.
     pub permitted: HashSet<PathBuf>,
@@ -68,6 +71,7 @@ impl Ctx {
             sandbox: None,
             shell_sandbox: None,
             sandbox_extra: Default::default(),
+            egress: None,
             permitted: HashSet::new(),
             progress: None,
             preview: None,

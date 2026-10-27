@@ -754,6 +754,9 @@ enum Event: Decodable, Sendable {
     case appResult(id: String, result: JSONValue?, error: String?)
     /// Auto mode's classifier let tool call `item` run without asking.
     case autoApproved(item: String, reason: String)
+    /// A sandboxed command tried to reach a host off the session's egress allow-list:
+    /// blocked at connect time (`enforced`), or only recorded (flag mode). Durable.
+    case egressBlocked(host: String, port: Int, item: String?, tool: String, command: String, enforced: Bool)
     /// How one permission check was decided (rule, classifier, fallback, ask),
     /// for measuring the ask rate; not shown in the transcript.
     case permissionDecision(item: String, layer: String, outcome: String, reason: String, ms: UInt64)
@@ -824,6 +827,7 @@ extension Event {
         case stepsDone = "steps_done", jobs, jobLabels = "job_labels", inbox
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
         case command, gist
+        case host, port, enforced
         case running
         case status, text, log, items, wakes
     }
@@ -904,6 +908,14 @@ extension Event {
                     message: try c.decodeIfPresent(String.self, forKey: .message)))
         case "auto_approved":
             self = .autoApproved(item: try c.decode(String.self, forKey: .item), reason: try c.decode(String.self, forKey: .reason))
+        case "egress_blocked":
+            self = .egressBlocked(
+                host: try c.decode(String.self, forKey: .host),
+                port: try c.decodeIfPresent(Int.self, forKey: .port) ?? 0,
+                item: try c.decodeIfPresent(String.self, forKey: .item),
+                tool: try c.decodeIfPresent(String.self, forKey: .tool) ?? "Bash",
+                command: try c.decodeIfPresent(String.self, forKey: .command) ?? "",
+                enforced: try c.decodeIfPresent(Bool.self, forKey: .enforced) ?? false)
         case "permission_decision":
             let item = try c.decode(String.self, forKey: .item)
             let layer = try c.decode(String.self, forKey: .layer)

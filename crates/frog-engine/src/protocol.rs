@@ -503,6 +503,25 @@ pub enum Event {
         item: String,
         reason: String,
     },
+    /// A sandboxed command tried to reach a host off the session's egress allow-list (see
+    /// `egress`): blocked at connect time (`enforced`), or only recorded (`flag` mode). The
+    /// exfil tripwire: shown as a notice row, logged to `egress.jsonl`, counted in the brief.
+    EgressBlocked {
+        host: String,
+        /// 0 when the sandbox stopped the lookup itself (a client that ignored the proxy).
+        #[serde(default)]
+        port: u16,
+        /// The tool call whose command tried it, when it was still running (a background
+        /// job's later attempts have none).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<String>,
+        /// `Bash` or `Monitor`.
+        tool: String,
+        /// The start of the command.
+        command: String,
+        #[serde(default)]
+        enforced: bool,
+    },
     /// How one permission check was decided, for measuring the ask rate:
     /// which layer answered (rule, classifier, fallback, user) and how long it took.
     PermissionDecision {
@@ -817,6 +836,7 @@ impl Event {
                 | Self::PermissionResolved { .. }
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
+                | Self::EgressBlocked { .. }
             | Self::PermissionDecision { .. }
                 | Self::Compacted { .. }
             | Self::CompactionFailed { .. }
