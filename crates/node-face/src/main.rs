@@ -128,6 +128,13 @@ fn sheet(path: &Path, panel: Panel) -> Result<()> {
 
 // ---- frog ----
 
+/// What frog is told when its replies are spoken rather than read.
+const SPOKEN: &str = "Your replies are spoken aloud by a voice, not shown as text. Talk the way a person would \
+in conversation: usually a sentence or two, and longer only when the question really needs it. \
+Never use Markdown, lists, headings, tables, code blocks, emoji or links; if something is code or a \
+path, describe it instead of reading it out. Say numbers, units and symbols the way you'd say them. \
+When you used tools, say what you found or did, not how.";
+
 /// `frog --serve` as a child process, one JSON line each way.
 struct Frog {
     child: Child,
@@ -136,8 +143,12 @@ struct Frog {
 }
 
 impl Frog {
-    fn spawn(bin: &str, args: &[String]) -> Result<Self> {
-        let mut child = Command::new(bin)
+    fn spawn(bin: &str, args: &[String], instructions: Option<&str>) -> Result<Self> {
+        let mut cmd = Command::new(bin);
+        if let Some(i) = instructions {
+            cmd.env("FROG_INSTRUCTIONS", i);
+        }
+        let mut child = cmd
             .arg("--serve")
             .args(args)
             .stdin(Stdio::piped())
@@ -195,7 +206,11 @@ fn run(args: &Args) -> Result<()> {
     let mut frog = if args.demo {
         None
     } else {
-        Some(Frog::spawn(&args.frog, &args.frog_args)?)
+        Some(Frog::spawn(
+            &args.frog,
+            &args.frog_args,
+            args.voice.then_some(SPOKEN),
+        )?)
     };
     let mut player = Player::new(if args.demo {
         demo::script()

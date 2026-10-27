@@ -234,7 +234,7 @@ impl Voice {
         } else {
             new.len()
         };
-        let words = new[..upto].split_whitespace().collect::<Vec<_>>().join(" ");
+        let words = speakable(&new[..upto]);
         if !words.is_empty() {
             writeln!(self.stdin, "{words}")?;
             self.open = true;
@@ -324,8 +324,34 @@ impl Mic {
     }
 }
 
+/// Words fit to say: frog is asked not to write Markdown, but anything that slips through
+/// (emphasis, headings, bullets, code ticks, table bars, links) is taken out rather than read.
+pub fn speakable(text: &str) -> String {
+    text.split_whitespace()
+        .filter(|w| !matches!(*w, "-" | "*" | "+" | "|" | ">" | "---") && !w.starts_with("http"))
+        .map(|w| {
+            let w = w.split("](").next().unwrap_or(w); // [text](url) -> text
+            w.trim_start_matches('#')
+                .replace(['*', '_', '`', '|', '[', ']'], "")
+        })
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl Drop for Voice {
     fn drop(&mut self) {
         let _ = self.child.kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn markdown_is_not_read_out() {
+        assert_eq!(
+            super::speakable("## Plan\n- **Run** the `tests` | see [docs](https://x.y) now"),
+            "Plan Run the tests see docs now"
+        );
     }
 }
