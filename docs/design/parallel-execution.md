@@ -78,7 +78,7 @@ batch, `QueuedEvents` shows the queue live). Two additions:
 
 Needs 2's conflict model to know when an urgent item may preempt (never between a write and
 the read that checks it). Impact: fewer polling calls and faster reaction to money events; no
-latency number worth guessing yet.
+latency number worth guessing yet. Mechanics, costs and ship order: `mid-turn-events.md`.
 
 ## org fanning (sketch)
 

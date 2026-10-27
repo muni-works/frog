@@ -11,3 +11,8 @@ smallest shippable version vs parallel-execution.md §4. Extend §4, don't dupli
 
 ## Progress
 - checkpoint 0.
+- docs/design/mid-turn-events.md written (+ one-line pointer from parallel-execution.md §4).
+  Finding: append-only injection doesn't break the cache prefix (anthropic.rs breakpoints);
+  the cost is reaction steps per delivery point (~50k-eq each on 500k) and reasoning-stripping
+  models re-rendering the turn on mid-loop user text. Recommendation: Queue pull (v1) + urgent
+  push at the post-batch safe point (v2), normal stays batched.
