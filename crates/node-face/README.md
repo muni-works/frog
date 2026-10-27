@@ -31,7 +31,7 @@ With `--features voice` and `--voice`, Pip speaks with [ribt](https://github.com
 RIBT_TTS=path/to/ribt-tts cargo run -p node-face --features voice -- --demo --voice
 ```
 
-Model paths default to ribt's Mac layout (`~/runs/tts/v2a`, `~/runs/vocoders/v12long_100000.safetensors`, `~/runs/tts/v2f/student/last.safetensors`); `RIBT_RUN`, `RIBT_CKPT`, `RIBT_VOC` and `RIBT_FLOW` override them. On the Orin, build ribt with `--features cuda`.
+The voice defaults to Pip's: RIBT-2's af_heart speaker, pitch +1, Minnesota accent, from `~/.claude/voice/run2` (where the Claude Code announce hook keeps it). `RIBT_RUN`, `RIBT_CKPT`, `RIBT_VOC`, `RIBT_FLOW`, `RIBT_REF`, `RIBT_PITCH` and `RIBT_ACCENT` override it. ribt-tts must be new enough to `stream --stdin --pcm`. On the Orin, build ribt with `--features cuda`.
 
 Until the head's microphone and camera are wired in, typing stands in for speech and the pointer stands in for where you are. The look was settled in `cortex/face/soft-blocks-lab.html` in the rose repo.
 

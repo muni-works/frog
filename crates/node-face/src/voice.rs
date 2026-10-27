@@ -20,35 +20,42 @@ const SR: u32 = 24_000;
 /// Loudness is noted per block of this many samples (20 ms).
 const BLOCK: usize = 480;
 
-/// Where ribt and its checkpoints are. Defaults are the Mac layout from ribt's README; each can be
-/// overridden with an environment variable.
+/// Which ribt voice, and where its checkpoints are. The default is Pip's voice: RIBT-2's af_heart
+/// speaker with the Minnesota accent, laid out as the Claude Code announce hook keeps it
+/// (`~/.claude/voice/run2`). Each piece can be overridden with an environment variable.
 pub struct Paths {
     pub bin: String,
     pub run: PathBuf,
     pub ckpt: String,
     pub voc: PathBuf,
     pub flow: PathBuf,
+    /// A reference clip of the speaker to sound like.
+    pub r#ref: PathBuf,
+    pub pitch: String,
+    pub accent: String,
 }
 
 impl Paths {
     pub fn from_env(bin: Option<&str>) -> Self {
         let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
         let var = |k: &str| std::env::var(k).ok();
+        let run = var("RIBT_RUN")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".claude/voice/run2"));
+        let path =
+            |k: &str, file: &str| var(k).map(PathBuf::from).unwrap_or_else(|| run.join(file));
         Self {
             bin: bin
                 .map(str::to_string)
                 .or_else(|| var("RIBT_TTS"))
                 .unwrap_or_else(|| "ribt-tts".into()),
-            run: var("RIBT_RUN")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join("runs/tts/v2a")),
-            ckpt: var("RIBT_CKPT").unwrap_or_else(|| "step0024000.safetensors".into()),
-            voc: var("RIBT_VOC")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join("runs/vocoders/v12long_100000.safetensors")),
-            flow: var("RIBT_FLOW")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join("runs/tts/v2f/student/last.safetensors")),
+            ckpt: var("RIBT_CKPT").unwrap_or_else(|| "acoustic_af_bon.safetensors".into()),
+            voc: path("RIBT_VOC", "vocoder_vocos_import.safetensors"),
+            flow: path("RIBT_FLOW", "flow_student_af.safetensors"),
+            r#ref: path("RIBT_REF", "ref_afheart.wav"),
+            pitch: var("RIBT_PITCH").unwrap_or_else(|| "1".into()),
+            accent: var("RIBT_ACCENT").unwrap_or_else(|| "minnesota".into()),
+            run,
         }
     }
 }
@@ -111,6 +118,9 @@ impl Voice {
             .arg(&p.voc)
             .arg("--flow")
             .arg(&p.flow)
+            .arg("--ref")
+            .arg(&p.r#ref)
+            .args(["--pitch", &p.pitch, "--accent", &p.accent, "--seed", "0"])
             .arg("--out-dir")
             .arg(&out_dir)
             .stdin(Stdio::piped())
