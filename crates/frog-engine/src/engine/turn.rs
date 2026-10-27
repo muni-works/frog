@@ -221,6 +221,8 @@ impl Agent {
         // Background work that finished while this turn was queued: delivered with it, as one
         // batch at its start (and shown with it, ahead of its input).
         let wakes = self.shared.bg.take_notices();
+        // Refused waits count within a turn (see `Batch::Waiting`).
+        self.shared.bg.long_wait_refusals.store(0, std::sync::atomic::Ordering::Relaxed);
         self.emit(Event::TurnStarted {
             turn,
             input: input.to_string(),
@@ -581,6 +583,7 @@ impl Agent {
                 Batch::Continue => {}
                 Batch::Denied => break EndReason::Denied,
                 Batch::Looping => break EndReason::Looping,
+                Batch::Waiting => break EndReason::Complete,
                 Batch::Blocked(denial) => break EndReason::BlockedOnApproval { denial },
                 Batch::Suspended => break EndReason::Suspended,
             }

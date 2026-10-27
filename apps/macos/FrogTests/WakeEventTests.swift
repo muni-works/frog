@@ -56,6 +56,22 @@ final class WakeEventTests: XCTestCase {
         XCTAssertNil(WakeEvent.parse(""))
     }
 
+    /// The engine's own turn inputs (a resume, work dropped by a restart) were green user
+    /// bubbles in quad00. They're notice lines.
+    func testEngineNotesAreNoticesNotUserBubbles() {
+        for input in [
+            "<resumed after the app restarted; your previous turn was interrupted; continue>",
+            "<resumed after the app updated; your previous turn was suspended; continue>",
+            "11 background pieces from before the engine restarted were dropped, not re-armed: job-1476 (sleep 5). Re-arm or re-run any that still matter.",
+            "1 background piece from before the engine restarted was dropped, not re-armed: mon-1 (x). Re-arm or re-run any that still matter.",
+        ] {
+            let lead = TurnLead(TurnState(number: 3, input: input))
+            XCTAssertEqual(lead.opener, .none, input)
+            XCTAssertEqual(lead.wakes.map(\.kind), [.note], input)
+        }
+        XCTAssertEqual(TurnLead(TurnState(number: 1, input: "<resumed> what happened?")).opener, .prompt)
+    }
+
     /// The bug: a monitor-done turn rendered as a user bubble. It leads with event rows.
     func testAWakeTurnLeadsWithEventRowsNotAUserBubble() {
         let wake = TurnState(number: 13, input: "<monitor-done id=mon-1 status=timeout polls=7>\nno match after 590s.\n</monitor-done>")

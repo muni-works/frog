@@ -74,14 +74,11 @@ indirect enum PaneLayout: Equatable {
         case .leaf(let leaf):
             guard leaf == target else { return self }
             return .even(edge.axis, edge.leading ? [.leaf(id), self] : [self, .leaf(id)])
-        case .split(let axis, var children, var weights):
+        case .split(let axis, var children, let weights):
             if axis == edge.axis, let i = children.firstIndex(of: .leaf(target)) {
-                let half = weights[i] / 2
-                weights[i] = half
-                let at = edge.leading ? i : i + 1
-                children.insert(.leaf(id), at: at)
-                weights.insert(half, at: at)
-                return .split(axis, children, weights: weights)
+                children.insert(.leaf(id), at: edge.leading ? i : i + 1)
+                // A new pane evens out the row: halving one share left three panes at 50/25/25.
+                return .even(axis, children)
             }
             return PaneLayout.split(axis, children.map { $0.inserting(id, beside: target, on: edge) }, weights: weights).flattened
         }

@@ -7199,6 +7199,50 @@ async fn a_long_bare_sleep_becomes_a_background_job() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// The quad00 storm: a model that ignores the guard's advice and sleeps again, and again,
+/// gets one job, not one per sleep. The repeats are refused while the first wait runs.
+#[tokio::test]
+async fn a_second_long_sleep_while_one_waits_is_refused() {
+    let dir = tmp_store();
+    // Each a little different, as quad00's were (`echo tick41`, `still-waiting48`): the
+    // identical-call guard never fired.
+    let sleep = |id: &str| {
+        call(id, "Bash", json!({"command": format!("sleep 595; echo {id}; tail -c 500 /dev/null")}))
+    };
+    let script = vec![
+        reply(vec![sleep("w1")], Stop::ToolUse),
+        reply(vec![sleep("w2")], Stop::ToolUse),
+        reply(vec![sleep("w3")], Stop::ToolUse),
+        // Never reached: the second refusal ends the turn.
+        reply(vec![sleep("w4")], Stop::ToolUse),
+    ];
+    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "wait for the export");
+    let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let started = evs
+        .iter()
+        .filter(|e| matches!(e.event, Event::BackgroundStarted { .. }))
+        .count();
+    assert_eq!(started, 1, "one wait, however often it's asked for");
+    for id in ["w2", "w3"] {
+        let out = tool_output(&evs, id).expect("the repeat's result");
+        assert!(out.contains("already waiting on job-1"), "{out}");
+    }
+    // The model wouldn't end its turn, so frog did: finished, waiting on the job's wake.
+    assert!(tool_output(&evs, "w4").is_none(), "the turn ended before another sleep");
+    assert!(matches!(
+        evs.iter().find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        }),
+        Some(EndReason::Complete)
+    ));
+    assert!(notices(&evs).iter().any(|n| n.contains("Turn ended to wait for job-1")), "{:?}", notices(&evs));
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// Events never interrupt a turn: two timers that fire while a turn is busy (a 3s command)
 /// are parked, the turn completes normally, and they run as the next turn, in the order
 /// they fired, before the engine goes idle (no `Idle` between the two turns).
