@@ -56,6 +56,7 @@ struct ComposerView: View {
                     .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
                 field
                 controls
+                hint
             }
             .padding(.horizontal, TurnSpace.gutter)
             .padding(.top, TurnSpace.top)
@@ -328,7 +329,8 @@ struct ComposerView: View {
         if let model = workspace.pendingDownloadModel {
             return "Downloading \(model.name)… messages send when it’s ready"
         }
-        if conversation.busy { return "Working… Esc interrupts · Return queues a follow-up" }
+        // The keys are under the field (`hint`), at rest too; the placeholder just says so.
+        if conversation.busy { return "Working… type a follow-up" }
         // A new conversation's placeholder is its only hint (the empty page is just a question).
         let new = conversation.turns.isEmpty && !conversation.replaying
         if workspace.isChat {
@@ -339,6 +341,23 @@ struct ComposerView: View {
 
     private var sendButton: some View {
         SendButton(conversation: conversation, canSend: canSend, send: send)
+    }
+
+    /// The keys, always: queueing is stated before you need it, not only while frog works.
+    /// Return is the one key for both (it sends at rest, queues while a turn runs; there is no
+    /// separate ⌘Return), so the line says what each state does with it.
+    private var hint: some View {
+        Text(conversation.busy
+             ? "⏎ to queue for later · esc interrupts · ⇧⏎ new line"
+             : "⏎ to send · ⏎ while frog works queues for later · ⇧⏎ new line")
+            .font(.system(size: Tokens.Size.meta))
+            .foregroundStyle(Tokens.textQuaternary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 5)
+            .contentTransition(.opacity)
+            .animation(.easeOut(duration: 0.2), value: conversation.busy)
+            .accessibilityHidden(true)
     }
 
     /// Under the field, without chrome: add things on the left, how frog works on the right.
