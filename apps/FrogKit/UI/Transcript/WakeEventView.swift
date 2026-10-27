@@ -38,11 +38,21 @@ struct TurnLead: Equatable {
 struct WakeEventRows: View {
     let events: [WakeEvent]
     let jobs: [String: BackgroundJob]
+    /// Only the newest few until asked: a turn woken by a thousand jobs is one transcript row,
+    /// and building every line of it at once beachballed opening the session.
+    @State private var shown = Self.page
+    static let page = 12
 
     var body: some View {
+        let hidden = max(0, events.count - shown)
         VStack(alignment: .leading, spacing: 3) {
-            ForEach(Array(events.enumerated()), id: \.offset) { _, event in
-                WakeEventRow(event: event, job: jobs[event.id])
+            if hidden > 0 {
+                Button("Show \(min(hidden, Self.page * 4)) earlier of \(hidden)") { shown += Self.page * 4 }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
+            ForEach(hidden..<events.count, id: \.self) { i in
+                WakeEventRow(event: events[i], job: jobs[events[i].id])
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

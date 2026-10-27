@@ -27,9 +27,12 @@ struct FrogFace: View {
     @State private var since = Date()
     /// When the last one-off hop began.
     @State private var hopped: Date?
+    /// Off screen (a scrolled-away row, a closed tab), the timeline stops: hidden frogs ticked at
+    /// 30 a second each and kept an idle app's main thread busy.
+    @State private var onScreen = false
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion || !animating || at != nil)) { timeline in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion || !animating || !onScreen || at != nil)) { timeline in
             #if DEBUG
             let _ = PillProbe.frog()
             #endif
@@ -46,6 +49,8 @@ struct FrogFace: View {
                 .offset(x: pose.body.tx * unit, y: pose.body.ty * unit)
         }
         .frame(width: size, height: size)
+        .onAppear { onScreen = true }
+        .onDisappear { onScreen = false }
         .onChange(of: mood) { since = .now }
         .onChange(of: hop) { hopped = .now }
         .accessibilityHidden(true)
