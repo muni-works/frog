@@ -128,9 +128,11 @@ struct WorkspaceView: View {
         return Self.margin + (open ? Self.sessionsWidth : SessionRail.width) + Self.gap
     }
 
-    private func extent(changes open: Bool, _ pane: Pane) -> CGFloat {
+    private func extent(changes open: Bool, _ pane: Pane, paneWidth: CGFloat = .infinity) -> CGFloat {
         guard pane.hasTabs || pane.hasRail else { return Self.gap }
-        let width = open ? pane.cardWidth : (pane.hasTabs ? Self.changesPill : TimelineRail.width)
+        // A narrow split pane's rail is its slim strip (see `PaneWidth`): it reserves only that.
+        let rail = panes.isSplit && PaneWidth(paneWidth) == .narrow ? TimelineRail.slimWidth : TimelineRail.width
+        let width = open ? pane.cardWidth : (pane.hasTabs ? Self.changesPill : rail)
         return Self.margin + width + Self.gap
     }
 
@@ -141,7 +143,8 @@ struct WorkspaceView: View {
     }
 
     /// Smallest a pane may be dragged to, across a divider.
-    static let minPane: CGFloat = 280
+    /// Smaller is unreadable even with a narrow pane's slimmed chrome.
+    static let minPane: CGFloat = 360
     /// The canvas's coordinate space, for dragging dividers.
     static let canvasSpace = "frog-canvas"
 
@@ -156,7 +159,7 @@ struct WorkspaceView: View {
         }
         // Split panes have a header to keep clear of.
         let top = panes.isSplit ? Self.headerClearance + Self.margin : 0
-        return (r, EdgeInsets(top: top, leading: leftmost ? ext : Self.gap, bottom: 0, trailing: extent(changes: changes, pane)))
+        return (r, EdgeInsets(top: top, leading: leftmost ? ext : Self.gap, bottom: 0, trailing: extent(changes: changes, pane, paneWidth: r.width)))
     }
 
     private func placement(_ pane: Pane) -> (frame: CGRect, insets: EdgeInsets) {

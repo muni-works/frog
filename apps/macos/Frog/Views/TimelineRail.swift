@@ -18,6 +18,9 @@ struct TimelineRail: View {
     let jump: (TurnState.ID) -> Void
 
     static let width: CGFloat = 28
+    /// A narrow split pane's rail: a thin strip, its turns and chapters on hover and click.
+    static let slimWidth: CGFloat = 14
+    @Environment(\.paneWidth) private var paneWidth
 
     @State private var hovered: Int?
     @State private var scrubbed: Int?
@@ -71,7 +74,7 @@ struct TimelineRail: View {
             let h = geo.size.height
             ZStack(alignment: .topLeading) {
                 Canvas { ctx, size in draw(ctx, size) }
-                if labelRoom >= 90 {
+                if labelRoom >= 90, paneWidth > .narrow {
                     labels(in: h)
                 }
                 if let i = hovered, turns.indices.contains(i) {
@@ -104,7 +107,7 @@ struct TimelineRail: View {
             )
             .contextMenu { menu }
         }
-        .frame(width: Self.width)
+        .frame(width: paneWidth == .narrow ? Self.slimWidth : Self.width)
         .animation(.easeOut(duration: 0.12), value: hovered)
         .confirmationDialog(
             "Rewind to before this turn?",
