@@ -48,7 +48,10 @@ state color confined to glyphs, hover-revealed actions are all in the code today
    verb is written is the *busy* placeholder ("Working… Esc interrupts · Return queues a
    follow-up", `ComposerView.swift:300`) — you learn it after you need it, and it disappears at
    idle. The fix: a one-line hint under the field at all times, and queued items styled as a
-   quiet strip with a QUEUED tag (§c.3).
+   quiet strip with a QUEUED tag (§c.3). *Built (PR #116): the hint always shows under the
+   field. One correction to this spec — frog has no ⌘⏎ binding; Return is the one key for
+   both (sends at rest, queues while a turn runs), so the hint says what each state does
+   instead of inventing a chord.*
 
 3. **Nested-session disclosure as a folded count.** Claude shows "3 nested sessions" as one
    muted line under a parent, with a git-branch glyph. Frog renders the full tree with 14pt
@@ -189,9 +192,11 @@ Width 250 → 264pt; the SessionRail compact strip stays as-is.
 
 - Field: raised `#232323`, radius 16, one 0.5px hairline + one soft shadow; transcript scrolls
   under a 40px fade (already built, keep).
-- **Queue affordance**: a persistent one-line hint under the field — `⏎ to send · ⌘⏎ to queue
-  for later · esc interrupts` (11pt, quaternary). Queued messages render above the field as a
-  quiet strip with a small-caps QUEUED tag and an ✕ to un-queue (replaces
+- **Queue affordance**: a persistent one-line hint under the field (11pt, quaternary) — at rest
+  `⏎ to send · ⏎ while frog works queues for later · ⇧⏎ new line`, while busy
+  `⏎ to queue for later · esc interrupts · ⇧⏎ new line`. (Return is the one key for both; there
+  is no separate ⌘⏎ — the spec's earlier copy invented one.) Queued messages render above the
+  field as a quiet strip with a small-caps QUEUED tag and an ✕ to un-queue (replaces
   `QueuedMessages`' clock-icon rows).
 - **Controls row**, left → right: + (attach/mention/skill) · **mode menu** ("Auto ▾", neutral)
   · spacer · **model menu**: "Opus 5.5 · low effort" in one control (text color primary for the
@@ -249,6 +254,11 @@ The collapse-to-pill behavior stays for narrow windows; ⌥⌘0 unchanged.
 | 11 | mascot retirement from live flow; empty-page only | `TranscriptView.swift:701-783` | pure SwiftUI polish | S |
 
 1–5 and 11 are a weekend of pure polish and would already read as "the calm version of frog".
+   *Status: 1–5+11 are built on `frog/premium-shell-1-5`, PR #116 (six commits, one per step).
+   Two follow-ups noted there: (a) two pre-existing sub-second loaders (`ModelLoadingStatus`,
+   `ProbeProgress`) still run ~12.5Hz timelines — outside the one-clock scope, candidates for
+   the same treatment; (b) a `switch-to-400-row-session` benchmark trips its ready budget on
+   some machines regardless of the diff — same known-noisy class the CI skips cover.*
 6–8 are the shell's identity change and need small engine additions (env kind, run totals).
 9–10 land with the review-ux build order (its step 2, outcome card read-only, is the natural
 host for step 9).
