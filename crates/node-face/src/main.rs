@@ -330,8 +330,40 @@ const PAUSE_SECS: f64 = 3.0;
 const FOLLOW_SECS: f64 = 6.0;
 /// After Smart Turn's `[turn end]`, wait this long for the last word to finish decoding.
 const END_GRACE_SECS: f64 = 0.4;
-/// Words that wake the face ("hey frog").
-const WAKE: &[&str] = &["frog"];
+/// The wake word.
+const WAKE: &str = "frog";
+
+/// Is `w` the wake word, as speech recognition tends to spell it? Anything containing it ("frogs",
+/// "cafrog" for a run-together "okay frog") or one letter off ("fro" when it's said alone, "frok").
+fn is_wake(w: &str) -> bool {
+    let w: String = w
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_lowercase();
+    w.contains(WAKE)
+        || (w.len() >= 3 && edit_distance(&w, WAKE) <= 1 && !NEAR_MISSES.contains(&w.as_str()))
+}
+
+/// Everyday words one letter from the wake word: too common to wake on.
+const NEAR_MISSES: &[&str] = &["from", "fog"];
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut prev = row[0];
+        row[0] = i;
+        for j in 1..=b.len() {
+            let cur = row[j];
+            row[j] = (prev + (a[i - 1] != b[j - 1]) as usize)
+                .min(row[j] + 1)
+                .min(row[j - 1] + 1);
+            prev = cur;
+        }
+    }
+    row[b.len()]
+}
 
 /// What you said, into frog. While the face is idle only the wake word starts a turn (or anything, just
 /// after it spoke); then words go into the turn and a pause sends it. Yes / no answers a request to
@@ -356,6 +388,13 @@ fn listen(
             .to_lowercase()
     };
     let is = |w: &str, set: &[&str]| set.contains(&bare(w).as_str());
+    let idle = matches!(p.mode, Mode::Idle | Mode::Done | Mode::Error | Mode::Boot);
+    // Wake on the word while it's still being heard: hear only finishes a word when the next one
+    // starts, and "frog" is often the last thing said before a pause.
+    if idle && is_wake(&e.partial().0) {
+        e.take_partial();
+        p.wake(now);
+    }
     for h in heard {
         let Heard::Word(w) = h else {
             // Smart Turn says you're done; the decoder may still be finishing the last word.
@@ -380,7 +419,7 @@ fn listen(
             Mode::Thinking | Mode::Running | Mode::Ask => {}
             Mode::Listening => p.hear(&format!("{w} "), now),
             // idle: the wake word, or a follow-up right after the face spoke
-            _ if is(&w, WAKE) => p.wake(now),
+            _ if is_wake(&w) => p.wake(now),
             _ if now - spoke < FOLLOW_SECS => p.hear(&format!("{w} "), now),
             _ => {}
         }
@@ -471,4 +510,17 @@ fn main() -> Result<()> {
         return sheet(p, args.panel());
     }
     run(&args)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn wake_word_as_heard() {
+        for w in ["frog", "Frog,", "frogs", "fro", "frok", "cafrog", "hayfrog"] {
+            assert!(super::is_wake(w), "{w}");
+        }
+        for w in ["from", "for", "fog", "free", "front", "f", "dog", "a"] {
+            assert!(!super::is_wake(w), "{w}");
+        }
+    }
 }
