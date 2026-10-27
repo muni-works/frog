@@ -169,6 +169,12 @@ final class EngineProcess {
     /// How the process ended, for error messages.
     var exitDescription: String { Self.describeExit(process) }
 
+    /// The signal that ended the process, if one did.
+    var exitSignal: Int32? {
+        guard !process.isRunning, process.terminationReason == .uncaughtSignal else { return nil }
+        return process.terminationStatus
+    }
+
     private nonisolated static func describeExit(_ process: Process) -> String {
         guard !process.isRunning else { return "still running" }
         let how = process.terminationReason == .uncaughtSignal ? "signal" : "status"
