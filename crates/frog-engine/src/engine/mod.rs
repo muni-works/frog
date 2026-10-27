@@ -3646,6 +3646,17 @@ Not saved: the next session starts on {from} again"
         }
         // A folder that keeps its code on this Mac can't take a cloud model.
         crate::policy::check(&root, &self.profile_name, &self.profile)?;
+        // One engine per linked worktree holds wherever the conversation goes: take the new
+        // tree's lock (or fail, naming its owner) before anything moves, and let the old go.
+        let same_tree = crate::worktree::linked(&root) == crate::worktree::linked(&self.root);
+        if !self.subagent && self.store.is_some() && !same_tree {
+            let lock =
+                crate::worktree::acquire(&root, &self.conv.session_id, Duration::from_secs(5))?;
+            self.worktree_lock = lock.map(|mut l| {
+                l.set_owner(&self.conv.session_id);
+                l
+            });
+        }
         // The session file moves with it: its header says which folder it belongs to.
         if let Some(dir) = self.store.clone() {
             let header = Header {
@@ -3705,8 +3716,12 @@ Not saved: the next session starts on {from} again"
         self.repo_map = Default::default();
         self.conv.edited.clear();
         self.refresh_repo_map(&[]);
-        // MCP servers are configured per project.
+        // MCP servers are configured per project. Ones that connected for the old folder but
+        // weren't merged yet go too, or the next turn would pick them up here.
         self.mcp.shutdown();
+        for (_, mut hub) in std::mem::take(&mut self.mcp_ready_queue) {
+            hub.shutdown();
+        }
         self.mcp = crate::mcp::Hub::empty();
         *self.shared.mcp.lock().unwrap() = None;
         self.connect_mcp();

@@ -1532,6 +1532,92 @@ async fn a_second_engine_in_the_same_worktree_refuses_naming_the_owner() {
     let _ = std::fs::remove_dir_all(repo.parent().unwrap());
 }
 
+/// The worktree lock follows the conversation: moving out of a linked worktree frees it for
+/// another engine, and moving into one another engine owns is refused, naming the owner.
+#[tokio::test]
+async fn the_worktree_lock_follows_a_folder_change() {
+    let (repo, wt) = crate::worktree::tests::repo_with_worktree("follow");
+    let opts = |cwd: PathBuf| {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd,
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: Some(tmp_store()),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        }
+    };
+    let move_to = |to: &Path| {
+        reply(
+            vec![Block::ToolUse {
+                id: "f".into(),
+                name: crate::folder::TOOL.into(),
+                input: json!({ "path": to.to_str().unwrap() }),
+            }],
+            Stop::ToolUse,
+        )
+    };
+    // Approve whatever's asked; the folder tool's result, ok or error.
+    async fn moved(h: &mut Handle) -> ToolOutcome {
+        let mut outcome = None;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::PermissionRequest { id, .. } = &env.event {
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Allow,
+                        note: None,
+                    })
+                    .unwrap();
+            }
+            if let Event::ItemCompleted {
+                item: Item::ToolCall {
+                    name, outcome: o, ..
+                },
+                ..
+            } = &env.event
+                && name == crate::folder::TOOL
+            {
+                outcome = Some(o.clone());
+            }
+            if matches!(env.event, Event::TurnEnded { .. }) {
+                return outcome.unwrap();
+            }
+        }
+    }
+    let script = |to: &Path| {
+        Provider::Scripted(scripted::Client::new(vec![
+            move_to(to),
+            reply(vec![text("moved")], Stop::End),
+        ]))
+    };
+    // Out of the worktree: it's free for the next engine.
+    let mut a = start(opts(wt.clone()), script(&repo)).unwrap();
+    submit(&a, "go to the main checkout");
+    assert_eq!(moved(&mut a).await, ToolOutcome::Ok);
+    let b = start(opts(wt.clone()), script(&repo)).unwrap();
+    // Into a worktree someone else owns: refused, and the conversation stays put.
+    let mut c = start(opts(repo.clone()), script(&wt)).unwrap();
+    submit(&c, "go to the worktree");
+    assert_eq!(moved(&mut c).await, ToolOutcome::Error);
+    shutdown(a).await;
+    shutdown(b).await;
+    shutdown(c).await;
+    let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+}
+
 async fn shutdown(mut h: Handle) {
     h.ops.send(Op::Shutdown).unwrap();
     while h.events.recv().await.is_some() {}
