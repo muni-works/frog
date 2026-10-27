@@ -12,7 +12,7 @@ use rodio::{OutputStream, Sink, Source};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -104,6 +104,10 @@ pub struct Voice {
     pcm: Arc<Mutex<(usize, Vec<i16>)>>,
     /// How much of this turn's reply has been sent, and whether the turn is still open.
     sent: usize,
+    /// The speaker, shared with the reader thread, and whether it's been cut off (interrupted):
+    /// audio still arriving for that reply is dropped.
+    sink: Arc<Sink>,
+    hush: Arc<AtomicBool>,
     open: bool,
 }
 
@@ -140,7 +144,9 @@ impl Voice {
         let stdin = child.stdin.take().context("ribt stdin")?;
         let mut stdout = child.stdout.take().context("ribt stdout")?;
         let (stream, handle) = OutputStream::try_default().context("no audio output")?;
-        let sink = Sink::try_new(&handle)?;
+        let sink = Arc::new(Sink::try_new(&handle)?);
+        let hush = Arc::new(AtomicBool::new(false));
+        let (sk, hs) = (sink.clone(), hush.clone());
         let cues = Sink::try_new(&handle)?;
         let (queued, played) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
         let levels = Arc::new(Mutex::new(Vec::new()));
@@ -183,7 +189,10 @@ impl Voice {
                 }
                 // The speaker has run dry since the last turn: catch the counter up to the queue,
                 // so the gap of silence isn't read as speech.
-                if sink.empty() {
+                if hs.load(Ordering::Relaxed) {
+                    continue; // interrupted: drop the rest of that reply
+                }
+                if sk.empty() {
                     pl.store(q.load(Ordering::Relaxed), Ordering::Relaxed);
                 }
                 {
@@ -204,7 +213,7 @@ impl Voice {
                     p.1.extend_from_slice(&chunk);
                 }
                 q.fetch_add(chunk.len(), Ordering::Relaxed);
-                sink.append(Counted {
+                sk.append(Counted {
                     samples: chunk.into_iter(),
                     played: pl.clone(),
                 });
@@ -220,6 +229,8 @@ impl Voice {
             levels,
             pcm,
             sent: 0,
+            sink,
+            hush,
             open: false,
         })
     }
@@ -230,6 +241,7 @@ impl Voice {
         let reply = p.reply.as_str();
         if reply.len() < self.sent {
             self.sent = 0; // a new turn
+            self.hush.store(false, Ordering::Relaxed);
         }
         let streaming = matches!(p.mode, Mode::Thinking | Mode::Running);
         let new = &reply[self.sent..];
@@ -245,6 +257,21 @@ impl Voice {
         }
         self.sent += upto;
         if self.open && !streaming {
+            writeln!(self.stdin)?;
+            self.open = false;
+        }
+        Ok(self.stdin.flush()?)
+    }
+
+    /// Stop talking now (the user interrupted): silence the speaker, end the utterance in ribt,
+    /// and drop whatever of this reply is still on its way.
+    pub fn stop(&mut self) -> Result<()> {
+        self.hush.store(true, Ordering::Relaxed);
+        self.sink.clear();
+        self.sink.play();
+        self.played
+            .store(self.queued.load(Ordering::Relaxed), Ordering::Relaxed);
+        if self.open {
             writeln!(self.stdin)?;
             self.open = false;
         }

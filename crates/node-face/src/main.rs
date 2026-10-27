@@ -279,6 +279,7 @@ fn run(args: &Args) -> Result<()> {
     // When the face last made a sound: its own voice mustn't be heard as yours.
     let mut spoke = f64::NEG_INFINITY;
     let mut turn_end: Option<f64> = None;
+    let mut wake_after = false;
     let (mut last_mode, mut last_mic_log) = (sim.puck.mode, 0.0f64);
 
     while win.is_open() {
@@ -302,7 +303,23 @@ fn run(args: &Args) -> Result<()> {
             spoke = now;
         }
         if let Some(e) = &ears {
-            ops.extend(listen(e, &mut sim.puck, now, spoke, &mut turn_end));
+            let mut barge = false;
+            ops.extend(listen(
+                e,
+                &mut sim.puck,
+                now,
+                spoke,
+                &mut turn_end,
+                &mut barge,
+                &mut wake_after,
+            ));
+            if barge {
+                if let Some(v) = voice.as_mut() {
+                    let _ = v.stop();
+                }
+                face.voice = None;
+                spoke = f64::NEG_INFINITY; // stop hearing its own voice now it's quiet
+            }
         }
         face.mic = mic.as_ref().map_or(0.0, |m| m.level());
         if sim.puck.mode != last_mode {
@@ -361,6 +378,8 @@ const PAUSE_SECS: f64 = 3.0;
 const FOLLOW_SECS: f64 = 6.0;
 /// After Smart Turn's `[turn end]`, wait this long for the last word to finish decoding.
 const END_GRACE_SECS: f64 = 0.4;
+/// Words that stop it while it talks or works (besides the wake word).
+const STOP: &[&str] = &["stop", "wait", "cancel", "hold"];
 /// After waking with nothing said yet, how long it keeps paying attention.
 const ATTENTION_SECS: f64 = 8.0;
 /// The wake word.
@@ -402,26 +421,64 @@ fn edit_distance(a: &str, b: &str) -> usize {
 /// after it spoke); then words go into the turn and a pause sends it. Yes / no answers a request to
 /// run something, "stop" stops it working. `spoke` is when the face last made a sound. Returns ops.
 #[cfg(feature = "window")]
+#[allow(clippy::too_many_arguments)]
 fn listen(
     e: &node_face::ears::Ears,
     p: &mut Puck,
     now: f64,
     spoke: f64,
     end: &mut Option<f64>,
+    barge: &mut bool,
+    wake_after: &mut bool,
 ) -> Vec<Value> {
     use node_face::ears::Heard;
     let mut ops = Vec::new();
     let heard = e.poll();
-    if now - spoke < MUTE_SECS {
-        e.take_partial(); // its own voice
-        return ops;
-    }
     let bare = |w: &str| {
         w.trim_matches(|c: char| !c.is_alphanumeric())
             .to_lowercase()
     };
     let is = |w: &str, set: &[&str]| set.contains(&bare(w).as_str());
     let idle = matches!(p.mode, Mode::Idle | Mode::Done | Mode::Error | Mode::Boot);
+    if *wake_after && idle {
+        // frog has stopped after an interruption: listen for what they wanted instead
+        *wake_after = false;
+        p.wake(now);
+    }
+
+    // Interruption. While it talks (its ears hear its own voice) or works, only "frog" or "stop"
+    // get through, and not if it's saying that word itself right now.
+    let talking = now - spoke < MUTE_SECS;
+    let busy = matches!(p.mode, Mode::Thinking | Mode::Running);
+    if talking || busy {
+        let own: std::collections::HashSet<String> = p.reply.split_whitespace().map(bare).collect();
+        let partial = e.partial().0;
+        let cut = heard
+            .iter()
+            .filter_map(|h| match h {
+                Heard::Word(w) => Some(w.as_str()),
+                Heard::TurnEnd => None,
+            })
+            .chain(std::iter::once(partial.as_str()))
+            .find(|w| (is_wake(w) || is(w, STOP)) && !own.contains(&bare(w)));
+        if let Some(w) = cut {
+            log!("interrupted by {w:?} ({:?}, talking {talking})", p.mode);
+            *barge = true;
+            e.take_partial();
+            *end = None;
+            if busy {
+                ops.extend(p.interrupt());
+                *wake_after = true; // listen once frog has stopped
+            } else {
+                p.wake(now);
+            }
+            return ops;
+        }
+        if talking {
+            e.take_partial(); // its own voice
+            return ops;
+        }
+    }
     // Wake on the word while it's still being heard: hear only finishes a word when the next one
     // starts, and "frog" is often the last thing said before a pause.
     if idle && is_wake(&e.partial().0) {
@@ -456,9 +513,6 @@ fn listen(
                 ops.extend(p.approve())
             }
             Mode::Ask if is(&w, &["no", "nope", "don't", "stop", "cancel"]) => ops.extend(p.deny()),
-            Mode::Thinking | Mode::Running if is(&w, &["stop", "wait", "cancel"]) => {
-                ops.extend(p.interrupt())
-            }
             Mode::Thinking | Mode::Running | Mode::Ask => {}
             Mode::Listening => p.hear(&format!("{w} "), now),
             // idle: the wake word, or a follow-up right after the face spoke
@@ -548,6 +602,9 @@ impl Silent {
         Vec::new()
     }
     fn cue(&self, _: &[u8]) {}
+    fn stop(&mut self) -> Result<()> {
+        Ok(())
+    }
     fn level(&self) -> Option<f32> {
         None
     }
