@@ -48,7 +48,7 @@ struct WakeEventRows: View {
         VStack(alignment: .leading, spacing: 3) {
             if hidden > 0 {
                 Button("Show \(min(hidden, Self.page * 4)) earlier of \(hidden)") { shown += Self.page * 4 }
-                    .buttonStyle(.link)
+                    .buttonStyle(.borderless)
                     .font(.caption)
             }
             ForEach(hidden..<events.count, id: \.self) { i in
