@@ -51,4 +51,40 @@ Rules: state color on glyphs only; numbers tabular; one shadow family (composer 
 | 11 | mascot out of live flow | TranscriptView:701-783 | S |
 
 ## Progress
-- checkpoint 0 (this file)
+- e254588 checkpoint 0
+- f8b3703 step 1 — Tokens.swift: c.0 as static lets (canvas/sidebar/raised/bubble, hairline .065/.11,
+  text #ececec/.58/.34/.2, accent=frog, signal #e5a54b, fail #ff6961, ramp 14/13/12.5/11.5/10.5,
+  radii 16/14/12/16/7, one pulse anim); 4-component Color(light:dark:) init; FrogCanvas dark 0.118→0.098.
+  Only FrogCanvas swapped (the one §d row); sidebar/field chrome stays for steps 6–8.
+- 737216a step 2 — UserPrompt: neutral bubble (Tokens.bubble, radius 16, Tokens.text); dropped
+  `tint` param + TurnView.promptTint + the dead `models` env read. Place colors stay in ModelLabel.
+- 21479c1 step 3 — one clock: pill's ActivityLabel running branch lost TimelineView+elapsed;
+  ActivityPanel header clock → finished-only; ActivityStepRow.runningClock → `streaming` dot;
+  SubagentView per-agent clock dropped; ActivityLabel.elapsed() deleted. LiveStatus keeps the
+  only 1Hz tick. PillProbe.clockTicks kept (reads 0; benchmark line notes it).
+- 281bb93 step 4 — composer: always-on hint under the controls ("⏎ to send · ⏎ while frog works
+  queues for later · ⇧⏎ new line"; busy: "⏎ to queue for later · esc interrupts"). Honest wording:
+  queueing is plain Return while busy, NOT ⌘Return (ComposerTextView checks shift/option only), so
+  the spec's "⌘⏎ to queue" would have lied; flag for the PM. QueuedMessages → QUEUED strip
+  (small-caps tag, Tokens type, hairline, ✕ per row). Busy placeholder trimmed (hint covers it).
+- 7dd1d26 step 5 — footers hover-only on macOS: `footers` = empty Set on the Mac;
+  TurnFooter.pinned kept for iOS (no hover there). TurnView.pinsFooter mechanics untouched.
+- ff633a9 step 11 — mascot out of the live flow: pill icons → plain symbols (ActivityLabel.icon
+  simplified; playful now words-only; ActivityViewer's waiting frog + dead icon() removed);
+  TypingBubble's frog column removed; Settings help text updated. FrogFace stays: EmptyTranscript,
+  DropZone, Dock tile, iOS/watch/widgets, snapshot frog-faces sheet, permission card, iOS chat header.
+## Tests
+- App suite (local, after step 11): 349 executed, 1 failure —
+  TranscriptSwitchBenchmarkTests/testSwitchTo400RowSession "ready over budget" (0.567 vs 0.25s).
+  Timing flake: the same suite ran all-green 20 min earlier in this worktree; ready is a
+  wall-clock poll under concurrent load; the diff touches no mount/scroll/decode path. Not blocking.
+- Streaming 500-row benchmark passed on rerun; snapshot fixtures all pass; prem-snaps PNGs
+  verified visually (neutral bubble, 0.098 canvas). /private/tmp/prem-dd + prem-target deleted.
+## Deferrals (honest)
+- iOS untouched and green: ChatView:229's `tint:` is SendButton's own param (still exists) —
+  UserPrompt's iOS callers pass no tint. No iOS rebuild run in this worktree (Mac scope).
+- Spec's "⌘⏎ to queue" wording dropped (real binding is Return-while-busy); PM's copy may differ.
+- c.0 applied only where this batch touches; sidebar/field/window chrome keep old surfaces (6–8).
+- WorkingLine/ModelLoadingStatus keep their 0.08s sweeps (progress-idiom unification is later).
+- ThinkingTrace shimmer clock, sidebar/AgentRows clocks: other panes' status rows, out of scope.
+
