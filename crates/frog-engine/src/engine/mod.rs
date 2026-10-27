@@ -3,7 +3,7 @@
 
 use crate::config::{Config, Profile, ProviderKind, Thinking, ToolMode};
 use crate::context::{self, Estimator};
-use crate::harness::{self, Caps, Tier};
+use crate::harness::{self, Tier};
 use crate::message::{Block, Message, Role, Usage};
 use crate::prompt;
 use crate::protocol::{
@@ -181,7 +181,10 @@ returns the same slice. Use offset={} (with a limit) to read the next part, or G
 /// Model calls per top-level turn: uncapped unless `FROG_MAX_STEPS` sets one. Runaway loops are
 /// caught by the repeat guard above, so long agentic work can run to completion.
 fn max_steps() -> u32 {
-    std::env::var("FROG_MAX_STEPS").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX)
+    std::env::var("FROG_MAX_STEPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(u32::MAX)
 }
 /// How many times a turn carries on after a reply runs out of output room.
 const MAX_CONTINUES: u32 = 3;
@@ -673,9 +676,10 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     } else {
                         "this client can't start carried-forward sessions"
                     };
-                    router
-                        .journal
-                        .emit(Event::Notice { level: Level::Info, message: msg.to_string() });
+                    router.journal.emit(Event::Notice {
+                        level: Level::Info,
+                        message: msg.to_string(),
+                    });
                     router.journal.emit(Event::Idle);
                 }
                 Op::Elicit {
@@ -752,18 +756,22 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             *taken <= shared.inbox_void.load(Ordering::SeqCst)
         };
         loop {
-            let op = if let Some(op) = held.take() { Some(op) } else { tokio::select! {
-                op = work_rx.recv() => op,
-                result = agent.mcp_ready() => {
-                    if let Some((_name, delta)) = result {
-                        agent.mcp_ready_queue.push((_name, delta));
-                    } else {
-                        agent.mcp_pending = None;
+            let op = if let Some(op) = held.take() {
+                Some(op)
+            } else {
+                tokio::select! {
+                    op = work_rx.recv() => op,
+                    result = agent.mcp_ready() => {
+                        if let Some((_name, delta)) = result {
+                            agent.mcp_ready_queue.push((_name, delta));
+                        } else {
+                            agent.mcp_pending = None;
+                        }
+                        agent.emit_status();
+                        continue;
                     }
-                    agent.emit_status();
-                    continue;
                 }
-            } };
+            };
             let Some(op) = op else { break };
             agent.poll_mcp();
             if let Op::Shutdown = op {
@@ -928,9 +936,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             // Background work that finished during the turn was parked (never injected into
             // it): it runs now, as the next turn, before the engine goes idle, so nobody sees
             // an idle session that is about to wake. A stop holds it instead.
-            if held.is_none()
-                && shared.bg.has_notices()
-                && !shared.wake_hold.load(Ordering::SeqCst)
+            if held.is_none() && shared.bg.has_notices() && !shared.wake_hold.load(Ordering::SeqCst)
             {
                 held = Some(Op::Wake);
                 continue;
@@ -1209,17 +1215,8 @@ struct Agent {
     est: Estimator,
     /// Everything the user has typed this session, kept verbatim through compaction.
     inputs: Vec<String>,
-    /// The tool-call mode in effect (the profile's, or resolved from `auto`).
-    tool_mode: ToolMode,
-    tier: Tier,
-    caps: Option<Caps>,
-    /// Tool-call format failures under `auto`; enough of them switches modes.
-    mode_failures: u32,
-    /// Why this session fell back to text tool calls, when it did. Session-only: it survives
-    /// `apply_harness` but is never written to the capability cache.
-    text_fallback: Option<String>,
-    /// A stale capability probe was measured again (or tried) this session, for this model.
-    reprobed: bool,
+    /// Tool-call mode, tier and capabilities for the current model, and what it fell back to.
+    harness: harness::Harness,
     /// A Tang sidecar loads its weights on its first completion request. Keep that visible until
     /// the first response arrives, then regular request activity takes over.
     model_ready: bool,
@@ -1285,8 +1282,6 @@ struct Agent {
     warming: Arc<Mutex<(bool, Option<Warming>)>>,
     /// Auto mode's classifier, started on first use.
     classifier: Option<crate::auto::Classifier>,
-    /// Why the session moved to text tool calls at run time, for the degraded status.
-    text_why: Option<String>,
     /// The model this session was started on or last set to on purpose (`Op::SetModel`):
     /// running on another one (a resume that picked up a different default, a fallback) is
     /// shown as degraded. Empty: unknown.
@@ -1342,15 +1337,11 @@ struct Agent {
 impl Agent {
     fn new(o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
         // Cached or shipped capability profiles are useful in both persisted and in-memory engines.
-        let caps = (!harness::native_known(&o.profile))
-            .then(|| harness::cached(&o.profile))
-            .flatten();
-        let tier = harness::tier(&o.profile, caps.as_ref());
-        let tool_mode = harness::choose_mode(&o.profile, caps.as_ref(), tier);
+        let harness = harness::Harness::for_profile(&o.profile);
         let system = format!(
             "{}{}",
             prompt::system_prompt(&o.cwd, &o.cfg, &o.profile.model),
-            harness::guidance(tier)
+            harness::guidance(harness.tier)
         );
         // Panes open when the session was last saved, to close in the log (their shells died
         // with that process) so a resumed client doesn't expect them.
@@ -1392,7 +1383,9 @@ impl Agent {
                         resumed_titled = true;
                     }
                     match &e.event {
-                        Event::BackgroundStarted { id, kind, label, .. } => {
+                        Event::BackgroundStarted {
+                            id, kind, label, ..
+                        } => {
                             bg_ids.push(id.clone());
                             lost_bg.push((id.clone(), kind.clone(), label.clone()));
                         }
@@ -1522,12 +1515,7 @@ impl Agent {
             window,
             est: Estimator::default(),
             inputs,
-            tool_mode,
-            tier,
-            caps,
-            mode_failures: 0,
-            text_fallback: None,
-            reprobed: false,
+            harness,
             model_ready: false,
             quiet: 0,
             turn_usage: TurnUsage::default(),
@@ -1557,7 +1545,6 @@ impl Agent {
             map_logged: false,
             edited: Vec::new(),
             titled: resumed_titled,
-            text_why: None,
             intended_model,
             model_flip_why: None,
             worktree_lock: None,
@@ -1726,8 +1713,8 @@ impl Agent {
             messages: self.messages.len(),
             context_tokens: self.context_tokens(),
             context_window: self.window,
-            tool_mode: self.tool_mode,
-            tier: self.tier,
+            tool_mode: self.harness.tool_mode,
+            tier: self.harness.tier,
             tokens_per_sec: self.tokens_per_sec(),
             todos: self.ctx.todos.clone(),
             vision: self.vision,
@@ -1740,7 +1727,7 @@ impl Agent {
     fn degraded(&self) -> Vec<crate::protocol::Degraded> {
         use crate::protocol::{Degraded, DegradedKind};
         let mut out = Vec::new();
-        if self.tool_mode == ToolMode::Text && self.profile.tool_mode != ToolMode::Text {
+        if self.harness.tool_mode == ToolMode::Text && self.profile.tool_mode != ToolMode::Text {
             out.push(Degraded {
                 kind: DegradedKind::TextTools,
                 what: "text tool calls".into(),
@@ -1748,7 +1735,8 @@ impl Agent {
             });
         }
         let norm = |m: &str| crate::providers::normalize(m);
-        if !self.intended_model.is_empty() && norm(&self.intended_model) != norm(&self.profile_name) {
+        if !self.intended_model.is_empty() && norm(&self.intended_model) != norm(&self.profile_name)
+        {
             out.push(Degraded {
                 kind: DegradedKind::Model,
                 what: format!("on {}", self.profile_name),
@@ -1776,9 +1764,10 @@ impl Agent {
     /// Why this session runs on text tool calls: its own two failed native/JSON replies this
     /// session, else the capability probe that put `auto` there.
     fn text_mode_why(&self) -> String {
-        self.text_why.clone().unwrap_or_else(|| {
-            "its capability probe found native tool calls not working".into()
-        })
+        self.harness
+            .text_why
+            .clone()
+            .unwrap_or_else(|| "its capability probe found native tool calls not working".into())
     }
 
     fn count_call(&mut self, u: Usage, streamed: &Streamed, compact: bool) {
@@ -1869,7 +1858,10 @@ impl Agent {
         let key = closed.key();
         let cached = self.chapter_titles.lock().unwrap().get(&key).cloned();
         if let Some(title) = cached {
-            self.emit(Event::ChapterTitled { turn: closed.start, title });
+            self.emit(Event::ChapterTitled {
+                turn: closed.start,
+                title,
+            });
             return;
         }
         if self.cfg.hermetic {
@@ -1887,7 +1879,10 @@ impl Agent {
             if journal.session() != session {
                 return;
             }
-            journal.emit(Event::ChapterTitled { turn: closed.start, title });
+            journal.emit(Event::ChapterTitled {
+                turn: closed.start,
+                title,
+            });
         });
     }
 
@@ -1925,7 +1920,9 @@ impl Agent {
                 )),
                 EndReason::BlockedOnApproval { denial } => Some((
                     NoticeKind::WaitingOnUser,
-                    format!("turn ended: blocked on an approval that was already denied ({denial})"),
+                    format!(
+                        "turn ended: blocked on an approval that was already denied ({denial})"
+                    ),
                 )),
                 EndReason::Error { error } => {
                     Some((NoticeKind::Errored, format!("turn errored: {error:?}")))
@@ -2234,7 +2231,7 @@ impl Agent {
             return (String::new(), Vec::new());
         }
         let files = crate::named_files::named(input, &self.root);
-        let mut budget = if self.tier == Tier::Strong {
+        let mut budget = if self.harness.tier == Tier::Strong {
             0
         } else {
             (self.est.chars(self.window) / 10).min(24_000)
@@ -2351,7 +2348,8 @@ impl Agent {
                 images: Vec::new(),
             })
             .collect();
-        self.turn_with(&notices.join("\n\n"), Vec::new(), more).await
+        self.turn_with(&notices.join("\n\n"), Vec::new(), more)
+            .await
     }
 
     async fn turn(&mut self, input: &str, images: Vec<crate::protocol::Image>) -> Result<()> {
@@ -2573,7 +2571,9 @@ impl Agent {
                     // The request exceeded the model's context window (estimate missed, or a
                     // result landed that the window can never hold): compact and retry the step
                     // once, instead of ending the turn on a 400. The second failure is real.
-                    if e.downcast_ref::<HttpError>().is_some_and(HttpError::context_overflow) {
+                    if e.downcast_ref::<HttpError>()
+                        .is_some_and(HttpError::context_overflow)
+                    {
                         if !overflowed {
                             overflowed = true;
                             self.notice(
@@ -2588,14 +2588,18 @@ impl Agent {
                                 self.emit(Event::CompactionFailed {
                                     detail: format!("{ce:#}"),
                                 });
-                                anyhow::bail!("compaction failed; the history can't fit the context window");
+                                anyhow::bail!(
+                                    "compaction failed; the history can't fit the context window"
+                                );
                             }
                             continue;
                         }
                         self.emit(Event::CompactionFailed {
                             detail: format!("{e:#}"),
                         });
-                        anyhow::bail!("the request still exceeds the model's context window after compaction");
+                        anyhow::bail!(
+                            "the request still exceeds the model's context window after compaction"
+                        );
                     }
                     let Some(local) = self.cloud_fallback(&e) else {
                         return Err(e);
@@ -2781,19 +2785,17 @@ impl Agent {
 
     /// Recompute tier, tool mode and system prompt from the profile and capabilities.
     fn apply_harness(&mut self) {
-        self.tier = harness::tier(&self.profile, self.caps.as_ref());
-        self.tool_mode = harness::choose_mode(&self.profile, self.caps.as_ref(), self.tier);
-        if self.text_fallback.is_some() && self.profile.tool_mode == ToolMode::Auto {
-            self.tool_mode = ToolMode::Text;
-        }
+        self.harness.apply(&self.profile);
         let base = if self.chat {
             prompt::chat_prompt(&self.cfg, &self.profile.model)
         } else {
             prompt::system_prompt(&self.root, &self.cfg, &self.profile.model)
         };
-        let rules =
-            crate::rules::prompt_section(&self.rules, crate::rules::prompt_budget(self.tier));
-        self.system = format!("{base}{rules}{}", harness::guidance(self.tier));
+        let rules = crate::rules::prompt_section(
+            &self.rules,
+            crate::rules::prompt_budget(self.harness.tier),
+        );
+        self.system = format!("{base}{rules}{}", harness::guidance(self.harness.tier));
         if !self.subagent && self.shared.sessions.enabled() {
             self.system.push_str(crate::tools::sessions::PROMPT);
         }
@@ -2819,7 +2821,7 @@ impl Agent {
         if !self.small_window() {
             self.system.push_str(&crate::skills::catalog(&self.skills));
         }
-        let (index, omitted) = crate::memory::index(&self.notes, self.tier, self.window);
+        let (index, omitted) = crate::memory::index(&self.notes, self.harness.tier, self.window);
         self.system.push_str(&index);
         self.notes_omitted = omitted;
         if self.has_recall() {
@@ -2856,7 +2858,7 @@ impl Agent {
         if self.chat || self.subagent || self.memory.is_none() {
             return;
         }
-        let budget = match crate::repomap::budget(self.tier) {
+        let budget = match crate::repomap::budget(self.harness.tier) {
             // A small window gets the top of the map only.
             b if self.small_window() => b.min(Self::SMALL_REPO_MAP),
             b => b,
@@ -2959,7 +2961,7 @@ impl Agent {
             return String::new();
         };
         let due = crate::rules::due(&self.rules, &rel, &mut self.rules_seen);
-        crate::rules::block(&due, &rel, crate::rules::inject_budget(self.tier))
+        crate::rules::block(&due, &rel, crate::rules::inject_budget(self.harness.tier))
     }
 
     /// Write or update this session's summary from its log. No model call.
@@ -2993,7 +2995,6 @@ impl Agent {
         Some(crate::summary::build(&loaded.header, &loaded.events, None))
     }
 
-
     /// `/remember`, `/forget`, `/memory` and `/recall`: answered with a notice, no model call.
     /// Returns false if `text` isn't one of them.
     fn memory_command(&mut self, text: &str) -> bool {
@@ -3013,7 +3014,7 @@ impl Agent {
                 notes: &self.notes,
                 sessions: &sessions,
             };
-            let reply = crate::recall::command(&sources, query, self.tier);
+            let reply = crate::recall::command(&sources, query, self.harness.tier);
             self.notice(Level::Info, reply);
             return true;
         }
@@ -3036,7 +3037,7 @@ impl Agent {
 
     /// The thinking switch for the next call, given whether [`thinking::wanted`] it.
     fn think_switch(&self, want: bool) -> Option<bool> {
-        let can_switch = match &self.caps {
+        let can_switch = match &self.harness.caps {
             // Nothing to switch off.
             Some(c) if !c.thinks => return None,
             Some(c) => c.think_off,
@@ -3063,10 +3064,12 @@ impl Agent {
     /// would otherwise decide the tool mode forever. Only under `auto`, which is what reads it,
     /// and never for a model whose native tools are known.
     async fn reprobe_if_stale(&mut self) {
-        if self.reprobed || !harness::reprobe_due(&self.profile, self.caps.as_ref(), now_ms()) {
+        if self.harness.reprobed
+            || !harness::reprobe_due(&self.profile, self.harness.caps.as_ref(), now_ms())
+        {
             return;
         }
-        self.reprobed = true;
+        self.harness.reprobed = true;
         // The full tool set, as `frog probe` measures: the probe asks for a Read, which a
         // chat's trimmed specs don't have.
         let specs = tools::specs();
@@ -3083,7 +3086,7 @@ impl Agent {
                 if self.store.is_some() {
                     harness::save(&self.profile, &caps);
                 }
-                self.caps = Some(caps);
+                self.harness.caps = Some(caps);
             }
             Err(e) => self.notice(
                 Level::Warn,
@@ -3099,7 +3102,7 @@ impl Agent {
     /// only for models that may slip into it (Qwen/Hermes templates on some servers). A model
     /// known to call tools natively that writes one is quoting the format, not calling.
     fn recovers_text_calls(&self) -> bool {
-        self.tool_mode == ToolMode::Text || !harness::native_known(&self.profile)
+        self.harness.recovers_text_calls(&self.profile)
     }
 
     /// The model botched the tool-call format (text calls under native, invalid JSON args, or
@@ -3107,21 +3110,9 @@ impl Agent {
     /// only: the finding is never written to the capability cache (see `harness::save`), and a
     /// model whose native tools are known to work never moves.
     fn note_format_failure(&mut self, why: &str) {
-        if self.profile.tool_mode != ToolMode::Auto
-            || self.tool_mode == ToolMode::Text
-            || harness::native_known(&self.profile)
-        {
+        let Some(from) = self.harness.note_format_failure(&self.profile, why) else {
             return;
-        }
-        self.mode_failures += 1;
-        if self.mode_failures < 2 {
-            return;
-        }
-        let from = self.tool_mode;
-        self.tool_mode = ToolMode::Text;
-        self.mode_failures = 0;
-        self.text_why = Some(why.to_string());
-        self.text_fallback = Some(why.to_string());
+        };
         // never persist the downgrade to the capability cache
         let from = format!("{from:?}").to_lowercase();
         self.warn_text_mode(format!(
@@ -3141,10 +3132,11 @@ Not saved: the next session starts on {from} again"
 
     /// At session start or a model switch: a cached probe that put `auto` on text tool calls.
     fn note_text_mode_from_probe(&self) {
-        if self.profile.tool_mode != ToolMode::Auto || self.tool_mode != ToolMode::Text {
+        if self.profile.tool_mode != ToolMode::Auto || self.harness.tool_mode != ToolMode::Text {
             return;
         }
         let when = self
+            .harness
             .caps
             .as_ref()
             .filter(|c| c.probed > 0)
@@ -3155,7 +3147,6 @@ Not saved: the next session starts on {from} again"
             "using text tool calls: its capability probe{when} found native tool calls not working. \
 `frog --probe -m <model>` measures again"
         ));
-
     }
 
     /// Settle the context window: configured value, bounded by what the server reports.
@@ -3558,7 +3549,7 @@ Not saved: the next session starts on {from} again"
             if !self.chat {
                 specs.push(crate::folder::spec());
             }
-            specs.push(crate::present::spec(self.tier == Tier::Weak));
+            specs.push(crate::present::spec(self.harness.tier == Tier::Weak));
             if self.can_ask && self.shared.client_ask.load(Ordering::Relaxed) {
                 specs.push(crate::ask::spec());
             }
@@ -3841,7 +3832,7 @@ Not saved: the next session starts on {from} again"
                 notes: &self.notes,
                 sessions: &sessions,
             };
-            return crate::recall::run(&sources, input, self.tier);
+            return crate::recall::run(&sources, input, self.harness.tier);
         }
         if name == crate::subagent::TOOL {
             return self.run_task(id, input).await;
@@ -3886,7 +3877,7 @@ Not saved: the next session starts on {from} again"
             return crate::irc::run(&bus, input);
         }
         if name == crate::present::TOOL {
-            return crate::present::run(input, &self.ctx.root, self.tier == Tier::Weak);
+            return crate::present::run(input, &self.ctx.root, self.harness.tier == Tier::Weak);
         }
         if name == crate::folder::TOOL && !self.subagent {
             return self.use_folder(input).await;
@@ -4176,9 +4167,9 @@ Don't repeat it. Change the arguments or try a different approach.",
                         None,
                     )
                 } else {
-                // A deny with a note (the user's, or frog's own when the prompt timed
-                // out) is direction, not a stop: the agent adjusts and carries on.
-                let (msg, stop) = match self.last_note.take() {
+                    // A deny with a note (the user's, or frog's own when the prompt timed
+                    // out) is direction, not a stop: the agent adjusts and carries on.
+                    let (msg, stop) = match self.last_note.take() {
                     Some(note) => (
                         format!("Not run: the call was denied with this note: {note}\nAdjust your approach accordingly and continue with the rest of the task."),
                         false,
@@ -4192,8 +4183,8 @@ Don't repeat it. Change the arguments or try a different approach.",
                         false,
                     ),
                 };
-                denied = stop;
-                text(ToolOutcome::Denied, msg, None)
+                    denied = stop;
+                    text(ToolOutcome::Denied, msg, None)
                 }
             } else {
                 let started = Instant::now();
@@ -4349,11 +4340,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             // batched side-model call (see `flush_gists`). Skipped calls (not run) don't
             // need one; the elided command tells that story.
             if is_bash && outcome == ToolOutcome::Ok && executed {
-                self.pending_gists.push((
-                    item_id,
-                    command,
-                    out_head,
-                ));
+                self.pending_gists.push((item_id, command, out_head));
             }
         }
         if looping {
@@ -4400,7 +4387,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
     fn wire(&self, messages: &[Message], specs: &[ToolSpec]) -> Wire {
         let with_images = self.prepare_images(messages);
         let prepared = with_images.as_deref().unwrap_or(messages);
-        match self.tool_mode {
+        match self.harness.tool_mode {
             ToolMode::Text => Wire {
                 system: format!("{}{}", self.system, prompt::text_tools_prompt(specs)),
                 messages: Some(prompt::to_text_mode(prepared)),
@@ -4493,12 +4480,12 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.ctx.judge = Some(self.profile.clone());
         }
         self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
-        self.caps = (!harness::native_known(&self.profile))
+        self.harness.caps = (!harness::native_known(&self.profile))
             .then(|| harness::cached(&self.profile))
             .flatten();
-        self.mode_failures = 0;
-        self.text_why = None;
-        self.reprobed = false;
+        self.harness.mode_failures = 0;
+        self.harness.text_why = None;
+        self.harness.reprobed = false;
         self.model_ready = false;
         self.apply_harness();
         self.resolve_window().await;
@@ -4556,7 +4543,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         think: Option<bool>,
         think_budget: Option<u32>,
     ) -> Result<(Response, Streamed)> {
-        let json_mode = self.tool_mode == ToolMode::Json;
+        let json_mode = self.harness.tool_mode == ToolMode::Json;
         // A JSON-mode reply is one object whose action comes last, so it's done by the time
         // its call is: nothing to gain.
         let early_tools = self.cfg.early_tools && offer_tools && !quiet && !json_mode;
@@ -4665,7 +4652,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             let (mut first, mut answer) = (None::<Instant>, None::<Instant>);
             let mut filter = TagFilter::default();
             let mut presenting = None::<crate::present::Stream>;
-            let (cwd, weak) = (self.ctx.root.clone(), self.tier == Tier::Weak);
+            let (cwd, weak) = (self.ctx.root.clone(), self.harness.tier == Tier::Weak);
             let text = |streamed: &mut Streamed, text: String| {
                 let id = streamed.message.get_or_insert_with(|| {
                     let id = new_id();
@@ -4822,7 +4809,10 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                     let budget = self.retry_budget(&e);
                     self.notice(
                         Level::Warn,
-                        format!("{e:#} — retrying in {}s ({attempt}/{budget})", wait.as_secs()),
+                        format!(
+                            "{e:#} — retrying in {}s ({attempt}/{budget})",
+                            wait.as_secs()
+                        ),
                     );
                     tokio::time::sleep(wait).await;
                 }
@@ -4895,7 +4885,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // a plain public domain (the fetch itself still re-checks every resolved IP
         // against private ranges, and a non-public host keeps asking as before). A
         // public-host GET sends nothing the request itself doesn't show.
-        if kind == Kind::Net && (name == "WebSearch" || crate::tools::web::public_host(input["url"].as_str().unwrap_or("")))
+        if kind == Kind::Net
+            && (name == "WebSearch"
+                || crate::tools::web::public_host(input["url"].as_str().unwrap_or("")))
         {
             self.decision(item, "rule", "allow", "read-only web call", 0);
             return Decision::Allow;
@@ -4912,8 +4904,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         }
         // A write the user granted this server in `[mcp_trust]` (`planetscale = "write"`):
         // no card, but every one is on the record (engine log, a notice, the decision event).
-        if let Some(server) =
-            crate::auto::mcp_write(name).filter(|s| self.cfg.mcp_write_trusted(s))
+        if let Some(server) = crate::auto::mcp_write(name).filter(|s| self.cfg.mcp_write_trusted(s))
         {
             let tool = crate::auto::mcp_parts(name).map_or(name, |(_, t)| t);
             let args = tools::truncate_middle(&input.to_string(), 400);
@@ -4924,7 +4915,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 eprintln!("{line}");
             }
             self.notice(Level::Info, line);
-            self.decision(item, "trust", "allow", &format!("write grant for {server}"), 0);
+            self.decision(
+                item,
+                "trust",
+                "allow",
+                &format!("write grant for {server}"),
+                0,
+            );
             return Decision::Allow;
         }
         let call = call_hash(name, input);
@@ -4957,11 +4954,14 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // workspace) or of localhost: a local capture and a localhost URL can only show the
         // session's own work. Anything else keeps asking. (Allow-by-default in every mode
         // would hand out the whole web; the chief's list scopes this to auto at minimum.)
-        if name == "Screenshot"
-            && self.mode == Mode::Auto
-            && crate::auto::local_capture(input)
-        {
-            self.decision(item, "rule", "allow", "captures only the session's own work", 0);
+        if name == "Screenshot" && self.mode == Mode::Auto && crate::auto::local_capture(input) {
+            self.decision(
+                item,
+                "rule",
+                "allow",
+                "captures only the session's own work",
+                0,
+            );
             return Decision::Allow;
         }
         // A path prefix the user allowed for this program earlier this session.
@@ -4969,7 +4969,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             && !crate::shell::touches_credentials(cmd)
             && crate::approval::prefix_allows(cmd, &self.ctx.cwd, &self.prefix_allow)
         {
-            self.decision(item, "session", "allow", "under a path prefix allowed this session", 0);
+            self.decision(
+                item,
+                "session",
+                "allow",
+                "under a path prefix allowed this session",
+                0,
+            );
             return Decision::Allow;
         }
         // Provenance (auto mode): a routine build/test step (known build tools,
@@ -4985,7 +4991,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             && crate::approval::routine(cmd)
             && crate::approval::own_scope(cmd, &self.ctx.cwd, &self.ctx.root, &self.created)
         {
-            self.decision(item, "provenance", "allow", "touches only the project or its own scratch", 0);
+            self.decision(
+                item,
+                "provenance",
+                "allow",
+                "touches only the project or its own scratch",
+                0,
+            );
             return Decision::Allow;
         }
         let key = match kind {
@@ -5012,7 +5024,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             if self.mode == Mode::Auto
                 && crate::approval::path_in_own_scope(&path, &self.ctx.root, &self.created)
             {
-                self.decision(item, "provenance", "allow", "writes only its own scratch", 0);
+                self.decision(
+                    item,
+                    "provenance",
+                    "allow",
+                    "writes only its own scratch",
+                    0,
+                );
                 self.ctx.permitted.insert(path);
                 return Decision::Allow;
             }
@@ -5063,7 +5081,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 &self.created,
             )
         {
-            self.decision(item, "provenance", "allow", "writes only its own scratch", 0);
+            self.decision(
+                item,
+                "provenance",
+                "allow",
+                "writes only its own scratch",
+                0,
+            );
             return Decision::Allow;
         }
         let auto = match kind {
@@ -5088,9 +5112,17 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         if auto || self.session_allow.contains(&key) {
             self.decision(
                 item,
-                if self.session_allow.contains(&key) { "session" } else { "rule" },
+                if self.session_allow.contains(&key) {
+                    "session"
+                } else {
+                    "rule"
+                },
                 "allow",
-                if self.session_allow.contains(&key) { "allowed earlier this session" } else { "mode allows it" },
+                if self.session_allow.contains(&key) {
+                    "allowed earlier this session"
+                } else {
+                    "mode allows it"
+                },
                 0,
             );
             return Decision::Allow;
@@ -5117,7 +5149,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.timing.classifier_ms += took;
             match verdict {
                 Ok(()) => {
-                    self.decision(item, "classifier", "allow", "the classifier approved it", took);
+                    self.decision(
+                        item,
+                        "classifier",
+                        "allow",
+                        "the classifier approved it",
+                        took,
+                    );
                     return Decision::Allow;
                 }
                 Err(why) => {
@@ -5241,7 +5279,11 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 let mins = (timeout_secs as f64 / 60.0).round() as u64;
                 self.last_note = Some(format!(
                     "nobody answered within {} so frog took the safe path and skipped it; don't retry it, find another way or leave it for the user",
-                    if mins >= 1 { format!("{mins} min") } else { format!("{timeout_secs} s") }
+                    if mins >= 1 {
+                        format!("{mins} min")
+                    } else {
+                        format!("{timeout_secs} s")
+                    }
                 ));
                 self.notice(
                     Level::Warn,
@@ -5307,7 +5349,13 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
     /// with a notice and the agent carries on. `None`: ask as usual.
     fn repeat_refusal(&mut self, item: &str, name: &str, arg: &str, call: u64) -> Option<Decision> {
         if let Some(denial) = self.turn_denied.get(&call).cloned() {
-            self.decision(item, "repeat", "deny", &format!("already denied this turn: {denial}"), 0);
+            self.decision(
+                item,
+                "repeat",
+                "deny",
+                &format!("already denied this turn: {denial}"),
+                0,
+            );
             self.notice(
                 Level::Warn,
                 format!(
@@ -5475,7 +5523,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 });
                 Ok(())
             }
-            Some(crate::auto::Verdict::Ask(reason)) => Err(format!("the classifier said: {reason}")),
+            Some(crate::auto::Verdict::Ask(reason)) => {
+                Err(format!("the classifier said: {reason}"))
+            }
             Some(crate::auto::Verdict::Failed(why)) => Err(why),
             // Nothing could judge: the built-in rules decide alone. A down classifier never
             // cards a call by itself; only a call no rule can prove harmless asks.
@@ -5528,7 +5578,11 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             match built {
                 Ok(c) if fallback => self.classifier_fallback = Some(c),
                 Ok(c) => self.classifier = Some(c),
-                Err(e) => return Err(self.classifier_failed(fallback, format!("it couldn't start ({e:#})"))),
+                Err(e) => {
+                    return Err(
+                        self.classifier_failed(fallback, format!("it couldn't start ({e:#})"))
+                    );
+                }
             }
         }
         let slot = if fallback {
@@ -5536,7 +5590,10 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         } else {
             &self.classifier
         };
-        let model = slot.as_ref().map(|c| c.profile_name.clone()).unwrap_or_default();
+        let model = slot
+            .as_ref()
+            .map(|c| c.profile_name.clone())
+            .unwrap_or_default();
         self.emit(Event::Progress {
             label: format!("checking with auto mode ({model})"),
             completed: None,
@@ -5594,7 +5651,9 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             };
             self.notice(
                 Level::Warn,
-                format!("auto mode's classifier ({primary}) is down ({why}); using {using}: {rest}."),
+                format!(
+                    "auto mode's classifier ({primary}) is down ({why}); using {using}: {rest}."
+                ),
             );
         }
         if changed {
@@ -5651,7 +5710,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
         // Native tools ride outside the text, so offering the same ones keeps the request an
         // extension of the last call and the server's cache of it holds: without them it
         // diverges right after the system prompt and the whole history is prefilled again.
-        let keep_prefix = matches!(self.tool_mode, ToolMode::Native | ToolMode::Auto);
+        let keep_prefix = matches!(self.harness.tool_mode, ToolMode::Native | ToolMode::Auto);
         let (mut resp, streamed) = self
             .call("compacting", &msgs, true, keep_prefix, think, None)
             .await?;
@@ -5686,11 +5745,18 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 0
             },
         );
-        let compacted_label = format!("{}. Work continues from this alone.)", context::COMPACTION_LABEL);
+        let compacted_label = format!(
+            "{}. Work continues from this alone.)",
+            context::COMPACTION_LABEL
+        );
         // Timers and monitors outlive compaction (the Registry is untouched), but the calls
         // that set them are summarized away: keep what's pending, or the model re-arms them.
         let pending = self.shared.bg.pending_block();
-        let pending = if pending.is_empty() { pending } else { format!("\n\n{pending}") };
+        let pending = if pending.is_empty() {
+            pending
+        } else {
+            format!("\n\n{pending}")
+        };
         let mut compacted = Message::user(format!(
             "{compacted_label}\n\nSummary:\n{summary}\n\n{record}{pending}"
         ));
@@ -5705,7 +5771,10 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             tokens_after: resp.usage.output,
             summary: self.build_summary().map(kept),
         });
-        if let Some(closed) = self.chapters.compacted(self.active_turn.unwrap_or(self.turn)) {
+        if let Some(closed) = self
+            .chapters
+            .compacted(self.active_turn.unwrap_or(self.turn))
+        {
             self.title_chapter(closed);
         }
         self.rebased();

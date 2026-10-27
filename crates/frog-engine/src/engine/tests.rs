@@ -5851,7 +5851,14 @@ fn barrier_fifos(dir: &Path, n: usize) -> Vec<PathBuf> {
                     std::thread::sleep(Duration::from_millis(10));
                 }
                 let all = joined.load(Ordering::SeqCst) >= n;
-                let _ = w.write_all(if all { format!("fifo {i}\n") } else { "alone\n".into() }.as_bytes());
+                let _ = w.write_all(
+                    if all {
+                        format!("fifo {i}\n")
+                    } else {
+                        "alone\n".into()
+                    }
+                    .as_bytes(),
+                );
             });
             p
         })
@@ -5884,7 +5891,10 @@ async fn a_replys_read_only_calls_run_concurrently() {
     let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
     for i in 0..4 {
         let out = tool_output(&evs, &format!("c{i}")).unwrap();
-        assert!(out.contains(&format!("fifo {i}")), "the reads ran one at a time: c{i}: {out}");
+        assert!(
+            out.contains(&format!("fifo {i}")),
+            "the reads ran one at a time: c{i}: {out}"
+        );
     }
     let order: Vec<&str> = evs
         .iter()
