@@ -1235,6 +1235,8 @@ struct Conversation {
     /// The session has a title (from the model's `SetTitle`, a client, or a resumed log), so
     /// the headless fallback shouldn't add one.
     titled: bool,
+    /// This turn's `Next` suggestion, emitted when the turn completes (see `next`).
+    next: Option<crate::next::Next>,
     /// Context from `Op::Shell`, attached to the next message.
     pending: Vec<String>,
     /// The open chapter, followed so the turn that closes it can have it titled (see
@@ -1552,6 +1554,7 @@ impl Agent {
                 rules_seen: HashSet::new(),
                 edited: Vec::new(),
                 titled: resumed_titled,
+                next: None,
                 pending: Vec::new(),
                 chapters: resumed_chapters,
             },
@@ -2008,6 +2011,15 @@ impl Agent {
         };
         // Background jobs' attempts since the last tool call.
         self.flush_egress(None, "");
+        if let Some(next) = self.conv.next.take()
+            && reason == EndReason::Complete
+        {
+            self.emit(Event::NextSuggested {
+                turn,
+                text: next.text,
+                act: next.act,
+            });
+        }
         self.emit(Event::TurnEnded {
             turn,
             reason: reason.clone(),

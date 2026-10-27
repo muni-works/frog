@@ -200,6 +200,10 @@ impl Agent {
             self.set_title(title.clone());
             return Ok(tools::Output::text(format!("Session titled \"{title}\".")));
         }
+        if name == crate::next::TOOL {
+            self.conv.next = Some(crate::next::parse(input)?);
+            return Ok(tools::Output::text("Suggested."));
+        }
         if name == crate::panes::TERMINAL {
             return self.shared.panes.terminal(input, self.subagent).await;
         }
