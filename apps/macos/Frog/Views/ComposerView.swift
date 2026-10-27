@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ComposerView: View {
+    @Environment(\.paneWidth) private var paneWidth
     let workspace: Workspace
     let conversation: Conversation
     var window: WindowState?
@@ -314,14 +315,17 @@ struct ComposerView: View {
     private var controls: some View {
         HStack(spacing: 8) {
             plusMenu
-            DictationButton(dictation: dictation, toggle: toggleDictation)
+            // A narrow pane keeps the controls you reach for: add, mode, model.
+            if paneWidth > .narrow {
+                DictationButton(dictation: dictation, toggle: toggleDictation)
+            }
             ModePicker(conversation: conversation)
             Spacer()
             if let e = workspace.raceError {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
             }
             ModelPicker(workspace: workspace, conversation: conversation)
-            if let status = conversation.status {
+            if let status = conversation.status, paneWidth == .wide {
                 ContextButton(conversation: conversation, status: status)
             }
         }

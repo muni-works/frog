@@ -91,6 +91,7 @@ struct PaneView: View {
         // Nothing (pill, rail, changes) draws into the pane beside it.
         .clipped()
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
+        .environment(\.paneWidth, number == nil ? .wide : PaneWidth(width))
         .environment(\.canvasInsets, insets)
         .environment(\.projectFolder, workspace.folder)
         .environment(\.models, workspace.models)
