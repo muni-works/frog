@@ -1,0 +1,347 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>frog — insides flagship mockup</title>
+<style>
+  :root {
+    --bg: #1e1e1e; --side: #262627; --card: #2a2a2b; --raise: #333335;
+    --text: #ececec; --sec: rgba(235,235,245,.60); --ter: rgba(235,235,245,.32); --quat: rgba(235,235,245,.16);
+    --sep: rgba(255,255,255,.09); --accent: #30d158; --red: #ff453a; --orange: #ff9f0a; --blue: #0a84ff; --purple: #bf5af2; --teal: #64d2ff;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0d0d0e; font: 13px -apple-system, "SF Pro Text", system-ui, sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; }
+  .page { padding: 32px 36px 56px; }
+  .eyebrow { color: var(--accent); font: 600 11px -apple-system; letter-spacing: .08em; text-transform: uppercase; }
+  h1 { font: 700 30px -apple-system; margin: 6px 0 6px; letter-spacing: -.01em; }
+  .lede { color: var(--sec); margin: 0 0 22px; max-width: 980px; line-height: 1.55; font-size: 14px; }
+  .n { display: inline-flex; width: 18px; height: 18px; border-radius: 9px; background: #ffd60a; color: #000; font: 700 11px -apple-system; align-items: center; justify-content: center; flex: none; }
+
+  .win { width: 1560px; height: 900px; border-radius: 12px; overflow: hidden; display: flex; background: var(--bg); box-shadow: 0 30px 80px rgba(0,0,0,.6), 0 0 0 .5px rgba(255,255,255,.12); }
+
+  /* left: source */
+  .src { width: 470px; border-right: .5px solid var(--sep); background: #1a1a1b; display: flex; flex-direction: column; }
+  .src-h, .main-h, .rail-h { height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: .5px solid var(--sep); flex: none; }
+  .lights { display: flex; gap: 8px; margin-right: 6px; }
+  .lights i { width: 12px; height: 12px; border-radius: 6px; background: #ff5f57; } .lights i:nth-child(2){background:#febc2e} .lights i:nth-child(3){background:#28c840}
+  .tab { font-size: 12px; color: var(--sec); padding: 4px 9px; border-radius: 6px; } .tab.on { background: rgba(255,255,255,.08); color: var(--text); }
+  .src-b { flex: 1; overflow: auto; font: 11.5px/1.7 var(--mono); padding: 8px 0; }
+  .sl { display: flex; padding-right: 10px; position: relative; transition: background .15s; }
+  .sl .g { width: 36px; text-align: right; padding-right: 10px; color: var(--ter); flex: none; }
+  .sl .heat { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--teal); opacity: 0; transition: opacity .15s; }
+  .sl.lit { background: rgba(100,210,255, var(--w)); } .sl.lit .heat { opacity: 1; }
+  .sl.lit .g { color: var(--teal); }
+  .src-f { border-top: .5px solid var(--sep); padding: 10px 14px; color: var(--ter); font-size: 11.5px; line-height: 1.45; min-height: 64px; }
+  .src-f b { color: var(--teal); font-weight: 500; }
+  .kw { color: #ff7ab2; } .ty { color: #6bdfff; } .st { color: #fc6a5d; } .cm { color: #7f8c98; } .nu { color: #d9c97c; } .fn { color: #67b7a4; }
+
+  /* center */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .pill { display: inline-flex; align-items: center; gap: 9px; height: 30px; padding: 0 14px; border-radius: 15px; background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.12); }
+  .pill .sec { color: var(--sec); }
+  .pulse { width: 16px; height: 16px; border-radius: 8px; background: var(--accent); box-shadow: 0 0 0 0 rgba(48,209,88,.6); animation: p 2.4s ease-out infinite; flex: none; }
+  .pulse.amber { background: var(--orange); animation-name: pa; }
+  @keyframes p { 0% { box-shadow: 0 0 0 0 rgba(48,209,88,.55); } 100% { box-shadow: 0 0 0 10px rgba(48,209,88,0); } }
+  @keyframes pa { 0% { box-shadow: 0 0 0 0 rgba(255,159,10,.6); } 100% { box-shadow: 0 0 0 10px rgba(255,159,10,0); } }
+  .scroll { flex: 1; overflow: auto; display: flex; justify-content: center; }
+  .col { width: 640px; padding: 22px 0 30px; }
+  .prompt { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+  .prompt span { background: rgba(255,255,255,.08); padding: 8px 12px; border-radius: 14px; max-width: 480px; line-height: 1.45; }
+  .say { line-height: 1.6; margin: 0 0 14px; color: var(--text); }
+  .say code, .note code { font: 12px var(--mono); background: rgba(255,255,255,.06); padding: 0 4px; border-radius: 4px; }
+
+  .tool { background: var(--card); border-radius: 10px; margin: 0 0 14px; overflow: hidden; box-shadow: 0 0 0 .5px var(--sep); }
+  .tool-h { display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--sec); font-size: 12px; border-bottom: .5px solid var(--sep); }
+  .tool-h b { color: var(--text); font-weight: 500; }
+  .tool-h .badge { margin-left: auto; font-size: 11px; padding: 1px 8px; border-radius: 9px; }
+  .badge.ok { color: var(--accent); background: rgba(48,209,88,.12); } .badge.warn { color: var(--orange); background: rgba(255,159,10,.12); }
+  .code { font: 12px/1.7 var(--mono); padding: 6px 0; }
+  .ln { display: flex; padding-right: 12px; position: relative; cursor: default; }
+  .ln .g { width: 34px; text-align: right; padding-right: 10px; color: var(--ter); flex: none; }
+  .ln .m { width: 14px; flex: none; text-align: center; }
+  .ln.add { background: rgba(48,209,88,.07); } .ln.add .m { color: var(--accent); }
+  .ln:hover { background: rgba(100,210,255,.08); }
+  .ln .dot { width: 6px; height: 6px; border-radius: 3px; background: var(--orange); display: inline-block; margin: 0 5px 1px -2px; vertical-align: middle; }
+  .ln .dot.red { background: var(--red); }
+  .fork { border-radius: 3px; background: rgba(255,159,10,.22); box-shadow: inset 0 -1.5px 0 var(--orange); cursor: pointer; position: relative; padding: 0 1px; }
+  .fork.unv { background: rgba(255,69,58,.18); box-shadow: inset 0 -1.5px 0 var(--red); }
+  .fork:hover { background: rgba(255,159,10,.38); }
+  .menu { position: absolute; top: 20px; left: -6px; z-index: 5; background: #2c2c2e; border-radius: 10px; padding: 6px; min-width: 300px; box-shadow: 0 14px 40px rgba(0,0,0,.6), 0 0 0 .5px rgba(255,255,255,.14); font: 12px -apple-system; display: none; white-space: normal; }
+  .menu.open { display: block; }
+  .menu .mh { color: var(--ter); font-size: 11px; padding: 4px 8px 6px; }
+  .opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+  .opt:hover { background: rgba(255,255,255,.07); }
+  .opt code { font: 12px var(--mono); min-width: 120px; }
+  .opt .bar { flex: 1; height: 5px; border-radius: 3px; background: var(--quat); overflow: hidden; } .opt .bar i { display: block; height: 100%; background: var(--orange); }
+  .opt.cur .bar i { background: var(--accent); }
+  .opt .pct { width: 30px; text-align: right; color: var(--sec); font-variant-numeric: tabular-nums; }
+  .opt .why { display: block; color: var(--ter); font-size: 11px; }
+  .menu .mf { border-top: .5px solid var(--sep); margin-top: 4px; padding: 7px 8px 3px; color: var(--ter); font-size: 11px; display: flex; justify-content: space-between; }
+  .menu .mf b { color: var(--accent); font-weight: 500; }
+
+  .guard { background: rgba(255,69,58,.07); border-radius: 10px; padding: 12px; margin: 0 0 14px; box-shadow: inset 0 0 0 .5px rgba(255,69,58,.35); }
+  .guard .gh { display: flex; gap: 8px; align-items: center; font-weight: 500; margin-bottom: 8px; }
+  .guard .cmd { font: 12px var(--mono); background: rgba(0,0,0,.3); padding: 8px 10px; border-radius: 7px; margin-bottom: 8px; }
+  .guard .cmd .sure { box-shadow: inset 0 -1.5px 0 var(--accent); }
+  .guard .cmd .guess { background: rgba(255,69,58,.22); box-shadow: inset 0 -1.5px 0 var(--red); border-radius: 3px; }
+  .guard p { margin: 0 0 10px; color: var(--sec); font-size: 12px; line-height: 1.5; }
+  .btns { display: flex; gap: 8px; }
+  .btn { all: unset; cursor: pointer; padding: 5px 12px; border-radius: 7px; background: rgba(255,255,255,.09); font-size: 12px; }
+  .btn.pri { background: var(--blue); } .btn.dim { color: var(--sec); }
+
+  .composer { margin: 10px 16px 16px; border-radius: 12px; background: rgba(255,255,255,.05); box-shadow: inset 0 0 0 .5px var(--sep); padding: 10px 12px; color: var(--ter); display: flex; align-items: center; gap: 10px; }
+  .composer .hint { margin-left: auto; font-size: 11.5px; color: var(--orange); background: rgba(255,159,10,.1); padding: 3px 9px; border-radius: 9px; }
+
+  /* right rail */
+  .rail { width: 360px; border-left: .5px solid var(--sep); background: var(--side); display: flex; flex-direction: column; }
+  .rail-h { font-weight: 600; }
+  .rail-b { padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 16px; }
+  .hero { background: linear-gradient(180deg, rgba(48,209,88,.12), rgba(48,209,88,.03)); border-radius: 12px; padding: 14px; box-shadow: inset 0 0 0 .5px rgba(48,209,88,.25); }
+  .hero .big { font: 700 30px -apple-system; letter-spacing: -.02em; }
+  .hero .big span { color: var(--sec); font-weight: 500; font-size: 15px; }
+  .hero .l { color: var(--sec); font-size: 12px; margin-top: 2px; line-height: 1.45; }
+  .meter { height: 8px; border-radius: 4px; background: rgba(255,255,255,.07); overflow: hidden; margin-top: 10px; display: flex; }
+  .meter i { display: block; height: 100%; }
+  .sect h3 { margin: 0 0 8px; font: 600 10.5px -apple-system; letter-spacing: .05em; color: var(--ter); text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+  .sect h3 .n { width: 15px; height: 15px; font-size: 9.5px; }
+  .q { display: flex; gap: 9px; align-items: flex-start; padding: 8px 9px; border-radius: 8px; cursor: pointer; }
+  .q:hover { background: rgba(255,255,255,.05); }
+  .q .rk { font: 600 11px var(--mono); color: var(--ter); width: 14px; padding-top: 1px; }
+  .q .t { flex: 1; line-height: 1.4; } .q .t small { display: block; color: var(--ter); font-size: 11px; }
+  .q .risk { font: 600 11px -apple-system; padding: 1px 6px; border-radius: 7px; font-variant-numeric: tabular-nums; }
+  .risk.hi { color: var(--red); background: rgba(255,69,58,.14); } .risk.md { color: var(--orange); background: rgba(255,159,10,.14); } .risk.lo { color: var(--sec); background: rgba(255,255,255,.07); }
+  .q.done { opacity: .4; } .q.done .t { text-decoration: line-through; }
+  .fp { display: flex; gap: 12px; align-items: center; }
+  .fp canvas { width: 64px; height: 64px; border-radius: 12px; background: rgba(0,0,0,.25); flex: none; }
+  .fp .t { color: var(--sec); font-size: 12px; line-height: 1.45; } .fp .t b { color: var(--text); font-weight: 500; }
+  .cal { font-size: 11.5px; color: var(--ter); line-height: 1.45; }
+  .cal b { color: var(--text); font-weight: 500; }
+
+  .story { margin-top: 30px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; max-width: 1560px; }
+  .story div { background: #161617; border-radius: 12px; padding: 16px; line-height: 1.5; color: var(--sec); box-shadow: 0 0 0 .5px var(--sep); }
+  .story b { color: var(--text); display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 13.5px; }
+  .moat { margin-top: 14px; max-width: 1560px; background: #161617; border-radius: 12px; padding: 16px 18px; box-shadow: 0 0 0 .5px var(--sep); color: var(--sec); line-height: 1.55; }
+  .moat b { color: var(--text); }
+  .fine { color: var(--ter); font-size: 11.5px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="eyebrow">frog · insides</div>
+  <h1>Review 4 lines, not 400.</h1>
+  <p class="lede">An agent that knows where it guessed, and proves it. Every line the model writes carries how sure it was, which of your lines it was looking at, and how often lines like it get changed afterwards. You review the guesses, steer at the forks, and skim the rest. This takes a model you control: frog runs its own inference, so it can read the model's internals and resume from any token. <b>Try it:</b> hover a line on the right to see which source lines drove it. Click an orange or red token to take the other branch.</p>
+
+  <div class="win">
+    <!-- SOURCE -->
+    <section class="src">
+      <div class="src-h"><div class="lights"><i></i><i></i><i></i></div><span class="tab on">billing/invoice.rs</span><span class="tab">stripe.rs</span></div>
+      <div class="src-b" id="src"></div>
+      <div class="src-f" id="srcf">Hover a generated line. Lines the model was attending to light up in <b>teal</b>, brighter for stronger influence.</div>
+    </section>
+
+    <!-- TRANSCRIPT -->
+    <section class="main">
+      <div class="main-h" style="justify-content:center">
+        <div class="pill"><span class="pulse" id="pulse"></span><span>add proration to invoice upgrades</span><span class="sec">local/qwen3-coder-next · M4 Max</span></div>
+      </div>
+      <div class="scroll"><div class="col">
+        <div class="prompt"><span>when a customer upgrades mid-cycle, prorate the invoice. use the existing helpers.</span></div>
+        <p class="say">I'll compute the unused fraction of the current period and credit it against the new plan, reusing <code>days_between</code> and <code>Money::scale</code>.</p>
+
+        <div class="tool">
+          <div class="tool-h"><span>Edit</span><b>billing/invoice.rs</b><span class="badge warn" id="diffbadge">4 to review · 31 skim</span></div>
+          <div class="code" id="diff"></div>
+        </div>
+
+        <div class="guard">
+          <div class="gh"><span style="color:var(--red)">●</span>Approve command? <span style="color:var(--sec);font-weight:400">The model guessed part of it.</span></div>
+          <div class="cmd"><span class="sure">psql</span> <span class="sure">-c</span> "<span class="sure">UPDATE invoices SET</span> prorated = true <span class="sure">WHERE</span> <span class="guess" title="41% · runner-up: plan_changed_at > now() - interval '1 day'">period_start &gt; '2026-10-01'</span>"</div>
+          <p>The model was sure about <i>what</i> to run (98%) but guessed <i>which rows</i> (41%). The runner-up limited it to yesterday's upgrades. Destructive SQL with a guessed WHERE clause needs a look.</p>
+          <div class="btns"><button class="btn">Allow once</button><button class="btn pri">Use runner-up</button><button class="btn dim">Ask model to verify first</button></div>
+        </div>
+      </div></div>
+      <div class="composer">Reply to frog…<span class="hint" id="depth">⚠ 3 guesses on money math · qwen3-coder-next is usually sure here</span></div>
+    </section>
+
+    <!-- REVIEW RAIL -->
+    <aside class="rail">
+      <div class="rail-h">Review</div>
+      <div class="rail-b">
+        <div class="hero">
+          <div class="big">4 <span>of 35 lines</span></div>
+          <div class="l">need your eyes. The other 31 were written with confidence that, on this repo, holds up 97% of the time.</div>
+          <div class="meter"><i style="width:8%;background:var(--red)"></i><i style="width:3.5%;background:var(--orange)"></i><i style="flex:1;background:rgba(48,209,88,.5)"></i></div>
+        </div>
+
+        <div class="sect">
+          <h3><span class="n">1</span>Review queue, riskiest first</h3>
+          <div id="queue"></div>
+        </div>
+
+        <div class="sect">
+          <h3><span class="n">2</span>Calibration on this repo</h3>
+          <canvas id="cal" height="110" style="width:100%;border-radius:8px;background:rgba(0,0,0,.25)"></canvas>
+          <div class="cal" style="margin-top:6px">When frog says <b>"60% sure"</b>, it's right about 58% of the time here. Learned from <b>1,204 lines</b> you kept, edited or reverted. Your data stays on this Mac.</div>
+        </div>
+
+        <div class="sect">
+          <h3><span class="n">3</span>Turn fingerprint</h3>
+          <div class="fp"><canvas id="fp" width="128" height="128"></canvas>
+            <div class="t"><b>Unusual for this model.</b> Routing looks like "writing SQL" more than "writing Rust". 2 of the 4 guesses are in that stretch.</div></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="story">
+    <div><b><span class="n">1</span>The pitch</b>Code review is the bottleneck of agentic coding. Agents write 10× more code, and humans still read it line by line. frog turns a 400-line diff into a 4-line review, and shows its working.</div>
+    <div><b><span class="n">2</span>Why only frog</b>Logprobs show <i>that</i> the model guessed. Grounding (which lines it read), branching at a token and routing fingerprints need the model's internals and its cache. Closed APIs don't expose them. frog owns the stack: tang on Metal, open weights.</div>
+    <div><b><span class="n">3</span>The flywheel</b>Every keep, edit or revert calibrates the risk score for that user, repo and model. The longer you use frog, the fewer lines you review. That data never leaves the machine, so it's private and it's yours.</div>
+    <div><b><span class="n">4</span>What it becomes</b>A trust layer for any agent's output. Run another agent's diff through frog's model to get grounding and risk on code it didn't write. An enterprise reviewer that knows which lines to distrust.</div>
+  </div>
+  <div class="moat"><b>The metric to prove before anyone writes a check:</b> on a fixed set of seeded-bug agent diffs, reviewers using frog's queue catch as many bugs as reviewers reading every line, in less than a quarter of the time. Ship that as a public benchmark next to bench v2.
+    <div class="fine">Mockup: the numbers, the model names on screen, and the calibration curve are illustrative. Grounding means coarse attention/attribution summed per source line. It's a pointer, not a proof.</div></div>
+</div>
+
+<script>
+// source file with ids we can light up
+const SRC = [
+  [12, "<span class='kw'>pub fn</span> <span class='fn'>days_between</span>(a: <span class='ty'>Date</span>, b: <span class='ty'>Date</span>) -> <span class='ty'>i64</span> {"],
+  [13, "    (b - a).num_days()"],
+  [14, "}"],
+  [15, ""],
+  [16, "<span class='kw'>impl</span> <span class='ty'>Money</span> {"],
+  [17, "    <span class='cm'>/// Rounds half-even, in minor units.</span>"],
+  [18, "    <span class='kw'>pub fn</span> <span class='fn'>scale</span>(&amp;<span class='kw'>self</span>, num: <span class='ty'>i64</span>, den: <span class='ty'>i64</span>) -> <span class='ty'>Money</span> { … }"],
+  [19, "    <span class='kw'>pub fn</span> <span class='fn'>credit</span>(&amp;<span class='kw'>self</span>) -> <span class='ty'>Money</span> { -<span class='kw'>self</span> }"],
+  [20, "}"],
+  [21, ""],
+  [22, "<span class='kw'>pub struct</span> <span class='ty'>Subscription</span> {"],
+  [23, "    <span class='kw'>pub</span> plan: <span class='ty'>Plan</span>,"],
+  [24, "    <span class='kw'>pub</span> period_start: <span class='ty'>Date</span>,"],
+  [25, "    <span class='kw'>pub</span> period_end: <span class='ty'>Date</span>,   <span class='cm'>// exclusive</span>"],
+  [26, "    <span class='kw'>pub</span> anchor_day: <span class='ty'>u8</span>,"],
+  [27, "}"],
+  [28, ""],
+  [29, "<span class='kw'>pub fn</span> <span class='fn'>build_invoice</span>(sub: &amp;<span class='ty'>Subscription</span>, today: <span class='ty'>Date</span>) -> <span class='ty'>Invoice</span> {"],
+  [30, "    <span class='kw'>let mut</span> inv = <span class='ty'>Invoice</span>::new(sub);"],
+  [31, "    inv.push(<span class='ty'>Line</span>::charge(sub.plan.price));"],
+  [32, "    inv"],
+  [33, "}"],
+  [34, ""],
+  [35, "<span class='cm'>// stripe.rs: prorations are applied in whole days, UTC.</span>"],
+];
+document.getElementById("src").innerHTML = SRC.map(([n, c]) => `<div class="sl" id="s${n}"><span class="heat"></span><span class="g">${n}</span><span>${c || "&nbsp;"}</span></div>`).join("");
+
+// diff lines: [no, code, risk(0 none,1 fork,2 unverified), grounding {srcLine: weight}]
+const forks = {
+  f1: { label: "period_end", why: "fork", opts: [["period_end", 52, "matches the struct, exclusive end"], ["period_end - 1", 31, "inclusive end"], ["next_anchor(sub)", 17, "recompute from anchor_day"]], ground: {25: .9, 24: .4, 26: .3} },
+  f2: { label: "Money::scale", why: "fork", opts: [["Money::scale", 47, "half-even, from source"], ["Money::mul_f64", 39, "float math"], ["Money::prorate", 14, "doesn't exist"]], ground: {18: .9, 17: .7} },
+  f3: { label: "Rounding::Up", why: "unverified", opts: [["Rounding::Up", 34, "no such enum in repo"], ["(scale already rounds)", 44, "drop the argument"], ["Rounding::HalfEven", 22, "doesn't exist either"]], ground: {17: .5}, unv: true },
+};
+const DIFF = [
+  [31, "    inv.push(<span class='ty'>Line</span>::charge(sub.plan.price));", 0, {31: .6}],
+  [32, "    <span class='kw'>if let</span> <span class='ty'>Some</span>(old) = sub.upgraded_from {", 0, {22: .5, 23: .6}],
+  [33, "        <span class='kw'>let</span> total = days_between(sub.period_start, sub.<FORK f1>);", 1, {12: .8, 24: .7, 25: .9}],
+  [34, "        <span class='kw'>let</span> left = days_between(today, sub.period_end);", 0, {12: .8, 25: .6, 29: .5}],
+  [35, "        <span class='kw'>let</span> unused = old.price.<FORK f2>(left, total);", 1, {18: .9, 17: .6}],
+  [36, "        inv.push(<span class='ty'>Line</span>::credit(unused.credit()));", 0, {19: .9, 31: .4}],
+  [37, "        inv.round(<FORK f3>);", 2, {17: .5}],
+  [38, "    }", 0, {}],
+];
+const diffEl = document.getElementById("diff");
+function renderDiff() {
+  diffEl.innerHTML = DIFF.map(([n, c, r, g], i) => {
+    const body = c.replace(/<FORK (\w+)>/g, (_, k) => `<span class="fork ${forks[k].unv ? 'unv' : ''}" data-f="${k}">${forks[k].label}<span class="menu" id="m-${k}"></span></span>`);
+    return `<div class="ln add" data-i="${i}"><span class="g">${n}</span><span class="m">+</span><span>${r ? `<span class="dot ${r === 2 ? 'red' : ''}"></span>` : ''}${body}</span></div>`;
+  }).join("");
+}
+renderDiff();
+
+// grounding hover
+const srcf = document.getElementById("srcf");
+diffEl.addEventListener("mouseover", e => {
+  const ln = e.target.closest(".ln"); if (!ln) return;
+  const fk = e.target.closest(".fork");
+  const g = fk ? forks[fk.dataset.f].ground : DIFF[ln.dataset.i][3];
+  document.querySelectorAll(".sl").forEach(s => s.classList.remove("lit"));
+  const ks = Object.keys(g);
+  ks.forEach(k => { const s = document.getElementById("s" + k); if (s) { s.classList.add("lit"); s.style.setProperty("--w", (g[k] * .28).toFixed(2)); } });
+  srcf.innerHTML = ks.length
+    ? `Line ${DIFF[ln.dataset.i][0]} was driven mostly by <b>line ${ks.sort((a, b) => g[b] - g[a])[0]}</b>${ks.length > 1 ? ` and ${ks.length - 1} more` : ""}.` + (fk && forks[fk.dataset.f].unv ? ` <span style="color:var(--red)">Nothing in the repo defines <code>${forks[fk.dataset.f].label}</code>. It was written from habit, not from your code.</span>` : "")
+    : "No strong grounding: closing syntax.";
+});
+diffEl.addEventListener("mouseleave", () => document.querySelectorAll(".sl").forEach(s => s.classList.remove("lit")));
+
+// fork menus: click to branch
+diffEl.addEventListener("click", e => {
+  const opt = e.target.closest(".opt");
+  if (opt) {
+    const f = forks[opt.dataset.f];
+    f.label = opt.dataset.v.startsWith("(") ? "/* scale rounds */" : opt.dataset.v;
+    if (opt.dataset.f === "f3") { f.unv = false; DIFF[6][2] = 0; }
+    else DIFF.find(d => d[1].includes(opt.dataset.f))[2] = 0;
+    renderDiff(); updateQueue(opt.dataset.f); return;
+  }
+  const fk = e.target.closest(".fork"); if (!fk) return;
+  const k = fk.dataset.f, m = document.getElementById("m-" + k), f = forks[k];
+  const wasOpen = m.classList.contains("open");
+  document.querySelectorAll(".menu").forEach(x => x.classList.remove("open"));
+  if (wasOpen) return;
+  m.innerHTML = `<div class="mh">${f.unv ? "Unverified: not defined anywhere in this repo" : "The model weighed these. Pick one to regenerate from here."}</div>` +
+    f.opts.map(([v, p, why], i) => `<div class="opt ${i ? '' : 'cur'}" data-f="${k}" data-v="${v}"><code>${v}</code><span class="bar"><i style="width:${p}%"></i></span><span class="pct">${p}%</span></div><div style="padding:0 8px 4px 16px;color:var(--ter);font-size:11px">${why}</div>`).join("") +
+    `<div class="mf"><span>resumes from this token · KV cached</span><b>~0.4s</b></div>`;
+  m.classList.add("open");
+  e.stopPropagation();
+});
+document.addEventListener("click", e => { if (!e.target.closest(".fork")) document.querySelectorAll(".menu").forEach(x => x.classList.remove("open")); });
+
+// review queue
+const Q = [
+  { k: "f3", t: "<code>Rounding::Up</code> doesn't exist", s: "line 37 · unverified name, habit not grounding", r: ["hi", "62%"] },
+  { k: "g",  t: "Guessed WHERE in the UPDATE", s: "psql · destructive, 41% sure", r: ["hi", "55%"] },
+  { k: "f2", t: "<code>scale</code> vs <code>mul_f64</code>", s: "line 35 · fork, float math on money", r: ["md", "31%"] },
+  { k: "f1", t: "Exclusive vs inclusive period end", s: "line 33 · off-by-one class", r: ["md", "24%"] },
+];
+const qEl = document.getElementById("queue");
+function renderQueue() {
+  qEl.innerHTML = Q.map((q, i) => `<div class="q ${q.done ? 'done' : ''}"><span class="rk">${i + 1}</span><span class="t">${q.t}<small>${q.s}</small></span><span class="risk ${q.r[0]}" title="calibrated chance a human changes this">${q.r[1]}</span></div>`).join("");
+  const left = Q.filter(q => !q.done).length;
+  document.getElementById("diffbadge").textContent = left ? `${left} to review · 31 skim` : "reviewed";
+  document.getElementById("diffbadge").className = "badge " + (left ? "warn" : "ok");
+  document.querySelector(".hero .big").innerHTML = `${left} <span>of 35 lines</span>`;
+  document.getElementById("pulse").className = "pulse" + (left > 1 ? " amber" : "");
+  document.getElementById("depth").style.display = left > 2 ? "" : "none";
+}
+function updateQueue(k) { const q = Q.find(q => q.k === k); if (q) q.done = true; renderQueue(); }
+renderQueue();
+
+// calibration curve
+(function () {
+  const c = document.getElementById("cal"), x = c.getContext("2d");
+  c.width = c.clientWidth * 2; c.height = 220; x.scale(2, 2);
+  const w = c.clientWidth, h = 110, pad = 14;
+  const P = (a, b) => [pad + a * (w - pad * 2), h - pad - b * (h - pad * 2)];
+  x.strokeStyle = "rgba(235,235,245,.18)"; x.setLineDash([3, 3]); x.beginPath(); x.moveTo(...P(0, 0)); x.lineTo(...P(1, 1)); x.stroke(); x.setLineDash([]);
+  const pts = [[.1, .07], [.25, .21], [.4, .37], [.6, .58], [.75, .77], [.9, .93], [.98, .97]];
+  x.strokeStyle = "#30d158"; x.lineWidth = 1.6; x.beginPath(); pts.forEach((p, i) => i ? x.lineTo(...P(...p)) : x.moveTo(...P(...p))); x.stroke();
+  pts.forEach(p => { x.fillStyle = "#30d158"; x.beginPath(); x.arc(...P(...p), 2.4, 0, 7); x.fill(); });
+  x.fillStyle = "rgba(235,235,245,.35)"; x.font = "10px -apple-system"; x.fillText("said", w - 32, h - 3); x.fillText("right", 2, 10);
+})();
+
+// fingerprint glyph: radial routing histogram
+(function () {
+  const c = document.getElementById("fp"), x = c.getContext("2d");
+  let s = 11; const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  x.translate(64, 64);
+  for (let i = 0; i < 48; i++) {
+    const a = i / 48 * Math.PI * 2, len = 14 + r() * 30 + (i > 30 && i < 40 ? 14 : 0);
+    x.strokeStyle = i > 30 && i < 40 ? "rgba(255,159,10,.9)" : `rgba(48,209,88,${.35 + r() * .5})`;
+    x.lineWidth = 2.4; x.lineCap = "round";
+    x.beginPath(); x.moveTo(Math.cos(a) * 10, Math.sin(a) * 10); x.lineTo(Math.cos(a) * len, Math.sin(a) * len); x.stroke();
+  }
+})();
+</script>
+</body>
+</html>
