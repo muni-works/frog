@@ -19,6 +19,11 @@ struct TurnLead: Equatable {
         if turn.images.isEmpty, let started = WakeEvent.parse(input) {
             wakes += started
             input = ""
+        } else if turn.images.isEmpty, Self.isEngineNote(input) {
+            // The engine's own words (a resume, background work lost to a restart), not yours:
+            // a notice line, never a user bubble.
+            wakes.append(WakeEvent(kind: .note, id: "", attributes: [], body: input))
+            input = ""
         }
         let texts = (input.isEmpty ? [] : [input]) + turn.more.map(\.text)
         let delivered = texts.compactMap(SessionMessage.parse)
@@ -29,6 +34,13 @@ struct TurnLead: Equatable {
         } else {
             opener = .none
         }
+    }
+
+    /// Turn inputs the engine writes itself (`protocol.rs` CONTINUE_NOTE / SUSPENDED_NOTE,
+    /// `background.rs` dropped pieces after a restart).
+    static func isEngineNote(_ input: String) -> Bool {
+        (input.hasPrefix("<resumed after the app ") && input.hasSuffix("; continue>"))
+            || input.firstMatch(of: #/^\d+ background pieces? from before the engine restarted (was|were) dropped, not re-armed: /#) != nil
     }
 }
 
