@@ -13,10 +13,10 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: #0d0d0e; font: 13px -apple-system, "SF Pro Text", system-ui, sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; }
   .page { padding: 32px 36px 56px; }
-  .eyebrow { color: var(--accent); font: 600 11px -apple-system; letter-spacing: .08em; text-transform: uppercase; }
-  h1 { font: 700 30px -apple-system; margin: 6px 0 6px; letter-spacing: -.01em; }
+  .eyebrow { color: var(--accent); font: 600 11px -apple-system, system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+  h1 { font: 700 30px -apple-system, system-ui, sans-serif; margin: 6px 0 6px; letter-spacing: -.01em; }
   .lede { color: var(--sec); margin: 0 0 22px; max-width: 980px; line-height: 1.55; font-size: 14px; }
-  .n { display: inline-flex; width: 18px; height: 18px; border-radius: 9px; background: #ffd60a; color: #000; font: 700 11px -apple-system; align-items: center; justify-content: center; flex: none; }
+  .n { display: inline-flex; width: 18px; height: 18px; border-radius: 9px; background: #ffd60a; color: #000; font: 700 11px -apple-system, system-ui, sans-serif; align-items: center; justify-content: center; flex: none; }
 
   .win { width: 1560px; height: 900px; border-radius: 12px; overflow: hidden; display: flex; background: var(--bg); box-shadow: 0 30px 80px rgba(0,0,0,.6), 0 0 0 .5px rgba(255,255,255,.12); }
 
@@ -67,7 +67,7 @@
   .fork { border-radius: 3px; background: rgba(255,159,10,.22); box-shadow: inset 0 -1.5px 0 var(--orange); cursor: pointer; position: relative; padding: 0 1px; }
   .fork.unv { background: rgba(255,69,58,.18); box-shadow: inset 0 -1.5px 0 var(--red); }
   .fork:hover { background: rgba(255,159,10,.38); }
-  .menu { position: absolute; top: 20px; left: -6px; z-index: 5; background: #2c2c2e; border-radius: 10px; padding: 6px; min-width: 300px; box-shadow: 0 14px 40px rgba(0,0,0,.6), 0 0 0 .5px rgba(255,255,255,.14); font: 12px -apple-system; display: none; white-space: normal; }
+  .menu { position: absolute; top: 20px; left: -6px; z-index: 5; background: #2c2c2e; border-radius: 10px; padding: 6px; min-width: 300px; box-shadow: 0 14px 40px rgba(0,0,0,.6), 0 0 0 .5px rgba(255,255,255,.14); font: 12px -apple-system, system-ui, sans-serif; display: none; white-space: normal; }
   .menu.open { display: block; }
   .menu .mh { color: var(--ter); font-size: 11px; padding: 4px 8px 6px; }
   .opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
@@ -98,18 +98,18 @@
   .rail-h { font-weight: 600; }
   .rail-b { padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 16px; }
   .hero { background: linear-gradient(180deg, rgba(48,209,88,.12), rgba(48,209,88,.03)); border-radius: 12px; padding: 14px; box-shadow: inset 0 0 0 .5px rgba(48,209,88,.25); }
-  .hero .big { font: 700 30px -apple-system; letter-spacing: -.02em; }
+  .hero .big { font: 700 30px -apple-system, system-ui, sans-serif; letter-spacing: -.02em; }
   .hero .big span { color: var(--sec); font-weight: 500; font-size: 15px; }
   .hero .l { color: var(--sec); font-size: 12px; margin-top: 2px; line-height: 1.45; }
   .meter { height: 8px; border-radius: 4px; background: rgba(255,255,255,.07); overflow: hidden; margin-top: 10px; display: flex; }
   .meter i { display: block; height: 100%; }
-  .sect h3 { margin: 0 0 8px; font: 600 10.5px -apple-system; letter-spacing: .05em; color: var(--ter); text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+  .sect h3 { margin: 0 0 8px; font: 600 10.5px -apple-system, system-ui, sans-serif; letter-spacing: .05em; color: var(--ter); text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
   .sect h3 .n { width: 15px; height: 15px; font-size: 9.5px; }
   .q { display: flex; gap: 9px; align-items: flex-start; padding: 8px 9px; border-radius: 8px; cursor: pointer; }
   .q:hover { background: rgba(255,255,255,.05); }
   .q .rk { font: 600 11px var(--mono); color: var(--ter); width: 14px; padding-top: 1px; }
   .q .t { flex: 1; line-height: 1.4; } .q .t small { display: block; color: var(--ter); font-size: 11px; }
-  .q .risk { font: 600 11px -apple-system; padding: 1px 6px; border-radius: 7px; font-variant-numeric: tabular-nums; }
+  .q .risk { font: 600 11px -apple-system, system-ui, sans-serif; padding: 1px 6px; border-radius: 7px; font-variant-numeric: tabular-nums; }
   .risk.hi { color: var(--red); background: rgba(255,69,58,.14); } .risk.md { color: var(--orange); background: rgba(255,159,10,.14); } .risk.lo { color: var(--sec); background: rgba(255,255,255,.07); }
   .q.done { opacity: .4; } .q.done .t { text-decoration: line-through; }
   .fp { display: flex; gap: 12px; align-items: center; }
@@ -118,9 +118,9 @@
   .cal { font-size: 11.5px; color: var(--ter); line-height: 1.45; }
   .cal b { color: var(--text); font-weight: 500; }
 
-  .rail-h .count { font: 600 11px -apple-system; color: var(--orange); background: rgba(255,159,10,.14); padding: 1px 7px; border-radius: 8px; }
+  .rail-h .count { font: 600 11px -apple-system, system-ui, sans-serif; color: var(--orange); background: rgba(255,159,10,.14); padding: 1px 7px; border-radius: 8px; }
   .rail-h .count.ok { color: var(--accent); background: rgba(48,209,88,.14); }
-  .rail-h .kbd { margin-left: auto; font: 400 10.5px -apple-system; color: var(--ter); }
+  .rail-h .kbd { margin-left: auto; font: 400 10.5px -apple-system, system-ui, sans-serif; color: var(--ter); }
   .strip { display: flex; gap: 2px; height: 22px; align-items: flex-end; }
   .strip i { flex: 1; border-radius: 2px; background: rgba(48,209,88,.35); cursor: pointer; }
   .strip i.or { background: var(--orange); } .strip i.rd { background: var(--red); } .strip i.ok { background: rgba(48,209,88,.7); }
@@ -134,7 +134,7 @@
   .gc.hi .kind { color: var(--red); } .gc.md .kind { color: var(--orange); }
   .gc .q { font-weight: 500; line-height: 1.4; margin-bottom: 8px; padding: 0; display: block; cursor: inherit; }
   .gc .vs { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: center; font: 11.5px var(--mono); margin-bottom: 9px; }
-  .gc .vs .lab { font: 10.5px -apple-system; color: var(--ter); }
+  .gc .vs .lab { font: 10.5px -apple-system, system-ui, sans-serif; color: var(--ter); }
   .gc .vs .bar { height: 4px; border-radius: 2px; background: var(--quat); overflow: hidden; } .gc .vs .bar i { display: block; height: 100%; }
   .gc .vs .p { color: var(--sec); font-variant-numeric: tabular-nums; }
   .gc .ev { font-size: 11.5px; color: var(--sec); line-height: 1.45; margin-bottom: 10px; }
@@ -146,9 +146,85 @@
   .trust { font-size: 11.5px; color: var(--ter); line-height: 1.5; border-top: .5px solid var(--sep); padding-top: 12px; }
   .trust b { color: var(--text); font-weight: 500; }
   .trust .why { color: var(--blue); cursor: help; }
-  .hood summary { font: 600 10.5px -apple-system; letter-spacing: .05em; color: var(--ter); text-transform: uppercase; cursor: pointer; margin-bottom: 8px; }
+  .hood summary { font: 600 10.5px -apple-system, system-ui, sans-serif; letter-spacing: .05em; color: var(--ter); text-transform: uppercase; cursor: pointer; margin-bottom: 8px; }
   .ln.flash { animation: fl 1.2s ease-out; }
   @keyframes fl { 0% { background: rgba(10,132,255,.35); } 100% { background: rgba(48,209,88,.07); } }
+  /* ── premium layer: neutrals carry the UI, colour only marks meaning ── */
+  :root {
+    --bg: #151516; --side: #18181a; --card: #1d1d20; --raise: #232327;
+    --text: #f2f2f3; --sec: rgba(242,242,243,.58); --ter: rgba(242,242,243,.34); --quat: rgba(242,242,243,.10);
+    --sep: rgba(255,255,255,.07); --hair: rgba(255,255,255,.10);
+    --accent: #5fd39a; --red: #f2766b; --orange: #e3b065; --blue: #8ab4ff; --teal: #8fd0e8;
+  }
+  body { background: #0a0a0b; font-feature-settings: "ss01", "cv11"; }
+  h1 { font: 600 34px "SF Pro Display", -apple-system, system-ui, sans-serif; letter-spacing: -.025em; }
+  .eyebrow { color: var(--ter); letter-spacing: .14em; font-weight: 500; }
+  .lede { color: var(--sec); font-size: 14.5px; }
+  .win { background: var(--bg); box-shadow: 0 50px 120px rgba(0,0,0,.7), 0 0 0 .5px rgba(255,255,255,.14), inset 0 .5px 0 rgba(255,255,255,.08); }
+  .src { background: #121213; }
+  .src-h, .main-h, .rail-h { background: linear-gradient(180deg, rgba(255,255,255,.025), transparent); }
+  .tab.on { background: none; color: var(--text); box-shadow: inset 0 -1px 0 var(--text); border-radius: 0; }
+  .pill { background: rgba(255,255,255,.04); box-shadow: inset 0 0 0 .5px var(--hair); font-weight: 500; letter-spacing: -.005em; }
+  .pulse { width: 7px; height: 7px; animation: none; box-shadow: 0 0 0 3px rgba(95,211,154,.15); }
+  .pulse.amber { animation: none; box-shadow: 0 0 0 3px rgba(227,176,101,.16); }
+  .prompt span { background: var(--raise); box-shadow: inset 0 0 0 .5px var(--hair); }
+  .tool { background: var(--card); box-shadow: 0 0 0 .5px var(--hair), 0 8px 24px rgba(0,0,0,.25); }
+  .tool-h .badge { background: none; padding: 0; font-variant-numeric: tabular-nums; }
+  .badge.warn { color: var(--sec); } .badge.ok { color: var(--accent); }
+  .ln.add { background: rgba(95,211,154,.035); } .ln.add .m { color: rgba(95,211,154,.7); }
+  .ln .dot { width: 4px; height: 4px; background: var(--orange); }
+  .fork { background: none; box-shadow: none; border-bottom: 1px dotted var(--orange); border-radius: 0; padding: 0; }
+  .fork:hover { background: rgba(227,176,101,.10); }
+  .fork.unv { background: none; box-shadow: none; text-decoration: underline wavy var(--red); text-decoration-thickness: 1px; text-underline-offset: 3px; border-bottom: 0; }
+  .menu { background: rgba(32,32,36,.92); backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4); box-shadow: 0 24px 60px rgba(0,0,0,.6), 0 0 0 .5px rgba(255,255,255,.16); }
+  .opt .bar { height: 2px; } .opt .bar i, .opt.cur .bar i { background: var(--sec); }
+  .menu .mf b { color: var(--sec); }
+
+  .guard { background: var(--card); box-shadow: 0 0 0 .5px var(--hair); padding: 14px 16px; }
+  .guard .gh { font-weight: 500; letter-spacing: -.005em; }
+  .guard .gh .tag, .gc .kind { font: 600 9.5px -apple-system, system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+  .guard .gh .tag { color: var(--red); }
+  .guard .cmd { background: #111113; box-shadow: inset 0 0 0 .5px var(--sep); }
+  .guard .cmd .sure { box-shadow: none; }
+  .guard .cmd .guess { background: none; box-shadow: none; text-decoration: underline wavy var(--red); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  .btn { background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 .5px var(--hair); color: var(--text); font-weight: 500; transition: background .15s; }
+  .btn:hover { background: rgba(255,255,255,.10); }
+  .btn.pri { background: var(--text); color: #111; box-shadow: none; }
+  .btn.pri:hover { background: #fff; }
+  .btn.dim { background: none; box-shadow: none; color: var(--sec); }
+  .composer { background: var(--card); box-shadow: inset 0 0 0 .5px var(--hair); }
+  .composer .hint { background: none; color: var(--ter); padding: 0; }
+  .composer .hint::before { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 3px; background: var(--orange); margin-right: 7px; vertical-align: 1px; }
+  .sl.lit { background: rgba(143,208,232, calc(var(--w) * .6)); }
+
+  .rail { background: var(--side); }
+  .rail-h { font: 600 13px -apple-system, system-ui, sans-serif; letter-spacing: -.005em; }
+  .rail-h .count, .rail-h .count.ok { background: none; color: var(--ter); font-weight: 500; font-variant-numeric: tabular-nums; padding: 0; }
+  .rail-h .kbd { letter-spacing: .02em; }
+  .rail-b { gap: 14px; padding: 16px; }
+  .strip { height: 14px; gap: 1.5px; }
+  .strip i { background: var(--quat); border-radius: 1px; }
+  .strip i.or { background: var(--orange); } .strip i.rd { background: var(--red); } .strip i.ok { background: rgba(95,211,154,.55); }
+  .gc { background: var(--card); border-radius: 10px; padding: 14px; box-shadow: 0 0 0 .5px var(--hair); }
+  .gc.hi, .gc.md { box-shadow: 0 0 0 .5px var(--hair); }
+  .gc.focus { box-shadow: 0 0 0 .5px rgba(255,255,255,.28), 0 10px 30px rgba(0,0,0,.35); background: var(--raise); }
+  .gc .top { margin-bottom: 8px; }
+  .gc .top .loc { color: var(--ter); }
+  .gc .top .kind { display: inline-flex; align-items: center; gap: 6px; }
+  .gc .top .kind::before { content: ""; width: 5px; height: 5px; border-radius: 3px; background: currentColor; }
+  .gc .q { font-size: 13px; letter-spacing: -.005em; margin-bottom: 12px; }
+  .gc .vs { gap: 5px 10px; margin-bottom: 12px; }
+  .gc .vs .bar { height: 2px; background: var(--quat); }
+  .gc .vs .bar i { background: var(--sec) !important; }
+  .gc .vs > :nth-child(n+7) .bar i, .gc .vs .bar:nth-child(n+7) i { opacity: .5; }
+  .gc .ev { color: var(--ter); border-top: .5px solid var(--sep); padding-top: 10px; }
+  .gc .ev b { color: var(--sec); }
+  .settled .s .ck { color: var(--ter); }
+  .trust { color: var(--ter); }
+  .trust .why { color: var(--sec); text-decoration: underline dotted; text-underline-offset: 2px; }
+
+  .story div, .moat { background: #111112; box-shadow: 0 0 0 .5px var(--sep); }
+  .story .n { background: none; color: var(--ter); width: auto; font: 500 11px var(--mono); }
   .story { margin-top: 30px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; max-width: 1560px; }
   .story div { background: #161617; border-radius: 12px; padding: 16px; line-height: 1.5; color: var(--sec); box-shadow: 0 0 0 .5px var(--sep); }
   .story b { color: var(--text); display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 13.5px; }
@@ -161,7 +237,7 @@
 <div class="page">
   <div class="eyebrow">frog · insides</div>
   <h1>Review 4 lines, not 400.</h1>
-  <p class="lede">An agent that knows where it guessed, and proves it. Every line the model writes carries how sure it was, which of your lines it was looking at, and how often lines like it get changed afterwards. You review the guesses, steer at the forks, and skim the rest. This takes a model you control: frog runs its own inference, so it can read the model's internals and resume from any token. <b>Try it:</b> hover a line on the right to see which source lines drove it. Click an orange or red token to take the other branch.</p>
+  <p class="lede">An agent that knows where it guessed, and proves it. Every line the model writes carries how sure it was, which of your lines it was looking at, and how often lines like it get changed afterwards. You review the guesses, steer at the forks, and skim the rest. This takes a model you control: frog runs its own inference, so it can read the model's internals and resume from any token. <b>Try it:</b> hover a line on the right to see which source lines drove it. Click an underlined token to take the other branch.</p>
 
   <div class="win">
     <!-- SOURCE -->
@@ -174,7 +250,7 @@
     <!-- TRANSCRIPT -->
     <section class="main">
       <div class="main-h" style="justify-content:center">
-        <div class="pill"><span class="pulse" id="pulse"></span><span>add proration to invoice upgrades</span><span class="sec">local/qwen3-coder-next · M4 Max</span></div>
+        <div class="pill" style="gap:10px"><span class="pulse" id="pulse"></span><span>add proration to invoice upgrades</span><span class="sec">local/qwen3-coder-next · M4 Max</span></div>
       </div>
       <div class="scroll"><div class="col">
         <div class="prompt"><span>when a customer upgrades mid-cycle, prorate the invoice. use the existing helpers.</span></div>
@@ -186,13 +262,13 @@
         </div>
 
         <div class="guard">
-          <div class="gh"><span style="color:var(--red)">●</span>Approve command? <span style="color:var(--sec);font-weight:400">The model guessed part of it.</span></div>
+          <div class="gh"><span class="tag">Guessed scope</span><span>Approve this command?</span></div>
           <div class="cmd"><span class="sure">psql</span> <span class="sure">-c</span> "<span class="sure">UPDATE invoices SET</span> prorated = true <span class="sure">WHERE</span> <span class="guess" title="41% · runner-up: plan_changed_at > now() - interval '1 day'">period_start &gt; '2026-10-01'</span>"</div>
           <p>The model was sure about <i>what</i> to run (98%) but guessed <i>which rows</i> (41%). The runner-up limited it to yesterday's upgrades. Destructive SQL with a guessed WHERE clause needs a look.</p>
           <div class="btns"><button class="btn">Allow once</button><button class="btn pri">Use runner-up</button><button class="btn dim">Ask model to verify first</button></div>
         </div>
       </div></div>
-      <div class="composer">Reply to frog…<span class="hint" id="depth">⚠ 3 guesses on money math · qwen3-coder-next is usually sure here</span></div>
+      <div class="composer">Reply to frog…<span class="hint" id="depth">3 guesses on money math. This model is usually sure here.</span></div>
     </section>
 
     <!-- REVIEW RAIL -->
