@@ -126,6 +126,11 @@ pub struct Face {
     pub talk: f32,
     /// A flash of attention when a word is heard.
     pub hear: f32,
+    /// The loudness (0..1) of Pip's own voice playing right now, set by the host each frame when
+    /// it speaks with ribt. `None` while silent.
+    pub voice: Option<f32>,
+    /// The host has a voice: talking follows the audio rather than the words arriving.
+    pub voiced: bool,
     vv: f32,
     va: f32,
     vg: f32,
@@ -162,6 +167,8 @@ impl Face {
             think: 0.0,
             talk: 0.0,
             hear: 0.0,
+            voice: None,
+            voiced: false,
             vv: 0.0,
             va: 0.0,
             vg: 0.0,
@@ -196,7 +203,11 @@ impl Face {
         }
         self.draft_len = p.draft.len();
         self.reply_len = p.reply.len();
-        let talking = now - self.last_word < TALK_SECS;
+        let talking = if self.voiced {
+            self.voice.is_some()
+        } else {
+            now - self.last_word < TALK_SECS
+        };
         let t = target(p, now, talking, look);
 
         if now > self.next_saccade {

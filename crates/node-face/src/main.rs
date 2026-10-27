@@ -6,6 +6,7 @@
 //! node-face --fullscreen              # borderless, for the panel itself
 //! node-face -- -m ollama/qwen3:8b     # arguments after -- go to frog
 //! node-face --demo                    # a scripted turn, no model needed
+//! node-face --voice                   # Pip speaks with ribt (build with --features voice)
 //! node-face --sheet out.png           # headless: the face through a whole turn, one PNG
 //! ```
 //!
@@ -52,6 +53,12 @@ struct Args {
     /// Render the demo turn as a contact sheet to this PNG and exit.
     #[arg(long, value_name = "PNG")]
     sheet: Option<PathBuf>,
+    /// Speak with ribt (needs the `voice` feature; see RIBT_* in src/voice.rs for model paths).
+    #[arg(long)]
+    voice: bool,
+    /// The ribt-tts binary (default: $RIBT_TTS, else ribt-tts on PATH).
+    #[arg(long, value_name = "PATH")]
+    ribt: Option<String>,
     /// The frog binary to run with --serve.
     #[arg(long, default_value = "frog")]
     frog: String,
@@ -252,6 +259,7 @@ fn run(args: &Args) -> Result<()> {
         title: !args.fullscreen,
         ..WindowOptions::default()
     };
+    let mut voice = voice(args)?;
     let mut win = Window::new("frog node", w, h, opts)?;
     win.set_target_fps(60);
     let typed = Rc::new(RefCell::new(Vec::new()));
@@ -309,12 +317,51 @@ fn run(args: &Args) -> Result<()> {
             .map(|(x, y)| (((x / w as f32) - 0.5) * 2.4, ((y / w as f32) - 0.45) * 2.4))
             .map(|(x, y)| (x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0)));
         sim.step(dt);
+        if let Some(v) = voice.as_mut() {
+            if v.feed(&sim.puck).is_err() {
+                voice = None; // ribt stopped: carry on silent
+            } else {
+                face.voice = v.level();
+            }
+        }
+        face.voiced = voice.is_some();
         face.step(&sim.puck, sim.t, dt, look);
         draw::draw(&mut cv, &face, &style, sim.t, &status(&sim.puck), &fonts);
         cv.to_u32(&mut buf);
         win.update_with_buffer(&buf, w, h)?;
     }
     Ok(())
+}
+
+#[cfg(feature = "voice")]
+fn voice(args: &Args) -> Result<Option<node_face::voice::Voice>> {
+    use node_face::voice::{Paths, Voice};
+    Ok(if args.voice {
+        Some(Voice::spawn(&Paths::from_env(args.ribt.as_deref()))?)
+    } else {
+        None
+    })
+}
+
+#[cfg(all(feature = "window", not(feature = "voice")))]
+fn voice(args: &Args) -> Result<Option<Silent>> {
+    if args.voice {
+        anyhow::bail!("this build has no voice; rebuild with `--features voice`");
+    }
+    Ok(None)
+}
+
+/// Stands in for the voice in builds without it.
+#[cfg(all(feature = "window", not(feature = "voice")))]
+struct Silent;
+#[cfg(all(feature = "window", not(feature = "voice")))]
+impl Silent {
+    fn feed(&mut self, _: &Puck) -> Result<()> {
+        Ok(())
+    }
+    fn level(&self) -> Option<f32> {
+        None
+    }
 }
 
 #[cfg(not(feature = "window"))]

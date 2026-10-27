@@ -4,11 +4,14 @@
 //!   levels, all on springs, folded from what [`puck::model::Puck`] says frog is doing.
 //! - [`draw`]: the eyes as 64-point outlines (so they morph into glyphs), pupils, the blink
 //!   membrane, blush, thinking motes and the glow, into a [`puck::canvas::Canvas`].
+//! - [`voice`] (feature `voice`): Pip speaks with ribt, and the eyes follow the audio.
 //!
 //! The look was settled in `cortex/face/soft-blocks-lab.html` (the rose repo); this is its port.
 
 pub mod draw;
 pub mod face;
+#[cfg(feature = "voice")]
+pub mod voice;
 
 /// The two heads' panels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

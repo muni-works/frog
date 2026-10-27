@@ -2122,6 +2122,7 @@ dependencies = [
  "clap",
  "minifb",
  "puck",
+ "rodio",
  "serde_json",
 ]
 

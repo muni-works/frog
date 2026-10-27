@@ -14,6 +14,8 @@ path = "src/main.rs"
 default = []
 # A window on the head's panel (X11/Wayland/macOS). Off by default so `cargo build --workspace` needs no GUI libraries.
 window = ["dep:minifb"]
+# Pip speaks with ribt (ipse's streaming TTS), through the host's audio device.
+voice = ["window", "dep:rodio"]
 
 [dependencies]
 # The puck crate already folds `frog --serve` into what a screen should show, and draws anti-aliased
@@ -23,3 +25,4 @@ anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 minifb = { version = "0.28", optional = true }
+rodio = { version = "0.20", optional = true, default-features = false }

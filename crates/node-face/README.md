@@ -23,7 +23,18 @@ cargo run -p node-face -- --sheet face.png                         # headless: t
 | error | sad, looking down |
 | words streaming | warm, at you, the eyes bounce with the words |
 
+## Voice
+
+With `--features voice` and `--voice`, Pip speaks with [ribt](https://github.com/ecto/ipse/tree/main/crates/ribt), ipse's streaming TTS. One `ribt-tts stream --stdin --pcm -` runs for the session; frog's reply goes in word by word as it streams and audio comes back a chunk at a time, about 15 ms after the words (the model compiles once at start, a few seconds). The eyes bounce with the loudness of what's actually playing.
+
+```
+RIBT_TTS=path/to/ribt-tts cargo run -p node-face --features voice -- --demo --voice
+```
+
+Model paths default to ribt's Mac layout (`~/runs/tts/v2a`, `~/runs/vocoders/v12long_100000.safetensors`, `~/runs/tts/v2f/student/last.safetensors`); `RIBT_RUN`, `RIBT_CKPT`, `RIBT_VOC` and `RIBT_FLOW` override them. On the Orin, build ribt with `--features cuda`.
+
 Until the head's microphone and camera are wired in, typing stands in for speech and the pointer stands in for where you are. The look was settled in `cortex/face/soft-blocks-lab.html` in the rose repo.
 
 - `face.rs`: the character. Emotion (valence × arousal), gaze, glyph and the listening / thinking / talking levels, on springs.
+- `voice.rs`: ribt as a child process, its PCM onto the speaker, loudness per 20 ms for the eyes.
 - `draw.rs`: 64-point eye outlines (so they morph into glyphs), pupils, membrane, blush, motes, the portrait status line, and the bloom.

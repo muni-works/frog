@@ -271,7 +271,9 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64, status: &str, font
         (face.vgy.abs() / 6.0).min(1.0),
     );
     let (sx, sy) = (1.0 + 0.18 * spx - 0.08 * spy, 1.0 - 0.1 * spx + 0.16 * spy); // squash along the saccade
-    let talk_h = 1.0 + 0.08 * (voice(t) - 0.5) * face.talk;
+    // The real voice's loudness when Pip speaks with ribt, else a stand-in envelope.
+    let vl = face.voice.unwrap_or_else(|| voice(t));
+    let talk_h = 1.0 + 0.1 * (vl - 0.5) * face.talk;
     let grow = 1.0 + 0.1 * face.listen + 0.05 * face.hear; // listening: the eyes open toward you
 
     for side in [-1.0f32, 1.0] {
@@ -281,7 +283,7 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64, status: &str, font
         e.lid_out = sat(e.lid_out + 0.06 * face.think);
         let near = 1.0 + 0.06 * face.gx * side;
         let cx = 0.5 + side * st.spacing + face.gx * 0.04;
-        let cy = 0.49 + face.gy * 0.035 + breathe - 0.012 * face.talk * voice(t);
+        let cy = 0.49 + face.gy * 0.035 + breathe - 0.014 * face.talk * vl;
         let p = outline(
             &e,
             cx,
