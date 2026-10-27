@@ -162,6 +162,9 @@ pub struct Registry {
     /// The job the sleep guard last made of a long wait (`Engine::background_wait`): while it
     /// runs, another long wait is refused rather than started.
     pub long_wait: Mutex<Option<String>>,
+    /// Long waits refused this turn because one already ran (`Engine::background_wait`): the
+    /// second ends the turn, since the model won't.
+    pub long_wait_refusals: AtomicU64,
     emit: Emit,
 }
 
@@ -174,6 +177,7 @@ impl Registry {
             wake: Default::default(),
             relay: Default::default(),
             long_wait: Default::default(),
+            long_wait_refusals: AtomicU64::new(0),
             emit: Box::new(emit),
         })
     }

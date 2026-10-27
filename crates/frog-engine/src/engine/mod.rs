@@ -230,6 +230,9 @@ enum Batch {
     Continue,
     Denied,
     Looping,
+    /// The model kept sleeping on a background wait: the turn ends as complete, and the
+    /// job's wake starts the next.
+    Waiting,
     /// The agent retried a call already denied this turn: frog didn't ask again, and the
     /// turn ends with the denial (`EndReason::BlockedOnApproval`).
     Blocked(String),

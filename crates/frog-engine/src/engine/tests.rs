@@ -7187,7 +7187,8 @@ async fn a_second_long_sleep_while_one_waits_is_refused() {
         reply(vec![sleep("w1")], Stop::ToolUse),
         reply(vec![sleep("w2")], Stop::ToolUse),
         reply(vec![sleep("w3")], Stop::ToolUse),
-        reply(vec![text("ending my turn")], Stop::End),
+        // Never reached: the second refusal ends the turn.
+        reply(vec![sleep("w4")], Stop::ToolUse),
     ];
     let mut h = engine_with(script, true, None, None, None, dir.clone());
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
@@ -7202,6 +7203,16 @@ async fn a_second_long_sleep_while_one_waits_is_refused() {
         let out = tool_output(&evs, id).expect("the repeat's result");
         assert!(out.contains("already waiting on job-1"), "{out}");
     }
+    // The model wouldn't end its turn, so frog did: finished, waiting on the job's wake.
+    assert!(tool_output(&evs, "w4").is_none(), "the turn ended before another sleep");
+    assert!(matches!(
+        evs.iter().find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        }),
+        Some(EndReason::Complete)
+    ));
+    assert!(notices(&evs).iter().any(|n| n.contains("Turn ended to wait for job-1")), "{:?}", notices(&evs));
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(dir);
 }
