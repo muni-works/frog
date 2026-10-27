@@ -126,6 +126,7 @@ impl Agent {
             if !self.chat {
                 specs.extend(crate::background::specs());
                 specs.push(crate::title::spec());
+                specs.push(crate::next::spec());
             }
             if !self.skills.is_empty() {
                 specs.push(crate::skills::spec());

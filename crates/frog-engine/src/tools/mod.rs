@@ -345,6 +345,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
             .join(": "),
         "Task" => s("description"),
         crate::title::TOOL => s("title"),
+        crate::next::TOOL => s("text"),
         "Monitor" => {
             let c = s("command");
             if c.is_empty() {

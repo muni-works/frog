@@ -151,6 +151,8 @@ struct ComposerTextView: NSViewRepresentable {
     var onMention: (String?) -> Void = { _ in }
     /// Keys while mention suggestions are showing. Return true if handled.
     var onMentionKey: (MentionKey) -> Bool = { _ in false }
+    /// Tab outside mentions (accepting a suggested next prompt). Return true if handled.
+    var onTab: () -> Bool = { false }
     /// Pasted images (copied images or image files). Nil: paste as usual.
     var onPasteImages: (([ToolImage]) -> Void)?
     var minHeight: CGFloat = 22
@@ -254,6 +256,8 @@ struct ComposerTextView: NSViewRepresentable {
                 return true
             }
             switch selector {
+            case #selector(NSResponder.insertTab(_:)):
+                return parent.onTab()
             case #selector(NSResponder.insertNewline(_:)):
                 let flags = NSApp.currentEvent?.modifierFlags ?? []
                 if flags.contains(.shift) || flags.contains(.option) {

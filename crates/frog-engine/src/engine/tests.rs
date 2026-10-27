@@ -1114,6 +1114,32 @@ async fn set_title_tool_names_the_session_and_disables_the_fallback() {
 }
 
 #[tokio::test]
+async fn next_tool_suggests_once_just_before_a_completed_turn_ends() {
+    let call = Block::ToolUse {
+        id: "n1".into(),
+        name: crate::next::TOOL.into(),
+        input: json!({ "text": "commit this" }),
+    };
+    let mut h = engine(
+        vec![
+            reply(vec![call], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+            reply(vec![text("ok")], Stop::End),
+        ],
+        true,
+    );
+    let evs = run(&mut h, "fix the bug").await;
+    let at = evs
+        .iter()
+        .position(|e| matches!(&e.event, Event::NextSuggested { text, act: false, .. } if text == "commit this"))
+        .expect("a NextSuggested");
+    assert!(matches!(evs[at + 1].event, Event::TurnEnded { .. }));
+    // Turn-scoped: the next turn, which didn't call it, suggests nothing.
+    let evs = run_now(&mut h, "thanks").await;
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::NextSuggested { .. })));
+}
+
+#[tokio::test]
 async fn headless_first_turn_falls_back_to_a_derived_title() {
     let mut h = engine(vec![reply(vec![text("ok")], Stop::End)], false);
     let evs = run(

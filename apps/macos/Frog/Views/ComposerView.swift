@@ -172,12 +172,31 @@ struct ComposerView: View {
             if !conversation.queue.isEmpty {
                 QueuedMessages(conversation: conversation)
             }
+            if let next = conversation.next, next.act, !conversation.busy {
+                // An outward step (push, send, deploy) takes a deliberate click, never a Tab.
+                Button {
+                    conversation.act(Present.Choice(label: next.text, send: nil))
+                } label: {
+                    Label(next.text, systemImage: "arrow.up.forward")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.opacity)
+            }
             if !attachments.isEmpty {
                 AttachmentStrip(images: $attachments, blind: conversation.status?.vision == false ? conversation.status?.model : nil)
             }
             HStack(alignment: .bottom, spacing: 10) {
                 ZStack(alignment: .topLeading) {
-                    if text.isEmpty {
+                    if text.isEmpty, let ghost {
+                        (Text(ghost) + Text("  ⇥").foregroundStyle(.quaternary))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .padding(.leading, 5)
+                            .padding(.top, 1)
+                            .allowsHitTesting(false)
+                    } else if text.isEmpty {
                         Text(placeholder)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
@@ -205,6 +224,11 @@ struct ComposerView: View {
                             mention = query
                         },
                         onMentionKey: handleMentionKey,
+                        onTab: {
+                            guard text.isEmpty, let ghost else { return false }
+                            text = ghost
+                            return true
+                        },
                         onPasteImages: { attachments += $0 }
                     )
                     .frame(height: height)
@@ -292,6 +316,12 @@ struct ComposerView: View {
         let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let usable = !draft.isEmpty && !draft.hasPrefix("/") && !draft.hasPrefix("!")
         conversation.send(.warm(draft: usable ? text : nil))
+    }
+
+    /// The model's suggested next prompt, as ghost text Tab accepts; outward ones are a button.
+    private var ghost: String? {
+        guard let next = conversation.next, !next.act, !conversation.busy else { return nil }
+        return next.text
     }
 
     private var placeholder: String {
