@@ -16,6 +16,9 @@ enum Tokens {
     static let sidebar = Color(light: (0.925, 0.925, 0.925), dark: (0.078, 0.078, 0.078))
     /// Bubbles, cards, the composer field, menus (#232323).
     static let raised = Color(light: (1.0, 1.0, 1.0), dark: (0.137, 0.137, 0.137))
+    /// The prompt bubble: `raised` in the dark; a soft gray in the light, where white would
+    /// vanish on a white phone background.
+    static let bubble = Color(light: (0.910, 0.910, 0.910), dark: (0.137, 0.137, 0.137))
 
     // MARK: hairlines
 

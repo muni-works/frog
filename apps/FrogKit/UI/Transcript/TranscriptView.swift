@@ -413,9 +413,6 @@ struct TranscriptView: View {
 struct UserPrompt: View {
     let text: String
     var images: [ToolImage] = []
-    /// Where the turn ran: iMessage blue on this Mac or your own server, green in the cloud,
-    /// like the model's name in its footer.
-    var tint: Color = .accentColor
 
     var body: some View {
         let (message, contexts) = PromptContext.split(text)
@@ -442,9 +439,10 @@ struct UserPrompt: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, TurnSpace.Inset.roomy + TurnSpace.Inset.hair)
                     .padding(.vertical, TurnSpace.Inset.card)
-                    // Solid, with white text, like iMessage (blue) and SMS (green).
-                    .foregroundStyle(.white)
-                    .background(tint, in: .rect(cornerRadius: 18))
+                    // Neutral raised gray: the prompt is you, not the place that served
+                    // you. Where it ran shows in the model pill and the turn's footer.
+                    .foregroundStyle(Tokens.text)
+                    .background(Tokens.bubble, in: .rect(cornerRadius: Tokens.Radius.bubble, style: .continuous))
             }
             ForEach(contexts) { ContextDisclosure(context: $0) }
         }
