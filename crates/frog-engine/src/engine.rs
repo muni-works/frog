@@ -1368,6 +1368,9 @@ impl Agent {
         let mut loaded_tools: Vec<String> = Vec::new();
         let mut resumed_titled = false;
         let mut resumed_model: Option<String> = None;
+        // What the context held when the log stopped, so a resumed session's status says so
+        // before its next call (not "unknown"): the newest real count, a turn's or a compaction's.
+        let mut resumed_context = None;
         let mut resumed_chapters = crate::chapter::Tracker::default();
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
@@ -1418,6 +1421,11 @@ impl Agent {
                         })
                         .unwrap_or_else(|| l.header.model.clone()),
                 );
+                resumed_context = l.events.iter().rev().find_map(|e| match &e.event {
+                    Event::TurnEnded { usage, .. } => usage.context_tokens,
+                    Event::Compacted { tokens_after, .. } => Some(*tokens_after),
+                    _ => None,
+                });
                 shared.panes.seed_ids(used);
                 // A turn that started and never ended: the engine died or was killed mid-turn.
                 let unfinished = l.events.iter().rev().find_map(|e| match &e.event {
@@ -1514,7 +1522,10 @@ impl Agent {
             subagent: o.subagent,
             chat: o.chat,
             store: o.store,
-            usage: Usage::default(),
+            usage: Usage {
+                input: resumed_context.unwrap_or(0),
+                ..Default::default()
+            },
             last_call: Duration::ZERO,
             session_id,
             turn,
@@ -13529,6 +13540,49 @@ However, your request has 1579729 input tokens. Please reduce the length of the 
             }
         }
         assert!(last_degraded(&last).is_empty(), "{:?}", last_degraded(&last));
+        shutdown(h).await;
+    }
+
+    /// A resumed session's status carries the context it ended with, before any new call:
+    /// the context popover read "0 of 1000.0k" on a 600k-token session after a relaunch.
+    #[tokio::test]
+    async fn a_resumed_session_reports_its_context_before_the_next_call() {
+        let dir = tmp_store();
+        let mut h = engine_at(vec![reply(vec![text("one")], Stop::End)], false, Some(dir.clone()), None);
+        let first = run(&mut h, "first").await;
+        let sid = first[0].session.clone();
+        shutdown(h).await;
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            profile,
+            cwd: std::env::temp_dir(),
+            mode: Mode::Default,
+            can_ask: false,
+            resume: Some(sid),
+            store: Some(dir),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = start(opts, Provider::Scripted(scripted::Client::new(vec![]))).unwrap();
+        let status = loop {
+            let env = tokio::time::timeout(Duration::from_secs(10), h.events.recv())
+                .await
+                .expect("a status")
+                .unwrap();
+            if let Event::Status(s) = env.event {
+                break s;
+            }
+        };
+        // `reply`'s usage: 100 in + 10 out.
+        assert_eq!(status.context_tokens, Some(110));
         shutdown(h).await;
     }
 
