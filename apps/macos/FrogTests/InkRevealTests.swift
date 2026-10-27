@@ -50,8 +50,19 @@ final class InkRevealTests: XCTestCase {
             pump(0.1)
         }
         let length = (v.textStorage?.string ?? "").count
+        // CI (`TestRunner.isCI`): a runner's virtual display ticks the display link late and
+        // unevenly, so the pen gets up to 5 s to catch up and the fade up to 5 s to settle,
+        // polled. Locally: caught up on the last chunk's frame, settled 0.7 s later, as written.
+        if TestRunner.isCI {
+            let deadline = Date().addingTimeInterval(5)
+            while v.reveal.revealed < length, Date() < deadline { pump(0.02) }
+        }
         XCTAssertEqual(v.reveal.revealed, length, "the pen never caught up")
         pump(0.7)
+        if TestRunner.isCI {
+            let deadline = Date().addingTimeInterval(5)
+            while !settled(v), Date() < deadline { pump(0.05) }
+        }
         XCTAssertGreaterThan(TranscriptProbe.inkStyles, 0, "no ink styling ran")
         // Each character is painted at most its fade's steps (plus the full-window pass when its
         // chunk arrived), never a whole-body restyle per frame.

@@ -280,14 +280,16 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
 
     private func report(_ name: String, rows: Int, _ m: Opened) {
         print("switch: \(name) \(rows) rows, \(m.bytes / 1024) KB log: paint \(Int(m.paint * 1000)) ms, ready \(Int(m.ready * 1000)) ms (decode \(Int(m.decode * 1000)) ms, deliver \(Int(m.deliver * 1000)) ms)")
+        if TestRunner.isCI { print("switch: \(name) on CI, budgets ×\(TestRunner.slack)") }
         print("switch: \(name) peak mounted rows \(m.peakRows), row bodies \(m.rowBodies), ink \(String(format: "%.4f", m.ink)), settled \(m.settled), blank-at-end \(m.blankFrames)")
     }
 
     private func check(_ m: Opened, _ budget: (paint: Double, ready: Double), _ name: String) {
         XCTAssertTrue(m.settled, "\(name): never settled at the end")
         XCTAssertGreaterThan(m.ink, 0.002, "\(name): blank once ready")
-        XCTAssertLessThan(m.paint, budget.paint, "\(name): first paint over budget")
-        XCTAssertLessThan(m.ready, budget.ready, "\(name): ready over budget")
+        // CI: the budgets times `TestRunner.slack` (a runner's frames come late); locally as is.
+        XCTAssertLessThan(m.paint, budget.paint * TestRunner.slack, "\(name): first paint over budget")
+        XCTAssertLessThan(m.ready, budget.ready * TestRunner.slack, "\(name): ready over budget")
         XCTAssertLessThanOrEqual(m.peakRows, Self.mountedBudget, "\(name): built more rows than are on screen")
     }
 
@@ -338,7 +340,9 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         let clip = scroll.contentView
         // Off the end, as scrolling up does: it stops following.
         jump = c.turns.last?.id
-        pump(0.5)
+        // CI: longer (`TestRunner.slack`): on a loaded machine the jump can land after a fixed
+        // half second, the transcript keeps following the end, and no fill ever runs.
+        pump(0.5 * TestRunner.slack)
         var heights: [CGFloat] = [], kept: [Double] = [], frames: [TimeInterval] = []
         for _ in 0..<500 {
             guard let doc = scroll.documentView else { break }
@@ -381,8 +385,9 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         print("switch: scroll-up frames p50 \(String(format: "%.1f", p50 * 1000)) ms, p95 \(String(format: "%.1f", p95 * 1000)) ms, max \(String(format: "%.1f", (sorted.last ?? 0) * 1000)) ms")
         XCTAssertTrue(TranscriptProbe.isMounted(suffix: "-msg-0"), "never reached the first row")
         // 60 fps is 16.7 ms a frame. Measured ~17 ms p50, ~24 ms p95 in a debug build with the
-        // pump's own overhead in it (release not measured here): room for that, no more.
-        XCTAssertLessThan(p50, 0.025, "scrolling well under 60 fps")
+        // pump's own overhead in it (release not measured here): room for that, no more. CI:
+        // times `TestRunner.slack` (a virtual display's frames).
+        XCTAssertLessThan(p50, 0.025 * TestRunner.slack, "scrolling well under 60 fps")
         XCTAssertGreaterThan(TranscriptBench.ink(scroll, in: host), 0.002, "blank at the top")
         XCTAssertGreaterThan(kept.count, 0, "no rows went in above")
         XCTAssertEqual(kept.min(), 1, "the view left its place as older rows went in above it")
@@ -432,6 +437,16 @@ final class ReplayLink: ConversationLink {
     func send(_ op: Op) { ops.append(op) }
     func stop() {}
     var endDescription: String { "" }
+}
+
+/// Where the tests run. A CI runner (GitHub Actions sets `CI`; the workflow forwards it to the
+/// test process as `TEST_RUNNER_CI`) is a shared VM with a virtual display: its frames and
+/// run-loop turns come late and uneven, so wall-clock budgets measured on a Mac don't hold
+/// there. On CI, and only there, budgets get `slack` times the room and waits get longer;
+/// locally every budget is exactly as written.
+enum TestRunner {
+    static let isCI = ProcessInfo.processInfo.environment["CI"].map { !$0.isEmpty && $0 != "0" && $0 != "false" } ?? false
+    static let slack: Double = isCI ? 4 : 1
 }
 
 /// Window probes shared by the transcript benchmarks.
