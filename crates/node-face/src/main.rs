@@ -58,8 +58,8 @@ struct Args {
     /// Log what the ears hear and what the face does, on stderr.
     #[arg(long)]
     verbose: bool,
-    /// A wake-word model from ipse's `wake` (default: $WAKE_MODEL). Without one, the wake word is
-    /// matched in hear's text.
+    /// A wake-word model from ipse's `wake` (default: $WAKE_MODEL). It wakes on either the model or
+    /// the word in hear's text, whichever hears it first.
     #[arg(long, value_name = "PATH")]
     wake_model: Option<String>,
     /// The wake binary (default: $WAKE_BIN, else wake on PATH).
@@ -484,7 +484,7 @@ fn listen(
                 Heard::TurnEnd => None,
             })
             .chain(std::iter::once(partial.as_str()))
-            .find(|w| ((kws.is_none() && is_wake(w)) || is(w, STOP)) && !own.contains(&bare(w)))
+            .find(|w| (is_wake(w) || is(w, STOP)) && !own.contains(&bare(w)))
             .map(str::to_string)
             .or_else(|| kws.flatten().map(|p| format!("the wake word (p {p:.2})")));
         if let Some(w) = cut {
@@ -511,7 +511,7 @@ fn listen(
         log!("wake (model)");
         p.wake(now);
     }
-    if idle && kws.is_none() && is_wake(&e.partial().0) {
+    if idle && is_wake(&e.partial().0) {
         log!("wake (partial {:?})", e.partial().0);
         e.take_partial();
         p.wake(now);
@@ -550,7 +550,7 @@ fn listen(
                     && (is_wake(&w) || is(&w, &["hey", "hi", "okay", "ok", "hay"])) => {}
             Mode::Listening => p.hear(&format!("{w} "), now),
             // idle: the wake word, or a follow-up right after the face spoke
-            _ if kws.is_none() && is_wake(&w) => {
+            _ if is_wake(&w) => {
                 log!("wake ({w:?})");
                 p.wake(now)
             }
