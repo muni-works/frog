@@ -1583,7 +1583,7 @@ mod tests {
         std::fs::create_dir_all(&ws).unwrap();
         let mut ctx = Ctx::new(ws.clone());
         let started = std::time::Instant::now();
-        let err = match run(&json!({ "command": "sleep 30", "timeout": 1000 }), &mut ctx).await {
+        let err = match run(&json!({ "command": "sleep 31.7", "timeout": 1000 }), &mut ctx).await {
             Err(e) => e,
             Ok(o) => panic!("expected a timeout, got {:?}", o.content),
         };
@@ -1594,11 +1594,11 @@ mod tests {
         );
         assert!(err.to_string().contains("timed out"), "{err}");
         let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 30"])
+            .args(["-f", "sleep 31.7"])
             .output()
             .map(|o| !o.stdout.is_empty())
             .unwrap_or(false);
-        assert!(!alive, "a timed-out `sleep 30` is still running");
+        assert!(!alive, "a timed-out `sleep 31.7` is still running");
         let _ = std::fs::remove_dir_all(&ws);
     }
 }
