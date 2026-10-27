@@ -3364,6 +3364,48 @@ async fn a_text_fallback_lasts_the_session() {
     assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
 }
 
+/// A text fallback belongs to the model that earned it: switching models on purpose starts
+/// the new one on its own harness, not on text calls with a made-up probe reason.
+#[tokio::test]
+async fn a_text_fallback_ends_with_a_model_switch() {
+    let text_call = r#"<tool_call>{"name":"Glob","arguments":{"pattern":"*.nothing"}}</tool_call>"#;
+    let script = vec![
+        reply(vec![text(text_call)], Stop::End),
+        reply(vec![text(text_call)], Stop::End),
+        reply(vec![text("none found")], Stop::End),
+    ];
+    let mut h = engine_mode(script, ToolMode::Auto);
+    let evs = run(&mut h, "find .nothing files").await;
+    assert_eq!(last_tool_mode(&evs), Some(ToolMode::Text));
+    h.ops
+        .send(Op::SetModel {
+            spec: "ollama/other".into(),
+        })
+        .unwrap();
+    let mut last = Vec::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        let idle = matches!(env.event, Event::Idle);
+        last.push(env);
+        if idle {
+            break;
+        }
+    }
+    let d = last_degraded(&last);
+    assert!(
+        !d.iter()
+            .any(|d| d.kind == crate::protocol::DegradedKind::TextTools),
+        "{d:?}"
+    );
+    assert!(
+        !notices(&last)
+            .iter()
+            .any(|n| n.contains("capability probe")),
+        "{:?}",
+        notices(&last)
+    );
+}
+
 /// The messages of a request as the scripted provider recorded it.
 fn sent_messages(req: &str) -> Vec<Value> {
     let at = req.find(r#"[{"role""#).expect("messages in the request");

@@ -4480,12 +4480,8 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             self.ctx.judge = Some(self.profile.clone());
         }
         self.shared.journal.header.lock().unwrap().1 = self.profile_name.clone();
-        self.harness.caps = (!harness::native_known(&self.profile))
-            .then(|| harness::cached(&self.profile))
-            .flatten();
-        self.harness.mode_failures = 0;
-        self.harness.text_why = None;
-        self.harness.reprobed = false;
+        // A new model starts on its own harness: what the old one fell back to doesn't carry.
+        self.harness = harness::Harness::for_profile(&self.profile);
         self.model_ready = false;
         self.apply_harness();
         self.resolve_window().await;
