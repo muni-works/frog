@@ -6714,6 +6714,36 @@ async fn draining_the_parent_suspends_its_subagent_mid_turn_and_resume_reruns() 
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(dir);
 }
+/// A wake's notices are the job's words, not the user's: an `@path` in a job's output
+/// doesn't inline that file into the turn.
+#[tokio::test]
+async fn a_wake_notice_does_not_expand_mentions() {
+    let dir = tmp_store();
+    std::fs::write(dir.join("notes.txt"), "inlined-file-body").unwrap();
+    let job = call(
+        "b",
+        "Bash",
+        json!({"command": "echo see @notes.txt", "run_in_background": true}),
+    );
+    let script = vec![
+        reply(vec![job], Stop::ToolUse),
+        reply(vec![text("it's running")], Stop::End),
+        reply(vec![text("seen")], Stop::End),
+    ];
+    let (mut h, sent) = engine_sent(script, Some(tmp_store()), None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "run it in the background");
+    drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let input = woke_with(&evs).expect("woken by the job");
+    assert!(input.contains("see @notes.txt"), "{input}");
+    let last = sent.lock().unwrap().last().cloned().unwrap();
+    assert!(last.contains("see @notes.txt"), "{last}");
+    assert!(!last.contains("inlined-file-body"), "{last}");
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[tokio::test]
 async fn a_finished_bash_job_reports_its_exit_and_output() {
     let dir = tmp_store();

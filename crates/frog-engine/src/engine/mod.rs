@@ -2048,7 +2048,7 @@ impl Agent {
                     for part in &more {
                         self.remember_from(&part.text);
                     }
-                    self.turn_with(&text, images, more).await?
+                    self.turn_with(&text, images, more, true).await?
                 }
             }
             Op::Act { label, send } => {
@@ -2331,7 +2331,7 @@ impl Agent {
                 images: Vec::new(),
             })
             .collect();
-        self.turn_with(&first, Vec::new(), more).await
+        self.turn_with(&first, Vec::new(), more, true).await
     }
 
     /// An informational message from another session ([`Op::Inform`]): logged as read, and
@@ -2362,12 +2362,13 @@ impl Agent {
                 images: Vec::new(),
             })
             .collect();
-        self.turn_with(&notices.join("\n\n"), Vec::new(), more)
+        // The notices are the turn's input (that's how it's shown) but not the user's words.
+        self.turn_with(&notices.join("\n\n"), Vec::new(), more, false)
             .await
     }
 
     async fn turn(&mut self, input: &str, images: Vec<crate::protocol::Image>) -> Result<()> {
-        self.turn_with(input, images, Vec::new()).await
+        self.turn_with(input, images, Vec::new(), true).await
     }
 
     /// A turn on `input` and any further messages sent with it (`more`, in order): one user
@@ -2377,11 +2378,17 @@ impl Agent {
         input: &str,
         mut images: Vec<crate::protocol::Image>,
         more: Vec<Part>,
+        // `input` is the user's words, not wake notices: only then do `@mentions`, `/skills`
+        // and image paths in it expand, and it's kept verbatim through compaction.
+        user: bool,
     ) -> Result<()> {
         // A completed background map can be adopted at a turn boundary. Never wait for it;
         // if it is still running, this turn proceeds with the current prompt.
         self.poll_repo_map();
-        let (input, named) = crate::image_paths::attach(input);
+        let (input, named) = match user {
+            true => crate::image_paths::attach(input),
+            false => (input.to_string(), Vec::new()),
+        };
         let input = input.as_str();
         images.extend(named);
         let more: Vec<Part> = more
@@ -2416,7 +2423,9 @@ impl Agent {
         // A draft still waiting to warm is stale now; the turn itself leaves the cache warm.
         self.warming.lock().unwrap().1 = None;
         self.shared.panes.set_in_turn(true);
-        self.conv.inputs.push(input.to_string());
+        if user {
+            self.conv.inputs.push(input.to_string());
+        }
         self.conv.inputs.extend(more.iter().map(|p| p.text.clone()));
         let texts: Vec<String> = more.iter().map(|p| p.text.clone()).collect();
         if let Some(closed) = self.conv.chapters.started(turn, input, &texts) {
@@ -2447,14 +2456,17 @@ impl Agent {
         if !text.is_empty() {
             text.push('\n');
         }
-        let typed = input.to_string();
+        if !user {
+            text.push_str(input);
+        }
+        let typed = if user { input } else { "" }.to_string();
         // `/skill-name ...` loads that skill ahead of the request.
-        let input = match crate::skills::expand_command(&self.skills, input) {
+        let input = match crate::skills::expand_command(&self.skills, &typed) {
             Some((expanded, name)) => {
                 self.conv.skills_loaded.insert(name);
                 expanded
             }
-            None => input.to_string(),
+            None => typed.clone(),
         };
         text.push_str(&self.expand_mentions(&input));
         // Only the user's own words: not skill text or shell output.
