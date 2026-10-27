@@ -33,8 +33,9 @@ RIBT_TTS=path/to/ribt-tts cargo run -p node-face --features voice -- --demo --vo
 
 The voice defaults to Pip's: RIBT-2's af_heart speaker, pitch +1, Minnesota accent, from `~/.claude/voice/run2` (where the Claude Code announce hook keeps it). `RIBT_RUN`, `RIBT_CKPT`, `RIBT_VOC`, `RIBT_FLOW`, `RIBT_REF`, `RIBT_PITCH` and `RIBT_ACCENT` override it. ribt-tts must be new enough to `stream --stdin --pcm`. On the Orin, build ribt with `--features cuda`.
 
-Until the head's microphone and camera are wired in, typing stands in for speech and the pointer stands in for where you are. The look was settled in `cortex/face/soft-blocks-lab.html` in the rose repo.
+With `--voice` it's voice only: ipse's `hear mic` listens (streaming recognition in tang's IR, model from `$HEAR_MODEL`, default `~/hear-assets`; binary from `--hear` or `$HEAR_BIN`). Talk and Pip listens; pause for about a second and it answers out loud. Say yes or no when it asks to run something, and "stop" while it works. Its ears close while it speaks, so it doesn't hear itself. Until the stereo camera can say where you are, the pointer stands in. The look was settled in `cortex/face/soft-blocks-lab.html` in the rose repo.
 
 - `face.rs`: the character. Emotion (valence × arousal), gaze, glyph and the listening / thinking / talking levels, on springs.
+- `ears.rs`: hear as a child process: finished words, the word being heard, turn ends.
 - `voice.rs`: ribt as a child process, its PCM onto the speaker, loudness per 20 ms for the eyes.
 - `draw.rs`: 64-point eye outlines (so they morph into glyphs), pupils, membrane, blush, motes, the portrait status line, and the bloom.

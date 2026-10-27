@@ -6,14 +6,13 @@
 //! node-face --fullscreen              # borderless, for the panel itself
 //! node-face -- -m ollama/qwen3:8b     # arguments after -- go to frog
 //! node-face --demo                    # a scripted turn, no model needed
-//! node-face --voice                   # Pip speaks with ribt (build with --features voice)
+//! node-face --voice                   # voice only: hear listens, ribt speaks (--features voice)
 //! node-face --sheet out.png           # headless: the face through a whole turn, one PNG
 //! ```
 //!
-//! Until the head has its microphone and camera wired in, the keyboard and pointer stand in:
-//!   type          talk (Enter sends)        W     say "hey frog"
-//!   space         approve a command         Esc   decline / stop
-//!   pointer       where you are: Pip looks at it while listening
+//! With --voice it's voice only: talk and Pip listens; pause and it answers out loud. When it asks
+//! to run something, say yes or no; while it works, "stop" stops it. Until the stereo camera can
+//! say where you are, Pip looks at the pointer while listening.
 
 #![cfg_attr(not(feature = "window"), allow(dead_code, unused_imports))]
 
@@ -56,6 +55,9 @@ struct Args {
     /// Speak with ribt (needs the `voice` feature; see RIBT_* in src/voice.rs for model paths).
     #[arg(long)]
     voice: bool,
+    /// The hear binary (default: $HEAR_BIN, else hear on PATH).
+    #[arg(long, value_name = "PATH")]
+    hear: Option<String>,
     /// The ribt-tts binary (default: $RIBT_TTS, else ribt-tts on PATH).
     #[arg(long, value_name = "PATH")]
     ribt: Option<String>,
@@ -224,19 +226,9 @@ impl Drop for Frog {
 
 #[cfg(feature = "window")]
 fn run(args: &Args) -> Result<()> {
-    use minifb::{Key, KeyRepeat, MouseMode, Window, WindowOptions};
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use minifb::{MouseMode, Window, WindowOptions};
+    use node_face::ears::Ears;
     use std::time::Instant;
-
-    struct Typed(Rc<RefCell<Vec<char>>>);
-    impl minifb::InputCallback for Typed {
-        fn add_char(&mut self, c: u32) {
-            if let Some(c) = char::from_u32(c) {
-                self.0.borrow_mut().push(c);
-            }
-        }
-    }
 
     let panel = args.panel();
     let (w, h) = panel.size();
@@ -260,11 +252,16 @@ fn run(args: &Args) -> Result<()> {
         ..WindowOptions::default()
     };
     let mut voice = voice(args)?;
+    let ears = if args.voice && !args.demo {
+        Some(Ears::spawn(args.hear.as_deref())?)
+    } else {
+        None
+    };
     let mut win = Window::new("frog node", w, h, opts)?;
     win.set_target_fps(60);
-    let typed = Rc::new(RefCell::new(Vec::new()));
-    win.set_input_callback(Box::new(Typed(typed.clone())));
     let mut last = Instant::now();
+    // When Pip last made a sound: its own voice mustn't be heard as yours.
+    let mut spoke = f64::NEG_INFINITY;
 
     while win.is_open() {
         let dt = last.elapsed().as_secs_f64().min(0.1);
@@ -283,25 +280,11 @@ fn run(args: &Args) -> Result<()> {
         }
         player.run(&mut sim);
 
-        let listening = sim.puck.mode == Mode::Listening;
-        for c in typed.borrow_mut().drain(..) {
-            if c.is_control() || (c == ' ' && !listening) {
-                continue;
-            }
-            if listening || c.is_alphanumeric() {
-                sim.puck.hear(&c.to_string(), now);
-            }
+        if face.voice.is_some() {
+            spoke = now;
         }
-        for k in win.get_keys_pressed(KeyRepeat::Yes) {
-            match k {
-                Key::Backspace => sim.puck.unhear(),
-                Key::Enter | Key::NumPadEnter => ops.extend(sim.puck.tap(now)),
-                Key::Space if !listening => ops.extend(sim.puck.approve()),
-                Key::Escape if sim.puck.mode == Mode::Ask => ops.extend(sim.puck.deny()),
-                Key::Escape => ops.extend(sim.puck.interrupt()),
-                Key::W if !listening => sim.puck.wake(now),
-                _ => {}
-            }
+        if let Some(e) = &ears {
+            ops.extend(listen(e, &mut sim.puck, now, now - spoke < MUTE_SECS));
         }
         for op in ops {
             if let Some(f) = frog.as_mut()
@@ -331,6 +314,60 @@ fn run(args: &Args) -> Result<()> {
         win.update_with_buffer(&buf, w, h)?;
     }
     Ok(())
+}
+
+/// After Pip stops making sound, how long its ears stay shut (the room's echo of its voice).
+const MUTE_SECS: f64 = 0.6;
+/// A pause this long after some words ends your turn.
+const PAUSE_SECS: f64 = 1.1;
+
+/// What you said, into frog: words while it listens (starting a turn), a pause to send, yes / no
+/// to a request to run something, "stop" while it works. Returns ops for frog.
+#[cfg(feature = "window")]
+fn listen(e: &node_face::ears::Ears, p: &mut Puck, now: f64, muted: bool) -> Vec<Value> {
+    use node_face::ears::Heard;
+    let mut ops = Vec::new();
+    let heard = e.poll();
+    if muted {
+        e.clear();
+        return ops;
+    }
+    let is = |w: &str, set: &[&str]| set.contains(&w.trim_matches(|c: char| !c.is_alphanumeric()));
+    for h in heard {
+        match h {
+            Heard::Word(w) => match p.mode {
+                Mode::Ask
+                    if is(
+                        &w,
+                        &["yes", "yeah", "yep", "sure", "okay", "ok", "go", "do"],
+                    ) =>
+                {
+                    ops.extend(p.approve())
+                }
+                Mode::Ask if is(&w, &["no", "nope", "don't", "stop", "cancel"]) => {
+                    ops.extend(p.deny())
+                }
+                Mode::Thinking | Mode::Running if is(&w, &["stop", "wait", "cancel"]) => {
+                    ops.extend(p.interrupt())
+                }
+                Mode::Thinking | Mode::Running | Mode::Ask => {}
+                _ => p.hear(&format!("{w} "), now),
+            },
+            Heard::TurnEnd if p.mode == Mode::Listening => ops.extend(p.submit(now)),
+            Heard::TurnEnd => {}
+        }
+    }
+    let (partial, quiet) = e.partial();
+    if p.mode == Mode::Listening && quiet > PAUSE_SECS {
+        if !partial.is_empty() {
+            p.hear(&partial, now);
+            e.clear();
+        }
+        if !p.draft.trim().is_empty() {
+            ops.extend(p.submit(now));
+        }
+    }
+    ops
 }
 
 #[cfg(feature = "voice")]
