@@ -12,9 +12,10 @@ use crate::config::ToolMode;
 use crate::harness::Tier;
 use crate::tools::todo::Todo;
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use std::path::PathBuf;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Mode {
     /// Ask before edits and shell commands.
@@ -47,7 +48,7 @@ impl Mode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Decision {
     Allow,
@@ -62,7 +63,7 @@ pub enum Decision {
 
 /// What a permission prompt shows so the user can decide quickly: why the agent
 /// wants it, what triggered the prompt, what it touches, and frog's advice.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ApprovalCard {
     /// What the agent said it was doing, from its message before the call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -84,7 +85,7 @@ pub struct ApprovalCard {
 }
 
 /// One path a command touches.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Touch {
     pub path: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -114,7 +115,7 @@ pub const SUSPENDED_NOTE: &str =
 /// `Interrupt`, `ClearInbox`, `Permission`, `Answer`, `Elicit`, `AppCall`, `Drain`,
 /// `DrainAbort` and `StopSubagent` take effect immediately. Everything else is queued
 /// and handled in order; each queued op ends with [`Event::Idle`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Op {
     Submit {
@@ -366,14 +367,14 @@ pub enum Op {
     Shutdown,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneKind {
     Terminal,
     Preview,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportKind {
     Console,
@@ -383,7 +384,7 @@ pub enum ReportKind {
     Title,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportLevel {
     Info,
@@ -392,7 +393,7 @@ pub enum ReportLevel {
 }
 
 /// What the engine can ask a preview pane to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneAction {
     Read,
@@ -423,7 +424,7 @@ impl PaneAction {
 }
 
 /// Wrapper for every event.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Envelope {
     /// Monotonic within a session; starts at 1.
     pub seq: u64,
@@ -435,7 +436,7 @@ pub struct Envelope {
 }
 
 /// Engine → client.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
     // ---- durable ----
@@ -865,7 +866,7 @@ impl Event {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ItemKind {
     Message,
@@ -873,7 +874,7 @@ pub enum ItemKind {
     ToolCall { name: String, arg: String },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 // Serialized data, built once per item; boxing the big variant buys nothing.
 #[allow(clippy::large_enum_variant)]
@@ -912,7 +913,7 @@ pub enum Item {
 }
 
 /// One choice offered by `Ask`.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AskOption {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -921,7 +922,7 @@ pub struct AskOption {
 
 /// What the user picked for a question: the chosen labels, their own words, or (both empty)
 /// nothing, because they dismissed it.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Answer {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<String>,
@@ -935,7 +936,7 @@ impl Answer {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Image {
     pub mime: String,
     /// Base64.
@@ -943,7 +944,7 @@ pub struct Image {
 }
 
 /// One message the user typed, when several go as one turn (see [`Op::Submit`]'s `more`).
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Part {
     pub text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -952,7 +953,7 @@ pub struct Part {
 
 /// An MCP App (`ui://` resource) to render for a tool result. The HTML and the raw
 /// `CallToolResult` can be large, so they live in files under the frog data dir.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AppView {
     pub server: String,
     /// The tool's name on the server.
@@ -965,7 +966,7 @@ pub struct AppView {
 }
 
 /// A file change as data, so clients can draw it however they like.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct FileDiff {
     pub path: String,
     /// The file didn't exist before.
@@ -975,12 +976,12 @@ pub struct FileDiff {
     pub hunks: Vec<Hunk>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Hunk {
     pub lines: Vec<DiffLine>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct DiffLine {
     pub kind: LineKind,
     /// 1-based line numbers in the old and new file.
@@ -989,7 +990,7 @@ pub struct DiffLine {
     pub text: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LineKind {
     Context,
@@ -997,7 +998,7 @@ pub enum LineKind {
     Remove,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolOutcome {
     Ok,
@@ -1007,7 +1008,7 @@ pub enum ToolOutcome {
     Skipped,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Delta {
     Text {
@@ -1029,7 +1030,7 @@ pub enum Delta {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EndReason {
     /// The model finished its answer.
@@ -1060,7 +1061,7 @@ pub enum EndReason {
 }
 
 /// Closed set of failures a client can react to.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EngineError {
     /// The provider answered with an error status.
@@ -1094,14 +1095,14 @@ impl std::fmt::Display for EngineError {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Level {
     Info,
     Warn,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct TurnUsage {
     /// Tokens in the context window after the last model call. `None` if the provider didn't say.
     pub context_tokens: Option<u64>,
@@ -1131,7 +1132,7 @@ pub struct TurnUsage {
 /// What a compaction kept, as a receipt ([`Event::Compacted`]'s `summary`): the structured
 /// summary's fields, trimmed to what a banner's expander shows. Built from the session log
 /// without a model call (see `summary::build`).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct KeptSummary {
     /// The session it summarizes (the one compacted).
     pub id: String,
@@ -1147,7 +1148,7 @@ pub struct KeptSummary {
 }
 
 /// One file the compaction kept: its path and the lines added and removed.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct KeptFile {
     pub path: String,
     pub added: u32,
@@ -1156,7 +1157,7 @@ pub struct KeptFile {
 
 /// One turn the compaction kept: what was asked, which tools ran, the tests run and whether
 /// each passed, and how the turn ended.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct KeptTurn {
     pub request: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1169,7 +1170,7 @@ pub struct KeptTurn {
 }
 
 /// One test the compaction kept: the command and whether it passed.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct KeptTest {
     pub command: String,
     pub passed: bool,
@@ -1177,7 +1178,7 @@ pub struct KeptTest {
 
 /// A turn's energy in watt-hours: the whole Mac above its idle power just before, and for a
 /// hosted model an estimate of its data center's share (see `energy::cloud`).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct TurnEnergy {
     pub local_wh: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1194,7 +1195,7 @@ pub struct TurnEnergy {
 
 /// A turn's wall time split by what it was waiting on, in milliseconds. `other` is whatever
 /// the rest don't cover (context fitting, MCP refresh, profiling, retries, the engine itself).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct TurnTiming {
     pub wall_ms: u64,
     /// Request sent → first streamed token, summed over the turn's model calls.
@@ -1226,7 +1227,7 @@ pub struct TurnTiming {
 }
 
 /// One model request.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct CallTiming {
     /// Prompt tokens as the provider reported them (including cache reads).
     pub prompt_tokens: u64,
@@ -1260,7 +1261,7 @@ pub struct CallTiming {
 }
 
 /// One tool call that got as far as the permission check.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ToolTiming {
     /// The tool call's item id.
     pub id: String,
@@ -1281,7 +1282,7 @@ fn is_zero(n: &u64) -> bool {
     *n == 0
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Status {
     pub model: String,
     pub mode: Mode,
@@ -1303,7 +1304,7 @@ pub struct Status {
 }
 
 /// One way a session runs degraded, for the header badge and SessionStatus.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Degraded {
     pub kind: DegradedKind,
     /// What's degraded, short and lowercase ("text tool calls").
@@ -1312,7 +1313,7 @@ pub struct Degraded {
     pub why: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DegradedKind {
     /// Tool calls written as text (native tool calls off) though the profile didn't ask for it.

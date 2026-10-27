@@ -3,10 +3,11 @@
 //! natively, the terminal in box-drawing characters. Mermaid converts in both directions.
 
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     /// Boxes and arrows: architecture, data flow, control flow.
@@ -16,7 +17,7 @@ pub enum Kind {
     Sequence,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Direction {
     #[default]
@@ -24,7 +25,7 @@ pub enum Direction {
     Right,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Shape {
     #[default]
@@ -39,7 +40,7 @@ pub enum Shape {
     External,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeStyle {
     #[default]
@@ -50,7 +51,7 @@ pub enum EdgeStyle {
     Thick,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Node {
     #[serde(default)]
     pub id: String,
@@ -73,7 +74,7 @@ pub struct Node {
     pub heat: Option<f32>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Edge {
     pub from: String,
     pub to: String,
@@ -83,14 +84,14 @@ pub struct Edge {
     pub style: EdgeStyle,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Group {
     pub id: String,
     #[serde(default)]
     pub label: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Diagram {
     #[serde(default)]
     pub kind: Kind,
@@ -113,7 +114,7 @@ pub struct Diagram {
 }
 
 /// Positions in points, origin top-left.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Layout {
     pub width: f32,
     pub height: f32,
@@ -126,7 +127,7 @@ pub struct Layout {
     pub lifeline_end: Option<f32>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct NodeBox {
     pub id: String,
     pub x: f32,
@@ -137,7 +138,7 @@ pub struct NodeBox {
     pub rank: usize,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct EdgePath {
     /// Index into `edges`.
     pub edge: usize,
@@ -147,7 +148,7 @@ pub struct EdgePath {
     pub label_at: Option<[f32; 2]>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct GroupBox {
     pub id: String,
     pub x: f32,

@@ -10,12 +10,13 @@ use crate::message::Message;
 use crate::prompt::{self, Action};
 use crate::provider::{Provider, Request, Response, ToolSpec};
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     Strong,
@@ -24,7 +25,7 @@ pub enum Tier {
 }
 
 /// What a model demonstrably does, from [`probe`].
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Caps {
     /// Calls a tool correctly through the API's native tool calling.
     pub native_tools: bool,
