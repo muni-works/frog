@@ -140,8 +140,13 @@ Structure top to bottom:
   click from anywhere. Pond moves here from "only on an empty chat" (`PondBrief.swift`), so the
   brief is always one click away. This mirrors Claude's grouped nav (New / Search / Projects /
   Artifacts / Scheduled) one-for-one.
-- **Org** (small-caps label): the started-by tree, one row per *session you'd open*: managers,
-  workers with live states, and your own top-level sessions. Row anatomy: **one 7pt status dot**
+- **Running** (small-caps label): live sessions first, newest activity first — time-buckets'
+  answer to "what's alive" (cam's default). Then **Today / Yesterday / date buckets**. The
+  **Org** section below is one grouping setting over the same rows (toggle in the view-options
+  menu: org · time · off, **time default**); with org on, the started-by tree shows one row per
+  *session you'd open*: managers, workers with live states, and your own top-level sessions.
+  While anything under a manager is live, its nest can auto-expand even in time view. Row
+  anatomy: **one 7pt status dot**
   (accent breathing = running · signal = needs you · ring = unread · red = failed · hidden =
   settled) + title in one weight, 13pt + age (11.5, tabular). No monograms, no per-row git
   badges, no spinners, no fold-count rows in the tree.
@@ -149,12 +154,11 @@ Structure top to bottom:
   `⤷ 6 nested · 2 running · 1 yours` — with Claude's git-branch-style glyph. Click expands the
   children in place (the existing `SessionNesting.Counts` already computes these counts,
   `SessionNesting.swift:45-49`; this is pure view work).
-- **Today / Yesterday / date buckets** for non-org sessions (chats, one-offs) — the current
-  Yours section, regrouped by time like Claude's history.
 - **Account pill** pinned at the bottom: avatar · cam · role · "opus 5.5 · local ready" (the
   local-model readiness dot frog already tracks in ModelDownloads, promoted to a glance).
 
 Selection: `rgba(255,255,255,.075)` radius 7 — never accent-tinted; accent stays on the dot.
+(The mockup shows the org setting for reference; shipped default is time.)
 Width 250 → 264pt; the SessionRail compact strip stays as-is.
 
 ### c.2 transcript (the frame; content per review-ux / diagram-ux)
@@ -251,12 +255,14 @@ host for step 9).
 
 ---
 
-## open questions for cam
+## open questions — answered by cam (2026-10-27, via the chief)
 
-1. **Prompt bubble**: neutral gray (recommended, the Claude read) vs keeping a *single* quiet
-   tint for cloud/local? The tint is real information but it's also the loudest thing in the
-   column today.
-2. **Sidebar grouping default**: org-first (recommended) vs Claude's pure time-buckets, with
-   org behind a filter? Org-first is frog's identity; time-buckets are calmer.
-3. **Inspector docked** (recommended, symmetric shell) vs keeping the floating glass card?
-   Docked costs window width; floating keeps the "peek" charm.
+1. **Prompt bubble**: **neutral gray.** The place tint moves to a subtle indicator elsewhere
+   (the model picker keeps cloud/local colors).
+2. **Sidebar grouping default**: **"time buckets, with support for tree."** Time-buckets are
+   the default (the calm read, cam's call after seeing `grouping-comparison.html`); running
+   sessions surface at top in a RUNNING section; the org tree stays reachable — a view-options
+   grouping toggle (org · time · off, **time default**) or an auto-expand of a manager's nest
+   while anything under it is active, so the org stays navigable without being the resting
+   shape. §c.1's Org-first sketch becomes the org *setting*, not the default.
+3. **Inspector docked**: **docked**, symmetric shell.
