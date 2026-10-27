@@ -26,6 +26,7 @@ impl Agent {
         }
         let mut cfg = self.cfg.clone();
         cfg.subagent_write = write;
+        cfg.egress_parent = self.ctx.egress.clone();
         let opts = Options {
             cfg,
             profile_name,
@@ -309,6 +310,7 @@ impl Agent {
             sandbox: self.ctx.sandbox.clone(),
             shell_sandbox: self.ctx.shell_sandbox.clone(),
             sandbox_extra: self.ctx.sandbox_extra.clone(),
+            egress: self.ctx.egress.clone(),
             permitted: self.ctx.permitted.clone(),
             progress: None,
             preview: None,
@@ -648,6 +650,8 @@ Don't repeat it. Change the arguments or try a different approach.",
                     app: out.app,
                 },
             });
+            // Connections it tried past the allow-list, right under its row.
+            self.flush_egress(Some(&item_id), &command);
             // Queue a gist for a finished shell command, written when the turn ends in one
             // batched side-model call (see `flush_gists`). Skipped calls (not run) don't
             // need one; the elided command tells that story.

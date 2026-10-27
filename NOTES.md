@@ -1,29 +1,31 @@
-# stale-timers — notes
+# egress-allowlist — notes
 
-Branch frog/stale-timers, base 4f246b3 (main). Commit per piece (`git commit -s`), never push.
-Edit tool only for Rust/Swift source. Targets: CARGO_TARGET_DIR=/private/tmp/tm-target,
--derivedDataPath /private/tmp/tm-dd; delete both at the end (disk is tight).
+Branch frog/egress-allowlist, base 9478753 (main). Commit per piece (`git commit -s`), never push.
+Edit tool only for Rust/Swift source. Targets: CARGO_TARGET_DIR=/private/tmp/eg-target,
+-derivedDataPath /private/tmp/eg-dd; delete both at the end (disk is tight).
 
 ## Brief
-Monitor/Timer wakeups keep firing after their condition went moot (chief: B300 retry timer,
-15+ stale wakeups overnight). Root-cause candidates: (1) no cancel/stale API, (2) wakeups carry
-no context, (3) timers re-armed after compaction/restart, (4) monitors in cancelled turns keep
-firing. Design doc first (docs/design/timers.md), then fixes a–e smallest first.
-
-## Findings (chief log 20261022-104528-3288, Oct 25 18:00 → Oct 26 11:30)
-391 turns, 113 wakeup turns; 195 armed a timer, 122 of those NOT wakeup turns → timers stacked,
-up to 22 live (13 at 11:33), one firing every 1800/N s. Compactions had 0 live timers; 49 prunes.
-Verdicts: (1) half — JobStop already stopped timers, undiscoverable; (2) real; (3) false as stated
-(nothing re-arms; Registry is in-memory) — real neighbours: compaction/prune forget, restart loses
-silently + id collisions; (4) false — Interrupt/Shutdown/Clear stop_all.
+Egress allow-list for agent tool calls (trigger: Cohere sandbox caught Qwen3.8-Flash-Next
+uploading a probe file to an Alibaba bucket while claiming zero tool calls). Pieces:
+1. `[egress]` policy in config.toml + per-project `egress.toml`; workers deny by default.
+2. Enforcement at the sandbox layer via the dev-proxy pattern (seatbelt matches IPs, not names).
+3. Tripwire: Event::EgressBlocked { host, tool, command head } → transcript notice + digest count.
+4. Tests: parsing, allow-listed pass, Cohere repro in a compound command, worker vs interactive,
+   grant path.
 
 ## Progress
-- e1aa8e7 checkpoint 0 · 7994fdb design (docs/design/timers.md)
-- 81b9729 a: Monitor {cancel: id|all}
-- 381751d b: subject (replace on re-arm, subject= in notices, "Also pending" on arm+wake, cap 5 timers)
-- 17433cb c: not built by design (timers must outlive their turn); regression test interrupt → no wake
-- 3c01139 d: compaction keeps "Pending background" block; resume → `lost` + one parked line, ids continue
-- b4f6fec e: Op::DismissWakes + strip "Dismiss all"
-Suites: engine 478/1 (a_replys_read_only_calls_run_concurrently — timing flake, passes alone);
-app 341/1 skipping TranscriptSwitchBenchmark (TranscriptStreamBenchmark anchoring, unrelated).
+- d3ea32a checkpoint 0
+- 3dc272c policy ([egress], ~/.config/frog/egress.toml), proxy (token per call), egress.jsonl
+- bcb6cfc seatbelt enforce (deny outbound but localhost + DNS), EgressBlocked, allow_hosts/unsandboxed
+  always card (even auto/yolo), --worker + header.worker, subagents share parent's Egress
+- 928a4c4 digest in the brief + morning notice
+- 2c48bf0 app: notice rows, --worker on StartSession, iOS durable
+- 1561bbe docs (docs/design/egress.md, reference.md)
+Suites: engine 491/0 (8 ignored; a first loaded run had 4 timing flakes, all pass alone and on
+rerun); app 348, 2 failures = TranscriptSwitchBenchmarkTests (known, unrelated). Network check
+(`egress_listed_hosts_work_over_the_network`, --ignored): git/curl/python reach listed hosts.
 Target dirs deleted.
+
+## Deferred
+Linux enforcement; WebFetch for workers; ssh/URLSession tools get no network when enforced;
+CDN/upload-capable listed hosts.

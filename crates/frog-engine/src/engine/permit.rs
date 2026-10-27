@@ -51,7 +51,11 @@ impl Agent {
         } else {
             tools::kind(name)
         };
-        if kind == Kind::Read || self.mode == Mode::Yolo {
+        // A command that would widen an enforced egress allow-list (hosts beyond it, or
+        // leaving the sandbox it's enforced in) is a human's call in every mode: no rule,
+        // sandbox, classifier or yolo lets it through. `Some(hosts)`: the hosts it asks for.
+        let egress_ask = self.egress_ask(name, input);
+        if (kind == Kind::Read || self.mode == Mode::Yolo) && egress_ask.is_none() {
             return Decision::Allow;
         }
         let pane_action = input["action"].as_str().unwrap_or("");
@@ -119,6 +123,7 @@ impl Agent {
         // sandbox is a write fence, not the only thing standing between the agent
         // and `cat`.
         if name == "Bash"
+            && egress_ask.is_none()
             && !crate::shell::touches_credentials(cmd)
             && (bash_allowed(cmd, &self.cfg.allow_bash) || crate::shell::read_only(cmd))
         {
@@ -127,7 +132,11 @@ impl Agent {
         }
         // A sandboxed command can only write inside the project and can't read credentials,
         // so it runs without asking; leaving the sandbox always asks.
-        if name == "Bash" && self.ctx.shell_sandbox.is_some() && !leaves_sandbox {
+        if name == "Bash"
+            && self.ctx.shell_sandbox.is_some()
+            && !leaves_sandbox
+            && egress_ask.is_none()
+        {
             self.decision(item, "sandbox", "allow", "sandboxed", 0);
             return Decision::Allow;
         }
@@ -147,6 +156,7 @@ impl Agent {
         }
         // A path prefix the user allowed for this program earlier this session.
         if name == "Bash"
+            && egress_ask.is_none()
             && !crate::shell::touches_credentials(cmd)
             && crate::approval::prefix_allows(cmd, &self.ctx.cwd, &self.prefix_allow)
         {
@@ -166,6 +176,7 @@ impl Agent {
         // doesn't need the classifier or a prompt. Destructive programs there
         // need provenance; anything outside this scope still asks.
         if name == "Bash"
+            && egress_ask.is_none()
             && self.mode == Mode::Auto
             && !crate::shell::touches_credentials(cmd)
             && crate::auto::hard_rule(name, input, &self.ctx.root).is_none()
@@ -290,7 +301,7 @@ impl Agent {
             // here is a write or unknown, which only auto mode's classifier may pass.
             _ => false,
         };
-        if auto || self.session_allow.contains(&key) {
+        if egress_ask.is_none() && (auto || self.session_allow.contains(&key)) {
             self.decision(
                 item,
                 if self.session_allow.contains(&key) {
@@ -318,7 +329,22 @@ impl Agent {
                     .to_string(),
             );
         }
-        if self.mode == Mode::Auto {
+        match &egress_ask {
+            Some(hosts) if !hosts.is_empty() => {
+                reason = Some(format!(
+                    "Reaches {}, which isn't on this session's network allow-list.",
+                    hosts.join(", ")
+                ))
+            }
+            Some(_) => {
+                reason = Some(
+                    "Runs outside the sandbox and past this session's network allow-list: it can reach any host, change files anywhere and read your credentials."
+                        .to_string(),
+                )
+            }
+            None => {}
+        }
+        if self.mode == Mode::Auto && egress_ask.is_none() {
             let sandbox = match (self.ctx.shell_sandbox.is_some(), leaves_sandbox) {
                 (_, true) => crate::auto::Sandbox::Leaving,
                 (true, false) => crate::auto::Sandbox::In,
@@ -354,7 +380,17 @@ impl Agent {
             }
         }
         if !self.can_ask {
-            self.decision(item, "ask", "ask", "not interactive: denied", 0);
+            self.decision(
+                item,
+                if egress_ask.is_some() {
+                    "egress"
+                } else {
+                    "ask"
+                },
+                "ask",
+                "not interactive: denied",
+                0,
+            );
             return Decision::Deny;
         }
         if let Some(d) = self.repeat_refusal(item, name, arg, call) {
@@ -406,12 +442,30 @@ impl Agent {
                 timeout_secs,
             )
         });
+        // An egress card's standing choice is the hosts, never a program under a prefix.
+        let card = card.map(|mut c| {
+            if let Some(hosts) = &egress_ask {
+                c.prefix = None;
+                c.risk = if hosts.is_empty() {
+                    "Past the allow-list nothing stops a command from sending this project, or anything it can read, to any host.".into()
+                } else {
+                    format!("{} would receive whatever the command sends: an unknown host is how code and secrets leave.", hosts.join(", "))
+                };
+            }
+            c
+        });
+        let always = match &egress_ask {
+            Some(hosts) if !hosts.is_empty() => {
+                format!("always allow {} this session", hosts.join(", "))
+            }
+            _ => always,
+        };
         let always = match card.as_ref().and_then(|c| c.prefix.as_ref()) {
             Some(p) => format!(
                 "allow `{}` under {p} this session",
                 crate::approval::program(cmd)
             ),
-            None if card.is_some() => String::new(),
+            None if card.is_some() && egress_ask.is_none() => String::new(),
             None => always,
         };
         let id = new_id();
@@ -487,6 +541,25 @@ impl Agent {
             self.record_denial(call, why);
         }
         self.emit(Event::PermissionResolved { id, decision });
+        // The grant: these hosts for this one run, or for the rest of the session.
+        if let (Some(hosts), Some(egress)) = (&egress_ask, &self.ctx.egress)
+            && !hosts.is_empty()
+        {
+            match decision {
+                Decision::Allow => egress.grant_once(cmd, hosts.clone()),
+                Decision::AllowAlways | Decision::AllowPrefix => {
+                    egress.grant(hosts);
+                    self.notice(
+                        Level::Info,
+                        format!(
+                            "Network allow-list: {} allowed for the rest of this session.",
+                            hosts.join(", ")
+                        ),
+                    );
+                }
+                Decision::Deny => {}
+            }
+        }
         match decision {
             Decision::AllowAlways | Decision::AllowPrefix if name == "Bash" => {
                 if let Some(p) = card_prefix {
@@ -502,6 +575,35 @@ impl Agent {
                 Decision::Allow
             }
             d => d,
+        }
+    }
+
+    /// Whether a shell command would widen an enforced egress allow-list: `Some(hosts)` when
+    /// its `allow_hosts` names hosts the session doesn't allow yet, `Some([])` when it asks to
+    /// leave the sandbox the list is enforced in, `None` otherwise.
+    fn egress_ask(&self, name: &str, input: &Value) -> Option<Vec<String>> {
+        let egress = self.ctx.egress.as_ref().filter(|e| e.enforced())?;
+        if name != "Bash" || (self.ctx.shell_sandbox.is_none() && self.ctx.sandbox.is_none()) {
+            return None;
+        }
+        let asked: Vec<String> = input["allow_hosts"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|h| h.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let missing = egress.missing(&asked);
+        // `--sandbox` (strict) ignores `unsandboxed`, so only the everyday sandbox can be left.
+        let leaves = input["unsandboxed"].as_bool() == Some(true)
+            && self.ctx.sandbox.is_none()
+            && self.ctx.shell_sandbox.is_some();
+        match (missing.is_empty(), leaves) {
+            (true, false) => None,
+            // Outside the sandbox no list applies: that's the question, whatever hosts it named.
+            (_, true) => Some(Vec::new()),
+            (false, false) => Some(missing),
         }
     }
 

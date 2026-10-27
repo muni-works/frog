@@ -349,8 +349,14 @@ struct Journal {
     store: Option<PathBuf>,
     /// Opened lazily on the first durable write, so idle launches leave no files behind.
     log: Mutex<Option<Log>>,
+    /// The log couldn't be created for this session (the id's file is unwritable, say), and
+    /// the one notice saying so has been sent. Appends stay silent no-ops rather than a
+    /// warning per event. Cleared when the session switches (a new conversation or `Op::Clear`).
+    dead: AtomicBool,
     /// For the header: cwd and model name.
     header: Mutex<(PathBuf, String)>,
+    /// For the header: an agent started this session.
+    worker: std::sync::atomic::AtomicBool,
     /// The current turn's streaming events (text as it arrives, progress), beside the log as
     /// `<id>.live`, so another process following this session sees it live. Reset each turn.
     live: Mutex<Option<(String, std::fs::File)>>,
@@ -364,7 +370,9 @@ impl Journal {
             session: Mutex::new(String::new()),
             store,
             log: Mutex::new(None),
+            dead: AtomicBool::new(false),
             header: Mutex::new((PathBuf::new(), String::new())),
+            worker: Default::default(),
             live: Mutex::new(None),
         }
     }
@@ -378,6 +386,7 @@ impl Journal {
         *self.session.lock().unwrap() = id;
         self.seq.store(seq, Ordering::Relaxed);
         *self.log.lock().unwrap() = log;
+        self.dead.store(false, Ordering::SeqCst);
     }
 
     fn has_log(&self) -> bool {
@@ -385,12 +394,17 @@ impl Journal {
     }
 
     /// Append a record to the session log, creating the log on first use. An error means the
-    /// session is no longer being saved.
+    /// session can't be saved, and that the caller should relay the error to the user once.
     fn record(&self, rec: Record) -> std::result::Result<(), String> {
         let Some(dir) = &self.store else {
             return Ok(());
         };
         let mut log = self.log.lock().unwrap();
+        // The log already failed for this session: nothing more to say, and nothing to retry —
+        // the error was a dead file, not a transient one.
+        if log.is_none() && self.dead.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         if log.is_none() {
             let (cwd, model) = self.header.lock().unwrap().clone();
             let header = Header {
@@ -400,14 +414,22 @@ impl Journal {
                 model,
                 created: now_ms(),
                 forked_from: None,
+                worker: self.worker.load(Ordering::Relaxed),
             };
             match Log::create(dir, header) {
                 Ok(l) => *log = Some(l),
-                Err(e) => return Err(format!("session won't be saved: {e:#}")),
+                Err(e) => {
+                    // Once per session, never per event — the turn endures without a log.
+                    self.dead.store(true, Ordering::SeqCst);
+                    return Err(format!(
+                        "session log unavailable, running without persistence: {e:#}"
+                    ));
+                }
             }
         }
         if let Some(Err(e)) = log.as_mut().map(|l| l.append(&rec)) {
             *log = None;
+            self.dead.store(true, Ordering::SeqCst);
             return Err(format!("session log write failed, no longer saving: {e:#}"));
         }
         Ok(())
@@ -1361,7 +1383,7 @@ struct Agent {
 }
 
 impl Agent {
-    fn new(o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
+    fn new(mut o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
         // Cached or shipped capability profiles are useful in both persisted and in-memory engines.
         let harness = harness::Harness::for_profile(&o.profile);
         let system = format!(
@@ -1385,11 +1407,14 @@ impl Agent {
         let mut loaded_tools: Vec<String> = Vec::new();
         let mut resumed_titled = false;
         let mut resumed_model: Option<String> = None;
+        // An agent started it: the resume keeps its worker egress policy whatever the flags.
+        let mut resumed_worker = false;
         let mut resumed_chapters = crate::chapter::Tracker::default();
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
                 let l = session::load(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
+                resumed_worker = l.header.worker;
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let (seq, turn) = (l.last_seq(), l.last_turn());
                 resumed_map = l.repo_map.clone();
@@ -1461,6 +1486,8 @@ impl Agent {
         };
         let intended_model = resumed_model.unwrap_or_else(|| o.profile_name.clone());
         *shared.journal.header.lock().unwrap() = (o.cwd.clone(), o.profile_name.clone());
+        o.cfg.worker |= resumed_worker;
+        shared.journal.worker.store(o.cfg.worker, Ordering::Relaxed);
         shared.journal.start_session(session_id.clone(), seq, log);
         for id in stale_panes {
             shared.journal.emit(Event::PaneClosed { id, exit: None });
@@ -1502,6 +1529,15 @@ impl Agent {
         });
         let resumed = o.resume.is_some();
         let sandbox_extra = o.cfg.sandbox.clone();
+        // A subagent shares its parent's; a chat runs no commands.
+        let egress = match (&o.cfg.egress_parent, o.chat) {
+            (Some(parent), _) => Some(parent.clone()),
+            (None, true) => None,
+            (None, false) => crate::egress::for_session(&o.cfg, &o.cwd),
+        };
+        if let (Some(e), None) = (&egress, &o.cfg.egress_parent) {
+            e.set_session(&session_id);
+        }
         let shell_root = o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone());
         shared.panes.configure(o.cwd.clone());
         let (map_build_tx, map_build_rx) = std::sync::mpsc::channel();
@@ -1530,6 +1566,7 @@ impl Agent {
                 ctx.screenshot_endpoint = screenshot_endpoint;
                 ctx.judge = judge;
                 ctx.sandbox_extra = sandbox_extra;
+                ctx.egress = egress;
                 if o.sandbox {
                     ctx.sandbox = Some(o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone()));
                 }
@@ -1692,6 +1729,42 @@ impl Agent {
             level,
             message: message.into(),
         });
+    }
+
+    /// Turn the egress hits since the last flush into events. A hit from `command` (the tool
+    /// call just finished) is tied to its item; anything else (a background job, a subagent)
+    /// stands alone. A subagent leaves them for its parent, whose transcript keeps them.
+    fn flush_egress(&self, item: Option<&str>, command: &str) {
+        if self.subagent && self.cfg.egress_parent.is_some() {
+            return;
+        }
+        let Some(egress) = &self.ctx.egress else {
+            return;
+        };
+        let head = crate::egress::head(command);
+        for hit in egress.drain() {
+            let item = item
+                .filter(|i| !i.is_empty() && !command.is_empty() && hit.command == head)
+                .map(str::to_string);
+            if self.cfg.log_calls {
+                eprintln!(
+                    "egress: {} {}:{} from {} `{}`",
+                    if hit.enforced { "blocked" } else { "flagged" },
+                    hit.host,
+                    hit.port,
+                    hit.tool,
+                    hit.command
+                );
+            }
+            self.emit(Event::EgressBlocked {
+                host: hit.host,
+                port: hit.port,
+                item,
+                tool: hit.tool,
+                command: hit.command,
+                enforced: hit.enforced,
+            });
+        }
     }
 
     /// Unknown (`None`) when the provider didn't report usage, rather than a misleading zero.
@@ -1933,6 +2006,8 @@ impl Agent {
             energy: self.turn_energy(),
             ..self.turn_usage.clone()
         };
+        // Background jobs' attempts since the last tool call.
+        self.flush_egress(None, "");
         self.emit(Event::TurnEnded {
             turn,
             reason: reason.clone(),

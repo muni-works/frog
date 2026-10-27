@@ -228,6 +228,7 @@ impl Agent {
                 model: self.profile_name.clone(),
                 created: now_ms(),
                 forked_from: None,
+                worker: self.cfg.worker,
             };
             self.shared.journal.header.lock().unwrap().0 = root.clone();
             let mut log = self.shared.journal.log.lock().unwrap();
@@ -262,6 +263,12 @@ impl Agent {
         }
         if self.cfg.sandbox_shell && tools::bash::available() {
             self.ctx.shell_sandbox = Some(root.clone());
+        }
+        // The new folder's `[sandbox]` holes and egress policy (its own egress.toml entry).
+        self.ctx.sandbox_extra = self.cfg.sandbox.clone();
+        self.ctx.egress = crate::egress::for_session(&self.cfg, &root);
+        if let Some(e) = &self.ctx.egress {
+            e.set_session(&self.conv.session_id);
         }
         self.rules = crate::rules::discover(&root);
         self.conv.rules_seen.clear();
