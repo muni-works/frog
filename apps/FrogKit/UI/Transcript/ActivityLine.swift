@@ -283,7 +283,7 @@ struct ActivityStepRow: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     outcome
-                    runningClock
+                    streaming
                     Spacer(minLength: 8)
                     status
                 }
@@ -317,27 +317,17 @@ struct ActivityStepRow: View {
         return "Ran \(CommandElision.elide(item.arg, from: conversation.folder.path))"
     }
 
-    /// A running shell row's honest elapsed timer ("1m 40s"), counting while it runs, and a
-    /// subtle hint that output is streaming (its newest line), so a silent-looking wait
-    /// reads as live.
+    /// A running row's subtle hint that output is streaming (its newest line shows below), so
+    /// a silent-looking wait reads as live. No per-step clock: the app keeps one, the turn's
+    /// live status row (`LiveStatus`).
     @ViewBuilder
-    private var runningClock: some View {
-        if !item.done, let since = item.startedAt {
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                HStack(spacing: TurnSpace.Inset.snug) {
-                    if !item.output.isEmpty {
-                        Image(systemName: "text.alignleft")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .help("Output is streaming")
-                    }
-                    Text(ActivityWords.duration(ctx.date.timeIntervalSince(since)))
-                        .monospacedDigit()
-                        .foregroundStyle(.tertiary)
-                }
-                .fixedSize()
-                .contentTransition(.opacity)
-            }
+    private var streaming: some View {
+        if !item.done, !item.output.isEmpty {
+            Image(systemName: "text.alignleft")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .help("Output is streaming")
+                .transition(.opacity)
         }
     }
 
