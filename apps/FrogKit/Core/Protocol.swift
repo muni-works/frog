@@ -725,6 +725,9 @@ enum Event: Decodable, Sendable {
     /// A chapter's title from a small side-model, sent when the next chapter opened; it
     /// replaces the rail's heuristic title for the chapter starting at `turn`. Durable.
     case chapterTitled(turn: UInt64, title: String)
+    /// The model's suggested next prompt, sent just before a completed turn ends. Live only.
+    /// `act`: it acts outside the project (push, send, deploy), so it's a button, not ghost text.
+    case nextSuggested(turn: UInt64, text: String, act: Bool)
     /// A retried model call's partial items (message/reasoning that streamed before the
     /// stream failed); drop them from the turn.
     case itemsDiscarded(ids: [String])
@@ -826,7 +829,7 @@ extension Event {
         case images, more
         case stepsDone = "steps_done", jobs, jobLabels = "job_labels", inbox
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
-        case command, gist
+        case command, gist, act
         case host, port, enforced
         case running
         case status, text, log, items, wakes
@@ -856,6 +859,11 @@ extension Event {
                 item: try c.decode(String.self, forKey: .item),
                 command: try c.decode(String.self, forKey: .command),
                 gist: try c.decode(String.self, forKey: .gist))
+        case "next_suggested":
+            self = .nextSuggested(
+                turn: try c.decode(UInt64.self, forKey: .turn),
+                text: try c.decode(String.self, forKey: .text),
+                act: try c.decodeIfPresent(Bool.self, forKey: .act) ?? false)
         case "chapter_titled":
             self = .chapterTitled(turn: try c.decode(UInt64.self, forKey: .turn), title: try c.decode(String.self, forKey: .title))
         case "item_delta":

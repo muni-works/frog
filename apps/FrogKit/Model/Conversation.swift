@@ -62,6 +62,12 @@ final class Conversation {
     private(set) var elicitation: Elicitation?
     /// The model's open `Ask`.
     private(set) var question: Question?
+    /// The model's suggested next prompt (its `Next` tool), until the next turn starts.
+    private(set) var next: Next?
+    struct Next: Equatable {
+        var text: String
+        var act: Bool
+    }
     /// Files dropped anywhere on the conversation, for the composer to attach or mention.
     var dropped: [URL] = []
     /// The terminal and preview panes the engine shares with this session.
@@ -365,6 +371,7 @@ final class Conversation {
     /// user's next message.
     func act(_ choice: Present.Choice) {
         let text = (choice.send ?? "").isEmpty ? choice.label : choice.send!
+        next = nil
         if busy || replaying {
             queue.append(Queued(text: text, images: []))
             return
@@ -720,6 +727,7 @@ final class Conversation {
         defer { reportLive() }
         switch env.event {
         case .turnStarted(let n, let input, let images, let more):
+            next = nil
             let at = Date(timeIntervalSince1970: Double(env.created) / 1000)
             if turns.contains(where: { $0.number == n }) {
                 // Seen already (a replay or reconnect re-sent it): appending would duplicate it,
@@ -808,6 +816,9 @@ final class Conversation {
             // call per turn flush (live only). Cached by command hash so identical rows share
             // it and later turns reuse it; rows read the cache (an @Observable) and rebuild.
             CommandGists.shared.record(command: command, gist: gist)
+        case .nextSuggested(_, let text, let act):
+            // Live only: a replay never brings back a suggestion for a turn long gone.
+            if isNews(env), !text.isEmpty { next = Next(text: text, act: act) }
         case .chapterTitled(let n, let title):
             // The model's name for the chapter starting at turn `n`: the rail shows it over
             // its heuristic one (which it showed meanwhile).

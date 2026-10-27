@@ -14,6 +14,13 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(step, 3); XCTAssertEqual(of, 8); XCTAssertEqual(index, 0)
     }
 
+    func testNextSuggestedDecodesWithActDefaultingOff() throws {
+        let ghost = try decode(#"{"seq":1,"session":"s","created":0,"event":"next_suggested","turn":2,"text":"commit this"}"#)
+        guard case .nextSuggested(2, "commit this", false) = ghost.event else { return XCTFail() }
+        let act = try decode(#"{"seq":2,"session":"s","created":0,"event":"next_suggested","turn":3,"text":"push it","act":true}"#)
+        guard case .nextSuggested(3, "push it", true) = act.event else { return XCTFail() }
+    }
+
     func testFixturesAllDecode() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "events", withExtension: "jsonl"))
         let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
