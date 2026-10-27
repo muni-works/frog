@@ -2115,6 +2115,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "node-face"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "minifb",
+ "puck",
+ "serde_json",
+]
+
+[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
