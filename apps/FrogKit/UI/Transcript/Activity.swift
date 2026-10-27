@@ -4,7 +4,8 @@ import SwiftUI
 /// "Interrupted". The Mac's activity viewer leads with it; the phone's chat title shows it.
 struct ActivityLabel: View {
     let conversation: Conversation
-    /// The frog's face as the icon, or a plain symbol (Settings › Appearance on the Mac).
+    /// Playful words ("Hopping to it", "Caught it") or plain ones (Settings › Appearance on the
+    /// Mac). The icon is a plain symbol either way.
     var playful = true
     var maxWidth: CGFloat = 300
 
@@ -27,7 +28,7 @@ struct ActivityLabel: View {
             // No clock here: the app keeps exactly one, the live status row in the transcript.
             // The words change when the work does, so the label has nothing to tick for.
             HStack(spacing: 7) {
-                icon(at: turn.startedAt ?? .distantPast) { Image(systemName: Self.symbol(turn)).foregroundStyle(.tint) }
+                icon { Image(systemName: Self.symbol(turn)).foregroundStyle(.tint) }
                 // Hugs the text, up to `maxWidth`.
                 Text(Self.live(turn, in: conversation)).lineLimit(1).truncationMode(.middle)
                     .frame(maxWidth: maxWidth, alignment: .leading)
@@ -59,21 +60,11 @@ struct ActivityLabel: View {
         }
     }
 
-    /// The frog, or the plain symbol when the playful frog is off. While a turn runs the pill's
-    /// frog holds one pose (`at`) rather than running its own 30/s timeline: the mood changes
-    /// when the work does, not per frame. Settled (done, ready, stopped) it holds its pose: an
-    /// idle pill's frog looping at 30/s redrew the whole window, glass and all, for as long as
-    /// the app sat open.
-    /// DEBUG churn benchmarking holds its pose through `PillChurn.noFrog` (Reduce Motion).
-    @ViewBuilder
-    private func icon(at: Date? = nil, @ViewBuilder plain: () -> some View) -> some View {
-        if playful {
-            let settled = !conversation.busy && !conversation.justFinished
-            FrogFace(mood: conversation.failure != nil ? .sad : conversation.mood, size: 16,
-                     animating: !PillChurn.noFrog && !settled, at: at).frame(width: 16)
-        } else {
-            plain().frame(width: 14)
-        }
+    /// The state's plain symbol. The frog's face is retired from the live chrome (it stays on
+    /// the empty page and decorative spots); `playful` now only flavors the words.
+    private func icon(@ViewBuilder plain: () -> some View) -> some View {
+        plain().frame(width: 14)
+>>>>>>> ff633a9 (premium shell 11: mascot out of the live flow — plain symbols in the pill and typing bubble, frog keeps the empty page)
     }
 
     /// A permission prompt or a server's question, in a few words.
