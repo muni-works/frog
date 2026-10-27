@@ -118,6 +118,37 @@
   .cal { font-size: 11.5px; color: var(--ter); line-height: 1.45; }
   .cal b { color: var(--text); font-weight: 500; }
 
+  .rail-h .count { font: 600 11px -apple-system; color: var(--orange); background: rgba(255,159,10,.14); padding: 1px 7px; border-radius: 8px; }
+  .rail-h .count.ok { color: var(--accent); background: rgba(48,209,88,.14); }
+  .rail-h .kbd { margin-left: auto; font: 400 10.5px -apple-system; color: var(--ter); }
+  .strip { display: flex; gap: 2px; height: 22px; align-items: flex-end; }
+  .strip i { flex: 1; border-radius: 2px; background: rgba(48,209,88,.35); cursor: pointer; }
+  .strip i.or { background: var(--orange); } .strip i.rd { background: var(--red); } .strip i.ok { background: rgba(48,209,88,.7); }
+  .gc { background: var(--card); border-radius: 12px; padding: 11px 12px 12px; box-shadow: 0 0 0 .5px var(--sep); cursor: pointer; transition: box-shadow .15s, opacity .2s; }
+  .gc + .gc { margin-top: 10px; }
+  .gc.hi { box-shadow: inset 3px 0 0 var(--red), 0 0 0 .5px var(--sep); } .gc.md { box-shadow: inset 3px 0 0 var(--orange), 0 0 0 .5px var(--sep); }
+  .gc.focus { box-shadow: inset 3px 0 0 var(--blue), 0 0 0 1px rgba(10,132,255,.6); }
+  .gc .top { display: flex; align-items: baseline; gap: 6px; font-size: 11px; color: var(--ter); margin-bottom: 5px; }
+  .gc .top .loc { font: 11px var(--mono); }
+  .gc .top .kind { margin-left: auto; font-weight: 600; }
+  .gc.hi .kind { color: var(--red); } .gc.md .kind { color: var(--orange); }
+  .gc .q { font-weight: 500; line-height: 1.4; margin-bottom: 8px; padding: 0; display: block; cursor: inherit; }
+  .gc .vs { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: center; font: 11.5px var(--mono); margin-bottom: 9px; }
+  .gc .vs .lab { font: 10.5px -apple-system; color: var(--ter); }
+  .gc .vs .bar { height: 4px; border-radius: 2px; background: var(--quat); overflow: hidden; } .gc .vs .bar i { display: block; height: 100%; }
+  .gc .vs .p { color: var(--sec); font-variant-numeric: tabular-nums; }
+  .gc .ev { font-size: 11.5px; color: var(--sec); line-height: 1.45; margin-bottom: 10px; }
+  .gc .ev b { color: var(--teal); font-weight: 500; }
+  .gc .btns .btn { padding: 4px 10px; font-size: 11.5px; }
+  .settled { margin-top: 4px; }
+  .settled .s { display: flex; gap: 8px; align-items: center; font-size: 11.5px; color: var(--ter); padding: 4px 2px; }
+  .settled .s .ck { color: var(--accent); }
+  .trust { font-size: 11.5px; color: var(--ter); line-height: 1.5; border-top: .5px solid var(--sep); padding-top: 12px; }
+  .trust b { color: var(--text); font-weight: 500; }
+  .trust .why { color: var(--blue); cursor: help; }
+  .hood summary { font: 600 10.5px -apple-system; letter-spacing: .05em; color: var(--ter); text-transform: uppercase; cursor: pointer; margin-bottom: 8px; }
+  .ln.flash { animation: fl 1.2s ease-out; }
+  @keyframes fl { 0% { background: rgba(10,132,255,.35); } 100% { background: rgba(48,209,88,.07); } }
   .story { margin-top: 30px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; max-width: 1560px; }
   .story div { background: #161617; border-radius: 12px; padding: 16px; line-height: 1.5; color: var(--sec); box-shadow: 0 0 0 .5px var(--sep); }
   .story b { color: var(--text); display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 13.5px; }
@@ -166,30 +197,16 @@
 
     <!-- REVIEW RAIL -->
     <aside class="rail">
-      <div class="rail-h">Review</div>
+      <div class="rail-h"><span>Guesses</span><span class="count" id="gcount">4 open</span><span class="kbd">↓ next · ⏎ keep · R runner-up</span></div>
       <div class="rail-b">
-        <div class="hero">
-          <div class="big">4 <span>of 35 lines</span></div>
-          <div class="l">need your eyes. The other 31 were written with confidence that, on this repo, holds up 97% of the time.</div>
-          <div class="meter"><i style="width:8%;background:var(--red)"></i><i style="width:3.5%;background:var(--orange)"></i><i style="flex:1;background:rgba(48,209,88,.5)"></i></div>
-        </div>
-
-        <div class="sect">
-          <h3><span class="n">1</span>Review queue, riskiest first</h3>
-          <div id="queue"></div>
-        </div>
-
-        <div class="sect">
-          <h3><span class="n">2</span>Calibration on this repo</h3>
-          <canvas id="cal" height="110" style="width:100%;border-radius:8px;background:rgba(0,0,0,.25)"></canvas>
-          <div class="cal" style="margin-top:6px">When frog says <b>"60% sure"</b>, it's right about 58% of the time here. Learned from <b>1,204 lines</b> you kept, edited or reverted. Your data stays on this Mac.</div>
-        </div>
-
-        <div class="sect">
-          <h3><span class="n">3</span>Turn fingerprint</h3>
+        <div class="strip" id="strip" title="each tick is a line of this turn; colour = how sure the model was"></div>
+        <div id="cards"></div>
+        <div class="settled" id="settled"></div>
+        <div class="trust">31 other lines were written confidently. On this repo, confident lines get changed <b>3%</b> of the time <span class="why" title="Learned from 1,204 lines you kept, edited or reverted. Stays on this Mac.">why?</span></div>
+        <details class="hood"><summary>Under the hood</summary>
           <div class="fp"><canvas id="fp" width="128" height="128"></canvas>
-            <div class="t"><b>Unusual for this model.</b> Routing looks like "writing SQL" more than "writing Rust". 2 of the 4 guesses are in that stretch.</div></div>
-        </div>
+            <div class="t"><b>Routed like SQL, not Rust</b> for lines 35–37. Unusual for this model on this repo, and 3 of the 4 guesses sit there.</div></div>
+        </details>
       </div>
     </aside>
   </div>
@@ -297,38 +314,75 @@ diffEl.addEventListener("click", e => {
 });
 document.addEventListener("click", e => { if (!e.target.closest(".fork")) document.querySelectorAll(".menu").forEach(x => x.classList.remove("open")); });
 
-// review queue
+// guess cards: the approval gate, applied to every guess
 const Q = [
-  { k: "f3", t: "<code>Rounding::Up</code> doesn't exist", s: "line 37 · unverified name, habit not grounding", r: ["hi", "62%"] },
-  { k: "g",  t: "Guessed WHERE in the UPDATE", s: "psql · destructive, 41% sure", r: ["hi", "55%"] },
-  { k: "f2", t: "<code>scale</code> vs <code>mul_f64</code>", s: "line 35 · fork, float math on money", r: ["md", "31%"] },
-  { k: "f1", t: "Exclusive vs inclusive period end", s: "line 33 · off-by-one class", r: ["md", "24%"] },
+  { k: "f3", loc: "invoice.rs:37", kind: "made up", lvl: "hi", line: 6,
+    q: "Used <code>Rounding::Up</code>, which nothing in this repo defines",
+    vs: [["picked", "Rounding::Up", 34], ["runner-up", "drop the arg", 44]],
+    ev: "Grounding is weak: it leaned on the doc comment at <b>line 17</b>, which says <code>scale</code> already rounds half-even.",
+    acts: ["Use runner-up", "Ask to verify", "Keep"] },
+  { k: "g", loc: "psql UPDATE", kind: "destructive", lvl: "hi",
+    q: "Guessed which rows the UPDATE should touch",
+    vs: [["picked", "period_start > '2026-10-01'", 41], ["runner-up", "plan_changed_at > now() - 1 day", 38]],
+    ev: "Sure about the command (98%), not the scope. Waiting on the approval above.",
+    acts: ["Use runner-up", "Ask to verify", "Allow once"] },
+  { k: "f2", loc: "invoice.rs:35", kind: "close call", lvl: "md", line: 4,
+    q: "Integer <code>scale</code> or float <code>mul_f64</code> for money?",
+    vs: [["picked", "Money::scale", 47], ["runner-up", "Money::mul_f64", 39]],
+    ev: "The pick matches your helper at <b>line 18</b>. The runner-up would do float math on money.",
+    acts: ["Keep", "Use runner-up"] },
+  { k: "f1", loc: "invoice.rs:33", kind: "close call", lvl: "md", line: 2,
+    q: "Is the period end inclusive or exclusive?",
+    vs: [["picked", "period_end", 52], ["runner-up", "period_end - 1", 31]],
+    ev: "The pick follows the <code>// exclusive</code> comment at <b>line 25</b>.",
+    acts: ["Keep", "Use runner-up"] },
 ];
-const qEl = document.getElementById("queue");
+let focusI = 0;
+const cardsEl = document.getElementById("cards"), settledEl = document.getElementById("settled");
 function renderQueue() {
-  qEl.innerHTML = Q.map((q, i) => `<div class="q ${q.done ? 'done' : ''}"><span class="rk">${i + 1}</span><span class="t">${q.t}<small>${q.s}</small></span><span class="risk ${q.r[0]}" title="calibrated chance a human changes this">${q.r[1]}</span></div>`).join("");
-  const left = Q.filter(q => !q.done).length;
+  const open = Q.filter(q => !q.done);
+  if (focusI >= open.length) focusI = 0;
+  cardsEl.innerHTML = open.map((q, i) => `
+    <div class="gc ${q.lvl} ${i === focusI ? 'focus' : ''}" data-k="${q.k}">
+      <div class="top"><span class="loc">${q.loc}</span><span class="kind">${q.kind}</span></div>
+      <span class="q">${q.q}</span>
+      <div class="vs">${q.vs.map(([lab, v, p], j) => `<span class="lab">${lab}</span><code>${v}</code><span class="p">${p}%</span><span></span><span class="bar"><i style="width:${p}%;background:${j ? 'var(--orange)' : 'var(--accent)'}"></i></span><span></span>`).join("")}</div>
+      <div class="ev">${q.ev}</div>
+      <div class="btns">${q.acts.map((a, j) => `<button class="btn ${j ? '' : 'pri'}" data-k="${q.k}" data-a="${a}">${a}</button>`).join("")}</div>
+    </div>`).join("");
+  settledEl.innerHTML = Q.filter(q => q.done).map(q => `<div class="s"><span class="ck">✓</span><span>${q.loc}</span><span>· ${q.how}</span></div>`).join("");
+  const left = open.length, gc = document.getElementById("gcount");
+  gc.textContent = left ? `${left} open` : "all settled"; gc.className = "count" + (left ? "" : " ok");
   document.getElementById("diffbadge").textContent = left ? `${left} to review · 31 skim` : "reviewed";
   document.getElementById("diffbadge").className = "badge " + (left ? "warn" : "ok");
-  document.querySelector(".hero .big").innerHTML = `${left} <span>of 35 lines</span>`;
   document.getElementById("pulse").className = "pulse" + (left > 1 ? " amber" : "");
   document.getElementById("depth").style.display = left > 2 ? "" : "none";
+  // turn strip: one tick per line, guesses coloured until settled
+  const lines = Array.from({ length: 35 }, (_, i) => ({ h: 30 + ((i * 37) % 50) }));
+  [[33, "f1"], [35, "f2"], [37, "f3"], [34, "g"]].forEach(([i, k]) => { const q = Q.find(q => q.k === k); lines[i - 3].k = k; lines[i - 3].c = q.done ? "ok" : q.lvl === "hi" ? "rd" : "or"; lines[i - 3].h = 100; });
+  document.getElementById("strip").innerHTML = lines.map(l => `<i class="${l.c || ''}" ${l.k ? `data-k="${l.k}"` : ""} style="height:${l.h}%"></i>`).join("");
 }
-function updateQueue(k) { const q = Q.find(q => q.k === k); if (q) q.done = true; renderQueue(); }
+function updateQueue(k, how = "branched") { const q = Q.find(q => q.k === k); if (q && !q.done) { q.done = true; q.how = how; } renderQueue(); }
+function flash(k) {
+  const q = Q.find(q => q.k === k);
+  if (q.line == null) { document.querySelector(".guard").scrollIntoView({ block: "center", behavior: "smooth" }); return; }
+  const ln = diffEl.querySelector(`.ln[data-i="${q.line}"]`);
+  ln.scrollIntoView({ block: "center", behavior: "smooth" });
+  ln.classList.remove("flash"); void ln.offsetWidth; ln.classList.add("flash");
+  ln.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+}
+document.querySelector(".rail").addEventListener("click", e => {
+  const b = e.target.closest(".btn");
+  if (b) { const how = { "Keep": "kept", "Allow once": "allowed", "Use runner-up": "took runner-up", "Ask to verify": "frog verified: grep found no definition, switched" }[b.dataset.a]; updateQueue(b.dataset.k, how); return; }
+  const t = e.target.closest("[data-k]"); if (t) flash(t.dataset.k);
+});
+document.addEventListener("keydown", e => {
+  const open = Q.filter(q => !q.done); if (!open.length) return;
+  if (e.key === "ArrowDown" || e.key === "j") { focusI = (focusI + 1) % open.length; renderQueue(); flash(open[focusI].k); }
+  if (e.key === "Enter") updateQueue(open[focusI].k, "kept");
+  if (e.key === "r") updateQueue(open[focusI].k, "took runner-up");
+});
 renderQueue();
-
-// calibration curve
-(function () {
-  const c = document.getElementById("cal"), x = c.getContext("2d");
-  c.width = c.clientWidth * 2; c.height = 220; x.scale(2, 2);
-  const w = c.clientWidth, h = 110, pad = 14;
-  const P = (a, b) => [pad + a * (w - pad * 2), h - pad - b * (h - pad * 2)];
-  x.strokeStyle = "rgba(235,235,245,.18)"; x.setLineDash([3, 3]); x.beginPath(); x.moveTo(...P(0, 0)); x.lineTo(...P(1, 1)); x.stroke(); x.setLineDash([]);
-  const pts = [[.1, .07], [.25, .21], [.4, .37], [.6, .58], [.75, .77], [.9, .93], [.98, .97]];
-  x.strokeStyle = "#30d158"; x.lineWidth = 1.6; x.beginPath(); pts.forEach((p, i) => i ? x.lineTo(...P(...p)) : x.moveTo(...P(...p))); x.stroke();
-  pts.forEach(p => { x.fillStyle = "#30d158"; x.beginPath(); x.arc(...P(...p), 2.4, 0, 7); x.fill(); });
-  x.fillStyle = "rgba(235,235,245,.35)"; x.font = "10px -apple-system"; x.fillText("said", w - 32, h - 3); x.fillText("right", 2, 10);
-})();
 
 // fingerprint glyph: radial routing histogram
 (function () {
