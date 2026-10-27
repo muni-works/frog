@@ -310,7 +310,14 @@ struct TranscriptView: View {
     private var transcript: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                #if os(macOS)
+                // On the Mac every turn's footer (model, cost, speed, energy) is hover-only,
+                // the last one too: nothing pinned under the answer at rest.
+                let footers = Set<TurnState.ID>()
+                #else
+                // No hover on a phone: the footers that matter stay pinned.
                 let footers = TurnFooter.pinned(conversation.turns) { ModelStats.shared.cost(of: $0) }
+                #endif
                 let lastTurn = conversation.turns.last?.id
                 // The transcript's first line: the last compaction's banner. Replay and
                 // reopen keep it (a durable event); sessions compacted before receipts
