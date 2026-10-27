@@ -254,9 +254,7 @@ impl Client {
                     message: err.to_string()
                 });
             }
-            if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
-                usage = read_usage(u);
-            }
+            take_usage(&v, &mut usage);
             if let Some(r) = v["choices"][0]["finish_reason"].as_str() {
                 stop = Some(Stop::from_reason(r));
             }
@@ -338,6 +336,19 @@ impl Client {
     }
 }
 
+/// A chunk's `usage`, if it reports something. Counts are cumulative, so the newest real one
+/// wins; an empty or all-zero object (some gateways send `"usage": {}` or nulls on other
+/// chunks) never clobbers it.
+fn take_usage(chunk: &Value, usage: &mut Usage) {
+    let u = &chunk["usage"];
+    let counts = ["prompt_tokens", "completion_tokens"]
+        .iter()
+        .any(|k| u[k].as_u64().is_some_and(|n| n > 0));
+    if counts {
+        *usage = read_usage(u);
+    }
+}
+
 /// A chat-completions `usage` object. `prompt_tokens` includes the cached part; gateways that
 /// pass Anthropic's cache writes through say so in `cache_creation_input_tokens`.
 fn read_usage(u: &Value) -> Usage {
@@ -375,6 +386,27 @@ mod tests {
         assert_eq!((u.input, u.cache_read, u.cache_write, u.output), (552, 151_667, 0, 6_500));
         let u = read_usage(&json!({ "prompt_tokens": 10, "completion_tokens": 2 }));
         assert_eq!((u.input, u.cache_read, u.output), (10, 0, 2));
+    }
+
+    /// Counts on the final chunk (a vercel/zai/glm-5.3-flash call's, from engine.log); chunks
+    /// around it carrying `"usage": null`, `{}` or zeros must not wipe them.
+    #[test]
+    fn empty_usage_chunks_never_zero_the_real_counts() {
+        let chunks = [
+            json!({ "choices": [{ "delta": { "content": "hi" } }], "usage": null }),
+            json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }], "usage": {} }),
+            json!({ "choices": [], "usage": {
+                "prompt_tokens": 612_263, "completion_tokens": 254, "total_tokens": 612_517,
+                "prompt_tokens_details": { "cached_tokens": 609_024 } } }),
+            json!({ "choices": [], "usage": {} }),
+            json!({ "choices": [], "usage": { "prompt_tokens": 0, "completion_tokens": 0 } }),
+        ];
+        let mut u = Usage::default();
+        for c in &chunks {
+            take_usage(c, &mut u);
+        }
+        assert_eq!((u.input, u.cache_read, u.output), (3_239, 609_024, 254));
+        assert_eq!(u.context(), 612_517);
     }
 
     #[test]
