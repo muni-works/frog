@@ -2,9 +2,10 @@ use super::{Ctx, Output};
 use crate::provider::ToolSpec;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use serde_json::{Value, json};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Todo {
     pub content: String,
     pub status: String,

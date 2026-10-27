@@ -38,6 +38,7 @@ pub mod providers;
 pub mod recall;
 pub mod repomap;
 pub mod rules;
+pub mod schema;
 pub mod session;
 pub mod setup;
 pub mod shell;
