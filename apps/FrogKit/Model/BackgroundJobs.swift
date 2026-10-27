@@ -79,6 +79,8 @@ struct WakeEvent: Equatable, Sendable {
     /// The wakes `input` is made of, in order, or nil when it isn't only wakes (something the
     /// user typed, a session message).
     static func parse(_ input: String) -> [WakeEvent]? {
+        // No wake tag anywhere (most turns: something you typed): nothing to parse.
+        guard Kind.tagged.contains(where: { input.contains("<\($0.rawValue) ") }) else { return nil }
         var rest = Substring(input).trimmingCharacters(in: .whitespacesAndNewlines)[...]
         var out: [WakeEvent] = []
         var sawTag = false

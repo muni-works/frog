@@ -39,8 +39,10 @@ struct TurnLead: Equatable {
     /// Turn inputs the engine writes itself (`protocol.rs` CONTINUE_NOTE / SUSPENDED_NOTE,
     /// `background.rs` dropped pieces after a restart).
     static func isEngineNote(_ input: String) -> Bool {
-        (input.hasPrefix("<resumed after the app ") && input.hasSuffix("; continue>"))
-            || input.firstMatch(of: #/^\d+ background pieces? from before the engine restarted (was|were) dropped, not re-armed: /#) != nil
+        if input.hasPrefix("<resumed after the app ") { return input.hasSuffix("; continue>") }
+        // Only the opening can match: a long brief must not cost a regex over all of it.
+        guard input.first?.isNumber == true else { return false }
+        return input.prefix(120).firstMatch(of: #/^\d+ background pieces? from before the engine restarted (was|were) dropped, not re-armed: /#) != nil
     }
 }
 

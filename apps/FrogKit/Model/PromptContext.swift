@@ -18,6 +18,9 @@ struct PromptContext: Identifiable, Equatable {
 
     /// Your request, and the context blocks after it.
     static func split(_ text: String) -> (message: String, contexts: [PromptContext]) {
+        // Nearly every message has no block: skip the regex (slow over a long brief, and the
+        // timeline rail asks for every turn's request on each switch).
+        guard text.contains("<context") else { return (text, []) }
         let block = /<context([^>]*)>\n?([\s\S]*?)\n?<\/context>/
         var contexts: [PromptContext] = []
         for (i, m) in text.matches(of: block).enumerated() {
