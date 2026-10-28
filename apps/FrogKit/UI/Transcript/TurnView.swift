@@ -461,8 +461,9 @@ struct PlanView: View {
         case "completed":
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case "in_progress":
+            // Still: a spinning symbol redrew the whole window every display frame (~100/s)
+            // for as long as a plan step ran. The tint and the dotted ring say it's going.
             Image(systemName: "circle.dotted.circle").foregroundStyle(.tint)
-                .symbolEffect(.rotate, isActive: true)
         default:
             Image(systemName: "circle").foregroundStyle(.tertiary)
         }

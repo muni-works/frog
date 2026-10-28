@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Refused long waits (one already running) that end the turn.
+const WAIT_REFUSALS_TO_END: u64 = 2;
+
 impl Agent {
     /// `Task`: run a subagent and return its report (its steps stream as live output), or,
     /// with `background`, start it and return its id. A write-mode subagent works in this
@@ -86,7 +89,19 @@ impl Agent {
     /// A long bare wait ([`crate::auto::long_wait`]) run as a background job (the same path as
     /// `Bash { run_in_background }`, already permitted): the tool returns at once, telling the
     /// model what happened, and the job's `<job-done>` wake brings the output when it ends.
+    ///
+    /// One at a time: a model that ignores the advice and sleeps again (quad00, GLM 5.3 Flash:
+    /// 1,334 sleeps in one turn, a new one every 3 s, ~200 running at once, then 1,300 wakes)
+    /// is told it's already waiting instead of getting another job.
     pub(super) fn background_wait(&self, input: &Value, secs: u64) -> Result<tools::Output> {
+        if let Some(id) = self.shared.bg.long_wait.lock().unwrap().clone()
+            && self.shared.bg.is_running(&id)
+        {
+            self.shared.bg.long_wait_refusals.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            anyhow::bail!(
+                "Not started: you're already waiting on {id}, and sleeping again doesn't make it come sooner. End your turn now; the <job-done id={id}> wake starts your next one."
+            );
+        }
         let started =
             crate::background::start_job(&self.shared.bg, input, &self.ctx, &self.jobs_dir())?;
         let id = started
@@ -95,6 +110,8 @@ impl Agent {
             .find(|w| w.starts_with("job-"))
             .map(|w| w.trim_end_matches([',', '.']).to_string())
             .unwrap_or_else(|| "a background job".into());
+        *self.shared.bg.long_wait.lock().unwrap() = Some(id.clone());
+        self.shared.bg.long_wait_refusals.store(0, std::sync::atomic::Ordering::Relaxed);
         self.notice(
             Level::Warn,
             format!("a {secs}s sleep moved to background job {id}; the turn goes on"),
@@ -199,6 +216,10 @@ impl Agent {
             let title = crate::title::parse(input)?;
             self.set_title(title.clone());
             return Ok(tools::Output::text(format!("Session titled \"{title}\".")));
+        }
+        if name == crate::next::TOOL {
+            self.conv.next = Some(crate::next::parse(input)?);
+            return Ok(tools::Output::text("Suggested."));
         }
         if name == crate::panes::TERMINAL {
             return self.shared.panes.terminal(input, self.subagent).await;
@@ -659,6 +680,19 @@ Don't repeat it. Change the arguments or try a different approach.",
                 self.pending_gists.push((item_id, command, out_head));
             }
         }
+        // A model that keeps sleeping on a wait that already runs (refused twice) won't end its
+        // turn: end it, as finished, and let the job's wake start the next one.
+        let waiting = !looping
+            && self.shared.bg.long_wait_refusals.load(std::sync::atomic::Ordering::Relaxed) >= WAIT_REFUSALS_TO_END;
+        if waiting {
+            self.shared.bg.long_wait_refusals.store(0, std::sync::atomic::Ordering::Relaxed);
+            let id = self.shared.bg.long_wait.lock().unwrap().clone().unwrap_or_else(|| "the background job".into());
+            let why = format!(
+                "[frog] Turn ended to wait for {id}: sleeping again doesn't bring it sooner. Its <job-done id={id}> wake starts the next turn."
+            );
+            self.notice(Level::Info, why.clone());
+            self.extend_last(vec![Block::Text { text: why }]);
+        }
         if looping {
             let why = format!(
                 "[frog] Turn stopped: the same tool call repeated {LOOP_STOP} times, or {LOOP_STALE_REPLANS} \
@@ -675,6 +709,8 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             Batch::Denied
         } else if looping {
             Batch::Looping
+        } else if waiting {
+            Batch::Waiting
         } else {
             Batch::Continue
         })

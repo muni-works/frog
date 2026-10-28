@@ -54,7 +54,6 @@ pub fn linked(dir: &Path) -> Option<(PathBuf, PathBuf)> {
 pub struct Lock {
     file: File,
     pub top: PathBuf,
-    path: PathBuf,
 }
 
 impl Lock {
@@ -67,16 +66,12 @@ impl Lock {
     }
 }
 
-/// The lock files this process holds now. A lock file still flocked although it names this pid and isn't
-/// in here was just dropped: a child forked meanwhile (a tool's command starting) holds a copy of the fd
-/// until its exec closes it.
-static HELD: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
-
 impl Drop for Lock {
+    /// Says it's free before letting go: a child forked elsewhere in this process, between its
+    /// fork and exec, briefly holds a copy of the descriptor and so the flock. `acquire` reads
+    /// an empty owner as "released, lingering" and waits that out instead of refusing.
     fn drop(&mut self) {
-        if let Ok(mut held) = HELD.lock() {
-            held.retain(|p| p != &self.path);
-        }
+        let _ = self.file.set_len(0);
     }
 }
 
@@ -87,7 +82,7 @@ fn owner(file: &mut File) -> (String, String) {
     let _ = file.read_to_string(&mut text);
     let mut parts = text.split_whitespace();
     (
-        parts.next().unwrap_or("an unknown session").to_string(),
+        parts.next().unwrap_or("").to_string(),
         parts.next().unwrap_or("?").to_string(),
     )
 }
@@ -103,36 +98,30 @@ pub fn acquire(
     let Some((top, gitdir)) = linked(dir) else {
         return Ok(None);
     };
-    let path = gitdir.join(LOCK_FILE);
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(&path)?;
-    let start = std::time::Instant::now();
+        .open(gitdir.join(LOCK_FILE))?;
+    let deadline = std::time::Instant::now() + same_session_wait;
+    let lingering = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
         // SAFETY: flock on a valid fd we own; released when `file` closes.
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-            if let Ok(mut held) = HELD.lock() {
-                held.push(path.clone());
-            }
-            let mut lock = Lock { file, top, path };
+            let mut lock = Lock { file, top };
             lock.set_owner(session);
             return Ok(Some(lock));
         }
         let (holder, pid) = owner(&mut file);
-        // Our own lock, already dropped: only a forked child's copy of its fd is left, gone at its exec.
-        let lingering = pid == std::process::id().to_string()
-            && HELD.lock().is_ok_and(|held| !held.contains(&path));
-        let wait = if lingering {
-            same_session_wait.max(std::time::Duration::from_secs(2))
-        } else if holder == session {
-            same_session_wait
-        } else {
-            std::time::Duration::ZERO
-        };
-        if start.elapsed() >= wait {
+        let now = std::time::Instant::now();
+        // Released, but a forked child's copy of the descriptor still holds it for a moment.
+        if holder.is_empty() && now < lingering {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            continue;
+        }
+        let holder = if holder.is_empty() { "an unknown session".to_string() } else { holder };
+        if holder != session || now >= deadline {
             bail!(
                 "this worktree ({}) already has an engine: session {holder} (pid {pid}) is running in it. \
 One engine per worktree, so two sessions never mix uncommitted work: stop or archive {holder}, \
@@ -184,6 +173,30 @@ pub(crate) mod tests {
         assert_eq!(top, wt);
         assert!(gitdir.ends_with("worktrees/w"), "{}", gitdir.display());
         assert!(linked(&std::env::temp_dir()).is_none());
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+    }
+
+    /// The macOS CI flake: a child forked elsewhere in the process, between fork and exec,
+    /// holds a copy of the lock's descriptor, so the flock outlives the `Lock` for a moment.
+    /// Re-taking it waits that out (the owner line is already empty) instead of refusing.
+    #[test]
+    fn a_released_lock_held_a_moment_by_a_forked_copy_is_waited_out() {
+        let (repo, wt) = repo_with_worktree("linger");
+        let first = acquire(&wt, "s-first", Duration::ZERO).unwrap().unwrap();
+        // SAFETY: dup of a valid fd we own; the copy is closed on the thread below.
+        let copy = unsafe { libc::dup(first.file.as_raw_fd()) };
+        assert!(copy >= 0);
+        drop(first);
+        let closer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            // SAFETY: closing the copy made above, once.
+            unsafe { libc::close(copy) };
+        });
+        let t0 = std::time::Instant::now();
+        let next = acquire(&wt, "s-next", Duration::ZERO).unwrap();
+        assert!(next.is_some(), "a released lock is taken once its copy closes");
+        assert!(t0.elapsed() >= Duration::from_millis(100), "it waited for the copy");
+        closer.join().unwrap();
         let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 

@@ -206,7 +206,7 @@ struct PresentCard: View {
         if let c = current, i < c {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         } else if let c = current, i == c {
-            Image(systemName: "circle.dotted").foregroundStyle(.blue).symbolEffect(.pulse)
+            Image(systemName: "circle.dotted").foregroundStyle(.blue).symbolEffect(.pulse, options: .repeat(3))
         } else {
             Image(systemName: "circle").foregroundStyle(.tertiary)
         }

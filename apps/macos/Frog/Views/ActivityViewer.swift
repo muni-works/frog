@@ -11,6 +11,8 @@ struct ActivityViewer: View {
     var jump: (TurnState.ID) -> Void = { _ in }
     /// In a split window: the pane's number leads the pill and a close button ends it.
     var pane: PaneBadge? = nil
+    /// How wide the activity words may get before truncating (narrower in a split pane).
+    var labelWidth: CGFloat = 300
 
     struct PaneBadge {
         let number: Int
@@ -23,6 +25,7 @@ struct ActivityViewer: View {
     @State private var library = Library.shared
     @AppStorage("playfulFrog") private var playful = true
     @Environment(\.openSession) private var openSession
+    @Environment(\.paneWidth) private var paneWidth
 
     /// A permission prompt or a server's question: the pill turns amber and takes you there.
     private var waiting: String? { ActivityLabel.waiting(conversation) }
@@ -89,11 +92,12 @@ struct ActivityViewer: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
             }
-            if let s = conversation.status {
+            // A narrow pane keeps what it's doing; the model is in its composer anyway.
+            if let s = conversation.status, paneWidth > .narrow {
                 Divider().frame(height: 14)
                 readout(s)
             }
-            if !others.isEmpty {
+            if !others.isEmpty, paneWidth > .narrow {
                 Divider().frame(height: 14)
                 othersMenu
             }
@@ -191,7 +195,7 @@ struct ActivityViewer: View {
     // MARK: Left: what's happening
 
     private var activity: some View {
-        ActivityLabel(conversation: conversation, playful: playful)
+        ActivityLabel(conversation: conversation, playful: playful, maxWidth: labelWidth)
     }
 
     // MARK: Right: the readout
@@ -231,14 +235,14 @@ struct ActivityViewer: View {
                     pickingModel = false
                 }
             }
-            if let tps = s.tokensPerSec, tps > 0 {
+            if let tps = s.tokensPerSec, tps > 0, paneWidth == .wide {
                 Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                     .contentTransition(.numericText())
             }
             if let degraded = s.degraded, !degraded.isEmpty {
-                DegradedBadge(degraded: degraded)
+                DegradedBadge(degraded: degraded, compact: paneWidth < .wide)
             }
         }
     }
@@ -248,6 +252,8 @@ struct ActivityViewer: View {
 /// picked, auto mode on fallback) in the pill, each one's why on hover and a click away.
 struct DegradedBadge: View {
     let degraded: [Degraded]
+    /// Just the warning sign (a split pane): the words are on hover and a click away.
+    var compact = false
     @State private var open = false
 
     var body: some View {
@@ -255,7 +261,7 @@ struct DegradedBadge: View {
             Button { open.toggle() } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill").imageScale(.small)
-                    Text(label).lineLimit(1)
+                    if !compact { Text(label).lineLimit(1) }
                 }
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.orange)
