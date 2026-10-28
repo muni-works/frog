@@ -306,7 +306,7 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64) {
             let (ew, eh) = (e.w * st.size * grow * w, e.h * st.size * grow * w);
             let dil = face.pose.pupil * (1.0 + 0.3 * face.listen + 0.15 * face.hear);
             let scan = face.think * ((t * 1000.0 / 260.0) as f32 + side * 0.4).sin() * 0.3;
-            let (pw, ph) = (ew * 0.52 * dil, eh * 0.4 * dil);
+            let (pw, ph) = (ew * 0.5 * dil, ew * 0.5 * dil); // a circle
             let (ecx, ecy) = u(cx, cy);
             let (px, py) = (
                 ecx + (face.gx * 0.3 + scan) * ew,
