@@ -62,6 +62,9 @@ struct Args {
     /// stands in for them, in a window only.
     #[arg(long, value_name = "INDEX", num_args = 0..=1, default_missing_value = "0")]
     camera: Option<u32>,
+    /// Also show what the camera sees, the faces boxed (the person's in green), in a window of its own.
+    #[arg(long)]
+    camera_preview: bool,
     /// SeetaFace's frontal model for --camera (default: ~/.local/share/node-face/seeta_fd_frontal_v1.0.bin).
     #[arg(long, value_name = "PATH")]
     face_model: Option<PathBuf>,
@@ -305,6 +308,14 @@ fn run(args: &Args) -> Result<()> {
     // Your loudness at the mic, for the listening dots (hear has the mic for the words).
     let (wake, mic) = mic(args)?;
     let eyes = eyes(args)?;
+    #[cfg(feature = "camera")]
+    let mut preview = match (&eyes, args.camera_preview) {
+        (Some(_), true) => Some((
+            Window::new("frog sees", 640, 360, WindowOptions::default())?,
+            Vec::new(),
+        )),
+        _ => None,
+    };
     let mut win = Window::new("frog node", w, h, opts)?;
     win.set_target_fps(60);
     if args.fullscreen {
@@ -429,6 +440,11 @@ fn run(args: &Args) -> Result<()> {
             spare = Some(buf);
         }
         ready = frame_rx.recv().ok();
+        #[cfg(feature = "camera")]
+        if let (Some((pw, pbuf)), Some(e)) = (preview.as_mut(), &eyes) {
+            let (w, h) = e.shot().paint(2, pbuf);
+            pw.update_with_buffer(pbuf, w, h)?;
+        }
     }
     Ok(())
 }
@@ -750,7 +766,7 @@ impl Eyes {
 /// The webcam watching for the person, if --camera asked for one.
 #[cfg(feature = "camera")]
 fn eyes(args: &Args) -> anyhow::Result<Option<Eyes>> {
-    let Some(i) = args.camera else {
+    let Some(i) = args.camera.or(args.camera_preview.then_some(0)) else {
         return Ok(None);
     };
     let model = args
@@ -764,7 +780,7 @@ fn eyes(args: &Args) -> anyhow::Result<Option<Eyes>> {
 #[cfg(not(feature = "camera"))]
 fn eyes(args: &Args) -> anyhow::Result<Option<Eyes>> {
     anyhow::ensure!(
-        args.camera.is_none(),
+        args.camera.is_none() && !args.camera_preview,
         "--camera needs node-face built with the `camera` feature"
     );
     Ok(None)
