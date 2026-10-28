@@ -443,18 +443,15 @@ fn lips(
         let j = gaps.windows(2).position(|s| px >= s[0].0 && px < s[1].0)?;
         let (a, b) = (gaps[j], gaps[j + 1]);
         let t = (px - a.0) / (b.0 - a.0).max(1e-3);
-        let (top, bot) = (a.1 + (b.1 - a.1) * t, a.2 + (b.2 - a.2) * t);
-        let gap = bot - top - 2.0 * r0;
-        if gap <= 0.0 || py <= top || py >= bot {
-            return None;
-        }
-        let v = 1.0 - ((py - (top + bot) / 2.0) / ((bot - top) / 2.0)).abs();
-        Some(0.22 * v * v * (gap / (r0 * 3.0)).min(1.0))
+        let (y1, y2) = (a.1 + (b.1 - a.1) * t, a.2 + (b.2 - a.2) * t);
+        let (top, bot) = (y1.min(y2), y1.max(y2));
+        // the lips' centres bound it; a pixel of soft edge, though the lips cover it anyway
+        Some(((py - top).min(bot - py)).clamp(0.0, 1.0)).filter(|&a| a > 0.0)
     };
     for y in (y0 - pad) as i32..=(y1 + pad) as i32 {
         for x in (x0 - pad) as i32..=(x1 + pad) as i32 {
             let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-            // squared falloff: droplets only fuse where they nearly touch, so parted lips show the dark between them
+            // squared falloff: droplets only fuse where they nearly touch; the opening between them is filled below
             let f: f32 = balls
                 .iter()
                 .map(|&(bx, by, r2)| {
@@ -463,20 +460,13 @@ fn lips(
                 })
                 .sum::<f32>()
                 .sqrt();
-            if f < 0.55 {
-                // between parted lips: a soft warm light from inside, brightest at the middle of the opening
-                if let Some(g) = inner(px, py) {
-                    cv.add(
-                        x,
-                        y,
-                        puck::canvas::lerp(col, [1.0, 0.82, 0.62], 0.35),
-                        g * lit,
-                    );
-                }
+            // between the lips: filled solid, like the eyes, so the open mouth reads as one shape
+            let fill = inner(px, py).unwrap_or(0.0);
+            if f < 0.55 && fill == 0.0 {
                 continue;
             }
-            let e = ((f - 0.55) / 0.5).min(1.0);
-            let a = e * e * (3.0 - 2.0 * e);
+            let e = ((f - 0.55) / 0.5).clamp(0.0, 1.0);
+            let a = (e * e * (3.0 - 2.0 * e)).max(fill);
             let core = ((f - 1.2) * 0.35).clamp(0.0, 1.0); // hotter where it's thick
             cv.add(x, y, puck::canvas::lerp(col, [1.0; 3], core), a * lit);
         }
