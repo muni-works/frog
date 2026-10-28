@@ -144,6 +144,44 @@ it fits (18-bit token ids, directory + content rows), nothing ported.
 See also `docs/research/memory-pareto.md` for where this sits against RAG, KV reuse, test-time
 training and parametric memory.
 
+## 6. Phase 2: proven on the author's checkpoint, in the author's code and in tang's math
+
+Three more tang branches and one reproduction (`docs/research/qwenputer-repro.md`):
+
+- **`frog/gdn-memserve`**: the serve-side wiring. The store heads are named in `RunningState`;
+  store ops run as engine-internal ≤8-token GDN windows on the store layer only (never the base
+  layers, LM head, KV or sampler); `/v1/memory/{load,op,end}` and `GET /v1/memory` keyed by
+  `prompt_cache_key`; `--memory-ephemeral` zeroes the store heads on slot reuse, eviction and
+  session end, blanks them before shared-prefix snapshots and writes them to the disk tier as
+  zeros; `tang-llm memory dump` prints a blob. 6 CPU tests, plus a 60-op CUDA-vs-CPU bitwise test
+  on mew. Finding: memstore's layout assumed 48 v heads (Flash-Next); Qwen3.5-4B and Coder-Next
+  are 16 k / 32 v, so the engine refuses the store on Coder-Next until a 32-head layout lands
+  (grouped k-head mapping `vh / 2`, not `vh % 16`).
+- **Reproduction on mew's 3090** with the author's RvChat code (chunked prefill added; their
+  `generate` OOMs on 24 GB): Qwen issued all nine store calls itself (3 puts, list, 3 gets,
+  delete, list), 160 model-printed tokens with 0 mismatches against the author's reference; state
+  saved to a 14 KB file and reloaded into an empty conversation listed and read the files back
+  exactly; KL to base 6.9e-4 vs a 6.7e-4 floor, and bitwise identical with files loaded or not.
+  Latency 1.0–1.65 s per op (35–55 positions, ~30 ms each, PyTorch fallback kernels; the store
+  itself adds 1–3 tokens per op). Layout: 12 compiled layers before Qwen's 32, hidden 2560→4608,
+  16 k / 32 v heads, store in 49 key heads (1,024-slot directory in 8 heads, 32 content heads,
+  small register/order/length/next-chunk tables); gates pinned by β = sigmoid(±128), dt_bias −110,
+  A_log 0.
+- **`frog/gdn-chip`, milestone 1**: tang's reference math runs the checkpoint's 12 compiled
+  layers (a 9 GB tensor slice) on the author's teacher-forced trace: all 126 fed tokens identical,
+  every store head's 128×128 state bitwise equal after each op when tang rounds to bf16 at the
+  same points HF does (plain f32 within 1.2e-4). The GDN recurrence is now one shared function
+  used by the reference and the chip path. Measured: 332 M multiply-adds per token for the chip
+  layers' nonzero blocks (~8% of the 4B model; 2.4 G if dense), ~13 ms per decode step on the Mac
+  CPU reference. Verified here: `cargo test --release -p tang-llm --lib chip -- --include-ignored`,
+  3/3.
+
+**Not done.** Milestone 2, the Rust compiler (the circuit is ~3.5k lines of python IR plus a
+300-line lowering; Coder-Next also needs a hidden size wider than 2048 for the ~1.8k computer
+slots); the 32-head memstore layout; append/delete/calc coverage in the chip test; the engine
+and CUDA integration of the chip layers (doc only); the frog-side memory tool and a
+LongMemEval/LoCoMo-style cross-session eval.
+
 ## Open
 
 - Disturbance KL of a poke on real weights (needs state injection on the GPU).
