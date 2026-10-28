@@ -58,6 +58,10 @@ struct Args {
     /// Log what the ears hear and what the face does, on stderr.
     #[arg(long)]
     verbose: bool,
+    /// Follow ipse's broca (its speech center, run with `--face ADDR`) instead of running frog, ears and a voice
+    /// here: the face listens on this UDP address (127.0.0.1:47210 if bare).
+    #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:47210")]
+    broca: Option<String>,
     /// Find the person with a webcam (this index, 0 if bare; needs the `camera` feature). Without it the pointer
     /// stands in for them, in a window only.
     #[arg(long, value_name = "INDEX", num_args = 0..=1, default_missing_value = "0")]
@@ -263,7 +267,12 @@ fn run(args: &Args) -> Result<()> {
 
     let panel = args.panel();
     let (w, h) = panel.size();
-    let mut frog = if args.demo {
+    let mut broca = args
+        .broca
+        .as_deref()
+        .map(node_face::broca::Broca::spawn)
+        .transpose()?;
+    let mut frog = if args.demo || broca.is_some() {
         None
     } else {
         Some(Frog::spawn(
@@ -355,6 +364,13 @@ fn run(args: &Args) -> Result<()> {
                 frog = None;
             }
         }
+        if let Some(b) = broca.as_mut() {
+            for l in b.apply(&mut sim.puck, now) {
+                if !l.starts_with("reply ") {
+                    log!("broca: {l}");
+                }
+            }
+        }
         player.run(&mut sim);
 
         if face.voice.is_some() {
@@ -434,7 +450,17 @@ fn run(args: &Args) -> Result<()> {
                 face.wave = v.wave(96);
             }
         }
-        face.voiced = voice.is_some();
+        if let Some(b) = broca.as_mut() {
+            let v = b.voice();
+            let was = face.voice.is_some();
+            face.voice = v.map(|v| v.0);
+            face.sound = v.map(|v| v.1);
+            face.phone = None;
+            if face.voice.is_some() != was {
+                log!("{}", if was { "voice: done" } else { "voice: playing" });
+            }
+        }
+        face.voiced = voice.is_some() || broca.is_some();
         face.step(&sim.puck, sim.t, dt, look);
         // hand this frame to the drawing thread, show the one it finished last time while it draws, then take it
         job_tx.send((face.clone(), sim.t, spare.take().unwrap_or_default()))?;
