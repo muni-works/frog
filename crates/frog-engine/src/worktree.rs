@@ -54,6 +54,7 @@ pub fn linked(dir: &Path) -> Option<(PathBuf, PathBuf)> {
 pub struct Lock {
     file: File,
     pub top: PathBuf,
+    path: PathBuf,
 }
 
 impl Lock {
@@ -63,6 +64,19 @@ impl Lock {
         let _ = self.file.seek(SeekFrom::Start(0));
         let _ = writeln!(self.file, "{session} {}", std::process::id());
         let _ = self.file.flush();
+    }
+}
+
+/// The lock files this process holds now. A lock file still flocked although it names this pid and isn't
+/// in here was just dropped: a child forked meanwhile (a tool's command starting) holds a copy of the fd
+/// until its exec closes it.
+static HELD: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        if let Ok(mut held) = HELD.lock() {
+            held.retain(|p| p != &self.path);
+        }
     }
 }
 
@@ -89,22 +103,36 @@ pub fn acquire(
     let Some((top, gitdir)) = linked(dir) else {
         return Ok(None);
     };
+    let path = gitdir.join(LOCK_FILE);
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(gitdir.join(LOCK_FILE))?;
-    let deadline = std::time::Instant::now() + same_session_wait;
+        .open(&path)?;
+    let start = std::time::Instant::now();
     loop {
         // SAFETY: flock on a valid fd we own; released when `file` closes.
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-            let mut lock = Lock { file, top };
+            if let Ok(mut held) = HELD.lock() {
+                held.push(path.clone());
+            }
+            let mut lock = Lock { file, top, path };
             lock.set_owner(session);
             return Ok(Some(lock));
         }
         let (holder, pid) = owner(&mut file);
-        if holder != session || std::time::Instant::now() >= deadline {
+        // Our own lock, already dropped: only a forked child's copy of its fd is left, gone at its exec.
+        let lingering = pid == std::process::id().to_string()
+            && HELD.lock().is_ok_and(|held| !held.contains(&path));
+        let wait = if lingering {
+            same_session_wait.max(std::time::Duration::from_secs(2))
+        } else if holder == session {
+            same_session_wait
+        } else {
+            std::time::Duration::ZERO
+        };
+        if start.elapsed() >= wait {
             bail!(
                 "this worktree ({}) already has an engine: session {holder} (pid {pid}) is running in it. \
 One engine per worktree, so two sessions never mix uncommitted work: stop or archive {holder}, \
@@ -170,17 +198,7 @@ pub(crate) mod tests {
         assert!(err.contains("worktree:true"), "{err}");
         // Released with its holder: the next engine gets in.
         drop(first);
-        // A child forked by another test can hold the lock's fd for a moment before its exec closes it.
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        let second = loop {
-            match acquire(&wt, "s-second", Duration::ZERO) {
-                Err(_) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(20))
-                }
-                r => break r,
-            }
-        };
-        assert!(second.unwrap().is_some());
+        assert!(acquire(&wt, "s-second", Duration::ZERO).unwrap().is_some());
         let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 }
