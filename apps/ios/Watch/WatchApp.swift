@@ -86,9 +86,22 @@ final class WristLink: NSObject, WCSessionDelegate {
 
     // MARK: Answers
 
-    func allow(_ row: Row, _ allow: Bool) {
+    /// A permission answered: "allow", "deny", or "allow_always" (what the Mac's card offers).
+    func decide(_ row: Row, _ decision: String) {
         guard let p = row.permission else { return }
-        send(["op": "permission", "id": p, "decision": allow ? "allow" : "deny"], in: row)
+        send(["op": "permission", "id": p, "decision": decision], in: row)
+    }
+
+    /// A few words of your own, as the next message.
+    func reply(_ row: Row, _ text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        send(["op": "submit", "text": text], in: row)
+    }
+
+    /// Stop the turn that's running.
+    func stop(_ row: Row) {
+        send(["op": "interrupt"], in: row)
     }
 
     /// An Ask answered: an option picked, or words of your own.
@@ -236,25 +249,43 @@ struct WristView: View {
                     .frame(maxWidth: .infinity)
                     .listRowBackground(Color.clear)
                 }
-                ForEach(waiting) { row in
-                    WaitingCard(row: row, link: link)
+                if !waiting.isEmpty {
+                    Section {
+                        ForEach(waiting) { row in
+                            WaitingCard(row: row, link: link)
+                        }
+                    } header: {
+                        Text("Needs you").foregroundStyle(.orange)
+                    }
                 }
-                ForEach(running) { row in
-                    NavigationLink(value: row) {
-                        HStack(spacing: 8) {
-                            FrogFace(mood: .working, size: 22).tint(.frog)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(row.title).font(.caption).lineLimit(1)
-                                Text(row.activity ?? "Working").font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                if !running.isEmpty {
+                    Section("Working") {
+                        ForEach(running) { row in
+                            NavigationLink(value: row) {
+                                HStack(spacing: 8) {
+                                    FrogFace(mood: .working, size: 22).tint(.frog)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(row.title).font(.caption).lineLimit(1)
+                                        HStack(spacing: 4) {
+                                            Text(row.activity ?? "Working").lineLimit(1)
+                                            if let t = row.since { Text(t, style: .timer).monospacedDigit() }
+                                        }
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                ForEach(done) { row in
-                    NavigationLink(value: row) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                            Text(row.last ?? "Done.").font(.caption).lineLimit(3)
+                if !done.isEmpty {
+                    Section("Done") {
+                        ForEach(done) { row in
+                            NavigationLink(value: row) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(row.title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                    Text(row.last ?? "Done.").font(.caption).lineLimit(3)
+                                }
+                            }
                         }
                     }
                 }
@@ -276,11 +307,13 @@ struct WristView: View {
     }
 }
 
-/// frog needs you: Allow or Deny for a permission; for an Ask, its options as buttons, and
-/// anything else said aloud.
+/// frog needs you: Allow or Deny for a permission, with the command (or the file and its +/−)
+/// and why it asks; for an Ask, its options as buttons, and anything else said aloud. In
+/// always-on the buttons wait for a raised wrist, so a sleeve can't press Allow.
 struct WaitingCard: View {
     let row: Snapshot.Row
     let link: WristLink
+    @Environment(\.isLuminanceReduced) private var dimmed
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -289,8 +322,20 @@ struct WaitingCard: View {
                 Text(row.title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
             Text(row.ask?.question ?? row.question ?? "frog needs you")
-                .font(.headline).foregroundStyle(.orange).lineLimit(4)
-            if link.sending.contains(row.id) {
+                .font(.headline).foregroundStyle(dimmed ? Color.secondary : Color.orange).lineLimit(3)
+            if row.permission != nil {
+                if let change = row.change {
+                    Text(change).font(.footnote.monospaced()).lineLimit(1)
+                } else if let arg = row.arg, !arg.isEmpty {
+                    Text(arg).font(.footnote.monospaced()).lineLimit(3)
+                }
+                if let reason = row.reason {
+                    Text(reason).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            if dimmed {
+                EmptyView()
+            } else if link.sending.contains(row.id) {
                 ProgressView().frame(maxWidth: .infinity)
             } else if let ask = row.ask {
                 ForEach(ask.options, id: \.self) { option in
@@ -308,32 +353,41 @@ struct WaitingCard: View {
                 }
             } else if row.permission != nil {
                 HStack {
-                    Button { link.allow(row, false) } label: { Image(systemName: "xmark") }
+                    Button("Deny") { link.decide(row, "deny") }
                         .tint(.gray)
-                    Button { link.allow(row, true) } label: { Image(systemName: "checkmark") }
-                        .tint(Color(red: 0.18, green: 0.62, blue: 0.31))
+                    Button("Allow") { link.decide(row, "allow") }
+                        .tint(.frog)
                 }
                 .buttonStyle(.borderedProminent)
+                if let always = row.always, !always.isEmpty {
+                    Button { link.decide(row, "allow_always") } label: {
+                        Text("Always allow \u{201C}\(always)\u{201D}").font(.footnote).lineLimit(2)
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.vertical, 4)
     }
 }
 
-/// What frog said last, to read with the Crown. Long-press to bring it up on the phone; it's
-/// offered there for Handoff too.
+/// What frog said last, to read with the Crown. Stop a turn that's running; reply by voice to one
+/// that's done. Long-press to bring it up on the phone; it's offered there for Handoff too.
 struct ReplyView: View {
     let row: Snapshot.Row
     let link: WristLink
+
+    private var running: Bool { row.live == "running" }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
-                    FrogFace(mood: row.live == "running" ? .working : .idle, size: 20).tint(.frog)
-                    Text(row.live == "running" ? (row.activity ?? "Working") : "Done")
-                        .font(.caption2).foregroundStyle(.secondary)
+                    FrogFace(mood: running ? .working : .idle, size: 20).tint(.frog)
+                    Text(running ? (row.activity ?? "Working") : "Done").lineLimit(1)
+                    if running, let t = row.since { Text(t, style: .timer).monospacedDigit() }
                 }
+                .font(.caption2).foregroundStyle(.secondary)
                 Text(row.last ?? (row.live == "running" ? "frog is still going." : "Nothing said yet."))
                     .font(.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -349,6 +403,22 @@ struct ReplyView: View {
             .onLongPressGesture { link.showOnPhone(row) }
         }
         .navigationTitle(row.title)
+        .toolbar {
+            ToolbarItemGroup(placement: .bottomBar) {
+                if running {
+                    Button(role: .destructive) { link.stop(row) } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                    .tint(.red)
+                } else {
+                    TextFieldLink(prompt: Text("Reply to frog")) {
+                        Label("Reply", systemImage: "mic")
+                    } onSubmit: { text in
+                        link.reply(row, text)
+                    }
+                }
+            }
+        }
         .userActivity(Handoff.conversation) { a in
             a.title = row.title
             a.userInfo = ["session": row.id]

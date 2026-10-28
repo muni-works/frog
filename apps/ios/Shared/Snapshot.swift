@@ -12,6 +12,14 @@ struct Snapshot: Codable, Equatable {
         var question: String?
         var permission: String?
         var local: Bool
+        /// The permission, in detail: the command (or file), why it asks, what "always" covers,
+        /// and for an edit the file and its +/−.
+        var arg: String? = nil
+        var reason: String? = nil
+        var always: String? = nil
+        var change: String? = nil
+        /// When the running turn began.
+        var since: Date? = nil
         /// Open in a window on the Mac, so it can take messages.
         var open: Bool = false
         /// frog's own question (the `Ask` tool), while it waits on one.
@@ -78,7 +86,12 @@ extension Snapshot.Row {
         self.init(id: id, title: r["title"] as? String ?? "frog", live: r["live"] as? String ?? "",
                   activity: r["activity"] as? String,
                   question: q.map { _ in PermissionRequest.question(name: name, arg: arg) },
-                  permission: q?["id"] as? String, local: true, open: r["open"] as? Bool ?? false,
+                  permission: q?["id"] as? String, local: true,
+                  arg: q.map { _ in Snapshot.Row.what(name: name, arg: arg) },
+                  reason: q?["reason"] as? String, always: q?["always"] as? String,
+                  change: Snapshot.Row.change(q?["change"]),
+                  since: (r["since"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) },
+                  open: r["open"] as? Bool ?? false,
                   ask: Snapshot.Ask(r["ask"]), last: r["last"] as? String,
                   stats: r["stats"] as? [String],
                   actions: (r["actions"] as? [[String: String]])?.compactMap { a in
@@ -92,5 +105,24 @@ extension Snapshot.Ask {
         guard let a = any as? [String: Any], let id = a["id"] as? String else { return nil }
         self.init(id: id, question: a["question"] as? String ?? "", options: a["options"] as? [String] ?? [],
                   other: a["other"] as? Bool ?? false)
+    }
+}
+
+extension Snapshot.Row {
+    /// The line under a permission's question: the command itself, or the file.
+    static func what(name: String, arg: String) -> String {
+        switch name {
+        case "Bash": return arg
+        case "Edit", "Write", "UseFolder": return (arg as NSString).lastPathComponent
+        default: return arg
+        }
+    }
+
+    /// "fetch.ts +12 −3", from the bridge's `change`.
+    static func change(_ any: Any?) -> String? {
+        guard let c = any as? [String: Any], let file = c["file"] as? String else { return nil }
+        let added = (c["added"] as? NSNumber)?.intValue ?? 0
+        let removed = (c["removed"] as? NSNumber)?.intValue ?? 0
+        return "\(file) +\(added) −\(removed)"
     }
 }

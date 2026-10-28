@@ -36,7 +36,7 @@ is the sidebar's row menu (archive, pin, rename).
 | `FrogNotify` | long-press a question: the command or diff |
 | `FrogWidgets` | Live Activity + Dynamic Island, home/lock widgets, Control Center control |
 | `FrogShare` | "Send to frog" in the share sheet |
-| `FrogWatch` | what needs you (answer with ✕ / ✓) and what's running |
+| `FrogWatch` | what needs you (the command, why, Allow / Deny / Always), what's running (Stop), what frog said (Reply) |
 | `FrogWatchWidgets` | the complication: the iPhone's status widget, built for watchOS |
 
 Shared with the Mac app: `Protocol.swift`, `Diagram.swift`, `FrogFace.swift`.

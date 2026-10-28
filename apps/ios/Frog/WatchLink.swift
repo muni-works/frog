@@ -24,7 +24,10 @@ final class WatchLink: NSObject, WCSessionDelegate {
               WCSession.default.isWatchAppInstalled else { return }
         let rows = sessions.filter { $0.live == .waiting || $0.live == .running || $0.live == .unread }.prefix(12).map { s in
             Snapshot.Row(id: s.id, title: s.title, live: s.live?.rawValue ?? "", activity: s.activity,
-                         question: s.question?.text, permission: s.question?.id, local: s.isLocal, open: s.open,
+                         question: s.question?.text, permission: s.question?.id, local: s.isLocal,
+                         arg: s.question.map { Snapshot.Row.what(name: $0.name, arg: $0.arg) },
+                         reason: s.question?.reason, always: s.question?.always, change: s.question?.change,
+                         since: s.since, open: s.open,
                          ask: s.ask, last: s.last.map { String($0.prefix(1200)) },
                          stats: s.stats, actions: s.actions)
         }

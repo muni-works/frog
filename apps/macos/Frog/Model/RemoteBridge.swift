@@ -51,6 +51,8 @@ final class RemoteBridge {
         var busy = false
         /// The step in hand, in words, for lists and the watch.
         var activity: String?
+        /// When the turn began, for a running timer on the wrist.
+        var started: Date?
     }
 
     // MARK: Lifecycle
@@ -158,8 +160,8 @@ final class RemoteBridge {
         case "status": s.status = line
         case "permission_request": s.permission = line
         case "permission_resolved", "turn_ended": s.permission = nil
-        case "turn_started": s.busy = true; s.activity = "Thinking…"
-        case "idle": s.busy = false; s.permission = nil; s.activity = nil
+        case "turn_started": s.busy = true; s.activity = "Thinking…"; s.started = .now
+        case "idle": s.busy = false; s.permission = nil; s.activity = nil; s.started = nil
         case "item_started":
             if let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                let kind = obj["kind"] as? [String: Any] {
@@ -429,10 +431,19 @@ final class RemoteBridge {
             }
             if let state = live[s.id] {
                 if let a = state.activity { row["activity"] = a }
-                // The open question, so a list or a watch can answer it without the thread.
+                if state.busy, let t = state.started { row["since"] = t.timeIntervalSince1970 * 1000 }
+                // The open question, so a list or a watch can answer it without the thread:
+                // what it would do, why it asks, and what "always" would cover.
                 if let line = state.permission,
                    let q = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
-                    row["question"] = ["id": q["id"] ?? "", "name": q["name"] ?? "", "arg": String((q["arg"] as? String ?? "").prefix(200))]
+                    var question: [String: Any] = ["id": q["id"] ?? "", "name": q["name"] ?? "", "arg": String((q["arg"] as? String ?? "").prefix(200))]
+                    if let r = q["reason"] as? String, !r.isEmpty { question["reason"] = r }
+                    if let a = q["always"] as? String, !a.isEmpty { question["always"] = a }
+                    if let p = q["preview"] as? [String: Any], let path = p["path"] as? String {
+                        question["change"] = ["file": (path as NSString).lastPathComponent,
+                                              "added": p["added"] ?? 0, "removed": p["removed"] ?? 0]
+                    }
+                    row["question"] = question
                 }
             }
             // The open Ask, so a watch can pick an option (or say its own) without the thread.
