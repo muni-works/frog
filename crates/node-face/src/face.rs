@@ -309,8 +309,11 @@ pub struct Face {
     pub mouth: f32,
     /// The shape the voice calls for now (hiss, dark), set by the host each frame; eased here.
     pub sound: Option<(f32, f32)>,
-    hiss: f32,
-    dark: f32,
+    /// The phoneme about to be heard (ribt's IPA), set by the host each frame; when known it shapes the lips
+    /// exactly, and `sound` is the fallback.
+    pub phone: Option<char>,
+    /// The lips' eased speaking shape: see [`Viseme`].
+    vis: Viseme,
     /// The emotion now, and its pose eased toward (pupil size included).
     pub mood: Mood,
     pub pose: Pose,
@@ -363,8 +366,8 @@ impl Face {
             mic: 0.0,
             mouth: 0.0,
             sound: None,
-            hiss: 0.0,
-            dark: 0.0,
+            phone: None,
+            vis: Viseme::REST,
             mood: Mood::Idle,
             pose: POSE0,
             blush: 0.0,
@@ -481,15 +484,96 @@ impl Face {
         let bt = t.mood.blush();
         self.blush += (bt - self.blush) * (dt32 * if bt > self.blush { 4.0 } else { 1.2 }).min(1.0);
         // the sound's shape, eased fast: a mouth moves quickly between sounds, never instantly
-        let (h, d) = if self.talk > 0.05 {
-            self.sound.unwrap_or((0.0, 0.0))
-        } else {
-            (0.0, 0.0)
-        };
-        let s = (dt32 * 18.0).min(1.0);
-        self.hiss += (h - self.hiss) * s;
-        self.dark += (d - self.dark) * s;
+        let want = self.viseme();
+        // closing for m, b, p is quick (it's a stop); everything else blends into its neighbours
+        let s = (dt32
+            * if want.shut > self.vis.shut {
+                30.0
+            } else {
+                16.0
+            })
+        .min(1.0);
+        self.vis.ease(want, s);
         self.step_lips(now, dt32);
+    }
+}
+
+/// What a sound asks of the lips while speaking.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Viseme {
+    /// spread wide and flat ("ee", "s")
+    pub wide: f32,
+    /// narrow and round ("oo", "w")
+    pub round: f32,
+    /// pressed shut (m, b, p) or tucked (f, v)
+    pub shut: f32,
+    /// how far the jaw drops, relative to loudness ("ah" 1.5, "s" 0.25)
+    pub gape: f32,
+}
+
+impl Viseme {
+    const REST: Self = Self::new(0.0, 0.0, 0.0, 1.0);
+
+    const fn new(wide: f32, round: f32, shut: f32, gape: f32) -> Self {
+        Self {
+            wide,
+            round,
+            shut,
+            gape,
+        }
+    }
+
+    fn ease(&mut self, to: Self, s: f32) {
+        self.wide += (to.wide - self.wide) * s;
+        self.round += (to.round - self.round) * s;
+        self.shut += (to.shut - self.shut) * s;
+        self.gape += (to.gape - self.gape) * s;
+    }
+
+    /// The lips for one of ribt's phonemes (lilt's IPA, with capitals for diphthongs: O "oh", W "ow", I "eye",
+    /// A "ay", Y "oy"). `None` for marks that only stretch the sound before them.
+    pub fn of(c: char) -> Option<Self> {
+        let v = |w, r, s, g| Some(Self::new(w, r, s, g));
+        match c {
+            'ˈ' | 'ˌ' | 'ː' => None,
+            'p' | 'b' | 'm' => v(0.1, 0.0, 1.0, 0.0),
+            'f' | 'v' => v(0.3, 0.0, 0.8, 0.0),
+            'u' | 'w' => v(0.0, 1.0, 0.0, 0.55),
+            'ʊ' => v(0.0, 0.7, 0.0, 0.8),
+            'O' => v(0.0, 0.8, 0.0, 0.95),
+            'ɔ' | 'Y' => v(0.0, 0.5, 0.0, 1.1),
+            'W' => v(0.0, 0.3, 0.0, 1.3),
+            'ɹ' | 'ɚ' | 'ɜ' => v(0.0, 0.45, 0.0, 0.75),
+            'ʃ' | 'ʒ' => v(0.1, 0.55, 0.0, 0.45),
+            'i' => v(1.0, 0.0, 0.0, 0.55),
+            'j' => v(0.8, 0.0, 0.0, 0.5),
+            'ɪ' => v(0.7, 0.0, 0.0, 0.8),
+            'A' | 'e' => v(0.6, 0.0, 0.0, 0.95),
+            's' | 'z' => v(0.9, 0.0, 0.0, 0.25),
+            't' | 'd' | 'n' | 'l' => v(0.4, 0.0, 0.0, 0.6),
+            'θ' | 'ð' => v(0.4, 0.0, 0.0, 0.5),
+            'ɑ' | 'a' => v(0.0, 0.0, 0.0, 1.5),
+            'æ' => v(0.4, 0.0, 0.0, 1.4),
+            'ʌ' => v(0.1, 0.0, 0.0, 1.2),
+            'I' => v(0.2, 0.0, 0.0, 1.4),
+            'k' | 'ɡ' | 'ŋ' | 'h' => v(0.2, 0.0, 0.0, 0.8),
+            c if c.is_whitespace() || c.is_ascii_punctuation() => v(0.0, 0.0, 0.6, 0.3),
+            _ => v(0.2, 0.0, 0.0, 1.0),
+        }
+    }
+}
+
+impl Face {
+    /// The shape speech wants right now: the phoneme if the host knows it, else a guess from the sound.
+    fn viseme(&self) -> Viseme {
+        if self.talk <= 0.05 {
+            return Viseme::REST;
+        }
+        if let Some(v) = self.phone.and_then(Viseme::of) {
+            return v;
+        }
+        let (hiss, dark) = self.sound.unwrap_or((0.0, 0.0));
+        Viseme::new(hiss, dark, 0.0, 1.0)
     }
 }
 
@@ -519,21 +603,26 @@ impl Face {
         let drift = self.think * 0.25 * (tt * 0.9).sin();
         let quiver =
             p.quiver * ((tt * 23.0).sin() * 0.5 + 0.5) * (tt * 0.7).sin().max(0.0).powi(8) * 0.003;
-        // speaking: loudness opens the jaw; hiss spreads the lips wide and flat, nearly shut; dark sounds pull
-        // them narrow and round
+        // speaking: loudness opens the jaw, scaled by the sound's gape; wide sounds spread the lips flat and nearly
+        // shut, round ones pull them narrow; m, b, p press them closed
+        let vis = &self.vis;
         let w = if speaking {
-            p.w.max(0.055 + 0.04 * self.mouth) * (1.0 + 0.32 * self.hiss - 0.38 * self.dark)
+            p.w.max(0.055 + 0.04 * self.mouth) * (1.0 + 0.32 * vis.wide - 0.38 * vis.round)
         } else {
             p.w * (1.0 + breath * 3.0)
         };
         let open = if speaking {
-            (0.004 + 0.05 * self.mouth) * (1.0 - 0.55 * self.hiss) * (1.0 + 0.2 * self.dark)
-                + p.open * 0.5
+            ((0.004 + 0.05 * self.mouth)
+                * (1.0 - 0.55 * vis.wide)
+                * (1.0 + 0.2 * vis.round)
+                * vis.gape
+                + p.open * 0.5)
+                * (1.0 - vis.shut)
         } else {
             p.open
         };
         let round = if speaking {
-            p.round.max(self.dark * 0.9)
+            p.round.max(vis.round * 0.9)
         } else {
             p.round
         };
@@ -557,7 +646,7 @@ impl Face {
         self.mood = mood;
         self.pose = mood.pose();
         self.blush = mood.blush();
-        (self.hiss, self.dark) = self.sound.unwrap_or((0.0, 0.0));
+        self.vis = self.viseme();
         for (l, lower) in [false, true].into_iter().enumerate() {
             for i in 0..LIPS {
                 let (x, y) = self.lip_target(i, lower, now);

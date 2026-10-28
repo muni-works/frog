@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "mouth.png".into());
     let (w, h, cols, scale) = (720usize, 720usize, 6usize, 3usize);
-    let n = MOODS.len() + 6;
+    let n = MOODS.len() + 10;
     let (tw, th) = (w / scale, h / scale);
     let mut sheet = Canvas::new(tw * cols, th * n.div_ceil(cols));
     let mut cv = Canvas::new(w, h);
@@ -42,19 +42,21 @@ fn main() -> anyhow::Result<()> {
             face.v = 0.35;
             face.a = 0.25;
             face.talk = 1.0;
-            // quiet to loud, then the loud mouth's shapes: open "ah", hissed "ee"/"s", dark "oo", half "oh"
+            // quiet to loud, then phonemes at speaking volume: "ah", "ee", "oo", "m", "f", "oh", "s"
             let k = i - MOODS.len();
-            face.mouth = [0.2, 0.6, 1.0, 0.8, 0.8, 0.8][k.min(5)];
-            face.sound = Some(
-                [
-                    (0.0, 0.0),
-                    (0.0, 0.0),
-                    (0.0, 0.0),
-                    (1.0, 0.0),
-                    (0.0, 1.0),
-                    (0.0, 0.55),
-                ][k.min(5)],
-            );
+            face.mouth = [0.2, 0.6, 1.0, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8][k];
+            face.phone = [
+                None,
+                None,
+                None,
+                Some('ɑ'),
+                Some('i'),
+                Some('u'),
+                Some('m'),
+                Some('f'),
+                Some('O'),
+                Some('s'),
+            ][k];
             face.settle(Mood::Speaking, 2.0);
         }
         draw::draw(&mut cv, &face, &Style::default(), 2.0);

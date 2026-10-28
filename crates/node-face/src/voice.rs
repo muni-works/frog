@@ -9,7 +9,7 @@
 use anyhow::{Context, Result};
 use puck::model::{Mode, Puck};
 use rodio::{OutputStream, Sink, Source};
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -102,6 +102,8 @@ pub struct Voice {
     levels: Arc<Mutex<Vec<f32>>>,
     /// Per 20 ms block, the mouth shape the sound calls for: (hiss, dark) -- see `shape_of`.
     shapes: Arc<Mutex<Vec<(f32, f32)>>>,
+    /// ribt's phonemes as it commits them, each with the sample it starts on (in the same count as `queued`).
+    phones: Arc<Mutex<Vec<(usize, char)>>>,
     /// The samples themselves, from absolute sample `.0` on, for the waveform.
     pcm: Arc<Mutex<(usize, Vec<i16>)>>,
     /// How much of this turn's reply has been sent, and whether the turn is still open.
@@ -119,7 +121,7 @@ impl Voice {
         std::fs::create_dir_all(&out_dir)?;
         let mut child = Command::new(&p.bin)
             .args([
-                "stream", "--stdin", "--pcm", "-", "--nfe", "1", "--temp", "0.3",
+                "stream", "--stdin", "--pcm", "-", "--phones", "--nfe", "1", "--temp", "0.3",
             ])
             .arg("--run")
             .arg(&p.run)
@@ -135,7 +137,7 @@ impl Voice {
             .arg(&out_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .with_context(|| {
                 format!(
@@ -145,6 +147,22 @@ impl Voice {
             })?;
         let stdin = child.stdin.take().context("ribt stdin")?;
         let mut stdout = child.stdout.take().context("ribt stdout")?;
+        let stderr = child.stderr.take().context("ribt stderr")?;
+        let phones = Arc::new(Mutex::new(Vec::new()));
+        let ph = phones.clone();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stderr)
+                .lines()
+                .map_while(Result::ok)
+            {
+                let mut f = line.split('\t');
+                if let (Some("phone"), Some(at), Some(c)) = (f.next(), f.next(), f.next())
+                    && let (Ok(at), Some(c)) = (at.parse(), c.chars().next())
+                {
+                    ph.lock().unwrap().push((at, c));
+                }
+            }
+        });
         let (stream, handle) = OutputStream::try_default().context("no audio output")?;
         let sink = Arc::new(Sink::try_new(&handle)?);
         let hush = Arc::new(AtomicBool::new(false));
@@ -198,7 +216,9 @@ impl Voice {
                 // The speaker has run dry since the last turn: catch the counter up to the queue,
                 // so the gap of silence isn't read as speech.
                 if hs.load(Ordering::Relaxed) {
-                    continue; // interrupted: drop the rest of that reply
+                    // interrupted: drop the rest of that reply, but count it, so sample numbers stay ribt's
+                    q.fetch_add(chunk.len(), Ordering::Relaxed);
+                    continue;
                 }
                 if sk.empty() {
                     pl.store(q.load(Ordering::Relaxed), Ordering::Relaxed);
@@ -236,6 +256,7 @@ impl Voice {
             played,
             levels,
             shapes,
+            phones,
             pcm,
             sent: 0,
             sink,
@@ -324,6 +345,26 @@ impl Voice {
         let s = self.shapes.lock().unwrap();
         let i = (p / BLOCK + 2).min(s.len().saturating_sub(1));
         s.get(i).copied()
+    }
+
+    /// The phoneme 40 ms ahead of the playhead (stress and length marks skipped: they stretch the one before),
+    /// or `None` when silent or ribt hasn't said.
+    pub fn phone(&self) -> Option<char> {
+        let (q, p) = (
+            self.queued.load(Ordering::Relaxed),
+            self.played.load(Ordering::Relaxed),
+        );
+        if p >= q {
+            return None;
+        }
+        let at = p + 2 * BLOCK;
+        let ph = self.phones.lock().unwrap();
+        let n = ph.partition_point(|&(s, _)| s <= at);
+        ph[..n]
+            .iter()
+            .rev()
+            .map(|&(_, c)| c)
+            .find(|c| !matches!(c, 'ˈ' | 'ˌ' | 'ː'))
     }
 }
 
