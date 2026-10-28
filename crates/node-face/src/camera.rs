@@ -145,8 +145,9 @@ fn watch(
             let b = f.bbox();
             let cx = (b.x() as f32 + b.width() as f32 / 2.0) / gw as f32;
             let cy = (b.y() as f32 + b.height() as f32 / 2.0) / gh as f32;
-            // The camera sees you mirrored: a person to the viewer's right is on the image's left.
-            let at = ((0.5 - cx) * 2.2, (cy - 0.45) * 1.8);
+            // The face's gaze is its own: +x is toward the face's left, which is where the camera's image puts a
+            // person on its right side (checked live: the other sign looked away from you).
+            let at = ((cx - 0.5) * 2.2, (cy - 0.45) * 1.8);
             *out.lock().unwrap() = Some((
                 Instant::now(),
                 (at.0.clamp(-1.0, 1.0), at.1.clamp(-1.0, 1.0)),
