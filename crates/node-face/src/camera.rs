@@ -8,7 +8,9 @@
 use anyhow::{Context, Result};
 use nokhwa::Camera;
 use nokhwa::pixel_format::RgbFormat;
-use nokhwa::utils::{CameraIndex, RequestedFormat, RequestedFormatType};
+use nokhwa::utils::{
+    CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution,
+};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -102,7 +104,13 @@ fn watch(
     det.set_score_thresh(2.0);
     det.set_pyramid_scale_factor(0.8);
     det.set_slide_window_step(4, 4);
-    let fmt = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
+    // 640x480 at 30 fps, or the nearest the camera has: the detector only looks at 320 wide, and the heaviest modes
+    // (a C920's raw 1080p) are enough to make a USB webcam drop off a busy hub, taking its mic with it.
+    let fmt = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(CameraFormat::new(
+        Resolution::new(640, 480),
+        FrameFormat::YUYV,
+        30,
+    )));
     if !nokhwa::nokhwa_check() {
         eprintln!(
             "camera: no access yet (macOS: allow the app that launched node-face under Privacy & Security > Camera)"
