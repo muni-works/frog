@@ -435,18 +435,60 @@ fn lips(
         .iter()
         .fold((f32::MAX, f32::MIN), |b, q| (b.0.min(q.1), b.1.max(q.1)));
     let pad = r0 * 1.8;
-    // the opening, column by column: (x, upper y, lower y) along the lips
-    let gaps: Vec<(f32, f32, f32)> = (0..crate::face::LIPS)
-        .map(|i| (balls[i].0, balls[i].1, balls[crate::face::LIPS + i].1))
-        .collect();
-    let inner = |px: f32, py: f32| -> Option<f32> {
-        let j = gaps.windows(2).position(|s| px >= s[0].0 && px < s[1].0)?;
-        let (a, b) = (gaps[j], gaps[j + 1]);
-        let t = (px - a.0) / (b.0 - a.0).max(1e-3);
-        let (y1, y2) = (a.1 + (b.1 - a.1) * t, a.2 + (b.2 - a.2) * t);
-        let (top, bot) = (y1.min(y2), y1.max(y2));
-        // the lips' centres bound it; a pixel of soft edge, though the lips cover it anyway
-        Some(((py - top).min(bot - py)).clamp(0.0, 1.0)).filter(|&a| a > 0.0)
+    // The mouth's outline: one closed curve, Catmull-Rom along the upper lip's droplet centres and back along the
+    // lower's, thickened by the droplets' reach, everything inside filled. Smooth wherever the springs leave the
+    // droplets; the metaball only lights the thick parts.
+    const N: usize = crate::face::LIPS;
+    const SUB: usize = 6;
+    let cr = |p0: f32, p1: f32, p2: f32, p3: f32, t: f32| {
+        0.5 * (2.0 * p1
+            + (p2 - p0) * t
+            + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t
+            + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t * t * t)
+    };
+    // (x, y, reach) densely along a lip, corner to corner
+    let curve = |l: usize| -> Vec<(f32, f32, f32)> {
+        let c = |k: isize| {
+            let (x, y, r2) = balls[l * N + k.clamp(0, N as isize - 1) as usize];
+            (x, y, 1.3 * r2.sqrt())
+        };
+        let mut out: Vec<_> = (0..N as isize - 1)
+            .flat_map(|j| {
+                let (c0, c1, c2, c3) = (c(j - 1), c(j), c(j + 1), c(j + 2));
+                (0..SUB).map(move |s| {
+                    let t = s as f32 / SUB as f32;
+                    (
+                        cr(c0.0, c1.0, c2.0, c3.0, t),
+                        cr(c0.1, c1.1, c2.1, c3.1, t),
+                        c1.2 + (c2.2 - c1.2) * t,
+                    )
+                })
+            })
+            .collect();
+        out.push(c(N as isize - 1));
+        out
+    };
+    let mut ring = curve(0);
+    ring.extend(curve(1).into_iter().rev());
+    let band = |px: f32, py: f32| -> f32 {
+        let mut inside = false;
+        let mut edge = f32::MIN;
+        for k in 0..ring.len() {
+            let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+            if (a.1 > py) != (b.1 > py) && px < a.0 + (py - a.1) / (b.1 - a.1) * (b.0 - a.0) {
+                inside = !inside;
+            }
+            let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+            let t = (((px - a.0) * dx + (py - a.1) * dy) / (dx * dx + dy * dy).max(1e-6))
+                .clamp(0.0, 1.0);
+            let dist = ((px - a.0 - t * dx).powi(2) + (py - a.1 - t * dy).powi(2)).sqrt();
+            edge = edge.max(a.2 + (b.2 - a.2) * t - dist);
+        }
+        if inside {
+            1.0
+        } else {
+            (edge + 0.5).clamp(0.0, 1.0)
+        }
     };
     for y in (y0 - pad) as i32..=(y1 + pad) as i32 {
         for x in (x0 - pad) as i32..=(x1 + pad) as i32 {
@@ -460,13 +502,11 @@ fn lips(
                 })
                 .sum::<f32>()
                 .sqrt();
-            // between the lips: filled solid, like the eyes, so the open mouth reads as one shape
-            let fill = inner(px, py).unwrap_or(0.0);
-            if f < 0.55 && fill == 0.0 {
+            // filled solid, like the eyes, so the open mouth reads as one shape
+            let a = band(px, py);
+            if a <= 0.0 {
                 continue;
             }
-            let e = ((f - 0.55) / 0.5).clamp(0.0, 1.0);
-            let a = (e * e * (3.0 - 2.0 * e)).max(fill);
             let core = ((f - 1.2) * 0.35).clamp(0.0, 1.0); // hotter where it's thick
             cv.add(x, y, puck::canvas::lerp(col, [1.0; 3], core), a * lit);
         }
