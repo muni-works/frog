@@ -176,9 +176,22 @@ Three more tang branches and one reproduction (`docs/research/qwenputer-repro.md
   CPU reference. Verified here: `cargo test --release -p tang-llm --lib chip -- --include-ignored`,
   3/3.
 
-**Not done.** Milestone 2, the Rust compiler (the circuit is ~3.5k lines of python IR plus a
-300-line lowering; Coder-Next also needs a hidden size wider than 2048 for the ~1.8k computer
-slots); the 32-head memstore layout; append/delete/calc coverage in the chip test; the engine
+- **`frog/gdn-chip-compiler`, milestone 2**: `crates/tang-chip`, a Rust port of the q35 lowering
+  (IR `Expr`/`Ffn`/`Head`/`Graph`, `allocate`, `emit_layers`, `embedding_rows`, `pick_hidden`;
+  each rule cites its emit.py line; MIT NOTICE). The store circuit itself is not transcribed: the
+  python builder's graph is exported once and bundled gzipped (600 KB: 3,753 dims, 164 heads,
+  47,532 units, 12 layers; RV32 core plus put/get/list/delete/append). Parity at Qwen3.5-4B
+  shapes: all 168 tensors of layers 0–11 equal the checkpoint bitwise in bf16, zero padding
+  included (2.44 G elements, 1.24 M nonzero); the emitted layers replay the author's trace with
+  all 126 tokens and every store head bitwise equal. Retarget to Coder-Next-like shapes (hidden
+  2048 + 1,920 chip dims = 3968, 16 k / 32 v, 12 layers): put/get/list bitwise against the trace
+  from zero state, no weight touches a host dim, 2.3 s release. Verified here: tang-chip 3/3 and
+  tang-llm chip 5/5 with the checkpoint env vars. Emitted weights are ~0.05% dense and run as CSR.
+
+**Not done.** A Coder-Next build needs the IR re-exported from the python builder with Coder-Next's
+tokenizer (the id code is token-id bits) and its text rows; hosts with other head counts or a
+narrower MLP need the python builder to re-schedule, or a Rust port of the builder (not
+started); the 32-head memstore layout; append/delete/calc coverage in the chip test; the engine
 and CUDA integration of the chip layers (doc only); the frog-side memory tool and a
 LongMemEval/LoCoMo-style cross-session eval.
 
