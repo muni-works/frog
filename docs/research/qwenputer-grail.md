@@ -117,6 +117,33 @@ skipping the chunk, not lossless, and fixing it means recomputing most of the de
    extra layers' compute per token, a few decoded tokens per lookup (seconds for big
    computations), and a larger checkpoint (mostly zero padding; store it sparse).
 
+## 5. Phase-1 prototype: the store exists
+
+`frog/gdn-memstore` (tang, `crates/tang-llm/src/flash/memstore.rs`, design in
+`docs/design/gdn-memstore.md`): a file store in dedicated GDN heads of one layer, every write and
+read through the real `gdn_step` kernel path with one-hot keys and pinned gates, so a compiled read
+circuit later sees exactly this state. Layout follows the qwenputer repo's `rv-store` branch where
+it fits (18-bit token ids, directory + content rows), nothing ported.
+- 4 k heads and their 12 v heads (25% of one layer): a 1,024-slot directory (FNV-1a, linear
+  probing, tombstones; 8 slots per state row so one token reads a bucket) and 512 content rows of
+  127 ids. Capacity 512 files / 65k tokens in 768 KiB of state.
+- values below 2^18, not 2^24: a read passes the rms norm and a division (~8 roundings), so exact
+  readback needs values under ~2^20; a marker column restores the scale the norm discards.
+- 1-row put or get = 2 windows; `list` = 16. Full 512-file fill: 3.4 s release on the CPU device;
+  10k random ops checked against a HashMap: 26.7 s.
+- 7 tests pass (round-trip to capacity, overwrite/delete, collisions, random workload, persistence
+  via the same bytes `RunningState` carries and via store-heads-only transfer into another
+  conversation's state, poison detection, base heads bitwise untouched).
+- not wired: `RunningState`, the serve session and the disk tier (the flash engine builds only
+  with cuda). Uses real heads 12–15, so production needs a widened layer, not borrowed heads.
+- phase 2 estimate (agent's, unmeasured): compiled chip layers in the repo's style, store tool
+  calls run as engine-internal ≤8-token windows that never touch the base layers or KV; ~0.1
+  GFLOP/token, ~2% of Coder-Next's active compute; 4–8 engineer-weeks; main risk is keeping the
+  chip rows exact under quantized projections.
+
+See also `docs/research/memory-pareto.md` for where this sits against RAG, KV reuse, test-time
+training and parametric memory.
+
 ## Open
 
 - Disturbance KL of a poke on real weights (needs state injection on the GPU).
