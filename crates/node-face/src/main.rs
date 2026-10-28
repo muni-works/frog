@@ -55,6 +55,9 @@ struct Args {
     /// Speak with ribt (needs the `voice` feature; see RIBT_* in src/voice.rs for model paths).
     #[arg(long)]
     voice: bool,
+    /// The 8-bit look: draw the face with pixels this many screen pixels wide (12 if bare), in a few hard shades.
+    #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "12")]
+    pixel: Option<usize>,
     /// Log what the ears hear and what the face does, on stderr.
     #[arg(long)]
     verbose: bool,
@@ -286,16 +289,24 @@ fn run(args: &Args) -> Result<()> {
     } else {
         Vec::new()
     });
-    let (mut sim, mut face, style) = (new_sim(), Face::new(), Style::default());
+    let (mut sim, mut face, mut style) = (new_sim(), Face::new(), Style::default());
+    let pixel = args.pixel.filter(|&n| n > 1);
+    if pixel.is_some() {
+        style.glow = false; // a soft halo has no place on a pixel grid
+    }
     // Frames are drawn on their own thread while the last one is shown: on the Jetson drawing and showing are each
     // most of a 60 Hz frame, so done one after the other they'd halve the rate. Costs one frame of latency.
     let (job_tx, job_rx) = std::sync::mpsc::sync_channel::<(Face, f64, Vec<u32>)>(1);
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<Vec<u32>>(1);
     std::thread::spawn(move || {
-        let mut cv = Canvas::new(w, h);
+        let n = pixel.unwrap_or(1);
+        let mut cv = Canvas::new(w.div_ceil(n), h.div_ceil(n));
         for (face, t, mut buf) in job_rx {
             draw::draw(&mut cv, &face, &style, t);
-            draw::to_u32(&cv, &mut buf);
+            match pixel {
+                Some(n) => draw::to_u32_pixel(&cv, n, style.color, (w, h), &mut buf),
+                None => draw::to_u32(&cv, &mut buf),
+            }
             if frame_tx.send(buf).is_err() {
                 break;
             }

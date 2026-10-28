@@ -610,6 +610,38 @@ pub fn to_u32(cv: &Canvas, out: &mut Vec<u32>) {
     });
 }
 
+/// The 8-bit look (`--pixel N`): `cv` was drawn at 1/`n` of the panel; each of its pixels becomes an `n`x`n` block
+/// in `out` (the panel's `w`x`h`), its brightness snapped to a few hard steps of `col`, with a dark seam between blocks
+/// like an LED matrix.
+pub fn to_u32_pixel(cv: &Canvas, n: usize, col: Rgb, (w, h): (usize, usize), out: &mut Vec<u32>) {
+    const STEPS: f32 = 3.0;
+    let n = n.max(1);
+    out.resize(w * h, 0);
+    let pack = |c: Rgb| {
+        let [r, g, b] = c.map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u32);
+        (r << 16) | (g << 8) | b
+    };
+    let (bg, seam) = (pack(BG), pack(BG.map(|v| v * 0.4)));
+    // how much of `col` a pixel holds, by its brightest channel
+    let peak = col.iter().cloned().fold(1e-3, f32::max);
+    let src = &cv.px;
+    par_rows(out, w, |y, row| {
+        let (sy, gy) = ((y / n).min(cv.h - 1), y % n == n - 1);
+        for (x, o) in row.iter_mut().enumerate() {
+            let (sx, gx) = ((x / n).min(cv.w - 1), x % n == n - 1);
+            let p = src[sy * cv.w + sx];
+            let lit = ((p[0].max(p[1]).max(p[2]) / peak).min(1.0) * STEPS + 0.35).floor() / STEPS;
+            *o = if n > 2 && (gx || gy) {
+                seam
+            } else if lit <= 0.0 {
+                bg
+            } else {
+                pack(col.map(|c| c * lit))
+            };
+        }
+    });
+}
+
 /// `Canvas::fill_sdf` with its rows spread over the cores: everything where `sdf` < 0 inside the box, one pixel of
 /// anti-aliasing, and the same skipping (a true distance lets one sample vouch for the pixels after it).
 #[allow(clippy::too_many_arguments)]
