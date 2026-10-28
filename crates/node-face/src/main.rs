@@ -368,7 +368,11 @@ fn run(args: &Args) -> Result<()> {
             if v.feed(&sim.puck).is_err() {
                 voice = None; // ribt stopped: carry on silent
             } else {
+                let was = face.voice.is_some();
                 face.voice = v.level();
+                if face.voice.is_some() != was {
+                    log!("{}", if was { "voice: done" } else { "voice: playing" });
+                }
                 face.wave = v.wave(96);
             }
         }

@@ -244,6 +244,11 @@ impl Voice {
             self.hush.store(false, Ordering::Relaxed);
         }
         let streaming = matches!(p.mode, Mode::Thinking | Mode::Running);
+        // frog's own placeholders for a turn that was cut short aren't anything to say aloud
+        if matches!(reply, "Stopped." | "Okay, I didn't run it.") {
+            self.sent = reply.len();
+            return Ok(());
+        }
         let new = &reply[self.sent..];
         let upto = if streaming {
             new.rfind(char::is_whitespace).map_or(0, |i| i + 1)
