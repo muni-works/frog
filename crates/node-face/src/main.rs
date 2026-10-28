@@ -291,10 +291,22 @@ fn run(args: &Args) -> Result<()> {
     let mut turn_end: Option<f64> = None;
     let mut wake_after = false;
     let (mut last_mode, mut last_mic_log) = (sim.puck.mode, 0.0f64);
+    // frames drawn since the last rate report, and the slowest frame among them
+    let (mut frames, mut worst, mut since) = (0u32, 0.0f64, Instant::now());
 
     while win.is_open() {
         let dt = last.elapsed().as_secs_f64().min(0.1);
         last = Instant::now();
+        frames += 1;
+        worst = worst.max(dt);
+        if since.elapsed().as_secs_f64() >= 5.0 {
+            log!(
+                "fps {:.1} (slowest frame {:.0} ms)",
+                frames as f64 / since.elapsed().as_secs_f64(),
+                worst * 1e3
+            );
+            (frames, worst, since) = (0, 0.0, Instant::now());
+        }
         let now = sim.t;
         let mut ops: Vec<Value> = Vec::new();
 
