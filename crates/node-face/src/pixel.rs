@@ -177,10 +177,11 @@ pub fn draw(face: &Face, t: f64, (w, h): (usize, usize), out: &mut Vec<u32>) {
     let (gw, gh) = (w / n, h / n);
     let mut buf = vec![0u8; gw * gh];
     let g = (gw, gh);
-    // the gaze in whole pixels
-    let (ex, ey) = (
-        (face.gx * 2.0).round() as i32,
-        (face.gy * 1.5).round() as i32,
+    // the gaze in whole pixels: the eyes shift a little, the pupils inside them more
+    let (ex, ey) = (face.gx.round() as i32, (face.gy * 0.75).round() as i32);
+    let (px, py) = (
+        ((face.gx * 2.0).round() as i32).clamp(-2, 2),
+        ((face.gy * 2.0).round() as i32).clamp(-2, 2),
     );
     let (cx, top) = (gw as i32 / 2, (gh as i32 - 18) / 2 + ey);
     let gap = (gw as i32 * 12 / 100).max(4);
@@ -246,6 +247,34 @@ pub fn draw(face: &Face, t: f64, (w, h): (usize, usize), out: &mut Vec<u32>) {
             }
             if near > 2 || (near > 0 && (x + y) % 2 == 1) {
                 buf[y * gw + x] = 1;
+            }
+        }
+    }
+    // the pupils, carved dark out of the lit eye after the glow so they stay dark; dilated up close and by mood
+    if face.g < 0.5
+        && [EYE_OPEN, EYE_WIDE, EYE_THINK, EYE_SAD, EYE_HALF]
+            .iter()
+            .any(|e| std::ptr::eq(*e, eye))
+    {
+        let size = face.pose.pupil * (1.0 + 0.18 * face.closeness);
+        let (pw, ph) = match size {
+            s if s > 1.08 => (3, 4),
+            s if s < 0.85 => (2, 2),
+            _ => (2, 3),
+        };
+        for ox in [cx - gap - 8 + ex, cx + gap + ex] {
+            let (x0, y0) = (ox + 4 - pw / 2 + px, top + 5 - ph / 2 + py);
+            for y in y0..y0 + ph {
+                for x in x0..x0 + pw {
+                    if x >= 0
+                        && y >= 0
+                        && (x as usize) < gw
+                        && (y as usize) < gh
+                        && buf[y as usize * gw + x as usize] == 4
+                    {
+                        buf[y as usize * gw + x as usize] = 0;
+                    }
+                }
             }
         }
     }
