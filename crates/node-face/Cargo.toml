@@ -16,6 +16,9 @@ default = []
 window = ["dep:minifb"]
 # the face speaks with ribt (ipse's streaming TTS), through the host's audio device.
 voice = ["window", "dep:rodio"]
+# the eyes find you: a webcam (nokhwa: AVFoundation on macOS, V4L2 on the Jetson) and a face detector (rustface,
+# pure Rust; it loads SeetaFace's model from --face-model).
+camera = ["dep:nokhwa", "dep:rustface"]
 
 [dependencies]
 # The puck crate already folds `frog --serve` into what a screen should show, and draws anti-aliased
@@ -26,3 +29,9 @@ clap.workspace = true
 serde_json.workspace = true
 minifb = { version = "0.28", optional = true }
 rodio = { version = "0.20", optional = true, default-features = false, features = ["wav"] }
+nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
+rustface = { version = "0.1", optional = true }
+
+[[example]]
+name = "camera"
+required-features = ["camera"]

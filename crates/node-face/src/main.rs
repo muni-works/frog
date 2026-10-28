@@ -58,6 +58,13 @@ struct Args {
     /// Log what the ears hear and what the face does, on stderr.
     #[arg(long)]
     verbose: bool,
+    /// Find the person with a webcam (this index, 0 if bare; needs the `camera` feature). Without it the pointer
+    /// stands in for them, in a window only.
+    #[arg(long, value_name = "INDEX", num_args = 0..=1, default_missing_value = "0")]
+    camera: Option<u32>,
+    /// SeetaFace's frontal model for --camera (default: ~/.local/share/node-face/seeta_fd_frontal_v1.0.bin).
+    #[arg(long, value_name = "PATH")]
+    face_model: Option<PathBuf>,
     /// A wake-word model from ipse's `wake` (default: $WAKE_MODEL). It wakes on either the model or
     /// the word in hear's text, whichever hears it first.
     #[arg(long, value_name = "PATH")]
@@ -297,6 +304,7 @@ fn run(args: &Args) -> Result<()> {
     };
     // Your loudness at the mic, for the listening dots (hear has the mic for the words).
     let (wake, mic) = mic(args)?;
+    let eyes = eyes(args)?;
     let mut win = Window::new("frog node", w, h, opts)?;
     win.set_target_fps(60);
     if args.fullscreen {
@@ -387,11 +395,16 @@ fn run(args: &Args) -> Result<()> {
             }
         }
 
-        // Where the person is: the pointer, until the stereo camera can say.
-        let look = win
-            .get_mouse_pos(MouseMode::Pass)
-            .map(|(x, y)| (((x / w as f32) - 0.5) * 2.4, ((y / w as f32) - 0.45) * 2.4))
-            .map(|(x, y)| (x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0)));
+        // Where the person is: the camera's nearest face, else the pointer in a window (on the head's own panel a
+        // parked pointer isn't anybody).
+        let look = match &eyes {
+            Some(e) => e.person(),
+            None if args.fullscreen => None,
+            None => win
+                .get_mouse_pos(MouseMode::Pass)
+                .map(|(x, y)| (((x / w as f32) - 0.5) * 2.4, ((y / w as f32) - 0.45) * 2.4))
+                .map(|(x, y)| (x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0))),
+        };
         sim.step(dt);
         if let Some(v) = voice.as_mut() {
             if v.feed(&sim.puck).is_err() {
@@ -720,6 +733,41 @@ fn main() -> Result<()> {
         return sheet(p, args.panel());
     }
     run(&args)
+}
+
+#[cfg(feature = "camera")]
+type Eyes = node_face::camera::Eyes;
+/// Built without the camera: never anyone to see.
+#[cfg(not(feature = "camera"))]
+struct Eyes;
+#[cfg(not(feature = "camera"))]
+impl Eyes {
+    fn person(&self) -> Option<(f32, f32)> {
+        None
+    }
+}
+
+/// The webcam watching for the person, if --camera asked for one.
+#[cfg(feature = "camera")]
+fn eyes(args: &Args) -> anyhow::Result<Option<Eyes>> {
+    let Some(i) = args.camera else {
+        return Ok(None);
+    };
+    let model = args
+        .face_model
+        .clone()
+        .unwrap_or_else(node_face::camera::default_model);
+    log!("camera {i}: watching for faces");
+    Eyes::spawn(i, model).map(Some)
+}
+
+#[cfg(not(feature = "camera"))]
+fn eyes(args: &Args) -> anyhow::Result<Option<Eyes>> {
+    anyhow::ensure!(
+        args.camera.is_none(),
+        "--camera needs node-face built with the `camera` feature"
+    );
+    Ok(None)
 }
 
 #[cfg(test)]

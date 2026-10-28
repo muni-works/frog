@@ -332,6 +332,16 @@ pub struct Face {
     // idle life
     saccade: (f32, f32),
     next_saccade: f64,
+    /// Where the person was last seen, and when: the eyes keep coming back to it after they look away.
+    person: Option<(f32, f32)>,
+    seen_at: f64,
+    /// Thinking breaks eye contact: where the eyes are off to, when they move on, and a quick glance back.
+    away: (f32, f32),
+    next_away: f64,
+    peek_until: f64,
+    /// On the person, the eyes never quite hold still: tiny flicks, as between someone's two eyes.
+    micro: (f32, f32),
+    next_micro: f64,
     rng: u64,
     // what the puck model said last frame
     draft_len: usize,
@@ -381,6 +391,13 @@ impl Face {
             vt: 0.0,
             saccade: (0.0, 0.0),
             next_saccade: 0.0,
+            person: None,
+            seen_at: f64::NEG_INFINITY,
+            away: (0.5, -0.55),
+            next_away: 0.0,
+            peek_until: 0.0,
+            micro: (0.0, 0.0),
+            next_micro: 0.0,
             rng: 0x9e37_79b9_7f4a_7c15,
             draft_len: 0,
             reply_len: 0,
@@ -413,7 +430,14 @@ impl Face {
         } else {
             now - self.last_word < TALK_SECS
         };
-        let t = target(p, now, talking, look);
+        // Remember where the person is: a voice or a face is there for a moment, and the eyes return to it.
+        if let Some(l) = look {
+            (self.person, self.seen_at) = (Some(l), now);
+        } else if now - self.seen_at > PERSON_SECS {
+            self.person = None;
+        }
+        let mut t = target(p, now, talking, self.person);
+        self.gaze_life(p, now, &mut t);
 
         if now > self.next_saccade {
             // Idle life: glance somewhere new every 0.8-2.6 s.
@@ -562,6 +586,47 @@ impl Viseme {
         }
     }
 }
+
+impl Face {
+    /// Where the eyes go beyond the mode's plain target. Thinking looks up and away from the person, the way people
+    /// break eye contact to think, moving on every second or few and now and then glancing back; on the person
+    /// (listening, asking, answering, done) the gaze flicks a little, never fixed like a stare.
+    fn gaze_life(&mut self, p: &Puck, now: f64, t: &mut Target) {
+        if p.mode == Mode::Thinking && t.mood == Mood::Thinking {
+            if now > self.next_away {
+                // away from the person's side (or either, with nobody known)
+                let coin = if self.rand() < 0.5 { -1.0 } else { 1.0 };
+                let side = match self.person {
+                    Some((x, _)) if x.abs() > 0.1 => -x.signum(),
+                    _ => coin,
+                };
+                self.away = (side * (0.4 + 0.3 * self.rand()), -0.45 - 0.3 * self.rand());
+                self.next_away = now + 1.0 + 2.0 * self.rand() as f64;
+                if self.person.is_some() && self.rand() < 0.3 {
+                    self.peek_until = now + 0.35;
+                }
+            }
+            t.gaze = Some(if now < self.peek_until {
+                self.person.unwrap_or((0.0, 0.0))
+            } else {
+                self.away
+            });
+            return;
+        }
+        let Some((x, y)) = self.person else { return };
+        if t.gaze != Some((x, y)) && t.mood != Mood::Done && t.mood != Mood::Happy {
+            return;
+        }
+        if now > self.next_micro {
+            self.micro = ((self.rand() - 0.5) * 0.1, (self.rand() - 0.5) * 0.06);
+            self.next_micro = now + 0.3 + 0.6 * self.rand() as f64;
+        }
+        t.gaze = Some((x + self.micro.0, y + self.micro.1));
+    }
+}
+
+/// How long the eyes remember where the person was after they stop being seen or heard.
+const PERSON_SECS: f64 = 45.0;
 
 impl Face {
     /// The shape speech wants right now: the phoneme if the host knows it, else a guess from the sound.
@@ -725,6 +790,31 @@ mod tests {
     }
 
     #[test]
+    fn thinking_looks_away_from_the_person_and_remembers_them() {
+        let mut p = puck_in(|p| {
+            p.tick(10.0);
+            p.hear("what's the weather", 10.0);
+        });
+        let mut f = Face::new();
+        // seen on the viewer's right while asking
+        f.step(&p, 10.0, 1.0 / 60.0, Some((0.6, 0.1)));
+        p.submit(10.1);
+        assert_eq!(p.mode, Mode::Thinking);
+        let mut away = 0;
+        for i in 0..300 {
+            let now = 10.1 + i as f64 / 60.0;
+            f.step(&p, now, 1.0 / 60.0, None);
+            if f.gx < -0.2 && f.gy < -0.2 {
+                away += 1;
+            }
+        }
+        // mostly up and to the other side, with a glance back now and then
+        assert!(away > 200, "away {away} of 300 frames");
+        // still remembered, with nobody seen for 5 s
+        assert_eq!(f.person, Some((0.6, 0.1)));
+    }
+
+    #[test]
     fn thinking_is_loud_and_settles() {
         let mut p = puck_in(|p| {
             p.tick(10.0);
@@ -738,6 +828,7 @@ mod tests {
         }
         assert!(f.think > 0.9, "think {}", f.think);
         assert!(f.listen < 0.1);
-        assert!((f.gx - 0.55).abs() < 0.05 && (f.gy + 0.6).abs() < 0.05);
+        // up and off to one side, wherever this glance landed
+        assert!(f.gx.abs() > 0.3 && f.gy < -0.35, "gaze {} {}", f.gx, f.gy);
     }
 }

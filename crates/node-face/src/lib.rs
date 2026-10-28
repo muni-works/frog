@@ -9,6 +9,8 @@
 //!
 //! The look was settled in `cortex/face/soft-blocks-lab.html` (the rose repo); this is its port.
 
+#[cfg(feature = "camera")]
+pub mod camera;
 pub mod draw;
 pub mod ears;
 pub mod face;
