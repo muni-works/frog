@@ -55,8 +55,8 @@ struct Args {
     /// Speak with ribt (needs the `voice` feature; see RIBT_* in src/voice.rs for model paths).
     #[arg(long)]
     voice: bool,
-    /// The 8-bit look: draw the face with pixels this many screen pixels wide (12 if bare), in a few hard shades.
-    #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "12")]
+    /// The 8-bit look: draw the face with pixels this many screen pixels wide (24 if bare), in a few hard shades.
+    #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "24")]
     pixel: Option<usize>,
     /// Log what the ears hear and what the face does, on stderr.
     #[arg(long)]
