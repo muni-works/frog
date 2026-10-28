@@ -299,6 +299,9 @@ fn run(args: &Args) -> Result<()> {
     let (wake, mic) = mic(args)?;
     let mut win = Window::new("frog node", w, h, opts)?;
     win.set_target_fps(60);
+    if args.fullscreen {
+        win.set_cursor_visibility(false); // the head's own panel: nothing to point at
+    }
     let mut last = Instant::now();
     // When the face last made a sound: its own voice mustn't be heard as yours.
     let mut spoke = f64::NEG_INFINITY;
