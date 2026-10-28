@@ -17,8 +17,11 @@ use std::time::{Duration, Instant};
 const WIDTH: u32 = 320;
 /// A sighting older than this is no sighting.
 const STALE: Duration = Duration::from_millis(600);
-/// The last sighting: when, and where (gaze -1..1).
-type Seen = Mutex<Option<(Instant, (f32, f32))>>;
+/// The last sighting: when, where (gaze -1..1), and how close (see `Eyes::near`).
+type Seen = Mutex<Option<(Instant, (f32, f32), f32)>>;
+/// How wide a face is in the frame (its share of the width) across a desk, and up close.
+const FAR: f32 = 0.08;
+const NEAR: f32 = 0.35;
 
 /// The last frame the detector saw, for a preview: the small grey image and every face in it (x, y, w, h), the
 /// first being the one taken for the person.
@@ -69,8 +72,18 @@ impl Eyes {
 
     /// Where the nearest face is, if one's been seen in the last moment.
     pub fn person(&self) -> Option<(f32, f32)> {
+        self.sighting().map(|(p, _)| p)
+    }
+
+    /// How close the person is: 0 across a desk, 1 at arm's length, a little past 1 nose to the glass.
+    pub fn near(&self) -> Option<f32> {
+        self.sighting().map(|(_, n)| n)
+    }
+
+    fn sighting(&self) -> Option<((f32, f32), f32)> {
         let s = *self.seen.lock().unwrap();
-        s.filter(|(at, _)| at.elapsed() < STALE).map(|(_, p)| p)
+        s.filter(|(at, ..)| at.elapsed() < STALE)
+            .map(|(_, p, n)| (p, n))
     }
 
     /// The last frame looked at, with its faces.
@@ -147,9 +160,11 @@ fn watch(
             let cy = (b.y() as f32 + b.height() as f32 / 2.0) / gh as f32;
             // The camera sees you mirrored: a person to the viewer's right is on the image's left.
             let at = ((0.5 - cx) * 2.2, (cy - 0.45) * 1.8);
+            let near = ((b.width() as f32 / gw as f32 - FAR) / (NEAR - FAR)).clamp(0.0, 1.4);
             *out.lock().unwrap() = Some((
                 Instant::now(),
                 (at.0.clamp(-1.0, 1.0), at.1.clamp(-1.0, 1.0)),
+                near,
             ));
         }
     }

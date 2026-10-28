@@ -409,7 +409,10 @@ fn run(args: &Args) -> Result<()> {
         // Where the person is: the camera's nearest face, else the pointer in a window (on the head's own panel a
         // parked pointer isn't anybody).
         let look = match &eyes {
-            Some(e) => e.person(),
+            Some(e) => {
+                face.near = e.near();
+                e.person()
+            }
             None if args.fullscreen => None,
             None => win
                 .get_mouse_pos(MouseMode::Pass)

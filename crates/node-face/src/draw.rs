@@ -304,7 +304,9 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64) {
         let pv = 1.0 - face.g;
         if pv > 0.02 {
             let (ew, eh) = (e.w * st.size * grow * w, e.h * st.size * grow * w);
-            let dil = face.pose.pupil * (1.0 + 0.3 * face.listen + 0.15 * face.hear);
+            // wider listening, hearing, and as someone comes close
+            let dil = face.pose.pupil
+                * (1.0 + 0.3 * face.listen + 0.15 * face.hear + 0.18 * face.closeness.min(1.2));
             let scan = face.think * ((t * 1000.0 / 260.0) as f32 + side * 0.4).sin() * 0.3;
             let (pw, ph) = (ew * 0.5 * dil, ew * 0.5 * dil); // a circle
             let (ecx, ecy) = u(cx, cy);

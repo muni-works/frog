@@ -342,6 +342,16 @@ pub struct Face {
     /// On the person, the eyes never quite hold still: tiny flicks, as between someone's two eyes.
     micro: (f32, f32),
     next_micro: f64,
+    /// How close the camera says the person is (see `camera::Eyes::near`), set by the host; `closeness` eases it.
+    pub near: Option<f32>,
+    pub closeness: f32,
+    /// Presence: since when the person's face has been in view (facing the head), when it was last lost, and the
+    /// moments that follow from that -- a greeting, a shy glance away from a long stare.
+    seen_since: Option<f64>,
+    lost_at: f64,
+    greet_until: f64,
+    shy_until: f64,
+    next_shy: f64,
     rng: u64,
     // what the puck model said last frame
     draft_len: usize,
@@ -398,6 +408,13 @@ impl Face {
             peek_until: 0.0,
             micro: (0.0, 0.0),
             next_micro: 0.0,
+            near: None,
+            closeness: 0.0,
+            seen_since: None,
+            lost_at: f64::NEG_INFINITY,
+            greet_until: 0.0,
+            shy_until: 0.0,
+            next_shy: 0.0,
             rng: 0x9e37_79b9_7f4a_7c15,
             draft_len: 0,
             reply_len: 0,
@@ -438,6 +455,7 @@ impl Face {
         }
         let mut t = target(p, now, talking, self.person);
         self.gaze_life(p, now, &mut t);
+        let shy = self.presence(p, now, talking, look, &mut t);
 
         if now > self.next_saccade {
             // Idle life: glance somewhere new every 0.8-2.6 s.
@@ -505,7 +523,8 @@ impl Face {
         ] {
             *cur += (to - *cur) * e;
         }
-        let bt = t.mood.blush();
+        // very close, or caught staring: a blush
+        let bt = (t.mood.blush() + 1.2 * (self.closeness - 1.0).max(0.0) + 0.6 * shy).min(1.0);
         self.blush += (bt - self.blush) * (dt32 * if bt > self.blush { 4.0 } else { 1.2 }).min(1.0);
         // the sound's shape, eased fast: a mouth moves quickly between sounds, never instantly
         let want = self.viseme();
@@ -627,6 +646,73 @@ impl Face {
 
 /// How long the eyes remember where the person was after they stop being seen or heard.
 const PERSON_SECS: f64 = 45.0;
+/// Away at least this long, and coming into view is an arrival (a greeting); back sooner, it just looks back.
+const ARRIVE_SECS: f64 = 20.0;
+/// Looked at this long with nothing going on, it gets a little shy.
+const STARE_SECS: f64 = 8.0;
+
+impl Face {
+    /// What a face in view means while frog has nothing to say. The detector only finds faces turned toward the
+    /// head, so a face in view is someone looking at it: it looks back, greets an arrival, gets shy at a long stare,
+    /// and dilates as they come close. Returns how shy it is (0..1), for the blush.
+    fn presence(
+        &mut self,
+        p: &Puck,
+        now: f64,
+        talking: bool,
+        look: Option<(f32, f32)>,
+        t: &mut Target,
+    ) -> f32 {
+        let want_near = self.near.filter(|_| look.is_some()).unwrap_or(0.0);
+        self.closeness += (want_near - self.closeness) * 0.08;
+        match (look, self.seen_since) {
+            (Some(_), None) => {
+                self.seen_since = Some(now);
+                if now - self.lost_at > ARRIVE_SECS {
+                    self.greet_until = now + 2.2;
+                } else {
+                    self.hear = self.hear.max(0.8); // looked back at: perks up
+                }
+            }
+            (None, Some(_)) => {
+                self.seen_since = None;
+                self.lost_at = now;
+            }
+            _ => {}
+        }
+        let idle = p.mode == Mode::Idle && !talking;
+        if !idle {
+            return 0.0;
+        }
+        let Some((x, y)) = self.person.filter(|_| look.is_some()) else {
+            return 0.0;
+        };
+        if now < self.greet_until {
+            *t = Target {
+                gaze: Some((x, y)),
+                mood: Mood::Happy,
+                ..Target::at(0.9, 0.45)
+            };
+            return 0.0;
+        }
+        if self.seen_since.is_some_and(|s| now - s > STARE_SECS) && now > self.next_shy {
+            self.shy_until = now + 1.8;
+            self.next_shy = now + 25.0;
+        }
+        if now < self.shy_until {
+            // down and a little aside, then back
+            t.gaze = Some((x * 0.4 + if x > 0.0 { -0.3 } else { 0.3 }, 0.55));
+            return 1.0;
+        }
+        // someone's there: keep an eye on them rather than wandering
+        if now > self.next_micro {
+            self.micro = ((self.rand() - 0.5) * 0.1, (self.rand() - 0.5) * 0.06);
+            self.next_micro = now + 0.3 + 0.6 * self.rand() as f64;
+        }
+        t.gaze = Some((x + self.micro.0, y + self.micro.1));
+        0.0
+    }
+}
 
 impl Face {
     /// The shape speech wants right now: the phoneme if the host knows it, else a guess from the sound.
@@ -812,6 +898,37 @@ mod tests {
         assert!(away > 200, "away {away} of 300 frames");
         // still remembered, with nobody seen for 5 s
         assert_eq!(f.person, Some((0.6, 0.1)));
+    }
+
+    #[test]
+    fn an_arrival_is_greeted_and_a_long_stare_makes_it_shy() {
+        let p = puck_in(|p| p.tick(10.0));
+        assert_eq!(p.mode, Mode::Idle);
+        let mut f = Face::new();
+        let dt = 1.0 / 60.0;
+        // nobody for a while, then a face in view
+        for i in 0..60 {
+            f.step(&p, 10.0 + i as f64 * dt, dt, None);
+        }
+        f.step(&p, 40.0, dt, Some((0.2, 0.0)));
+        assert_eq!(target_after(&mut f, &p, 40.5).mood, Mood::Happy, "greets");
+        // still looking at it 9 s on: a shy glance down and away, and a blush
+        let mut shy = false;
+        for i in 0..600 {
+            let now = 41.0 + i as f64 * dt;
+            f.step(&p, now, dt, Some((0.2, 0.0)));
+            shy |= f.gy > 0.3 && f.blush > 0.2;
+        }
+        assert!(shy, "never shy");
+    }
+
+    /// Step once with the person still in view and return the face's target then.
+    fn target_after(f: &mut Face, p: &Puck, now: f64) -> Target {
+        f.step(p, now, 1.0 / 60.0, Some((0.2, 0.0)));
+        let mut t = target(p, now, false, f.person);
+        f.gaze_life(p, now, &mut t);
+        f.presence(p, now, false, Some((0.2, 0.0)), &mut t);
+        t
     }
 
     #[test]
