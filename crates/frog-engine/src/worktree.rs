@@ -170,7 +170,17 @@ pub(crate) mod tests {
         assert!(err.contains("worktree:true"), "{err}");
         // Released with its holder: the next engine gets in.
         drop(first);
-        assert!(acquire(&wt, "s-second", Duration::ZERO).unwrap().is_some());
+        // A child forked by another test can hold the lock's fd for a moment before its exec closes it.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let second = loop {
+            match acquire(&wt, "s-second", Duration::ZERO) {
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                r => break r,
+            }
+        };
+        assert!(second.unwrap().is_some());
         let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 }
