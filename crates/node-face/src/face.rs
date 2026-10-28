@@ -307,6 +307,10 @@ pub struct Face {
     /// How open the mouth is (0..1): the voice's loudness, snapping open on syllables and easing
     /// shut.
     pub mouth: f32,
+    /// The shape the voice calls for now (hiss, dark), set by the host each frame; eased here.
+    pub sound: Option<(f32, f32)>,
+    hiss: f32,
+    dark: f32,
     /// The emotion now, and its pose eased toward (pupil size included).
     pub mood: Mood,
     pub pose: Pose,
@@ -358,6 +362,9 @@ impl Face {
             wave: Vec::new(),
             mic: 0.0,
             mouth: 0.0,
+            sound: None,
+            hiss: 0.0,
+            dark: 0.0,
             mood: Mood::Idle,
             pose: POSE0,
             blush: 0.0,
@@ -473,6 +480,15 @@ impl Face {
         }
         let bt = t.mood.blush();
         self.blush += (bt - self.blush) * (dt32 * if bt > self.blush { 4.0 } else { 1.2 }).min(1.0);
+        // the sound's shape, eased fast: a mouth moves quickly between sounds, never instantly
+        let (h, d) = if self.talk > 0.05 {
+            self.sound.unwrap_or((0.0, 0.0))
+        } else {
+            (0.0, 0.0)
+        };
+        let s = (dt32 * 18.0).min(1.0);
+        self.hiss += (h - self.hiss) * s;
+        self.dark += (d - self.dark) * s;
         self.step_lips(now, dt32);
     }
 }
@@ -503,24 +519,33 @@ impl Face {
         let drift = self.think * 0.25 * (tt * 0.9).sin();
         let quiver =
             p.quiver * ((tt * 23.0).sin() * 0.5 + 0.5) * (tt * 0.7).sin().max(0.0).powi(8) * 0.003;
+        // speaking: loudness opens the jaw; hiss spreads the lips wide and flat, nearly shut; dark sounds pull
+        // them narrow and round
         let w = if speaking {
-            p.w.max(0.055 + 0.04 * self.mouth)
+            p.w.max(0.055 + 0.04 * self.mouth) * (1.0 + 0.32 * self.hiss - 0.38 * self.dark)
         } else {
             p.w * (1.0 + breath * 3.0)
         };
         let open = if speaking {
-            0.004 + 0.05 * self.mouth + p.open * 0.5
+            (0.004 + 0.05 * self.mouth) * (1.0 - 0.55 * self.hiss) * (1.0 + 0.2 * self.dark)
+                + p.open * 0.5
         } else {
             p.open
         };
+        let round = if speaking {
+            p.round.max(self.dark * 0.9)
+        } else {
+            p.round
+        };
         let f = i as f32 / (LIPS - 1) as f32 - 0.5;
-        let bell = (1.0 - p.round) * (f * std::f32::consts::PI).cos()
-            + p.round * (1.0 - 4.0 * f * f).max(0.0).sqrt();
+        let bell = (1.0 - round) * (f * std::f32::consts::PI).cos()
+            + round * (1.0 - 4.0 * f * f).max(0.0).sqrt();
         let corner = -(p.curve * 0.022) * (4.0 * f * f)
             + p.tilt * 0.012 * f
             + quiver * f.signum() * 4.0 * f * f;
         let sgn = if lower { 1.0 } else { -1.0 };
-        let gap = if lower { 1.1 } else { 0.9 };
+        // a jaw: the lower lip carries most of an opening, the upper barely moves
+        let gap = if lower { 1.45 } else { 0.55 };
         let y = corner
             + sgn * gap * open / 2.0 * bell
             + sgn * 0.004 * (1.0 - bell * 0.5) * (1.0 - 0.6 * p.press);
@@ -532,6 +557,7 @@ impl Face {
         self.mood = mood;
         self.pose = mood.pose();
         self.blush = mood.blush();
+        (self.hiss, self.dark) = self.sound.unwrap_or((0.0, 0.0));
         for (l, lower) in [false, true].into_iter().enumerate() {
             for i in 0..LIPS {
                 let (x, y) = self.lip_target(i, lower, now);

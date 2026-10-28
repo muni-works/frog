@@ -435,6 +435,22 @@ fn lips(
         .iter()
         .fold((f32::MAX, f32::MIN), |b, q| (b.0.min(q.1), b.1.max(q.1)));
     let pad = r0 * 1.8;
+    // the opening, column by column: (x, upper y, lower y) along the lips
+    let gaps: Vec<(f32, f32, f32)> = (0..crate::face::LIPS)
+        .map(|i| (balls[i].0, balls[i].1, balls[crate::face::LIPS + i].1))
+        .collect();
+    let inner = |px: f32, py: f32| -> Option<f32> {
+        let j = gaps.windows(2).position(|s| px >= s[0].0 && px < s[1].0)?;
+        let (a, b) = (gaps[j], gaps[j + 1]);
+        let t = (px - a.0) / (b.0 - a.0).max(1e-3);
+        let (top, bot) = (a.1 + (b.1 - a.1) * t, a.2 + (b.2 - a.2) * t);
+        let gap = bot - top - 2.0 * r0;
+        if gap <= 0.0 || py <= top || py >= bot {
+            return None;
+        }
+        let v = 1.0 - ((py - (top + bot) / 2.0) / ((bot - top) / 2.0)).abs();
+        Some(0.22 * v * v * (gap / (r0 * 3.0)).min(1.0))
+    };
     for y in (y0 - pad) as i32..=(y1 + pad) as i32 {
         for x in (x0 - pad) as i32..=(x1 + pad) as i32 {
             let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
@@ -448,6 +464,15 @@ fn lips(
                 .sum::<f32>()
                 .sqrt();
             if f < 0.55 {
+                // between parted lips: a soft warm light from inside, brightest at the middle of the opening
+                if let Some(g) = inner(px, py) {
+                    cv.add(
+                        x,
+                        y,
+                        puck::canvas::lerp(col, [1.0, 0.82, 0.62], 0.35),
+                        g * lit,
+                    );
+                }
                 continue;
             }
             let e = ((f - 0.55) / 0.5).min(1.0);

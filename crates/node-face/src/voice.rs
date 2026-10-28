@@ -100,6 +100,8 @@ pub struct Voice {
     queued: Arc<AtomicUsize>,
     played: Arc<AtomicUsize>,
     levels: Arc<Mutex<Vec<f32>>>,
+    /// Per 20 ms block, the mouth shape the sound calls for: (hiss, dark) -- see `shape_of`.
+    shapes: Arc<Mutex<Vec<(f32, f32)>>>,
     /// The samples themselves, from absolute sample `.0` on, for the waveform.
     pcm: Arc<Mutex<(usize, Vec<i16>)>>,
     /// How much of this turn's reply has been sent, and whether the turn is still open.
@@ -150,6 +152,8 @@ impl Voice {
         let cues = Sink::try_new(&handle)?;
         let (queued, played) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
         let levels = Arc::new(Mutex::new(Vec::new()));
+        let shapes = Arc::new(Mutex::new(Vec::new()));
+        let sh = shapes.clone();
         let pcm = Arc::new(Mutex::new((0usize, Vec::new())));
         let (q, pl, lv, pc) = (queued.clone(), played.clone(), levels.clone(), pcm.clone());
         std::thread::spawn(move || {
@@ -185,6 +189,10 @@ impl Voice {
                             / b.len() as f32)
                             .sqrt();
                         l.push((rms * 6.0).min(1.0));
+                    }
+                    let mut s = sh.lock().unwrap();
+                    for b in chunk.chunks(BLOCK) {
+                        s.push(shape_of(b));
                     }
                 }
                 // The speaker has run dry since the last turn: catch the counter up to the queue,
@@ -227,6 +235,7 @@ impl Voice {
             queued,
             played,
             levels,
+            shapes,
             pcm,
             sent: 0,
             sink,
@@ -301,6 +310,43 @@ impl Voice {
         }
         self.levels.lock().unwrap().get(p / BLOCK).copied()
     }
+
+    /// The mouth shape for what's about to be heard: (hiss, dark), from the block 40 ms ahead of the
+    /// playhead (real mouths shape a sound just before you hear it). `None` when silent.
+    pub fn shape(&self) -> Option<(f32, f32)> {
+        let (q, p) = (
+            self.queued.load(Ordering::Relaxed),
+            self.played.load(Ordering::Relaxed),
+        );
+        if p >= q {
+            return None;
+        }
+        let s = self.shapes.lock().unwrap();
+        let i = (p / BLOCK + 2).min(s.len().saturating_sub(1));
+        s.get(i).copied()
+    }
+}
+
+/// What a 20 ms block of speech asks of the mouth, from two cheap measures:
+/// - hiss: the zero-crossing rate. High for "s", "f", "sh", "t" and the bright "ee": lips wide, flat, nearly shut.
+/// - dark: the share of energy below ~800 Hz (a one-pole low-pass). High for "oo", "oh", "w": lips narrow and round.
+fn shape_of(b: &[i16]) -> (f32, f32) {
+    let x: Vec<f32> = b.iter().map(|&s| s as f32 / 32768.0).collect();
+    let e: f32 = x.iter().map(|v| v * v).sum::<f32>() + 1e-9;
+    let zc = x
+        .windows(2)
+        .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
+        .count() as f32
+        / x.len() as f32;
+    let (mut lp, mut low) = (0.0f32, 0.0f32);
+    let k = 1.0 - (-2.0 * std::f32::consts::PI * 800.0 / SR as f32).exp();
+    for v in &x {
+        lp += k * (v - lp);
+        low += lp * lp;
+    }
+    let hiss = ((zc - 0.12) / 0.2).clamp(0.0, 1.0);
+    let dark = ((low / e - 0.55) / 0.35).clamp(0.0, 1.0) * (1.0 - hiss);
+    (hiss, dark)
 }
 
 impl Voice {

@@ -42,7 +42,19 @@ fn main() -> anyhow::Result<()> {
             face.v = 0.35;
             face.a = 0.25;
             face.talk = 1.0;
-            face.mouth = (i - MOODS.len()) as f32 / 5.0;
+            // quiet to loud, then the loud mouth's shapes: open "ah", hissed "ee"/"s", dark "oo", half "oh"
+            let k = i - MOODS.len();
+            face.mouth = [0.2, 0.6, 1.0, 0.8, 0.8, 0.8][k.min(5)];
+            face.sound = Some(
+                [
+                    (0.0, 0.0),
+                    (0.0, 0.0),
+                    (0.0, 0.0),
+                    (1.0, 0.0),
+                    (0.0, 1.0),
+                    (0.0, 0.55),
+                ][k.min(5)],
+            );
             face.settle(Mood::Speaking, 2.0);
         }
         draw::draw(&mut cv, &face, &Style::default(), 2.0);

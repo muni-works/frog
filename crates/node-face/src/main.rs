@@ -370,6 +370,7 @@ fn run(args: &Args) -> Result<()> {
             } else {
                 let was = face.voice.is_some();
                 face.voice = v.level();
+                face.sound = v.shape();
                 if face.voice.is_some() != was {
                     log!("{}", if was { "voice: done" } else { "voice: playing" });
                 }
