@@ -268,7 +268,21 @@ fn run(args: &Args) -> Result<()> {
         Vec::new()
     });
     let (mut sim, mut face, style) = (new_sim(), Face::new(), Style::default());
-    let (mut cv, mut buf) = (Canvas::new(w, h), Vec::new());
+    // Frames are drawn on their own thread while the last one is shown: on the Jetson drawing and showing are each
+    // most of a 60 Hz frame, so done one after the other they'd halve the rate. Costs one frame of latency.
+    let (job_tx, job_rx) = std::sync::mpsc::sync_channel::<(Face, f64, Vec<u32>)>(1);
+    let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<Vec<u32>>(1);
+    std::thread::spawn(move || {
+        let mut cv = Canvas::new(w, h);
+        for (face, t, mut buf) in job_rx {
+            draw::draw(&mut cv, &face, &style, t);
+            draw::to_u32(&cv, &mut buf);
+            if frame_tx.send(buf).is_err() {
+                break;
+            }
+        }
+    });
+    let (mut spare, mut ready): (Option<Vec<u32>>, Option<Vec<u32>>) = (None, None);
 
     let opts = WindowOptions {
         borderless: args.fullscreen,
@@ -392,9 +406,13 @@ fn run(args: &Args) -> Result<()> {
         }
         face.voiced = voice.is_some();
         face.step(&sim.puck, sim.t, dt, look);
-        draw::draw(&mut cv, &face, &style, sim.t);
-        cv.to_u32(&mut buf);
-        win.update_with_buffer(&buf, w, h)?;
+        // hand this frame to the drawing thread, show the one it finished last time while it draws, then take it
+        job_tx.send((face.clone(), sim.t, spare.take().unwrap_or_default()))?;
+        if let Some(buf) = ready.take() {
+            win.update_with_buffer(&buf, w, h)?;
+            spare = Some(buf);
+        }
+        ready = frame_rx.recv().ok();
     }
     Ok(())
 }

@@ -297,7 +297,7 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64) {
         .map(|(x, y)| u(x, y));
         let (x0, y0, x1, y1) = bounds(&p);
         let eye = |x: f32, y: f32| poly_sdf(&p, x, y);
-        cv.fill_sdf(x0, y0, x1, y1, col, 1.0, eye);
+        fill_par(cv, x0, y0, x1, y1, col, 1.0, eye);
 
         // Pupil: a big soft oval that travels further than the eye (that's what reads as looking
         // AT something), dilates while listening and sweeps side to side while thinking.
@@ -313,7 +313,8 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64) {
                 ecy + face.gy * 0.24 * eh - face.think * 0.12 * eh - e.cheek * 0.28 * eh, // rides up on a happy cheek
             );
             let (hx, hy, r) = (pw / 2.0 - ph / 2.0, 0.0f32, ph / 2.0);
-            cv.fill_sdf(
+            fill_par(
+                cv,
                 px - pw / 2.0,
                 py - ph / 2.0,
                 px + pw / 2.0,
@@ -332,7 +333,9 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64) {
         // Blink: a translucent membrane sweeps up from below, frog-style.
         if bl > 0.01 {
             let top = y1 - (y1 - y0) * bl;
-            cv.fill_sdf(x0, top, x1, y1, BG, 0.72, |x, y| (top - y).max(eye(x, y)));
+            fill_par(cv, x0, top, x1, y1, BG, 0.72, |x, y| {
+                (top - y).max(eye(x, y))
+            });
         }
     }
 
@@ -490,10 +493,23 @@ fn lips(
             (edge + 0.5).clamp(0.0, 1.0)
         }
     };
-    for y in (y0 - pad) as i32..=(y1 + pad) as i32 {
-        for x in (x0 - pad) as i32..=(x1 + pad) as i32 {
-            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-            // squared falloff: droplets only fuse where they nearly touch; the opening between them is filled below
+    let (cw, ch) = (cv.w as i32, cv.h as i32);
+    let ys = ((y0 - pad) as i32).max(0)..((y1 + pad) as i32 + 1).min(ch);
+    let xs = ((x0 - pad) as i32).max(0)..((x1 + pad) as i32 + 1).min(cw);
+    if ys.is_empty() || xs.is_empty() {
+        return;
+    }
+    let rows = &mut cv.px[ys.start as usize * cw as usize..ys.end as usize * cw as usize];
+    par_rows(rows, cw as usize, |i, row| {
+        let py = (ys.start + i as i32) as f32 + 0.5;
+        for x in xs.clone() {
+            let px = x as f32 + 0.5;
+            // the outline sets the coverage, filled solid like the eyes
+            let a = band(px, py);
+            if a <= 0.0 {
+                continue;
+            }
+            // the metaball, with a squared falloff, only lights it: hotter where the droplets are thick
             let f: f32 = balls
                 .iter()
                 .map(|&(bx, by, r2)| {
@@ -502,15 +518,12 @@ fn lips(
                 })
                 .sum::<f32>()
                 .sqrt();
-            // filled solid, like the eyes, so the open mouth reads as one shape
-            let a = band(px, py);
-            if a <= 0.0 {
-                continue;
-            }
-            let core = ((f - 1.2) * 0.35).clamp(0.0, 1.0); // hotter where it's thick
-            cv.add(x, y, puck::canvas::lerp(col, [1.0; 3], core), a * lit);
+            let core = ((f - 1.2) * 0.35).clamp(0.0, 1.0);
+            let (c, a) = (puck::canvas::lerp(col, [1.0; 3], core), a * lit);
+            let p = &mut row[x as usize];
+            *p = [0, 1, 2].map(|k| (p[k] + c[k] * a).min(1.0));
         }
-    }
+    });
     // the sheen: a soft highlight along the upper lip's top
     let top: Vec<(f32, f32)> = face.lips[0]
         .iter()
@@ -538,46 +551,125 @@ fn bloom(cv: &mut Canvas, amount: f32, radius: usize) {
     const S: usize = 4;
     let (w, h) = (cv.w.div_ceil(S), cv.h.div_ceil(S));
     let mut small = vec![[0.0f32; 3]; w * h];
-    for y in 0..cv.h {
-        for x in 0..cv.w {
-            let (p, q) = (cv.px[y * cv.w + x], &mut small[(y / S) * w + x / S]);
-            for c in 0..3 {
-                q[c] += (p[c] - BG[c]).max(0.0) / (S * S) as f32;
+    let (cw, ch) = (cv.w, cv.h);
+    // The two full-size passes (down and back up) are most of a frame on the Jetson; rows are independent, so
+    // they're spread over the cores.
+    let src = &cv.px;
+    par_rows(&mut small, w, |sy, row| {
+        for y in sy * S..((sy + 1) * S).min(ch) {
+            for x in 0..cw {
+                let (p, q) = (src[y * cw + x], &mut row[x / S]);
+                for c in 0..3 {
+                    q[c] += (p[c] - BG[c]).max(0.0) / (S * S) as f32;
+                }
             }
         }
-    }
+    });
     let r = (radius / S).max(1);
     let mut tmp = small.clone();
     for _ in 0..3 {
         box_pass(&small, &mut tmp, w, h, r, true);
         box_pass(&tmp, &mut small, w, h, r, false);
     }
-    for y in 0..cv.h {
-        for x in 0..cv.w {
-            let (fx, fy) = (
-                (x as f32 + 0.5) / S as f32 - 0.5,
-                (y as f32 + 0.5) / S as f32 - 0.5,
-            );
-            let (ix, iy) = (fx.floor().max(0.0) as usize, fy.floor().max(0.0) as usize);
-            let (tx, ty) = (
-                (fx - ix as f32).clamp(0.0, 1.0),
-                (fy - iy as f32).clamp(0.0, 1.0),
-            );
-            let at = |x: usize, y: usize| small[y.min(h - 1) * w + x.min(w - 1)];
+    let small = &small;
+    par_rows(&mut cv.px, cw, |y, row| {
+        let fy = (y as f32 + 0.5) / S as f32 - 0.5;
+        let iy = fy.floor().max(0.0) as usize;
+        let ty = (fy - iy as f32).clamp(0.0, 1.0);
+        let at = |x: usize, y: usize| small[y.min(h - 1) * w + x.min(w - 1)];
+        for (x, p) in row.iter_mut().enumerate() {
+            let fx = (x as f32 + 0.5) / S as f32 - 0.5;
+            let ix = fx.floor().max(0.0) as usize;
+            let tx = (fx - ix as f32).clamp(0.0, 1.0);
             let (a, b, c, d) = (
                 at(ix, iy),
                 at(ix + 1, iy),
                 at(ix, iy + 1),
                 at(ix + 1, iy + 1),
             );
-            let p = &mut cv.px[y * cv.w + x];
             for k in 0..3 {
                 let v = (a[k] * (1.0 - tx) + b[k] * tx) * (1.0 - ty)
                     + (c[k] * (1.0 - tx) + d[k] * tx) * ty;
                 p[k] = (p[k] + v * amount).min(1.0);
             }
         }
+    });
+}
+
+/// `Canvas::to_u32` (0x00RRGGBB, as minifb wants) spread over the cores: on the Jetson it's a frame's worth of time.
+pub fn to_u32(cv: &Canvas, out: &mut Vec<u32>) {
+    out.resize(cv.px.len(), 0);
+    let src = &cv.px;
+    par_rows(out, cv.w, |y, row| {
+        for (o, p) in row.iter_mut().zip(&src[y * cv.w..]) {
+            let [r, g, b] = p.map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u32);
+            *o = (r << 16) | (g << 8) | b;
+        }
+    });
+}
+
+/// `Canvas::fill_sdf` with its rows spread over the cores: everything where `sdf` < 0 inside the box, one pixel of
+/// anti-aliasing, and the same skipping (a true distance lets one sample vouch for the pixels after it).
+#[allow(clippy::too_many_arguments)]
+fn fill_par(
+    cv: &mut Canvas,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    c: Rgb,
+    a: f32,
+    sdf: impl Fn(f32, f32) -> f32 + Sync,
+) {
+    let (w, h) = (cv.w as i32, cv.h as i32);
+    let ys = (y0.floor() as i32 - 1).max(0)..(y1.ceil() as i32 + 2).min(h);
+    let xs = (x0.floor() as i32 - 1).max(0)..(x1.ceil() as i32 + 2).min(w);
+    if ys.is_empty() || xs.is_empty() {
+        return;
     }
+    let blend = |p: &mut Rgb, a: f32| *p = [0, 1, 2].map(|k| p[k] + (c[k] - p[k]) * a.min(1.0));
+    let rows = &mut cv.px[ys.start as usize * w as usize..ys.end as usize * w as usize];
+    par_rows(rows, w as usize, |i, row| {
+        let y = (ys.start + i as i32) as f32 + 0.5;
+        let mut x = xs.start;
+        while x < xs.end {
+            let d = sdf(x as f32 + 0.5, y);
+            if d >= 1.5 {
+                x += (d - 0.5) as i32;
+            } else if d <= -1.5 {
+                let end = (x + (-0.5 - d) as i32).min(xs.end);
+                for p in &mut row[x as usize..end as usize] {
+                    blend(p, a);
+                }
+                x = end;
+            } else {
+                let cov = (0.5 - d).clamp(0.0, 1.0);
+                if cov > 0.0 {
+                    blend(&mut row[x as usize], a * cov);
+                }
+                x += 1;
+            }
+        }
+    });
+}
+
+/// Run `f(y, row)` over each `w`-wide row of `px`, the rows split in bands across the cores.
+fn par_rows<T: Send>(px: &mut [T], w: usize, f: impl Fn(usize, &mut [T]) + Sync) {
+    let rows = px.len() / w;
+    let n = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(rows.max(1));
+    let band = rows.div_ceil(n);
+    std::thread::scope(|s| {
+        for (b, chunk) in px.chunks_mut(band * w).enumerate() {
+            let f = &f;
+            s.spawn(move || {
+                for (i, row) in chunk.chunks_mut(w).enumerate() {
+                    f(b * band + i, row);
+                }
+            });
+        }
+    });
 }
 
 fn box_pass(
