@@ -31,8 +31,8 @@ struct Cli {
     /// Speak the engine protocol over stdio (Op JSON lines in, Event JSON lines out).
     #[arg(long, conflicts_with = "print")]
     serve: bool,
-    /// Answer one turn per HTTP request on ADDR (e.g. a Tailscale IP:8915), for the iOS app and
-    /// Siri. Needs FROG_LISTEN_TOKEN (the bearer token). See docs/ios-siri.md.
+    /// Answer one turn per HTTP request on ADDR (e.g. a Tailscale IP:8915): POST /v1/turn,
+    /// GET /v1/session/<id>/answer, GET /v1/health. Needs FROG_LISTEN_TOKEN (the bearer token).
     #[arg(long, value_name = "ADDR", conflicts_with_all = ["print", "serve", "acp"])]
     listen: Option<String>,
     /// With --serve: the client can answer MCP elicitations and host MCP Apps.

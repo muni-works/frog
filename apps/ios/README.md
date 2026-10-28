@@ -28,11 +28,6 @@ a phone asks rather than decides. A `model` choice goes to the pane showing the 
 which does what the Mac's picker would (switch, download first, or ask about the cloud); `manage`
 is the sidebar's row menu (archive, pin, rename).
 
-## The house (no Mac needed)
-
-Settings › The House, and Siri's "Ask Frog about the house", talk to `frog --listen` on a home
-server over HTTPS instead of the Mac bridge. See [../../docs/ios-siri.md](../../docs/ios-siri.md).
-
 ## Targets
 
 | target | what |
