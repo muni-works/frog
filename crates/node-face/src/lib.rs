@@ -15,6 +15,7 @@ pub mod camera;
 pub mod draw;
 pub mod ears;
 pub mod face;
+pub mod pixel;
 #[cfg(feature = "voice")]
 pub mod voice;
 
