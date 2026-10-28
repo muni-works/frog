@@ -1,0 +1,37 @@
+[package]
+name = "node-face"
+description = "The frog node's face: the Soft Blocks eyes on the head's screen, driven by frog's state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "node-face"
+path = "src/main.rs"
+
+[features]
+default = []
+# A window on the head's panel (X11/Wayland/macOS). Off by default so `cargo build --workspace` needs no GUI libraries.
+window = ["dep:minifb"]
+# the face speaks with ribt (ipse's streaming TTS), through the host's audio device.
+voice = ["window", "dep:rodio"]
+# the eyes find you: a webcam (nokhwa: AVFoundation on macOS, V4L2 on the Jetson) and a face detector (rustface,
+# pure Rust; it loads SeetaFace's model from --face-model).
+camera = ["dep:nokhwa", "dep:rustface"]
+
+[dependencies]
+# The puck crate already folds `frog --serve` into what a screen should show, and draws anti-aliased
+# shapes and text into a framebuffer; the node's face reuses both.
+puck = { path = "../puck" }
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+minifb = { version = "0.28", optional = true }
+rodio = { version = "0.20", optional = true, default-features = false, features = ["wav"] }
+nokhwa = { version = "0.10", optional = true, features = ["input-native"] }
+rustface = { version = "0.1", optional = true }
+
+[[example]]
+name = "camera"
+required-features = ["camera"]
