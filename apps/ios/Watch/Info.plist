@@ -21,7 +21,7 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>WKCompanionAppBundleIdentifier</key>
-	<string>eco.frog.remote</string>
+	<string>toys.frog.remote</string>
 	<key>WKRunsIndependentlyOfCompanionApp</key>
 	<true/>
 </dict>

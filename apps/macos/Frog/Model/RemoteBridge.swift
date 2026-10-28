@@ -556,7 +556,7 @@ final class RemoteBridge {
 /// A phone choosing a model for a conversation. The pane showing the session claims it.
 @MainActor
 final class ModelRequest {
-    static let name = Notification.Name("eco.frog.remote.model")
+    static let name = Notification.Name("toys.frog.remote.model")
     /// The phone's answer to "Use cloud models in <project>?".
     enum Cloud: String { case once, always }
     enum Outcome {
@@ -588,7 +588,7 @@ final class ModelRequest {
 /// A phone asking to fork or rewind a turn. The pane showing the session claims it.
 @MainActor
 final class TurnRequest {
-    static let name = Notification.Name("eco.frog.remote.turn")
+    static let name = Notification.Name("toys.frog.remote.turn")
     enum Action: String { case fork, rewind }
 
     let session: String
@@ -613,7 +613,7 @@ final class TurnRequest {
 /// `folder`, or a chat) that starts with `text`. The first window to claim it opens it.
 @MainActor
 final class OpenRequest {
-    static let name = Notification.Name("eco.frog.remote.open")
+    static let name = Notification.Name("toys.frog.remote.open")
 
     let session: SessionInfo?
     let folder: URL?

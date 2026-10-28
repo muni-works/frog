@@ -150,7 +150,7 @@ enum House {
 enum Keychain {
     private static func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "eco.frog.remote",
+         kSecAttrService as String: "toys.frog.remote",
          kSecAttrAccount as String: account]
     }
 

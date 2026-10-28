@@ -53,8 +53,8 @@ time, and the first command or edit stops to ask. They drive the Live Activity, 
 too.
 
 ```
-xcrun simctl launch booted eco.frog.remote -fixtures YES          # the list of recordings
-xcrun simctl launch booted eco.frog.remote -fixture long-answer    # straight into one
+xcrun simctl launch booted toys.frog.remote -fixtures YES          # the list of recordings
+xcrun simctl launch booted toys.frog.remote -fixture long-answer    # straight into one
 ```
 
 ## Against the Mac, in the Simulator
@@ -62,7 +62,7 @@ xcrun simctl launch booted eco.frog.remote -fixture long-answer    # straight in
 ```
 defaults write eco.frog.dev remoteEnabled -bool YES     # the debug Mac app, eco.frog.dev
 defaults read eco.frog.dev remoteToken                  # the code
-SIMCTL_CHILD_FROG_REMOTE_CODE=<code> xcrun simctl launch booted eco.frog.remote
+SIMCTL_CHILD_FROG_REMOTE_CODE=<code> xcrun simctl launch booted toys.frog.remote
 ```
 
 Once connected, the phone registers with the Mac for pushes. In the Simulator the Mac delivers

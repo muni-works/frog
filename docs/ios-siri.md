@@ -113,7 +113,7 @@ works both at home and away.
 **Simulator.** An unsigned build can't use the Keychain, so pass the token in the environment:
 
 ```bash
-SIMCTL_CHILD_FROG_HOUSE_TOKEN=… xcrun simctl launch booted eco.frog.remote
+SIMCTL_CHILD_FROG_HOUSE_TOKEN=… xcrun simctl launch booted toys.frog.remote
 ```
 
 ## What works where

@@ -43,7 +43,7 @@ struct Snapshot: Codable, Equatable {
     var host: String?
     var at: Date
 
-    static let group = "group.eco.frog.remote"
+    static let group = "group.toys.frog.remote"
     static var defaults: UserDefaults { UserDefaults(suiteName: group) ?? .standard }
 
     var waiting: [Row] { rows.filter { $0.live == "waiting" } }

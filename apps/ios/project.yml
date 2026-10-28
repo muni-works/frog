@@ -1,6 +1,6 @@
 name: FrogRemote
 options:
-  bundleIdPrefix: eco.frog
+  bundleIdPrefix: toys.frog
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
@@ -32,7 +32,7 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote
+        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote
         PRODUCT_NAME: Frog
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) FROG_APP
         CODE_SIGN_ENTITLEMENTS: Frog/Frog.entitlements
@@ -52,11 +52,11 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSUserActivityTypes: [eco.frog.conversation]
-        FrogKeychainGroup: $(AppIdentifierPrefix)eco.frog.remote
+        FrogKeychainGroup: $(AppIdentifierPrefix)toys.frog.remote
         NSSupportsLiveActivities: true
         NSBonjourServices: [_frog._tcp]
         CFBundleURLTypes:
-          - CFBundleURLName: eco.frog.remote
+          - CFBundleURLName: toys.frog.remote
             CFBundleURLSchemes: [frog]
   # Long-press a question from frog: the command or the diff, before you allow it.
   FrogNotify:
@@ -73,7 +73,7 @@ targets:
       - path: ../FrogKit/UI/Cards
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.notify
+        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.notify
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Frog
     info:
@@ -104,7 +104,7 @@ targets:
       - path: ../FrogKit/UI/Cards
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.widgets
         CODE_SIGN_ENTITLEMENTS: Widgets/Widgets.entitlements
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Frog
@@ -132,19 +132,19 @@ targets:
       - path: ../FrogKit/UI/Basics
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.watchkitapp
+        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.watchkitapp
         CODE_SIGN_ENTITLEMENTS: Watch/Watch.entitlements
         PRODUCT_NAME: Frog
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Frog
-        INFOPLIST_KEY_WKCompanionAppBundleIdentifier: eco.frog.remote
+        INFOPLIST_KEY_WKCompanionAppBundleIdentifier: toys.frog.remote
         INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Watch/Info.plist
       properties:
         CFBundleDisplayName: Frog
-        WKCompanionAppBundleIdentifier: eco.frog.remote
+        WKCompanionAppBundleIdentifier: toys.frog.remote
         WKRunsIndependentlyOfCompanionApp: true
   # "Send to frog" in the share sheet: a screenshot, a log or a link, into an open conversation.
   FrogShare:
@@ -159,7 +159,7 @@ targets:
       - path: ../FrogKit/UI/Cards
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.share
+        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.share
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Send to frog
         CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
@@ -167,7 +167,7 @@ targets:
       path: ShareExtension/Info.plist
       properties:
         CFBundleDisplayName: Send to frog
-        FrogKeychainGroup: $(AppIdentifierPrefix)eco.frog.remote
+        FrogKeychainGroup: $(AppIdentifierPrefix)toys.frog.remote
         NSBonjourServices: [_frog._tcp]
         NSLocalNetworkUsageDescription: "frog sends what you share to frog on your Mac."
         NSAppTransportSecurity:
@@ -203,7 +203,7 @@ targets:
       - path: ../FrogKit/UI/Basics
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.remote.watchkitapp.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.watchkitapp.widgets
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Frog
         CODE_SIGN_ENTITLEMENTS: WatchWidgets/WatchWidgets.entitlements

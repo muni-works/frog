@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const http2 = require("node:http2");
 
 const HOSTS = { production: "https://api.push.apple.com", sandbox: "https://api.sandbox.push.apple.com" };
-const TOPIC = /^eco\.frog\.remote(\.push-type\.liveactivity)?$/;
+const TOPIC = /^toys\.frog\.remote(\.push-type\.liveactivity)?$/;
 
 /** A request from a Mac, checked; throws a message a Mac can show. */
 function validate(body) {
