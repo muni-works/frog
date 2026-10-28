@@ -17,6 +17,161 @@ pub enum Glyph {
     Diamond,
 }
 
+/// The designed emotions. Each is one clear idea: a mouth pose, a pupil size, an entry motion and a blush
+/// (settled in the Soft Blocks lab, cortex/face/soft-blocks-lab.html in the rose repo).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mood {
+    Idle,
+    Listening,
+    Thinking,
+    Happy,
+    Delighted,
+    Surprised,
+    Annoyed,
+    Sad,
+    Sleepy,
+    Focused,
+    Love,
+    Done,
+    Speaking,
+}
+
+/// The mouth's pose: `w` width and `open`ing (screen widths), `curve` (+ smile / - frown), `side` (toward one
+/// cheek), `tilt` (one corner lower), `round` (an "o" rather than a lens), `press` (thinner lips); plus `pupil`
+/// size, a sad `quiver` and an entry `bounce`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pose {
+    pub w: f32,
+    pub open: f32,
+    pub curve: f32,
+    pub side: f32,
+    pub tilt: f32,
+    pub round: f32,
+    pub press: f32,
+    pub pupil: f32,
+    pub quiver: f32,
+    pub bounce: f32,
+}
+
+const POSE0: Pose = Pose {
+    w: 0.085,
+    open: 0.0,
+    curve: 0.15,
+    side: 0.0,
+    tilt: 0.0,
+    round: 0.0,
+    press: 0.0,
+    pupil: 1.0,
+    quiver: 0.0,
+    bounce: 0.0,
+};
+
+impl Mood {
+    pub fn pose(self) -> Pose {
+        let p = POSE0;
+        match self {
+            Mood::Idle => p,
+            Mood::Listening => Pose {
+                w: 0.075,
+                open: 0.007,
+                curve: 0.1,
+                pupil: 1.15,
+                ..p
+            },
+            Mood::Thinking => Pose {
+                w: 0.055,
+                curve: -0.1,
+                side: 0.55,
+                tilt: 0.25,
+                press: 0.5,
+                pupil: 0.95,
+                ..p
+            },
+            Mood::Happy => Pose {
+                w: 0.11,
+                open: 0.006,
+                curve: 0.85,
+                pupil: 1.05,
+                ..p
+            },
+            Mood::Delighted => Pose {
+                w: 0.12,
+                open: 0.03,
+                curve: 1.0,
+                round: 0.15,
+                pupil: 1.1,
+                bounce: 1.6,
+                ..p
+            },
+            Mood::Surprised => Pose {
+                w: 0.034,
+                open: 0.034,
+                curve: 0.0,
+                round: 1.0,
+                pupil: 0.72,
+                bounce: 1.0,
+                ..p
+            },
+            Mood::Annoyed => Pose {
+                w: 0.07,
+                curve: -0.25,
+                tilt: -0.6,
+                press: 0.8,
+                pupil: 0.9,
+                ..p
+            },
+            Mood::Sad => Pose {
+                w: 0.06,
+                curve: -0.9,
+                press: 0.2,
+                pupil: 1.08,
+                quiver: 1.0,
+                ..p
+            },
+            Mood::Sleepy => Pose {
+                w: 0.05,
+                open: 0.005,
+                curve: 0.0,
+                round: 0.5,
+                pupil: 0.9,
+                ..p
+            },
+            Mood::Focused => Pose {
+                w: 0.06,
+                curve: -0.05,
+                press: 1.0,
+                pupil: 0.92,
+                ..p
+            },
+            Mood::Love => Pose {
+                w: 0.07,
+                curve: 0.7,
+                pupil: 1.2,
+                bounce: 0.8,
+                ..p
+            },
+            Mood::Done => Pose {
+                w: 0.09,
+                curve: 0.75,
+                bounce: 0.6,
+                ..p
+            },
+            Mood::Speaking => Pose { curve: 0.3, ..p },
+        }
+    }
+
+    /// How much it blushes: love most, then delight, happiness, a job done; never the rest.
+    pub fn blush(self) -> f32 {
+        match self {
+            Mood::Love => 1.0,
+            Mood::Delighted => 0.8,
+            Mood::Happy => 0.55,
+            Mood::Done => 0.35,
+            _ => 0.0,
+        }
+    }
+}
+
 /// What the face is heading for.
 #[derive(Clone, Copy, Debug)]
 pub struct Target {
@@ -27,6 +182,7 @@ pub struct Target {
     pub glyph: Glyph,
     pub listen: bool,
     pub think: f32,
+    pub mood: Mood,
 }
 
 impl Target {
@@ -38,6 +194,7 @@ impl Target {
             glyph: Glyph::None,
             listen: false,
             think: 0.0,
+            mood: Mood::Idle,
         }
     }
 }
@@ -54,28 +211,33 @@ pub fn target(p: &Puck, now: f64, talking: bool, look: Option<(f32, f32)>) -> Ta
     let mut t = match p.mode {
         Mode::Boot => Target {
             gaze: Some((0.0, 0.3)),
+            mood: if age < 1.6 { Mood::Sleepy } else { Mood::Idle },
             ..Target::at(0.05, if age < 1.6 { -1.0 } else { 0.0 })
         },
         Mode::Idle => Target::at(0.0, 0.0),
         Mode::Listening => Target {
             listen: true,
             gaze: Some(look.unwrap_or((0.0, 0.0))),
+            mood: Mood::Listening,
             ..Target::at(0.2, 0.5)
         },
         Mode::Thinking => Target {
             think: 1.0,
             gaze: Some((0.55, -0.6)),
+            mood: Mood::Thinking,
             ..Target::at(0.0, 0.2)
         },
         // Running a command: focused, looking down at the work, still a little busy.
         Mode::Running => Target {
             think: 0.35,
             gaze: Some((0.0, 0.75)),
+            mood: Mood::Focused,
             ..Target::at(0.0, -0.2)
         },
         // Asking to run something: attentive, at the person.
         Mode::Ask => Target {
             gaze: Some(look.unwrap_or((0.0, 0.0))),
+            mood: Mood::Listening,
             ..Target::at(0.2, 0.75)
         },
         Mode::Done => Target {
@@ -84,10 +246,16 @@ pub fn target(p: &Puck, now: f64, talking: bool, look: Option<(f32, f32)>) -> Ta
             } else {
                 Glyph::None
             },
+            mood: if age < CHECK_SECS {
+                Mood::Done
+            } else {
+                Mood::Happy
+            },
             ..Target::at(0.9, 0.45)
         },
         Mode::Error => Target {
             gaze: Some((0.0, 0.6)),
+            mood: Mood::Sad,
             ..Target::at(-0.75, -0.4)
         },
     };
@@ -95,6 +263,7 @@ pub fn target(p: &Puck, now: f64, talking: bool, look: Option<(f32, f32)>) -> Ta
         // Words are streaming: warm, open, at the person.
         t = Target {
             gaze: Some(look.unwrap_or((0.0, 0.0))),
+            mood: Mood::Speaking,
             ..Target::at(0.35, 0.25)
         };
     }
@@ -138,6 +307,16 @@ pub struct Face {
     /// How open the mouth is (0..1): the voice's loudness, snapping open on syllables and easing
     /// shut.
     pub mouth: f32,
+    /// The emotion now, and its pose eased toward (pupil size included).
+    pub mood: Mood,
+    pub pose: Pose,
+    /// Blush, 0..1: blooms in quickly, fades slowly.
+    pub blush: f32,
+    /// The liquid lips: upper and lower, each a chain of droplets (relative to the mouth's centre, screen widths).
+    pub lips: [[Droplet; LIPS]; 2],
+    /// A kick to the lips' surface: a syllable onset, or an emotion arriving with a bounce.
+    pub pulse: f32,
+    prev_mouth: f32,
     vv: f32,
     va: f32,
     vg: f32,
@@ -179,6 +358,12 @@ impl Face {
             wave: Vec::new(),
             mic: 0.0,
             mouth: 0.0,
+            mood: Mood::Idle,
+            pose: POSE0,
+            blush: 0.0,
+            lips: [[Droplet::default(); LIPS]; 2],
+            pulse: 0.0,
+            prev_mouth: 0.0,
             vv: 0.0,
             va: 0.0,
             vg: 0.0,
@@ -264,6 +449,139 @@ impl Face {
         };
         let rate = if open > self.mouth { 30.0 } else { 9.0 };
         self.mouth += (open - self.mouth) * (dt32 * rate).min(1.0);
+
+        // the emotion: ease the pose in, bounce on arrival, bloom or fade the blush
+        if t.mood != self.mood {
+            self.mood = t.mood;
+            self.pulse = self.pulse.max(t.mood.pose().bounce);
+        }
+        let want = t.mood.pose();
+        let e = 1.0 - (-dt32 * 5.5).exp();
+        let p = &mut self.pose;
+        for (cur, to) in [
+            (&mut p.w, want.w),
+            (&mut p.open, want.open),
+            (&mut p.curve, want.curve),
+            (&mut p.side, want.side),
+            (&mut p.tilt, want.tilt),
+            (&mut p.round, want.round),
+            (&mut p.press, want.press),
+            (&mut p.pupil, want.pupil),
+            (&mut p.quiver, want.quiver),
+        ] {
+            *cur += (to - *cur) * e;
+        }
+        let bt = t.mood.blush();
+        self.blush += (bt - self.blush) * (dt32 * if bt > self.blush { 4.0 } else { 1.2 }).min(1.0);
+        self.step_lips(now, dt32);
+    }
+}
+
+/// Droplets per lip.
+pub const LIPS: usize = 9;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Droplet {
+    pub x: f32,
+    pub y: f32,
+    vx: f32,
+    vy: f32,
+}
+
+impl Face {
+    /// Where droplet `i` of a lip wants to be, relative to the mouth's centre: the lips bow apart in the middle (a
+    /// lens, or toward an ellipse when round) and meet at the corners, which carry the curve and the tilt.
+    pub fn lip_target(&self, i: usize, lower: bool, now: f64) -> (f32, f32) {
+        let p = &self.pose;
+        let tt = now as f32;
+        let speaking = self.talk > 0.05;
+        let breath = if speaking {
+            0.0
+        } else {
+            0.004 * (tt * 1.3).sin() * (1.0 - self.listen)
+        };
+        let drift = self.think * 0.25 * (tt * 0.9).sin();
+        let quiver =
+            p.quiver * ((tt * 23.0).sin() * 0.5 + 0.5) * (tt * 0.7).sin().max(0.0).powi(8) * 0.003;
+        let w = if speaking {
+            p.w.max(0.055 + 0.04 * self.mouth)
+        } else {
+            p.w * (1.0 + breath * 3.0)
+        };
+        let open = if speaking {
+            0.004 + 0.05 * self.mouth + p.open * 0.5
+        } else {
+            p.open
+        };
+        let f = i as f32 / (LIPS - 1) as f32 - 0.5;
+        let bell = (1.0 - p.round) * (f * std::f32::consts::PI).cos()
+            + p.round * (1.0 - 4.0 * f * f).max(0.0).sqrt();
+        let corner = -(p.curve * 0.022) * (4.0 * f * f)
+            + p.tilt * 0.012 * f
+            + quiver * f.signum() * 4.0 * f * f;
+        let sgn = if lower { 1.0 } else { -1.0 };
+        let gap = if lower { 1.1 } else { 0.9 };
+        let y = corner
+            + sgn * gap * open / 2.0 * bell
+            + sgn * 0.004 * (1.0 - bell * 0.5) * (1.0 - 0.6 * p.press);
+        ((p.side + drift) * 0.02 + f * w, y)
+    }
+
+    /// Jump straight to `mood`, settled (pose, blush, lips at rest): for stills and previews.
+    pub fn settle(&mut self, mood: Mood, now: f64) {
+        self.mood = mood;
+        self.pose = mood.pose();
+        self.blush = mood.blush();
+        for (l, lower) in [false, true].into_iter().enumerate() {
+            for i in 0..LIPS {
+                let (x, y) = self.lip_target(i, lower, now);
+                self.lips[l][i] = Droplet {
+                    x,
+                    y,
+                    ..Droplet::default()
+                };
+            }
+        }
+    }
+
+    /// Damped springs with surface tension: each droplet pulls toward its target and its neighbours, and a syllable
+    /// onset (or an emotion's arrival) kicks the surface.
+    fn step_lips(&mut self, now: f64, dt: f32) {
+        if self.lips[0][0] == Droplet::default() {
+            for (l, lip) in [false, true].into_iter().enumerate() {
+                for i in 0..LIPS {
+                    let (x, y) = self.lip_target(i, lip, now);
+                    self.lips[l][i] = Droplet {
+                        x,
+                        y,
+                        ..Droplet::default()
+                    };
+                }
+            }
+        }
+        if self.mouth - self.prev_mouth > 0.18 {
+            self.pulse = self.pulse.max(1.0);
+        }
+        self.prev_mouth = self.mouth;
+        self.pulse *= (-dt * 8.0).exp();
+        for (l, lower) in [false, true].into_iter().enumerate() {
+            let ys: Vec<f32> = self.lips[l].iter().map(|d| d.y).collect();
+            for i in 0..LIPS {
+                let (tx, ty) = self.lip_target(i, lower, now);
+                let nb = (ys[i.saturating_sub(1)] + ys[(i + 1).min(LIPS - 1)]) / 2.0;
+                let kick = self.pulse
+                    * if lower { 1.0 } else { -1.0 }
+                    * (i as f32 / (LIPS - 1) as f32 * std::f32::consts::PI).sin()
+                    * 0.6;
+                let d = &mut self.lips[l][i];
+                let ay = 260.0 * (ty - d.y) + 90.0 * (nb - d.y) - 9.0 * d.vy + kick * 2.2;
+                let ax = 260.0 * (tx - d.x) - 9.0 * d.vx;
+                d.vx += ax * dt;
+                d.vy += ay * dt;
+                d.x += d.vx * dt;
+                d.y += d.vy * dt;
+            }
+        }
     }
 }
 

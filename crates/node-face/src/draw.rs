@@ -304,7 +304,7 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64) {
         let pv = 1.0 - face.g;
         if pv > 0.02 {
             let (ew, eh) = (e.w * st.size * grow * w, e.h * st.size * grow * w);
-            let dil = 1.0 + 0.45 * face.listen + 0.15 * face.hear - 0.075 * pos(face.v);
+            let dil = face.pose.pupil * (1.0 + 0.3 * face.listen + 0.15 * face.hear);
             let scan = face.think * ((t * 1000.0 / 260.0) as f32 + side * 0.4).sin() * 0.3;
             let (pw, ph) = (ew * 0.52 * dil, eh * 0.4 * dil);
             let (ecx, ecy) = u(cx, cy);
@@ -336,24 +336,8 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64) {
         }
     }
 
-    // Blush under the outer corners when happy.
-    if face.v > 0.1 {
-        let a = (face.v * 0.55).min(0.55);
-        for side in [-1.0f32, 1.0] {
-            let (bx, by) = u(0.5 + side * (st.spacing + 0.075), 0.49 + 0.19 * st.size);
-            let (rx, ry) = (0.06 * w, 0.03 * w);
-            for y in (by - ry) as i32..=(by + ry) as i32 {
-                for x in (bx - rx) as i32..=(bx + rx) as i32 {
-                    let d = ((x as f32 - bx) / rx).hypot((y as f32 - by) / ry);
-                    if d < 1.0 {
-                        cv.blend(x, y, BLUSH, a * (1.0 - d) * (1.0 - d));
-                    }
-                }
-            }
-        }
-    }
-
-    voice_light(cv, face, t, &u, w, col, st.size);
+    blush(cv, face, &u, w, col, st);
+    lips(cv, face, &u, w, col, st.size);
 
     if st.glow {
         // Louder while listening and thinking: the glow pulses.
@@ -365,149 +349,132 @@ pub fn draw(cv: &mut Canvas, face: &Face, st: &Style, t: f64) {
     }
 }
 
-/// The mouth, under the eyes: a mouth made of light, never a readout. At rest a short soft capsule
-/// that breathes; while listening, soft pills that bounce with your voice; while thinking, three
-/// dots bobbing; while speaking, three translucent ribbons that open with the voice's loudness and
-/// drift against each other, added together so their overlaps glow, around a bright core. The
-/// states cross-fade on their springs.
-#[allow(clippy::too_many_arguments)]
-fn voice_light(
+/// The blush: light, not paint. A wide faint halo, a body and a small warm core, its colour leaning toward the eyes'
+/// glow, shaped like a cheek (long, tilted up at the outer end) under each eye, rising with a smiling cheek and
+/// following the gaze. `face.blush` blooms in fast and fades slow.
+fn blush(
     cv: &mut Canvas,
     face: &Face,
-    t: f64,
+    u: &dyn Fn(f32, f32) -> (f32, f32),
+    w: f32,
+    col: Rgb,
+    st: &Style,
+) {
+    let b = face.blush;
+    if b < 0.01 {
+        return;
+    }
+    let cheek = pos(face.v);
+    for side in [-1.0f32, 1.0] {
+        let (bx, by) = u(
+            0.5 + side * (st.spacing + 0.062) + face.gx * 0.025,
+            0.49 + (0.205 - 0.03 * cheek) * st.size + face.gy * 0.02,
+        );
+        let (rot_c, rot_s) = ((side * 0.16).cos(), (side * 0.16).sin());
+        let reach = 0.095 * w;
+        for y in (by - reach * 0.6) as i32..=(by + reach * 0.6) as i32 {
+            for x in (bx - reach) as i32..=(bx + reach) as i32 {
+                let (dx, dy) = (x as f32 + 0.5 - bx, y as f32 + 0.5 - by);
+                // into the cheek's frame: rotated, squashed to half height
+                let (ex, ey) = (dx * rot_c + dy * rot_s, (-dx * rot_s + dy * rot_c) / 0.5);
+                let d = ex.hypot(ey) / w;
+                for (r, a, m) in [
+                    (0.095f32, 0.16f32, 0.3f32),
+                    (0.055, 0.3, 0.12),
+                    (0.028, 0.22, 0.0),
+                ] {
+                    let q = d / r;
+                    if q >= 1.0 {
+                        continue;
+                    }
+                    let fall = if q < 0.55 {
+                        1.0 - 0.55 * q / 0.55
+                    } else {
+                        0.45 * (1.0 - q) / 0.45
+                    };
+                    cv.add(x, y, puck::canvas::lerp(BLUSH, col, m), a * b * fall);
+                }
+            }
+        }
+    }
+}
+
+/// The mouth: two lips of light, each a chain of droplets (face.lips, moved by springs in face.rs), drawn per pixel
+/// as one metaball field: soft anti-aliased edges, a hotter core where it's thickest, a sheen along the top.
+fn lips(
+    cv: &mut Canvas,
+    face: &Face,
     u: &dyn Fn(f32, f32) -> (f32, f32),
     w: f32,
     col: Rgb,
     size: f32,
 ) {
-    // Human proportions: the mouth sits well below the eyes, about a third of the way from them to
-    // the chin; the tall portrait panel has room to drop it further.
-    let below = if cv.h > cv.w { 0.43 } else { 0.33 };
-    let (cx, cy) = u(0.5, 0.49 + below * size);
-    let t32 = t as f32;
-    let speak = face.talk.clamp(0.0, 1.0);
-    let listen = (face.listen * (1.0 - speak)).clamp(0.0, 1.0);
-    let think = (face.think * (1.0 - speak) * (1.0 - listen)).clamp(0.0, 1.0);
-    let rest = (1.0 - speak - listen - think).clamp(0.0, 1.0);
-    let dot = 0.011 * w;
-
-    if rest > 0.02 {
-        // A closed mouth: a short capsule, breathing.
-        let b = 0.5 + 0.5 * (t32 / 1.4).sin();
-        let len = (0.05 + 0.006 * b) * w;
-        soft_capsule(cv, cx, cy, len, dot * 0.9, col, rest * (0.5 + 0.3 * b));
-    }
-    if listen > 0.02 {
-        // Your voice: five soft pills, tallest in the middle, each with its own wobble.
-        for i in -2i32..=2 {
-            let shape = 1.0 - i.abs() as f32 / 3.2;
-            let wob = 0.65 + 0.35 * (t32 * 6.0 + i as f32 * 1.7).sin();
-            let h = dot * 2.0 + face.mic * shape * wob * 0.08 * w;
-            pill(
-                cv,
-                cx + i as f32 * 0.035 * w,
-                cy,
-                dot * 1.6,
-                h,
-                col,
-                listen * 0.85,
-            );
+    let (mx, my) = (0.5, 0.49 + if cv.h > cv.w { 0.43 } else { 0.33 } * size);
+    let speaking = face.talk > 0.05;
+    let rest = (1.0 - face.talk - face.listen - face.think).clamp(0.0, 1.0);
+    let lit = 0.55 + 0.45 * rest.max(face.talk.min(1.0));
+    let p = &face.pose;
+    let r0 = if speaking { 0.0105 } else { 0.0115 }
+        * size
+        * (1.0 - 0.32 * p.press)
+        * (1.0 - 0.25 * p.round * if speaking { 0.0 } else { 1.0 })
+        * w;
+    let mut balls: Vec<(f32, f32, f32)> = Vec::with_capacity(2 * crate::face::LIPS);
+    for lip in &face.lips {
+        for (i, d) in lip.iter().enumerate() {
+            let f = i as f32 / (crate::face::LIPS - 1) as f32 - 0.5;
+            let r = r0 * (1.0 - 0.7 * f.abs()) * (1.0 + 0.15 * face.mouth);
+            let (x, y) = u(mx + d.x * size, my + d.y * size);
+            balls.push((x, y, r * r));
         }
     }
-    if think > 0.02 {
-        for i in 0..3 {
-            let y = cy - (t32 * 6.0 - i as f32 * 0.9).sin().max(0.0) * 0.014 * w;
-            soft_dot(
-                cv,
-                cx + (i as f32 - 1.0) * 0.035 * w,
-                y,
-                dot,
-                col,
-                think * 0.9,
-            );
-        }
-    }
-    if speak > 0.02 {
-        ribbon(cv, cx, cy, w, t32, face.mouth, col, speak);
-    }
-}
-
-/// The speaking mouth: three lens-shaped ribbons, opening with `open` (0..1), drifting at their own
-/// speeds and summed as light, around a thin bright core.
-#[allow(clippy::too_many_arguments)]
-fn ribbon(cv: &mut Canvas, cx: f32, cy: f32, w: f32, t: f32, open: f32, col: Rgb, a: f32) {
-    let half = 0.17 * w;
-    let amp = (0.004 + 0.075 * open.clamp(0.0, 1.0).powf(0.8)) * w;
-    let warm = puck::canvas::lerp(col, BLUSH, 0.35);
-    let white = puck::canvas::lerp(col, [1.0; 3], 0.5);
-    // (cycles across, drift speed, phase, height, colour, alpha)
-    let layers = [
-        (1.0f32, 1.3f32, 0.0f32, 1.0f32, col, 0.3f32),
-        (1.6, -2.1, 1.7, 0.75, warm, 0.24),
-        (2.4, 3.2, 4.1, 0.55, white, 0.18),
-    ];
-    let (x0, x1) = ((cx - half).floor() as i32, (cx + half).ceil() as i32);
-    for x in x0..=x1 {
-        let f = ((x as f32 + 0.5 - (cx - half)) / (2.0 * half)).clamp(0.0, 1.0);
-        let env = (f * PI).sin().powf(1.4);
-        for &(cyc, speed, ph, hk, c, ak) in &layers {
-            let h = amp * hk * env * (0.55 + 0.45 * (f * cyc * TAU + t * speed + ph).sin());
-            if h < 0.5 {
+    let (x0, x1) = balls
+        .iter()
+        .fold((f32::MAX, f32::MIN), |b, q| (b.0.min(q.0), b.1.max(q.0)));
+    let (y0, y1) = balls
+        .iter()
+        .fold((f32::MAX, f32::MIN), |b, q| (b.0.min(q.1), b.1.max(q.1)));
+    let pad = r0 * 1.8;
+    for y in (y0 - pad) as i32..=(y1 + pad) as i32 {
+        for x in (x0 - pad) as i32..=(x1 + pad) as i32 {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            // squared falloff: droplets only fuse where they nearly touch, so parted lips show the dark between them
+            let f: f32 = balls
+                .iter()
+                .map(|&(bx, by, r2)| {
+                    let q = r2 / ((px - bx).powi(2) + (py - by).powi(2) + 0.5);
+                    q * q
+                })
+                .sum::<f32>()
+                .sqrt();
+            if f < 0.55 {
                 continue;
             }
-            for y in (cy - h - 1.0) as i32..=(cy + h + 1.0) as i32 {
-                let d = ((y as f32 + 0.5 - cy).abs() / h).min(1.2);
-                // denser toward the middle, a soft edge outside
-                let v = (1.0 - d * d).max(0.0).powf(0.6)
-                    + (1.0 - (d - 1.0).abs() * 6.0).max(0.0) * 0.25;
-                cv.add(x, y, c, a * ak * v);
-            }
-        }
-        // the core: a thin bright line, thickest where the mouth is open
-        let core = (0.0035 * w) * (0.6 + 0.4 * env);
-        for y in (cy - core - 1.0) as i32..=(cy + core + 1.0) as i32 {
-            let v = (1.0 - ((y as f32 + 0.5 - cy).abs() - core).max(0.0)).clamp(0.0, 1.0);
-            cv.add(x, y, white, a * 0.55 * v * env.powf(0.5));
+            let e = ((f - 0.55) / 0.5).min(1.0);
+            let a = e * e * (3.0 - 2.0 * e);
+            let core = ((f - 1.2) * 0.35).clamp(0.0, 1.0); // hotter where it's thick
+            cv.add(x, y, puck::canvas::lerp(col, [1.0; 3], core), a * lit);
         }
     }
-}
-
-/// A horizontal capsule with a soft, glowing edge (added as light).
-fn soft_capsule(cv: &mut Canvas, cx: f32, cy: f32, len: f32, r: f32, c: Rgb, a: f32) {
-    let hx = len / 2.0;
-    for y in (cy - r * 2.0) as i32..=(cy + r * 2.0) as i32 {
-        for x in (cx - hx - r * 2.0) as i32..=(cx + hx + r * 2.0) as i32 {
-            let dx = ((x as f32 + 0.5 - cx).abs() - hx).max(0.0);
-            let d = dx.hypot(y as f32 + 0.5 - cy) / r;
-            let v = if d < 1.0 {
-                1.0
-            } else {
-                (-(d - 1.0) * (d - 1.0) * 3.0).exp() * 0.5
-            };
-            cv.add(x, y, c, a * v);
-        }
+    // the sheen: a soft highlight along the upper lip's top
+    let top: Vec<(f32, f32)> = face.lips[0]
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| ((*i as f32 / (crate::face::LIPS - 1) as f32) - 0.5).abs() < 0.36)
+        .map(|(_, d)| u(mx + d.x * size, my + d.y * size))
+        .map(|(x, y)| (x, y - r0 * 0.55))
+        .collect();
+    for s in top.windows(2) {
+        cv.line(
+            s[0].0,
+            s[0].1,
+            s[1].0,
+            s[1].1,
+            0.003 * w,
+            [1.0; 3],
+            0.25 * lit,
+        );
     }
-}
-
-/// A vertical pill `h` tall, soft-edged.
-fn pill(cv: &mut Canvas, cx: f32, cy: f32, wd: f32, h: f32, c: Rgb, a: f32) {
-    let (r, hy) = (wd / 2.0, (h / 2.0 - wd / 2.0).max(0.0));
-    for y in (cy - h / 2.0 - r) as i32..=(cy + h / 2.0 + r) as i32 {
-        for x in (cx - r * 2.0) as i32..=(cx + r * 2.0) as i32 {
-            let dy = ((y as f32 + 0.5 - cy).abs() - hy).max(0.0);
-            let d = (x as f32 + 0.5 - cx).hypot(dy) / r;
-            let v = if d < 1.0 {
-                1.0
-            } else {
-                (-(d - 1.0) * (d - 1.0) * 3.0).exp() * 0.5
-            };
-            cv.add(x, y, c, a * v);
-        }
-    }
-}
-
-fn soft_dot(cv: &mut Canvas, cx: f32, cy: f32, r: f32, c: Rgb, a: f32) {
-    pill(cv, cx, cy, r * 2.0, r * 2.0, c, a);
 }
 
 /// Add a blurred copy of the frame back onto itself. The blur runs at quarter resolution (three box

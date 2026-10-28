@@ -2,7 +2,7 @@
 
 ![the face through a turn, full panel](sheet.png)
 
-![the speaking mouth, quiet to loud](mouth.png)
+![every emotion, then the speaking mouth quiet to loud](mouth.png)
 
 The face on the frog node's screen: the Soft Blocks eyes, kawaii and glowing, at the head's panel resolution. It reuses [`puck`](../puck) to fold `frog --serve` into what frog is doing, and to draw anti-aliased shapes and text into a framebuffer.
 
@@ -40,4 +40,5 @@ With `--voice` it's voice only: ipse's `hear mic` listens (streaming recognition
 - `face.rs`: the character. Emotion (valence × arousal), gaze, glyph and the listening / thinking / talking levels, on springs.
 - `ears.rs`: hear as a child process: finished words, the word being heard, turn ends.
 - `voice.rs`: ribt as a child process, its PCM onto the speaker, loudness per 20 ms for the eyes.
+- `face.rs` also holds the designed emotions (`Mood`: a mouth pose, pupil size, entry bounce and blush each) and the liquid lips' physics.
 - `draw.rs`: 64-point eye outlines (so they morph into glyphs), pupils, membrane, blush, motes, the portrait status line, and the bloom.

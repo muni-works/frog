@@ -1,34 +1,61 @@
-//! The speaking mouth at six openings, side by side: `cargo run -p node-face --example mouth -- out.png`.
+//! Every emotion's face, settled, plus the speaking mouth quiet to loud:
+//! `cargo run -p node-face --example mouth -- out.png`.
 
 use node_face::draw::{self, Style};
-use node_face::face::Face;
+use node_face::face::{Face, Mood};
 use puck::canvas::Canvas;
+
+const MOODS: [(Mood, f32, f32); 12] = [
+    (Mood::Idle, 0.0, 0.0),
+    (Mood::Listening, 0.2, 0.5),
+    (Mood::Thinking, 0.0, 0.2),
+    (Mood::Happy, 0.9, 0.45),
+    (Mood::Delighted, 1.0, 0.9),
+    (Mood::Surprised, 0.2, 1.0),
+    (Mood::Annoyed, -0.7, 0.6),
+    (Mood::Sad, -0.75, -0.4),
+    (Mood::Sleepy, 0.05, -1.0),
+    (Mood::Focused, 0.0, -0.2),
+    (Mood::Love, 1.0, 0.4),
+    (Mood::Done, 0.7, 0.2),
+];
 
 fn main() -> anyhow::Result<()> {
     let out = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "mouth.png".into());
-    let (w, h, n) = (720usize, 720usize, 6usize);
-    let (top, rows) = (500usize, 220usize); // the band of the frame the mouth is in
-    let mut sheet = Canvas::new(w * 3 / 2, rows * 2);
+    let (w, h, cols, scale) = (720usize, 720usize, 6usize, 3usize);
+    let n = MOODS.len() + 6;
+    let (tw, th) = (w / scale, h / scale);
+    let mut sheet = Canvas::new(tw * cols, th * n.div_ceil(cols));
     let mut cv = Canvas::new(w, h);
     for i in 0..n {
         let mut face = Face::new();
-        face.a = 0.0;
-        face.v = 0.35;
-        face.gy = 0.0;
-        face.talk = 1.0;
-        face.mouth = (i as f32 + 0.5) / n as f32;
-        draw::draw(&mut cv, &face, &Style::default(), 2.0 + i as f64 * 0.37);
-        // half size, two rows of three
-        let (ox, oy) = ((i % 3) * w / 2, (i / 3) * rows);
-        for y in 0..rows {
-            for x in 0..w / 2 {
+        if let Some(&(m, v, a)) = MOODS.get(i) {
+            face.v = v;
+            face.a = a;
+            face.listen = (m == Mood::Listening) as u8 as f32;
+            face.think = (m == Mood::Thinking) as u8 as f32;
+            face.settle(m, 2.0);
+        } else {
+            // speaking, quiet to loud
+            face.v = 0.35;
+            face.a = 0.25;
+            face.talk = 1.0;
+            face.mouth = (i - MOODS.len()) as f32 / 5.0;
+            face.settle(Mood::Speaking, 2.0);
+        }
+        draw::draw(&mut cv, &face, &Style::default(), 2.0);
+        let (ox, oy) = ((i % cols) * tw, (i / cols) * th);
+        for y in 0..th {
+            for x in 0..tw {
                 let mut s = [0.0f32; 3];
-                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let p = cv.px[(top + y / 2 * 2 + dy).min(h - 1) * w + x * 2 + dx];
-                    for c in 0..3 {
-                        s[c] += p[c] / 4.0;
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let p = cv.px[(y * scale + dy) * w + x * scale + dx];
+                        for c in 0..3 {
+                            s[c] += p[c] / (scale * scale) as f32;
+                        }
                     }
                 }
                 sheet.px[(oy + y) * sheet.w + ox + x] = s;
