@@ -20,11 +20,19 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 pub const PROTOCOL: u64 = 1;
 const UPGRADE: &str = "https://frog.toys/download";
+/// The largest integer a JSON number keeps exactly in JavaScript (2^53 - 1).
+const MAX_SAFE_SEQ: u64 = (1 << 53) - 1;
 
 #[derive(Default)]
 struct State {
     session: String,
+    /// The last seq sent to a peer (after `offset`).
     last_seq: u64,
+    /// Added to the engine's seq on the wire. A restored container starts a new process whose
+    /// engine counts from 1 again, while the gateway still holds the old seqs; a peer that
+    /// resumes past anything this process sent moves the numbering above what it has, since a
+    /// client drops anything at or below the last seq it has seen.
+    offset: u64,
     /// Durable envelopes this process has emitted, as sent, for a peer's `resume_after`.
     durable: Vec<(u64, String)>,
     /// Asks still waiting on an answer (permission requests, questions, elicitations), as
@@ -74,9 +82,10 @@ pub async fn serve(mut h: Handle, addr: &str) -> Result<()> {
             let _ = ops.send(Op::Shutdown);
         });
     }
-    while let Some(env) = h.events.recv().await {
-        let text = serde_json::to_string(&env)?;
+    while let Some(mut env) = h.events.recv().await {
         let mut s = state.lock().unwrap();
+        env.seq += s.offset;
+        let text = serde_json::to_string(&env)?;
         s.session.clone_from(&env.session);
         s.last_seq = env.seq;
         if env.event.is_durable() {
@@ -144,6 +153,11 @@ async fn conn(
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     let me = {
         let mut s = state.lock().unwrap();
+        // Past anything a JS client can hold (u64::MAX: "only what's new") is no real seq.
+        if after > s.last_seq && after <= MAX_SAFE_SEQ {
+            s.offset += after - s.last_seq;
+            s.last_seq = after;
+        }
         let welcome = json!({"welcome": {
             "protocol": PROTOCOL,
             "session": s.session,
