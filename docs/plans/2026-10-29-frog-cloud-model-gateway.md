@@ -262,10 +262,9 @@ Found along the way:
 
 ### Backup provider
 
-**OpenRouter, pinned to Parasail** (bf16; the only Qwen3-Coder-Next host on OpenRouter today). One key and one integration covers several FP8 hosts (Together, Novita,
-Parasail), so an outage at one doesn't take overflow down, and the same upstream serves the
-other models (decision 9). The cost is OpenRouter's credit fee. Prices reported by third
-parties, unverified: OpenRouter ~$0.12 / $0.80 per M, Together FP8 $0.50 / $1.20.
+**OpenRouter, pinned to Parasail** (bf16; the only Qwen3-Coder-Next host on OpenRouter today). The same key serves the
+other models (decision 9). The cost is OpenRouter's credit fee. Parasail is a single host, so
+add Together direct (FP8, ~$0.50 / $1.20 per M, unverified) as a second overflow upstream.
 
 Alternative: Together direct (one provider, no reseller fee). Cloudflare Workers AI and Vercel
 don't appear to list Qwen3-Coder-Next.
