@@ -373,3 +373,11 @@ button.tool:hover { color: var(--fg); }
 .side-float { position: absolute; top: 11px; left: 12px; z-index: 5; }
 .brand .side-toggle { margin-right: -4px; }
 @media (max-width: 760px) { .side-toggle, .side-float { display: none !important; } .win.collapsed > .side { display: flex; } }
+/* Under your message, like Claude's: ticks, when, then the actions. */
+.hover-row .when, .hover-row .sep { font-size: 12px; color: var(--faint); padding: 0 2px; }
+.hover-row.waiting .when, .hover-row.waiting .sep { opacity: 0; }
+.ask-block:hover .hover-row.waiting .when, .ask-block:hover .hover-row.waiting .sep { opacity: 1; }
+/* View options ride on the first section header's right edge. */
+.slist { position: relative; }
+.slist > .sbar { position: absolute; right: 0; top: 4px; margin: 0; z-index: 2; }
+.slist > .sbar .ic-btn { width: 24px; height: 24px; }
