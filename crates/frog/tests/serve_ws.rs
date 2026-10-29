@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
@@ -150,15 +150,13 @@ async fn frog_on(script: Vec<String>, model: Option<&str>, extra: &[&str]) -> Fr
     let base = fake_model(script, models.clone()).await;
     let home = temp_dir("home");
     let work = temp_dir("work");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let addr = format!("127.0.0.1:{port}");
+
     let store = home.join("store");
     let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_frog"));
-    c.args(["--serve", "--serve-ws", &addr]);
+    // Port 0: frog binds a free port itself and prints it. Picking one here and handing it
+    // over raced between the tests running in parallel: two frogs could get the same port, and
+    // one test's client then replaced the other's peer mid-test.
+    c.args(["--serve", "--serve-ws", "127.0.0.1:0"]);
     if let Some(m) = model {
         c.args(["-m", m]);
     }
@@ -173,8 +171,28 @@ async fn frog_on(script: Vec<String>, model: Option<&str>, extra: &[&str]) -> Fr
         .env_remove("OPENAI_API_KEY")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let child = c.spawn().unwrap();
+    let mut child = c.spawn().unwrap();
+    // "frog serving websocket on <addr>" names the port it bound; the rest of stderr is passed
+    // through so a failing test still shows the engine's log.
+    let mut lines = tokio::io::BufReader::new(child.stderr.take().unwrap()).lines();
+    let addr = tokio::time::timeout(Duration::from_secs(30), async {
+        while let Some(line) = lines.next_line().await.unwrap() {
+            eprintln!("{line}");
+            if let Some(a) = line.strip_prefix("frog serving websocket on ") {
+                return a.trim().to_string();
+            }
+        }
+        panic!("frog exited before serving the websocket");
+    })
+    .await
+    .expect("frog --serve-ws never said where it's serving");
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = lines.next_line().await {
+            eprintln!("{line}");
+        }
+    });
     let f = Frog {
         child,
         addr,
