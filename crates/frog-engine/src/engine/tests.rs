@@ -1033,6 +1033,23 @@ async fn a_reply_cut_off_by_the_output_limit_is_continued() {
 }
 
 #[tokio::test]
+async fn a_cut_off_tool_call_is_asked_for_in_pieces_not_continued() {
+    // The output limit fell inside a tool call: no text, nothing that can run. "Continue" would
+    // restart the same oversized call, so the model is told to split it.
+    let script = vec![
+        reply(vec![], Stop::Length),
+        reply(vec![text("done in parts")], Stop::End),
+    ];
+    let (mut h, sent) = engine_profile(script, gateway_opus());
+    run(&mut h, "write a very long story to story.md").await;
+    let sent = sent.lock().unwrap();
+    let msgs = sent_messages(&sent[1]);
+    let last = msgs.iter().rev().find(|m| m["role"] == "user").unwrap().to_string();
+    assert!(last.contains("split it into smaller calls"), "{last}");
+    assert!(!last.contains("Continue exactly where you left off"), "{last}");
+}
+
+#[tokio::test]
 async fn max_tokens_is_distinguished() {
     // Continued MAX_CONTINUES times, then still cut off: the turn ends as MaxTokens.
     let mut h = engine(
