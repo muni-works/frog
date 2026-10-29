@@ -8,10 +8,25 @@ struct SettingsSheet: View {
     @AppStorage("playfulSounds") private var sounds = true
     @AppStorage(WatchLink.directKey) private var watchURL = ""
     private let stats = ModelStats.shared
+    @State private var cloud = CloudPhone.shared
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    if cloud.key != nil {
+                        Button("Sign Out", role: .destructive) { cloud.signOut() }
+                    } else {
+                        Button(cloud.signingIn ? "Signing In…" : "Sign In with GitHub") { cloud.signIn() }
+                            .disabled(cloud.signingIn)
+                    }
+                    if let e = cloud.error { Text(e).font(.footnote).foregroundStyle(.red) }
+                } header: {
+                    Text("Frog Cloud")
+                } footer: {
+                    Text("Sessions in their own cloud sandbox, on a repo you pick. They belong to your account, so they show up on the web and your Mac too.")
+                }
+
                 Section {
                     LabeledContent("This week", value: ModelStats.spent(stats.spentThisWeek))
                     if stats.monthlyCap > 0 {

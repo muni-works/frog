@@ -59,7 +59,8 @@ struct RootView: View {
                 }
             } else {
                 NavigationStack(path: $path) {
-                    if connected { SessionListView(remote: remote) } else { ConnectView(remote: remote) }
+                    // Signed in to Frog Cloud, the list works without a Mac: its sessions are the cloud's.
+                    if connected || CloudPhone.shared.key != nil { SessionListView(remote: remote) } else { ConnectView(remote: remote) }
                 }
                 .environment(\.startNewChat) { if size != .regular { go(NewChat(), animated: true) } }
             }
@@ -164,6 +165,12 @@ struct ConnectView: View {
                 Section {
                     Button("Scan the Code on Your Mac", systemImage: "qrcode.viewfinder") { scanning = true }
                 }
+            }
+            Section {
+                Button(CloudPhone.shared.signingIn ? "Signing In…" : "Sign In to Frog Cloud", systemImage: "cloud") { CloudPhone.shared.signIn() }
+                    .disabled(CloudPhone.shared.signingIn)
+            } footer: {
+                Text("No Mac needed: sessions run in their own cloud sandbox, on a repo you pick.")
             }
             Section {
                 if finder.names.isEmpty {

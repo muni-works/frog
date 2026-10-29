@@ -29,6 +29,7 @@ struct SessionListView: View {
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
+            CloudSection(query: query)
             section("Needs you", shown.filter { $0.live == .waiting })
             section("Running", shown.filter { $0.live == .running })
             section("Pinned", shown.filter { $0.pinned && !isLive($0) })
@@ -59,6 +60,7 @@ struct SessionListView: View {
             Button("Cancel", role: .cancel) { renaming = nil }
         }
         .navigationDestination(for: NewChat.self) { _ in NewChatView(remote: remote) }
+        .navigationDestination(for: CloudGateway.Session.self) { s in CloudChat(session: s) }
         .navigationDestination(for: RemoteSession.self) { s in
             let c = remote.conversation(s)
             ChatView(conversation: c, link: remote.openLink, title: s.title) { remote.close(c) }
@@ -231,5 +233,83 @@ struct FixtureListView: View {
         .onAppear {
             if let name = UserDefaults.standard.string(forKey: "fixture"), path.isEmpty { path = [name] }
         }
+    }
+}
+
+/// Frog Cloud's sessions, above the Mac's: title, then repo and age, as on the web.
+struct CloudSection: View {
+    let query: String
+    @State private var cloud = CloudPhone.shared
+
+    private var rows: [CloudGateway.Session] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return cloud.live.filter { q.isEmpty || $0.title.lowercased().contains(q) || $0.repo.lowercased().contains(q) }
+    }
+
+    var body: some View {
+        if cloud.key != nil {
+            Section {
+                ForEach(rows) { s in
+                    NavigationLink(value: s) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.title.isEmpty ? "New session" : s.title).lineLimit(1)
+                            Text([s.repo.isEmpty ? "No repo" : s.repo, SessionAge.short(Date(timeIntervalSince1970: (s.last_turn ?? s.updated) / 1000))].joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    .swipeActions {
+                        Button("Archive") { Task { await cloud.archive(s.id) } }.tint(.indigo)
+                    }
+                }
+                if query.isEmpty {
+                    NewCloudSession()
+                }
+            } header: {
+                Label("Frog Cloud", systemImage: "cloud")
+            }
+            .task { cloud.start() }
+        }
+    }
+}
+
+/// A new sandbox: on a repo the Frog GitHub App reaches, or none.
+private struct NewCloudSession: View {
+    @State private var cloud = CloudPhone.shared
+    @State private var repos: CloudGateway.Repos?
+    @State private var made: CloudGateway.Session?
+
+    var body: some View {
+        Menu {
+            Button("No Repo") { start(nil) }
+            ForEach(repos?.repos ?? [], id: \.self) { r in
+                Button(r.name, systemImage: r.private ? "lock" : "book.closed") { start(r.name) }
+            }
+        } label: {
+            Label("New cloud session", systemImage: "plus")
+        }
+        .task { repos = (try? await cloud.gateway?.repos()) ?? CloudGateway.Repos(repos: [], install: nil) }
+        .navigationDestination(item: $made) { CloudChat(session: $0) }
+    }
+
+    private func start(_ repo: String?) {
+        Task { made = await cloud.create(repo: repo) }
+    }
+}
+
+/// One cloud session, in the same chat view as the Mac's.
+struct CloudChat: View {
+    let session: CloudGateway.Session
+    @State private var conversation: Conversation?
+
+    var body: some View {
+        Group {
+            if let conversation {
+                ChatView(conversation: conversation, link: nil, title: session.title.isEmpty ? "New session" : session.title)
+            } else {
+                ProgressView()
+            }
+        }
+        .task { if conversation == nil { conversation = CloudPhone.shared.conversation(session) } }
+        .onDisappear { conversation?.stop() }
     }
 }
