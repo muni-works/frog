@@ -174,11 +174,6 @@ export function SessionList(p: {
   return (
     <div className={`slist${view.compact ? ' compact' : ''}`} ref={list} onKeyDown={move}>
       <div className="sbar" ref={opts}>
-        <button type="button" className="ssearch" onClick={p.onSearch} aria-label="Search sessions (⌘K)">
-          <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
-          <span>Search</span>
-          <kbd>⌘K</kbd>
-        </button>
         <button type="button" className="ic-btn" aria-label="View options" title="View options" aria-expanded={menu} onClick={() => setMenu(!menu)}>
           <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>
         </button>

@@ -93,9 +93,11 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
               </div>
             ))}
             <div className={`hover-row mine${turn.entries.length ? '' : ' waiting'}`}>
-              {onEdit && <IconButton label="Edit (back to the composer)" onClick={() => onEdit([turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n'))} icon="edit" />}
-              <CopyButton text={[turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n')} />
               <Ticks n={2} />
+              {turn.at ? <span className="when" title={new Date(turn.at).toLocaleString()}>{ago(turn.at)}</span> : null}
+              <span className="sep" aria-hidden="true">·</span>
+              <CopyButton text={[turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n')} />
+              {onEdit && <IconButton label="Edit (back to the composer)" onClick={() => onEdit([turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n'))} icon="edit" />}
             </div>
           </div>
           <div className="reply-block">
@@ -199,4 +201,13 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
   const [done, setDone] = useState(false)
   return <IconButton label={done ? 'Copied' : label} icon={done ? 'check' : 'copy'} on={done}
     onClick={() => { navigator.clipboard?.writeText(text); setDone(true); setTimeout(() => setDone(false), 1200) }} />
+}
+
+/** "just now", "3 minutes ago", "2 hours ago", then a date, as Claude writes it. */
+function ago(ms: number) {
+  const s = Math.max(0, (Date.now() - ms) / 1000)
+  if (s < 45) return 'just now'
+  if (s < 3600) { const m = Math.max(1, Math.round(s / 60)); return `${m} minute${m === 1 ? '' : 's'} ago` }
+  if (s < 86_400) { const h = Math.round(s / 3600); return `${h} hour${h === 1 ? '' : 's'} ago` }
+  return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }

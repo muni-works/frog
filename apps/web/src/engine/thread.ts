@@ -33,7 +33,7 @@ export interface Thread {
   lastAt?: number
   lastRaw?: number
   /** Each turn's input and items; `usage` and `reason` once it ends. */
-  turns: { turn: number; input: string; images?: Image[]; more?: Part[]; entries: Entry[]; usage?: TurnUsage; reason?: EndReason }[]
+  turns: { turn: number; input: string; images?: Image[]; more?: Part[]; entries: Entry[]; at?: number; usage?: TurnUsage; reason?: EndReason }[]
   running: boolean
   ask: Ask | null
   ended: EndReason | null
@@ -76,7 +76,7 @@ function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
 function apply(t: Thread, ev: Event, created: number): Thread {
   switch (ev.event) {
     case 'turn_started':
-      return { ...t, running: true, ended: null, next: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, images: ev.images, more: ev.more, entries: [] }] }
+      return { ...t, running: true, ended: null, next: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, images: ev.images, more: ev.more, entries: [], at: created }] }
     case 'next_suggested':
       return { ...t, next: { text: ev.text, act: !!ev.act } }
     case 'turn_ended': {
