@@ -4,6 +4,7 @@ import type { Ask, Entry, Thread } from '../engine/thread'
 import type { Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
 import { Markdown } from './Markdown'
+import { Hunks } from './Diff'
 import { endError } from '../store'
 import { TurnFooter } from './TurnFooter'
 
@@ -17,11 +18,7 @@ export function DiffCard({ diff, ask, onDecide, note }: { diff: FileDiff; ask?: 
         <b>{ask ? 'Edit' : 'Edited'} {diff.path}</b>
         <span className="det">+{diff.added} −{diff.removed}</span>
       </div>
-      <div className="diff">
-        {diff.hunks.flatMap((h) => h.lines).map((l, i) => (
-          <div key={i} className={l.kind}>{l.kind === 'add' ? '+ ' : l.kind === 'remove' ? '- ' : '  '}{l.text}</div>
-        ))}
-      </div>
+      <Hunks diff={diff} max={40} />
       {ask && onDecide && (
         <div className="diff-acts">
           <span style={{ flex: 1 }} className="det">{note}</span>

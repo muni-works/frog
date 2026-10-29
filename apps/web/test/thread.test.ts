@@ -110,3 +110,20 @@ test("a woken engine's restarted seqs still land, by time; real replays stay dro
   assert.equal(t.running, false);
   assert.equal(t.lastSeq, 2);
 });
+
+test("a file edited twice keeps both edits' hunks and summed counts", () => {
+  const diff = (n: number) => ({ path: "src/a.ts", created: n === 1, added: n, removed: 1, hunks: [{ lines: [{ kind: "add", old: null, new: n, text: `line ${n}` }] }] });
+  const done = (id: string, n: number) => ({ event: "item_completed", id, item: { type: "tool_call", name: "Edit", arg: "src/a.ts", outcome: "ok", diff: diff(n) } });
+  const t = [
+    { event: "turn_started", turn: 1, input: "edit" },
+    { event: "item_started", id: "e1", kind: { type: "tool_call", name: "Edit", arg: "src/a.ts" } },
+    done("e1", 1),
+    { event: "item_started", id: "e2", kind: { type: "tool_call", name: "Edit", arg: "src/a.ts" } },
+    done("e2", 2),
+  ].reduce((t, e) => reduce(t, env(e as Event)), emptyThread);
+  assert.equal(t.changes.length, 1);
+  assert.equal(t.changes[0].added, 3);
+  assert.equal(t.changes[0].removed, 2);
+  assert.equal(t.changes[0].created, true);
+  assert.equal(t.changes[0].hunks.length, 2);
+});
