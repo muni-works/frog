@@ -10,6 +10,7 @@ struct SettingsView: View {
         TabView(selection: $tab) {
             Tab("General", systemImage: "gearshape", value: "general") { GeneralSettings() }
             Tab("Models", systemImage: "cpu", value: "models") { ModelSettings() }
+            Tab("Billing", systemImage: "creditcard", value: "billing") { BillingSettings() }
             Tab("Energy", systemImage: "leaf", value: "energy") { EnergySettings() }
             Tab("Permissions", systemImage: "hand.raised", value: "permissions") { PermissionSettings() }
             Tab("MCP", systemImage: "puzzlepiece.extension", value: "mcp") { MCPSettings() }
