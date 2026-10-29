@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { SessionSummary } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
 import { outOfCredits, peek } from '../store'
@@ -78,6 +79,9 @@ export function SessionList(p: {
   // View options, as on the Mac (sidebarGroup, sidebarSort, compactSidebar), kept per browser.
   const [view, setViewOpts] = useState<View>(loadView)
   const [menu, setMenu] = useState(false)
+  // The view options button sits beside the sidebar's collapse toggle (App's #side-acts).
+  const [slot, setSlot] = useState<HTMLElement | null>(null)
+  useEffect(() => setSlot(document.getElementById('side-acts')), [])
   // Rows drawn so far: the first screenful or two, more as the list scrolls near its end.
   const [shown, setShown] = useState(60)
   const more = useRef<HTMLDivElement>(null)
@@ -196,6 +200,7 @@ export function SessionList(p: {
 
   return (
     <div className={`slist${view.compact ? ' compact' : ''}`} ref={list} onKeyDown={move}>
+      {slot && createPortal(
       <div className="sbar" ref={opts}>
         <button type="button" className="ic-btn" aria-label="View options" title="View options" aria-expanded={menu} onClick={() => setMenu(!menu)}>
           <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>
@@ -226,7 +231,9 @@ export function SessionList(p: {
             </button>
           </div>
         )}
-      </div>
+      </div>,
+        slot,
+      )}
       {p.error && <div className="det wrap" style={{ padding: '10px 8px', color: 'var(--warn)' }}>Couldn't load sessions: {p.error}</div>}
       {view.archived && !groups.length && <div className="det wrap" style={{ padding: '14px 8px' }}>Nothing archived. Archive a session from its ⋯ menu.</div>}
       {!p.error && p.sessions.length === 0 && <div className="det wrap" style={{ padding: '14px 8px' }}>No sessions yet. Start one and it shows up here, and in Frog on your other devices.</div>}

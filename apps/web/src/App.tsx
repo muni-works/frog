@@ -369,7 +369,7 @@ export default function App() {
     <div className={`win ${drawer ? 'drawer' : ''}${collapsed ? ' collapsed' : ''}`}>
       <div className="side-scrim" onClick={() => setDrawer(false)} />
       <aside className="side f-glass">
-        <div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b>{sideToggle(true)}</div>
+        <div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b><span id="side-acts" className="side-acts" />{sideToggle(true)}</div>
         <Nav />
         <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
           onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}

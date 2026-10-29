@@ -378,8 +378,10 @@ button.tool:hover { color: var(--fg); }
 .ask-block:hover .hover-row.waiting .when, .ask-block:hover .hover-row.waiting .sep { opacity: 1; }
 /* View options ride on the first section header's right edge. */
 .slist { position: relative; }
-.slist > .sbar { position: absolute; right: 0; top: 4px; margin: 0; z-index: 2; }
-.slist > .sbar .ic-btn { width: 24px; height: 24px; }
+.side-acts { display: flex; }
+.side-acts .sbar { position: relative; margin: 0; }
+.side-acts .ic-btn, .brand .side-toggle { width: 26px; height: 26px; }
+.side-acts .sview { left: auto; right: -30px; }
 .insp-empty { padding: 14px; }
 /* Terminal: part of the panel, not a black box in it. */
 .term-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 4px 14px; font-size: 12px; }
@@ -515,3 +517,21 @@ body.resizing { cursor: col-resize; user-select: none; }
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 body { font-family: var(--font-sans); }
+/* Tool calls: an icon, what it did in words, the argument quiet in mono; a chevron on hover. */
+.tool-row { gap: 2px; }
+button.tool { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 100%; border: 0; background: transparent; padding: 4px 8px; margin-left: -8px; border-radius: 8px; font: 13px/20px var(--font-sans); color: var(--muted); cursor: pointer; text-align: left; min-width: 0; }
+button.tool:hover { background: var(--hover); color: var(--fg); }
+.tool-ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; color: var(--faint); }
+button.tool:hover .tool-ic { color: var(--muted); }
+.tool-verb { flex: none; }
+.tool-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px/20px var(--font-mono); color: var(--faint); }
+button.tool:hover .tool-what { color: var(--muted); }
+.tool-tag { flex: none; font-size: 11px; color: var(--muted); background: var(--hover); border-radius: 5px; padding: 0 6px; line-height: 17px; }
+.tool-tag.err { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.tool-row.err .tool-ic { color: var(--warn); }
+.tool-row.run .tool-verb { color: var(--fg); }
+.tool-chev { margin-left: auto; flex: none; color: var(--faint); opacity: 0; transition: opacity .12s, transform .15s; font-size: 14px; }
+button.tool:hover .tool-chev, button.tool[aria-expanded="true"] .tool-chev { opacity: 1; }
+button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
+.tool-spin { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--frog-pad); border-top-color: var(--frog); animation: spin 1s linear infinite; }
+.tool-body { margin: 2px 0 6px 7px; }
