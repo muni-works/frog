@@ -228,3 +228,22 @@ button.tool:hover { color: var(--fg); }
 .set-prices { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .set-price-h, .set-price { display: grid; grid-template-columns: 1fr 64px 64px 64px; gap: 8px; }
 .set-price-h { color: var(--muted); font-size: 11.5px; } .set-price span:not(:first-child), .set-price-h span:not(:first-child) { text-align: right; }
+
+/* Home: ambient pond behind the hero, and how Frog works. */
+.home-hero { position: relative; overflow: hidden; }
+.home-hero > :not(.pond) { position: relative; }
+.pond { position: absolute; inset: 0; pointer-events: none; }
+.pond-ripples { position: absolute; left: 50%; top: 50%; width: min(1100px, 140%); transform: translate(-50%, -58%); overflow: visible; }
+.pond-ripples ellipse { fill: none; stroke: var(--frog); stroke-width: 1; vector-effect: non-scaling-stroke; transform-origin: 0 0; opacity: 0; animation: ripple 12s ease-out infinite; }
+@keyframes ripple { 0% { transform: scale(.08); opacity: 0; } 12% { opacity: .22; } 100% { transform: scale(1); opacity: 0; } }
+.pond-reeds { position: absolute; bottom: 0; width: 120px; height: 240px; }
+.pond-reeds--l { left: 16px; }
+.pond-reeds--r { right: 16px; transform: scaleX(-1); }
+.pond-reeds path { fill: none; stroke: var(--frog); stroke-width: 1.5; stroke-linecap: round; vector-effect: non-scaling-stroke; opacity: .14; transform-box: fill-box; transform-origin: 50% 100%; animation: sway 7s ease-in-out infinite alternate; }
+@keyframes sway { from { transform: rotate(-2deg); } to { transform: rotate(2.5deg); } }
+@media (prefers-reduced-motion: reduce) { .pond-ripples ellipse, .pond-reeds path { animation: none; } .pond-ripples ellipse:nth-child(1) { opacity: .1; transform: scale(.3); } .pond-ripples ellipse:nth-child(2) { opacity: .08; transform: scale(.6); } }
+.how { list-style: none; margin: 22px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; width: 100%; max-width: 680px; }
+.how li { display: flex; flex-direction: column; gap: 4px; padding: 14px; border-radius: 14px; background: color-mix(in srgb, var(--card) 70%, transparent); border: 1px solid var(--line); font-size: 12.5px; line-height: 1.45; color: var(--muted); backdrop-filter: blur(6px); }
+.how li b { color: var(--fg); font-size: 13px; font-weight: 600; }
+.how-n { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--frog-pad); color: var(--frog); font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+@media (max-width: 760px) { .how { grid-template-columns: 1fr; } .how li { padding: 10px 12px; } .pond-reeds { height: 140px; width: 70px; } }

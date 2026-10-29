@@ -8,6 +8,7 @@ import type { Image, Mode } from './cloud/protocol'
 import { idOf, spec, useModels } from './models'
 import { outOfCredits, starters, useCloud, useRepos, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
+import { Pond, HowItWorks } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
 import { creditLine, Palette, Settings, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
@@ -475,11 +476,13 @@ export default function App() {
         {view.kind === 'new' && (
           <div className="main home">
             <div className="home-hero">
+              <Pond />
               <Mark size={56} />
               <h1>What should we work on?</h1>
               <div className="starters">
                 {starters.map((t) => <button key={t.title} type="button" className="cz-chip" onClick={() => setDraft(t.title)}>{t.i} {t.title}</button>)}
               </div>
+              <HowItWorks />
             </div>
             <div className="dock">
               <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick}
