@@ -215,15 +215,57 @@ User code now passes through frog's infrastructure and then an upstream.
    handles `anthropic/*` over its Messages API since `1ad4a4c7`), not as how frog itself reaches
    models.
 
-3. **Launch with three models** (Cam, 2026-10-29): `frog/dart` (Qwen3-Coder-Next), `frog/tree`
-   (GLM-5.3-Flash, 321B / ~18B active), `frog/bull` (DeepSeek-V4.1-Flash, ~760B stored / ~13B
-   active). No Claude or GPT on Frog Cloud at launch;
-   people who want them add their own key.
+3. **Launch with one model of our own: `frog/dart`** (Qwen3-Coder-Next) (Cam, 2026-10-29). It
+   runs on This Mac and on Frog Cloud, and spills to a third-party provider when tang is full.
+   tree (GLM-5.3-Flash) and bull (DeepSeek-V4.1-Flash) come later, once tang serves them
+   (section "Later: tree and bull").
+9. **Other models through the gateway** (Cam, 2026-10-29). With one model of our own, Frog
+   Cloud also offers a short list of third-party models, served entirely by upstreams and
+   billed through the same credits. They use their real names (`frog/claude-sonnet-5.5`,
+   `frog/glm-5.3-flash`), so `tree` and `bull` stay the names of tang-served models.
 
-## Serving the launch models
+## Launch: dart
 
-Own GPUs are margin only when they're busy. Price each model at least at its third-party list
-price, so overflow breaks even and every token tang serves is margin.
+### Weights
+
+| where | weights | notes |
+|---|---|---|
+| Frog Cloud (tang, H200) | unsloth `Qwen3-Coder-Next-UD-Q4_K_XL.gguf` (mixed 4-bit) | `zest/docs/runbooks/frog-cloud/node-up.sh`; 234 tok/s single stream |
+| tang alternative | Q8_0 | 222 tok/s (5% slower); vs Q4: KL median 0.0005, top-1 agreement ~97% (`zest/docs/bench/frog-api-vs-novita.md`) |
+| This Mac | MLX 4-bit, ~45 GB | needs a 64 GB+ Mac; not in `LOCAL_MODELS` yet |
+| third-party backups | FP8 | Together, Novita, Parasail, Bedrock |
+
+Q4 and Q8 differ by less than the noise between providers, and FP8 is close to Q8, so an FP8
+upstream counts as "same model, different host". Confirm with a frog-bench run on the backup
+before turning overflow on. If it isn't close enough, serve Q8_0 on tang (5% slower) so tang
+and the backup are both 8-bit.
+
+### Backup provider
+
+**OpenRouter, pinned to FP8** (`provider: {quantizations: ["fp8"], allow_fallbacks: true}`
+inside the FP8 set). One key and one integration covers several FP8 hosts (Together, Novita,
+Parasail), so an outage at one doesn't take overflow down, and the same upstream serves the
+other models (decision 9). The cost is OpenRouter's credit fee. Prices reported by third
+parties, unverified: OpenRouter ~$0.12 / $0.80 per M, Together FP8 $0.50 / $1.20.
+
+Alternative: Together direct (one provider, no reseller fee). Cloudflare Workers AI and Vercel
+don't appear to list Qwen3-Coder-Next.
+
+### Pricing
+
+Price dart at or above the backup's cost (FP8 at ~$1.20/M output), so overflow never loses
+money and tang's tokens are margin.
+
+## Other models (decision 9)
+
+- A short, curated list at launch: e.g. Claude Sonnet 5.5, Claude Opus 5.5, GLM-5.3-Flash,
+  DeepSeek-V4.1-Flash. Billed at the upstream's price plus the credit fee.
+- All go through OpenRouter at launch, so the gateway has one third-party upstream.
+- Claude on chat completions loses caching unless the upstream passes `cache_control` through;
+  check OpenRouter's. If it doesn't, Claude waits for `/v1/messages` (section 1).
+- The turn details say who served each call ("Anthropic via OpenRouter"), the same as overflow.
+
+## Later: tree and bull
 
 Where tang is (2026-10-29):
 
@@ -240,19 +282,13 @@ Break-even aggregate output throughput, counting output revenue only:
 | tree | ~$4.40 (confirm the Flash price) | 1× B300, $8.99/hr | ~570 | ~4.5× single stream: needs batching |
 | bull | $1.20 | 8× H100, ~$20/hr (estimate) | ~4,600 | ~24× single stream: needs batching |
 
-So:
+When tang serves them, they launch under their frog names:
 
-- **dart**: tang only at launch; add a third-party overflow upstream once one serves the same
-  weights.
-- **tree**: third-party at launch (Vercel lists `zai/glm-5.3-flash`; check Cloudflare), tang
-  takes over once GLM batching lands and clears ~570 tok/s on a B300. Overflow must match
-  tang's behavior closely enough to share a name: tang runs 4-bit UD-Q4_K_XL, the upstream
-  likely FP8. Run frog-bench on both before calling them one model.
-- **bull**: third-party at launch (Workers AI, $0.30 / $1.20). Tang's single stream is
-  already fast (193 tok/s, a 17k-token prompt prefills in ~35 s), so tang can serve bull for
-  latency and quality now, at a loss per GPU-hour until batching. Two ways it pays: batching
-  (~24× single stream on 8× H100), or reserved/owned GPUs well under the rental estimate.
-  Prefix reuse across turns matters as much as batching for agent traffic.
+- **tree**: tang takes over from the third-party GLM-5.3-Flash once GLM batching clears
+  ~570 tok/s on a B300 and frog-bench matches the upstream.
+- **bull**: tang's single stream is already fast (193 tok/s, a 17k-token prompt prefills in
+  ~35 s); it pays once batching gets ~24× single stream on 8× H100, or on reserved GPUs well
+  under the rental estimate. Prefix reuse across turns matters as much as batching.
 
 ## Open decisions
 
