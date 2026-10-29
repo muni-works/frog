@@ -4,13 +4,30 @@ import type { Thread } from '../engine/thread'
 import { TerminalPane } from './TerminalPane'
 
 export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thread; branch?: string; hasPr: boolean; onCommit: () => void; onPr: () => void; send: (op: Op) => void }) {
+  // Width, dragged from the left edge and kept per browser.
+  const [width, setWidth] = useState(() => { try { return Number(localStorage.getItem('frog.inspectorWidth')) || 330 } catch { return 330 } })
+  const [dragging, setDragging] = useState(false)
+  const grab = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const x0 = e.clientX, w0 = width
+    setDragging(true); document.body.classList.add('resizing')
+    const move = (ev: PointerEvent) => setWidth(Math.round(Math.min(Math.max(260, w0 + x0 - ev.clientX), Math.min(720, innerWidth * 0.6))))
+    const up = () => {
+      setDragging(false); document.body.classList.remove('resizing')
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up)
+      setWidth((w) => { try { localStorage.setItem('frog.inspectorWidth', String(w)) } catch { /* private mode */ } return w })
+    }
+    addEventListener('pointermove', move); addEventListener('pointerup', up)
+  }
   const [pane, setPane] = useState<'changes' | 'terminal' | 'log'>('changes')
   // The newest terminal pane that's still open, else the newest one.
   const terms = Object.values(thread.panes).filter((p) => p.kind === 'terminal')
   const term = [...terms].reverse().find((p) => !p.closed) ?? terms[terms.length - 1]
   const resize = useCallback((cols: number, rows: number) => { if (term && !term.closed) send({ op: 'pane_resize', id: term.id, cols, rows }) }, [term?.id, term?.closed, send]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <section className="insp f-glass" aria-label="Inspector">
+    <section className="insp f-glass" aria-label="Inspector" style={{ width }}>
+      <div className={`insp-grip${dragging ? ' on' : ''}`} role="separator" aria-orientation="vertical" aria-label="Resize the inspector" onPointerDown={grab}
+        onDoubleClick={() => { setWidth(330); try { localStorage.removeItem('frog.inspectorWidth') } catch { /* private mode */ } }} />
       <div className="insp-top">
         <div className="seg" role="tablist" style={{ flex: 1 }}>
           {(['changes', 'terminal', 'log'] as const).map((p) => (
