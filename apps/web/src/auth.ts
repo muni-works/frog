@@ -12,6 +12,8 @@ export const API = (import.meta.env.VITE_API as string | undefined) ?? 'https://
 /** The account shape every app gets from the edge (accounts-ux §5). */
 export interface Account {
   plan: string
+  /** The name they go by (GitHub's display name); null until they sign in again, or by email. */
+  name?: string | null
   handle: string | null
   email: string | null
   tasks_left: number
@@ -86,4 +88,9 @@ export async function me(key: string): Promise<Account> {
 
 export function signOut() {
   store.del(localStorage, KEY)
+}
+
+/** What to call someone: their first name, else their GitHub login, else their email. */
+export function firstName(a: Account | null): string | null {
+  return a?.name?.trim().split(/\s+/)[0] || a?.handle || a?.email || null
 }

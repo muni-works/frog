@@ -66,7 +66,7 @@ Sessions come from `GET /v1/sessions` (refreshed every 15 s), new ones from `POS
 
 Each of these needs an API that doesn't exist yet, so the UI leaves it out instead of faking it:
 
-- A list of the repos the GitHub App can see. The composer's repo menu offers recent repos and takes `owner/name` or a URL.
+- Org repos in the repo menu. It lists your recent repos, the repos the Frog GitHub App can reach in your own account plus your public ones (`GET /v1/repos`), and takes `owner/name` or a URL.
 - PR checks. The PR number shows when the session summary has one.
 - MCP servers, routines and skills.
 - The Preview tab. It needs a sandbox port.

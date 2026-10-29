@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Gateway } from './cloud/client'
-import type { SessionSummary } from './cloud/protocol'
+import type { RepoList, SessionSummary } from './cloud/protocol'
 import { CloudEngine } from './engine/cloud'
 import { emptyThread, reduce, type Thread } from './engine/thread'
 
@@ -77,4 +77,16 @@ export function turnError(t: Thread): string | null {
   try { detail = JSON.parse(detail)?.error?.message ?? detail } catch { /* not JSON */ }
   if (e.status === 401) return `The model provider refused this session's key${detail ? ` (${detail})` : ''}.`
   return [e.type === 'provider' ? 'The model call failed' : 'The turn stopped', e.status ? `(${e.status})` : '', detail ? `: ${detail}` : ''].join(' ').replace(' :', ':').trim() + '.'
+}
+
+/** The account's repos for the composer menu; empty until the gateway answers (or if it can't). */
+export function useRepos(cloud: CloudEngine | null) {
+  const [list, setList] = useState<RepoList>({ repos: [] })
+  useEffect(() => {
+    if (!cloud) return
+    let live = true
+    cloud.gateway.repos().then((r) => live && setList(r), () => live && setList({ repos: [] }))
+    return () => { live = false }
+  }, [cloud])
+  return list
 }

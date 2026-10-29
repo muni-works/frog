@@ -1,6 +1,6 @@
 // Frog Cloud gateway client: the §4 routes and the §2 websocket handshake, with reconnect.
 // See docs/plans/2026-10-28-frog-cloud-wire-contract.md.
-import type { Envelope, NewSession, Op, Refused, SessionSummary, Welcome } from "./protocol";
+import type { Envelope, NewSession, Op, Refused, RepoList, SessionSummary, Welcome } from "./protocol";
 
 export const PROTOCOL = 1;
 export const CLIENT = "frog-web/0.1.0";
@@ -50,6 +50,10 @@ export class Gateway {
     const json = text ? JSON.parse(text) : undefined;
     if (!res.ok) throw new GatewayError(res.status, json?.error ?? res.statusText);
     return json as T;
+  }
+
+  repos(): Promise<RepoList> {
+    return this.req("GET", "/v1/repos");
   }
 
   async list(): Promise<SessionSummary[]> {

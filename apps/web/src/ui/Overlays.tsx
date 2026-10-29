@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { API, type Account } from '../auth'
+import { API, firstName, type Account } from '../auth'
 import type { SessionSummary } from '../cloud/protocol'
 
 export interface Command { id: string; label: string; hint?: string; run: () => void }
@@ -63,7 +63,7 @@ export function Settings({ account, onSignOut, onClose }: { account: Account | n
             <h2>Account</h2>
             <div className="f-account">
               <span className="mark" style={{ width: 28, height: 28 }} />
-              <div className="grow"><div className="name"><b>{account?.handle ?? account?.email ?? 'Signed in'}</b>{account?.handle && <span className="f-badge">GitHub</span>}</div><div className="detail">{account?.email ?? ''}</div></div>
+              <div className="grow"><div className="name"><b>{account?.name ?? firstName(account) ?? 'Signed in'}</b>{account?.handle && <span className="f-badge">GitHub</span>}</div><div className="detail">{[account?.handle && `@${account.handle}`, account?.email].filter(Boolean).join(' · ')}</div></div>
               <div className="acts"><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onSignOut}>Sign out</button></div>
             </div>
             <p className="det wrap">Cloud sessions belong to your account, so they show up on every device you sign in on.</p>

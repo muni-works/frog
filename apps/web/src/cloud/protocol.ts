@@ -98,8 +98,16 @@ export interface SessionSummary {
   pr?: string;
 }
 export interface NewSession {
-  repo: string;
+  /** Omit for a session without a repo (an empty git repo in the sandbox). */
+  repo?: string;
   branch?: string;
   base?: string;
   model?: string;
+}
+
+/** GET /v1/repos: repos the Frog GitHub App can reach for this account, plus the user's public ones. */
+export interface RepoList {
+  repos: { name: string; private: boolean; pushed_at: string | null }[];
+  /** The App's install page, to give Frog access to more repos. */
+  install?: string;
 }

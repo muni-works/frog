@@ -25,10 +25,14 @@ export interface ComposerProps {
   onMode?: (mode: Mode) => void
   onSend: (text: string) => void
   onStop?: () => void
-  /** A new session's repo picker, in the composer: recent repos, search, or a pasted URL.
-   * With `onRepo`, sending without a repo opens it instead. */
-  onRepo?: (repo: string) => void
+  /** A new session's repo picker, in the composer: recent repos, the account's repos, search, or
+   * a pasted URL. Optional: a session can start without one. */
+  onRepo?: (repo: string | undefined) => void
   recent?: string[]
+  /** Repos the Frog GitHub App can reach, plus public ones (GET /v1/repos). */
+  repos?: string[]
+  /** The App's install page, to give Frog access to more repos. */
+  install?: string
   /** Open the repo menu on mount (e.g. back from sign-in with a message but no repo). */
   pickRepo?: boolean
   /** Starting a session: the send button waits. */
@@ -78,7 +82,6 @@ export function Composer(p: ComposerProps) {
   const send = () => {
     const t = text.trim()
     if (!t || paused || p.busy) return
-    if (p.onRepo && !p.repo) return setMenu('repo')
     p.onSend(t)
     setText('')
   }
@@ -108,8 +111,11 @@ export function Composer(p: ComposerProps) {
       )}
       {menu === 'repo' && p.onRepo && (() => {
         const typed = parseRepo(q)
-        const list = (p.recent ?? []).filter((r) => r.toLowerCase().includes(q.trim().toLowerCase()))
-        const pick = (r: string) => { p.onRepo!(r); setMenu(null); setQ(''); ref.current?.focus() }
+        const match = (r: string) => r.toLowerCase().includes(q.trim().toLowerCase())
+        const recent = (p.recent ?? []).filter(match)
+        const yours = (p.repos ?? []).filter((r) => match(r) && !recent.includes(r))
+        const list = [...recent, ...yours]
+        const pick = (r: string | undefined) => { p.onRepo!(r); setMenu(null); setQ(''); ref.current?.focus() }
         return (
           <div className="f-card cz-menu cz-repos" role="menu" aria-label="Repo" style={{ left: 150, width: 320 }}>
             <input className="cz-search" autoFocus value={q} placeholder="Search repos, or paste a GitHub URL" aria-label="Repo"
@@ -119,13 +125,25 @@ export function Composer(p: ComposerProps) {
                 if (e.key === 'Enter') { e.preventDefault(); const r = typed ?? list[0]; if (r) pick(r) }
               }} />
             {typed && !list.includes(typed) && <button type="button" role="menuitem" onClick={() => pick(typed)}><span style={{ flex: 1 }}>{typed}</span><span className="det">from GitHub</span></button>}
-            {list.length > 0 && <div className="cz-menu-h">Recent</div>}
-            {list.map((r) => (
-              <button key={r} type="button" role="menuitemradio" aria-checked={r === p.repo} onClick={() => pick(r)}>
-                <span style={{ flex: 1 }}>{r}</span><span style={{ color: 'var(--frog)', opacity: r === p.repo ? 1 : 0 }}>✓</span>
+            {!q && (
+              <button type="button" role="menuitemradio" aria-checked={!p.repo} onClick={() => pick(undefined)}>
+                <span style={{ flex: 1 }}>No repo</span><span style={{ color: 'var(--frog)', opacity: !p.repo ? 1 : 0 }}>✓</span>
               </button>
-            ))}
-            {!typed && list.length === 0 && <div className="det wrap" style={{ padding: '6px 10px' }}>Type owner/name or paste a GitHub URL. Private repos need the Frog GitHub App.</div>}
+            )}
+            <div className="cz-list">
+              {([['Recent', recent], ['Your repos', yours]] as const).map(([h, rs]) => rs.length > 0 && (
+                <div key={h}>
+                  <div className="cz-menu-h">{h}</div>
+                  {rs.map((r) => (
+                    <button key={r} type="button" role="menuitemradio" aria-checked={r === p.repo} onClick={() => pick(r)}>
+                      <span style={{ flex: 1 }}>{r}</span><span style={{ color: 'var(--frog)', opacity: r === p.repo ? 1 : 0 }}>✓</span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+            {!typed && list.length === 0 && q && <div className="det wrap" style={{ padding: '6px 10px' }}>No match. Type owner/name or paste a GitHub URL.</div>}
+            {p.install && <a className="cz-more" href={p.install} target="_blank" rel="noreferrer">Give Frog access to more repos</a>}
           </div>
         )
       })()}
@@ -196,7 +214,7 @@ export function Composer(p: ComposerProps) {
           {!p.branch && (
             <button type="button" className="cz-chip" disabled={!p.onRepo} aria-expanded={menu === 'repo'} onClick={() => setMenu(menu === 'repo' ? null : 'repo')}>
               <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h6l2 2h10v10H3z" /></svg>
-              {p.repo || 'Connect a repo'}
+              {p.repo || 'No repo'}
             </button>
           )}
           <span style={{ flex: 1 }} />

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { finishSignIn, me, savedKey, signIn, signOut, API, AuthError, type Account } from './auth'
+import { finishSignIn, firstName, me, savedKey, signIn, signOut, API, AuthError, type Account } from './auth'
 import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Thread } from './engine/thread'
 import type { Mode } from './cloud/protocol'
 import { idOf, spec, useModels } from './models'
-import { outOfCredits, starters, turnError, useCloud, useSessions, useThreads } from './store'
+import { outOfCredits, starters, turnError, useCloud, useRepos, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Inspector } from './ui/Inspector'
 import { Palette, Settings, tasksLine, type Command } from './ui/Overlays'
@@ -73,6 +73,7 @@ export default function App() {
 
   const cloud = useCloud(key)
   const models = useModels(DEV_KEY ? null : key)
+  const repoList = useRepos(cloud)
   const { sessions, error: listError, setSessions } = useSessions(cloud)
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined
   // Stream the open session and any with a live sandbox (for Needs you), not sleeping ones:
@@ -91,7 +92,7 @@ export default function App() {
     finishSignIn().then(async (done) => {
       if (done) {
         setKey(done.key); setAccount(done.account)
-        setBanner(`Signed in as ${done.account.handle ?? done.account.email ?? 'you'}. ${tasksLine(done.account)}.`)
+        setBanner(`Hi ${firstName(done.account) ?? 'there'}. ${tasksLine(done.account)}.`)
         if (done.after) { setDraft(done.after); setView({ kind: 'new', pick: true }) }
         return
       }
@@ -108,11 +109,11 @@ export default function App() {
 
   const send = useCallback((id: string, text: string) => cloud?.send(id, { op: 'submit', text }), [cloud])
 
-  const start = useCallback(async (text: string, repo: string) => {
+  const start = useCallback(async (text: string, repo?: string) => {
     if (!cloud) return
     setBusy(true)
     try {
-      const s = await cloud.gateway.create({ repo, ...(newModel ? { model: spec(newModel) } : {}) })
+      const s = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(newModel ? { model: spec(newModel) } : {}) })
       setSessions((all) => [{ ...s, title: s.title || text }, ...all.filter((x) => x.id !== s.id)])
       setView({ kind: 'session', id: s.id })
       if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
@@ -273,7 +274,7 @@ export default function App() {
           {!listError && sessions.length === 0 && <div className="det wrap" style={{ padding: '14px 8px' }}>No sessions yet. Start one and it shows up here, and in Frog on your other devices.</div>}
           {byRepo.map((repo) => (
             <div key={repo}>
-              <div className="h"><span>{repo.split('/')[1] ?? repo}</span></div>
+              <div className="h"><span>{repo ? (repo.split('/')[1] ?? repo) : 'No repo'}</span></div>
               {sessions.filter((s) => s.repo === repo).map((s) => {
                 const y = sym(s, thread(s.id))
                 return (
@@ -293,7 +294,7 @@ export default function App() {
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
           <Mark size={28} />
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-            <b>{account?.handle ?? account?.email ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
+            <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
             <div className="det" style={{ color: account && account.tasks_left <= 0 ? 'var(--warn)' : undefined }}>{account ? tasksLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
           </div>
           <span className="det">⚙</span>
@@ -304,7 +305,7 @@ export default function App() {
         <div className="titlebar">
           <div style={{ flex: 1, minWidth: 0 }}>
             <b style={{ fontSize: 14 }}>{current ? title(current) : 'New session'}</b>
-            <div className="det">{current ? `${current.repo} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}${ct?.context?.used ? ` · ${Math.round(ct.context.used / 1000)}k of ${Math.round(ct.context.window / 1000)}k context` : ''}` : 'Runs in a private Frog Cloud sandbox'}</div>
+            <div className="det">{current ? `${current.repo || 'No repo'} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}${ct?.context?.used ? ` · ${Math.round(ct.context.used / 1000)}k of ${Math.round(ct.context.window / 1000)}k context` : ''}` : 'Runs in a private Frog Cloud sandbox'}</div>
           </div>
           {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? 'In Frog Cloud' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
           {current && <button type="button" className="f-btn f-btn--plain" onClick={() => setInspector(!inspector)} aria-pressed={inspector}>{inspector ? 'Hide inspector' : 'Inspector'}</button>}
@@ -355,9 +356,9 @@ export default function App() {
             <h1>What should we work on?</h1>
             <div style={{ width: '100%', maxWidth: 680 }}>
               <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} busy={busy}
-                recent={[...new Set(sessions.map((s) => s.repo))]} onRepo={(repo) => setView({ kind: 'new', repo })}
+                recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
-                onSend={(text) => { setDraft(undefined); if (view.repo) start(text, view.repo) }} />
+                onSend={(text) => { setDraft(undefined); start(text, view.repo) }} />
             </div>
             <div className="starters">
               {starters.map((t) => <button key={t.title} type="button" className="cz-chip" onClick={() => setDraft(t.title)}>{t.i} {t.title}</button>)}
