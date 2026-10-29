@@ -88,9 +88,9 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
             <div key={i} className="me">
               {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
               {m.text}
-              {i === 0 && <Ticks n={2} />}
             </div>
           ))}
+          <Ticks n={2} />
           {turn.entries.map((e) => {
             if (e.kind === 'reasoning') return (
               <div key={e.id} className="decided"><b>Decided</b> · {e.text}</div>
@@ -143,8 +143,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
           <div className={`me${m.state === 'failed' ? ' failed' : ''}`}>
             {m.images.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
             {m.text}
-            {m.state === 'failed' ? null : <Ticks n={m.state === 'sent' ? 1 : 0} />}
           </div>
+          {m.state !== 'failed' && <Ticks n={m.state === 'sent' ? 1 : 0} />}
           {m.state === 'failed' && <div className="me-fail">Not sent · <button type="button" onClick={() => onResend?.(m.id)}>Try again</button></div>}
         </div>
       ))}
