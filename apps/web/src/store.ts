@@ -100,16 +100,17 @@ function saveThread(id: string, t: Thread) {
   } catch { /* full or private mode: memory only */ }
 }
 
-/** A kept thread's last reply, for the sidebar's second line; cached by when it was saved. */
-const peeks = new Map<string, { at: number; text: string | null }>()
-export function lastReply(id: string, updated: number): string | null {
+/** What this browser kept of a thread, for the sidebar's second line; cached by when it was saved. */
+export interface Peek { reply: string | null; turns: number; model: string | null }
+const peeks = new Map<string, { at: number; v: Peek }>()
+export function peek(id: string, updated: number): Peek {
   const hit = peeks.get(id)
-  if (hit && hit.at >= updated) return hit.text
+  if (hit && hit.at >= updated) return hit.v
   const t = loadThread(id)
   const msg = t ? [...t.turns].reverse().flatMap((u) => [...u.entries].reverse()).find((e) => e.kind === 'message') : undefined
-  const text = msg && 'text' in msg ? (msg.text as string) : null
-  peeks.set(id, { at: updated, text })
-  return text
+  const v = { reply: msg && 'text' in msg ? (msg.text as string) : null, turns: t?.turns.length ?? 0, model: t?.model ?? null }
+  peeks.set(id, { at: updated, v })
+  return v
 }
 
 /** Sign-out forgets every thread this browser kept. */
