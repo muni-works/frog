@@ -9329,9 +9329,11 @@ fn layers(evs: &[Envelope], call: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// A fresh scratch dir under /private/tmp, not yet created.
+/// A fresh scratch dir under the shared temp dir (/private/tmp on macOS, /tmp
+/// elsewhere), not yet created.
 fn scratch_path(tag: &str) -> PathBuf {
-    crate::approval::normalize(&std::path::Path::new("/private/tmp").join(format!("deleg-{tag}-{}", new_id())))
+    let tmp = if cfg!(target_os = "macos") { "/private/tmp" } else { "/tmp" };
+    crate::approval::normalize(&std::path::Path::new(tmp).join(format!("deleg-{tag}-{}", new_id())))
 }
 
 /// Run one turn; for each `SessionRequest`, call `on(id, tool)` (the test may
