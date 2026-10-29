@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog workspace</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.win{border-radius:14px;overflow:hidden;background:var(--canvas);border:1px solid var(--line-strong);box-shadow:0 30px 80px -24px rgba(0,0,0,.45);display:flex;position:relative;flex:none}
+.side{flex:none;display:flex;flex-direction:column;gap:1px;padding:12px 10px}
+.row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;font-size:13px;cursor:default}
+.row:hover{background:var(--hover)}
+.row.on{background:var(--hover)}
+.h{font-size:11px;font-weight:600;color:var(--muted);padding:14px 8px 4px;display:flex;justify-content:space-between}
+.sym{width:18px;height:18px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;box-sizing:border-box}
+.det{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.me{align-self:flex-end;max-width:76%;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:9px 13px}
+.tool{font:12px/18px var(--font-mono);color:var(--muted)}
+.cardx{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.seg{display:flex;padding:2px;border-radius:8px;background:rgba(127,127,127,.14)}
+.seg button{flex:1;border:0;background:transparent;padding:4px 0;border-radius:6px;font:12px var(--font-sans);color:var(--fg);cursor:pointer}
+.seg button[aria-selected=true]{background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.12);font-weight:600}
+.kbd{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="width: 100%; font-size: 13px; line-height: 1.45; background: transparent;">
+      <sc-if value="{{signedOut}}" hint-placeholder-val="{{ false }}">
+      <div class="win" style="width: 100%; height: {{height}}px; border-radius: {{radius}};">
+        <aside class="side f-glass" style="width: 270px; border-radius: 0; box-shadow: none; border-right: 1px solid var(--line);">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px 10px;"><img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 22px; height: 22px;"><b style="font-size: 15px;">Frog</b></div>
+          <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 1px; padding: 2px 0 6px;">
+<div class="row" style="padding: 7px 8px; font-size: 14px;"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M12 5v14M5 12h14"/></svg><span style="flex: 1;">New session</span><span style="font-size: 11px; color: var(--faint);">⌘N</span></div>
+<div class="row" style="padding: 7px 8px; font-size: 14px;"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span style="flex: 1;">Search</span><span style="font-size: 11px; color: var(--faint);">⌘K</span></div>
+</nav>
+
+          <div class="h"><span>Try one</span></div>
+          <sc-for list="{{starters}}" as="t" hint-placeholder-count="4">
+            <div class="row" style="cursor: pointer;"><span class="sym" style="background: var(--frog-pad); color: var(--frog); font-size: 11px;">{{t.i}}</span><div style="flex: 1; min-width: 0;"><div>{{t.title}}</div><div class="det">{{t.detail}}</div></div></div>
+          </sc-for>
+
+          <div style="margin: 14px 2px 0;"><dc-import name="PromoCard" kind="mac" theme="{{theme}}" hint-size="246px,280px"></dc-import></div>
+
+          <span style="flex: 1;"></span>
+          <div style="margin: 0 2px 6px; padding: 14px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; gap: 10px; align-items: center;"><img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 30px; height: 30px;"><div><b style="font-size: 14px;">Sign up to start</b><div class="det">$5 of Frog Cloud, no card</div></div></div>
+            <a href="Main.dc.html" class="f-btn f-btn--prominent" style="justify-content: center; text-decoration: none;">Sign up with GitHub</a>
+            <div style="display: flex; justify-content: space-between; font-size: 12px;"><a href="Main.dc.html">Use email instead</a><a href="Main.dc.html" style="color: var(--muted);">Sign in</a></div>
+          </div>
+        </aside>
+        <main style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 0 24px 60px;">
+          <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 56px; height: 56px;">
+          <h1 style="margin: 0; font-family: var(--font-display); font-size: 30px; letter-spacing: -0.02em;">What should we work on?</h1>
+          <div style="width: 100%; max-width: 680px;"><dc-import name="Composer" platform="web" repo="Connect a repo" theme="{{theme}}" hint-size="100%,130px"></dc-import></div>
+          <div class="det">Sending asks you to sign up first.</div>
+        </main>
+      </div>
+      </sc-if>
+      <sc-if value="{{signedIn}}" hint-placeholder-val="{{ true }}">
+      <div class="win" style="width: 100%; height: {{height}}px; border-radius: {{radius}};">
+        <aside class="side f-glass" style="width: 270px; border-radius: 0; box-shadow: none; border-right: 1px solid var(--line);">
+          <sc-if value="{{isMac}}" hint-placeholder-val="{{ true }}"><div aria-hidden="true" style="display: flex; gap: 8px; padding: 2px 4px 12px;"><span style="width: 12px; height: 12px; border-radius: 50%; background: #ff5f57;"></span><span style="width: 12px; height: 12px; border-radius: 50%; background: #febc2e;"></span><span style="width: 12px; height: 12px; border-radius: 50%; background: #28c840;"></span></div></sc-if>
+          <sc-if value="{{isWeb}}" hint-placeholder-val="{{ false }}"><div style="display: flex; align-items: center; gap: 8px; padding: 2px 8px 10px;"><img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 22px; height: 22px;"><b style="font-size: 15px;">Frog</b></div></sc-if>
+          <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 1px; padding: 2px 0 6px;">
+<div class="row" style="padding: 7px 8px; font-size: 14px;"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M12 5v14M5 12h14"/></svg><span style="flex: 1;">New session</span><span style="font-size: 11px; color: var(--faint);">⌘N</span></div>
+<div class="row" style="padding: 7px 8px; font-size: 14px;"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span style="flex: 1;">Search</span><span style="font-size: 11px; color: var(--faint);">⌘K</span></div>
+<div class="row" style="padding: 7px 8px; font-size: 14px;"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/></svg><span style="flex: 1;">Repos</span><span style="font-size: 11px; color: var(--faint);"></span></div>
+<div class="row" style="padding: 7px 8px; font-size: 14px;"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg><span style="flex: 1;">Routines</span><span style="font-size: 11px; color: var(--faint);"></span></div>
+<div class="row" style="padding: 7px 8px; font-size: 14px;"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"/></svg><span style="flex: 1;">Skills</span><span style="font-size: 11px; color: var(--faint);"></span></div>
+</nav>
+
+          <div class="h"><span>Needs you</span><span style="color: var(--notice);">1</span></div>
+          <div style="margin: 0 2px; padding: 10px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; gap: 8px;"><img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 26px; height: 26px;"><div style="flex: 1; min-width: 0;"><b style="font-size: 13px;">Can I edit auth/session.ts?</b><div class="det">Fix the failing tests · <span style="color: var(--frog);">+2</span> <span style="color: var(--warn);">−1</span></div></div></div>
+            <div style="display: flex; gap: 6px;"><span style="flex: 1; text-align: center; padding: 4px; border-radius: 999px; background: rgba(127,127,127,.14); font-weight: 600;">Deny</span><span style="flex: 1; text-align: center; padding: 4px; border-radius: 999px; background: var(--frog); color: var(--on-frog); font-weight: 600;">Allow ⌘↩</span></div>
+          </div>
+
+          <div class="h"><span>ledger</span><span style="font-weight: 400;">main ↑2 · ● 3</span></div>
+          <sc-for list="{{sessions}}" as="s" hint-placeholder-count="4">
+            <div class="row" style="background: {{s.bg}};">
+              <span class="sym" style="background: {{s.symBg}}; border: {{s.symBorder}};">{{s.sym}}</span>
+              <div style="flex: 1; min-width: 0;"><div style="display: flex; justify-content: space-between; gap: 6px;"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: {{s.color}};">{{s.title}}</span><span style="font-size: 11px; color: var(--muted); flex: none;">{{s.where}} {{s.age}}</span></div><div class="det">{{s.detail}}</div></div>
+            </div>
+          </sc-for>
+          <div class="h"><span>garden</span><span style="font-weight: 400;">· clean</span></div>
+          <div class="row"><span class="sym" style="background: rgba(127,127,127,.18); color: var(--muted);">✓</span><div style="flex: 1;"><div style="color: var(--muted);">Add soil sensor</div><div class="det">Done Friday</div></div></div>
+
+          <span style="flex: 1;"></span>
+          <sc-if value="{{isWeb}}" hint-placeholder-val="{{ false }}"><div class="row" style="margin: 0 2px 4px; border: 1px solid var(--line); background: var(--card);"><span style="color: var(--place-local);">▭</span><div style="flex: 1;"><div>Frog for Mac</div><div class="det">Local models, your files, free</div></div><a href="SiteMac.dc.html" style="font-size: 12px;">Get it</a></div></sc-if>
+          <div class="row"><img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 28px; height: 28px;"><div style="flex: 1;"><b>Pip</b><div class="det" style="color: {{creditColor}};">samr · {{credits}} credits</div></div><span title="Settings ⌘," style="color: var(--muted);">⚙</span></div>
+        </aside>
+
+        <main style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+          <div style="display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px; border-bottom: 1px solid var(--line);">
+            <div style="flex: 1; min-width: 0;"><b style="font-size: 14px;">{{tTitle}}</b><div class="det">{{tSub}}</div></div>
+            <span style="font-size: 12px; color: {{whereColor}};">{{whereLine}}</span>
+          </div>
+<sc-if value="{{isSession}}" hint-placeholder-val="{{ true }}"><div style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+          <div style="flex: 1; overflow: hidden; display: flex; justify-content: center; padding: 18px 22px 0;">
+            <div style="width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 12px;">
+              <div class="me">Fix the failing tests in auth/</div>
+              <div class="tool">✓ ran the tests · 2 failing in auth/<br>✓ read auth/session.ts, auth/refresh.ts</div>
+              <div style="font-size: 12px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 10px;"><b style="color: var(--fg);">Decided</b> · parse cookies before reading the refresh token.</div>
+              <div style="font-size: 14px;">The refresh token is read before the cookie is parsed, so a fresh login looks expired. I'll parse first.</div>
+              <div class="cardx">
+                <div style="display: flex; justify-content: space-between; padding: 10px 14px 6px;"><b>Edit auth/session.ts</b><span style="color: var(--muted);">+2 −1</span></div>
+                <div style="padding: 8px 14px; background: rgba(127,127,127,.08); font: 12px/18px var(--font-mono); white-space: pre;"><div style="color: var(--warn);">- const t = readRefresh(req)</div><div style="color: var(--frog);">+ const jar = parseCookies(req)</div><div style="color: var(--frog);">+ const t = readRefresh(jar)</div></div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end; align-items: center; padding: 10px 14px;"><span style="flex: 1; color: var(--muted); font-size: 12px;">{{askNote}}</span><span class="f-btn f-btn--bordered">Deny ⌘.</span><span class="f-btn f-btn--prominent">Allow ⌘↩</span></div>
+              </div>
+            </div>
+          </div>
+          <div style="display: flex; justify-content: center; padding: 6px 18px 12px;"><div style="width: 100%; max-width: 680px;"><dc-import name="Composer" platform="{{platform}}" runner="{{runner}}" state="working" repo="ledger" branch="frog/fix-auth" pr="{{pr}}" checks="{{checks}}" changes="+38 −12" timer="0:42" theme="{{theme}}" hint-size="100%,150px"></dc-import></div></div>
+          </div></sc-if>
+
+          <sc-if value="{{isPickRepo}}" hint-placeholder-val="{{ false }}"><div style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+            <div style="flex: 1; display: flex; flex-direction: column; align-items: center; padding: 60px 22px 0; gap: 14px;">
+              <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 44px; height: 44px;">
+              <h2 style="margin: 0; font-size: 22px; letter-spacing: -0.02em;">Which repo?</h2>
+              <div class="cardx" style="width: 100%; max-width: 560px; box-shadow: var(--shadow-float);">
+                <div style="padding: 10px 12px;"><input class="f-field" placeholder="Search your repos, or paste a GitHub URL" aria-label="Search repos" style="font-size: 14px; padding: 8px 10px;"></div>
+                <sc-for list="{{repos}}" as="r" hint-placeholder-count="4"><div class="row" style="border-radius: 0; border-top: 1px solid var(--line); padding: 9px 14px; background: {{r.bg}};"><span style="color: var(--muted);">▤</span><span style="flex: 1;"><b style="font-weight: 600;">{{r.name}}</b> <span class="det">{{r.meta}}</span></span><span class="det">{{r.when}}</span></div></sc-for>
+                <div class="row" style="border-radius: 0; border-top: 1px solid var(--line); padding: 9px 14px; justify-content: space-between; color: var(--muted);"><span>Don't see it? <a href="#">Give Frog access to more repos</a></span><span>Public repos work without access</span></div>
+              </div>
+              <div class="det">Frog clones it into a private cloud sandbox. Nothing is pushed until you say so.</div>
+            </div>
+            <div style="display: flex; justify-content: center; padding: 6px 18px 12px;"><div style="width: 100%; max-width: 680px;"><dc-import name="Composer" platform="{{platform}}" runner="{{runner}}" repo="Connect a repo" theme="{{theme}}" hint-size="100%,150px"></dc-import></div></div>
+          </div></sc-if>
+
+          <sc-if value="{{isResumed}}" hint-placeholder-val="{{ false }}"><div style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+            <div style="flex: 1; overflow: hidden; display: flex; justify-content: center; padding: 18px 22px 0;"><div style="width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 12px;">
+              <div role="status" style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; background: var(--badge-bg);"><span style="color: var(--place-cloud);">✓</span><span style="flex: 1;">Signed in as samr. <b>$5.00</b> in credits, no card. Picking up where you left off.</span><span style="color: var(--muted);">✕</span></div>
+              <div class="me">Review my open PR</div>
+              <div class="tool">✓ cloned ecto/ledger into your sandbox<br>✓ found PR #212 · Move dates to Temporal<br>… reading 31 changed files · 8s</div>
+              <div style="font-size: 14px; color: var(--muted);">Reading the diff. I'll start with reports/, where the time zones change.</div>
+            </div></div>
+            <div style="display: flex; justify-content: center; padding: 6px 18px 12px;"><div style="width: 100%; max-width: 680px;"><dc-import name="Composer" platform="{{platform}}" runner="{{runner}}" state="working" timer="0:12" repo="ledger" branch="dates-to-temporal" pr="#212" checks="failing" theme="{{theme}}" hint-size="100%,150px"></dc-import></div></div>
+          </div></sc-if>
+
+          <sc-if value="{{isCredits}}" hint-placeholder-val="{{ false }}"><div style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+            <div style="flex: 1; overflow: hidden; display: flex; justify-content: center; padding: 18px 22px 0;"><div style="width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 12px;">
+              <div class="tool">✓ rewrote 31 files · +612 −540<br>✓ ran the tests · 214 pass · 3 fail</div>
+              <div style="font-size: 14px;">First pass is done and saved. 3 tests in reports/ still fail.</div>
+              <section class="cardx" aria-label="Out of credits" style="padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+                <b style="font-size: 15px;">You're out of cloud credits</b>
+                <div class="det" style="white-space: normal; margin-top: -4px;">Nothing is lost. The sandbox, the changes and this conversation stay put.</div>
+                <sc-for list="{{outs}}" as="o" hint-placeholder-count="3"><div style="display: flex; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid {{o.edge}}; border-radius: 12px;"><div style="flex: 1;"><b>{{o.title}}</b><div class="det" style="white-space: normal;">{{o.body}}</div></div><span class="{{o.btn}}">{{o.cta}}</span></div></sc-for>
+                <div style="display: flex; justify-content: space-between; color: var(--muted);"><a href="#">Download the patch</a><span>Or open a PR with what's done</span></div>
+              </section>
+            </div></div>
+            <div style="display: flex; justify-content: center; padding: 6px 18px 12px;"><div style="width: 100%; max-width: 680px;"><dc-import name="Composer" platform="{{platform}}" runner="{{runner}}" state="paused" repo="ledger" branch="frog/temporal" changes="+612 −540" theme="{{theme}}" hint-size="100%,150px"></dc-import></div></div>
+          </div></sc-if>
+
+          <sc-if value="{{isHard}}" hint-placeholder-val="{{ false }}"><div style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+            <div style="flex: 1; overflow: hidden; display: flex; justify-content: center; padding: 18px 22px 0;"><div style="width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 12px;">
+              <div class="me">Move every date in ledger from moment to Temporal, and keep the tests green.</div>
+              <div class="tool">✓ found moment in 31 files<br>✓ rewrote 31 files · +612 −540<br>✓ ran the tests · 214 pass · 3 fail (reports/tz.test.ts)<br>✓ second try on reports/ · still 3 fail</div>
+              <b>First pass done · 31 files touched, 3 tests still red</b>
+              <div style="font-size: 14px;">This one's big, and my small brain keeps missing the time-zone corner cases in reports/. Two more passes here would take about 6 minutes.</div>
+              <section class="cardx" aria-label="Run this in Frog Cloud" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: flex; gap: 10px;"><span style="color: var(--place-cloud); font-size: 16px;">☁</span><div><b>Run this in Frog Cloud: dart does it in one pass, about 40 seconds</b><div class="det" style="white-space: normal;">This session moves to a private sandbox with this branch and keeps going if your Mac sleeps. Sign in for $5 in credits, no card.</div></div></div>
+                <div style="display: flex; gap: 8px; padding-left: 26px;"><a href="Main.dc.html" class="f-btn f-btn--prominent" style="text-decoration: none;">Run in Frog Cloud · Sign in</a><span class="f-btn f-btn--plain">Keep going on this Mac</span></div>
+              </section>
+            </div></div>
+            <div style="display: flex; justify-content: center; padding: 6px 18px 12px;"><div style="width: 100%; max-width: 680px;"><dc-import name="Composer" platform="{{platform}}" state="working" repo="ledger" branch="frog/temporal" changes="+612 −540" timer="6m 12s" theme="{{theme}}" hint-size="100%,150px"></dc-import></div></div>
+          </div></sc-if>
+        </main>
+
+        <sc-if value="{{showInspector}}" hint-placeholder-val="{{ true }}"><section style="width: 330px; flex: none; border-left: 1px solid var(--line); background: var(--card); display: flex; flex-direction: column;">
+          <div style="height: 52px; display: flex; align-items: center; padding: 0 12px; border-bottom: 1px solid var(--line);">
+            <div class="seg" role="tablist" style="flex: 1;">
+              <button type="button" role="tab" aria-selected="{{pc}}" onClick="{{showC}}">Changes</button>
+              <button type="button" role="tab" aria-selected="{{pt}}" onClick="{{showT}}">Terminal</button>
+              <button type="button" role="tab" aria-selected="{{pp}}" onClick="{{showP}}">Preview</button>
+            </div>
+          </div>
+          <sc-if value="{{pc}}" hint-placeholder-val="{{ true }}">
+            <div style="flex: 1; display: flex; flex-direction: column;">
+              <div style="padding: 10px 14px 4px; font-size: 11px; font-weight: 600; color: var(--muted);">Made by this session</div>
+              <div style="padding: 0 14px; font: 12px/26px var(--font-mono);">
+                <div style="display: flex;"><span style="flex: 1;">auth/session.ts</span><span style="color: var(--frog);">+2</span>&nbsp;<span style="color: var(--warn);">−1</span></div>
+                <div style="display: flex;"><span style="flex: 1;">auth/session.test.ts</span><span style="color: var(--frog);">+34</span>&nbsp;<span style="color: var(--warn);">−9</span></div>
+                <div style="display: flex;"><span style="flex: 1;">auth/refresh.ts</span><span style="color: var(--frog);">+2</span>&nbsp;<span style="color: var(--warn);">−2</span></div>
+              </div>
+              <span style="flex: 1;"></span>
+              <div style="display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line);"><span class="f-btn f-btn--bordered" style="flex: 1; justify-content: center;">Commit</span><span class="f-btn f-btn--prominent" style="flex: 1; justify-content: center;">Open PR</span></div>
+            </div>
+          </sc-if>
+          <sc-if value="{{pt}}" hint-placeholder-val="{{ false }}">
+            <div style="flex: 1; background: #141614; color: #ecebe6; font: 12px/19px var(--font-mono); padding: 12px 14px; white-space: pre;">{{shellHost}}~/ledger (frog/fix-auth) $ npm test auth
+
+ <span style="color: #58cc6f;">PASS</span>  auth/session.test.ts
+ <span style="color: #58cc6f;">PASS</span>  auth/refresh.test.ts
+
+Tests:  <span style="color: #58cc6f;">14 passed</span>, 14 total
+{{shellHost}}~/ledger (frog/fix-auth) $ <span style="background: #ecebe6;"> </span></div>
+          </sc-if>
+          <sc-if value="{{pp}}" hint-placeholder-val="{{ false }}">
+            <div style="flex: 1; display: flex; flex-direction: column;">
+              <div style="display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--line);"><span style="color: var(--muted);">‹ ↻</span><input class="f-field" value="{{previewUrl}}" aria-label="URL or port" style="flex: 1;"></div>
+              <div style="flex: 1; background: var(--well); display: flex; align-items: center; justify-content: center;"><div class="cardx" style="width: 210px; padding: 16px; display: flex; flex-direction: column; gap: 8px;"><b>ledger</b><div class="f-field" style="color: var(--faint);">Email</div><div class="f-field" style="color: var(--faint);">Password</div><span class="f-btn f-btn--prominent" style="justify-content: center;">Log in</span></div></div>
+              <div style="padding: 8px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);">Inspect: click an element to mention it</div>
+            </div>
+          </sc-if>
+        </section></sc-if>
+      </div>
+      </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"platform":{"editor":"enum","options":["mac","web"],"default":"mac"},"scene":{"editor":"enum","options":["session","pickRepo","resumed","credits","hardTask"],"default":"session"},"pane":{"editor":"enum","options":["changes","terminal","preview"],"default":"changes"},"height":{"editor":"int","default":900},"signedOut":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props.platform || 'mac', web = p === 'web';
+    const pane = (this.state && this.state.pane) || this.props.pane || 'changes';
+    const ring = { sym: '', symBg: 'transparent', symBorder: '2px solid var(--frog-pad)' };
+    const sessions = [
+      { title: 'Fix the failing tests in auth/', detail: 'Waiting on you · edit auth/session.ts', where: '', age: 'now', bg: 'var(--hover)', sym: '!', symBg: 'var(--notice)', symBorder: '0', color: 'var(--fg)' },
+      { title: 'Move dates to Temporal', detail: 'Step 4 of 6 · rewriting reports/', where: '☁', age: '2m', bg: 'transparent', ...ring, color: 'var(--fg)' },
+      { title: 'Bump vitest', detail: 'Finished while you were away', where: '', age: '2h', bg: 'transparent', sym: '✓', symBg: 'var(--place-local)', symBorder: '0', color: 'var(--fg)' },
+      { title: 'Fix login redirect', detail: 'Merged · #209', where: '', age: 'Mon', bg: 'transparent', sym: '✓', symBg: 'rgba(127,127,127,.25)', symBorder: '0', color: 'var(--muted)' },
+    ];
+    // On the web every session runs in Frog Cloud.
+    if (web) sessions.forEach((x) => { x.where = '☁'; });
+    return {
+      theme: this.props.theme ?? 'dark', sessions, platform: p,
+      ...(() => {
+        const sc = this.props.scene || 'session';
+        const T = { session: ['Fix the failing tests in auth/', 'ledger · frog/fix-auth · step 2 of 4'], pickRepo: ['New session', 'Pick a repo to start'], resumed: ['Review my open PR', 'ledger · dates-to-temporal · PR #212'], credits: ['Move dates to Temporal', 'ledger · frog/temporal · paused'], hardTask: ['Move dates to Temporal', 'ledger · frog/temporal · 6m'] }[sc];
+        const prom = 'f-btn f-btn--prominent', bord = 'f-btn f-btn--bordered';
+        return {
+          isSession: sc === 'session', isPickRepo: sc === 'pickRepo', isResumed: sc === 'resumed', isCredits: sc === 'credits', isHard: sc === 'hardTask',
+          showInspector: sc === 'session', tTitle: T[0], tSub: T[1],
+          credits: sc === 'credits' ? '$0.00' : sc === 'resumed' ? '$5.00' : '$3.20', creditColor: sc === 'credits' ? 'var(--warn)' : 'var(--muted)',
+          repos: [
+            { name: 'ecto/ledger', meta: 'TypeScript · private', when: 'pushed 2h ago', bg: 'var(--hover)' },
+            { name: 'ecto/garden', meta: 'Rust · private', when: 'yesterday', bg: 'transparent' },
+            { name: 'ecto/frog', meta: 'Rust · private', when: 'yesterday', bg: 'transparent' },
+            { name: 'ecto/dotfiles', meta: 'Shell · public', when: 'last week', bg: 'transparent' } ],
+          outs: [
+            { title: 'Finish on your Mac', body: "Sam's MacBook Pro is online. It picks up this session with qwen3-4b, free.", cta: 'Move to my Mac', btn: prom, edge: 'var(--frog)' },
+            { title: 'Add credit', body: 'Pay as you go. No subscription.', cta: 'Add $10', btn: bord, edge: 'var(--line)' },
+            { title: 'Go Pro', body: 'Cloud usage included every month, plus routines while you sleep.', cta: 'See plans', btn: bord, edge: 'var(--line)' } ],
+        };
+      })(),
+      starters: [
+        { i: '✓', title: 'Fix the failing tests', detail: 'Runs them, finds why, fixes it' },
+        { i: '⑂', title: 'Review my open PR', detail: 'Reads the diff, leaves notes' },
+        { i: '?', title: 'Explain this codebase', detail: 'A map of how it fits together' },
+        { i: '+', title: 'Add a small feature', detail: 'Plans it, builds it, opens a PR' } ],
+      ghosts: [{ w: '72%', o: .9 }, { w: '58%', o: .6 }, { w: '66%', o: .35 }],
+      signedOut: web && !!this.props.signedOut, signedIn: !(web && !!this.props.signedOut),
+      height: this.props.height ?? 900, radius: web ? '0' : '14px',
+      isMac: !web, isWeb: web, titlePad: web ? '6px 8px 8px' : '0 8px 8px',
+      runner: web ? 'cloud' : 'here', pr: web ? '#214' : '', checks: web ? 'running' : '',
+      whereLine: web ? '$0.06 · in Frog Cloud' : '$0.00 · on this Mac', whereColor: web ? 'var(--place-cloud)' : 'var(--muted)',
+      askNote: web ? 'Runs in your cloud sandbox. Nothing is pushed until you say so.' : 'Also answerable from the sidebar, your iPhone or your Watch',
+      shellHost: web ? 'sandbox ' : '', previewUrl: web ? 'sandbox · :5173/login' : 'localhost:5173/login',
+      pc: pane === 'changes', pt: pane === 'terminal', pp: pane === 'preview',
+      showC: () => this.setState({ pane: 'changes' }), showT: () => this.setState({ pane: 'terminal' }), showP: () => this.setState({ pane: 'preview' }),
+    };
+  }
+}
+</script>
+</body>
+</html>
