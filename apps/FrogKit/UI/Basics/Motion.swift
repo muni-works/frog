@@ -68,12 +68,12 @@ enum FrogCanvas {
     #if os(macOS)
     static let nsColor = NSColor(name: "FrogCanvas") { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 0.098, alpha: 1)
-            : NSColor(white: 0.955, alpha: 1)
+            ? NSColor(white: 0, alpha: 1)
+            : NSColor(white: 1, alpha: 1)
     }
     static let color = Color(nsColor: nsColor)
     #elseif os(iOS)
-    static let color = Color(uiColor: .systemBackground)
+    static let color = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? .black : .white })
     #else
     static let color = Color.black
     #endif

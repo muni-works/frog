@@ -1,31 +1,32 @@
 import SwiftUI
 
-/// The shell's design tokens: the premium redesign's c.0 block as constants, so views read one
-/// palette, one type ramp and one set of radii instead of picking their own. Dark values are the
-/// spec's (Claude Code Desktop's calm near-black); light values are their mirror on the light
-/// canvas. The Watch is always dark.
+/// The shell's design tokens, so views read one palette, one type ramp and one set of radii
+/// instead of picking their own. Same as the web app (docs/design/frog-web/README.md, "as
+/// built"): dark is true black and surfaces step up from it (#0a0a0a sidebar, #121212 raised);
+/// light is true white and they step down (#fafafa, #f4f4f4). No lines: hairlines are clear,
+/// so things separate by fill. The Watch is always dark.
 ///
 /// Rules that come with them: state color lives on glyphs only (a dot, a check, a hairline),
 /// never on fills; numbers are tabular; the composer field is the only thing with a shadow.
 enum Tokens {
     // MARK: surfaces
 
-    /// The transcript and main area (#191919 in the dark; `FrogCanvas` is this on the Mac).
-    static let canvas = Color(light: (0.955, 0.955, 0.955), dark: (0.098, 0.098, 0.098))
-    /// The sidebar: opaque, one step darker than the canvas (#141414).
-    static let sidebar = Color(light: (0.925, 0.925, 0.925), dark: (0.078, 0.078, 0.078))
-    /// Bubbles, cards, the composer field, menus (#232323).
-    static let raised = Color(light: (1.0, 1.0, 1.0), dark: (0.137, 0.137, 0.137))
+    /// The transcript and main area (#000 in the dark, #fff in the light; `FrogCanvas` is this on the Mac).
+    static let canvas = Color(light: (1.0, 1.0, 1.0), dark: (0.0, 0.0, 0.0))
+    /// The sidebar and inspector: opaque, one step off the canvas (#0a0a0a).
+    static let sidebar = Color(light: (0.980, 0.980, 0.980), dark: (0.039, 0.039, 0.039))
+    /// Bubbles, cards, the composer field, menus (#121212).
+    static let raised = Color(light: (0.957, 0.957, 0.957), dark: (0.071, 0.071, 0.071))
     /// The prompt bubble: `raised` in the dark; a soft gray in the light, where white would
     /// vanish on a white phone background.
-    static let bubble = Color(light: (0.910, 0.910, 0.910), dark: (0.137, 0.137, 0.137))
+    static let bubble = Color(light: (0.957, 0.957, 0.957), dark: (0.071, 0.071, 0.071))
 
     // MARK: hairlines
 
-    /// Dividers (white .065 in the dark).
-    static let hairline = Color(light: (0, 0, 0, 0.08), dark: (1, 1, 1, 0.065))
-    /// Field strokes and controls (white .11 in the dark).
-    static let hairlineStrong = Color(light: (0, 0, 0, 0.13), dark: (1, 1, 1, 0.11))
+    /// Dividers: clear now (no lines); kept so call sites still compile while they move to fills.
+    static let hairline = Color(light: (0, 0, 0, 0), dark: (1, 1, 1, 0))
+    /// Field strokes and controls: a faint 6% wash, for the few controls that still need an edge.
+    static let hairlineStrong = Color(light: (0, 0, 0, 0.05), dark: (1, 1, 1, 0.06))
 
     // MARK: text
 
