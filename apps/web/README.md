@@ -11,6 +11,8 @@ VITE_DEV_KEY=dev npm run dev    # Vite proxies /v1 (HTTP and websockets) to $GAT
 npm run check && npm test && npm run build
 ```
 
+For real sessions instead of the mock, run the Frog Cloud gateway locally (zest `sandbox/dev/run.sh`, which builds the image with a local frog and serves on :8787), then `GATEWAY=http://127.0.0.1:8787 VITE_DEV_KEY=$FROG_KEY npm run dev`. Model calls are billed to `FROG_KEY` at api.frog.toys.
+
 `VITE_DEV_KEY` (dev builds only) skips sign-in and uses that key with the gateway. Without it you get the real sign-in, which needs the edge to allow your origin (below).
 
 | Variable | Default | What |

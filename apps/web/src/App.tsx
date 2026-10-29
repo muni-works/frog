@@ -5,7 +5,7 @@ import type { SessionSummary } from './cloud/protocol'
 import type { Thread } from './engine/thread'
 import type { Mode } from './cloud/protocol'
 import { idOf, spec, useModels } from './models'
-import { outOfCredits, starters, useCloud, useSessions, useThreads } from './store'
+import { outOfCredits, starters, turnError, useCloud, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Inspector } from './ui/Inspector'
 import { Palette, Settings, tasksLine, type Command } from './ui/Overlays'
@@ -45,6 +45,7 @@ function sym(s: SessionSummary, t: Thread) {
   if (s.state === 'starting') return { ch: '', cls: 'sym ring', detail: 'Starting the sandbox…' }
   if (s.state === 'error') return { ch: '!', cls: 'sym paused', detail: 'The sandbox hit an error' }
   if (s.state === 'sleeping') return { ch: '', cls: 'sym merged', detail: s.pr ? `Sleeping · ${s.pr}` : 'Sleeping' }
+  if (t.ended?.type === 'error') return { ch: '!', cls: 'sym paused', detail: 'Stopped on an error' }
   if (t.ended?.type === 'denied') return { ch: '✕', cls: 'sym merged', detail: 'Stopped · you denied a step' }
   if (t.ended) return { ch: '✓', cls: 'sym done', detail: 'Finished' }
   return { ch: '', cls: 'sym merged', detail: s.pr ? `Bound to ${s.pr}` : s.branch }
@@ -293,7 +294,7 @@ export default function App() {
           <Mark size={28} />
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
             <b>{account?.handle ?? account?.email ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
-            <div className="det" style={{ color: account && account.tasks_left <= 0 ? 'var(--warn)' : undefined }}>{account ? tasksLine(account) : DEV_KEY ? 'mock gateway' : ''}</div>
+            <div className="det" style={{ color: account && account.tasks_left <= 0 ? 'var(--warn)' : undefined }}>{account ? tasksLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
           </div>
           <span className="det">⚙</span>
         </button>
@@ -316,6 +317,12 @@ export default function App() {
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
             {ct.turns.length === 0 && cs?.state !== 'refused' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? 'Starting the sandbox and cloning the repo…' : 'Nothing here yet.'}</div>}
             <Transcript thread={ct} onDecide={(a) => decide(current.id, a)} />
+            {turnError(ct) && (
+              <div role="status" className="banner warn">
+                <span style={{ flex: 1 }}>{turnError(ct)}</span>
+                <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => send(current.id, 'Try that again.')}>Try again</button>
+              </div>
+            )}
             {paused && (
               <section className="cardx outs" aria-label="Out of credits">
                 <b style={{ fontSize: 15 }}>You're out of cloud credits</b>

@@ -116,3 +116,9 @@ a { color: var(--frog); }
 .cz-search::placeholder { color: var(--faint); }
 .cz-chip:disabled { cursor: default; }
 .f-pill { white-space: nowrap; }
+/* A narrow composer (inspector open, small window): the row never wraps; the run-on chip drops
+   its label and the model name truncates before the send button is pushed out. */
+.cz-box { container-type: inline-size; }
+.cz-row > * { flex-shrink: 0; }
+.cz-row > .f-pill--cloud { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@container (max-width: 480px) { .cz-label { display: none; } }
