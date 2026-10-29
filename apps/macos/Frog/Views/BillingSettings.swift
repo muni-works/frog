@@ -15,6 +15,19 @@ struct BillingSettings: View {
                         .foregroundStyle(.secondary)
                 }
             } else if let me = account.me {
+                Section("Account") {
+                    LabeledContent(me.name ?? me.handle ?? "Signed in") {
+                        Text([me.handle.map { "@\($0)" }, me.email].compactMap { $0 }.joined(separator: " · "))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Cloud sessions belong to your account, so they show up on every device you sign in on.")
+                        .font(.frog(size: 11)).foregroundStyle(.secondary)
+                    HStack {
+                        Link("Devices and keys", destination: CloudAccount.origin.appending(path: "account"))
+                        Spacer()
+                        Button("Sign Out") { Task { await signOut() } }
+                    }
+                }
                 plan(me)
                 credit(me)
                 Section {
@@ -30,6 +43,13 @@ struct BillingSettings: View {
         }
         .formStyle(.grouped)
         .task { await account.refresh() }
+    }
+
+    /// Forgets this Mac's Frog Cloud key, as signing out on the web forgets the browser's.
+    private func signOut() async {
+        await ProviderStore.shared.setKey("", for: "cloud")
+        await account.refresh()
+        await CloudSessions.shared.refresh()
     }
 
     @ViewBuilder
