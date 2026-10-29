@@ -10,7 +10,7 @@ export interface ComposerProps {
   /** Context used of the window, from the engine's status: a ring by the send button. */
   context?: { used: number | null; window: number } | null
   /** The account's plan usage and credit, shown in the ring's popover as in Claude's. */
-  usage?: { sub: { name: string; windows: { kind: '5h' | 'weekly'; used: number; limit: number; resets_at: string }[]; over: boolean } | null; credit: string; onBilling: () => void }
+  usage?: { sub: { name: string; windows: { kind: '5h' | 'weekly'; used: number; limit: number; resets_at: string }[]; over: boolean } | null; credit: string; onBilling: () => void; onOpen?: () => void }
   /** Summarize the conversation so far to free up context (the ring's button, or /compact). */
   onCompact?: (focus?: string) => void
   compacting?: boolean
@@ -353,7 +353,7 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
   const r = 6.5, c = 2 * Math.PI * r
   return (
     <span className="ctx" ref={root}>
-      <button type="button" className="ctx-ring" aria-expanded={open} onClick={() => setOpen(!open)} aria-label={`Usage and context, ${Math.round(f * 100)}%`}>
+      <button type="button" className="ctx-ring" aria-expanded={open} onClick={() => { if (!open) usage?.onOpen?.(); setOpen(!open) }} aria-label={`Usage and context, ${Math.round(f * 100)}%`}>
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
           <circle cx="9" cy="9" r={r} fill="none" stroke="var(--line-strong)" strokeWidth="2.5" />
           <circle cx="9" cy="9" r={r} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"
