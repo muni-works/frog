@@ -263,7 +263,7 @@ export default function App() {
           <Composer repo="Connect a repo" onSend={(text) => leave(text)} autoFocus />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening GitHub… your message is saved.</div>}
         </div></div>
-        <footer className="muni-foot"><Muni /><span>Made by Municipal Robotics</span></footer>
+        <footer className="muni-foot"><a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a></footer>
       </main>
     </div>
   )

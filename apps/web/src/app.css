@@ -246,4 +246,6 @@ button.tool:hover { color: var(--fg); }
 .trust li { display: flex; align-items: center; gap: 6px; }
 .trust li::before { content: '✓'; color: var(--frog); font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { .beta-pill i { animation: none; } }
-.muni-foot { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 0 14px; font-size: 11.5px; color: var(--faint); }
+.muni-foot { display: flex; justify-content: center; padding: 0 0 14px; }
+.muni-foot a { display: flex; color: var(--faint); transition: color .2s; }
+.muni-foot a:hover, .muni-foot a:focus-visible { color: #ff8a1f; }
