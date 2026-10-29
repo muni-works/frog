@@ -60,6 +60,20 @@ export function Composer(p: ComposerProps) {
   useEffect(() => { if (p.draft !== undefined) setText(p.draft) }, [p.draft])
   useEffect(() => { if (p.autoFocus) ref.current?.focus() }, [p.autoFocus])
   useEffect(() => { if (p.pickRepo) setMenu('repo') }, [p.pickRepo])
+  // A menu closes on any click outside it (its own toggle chip toggles it), or Escape.
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!menu) return
+    const down = (e: MouseEvent) => {
+      const t = e.target as Element
+      if (root.current?.contains(t) && t.closest('.cz-menu, [aria-expanded]')) return
+      setMenu(null)
+    }
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
+    document.addEventListener('mousedown', down)
+    document.addEventListener('keydown', key)
+    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key) }
+  }, [menu])
 
   const send = () => {
     const t = text.trim()
@@ -74,7 +88,7 @@ export function Composer(p: ComposerProps) {
   const hasGit = (p.adds ?? 0) + (p.dels ?? 0) > 0
 
   return (
-    <div className="cz">
+    <div className="cz" ref={root}>
       {menu === 'plus' && (
         <div className="f-card cz-menu" role="menu" style={{ left: 8 }}>
           <button type="button" role="menuitem" onClick={() => { setText(text + '@'); setMenu(null); ref.current?.focus() }}><span>@</span>Mention a file</button>
