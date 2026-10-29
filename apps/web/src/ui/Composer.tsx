@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Mode } from '../cloud/protocol'
+import { modes, price, type Model } from '../models'
 
 // Port of Composer.dc.html with platform="web": the run-on chip is fixed to Frog Cloud.
 
@@ -13,8 +15,13 @@ export interface ComposerProps {
   /** The running turn is blocked on a permission ask. */
   waiting?: boolean
   draft?: string
-  /** Shown when the gateway reports one; there's no model list to pick from yet. */
-  model?: string
+  /** The model id (without `cloud/`) and the ones to pick from; the menu shows when there's a list. */
+  model?: string | null
+  models?: Model[]
+  onModel?: (id: string) => void
+  /** When the engine asks before acting; the chip shows once the engine (or a new session) says. */
+  mode?: Mode | null
+  onMode?: (mode: Mode) => void
   onSend: (text: string) => void
   onStop?: () => void
   onRepo?: () => void
@@ -37,7 +44,7 @@ function useTimer(since?: number) {
 
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
-  const [menu, setMenu] = useState<'plus' | null>(null)
+  const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | null>(null)
   const ref = useRef<HTMLTextAreaElement>(null)
   const working = p.state === 'working', paused = p.state === 'paused'
   const timer = useTimer(working ? p.startedAt : undefined)
@@ -60,6 +67,29 @@ export function Composer(p: ComposerProps) {
       {menu === 'plus' && (
         <div className="f-card cz-menu" role="menu" style={{ left: 8 }}>
           <button type="button" role="menuitem" onClick={() => { setText(text + '@'); setMenu(null); ref.current?.focus() }}><span>@</span>Mention a file</button>
+        </div>
+      )}
+
+      {menu === 'model' && (
+        <div className="f-card cz-menu" role="menu" aria-label="Model" style={{ left: 150, width: 300 }}>
+          <div className="cz-menu-h">Model on Frog Cloud</div>
+          {p.models?.map((m) => (
+            <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null) }}>
+              <span style={{ flex: 1, minWidth: 0 }}><b style={{ fontWeight: 600 }}>{m.id}</b><br /><span className="det">{[price(m), m.context ? `${Math.round(m.context / 1000)}k context` : ''].filter(Boolean).join(' · ')}</span></span>
+              <span style={{ color: 'var(--frog)', opacity: m.id === p.model ? 1 : 0 }}>✓</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {menu === 'mode' && (
+        <div className="f-card cz-menu" role="menu" aria-label="When Frog asks" style={{ left: 150, width: 300 }}>
+          <div className="cz-menu-h">When Frog asks</div>
+          {modes.map((m) => (
+            <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.mode} onClick={() => { p.onMode?.(m.id); setMenu(null) }}>
+              <span style={{ flex: 1, minWidth: 0 }}><b style={{ fontWeight: 600 }}>{m.label}</b><br /><span className="det wrap">{m.note}</span></span>
+              <span style={{ color: 'var(--frog)', opacity: m.id === p.mode ? 1 : 0 }}>✓</span>
+            </button>
+          ))}
         </div>
       )}
 
@@ -102,11 +132,18 @@ export function Composer(p: ComposerProps) {
           <span className="cz-chip" title="Web sessions run in a private Frog Cloud sandbox" style={{ color: 'var(--place-cloud)', cursor: 'default' }}>
             <span aria-hidden="true">☁</span>Frog Cloud
           </span>
-          {p.model && (
-            <span className="f-pill f-pill--cloud" style={{ cursor: 'default' }} title={`Model: ${p.model} on Frog Cloud`}>
+          {(!!p.model || !!p.models?.length) && (
+            <button type="button" className="f-pill f-pill--cloud" aria-label={`Model: ${p.model ?? 'default'} on Frog Cloud`} aria-expanded={menu === 'model'}
+              disabled={!p.models?.length || !p.onModel} onClick={() => setMenu(menu === 'model' ? null : 'model')}>
               <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z" /></svg>
-              {p.model}
-            </span>
+              {p.model ?? 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
+            </button>
+          )}
+          {p.mode && p.onMode && (
+            <button type="button" className="f-pill" style={{ color: p.mode === 'yolo' ? 'var(--notice)' : 'var(--muted)' }} aria-expanded={menu === 'mode'}
+              title="When Frog asks before acting" onClick={() => setMenu(menu === 'mode' ? null : 'mode')}>
+              {modes.find((m) => m.id === p.mode)?.label} <span className="chev">▾</span>
+            </button>
           )}
           {!p.branch && (
             <button type="button" className="cz-chip" onClick={p.onRepo}>

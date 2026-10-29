@@ -3,6 +3,8 @@ import { finishSignIn, me, savedKey, signIn, signOut, API, AuthError, type Accou
 import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Thread } from './engine/thread'
+import type { Mode } from './cloud/protocol'
+import { idOf, spec, useModels } from './models'
 import { outOfCredits, starters, useCloud, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Inspector } from './ui/Inspector'
@@ -63,9 +65,13 @@ export default function App() {
   const [pending, setPending] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [conn, setConn] = useState<Record<string, ConnectionState>>({})
+  // What a new session starts with: null model = the gateway's default.
+  const [newModel, setNewModel] = useState<string | null>(null)
+  const [newMode, setNewMode] = useState<Mode>('default')
   const toastTimer = useRef(0)
 
   const cloud = useCloud(key)
+  const models = useModels(DEV_KEY ? null : key)
   const { sessions, error: listError, setSessions } = useSessions(cloud)
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined
   // Stream the open session and any with a live sandbox (for Needs you), not sleeping ones:
@@ -105,17 +111,18 @@ export default function App() {
     if (!cloud) return
     setBusy(true)
     try {
-      const s = await cloud.gateway.create({ repo })
+      const s = await cloud.gateway.create({ repo, ...(newModel ? { model: spec(newModel) } : {}) })
       setSessions((all) => [{ ...s, title: s.title || text }, ...all.filter((x) => x.id !== s.id)])
       setView({ kind: 'session', id: s.id })
       setPending(null)
+      if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
       send(s.id, text) // queued until the session's socket is live
     } catch (e) {
       say(`Couldn't start a sandbox: ${e instanceof Error ? e.message : e}`)
     } finally {
       setBusy(false)
     }
-  }, [cloud, send, setSessions])
+  }, [cloud, send, setSessions, newModel, newMode])
 
   const decide = useCallback((id: string, allow: boolean) => {
     const ask = thread(id).ask
@@ -297,7 +304,7 @@ export default function App() {
         <div className="titlebar">
           <div style={{ flex: 1, minWidth: 0 }}>
             <b style={{ fontSize: 14 }}>{current ? title(current) : 'New session'}</b>
-            <div className="det">{current ? `${current.repo} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}` : view.kind === 'pickRepo' ? 'Pick a repo to start' : 'Runs in a private Frog Cloud sandbox'}</div>
+            <div className="det">{current ? `${current.repo} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}${ct?.context?.used ? ` · ${Math.round(ct.context.used / 1000)}k of ${Math.round(ct.context.window / 1000)}k context` : ''}` : view.kind === 'pickRepo' ? 'Pick a repo to start' : 'Runs in a private Frog Cloud sandbox'}</div>
           </div>
           {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? 'In Frog Cloud' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
           {current && <button type="button" className="f-btn f-btn--plain" onClick={() => setInspector(!inspector)} aria-pressed={inspector}>{inspector ? 'Hide inspector' : 'Inspector'}</button>}
@@ -329,6 +336,8 @@ export default function App() {
           <div className="dock">
             <Composer key={current.id} state={ct.running ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!ct.ask}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
+              model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
+              mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
               onSend={(text) => send(current.id, text)} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />
           </div>
         </>)}
@@ -340,6 +349,7 @@ export default function App() {
             <h1>What should we work on?</h1>
             <div style={{ width: '100%', maxWidth: 680 }}>
               <Composer repo={view.repo} draft={draft} autoFocus onRepo={() => setView({ kind: 'pickRepo' })}
+                model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text) => { setDraft(undefined); if (view.repo) start(text, view.repo); else { setPending(text); setView({ kind: 'pickRepo' }) } }} />
             </div>
             <div className="starters">

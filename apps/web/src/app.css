@@ -111,3 +111,5 @@ a { color: var(--frog); }
 .set-x { position: absolute; top: 12px; right: 12px; }
 .set-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 999px; box-shadow: var(--shadow-toast); z-index: 30; }
+.f-pill:disabled { cursor: default; }
+.f-pill:disabled:hover { background: transparent; }

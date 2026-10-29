@@ -10,5 +10,5 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true
   },
-  "include": [".", "../src/cloud"]
+  "include": [".", "../src/cloud", "../src/engine"]
 }
