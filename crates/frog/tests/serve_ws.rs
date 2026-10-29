@@ -323,9 +323,12 @@ async fn a_new_peer_replaces_the_old_and_can_resume() {
     assert_eq!(w["session"], seen[0]["session"]);
     // The old peer is closed.
     while recv(&mut a).await.is_some() {}
-    // resume_after 0 replays the durable envelopes, in order, starting with the turn.
+    // resume_after 0 replays the durable envelopes in order, plus the latest status at its
+    // own seq; the first durable one is the turn.
     let replay = until(&mut b, "turn_ended").await;
-    assert_eq!(replay[0]["event"], "turn_started");
+    let first = replay.iter().find(|e| e["event"] != "status").unwrap();
+    assert_eq!(first["event"], "turn_started");
+    assert!(replay.iter().filter(|e| e["event"] == "status").count() <= 1);
     assert!(
         replay
             .iter()
@@ -389,6 +392,49 @@ async fn ask_waits_for_the_peers_permission() {
         out["item"]["output"].as_str().unwrap().contains("hi"),
         "{out}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_that_attaches_mid_ask_gets_the_ask() {
+    let bash = tool_reply(
+        "Bash",
+        json!({"command": "echo hi > made.txt && cat made.txt", "unsandboxed": true}),
+    );
+    let f = frog(vec![bash, text_reply("done")], &["--ask"]).await;
+    let mut a = connect(&f.addr).await;
+    hello(&mut a, 0).await;
+    send(&mut a, json!({"op": "submit", "text": "run it"})).await;
+    let asked = until(&mut a, "permission_request").await;
+    let ask = asked.last().unwrap().clone();
+
+    // A reload, or another device: the ask is in the replay, in seq order, and answerable.
+    let mut b = connect(&f.addr).await;
+    hello(&mut b, 0).await;
+    let replay = until(&mut b, "permission_request").await;
+    assert_eq!(replay.last().unwrap()["id"], ask["id"]);
+    assert!(
+        replay
+            .windows(2)
+            .all(|w| w[0]["seq"].as_u64() < w[1]["seq"].as_u64()),
+        "{replay:?}"
+    );
+    send(
+        &mut b,
+        json!({"op": "permission", "id": ask["id"], "decision": "allow"}),
+    )
+    .await;
+    until(&mut b, "turn_ended").await;
+
+    // Answered and finished: a later peer's replay has no open ask, and it does have the
+    // engine's latest status (model and mode) though status isn't durable.
+    let mut c = connect(&f.addr).await;
+    hello(&mut c, 0).await;
+    let replay = until(&mut c, "status").await;
+    assert!(
+        replay.iter().all(|e| e["event"] != "permission_request"),
+        "{replay:?}"
+    );
+    assert!(replay.last().unwrap()["mode"].is_string(), "{replay:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
