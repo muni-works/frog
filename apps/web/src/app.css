@@ -300,3 +300,14 @@ button.tool:hover { color: var(--fg); }
 .sstate-fail { color: var(--warn); }
 .sstate .sg { width: 10px; height: 10px; }
 .sgf { width: 10px; flex: none; }
+
+/* Loading a conversation: its shape, shimmering, instead of an empty page. */
+.ghost { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; animation: ghost-in .3s ease-out both .15s; }
+.ghost-me { align-self: flex-end; width: 42%; height: 36px; border-radius: 16px; margin-bottom: 8px; }
+.ghost-line { height: 11px; border-radius: 6px; }
+.ghost-me, .ghost-line { background: linear-gradient(90deg, var(--card) 0%, var(--well) 40%, var(--card) 80%) 0 0 / 300% 100%; animation: shimmer 1.6s ease-in-out infinite; }
+.ghost-line:nth-child(3) { animation-delay: .08s; } .ghost-line:nth-child(4) { animation-delay: .16s; }
+.ghost-cap { margin-top: 6px; font-size: 12px; color: var(--faint); }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -50% 0; } }
+@keyframes ghost-in { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .ghost, .ghost-me, .ghost-line { animation: none; } }

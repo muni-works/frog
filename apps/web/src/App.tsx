@@ -314,7 +314,15 @@ export default function App() {
           <div className="scroll" ref={(el) => { if (el) el.scrollTop = el.scrollHeight }}><div className="col">
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{cs.refused.upgrade ? <a className="f-btn f-btn--bordered f-btn--small" href={cs.refused.upgrade} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
-            {ct.turns.length === 0 && !opening[current.id] && cs?.state !== 'refused' && current.state !== 'error' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Nothing here yet.'}</div>}
+            {ct.turns.length === 0 && !opening[current.id] && cs?.state !== 'refused' && current.state !== 'error' && (
+              <div className="ghost" role="status" aria-label={current.state === 'starting' ? 'Starting the sandbox' : 'Loading the conversation'}>
+                <div className="ghost-me" />
+                <div className="ghost-line" style={{ width: '92%' }} />
+                <div className="ghost-line" style={{ width: '78%' }} />
+                <div className="ghost-line" style={{ width: '54%' }} />
+                <div className="ghost-cap">{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Loading the conversation…'}</div>
+              </div>
+            )}
             {opening[current.id] && ct.turns.length === 0 && current.state !== 'error' && (
               <div className="turn">
                 <div className="me">{opening[current.id].text}</div>
