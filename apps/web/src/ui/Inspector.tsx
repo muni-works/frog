@@ -19,7 +19,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thr
     }
     addEventListener('pointermove', move); addEventListener('pointerup', up)
   }
-  const [pane, setPane] = useState<'changes' | 'terminal' | 'log'>('changes')
+  const [pane, setPane] = useState<'changes' | 'terminal' | 'log'>(() => { try { return (localStorage.getItem('frog.inspectorTab') as 'changes' | 'terminal' | 'log') || 'changes' } catch { return 'changes' } })
   // The newest terminal pane that's still open, else the newest one.
   const terms = Object.values(thread.panes).filter((p) => p.kind === 'terminal')
   const term = [...terms].reverse().find((p) => !p.closed) ?? terms[terms.length - 1]
@@ -31,7 +31,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thr
       <div className="insp-top">
         <div className="seg" role="tablist" style={{ flex: 1 }}>
           {(['changes', 'terminal', 'log'] as const).map((p) => (
-            <button key={p} type="button" role="tab" aria-selected={pane === p} onClick={() => setPane(p)}>
+            <button key={p} type="button" role="tab" aria-selected={pane === p} onClick={() => { setPane(p); try { localStorage.setItem('frog.inspectorTab', p) } catch { /* private mode */ } }}>
               {{ changes: 'Changes', terminal: 'Terminal', log: 'Frog’s log' }[p]}
             </button>
           ))}

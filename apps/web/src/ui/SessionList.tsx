@@ -48,7 +48,8 @@ function loadView(): View {
   try { return { ...d, ...JSON.parse(localStorage.getItem(VIEW) ?? '{}') } } catch { return d }
 }
 
-// When you last opened each session, so a finish you haven't seen gets a dot.
+// When you last looked at each session, so a turn that ended since gets a dot. Keyed off the
+// gateway's last_turn: `updated` also moves when a sandbox sleeps or wakes.
 const SEEN = 'frog.seen'
 function loadSeen(): Record<string, number> { try { return JSON.parse(localStorage.getItem(SEEN) ?? '{}') } catch { return {} } }
 
@@ -87,8 +88,9 @@ export function SessionList(p: {
   useEffect(() => {
     if (!p.current) return
     const s = p.sessions.find((x) => x.id === p.current)
-    if (!s || (seen[s.id] ?? 0) >= s.updated) return
-    const next = { ...seen, [s.id]: s.updated }
+    const mark = s ? Math.max(s.last_turn ?? 0, s.updated) : 0
+    if (!s || (seen[s.id] ?? 0) >= mark) return
+    const next = { ...seen, [s.id]: mark }
     setSeen(next)
     try { localStorage.setItem(SEEN, JSON.stringify(next)) } catch { /* private mode */ }
   }, [p.current, p.sessions, seen])
@@ -142,7 +144,7 @@ export function SessionList(p: {
 
   const row = (s: SessionSummary) => {
     const t = p.thread(s.id)
-    const unread = s.id !== p.current && !!seen[s.id] && s.updated > seen[s.id]
+    const unread = s.id !== p.current && !!seen[s.id] && !!s.last_turn && s.last_turn > seen[s.id]
     const { glyph, detail } = look(s, t, unread)
     const repo = s.repo ? s.repo.split('/')[1] ?? s.repo : null
     const quiet = !glyph && s.id !== p.current

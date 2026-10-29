@@ -145,6 +145,8 @@ export interface SessionSummary {
   /** When it was made; older gateways leave it out. */
   created?: number;
   updated: number;
+  /** When a turn last ended; unlike `updated`, sleep and wake don't move it. */
+  last_turn?: number;
   pr?: string;
   /** Put away (PATCH archived); listed under Archived. */
   archived?: boolean;
