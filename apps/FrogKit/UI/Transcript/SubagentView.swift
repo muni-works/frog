@@ -66,10 +66,9 @@ struct AgentStepRow: View {
         .font(.callout)
         .foregroundStyle(.secondary)
         .contentShape(.rect)
-        .onTapGesture {
-            guard !running else { return }
-            showRun = true
-        }
+        // Running or done, its run opens: watching an agent work is the point of the sheet
+        // (built from this row's item, so it follows the run live).
+        .onTapGesture { showRun = true }
         .sheet(isPresented: $showRun) {
             SubagentRunSheet(title: arg, run: run, conversation: conversation)
         }

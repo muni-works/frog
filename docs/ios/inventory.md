@@ -31,7 +31,7 @@ first half is wrong and the second half is right, and both matter:
 
 | target | platform | what's real | key files |
 |---|---|---|---|
-| `Frog` (`eco.frog.remote`) | iPhone + iPad (`TARGETED_DEVICE_FAMILY 1,2`) | Pair by QR or code. Session list with "Needs you / Pinned / Open on your Mac / by day" sections. Full FrogKit transcript, glass composer, Ask and permission cards. Model picker (the Mac decides). Changes inspector, row menu (archive/pin/rename), photo attach and lightbox, fork/rewind/Mermaid, spend and energy settings. Handoff (`eco.frog.conversation`). Siri/Shortcuts intents. "The house" (talks to `frog --listen` with no Mac). Fixture playback. | `Frog/FrogApp.swift` (iPad `NavigationSplitView`), `Remote.swift` (501), `ChatView.swift`, `SessionListView.swift`, `Notifications.swift`, `LiveActivities.swift`, `Intents.swift`, `HouseIntents.swift`, `WatchLink.swift` |
+| `Frog` (`toys.frog.remote`) | iPhone + iPad (`TARGETED_DEVICE_FAMILY 1,2`) | Pair by QR or code. Session list with "Needs you / Pinned / Open on your Mac / by day" sections. Full FrogKit transcript, glass composer, Ask and permission cards. Model picker (the Mac decides). Changes inspector, row menu (archive/pin/rename), photo attach and lightbox, fork/rewind/Mermaid, spend and energy settings. Handoff (`eco.frog.conversation`). Siri/Shortcuts intents. Fixture playback. | `Frog/FrogApp.swift` (iPad `NavigationSplitView`), `Remote.swift` (501), `ChatView.swift`, `SessionListView.swift`, `Notifications.swift`, `LiveActivities.swift`, `Intents.swift`, `WatchLink.swift` |
 | `FrogNotify` | iOS content extension | Long-press a `PERMISSION` notification to see the command or diff in FrogKit's `QuestionBody` | `NotificationContent/NotificationViewController.swift` |
 | `FrogWidgets` | iOS WidgetKit | A Live Activity and Dynamic Island per running turn. Home and lock status widgets, a Control Center control. | `Widgets/FrogWidgets.swift`, `StatusWidgets.swift`, `Shared/TurnActivity.swift` |
 | `FrogShare` | iOS share extension | "Send to frog": text, a URL or an image into an open conversation | `ShareExtension/ShareViewController.swift` |
@@ -118,20 +118,22 @@ client must say `hello{token}` first.
 
 Delivery goes through `xcrun simctl push` for simulators, or POSTs to a relay for real phones.
 The relay holds the APNs key (`site/api/_apns.js`). It validates the token format, the topic
-(`eco.frog.remote`), the size limits and `push_type`. On a 410 it tells the Mac to forget the
+(`toys.frog.remote`), the size limits and `push_type`. On a 410 it tells the Mac to forget the
 device.
 
 Problems in the push path:
 
-1. **Wrong host.** `RemotePush.relay` defaults to `https://frog.eco/api/push`. The site moved to
-   **frog.toys on Cloudflare Pages** on 2026-10-22 (9e524b9).
-2. **The Cloudflare function is broken as written.** `site/functions/api/push.js` uses `require`
-   inside an ES-module `onRequest`. It also reads `context.env.request` instead of
-   `context.request`, and that destructure shadows the `request()` helper it imports. The
-   Vercel version (`site/api/push.js`) looks right but is no longer the deploy target.
-3. **No caller auth and no rate limits.** Anyone who holds a device token can push to it. The
-   README already lists rate limits as missing.
-4. **Payloads are plaintext.** The command text and diff hunks pass through the frog relay and
+1. ~~Wrong host.~~ `RemotePush.relay` is `https://frog.toys/api/push`, served by `site/worker.js`
+   on Workers (October 2026).
+2. ~~The Cloudflare function is broken.~~ Fixed; `site/api/` is the unused Vercel copy.
+3. ~~No caller auth and no rate limits.~~ A shared `PUSH_RELAY_SECRET` (the Mac's Settings ›
+   General) and 30 pushes a minute per isolate. Per-Mac secrets minted at pairing are still the
+   plan.
+4. ~~Payloads are plaintext.~~ Alert pushes are sealed with ChaChaPoly under a key derived from
+   the pairing code (`FrogKit/Core/PushCrypto.swift`); `FrogPush`, a notification service
+   extension, opens them on the phone. Live Activity updates (the activity line and step count)
+   still go in the clear, since iOS renders those itself. Details below are the old state.
+   **Payloads were plaintext.** The command text and diff hunks pass through the frog relay and
    APNs. There's no Notification Service Extension to decrypt an encrypted payload (`FrogNotify`
    is a content extension). For a privacy-first product, that's a shipping blocker.
 5. **One Live Activity at a time.** `LiveActivities.current` holds a single activity for the

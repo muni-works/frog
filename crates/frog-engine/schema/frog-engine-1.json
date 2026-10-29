@@ -1336,6 +1336,67 @@
           "type": "object"
         },
         {
+          "description": "A sandboxed command tried to reach a host off the session's egress allow-list (see\n`egress`): blocked at connect time (`enforced`), or only recorded (`flag` mode). The\nexfil tripwire: shown as a notice row, logged to `egress.jsonl`, counted in the brief.",
+          "properties": {
+            "command": {
+              "description": "The start of the command.",
+              "type": "string"
+            },
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "enforced": {
+              "default": false,
+              "type": "boolean"
+            },
+            "event": {
+              "const": "egress_blocked",
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "item": {
+              "description": "The tool call whose command tried it, when it was still running (a background\njob's later attempts have none).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "port": {
+              "default": 0,
+              "description": "0 when the sandbox stopped the lookup itself (a client that ignored the proxy).",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "tool": {
+              "description": "`Bash` or `Monitor`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "host",
+            "tool",
+            "command",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "description": "How one permission check was decided, for measuring the ask rate:\nwhich layer answered (rule, classifier, fallback, user) and how long it took.",
           "properties": {
             "created": {
@@ -3223,6 +3284,52 @@
             "event",
             "item",
             "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A sandboxed command tried to reach a host off the session's egress allow-list (see\n`egress`): blocked at connect time (`enforced`), or only recorded (`flag` mode). The\nexfil tripwire: shown as a notice row, logged to `egress.jsonl`, counted in the brief.",
+          "properties": {
+            "command": {
+              "description": "The start of the command.",
+              "type": "string"
+            },
+            "enforced": {
+              "default": false,
+              "type": "boolean"
+            },
+            "event": {
+              "const": "egress_blocked",
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "item": {
+              "description": "The tool call whose command tried it, when it was still running (a background\njob's later attempts have none).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "port": {
+              "default": 0,
+              "description": "0 when the sandbox stopped the lookup itself (a client that ignored the proxy).",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tool": {
+              "description": "`Bash` or `Monitor`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "host",
+            "tool",
+            "command"
           ],
           "type": "object"
         },

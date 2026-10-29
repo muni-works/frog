@@ -407,7 +407,7 @@ pub fn events_after(dir: &Path, id: &str, after: u64) -> Result<Vec<Envelope>> {
 /// How a session's last turn ended, for listings: is it still going, and if not, how did it
 /// stop? Derived from the last `TurnStarted`/`TurnEnded` pair; `None` means the session never
 /// finished a turn (idle, or one that only ever crashed).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EndState {
     /// The last turn is still open (or ended mid-run: torn tail, crash) — live readers should
     /// consult the `.live` file for what's happening now.
@@ -453,11 +453,114 @@ pub struct Info {
     pub end: Option<EndState>,
 }
 
+/// What `list` reads out of one log: everything but whether it's in use right now.
+#[derive(Clone, Serialize, Deserialize)]
+struct Scanned {
+    header: Header,
+    first_input: Option<String>,
+    title: Option<String>,
+    end: Option<EndState>,
+    /// The newest turn is still open.
+    open: bool,
+    /// Last conversation activity, ms.
+    active: i64,
+}
+
+/// `list`'s summaries, keyed by session id and stamped with the log's size and mtime: reading
+/// every log in full (screenshots and all, ~2 GB for 1,300 sessions) took over a second, and the
+/// app lists every few seconds while anything streams. Only a log that changed is read again.
+#[derive(Default, Serialize, Deserialize)]
+struct ListIndex {
+    entries: std::collections::HashMap<String, (u64, i128, Scanned)>,
+}
+
+const LIST_INDEX: &str = ".list-index.json";
+
+/// A log's (size, mtime ns), the index's validity stamp.
+fn stamp(meta: &std::fs::Metadata) -> Option<(u64, i128)> {
+    let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((meta.len(), mtime.as_nanos() as i128))
+}
+
+fn scan(p: &Path) -> Option<Scanned> {
+    let file = File::open(p).ok()?;
+    let mut lines = BufReader::new(file).lines().map_while(|l| l.ok());
+    let Some(Ok(Record::Header(header))) = lines.next().map(|l| serde_json::from_str(&l)) else {
+        return None;
+    };
+    let (mut first_input, mut title) = (None, None);
+    // The end of the newest turn that closed, and whether a later one is still open.
+    let mut end: Option<EndState> = None;
+    let mut open = false;
+    // Last conversation activity: when a turn last started or ended. Not the file's mtime,
+    // since merely resuming a session appends bookkeeping records, which would reorder the
+    // list every time you open one.
+    let mut active = header.created;
+    for l in lines {
+        // Only these three events matter: skip parsing the rest (tool output, screenshots),
+        // which is nearly all of a log's bytes.
+        if !(l.contains("\"turn_started\"") || l.contains("\"turn_ended\"") || l.contains("\"titled\"")) {
+            continue;
+        }
+        match serde_json::from_str(&l) {
+            Ok(Record::Event {
+                env:
+                    Envelope {
+                        event: Event::TurnStarted { input, .. },
+                        created,
+                        ..
+                    },
+            }) => {
+                active = active.max(created);
+                open = true;
+                if first_input.is_none() {
+                    first_input = Some(input);
+                }
+            }
+            Ok(Record::Event {
+                env:
+                    Envelope {
+                        event: Event::TurnEnded { reason, .. },
+                        created,
+                        ..
+                    },
+            }) => {
+                active = active.max(created);
+                open = false;
+                end = EndState::new(&reason);
+            }
+            Ok(Record::Event {
+                env:
+                    Envelope {
+                        event: Event::Titled { title: t },
+                        ..
+                    },
+            }) => title = Some(t),
+            _ => {}
+        }
+    }
+    Some(Scanned {
+        header,
+        first_input,
+        title,
+        end,
+        open,
+        active,
+    })
+}
+
 /// Sessions started in `cwd` (every folder's, with `None`), most recently active first.
 pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(Vec::new());
     };
+    let index_path = dir.join(LIST_INDEX);
+    let old: ListIndex = std::fs::read(&index_path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let mut index = ListIndex::default();
+    let mut dirty = false;
     let mut out = Vec::new();
     for e in entries.filter_map(|e| e.ok()) {
         let p = e.path();
@@ -467,61 +570,29 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
         let Some(id) = p.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        let Ok(file) = File::open(&p) else { continue };
-        let mut lines = BufReader::new(file).lines().map_while(|l| l.ok());
-        let Some(Ok(Record::Header(header))) = lines.next().map(|l| serde_json::from_str(&l))
-        else {
+        let Some((len, mtime)) = e.metadata().ok().as_ref().and_then(stamp) else {
             continue;
         };
-        if cwd.is_some_and(|c| header.cwd != c) {
+        let scanned = match old.entries.get(id) {
+            Some((l, m, s)) if *l == len && *m == mtime => s.clone(),
+            _ => {
+                dirty = true;
+                let Some(s) = scan(&p) else { continue };
+                s
+            }
+        };
+        index.entries.insert(id.to_string(), (len, mtime, scanned.clone()));
+        if cwd.is_some_and(|c| scanned.header.cwd != c) {
             continue;
         }
-        let (mut first_input, mut title) = (None, None);
-        // The end of the newest turn that closed, and whether a later one is still open.
-        let mut end: Option<EndState> = None;
-        let mut open = false;
-        // Last conversation activity: when a turn last started or ended. Not the file's mtime,
-        // since merely resuming a session appends bookkeeping records, which would reorder the
-        // list every time you open one.
-        let mut active = header.created;
-        for l in lines {
-            match serde_json::from_str(&l) {
-                Ok(Record::Event {
-                    env:
-                        Envelope {
-                            event: Event::TurnStarted { input, .. },
-                            created,
-                            ..
-                        },
-                }) => {
-                    active = active.max(created);
-                    open = true;
-                    if first_input.is_none() {
-                        first_input = Some(input);
-                    }
-                }
-                Ok(Record::Event {
-                    env:
-                        Envelope {
-                            event: Event::TurnEnded { reason, .. },
-                            created,
-                            ..
-                        },
-                }) => {
-                    active = active.max(created);
-                    open = false;
-                    end = EndState::new(&reason);
-                }
-                Ok(Record::Event {
-                    env:
-                        Envelope {
-                            event: Event::Titled { title: t },
-                            ..
-                        },
-                }) => title = Some(t),
-                _ => {}
-            }
-        }
+        let Scanned {
+            header,
+            first_input,
+            title,
+            end,
+            open,
+            active,
+        } = scanned;
         let modified =
             std::time::UNIX_EPOCH + std::time::Duration::from_millis(active.max(0) as u64);
         out.push(Info {
@@ -539,6 +610,16 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
                 end
             },
         });
+    }
+    // Deleted logs drop out too. Written whole and renamed in, so a concurrent listing reads
+    // the old index or the new one, never half; a failed write only costs the next a rescan.
+    if dirty || index.entries.len() != old.entries.len() {
+        let tmp = dir.join(format!("{LIST_INDEX}.{}", std::process::id()));
+        if let Ok(bytes) = serde_json::to_vec(&index)
+            && std::fs::write(&tmp, bytes).is_ok()
+        {
+            let _ = std::fs::rename(&tmp, &index_path);
+        }
     }
     out.sort_by_key(|i| std::cmp::Reverse(i.modified));
     Ok(out)

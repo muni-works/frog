@@ -66,12 +66,15 @@ struct ActivityLabel: View {
     /// The frog, or the plain symbol when the playful frog is off. The pill's frog does not
     /// run its own 30/s timeline: it rides this label's 1Hz clock (the mood changes when work
     /// changes, not per frame), so the capsule costs a frame a second instead of thirty.
+    /// Settled (done, ready, stopped) it holds its pose: an idle pill's frog looping at 30/s
+    /// redrew the whole window, glass and all, for as long as the app sat open.
     /// DEBUG churn benchmarking holds its pose through `PillChurn.noFrog` (Reduce Motion).
     @ViewBuilder
     private func icon(at: Date? = nil, @ViewBuilder plain: () -> some View) -> some View {
         if playful {
+            let settled = !conversation.busy && !conversation.justFinished
             FrogFace(mood: conversation.failure != nil ? .sad : conversation.mood, size: 16,
-                     animating: !PillChurn.noFrog, at: at).frame(width: 16)
+                     animating: !PillChurn.noFrog && !settled, at: at).frame(width: 16)
         } else {
             plain().frame(width: 14)
         }

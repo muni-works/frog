@@ -1,0 +1,18 @@
+// frog.toys on Workers static assets. Deploy: `npx wrangler deploy` from site/.
+{
+  "name": "frog-site",
+  "main": "worker.js",
+  "compatibility_date": "2026-05-03",
+  "assets": {
+    "directory": ".",
+    // /energy -> /energy/, /index.html -> /, like vercel.json's cleanUrls.
+    "html_handling": "auto-trailing-slash",
+    // No SPA fallback: unmatched paths go to the worker, which 404s.
+    "not_found_handling": "none"
+  },
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "frog.toys", "custom_domain": true },
+    { "pattern": "www.frog.toys", "custom_domain": true }
+  ]
+}

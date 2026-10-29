@@ -60,7 +60,10 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func registered(_ token: Data) {
-        deviceToken = token.map { String(format: "%02x", $0) }.joined()
+        let hex = token.map { String(format: "%02x", $0) }.joined()
+        guard hex != deviceToken else { return }
+        deviceToken = hex
+        Remote.shared.registerForPushes()
     }
 
     // MARK: Delegate

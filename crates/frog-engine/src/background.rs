@@ -159,6 +159,12 @@ pub struct Registry {
     wake: Mutex<Option<mpsc::WeakUnboundedSender<Op>>>,
     /// Permission requests from subagents, by request id: answers go to that subagent.
     relay: Mutex<HashMap<String, mpsc::UnboundedSender<Op>>>,
+    /// The job the sleep guard last made of a long wait (`Engine::background_wait`): while it
+    /// runs, another long wait is refused rather than started.
+    pub long_wait: Mutex<Option<String>>,
+    /// Long waits refused this turn because one already ran (`Engine::background_wait`): the
+    /// second ends the turn, since the model won't.
+    pub long_wait_refusals: AtomicU64,
     emit: Emit,
 }
 
@@ -170,6 +176,8 @@ impl Registry {
             notices: Default::default(),
             wake: Default::default(),
             relay: Default::default(),
+            long_wait: Default::default(),
+            long_wait_refusals: AtomicU64::new(0),
             emit: Box::new(emit),
         })
     }
@@ -216,7 +224,7 @@ impl Registry {
                 file,
                 stop: stop.clone(),
                 started: Instant::now(),
-                due: due.map(|d| Instant::now() + d),
+                due: due.and_then(|d| Instant::now().checked_add(d)),
                 subject,
             },
         );
@@ -247,6 +255,11 @@ impl Registry {
             .values()
             .filter(|e| e.running && e.kind == kind)
             .count()
+    }
+
+    /// Whether piece `id` is still running.
+    pub fn is_running(&self, id: &str) -> bool {
+        self.entries.lock().unwrap().get(id).is_some_and(|e| e.running)
     }
 
     /// Live output: kept as the entry's latest output when `keep`, and sent to clients.

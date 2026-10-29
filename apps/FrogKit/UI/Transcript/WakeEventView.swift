@@ -19,6 +19,11 @@ struct TurnLead: Equatable {
         if turn.images.isEmpty, let started = WakeEvent.parse(input) {
             wakes += started
             input = ""
+        } else if turn.images.isEmpty, Self.isEngineNote(input) {
+            // The engine's own words (a resume, background work lost to a restart), not yours:
+            // a notice line, never a user bubble.
+            wakes.append(WakeEvent(kind: .note, id: "", attributes: [], body: input))
+            input = ""
         }
         let texts = (input.isEmpty ? [] : [input]) + turn.more.map(\.text)
         let delivered = texts.compactMap(SessionMessage.parse)
@@ -30,6 +35,15 @@ struct TurnLead: Equatable {
             opener = .none
         }
     }
+
+    /// Turn inputs the engine writes itself (`protocol.rs` CONTINUE_NOTE / SUSPENDED_NOTE,
+    /// `background.rs` dropped pieces after a restart).
+    static func isEngineNote(_ input: String) -> Bool {
+        if input.hasPrefix("<resumed after the app ") { return input.hasSuffix("; continue>") }
+        // Only the opening can match: a long brief must not cost a regex over all of it.
+        guard input.first?.isNumber == true else { return false }
+        return input.prefix(120).firstMatch(of: #/^\d+ background pieces? from before the engine restarted (was|were) dropped, not re-armed: /#) != nil
+    }
 }
 
 /// A turn the engine started on background wakes alone: one compact line per wake (glyph,
@@ -38,11 +52,21 @@ struct TurnLead: Equatable {
 struct WakeEventRows: View {
     let events: [WakeEvent]
     let jobs: [String: BackgroundJob]
+    /// Only the newest few until asked: a turn woken by a thousand jobs is one transcript row,
+    /// and building every line of it at once beachballed opening the session.
+    @State private var shown = Self.page
+    static let page = 12
 
     var body: some View {
+        let hidden = max(0, events.count - shown)
         VStack(alignment: .leading, spacing: 3) {
-            ForEach(Array(events.enumerated()), id: \.offset) { _, event in
-                WakeEventRow(event: event, job: jobs[event.id])
+            if hidden > 0 {
+                Button("Show \(min(hidden, Self.page * 4)) earlier of \(hidden)") { shown += Self.page * 4 }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+            }
+            ForEach(hidden..<events.count, id: \.self) { i in
+                WakeEventRow(event: events[i], job: jobs[events[i].id])
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

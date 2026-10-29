@@ -473,6 +473,16 @@ pub enum Event {
         /// The gist, one line; empty never arrives (the event is only sent when there is one).
         gist: String,
     },
+    /// The model's suggested next prompt (its `Next` tool), sent just before a completed
+    /// turn's [`Event::TurnEnded`]. Live only: a replaying client shows no stale suggestion.
+    NextSuggested {
+        turn: u64,
+        /// One line in the user's voice; empty never arrives.
+        text: String,
+        /// It acts outside the project (push, send, deploy): show a button, not ghost text.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        act: bool,
+    },
     /// A chapter's title, written by a small side-model when the next chapter opened (see
     /// `chapter`). The app derives chapters and a heuristic title itself; this one, when it
     /// arrives, wins. Durable, so a replaying client shows it too.
