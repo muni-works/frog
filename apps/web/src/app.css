@@ -79,11 +79,15 @@ a { color: var(--frog); }
 
 /* composer */
 .cz { position: relative; width: 100%; box-sizing: border-box; padding: 6px 0; }
-.cz-box { border-radius: 24px; padding: 12px 10px 10px 16px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); box-shadow: 0 8px 24px -14px rgba(0,0,0,.35); }
+.cz-box { border-radius: 22px; padding: 8px 8px 8px 8px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); box-shadow: 0 8px 24px -14px rgba(0,0,0,.35); }
 .cz-box:focus-within { border-color: var(--line-strong); }
-.cz-box textarea { border: 0; background: transparent; resize: none; outline: none; font: 15px/21px var(--font-sans); color: var(--fg); padding: 0 2px; }
+.cz-box textarea { flex: 1; min-width: 0; border: 0; background: transparent; resize: none; outline: none; font: 15px/21px var(--font-sans); color: var(--fg); padding: 5px 2px; max-height: 220px; box-sizing: border-box; line-height: 21px; height: 31px; }
 .cz-box textarea::placeholder { color: var(--faint); }
 .cz-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cz-row > .cz-ic, .cz-row > .cz-send, .cz-row > .cz-signin { margin-bottom: 0; }
+.cz-row > span { align-self: center; }
+.cz-under { display: flex; align-items: center; gap: 4px; padding: 6px 10px 0; min-width: 0; }
+.cz-under > .f-pill--cloud { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cz-ic { display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; border-radius: 50%; }
 .cz-ic:hover { background: var(--hover); color: var(--fg); }
 .cz-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 3px 10px; font: 12px/16px var(--font-sans); color: var(--muted); background: transparent; cursor: pointer; white-space: nowrap; }
@@ -121,15 +125,12 @@ a { color: var(--frog); }
 /* A narrow composer (inspector open, small window): the row never wraps; the model name
    truncates before the send button is pushed out. */
 .cz-box { container-type: inline-size; }
-.cz-row > * { flex-shrink: 0; }
-.cz-row > .f-pill--cloud { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cz-row > :not(textarea) { flex-shrink: 0; }
 .cz-list { max-height: 260px; overflow-y: auto; }
 .cz-more { display: block; padding: 8px 10px 4px; margin-top: 4px; border-top: 1px solid var(--line); font-size: 12px; }
 .turn { position: relative; }
 .turn-foot { position: relative; display: flex; align-items: center; gap: 10px; min-height: 22px; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .15s; }
-.turn:hover .turn-foot, .turn-foot.pinned, .turn-foot:focus-within { opacity: 1; }
-.turn-foot .copy { opacity: 0; }
-.turn:hover .turn-foot .copy, .turn-foot .copy:focus-visible { opacity: 1; }
+.reply-block:hover .turn-foot, .turn-foot.pinned, .turn-foot:focus-within { opacity: 1; }
 .turn-plate { border: 0; background: transparent; color: inherit; font: inherit; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
 .turn-plate:hover { background: var(--hover); color: var(--muted); }
 .turn-card { position: absolute; top: 24px; left: 0; z-index: 10; width: 280px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--fg); box-shadow: var(--shadow-float); }
@@ -214,7 +215,7 @@ button.tool:hover { color: var(--fg); }
   .main.home h1 { font-size: 24px; text-align: center; }
   .starters { gap: 6px; }
   .insp { position: fixed; z-index: 30; inset: 48px 0 0 0; width: auto; border-left: 0; }
-  .cz-box { padding: 10px 8px 8px 12px; border-radius: 20px; }
+  .cz-box { padding: 6px; border-radius: 20px; }
   .cz-box textarea { font-size: 16px; } /* 16px keeps iOS from zooming the page on focus */
   .cz-menu { left: 4px !important; right: 4px; width: auto !important; max-width: none; }
   .cz-bar { margin: 0 4px 6px; gap: 8px; }
@@ -223,7 +224,7 @@ button.tool:hover { color: var(--fg); }
   .set-nav b { display: none; }
   .scrim { padding-top: 16px; }
   .turn-foot { flex-wrap: wrap; row-gap: 2px; }
-  .turn-foot .copy { opacity: 1; }
+  .hover-acts, .hover-row .icon-plate { opacity: 1; }
   .plan { margin: 0 4px 6px; }
 }
 .set-prices { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
@@ -258,7 +259,10 @@ button.tool:hover { color: var(--fg); }
 
 /* Sidebar sessions: quiet one-line rows, a glyph only when it means something. */
 .slist { flex: 1; display: flex; flex-direction: column; }
-.ssearch { display: flex; align-items: center; gap: 8px; margin: 8px 2px 2px; padding: 0 9px; height: 30px; border-radius: 8px; background: var(--hover); border: 0; color: var(--faint); }
+.sbar { position: relative; display: flex; align-items: center; gap: 4px; margin: 8px 2px 2px; }
+.ssearch { flex: 1; display: flex; align-items: center; gap: 8px; padding: 0 9px; height: 30px; border-radius: 8px; background: var(--hover); border: 0; color: var(--faint); font: inherit; font-size: 12.5px; cursor: pointer; text-align: left; }
+.ssearch span { flex: 1; }
+.ssearch:hover { color: var(--muted); }
 .ssearch:focus-within { color: var(--muted); }
 .ssearch input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font: inherit; font-size: 12.5px; }
 .ssearch input::placeholder { color: var(--faint); }
@@ -315,8 +319,52 @@ button.tool:hover { color: var(--fg); }
 .ic-btn:hover, .ic-btn[aria-pressed="true"], .ic-btn[aria-expanded="true"] { background: var(--hover); color: var(--fg); }
 /* Read receipts on your messages. */
 .me { position: relative; }
-.ticks { display: inline-flex; vertical-align: -1px; margin-left: 8px; color: var(--faint); }
-.ticks.t2 { color: var(--frog); }
+.ticks { display: inline-flex; padding: 0 4px; color: var(--faint); opacity: .7; }
+.ticks.t2 { opacity: .55; }
 .me.failed { opacity: .7; }
 .me-fail { align-self: flex-end; font-size: 11.5px; color: var(--warn); }
 .me-fail button { border: 0; background: none; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+/* Each message and each reply has its own hover row. */
+.ask-block, .reply-block { display: flex; flex-direction: column; gap: 12px; }
+.ask-block { gap: 4px; }
+.hover-row { display: flex; align-items: center; gap: 2px; min-height: 24px; margin-top: -2px; }
+.hover-row.mine { align-self: flex-end; }
+.icon-plate { width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: var(--radius-plate); background: transparent; color: var(--faint); cursor: pointer; padding: 0; }
+.icon-plate:hover { background: var(--hover); color: var(--fg); }
+.icon-plate.on { color: var(--frog); }
+.hover-row .icon-plate, .hover-acts { opacity: 0; transition: opacity .12s; }
+.ask-block:hover .hover-row .icon-plate, .hover-row .icon-plate:focus-visible, .reply-block:hover .hover-acts, .hover-acts:focus-within { opacity: 1; }
+.hover-acts { display: inline-flex; gap: 2px; margin-left: -6px; }
+/* Rows under messages stay hidden until hovered; only the ticks show, until the reply starts. */
+.hover-row { opacity: 0; transition: opacity .12s; }
+.ask-block:hover .hover-row, .hover-row:focus-within, .hover-row.waiting { opacity: 1; }
+.hover-row.waiting .icon-plate { opacity: 0; }
+.ask-block:hover .hover-row.waiting .icon-plate { opacity: 1; }
+/* Starting a sandbox: three quiet steps, the current one spinning. */
+.starting ol { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; }
+.starting li { display: flex; align-items: center; gap: 9px; color: var(--faint); transition: color .25s; }
+.starting li.now { color: var(--fg); }
+.starting li.done { color: var(--muted); }
+.starting-g { width: 14px; height: 14px; flex: none; border-radius: 50%; display: grid; place-items: center; box-sizing: border-box; border: 1.5px solid var(--line-strong); }
+.starting li.done .starting-g { border: 0; background: var(--frog-pad); color: var(--frog); }
+.starting li.now .starting-g { border-color: var(--frog-pad); border-top-color: var(--frog); animation: spin 1s linear infinite; }
+.starting-t { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .starting li.now .starting-g { animation: none; border-color: var(--frog); } }
+.ctx { position: relative; display: inline-flex; }
+.ctx-ring { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; cursor: pointer; padding: 0; }
+.ctx-ring:hover { background: var(--hover); }
+.ctx-card { position: absolute; right: -6px; bottom: calc(100% + 10px); width: 220px; padding: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-float); z-index: 6; }
+.ctx-h { display: flex; justify-content: space-between; font-size: 13px; }
+.ctx-bar { height: 4px; border-radius: 2px; background: var(--well); overflow: hidden; }
+.ctx-bar span { display: block; height: 100%; border-radius: 2px; }
+.cz-row > .cz-ic { width: 32px; height: 32px; border-radius: 50%; }
+.sview { position: absolute; right: 0; top: calc(100% + 6px); z-index: 8; width: 200px; padding: 6px; box-shadow: var(--shadow-float); }
+.sview button { display: flex; align-items: center; width: 100%; border: 0; background: transparent; padding: 6px 10px; border-radius: var(--radius-plate); font: 13px/18px var(--font-sans); color: var(--fg); cursor: pointer; text-align: left; }
+.sview button:hover { background: var(--hover); }
+.sview .ok { color: var(--frog); }
+.sview-sep { height: 1px; background: var(--line); margin: 4px 6px; }
+.slist.compact .srow { padding-top: 3px; padding-bottom: 3px; font-size: 12.5px; }
+.slist.compact .sdetail, .slist.compact .srepo { display: none; }
+.sctx { position: fixed; z-index: 30; width: 170px; padding: 6px; box-shadow: var(--shadow-float); }
+.sctx button { display: flex; width: 100%; border: 0; background: transparent; padding: 6px 10px; border-radius: var(--radius-plate); font: 13px/18px var(--font-sans); color: var(--fg); cursor: pointer; text-align: left; }
+.sctx button:hover { background: var(--hover); }

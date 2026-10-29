@@ -10,6 +10,7 @@ import { Composer } from './ui/Composer'
 import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
 import { SessionList } from './ui/SessionList'
+import { Starting } from './ui/Starting'
 import { creditLine, Palette, Settings, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 
@@ -50,7 +51,7 @@ export default function App() {
   /** Sessions still opening: their first message (and repo), from the moment you send until the
    * first turn starts. The placeholder and then the real session show the same bubble and one
    * status line, so the hand-over doesn't flicker between two different "starting" states. */
-  const [opening, setOpening] = useState<Record<string, { text: string; repo?: string }>>({})
+  const [opening, setOpening] = useState<Record<string, { text: string; repo?: string; at: number }>>({})
   // Follow-ups typed while Frog works wait here (per session) and go together, in order, as the
   // next turn once this one ends, like the Mac app. × takes one back into the field.
   const [queue, setQueue] = useState<Record<string, { text: string; images: Image[] }[]>>({})
@@ -147,7 +148,7 @@ export default function App() {
     // Open the session at once, as a placeholder, and swap in the real one when the gateway
     // answers: starting a conversation should feel instant, not wait on a round trip.
     const temp = `${PENDING}${Date.now()}`
-    setOpening((o) => ({ ...o, [temp]: { text, repo } }))
+    setOpening((o) => ({ ...o, [temp]: { text, repo, at: Date.now() } }))
     setSessions((all) => [{ id: temp, title: text.length > 60 ? text.slice(0, 57) + '…' : text, repo: repo ?? '', branch: '', state: 'starting', updated: Date.now() }, ...all])
     setView({ kind: 'session', id: temp })
     try {
@@ -155,7 +156,7 @@ export default function App() {
       // A session without a repo comes back titled "New session" until the engine names it.
       const s = { ...s0, title: s0.repo ? s0.title : text.length > 60 ? text.slice(0, 57) + '…' : text }
       setSessions((all) => [s, ...all.filter((x) => x.id !== s.id && x.id !== temp)])
-      setOpening(({ [temp]: first, ...rest }) => ({ ...rest, [s.id]: first ?? { text, repo } }))
+      setOpening(({ [temp]: first, ...rest }) => ({ ...rest, [s.id]: first ?? { text, repo, at: Date.now() } }))
       setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'session', id: s.id } : v))
       if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
       send(s.id, text, images) // queued until the session's socket is live
@@ -186,9 +187,19 @@ export default function App() {
     try {
       await cloud?.gateway.remove(s.id)
       setSessions((all) => all.filter((x) => x.id !== s.id))
-      setView({ kind: 'new' })
+      setView((v) => (v.kind === 'session' && v.id === s.id ? { kind: 'new' } : v))
     } catch (e) {
       say(`Couldn't delete: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  const archive = async (s: SessionSummary, archived: boolean) => {
+    try {
+      const next = await cloud!.gateway.archive(s.id, archived)
+      setSessions((all) => all.map((x) => (x.id === s.id ? { ...x, ...next } : x)))
+      say(archived ? 'Archived. Find it under View options → Archived.' : 'Moved back to your sessions.')
+    } catch (e) {
+      say(`Couldn't ${archived ? 'archive' : 'restore'} it: ${e instanceof Error ? e.message : e}`)
     }
   }
 
@@ -226,6 +237,7 @@ export default function App() {
     { id: 'c-settings', label: 'Settings', hint: '⌘,', run: () => key && setSettings(true) },
     ...(current ? [
       { id: 'c-rename', label: 'Rename session', run: () => setRenaming(current.id) },
+      { id: 'c-archive', label: current.archived ? 'Unarchive session' : 'Archive session', run: () => archive(current, !current.archived) },
       { id: 'c-delete', label: 'Delete session', run: () => remove(current) },
     ] : []),
     { id: 'c-insp', label: inspector ? 'Hide inspector' : 'Show inspector', run: () => setInspector(!inspector) },
@@ -305,7 +317,8 @@ export default function App() {
         <div className="brand"><Mark /><b>Frog</b></div>
         <Nav />
         <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
-          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} />
+          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
+          onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
           {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} /> : <Mark size={28} />}
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
@@ -327,9 +340,8 @@ export default function App() {
             ) : (
               <b style={{ fontSize: 14 }} onDoubleClick={() => current && setRenaming(current.id)} title={current ? 'Double-click to rename' : undefined}>{current ? title(current) : 'New session'}</b>
             )}
-            <div className="det">{current ? `${current.repo || 'No repo'} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}${ct?.context?.used ? ` · ${Math.round(ct.context.used / 1000)}k of ${Math.round(ct.context.window / 1000)}k context` : ''}` : 'Runs in a private Frog Cloud sandbox'}</div>
           </div>
-          {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? 'In Frog Cloud' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
+          {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? '' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
           {current && <button type="button" className="ic-btn" onClick={() => setInspector(!inspector)} aria-pressed={inspector} aria-label={inspector ? 'Hide inspector' : 'Show inspector'} title={inspector ? 'Hide inspector' : 'Inspector'}>
             <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" />{inspector && <path d="M15 4h3a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-3z" fill="currentColor" stroke="none" opacity=".35" />}</svg>
           </button>}
@@ -341,6 +353,7 @@ export default function App() {
               {menuOpen && (
                 <div className="f-card cz-menu" role="menu" style={{ top: 30, bottom: 'auto', right: 0, left: 'auto', width: 180 }} onMouseLeave={() => setMenuOpen(false)}>
                   <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename</button>
+                  <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); archive(current, !current.archived) }}>{current.archived ? 'Unarchive' : 'Archive'}</button>
                   <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setMenuOpen(false); remove(current) }}>Delete session</button>
                 </div>
               )}
@@ -360,17 +373,19 @@ export default function App() {
                 <div className="ghost-line" style={{ width: '54%' }} />
               </div>
             )}
-            {opening[current.id] && ct.turns.length === 0 && current.state !== 'error' && (
-              <div className="turn">
-                <div className="me">{opening[current.id].text}</div>
-                <div className="tool">… {opening[current.id].repo ? `Starting a sandbox with ${opening[current.id].repo}` : 'Starting a sandbox'}</div>
-              </div>
+            {opening[current.id] && ct.turns.length === 0 && !outbox[current.id]?.length && current.state !== 'error' && (
+              <div className="turn"><div className="me">{opening[current.id].text}</div></div>
             )}
             <Transcript thread={ct} models={models} onDecide={(a) => decide(current.id, a)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}
-              outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)} />
+              outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)}
+              onEdit={(text) => setRestore({ text, images: [] })} />
+            {opening[current.id] && ct.turns.length === 0 && current.state !== 'error' && (
+              <Starting repo={opening[current.id].repo} since={opening[current.id].at}
+                step={current.id.startsWith(PENDING) ? 0 : cs?.state === 'live' ? 2 : 1} />
+            )}
             {/* A sandbox that couldn't start says so here, by the composer, not above the conversation. */}
             {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ?? "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
             {paused && (
@@ -399,7 +414,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} autoFocus chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
+            <Composer key={current.id} autoFocus context={ct.context} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}

@@ -7,6 +7,8 @@ import { parseRepo } from '../store'
 // chip (the Mac's "this Mac / Frog Cloud" choice).
 
 export interface ComposerProps {
+  /** Context used of the window, from the engine's status: a ring by the send button. */
+  context?: { used: number | null; window: number } | null
   state?: 'idle' | 'working' | 'paused'
   repo?: string
   branch?: string
@@ -75,11 +77,17 @@ export function Composer(p: ComposerProps) {
   const [q, setQ] = useState('')
   // Where the open menu's button sits, so the menu opens right above it.
   const [at, setAt] = useState(8)
-  const anchor = (e: { currentTarget: Element }) => setAt(e.currentTarget.getBoundingClientRect().left - (root.current?.getBoundingClientRect().left ?? 0))
+  const anchor = (e: { currentTarget: Element }) => {
+    const box = root.current?.getBoundingClientRect()
+    setAt(Math.max(0, Math.min(e.currentTarget.getBoundingClientRect().left - (box?.left ?? 0), (box?.width ?? 300) - 300)))
+  }
   const ref = useRef<HTMLTextAreaElement>(null)
+  // One line until you write more, then it grows (to a cap, then scrolls), like Claude's.
+  const grow = (el: HTMLTextAreaElement) => { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 220)}px` }
   const working = p.state === 'working', paused = p.state === 'paused'
   const timer = useTimer(working ? p.startedAt : undefined)
   useEffect(() => { if (p.draft !== undefined) setText(p.draft) }, [p.draft])
+  useEffect(() => { if (ref.current) grow(ref.current) }, [text])
   useEffect(() => { if (p.autoFocus) ref.current?.focus() }, [p.autoFocus])
   useEffect(() => { if (p.pickRepo) setMenu('repo') }, [p.pickRepo])
   // A menu closes on any click outside it (its own toggle chip toggles it), or Escape.
@@ -254,40 +262,20 @@ export function Composer(p: ComposerProps) {
             {p.vision === false && <span className="det wrap" style={{ color: 'var(--notice)' }}>This model can't see images; it gets a note that one was attached.</span>}
           </div>
         )}
-        <label htmlFor="cz" className="sr">Message Frog</label>
-        <textarea
-          id="cz" ref={ref} rows={working ? 1 : 2} placeholder={placeholder} value={text}
-          onChange={(e) => setText(e.target.value)}
-          onPaste={(e) => { const fs = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/')); if (fs.length) { e.preventDefault(); attach(fs) } }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) { e.preventDefault(); send() }
-            if (e.key === 'Escape' && working) p.onStop?.()
-          }}
-        />
         <div className="cz-row">
-          <button type="button" className="cz-ic" onClick={() => setMenu(menu === 'plus' ? null : 'plus')} aria-label="Attach images or mention a file" aria-expanded={menu === 'plus'} style={{ width: 28, height: 28, border: '1px solid var(--line)' }}>
+          <button type="button" className="cz-ic" onClick={() => setMenu(menu === 'plus' ? null : 'plus')} aria-label="Attach images or mention a file" aria-expanded={menu === 'plus'}>
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           </button>
-          {(!!p.model || !!p.models?.length) && (
-            <button type="button" className="f-pill f-pill--cloud" aria-label={`Model: ${p.model ?? 'default'} on Frog Cloud`} aria-expanded={menu === 'model'}
-              disabled={!p.models?.length || !p.onModel} onClick={(e) => { anchor(e); setMenu(menu === 'model' ? null : 'model') }}>
-              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z" /></svg>
-              {p.model ?? 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
-            </button>
-          )}
-          {p.mode && p.onMode && (
-            <button type="button" className="f-pill" style={{ color: p.mode === 'yolo' ? 'var(--notice)' : 'var(--muted)' }} aria-expanded={menu === 'mode'}
-              title="When Frog asks before acting" onClick={(e) => { anchor(e); setMenu(menu === 'mode' ? null : 'mode') }}>
-              {modes.find((m) => m.id === p.mode)?.label} <span className="chev">▾</span>
-            </button>
-          )}
-          {!p.branch && (
-            <button type="button" className="cz-chip" disabled={!p.onRepo && !p.onConnect} aria-expanded={menu === 'repo'} onClick={() => (p.onConnect ? p.onConnect(text) : setMenu(menu === 'repo' ? null : 'repo'))}>
-              <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h6l2 2h10v10H3z" /></svg>
-              {p.repo || 'No repo'}
-            </button>
-          )}
-          <span style={{ flex: 1 }} />
+          <label htmlFor="cz" className="sr">Message Frog</label>
+          <textarea
+            id="cz" ref={ref} rows={1} placeholder={placeholder} value={text}
+            onChange={(e) => { setText(e.target.value); grow(e.target) }}
+            onPaste={(e) => { const fs = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/')); if (fs.length) { e.preventDefault(); attach(fs) } }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) { e.preventDefault(); send() }
+              if (e.key === 'Escape' && working) p.onStop?.()
+            }}
+          />
           <span style={{ fontSize: 12, color: paused ? 'var(--warn)' : p.waiting ? 'var(--notice)' : 'var(--muted)', whiteSpace: 'nowrap' }}>
             {working && p.waiting ? 'Waiting on you' : working ? `Working · ${timer}` : paused ? 'Out of credits' : ''}
           </span>
@@ -307,6 +295,57 @@ export function Composer(p: ComposerProps) {
           )}
         </div>
       </div>
+      <div className="cz-under">
+        {p.mode && p.onMode && (
+          <button type="button" className="f-pill" style={{ color: p.mode === 'yolo' ? 'var(--notice)' : 'var(--muted)' }} aria-expanded={menu === 'mode'}
+            title="When Frog asks before acting" onClick={(e) => { anchor(e); setMenu(menu === 'mode' ? null : 'mode') }}>
+            {modes.find((m) => m.id === p.mode)?.label} <span className="chev">▾</span>
+          </button>
+        )}
+        {!p.branch && (
+          <button type="button" className="cz-chip" disabled={!p.onRepo && !p.onConnect} aria-expanded={menu === 'repo'} onClick={() => (p.onConnect ? p.onConnect(text) : setMenu(menu === 'repo' ? null : 'repo'))}>
+            <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h6l2 2h10v10H3z" /></svg>
+            {p.repo || 'No repo'}
+          </button>
+        )}
+    <span style={{ flex: 1 }} />
+        {(!!p.model || !!p.models?.length) && (
+          <button type="button" className="f-pill f-pill--cloud" aria-label={`Model: ${p.model ?? 'default'} on Frog Cloud`} aria-expanded={menu === 'model'}
+            disabled={!p.models?.length || !p.onModel} onClick={(e) => { anchor(e); setMenu(menu === 'model' ? null : 'model') }}>
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z" /></svg>
+            {p.model ?? 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
+          </button>
+        )}
+        {p.context?.window ? <ContextRing used={p.context.used} window={p.context.window} /> : null}
+      </div>
     </div>
+  )
+}
+
+/** How full the context is, as a ring (the Mac's ContextRing); click it for the numbers. */
+function ContextRing({ used, window }: { used: number | null; window: number }) {
+  const [open, setOpen] = useState(false)
+  const f = used ? Math.min(1, used / window) : 0
+  const color = f > 0.8 ? 'var(--warn)' : f > 0.6 ? 'var(--notice)' : 'var(--muted)'
+  const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
+  const r = 6.5, c = 2 * Math.PI * r
+  return (
+    <span className="ctx">
+      <button type="button" className="ctx-ring" aria-expanded={open} onClick={() => setOpen(!open)}
+        aria-label={`Context ${Math.round(f * 100)}% full`} title={`${k(used ?? 0)} of ${k(window)} tokens (${Math.round(f * 100)}%)`}>
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <circle cx="9" cy="9" r={r} fill="none" stroke="var(--line-strong)" strokeWidth="2.5" />
+          <circle cx="9" cy="9" r={r} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"
+            strokeDasharray={`${f * c} ${c}`} transform="rotate(-90 9 9)" style={{ transition: 'stroke-dasharray .4s' }} />
+        </svg>
+      </button>
+      {open && (
+        <div className="f-card ctx-card" role="dialog" aria-label="Context">
+          <div className="ctx-h"><b>Context</b><b style={{ color: f > 0.6 ? color : undefined }}>{Math.round(f * 100)}%</b></div>
+          <div className="ctx-bar"><span style={{ width: `${f * 100}%`, background: f > 0.6 ? color : 'var(--frog)' }} /></div>
+          <div className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens</div>
+        </div>
+      )}
+    </span>
   )
 }

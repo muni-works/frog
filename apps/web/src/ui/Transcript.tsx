@@ -66,7 +66,7 @@ function ToolLine({ e }: { e: Entry }) {
   )
 }
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = [], outbox = [], onResend }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = [], outbox = [], onResend, onEdit }: {
   thread: Thread
   onDecide: (allow: boolean) => void
   onAnswer: (choices: string[], other?: string) => void
@@ -77,20 +77,28 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   /** Messages sent but not yet started as a turn: shown at once, with a tick once on the wire. */
   outbox?: { id: number; text: string; images: Image[]; state: 'sending' | 'sent' | 'failed' }[]
   onResend?: (id: number) => void
+  /** Put one of your messages back in the composer to change and resend. */
+  onEdit?: (text: string) => void
 }) {
   const lastTurn = thread.turns[thread.turns.length - 1]?.turn
-  const lastDone = [...thread.turns].reverse().find((u) => u.usage && (u.reason?.type === 'complete' || u.reason?.type === 'denied'))?.turn
   return (
     <>
       {thread.turns.map((turn) => (
         <div key={turn.turn} className="turn">
-          {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => (
-            <div key={i} className="me">
-              {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
-              {m.text}
-              {i === 0 && <Ticks n={2} />}
+          <div className="ask-block">
+            {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => (
+              <div key={i} className="me">
+                {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
+                {m.text}
+              </div>
+            ))}
+            <div className={`hover-row mine${turn.entries.length ? '' : ' waiting'}`}>
+              {onEdit && <IconButton label="Edit (back to the composer)" onClick={() => onEdit([turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n'))} icon="edit" />}
+              <CopyButton text={[turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n')} />
+              <Ticks n={2} />
             </div>
-          ))}
+          </div>
+          <div className="reply-block">
           {turn.entries.map((e) => {
             if (e.kind === 'reasoning') return (
               <div key={e.id} className="decided"><b>Decided</b> · {e.text}</div>
@@ -118,9 +126,11 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
             return <ToolLine key={e.id} e={e} />
           })}
           {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
-            <TurnFooter usage={turn.usage} models={models} pinned={turn.turn === lastDone}
-              answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''} />
+            <TurnFooter usage={turn.usage} models={models} pinned={false}
+              answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
+              onRetry={turn.turn === lastTurn && !thread.running ? onRetry : undefined} />
           )}
+          </div>
           {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
           {turn.reason?.type === 'cancelled' && <div className="tool">Stopped</div>}
           {endError(turn.reason) && !/insufficient_credit|out_of_credits|402/.test(JSON.stringify(turn.reason)) && (
@@ -143,8 +153,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
           <div className={`me${m.state === 'failed' ? ' failed' : ''}`}>
             {m.images.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
             {m.text}
-            {m.state === 'failed' ? null : <Ticks n={m.state === 'sent' ? 1 : 0} />}
           </div>
+          {m.state !== 'failed' && <div className="hover-row mine waiting"><Ticks n={m.state === 'sent' ? 1 : 0} /></div>}
           {m.state === 'failed' && <div className="me-fail">Not sent · <button type="button" onClick={() => onResend?.(m.id)}>Try again</button></div>}
         </div>
       ))}
@@ -167,4 +177,26 @@ function Ticks({ n }: { n: 0 | 1 | 2 }) {
       )}
     </span>
   )
+}
+
+const ICONS = {
+  copy: <><rect x="8" y="8" width="12" height="12" rx="2.5" /><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8" /></>,
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  edit: <><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13.5 6.5l4 4" /></>,
+  retry: <><path d="M4 12a8 8 0 0 1 14-5.3L20 9" /><path d="M20 4v5h-5" /><path d="M20 12a8 8 0 0 1-14 5.3L4 15" /><path d="M4 20v-5h5" /></>,
+}
+
+export function IconButton({ label, onClick, icon, on }: { label: string; onClick: () => void; icon: keyof typeof ICONS; on?: boolean }) {
+  return (
+    <button type="button" className={`icon-plate${on ? ' on' : ''}`} aria-label={label} title={label} onClick={onClick}>
+      <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{ICONS[icon]}</svg>
+    </button>
+  )
+}
+
+/** Copy, turning into a check for a moment. */
+export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false)
+  return <IconButton label={done ? 'Copied' : label} icon={done ? 'check' : 'copy'} on={done}
+    onClick={() => { navigator.clipboard?.writeText(text); setDone(true); setTimeout(() => setDone(false), 1200) }} />
 }
