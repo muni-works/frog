@@ -193,7 +193,7 @@ a{color:var(--frog)}a:hover{color:var(--fg)}
   </section>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"tab":{"editor":"enum","options":["account","plan","general","models","permissions","mcp","appearance","shortcuts"],"default":"account"},"$preview":{"width":1280,"height":860}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"tab":{"editor":"enum","options":["account","plan","general","models","permissions","mcp","appearance","shortcuts"],"default":"account"},"$preview":{"width":1280,"height":860}}'>
 class Component extends DCLogic {
   renderVals() {
     const tab = (this.state && this.state.tab) || this.props.tab || 'account';
@@ -221,7 +221,7 @@ class Component extends DCLogic {
       { a: 'Deny', k: '⌘.' }, { a: 'Hide side pane', k: '⌥⌘0' }, { a: 'Settings', k: '⌘,' },
     ];
     return {
-      theme: this.props.theme ?? 'light', tabs, plans, devices, shortcuts,
+      theme: this.props.theme ?? 'dark', tabs, plans, devices, shortcuts,
       title: defs.find((d) => d[0] === tab)[1],
       isAccount: tab === 'account', isPlan: tab === 'plan', isGeneral: tab === 'general', isModels: tab === 'models',
       isPerms: tab === 'permissions', isMcp: tab === 'mcp', isLook: tab === 'appearance', isKeys: tab === 'shortcuts',

@@ -16,10 +16,10 @@
   <dc-import name="Workspace" platform="web" signed-out="{{yes}}" height="860" theme="{{theme}}" hint-size="100%,860px"></dc-import>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":1280,"height":860}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":1280,"height":860}}'>
 class Component extends DCLogic {
   renderVals() {
-    return { theme: this.props.theme ?? 'light', yes: true };
+    return { theme: this.props.theme ?? 'dark', yes: true };
   }
 }
 </script>

@@ -63,7 +63,7 @@ a{color:var(--frog)}a:hover{color:var(--fg)}
   </main>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":1280,"height":1040}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":1280,"height":1040}}'>
 class Component extends DCLogic {
   renderVals() {
     const prom = 'f-btn f-btn--prominent', bord = 'f-btn f-btn--bordered';
@@ -82,7 +82,7 @@ class Component extends DCLogic {
         items: ['[INCLUDED CLOUD USAGE] × 20', 'Everything in Pro', 'Priority on Frog Cloud', 'Max 5x: $100 a month'] },
     ];
     return {
-      theme: this.props.theme ?? 'light',
+      theme: this.props.theme ?? 'dark',
       plans: plans.map((p) => ({ ...p, current: !!p.current, edge: p.featured ? 'var(--frog)' : 'var(--line)' })),
     };
   }

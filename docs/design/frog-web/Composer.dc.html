@@ -114,7 +114,7 @@ body{margin:0}
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"platform":{"editor":"enum","options":["mac","web","phone","ipad"],"default":"mac"},"state":{"editor":"enum","options":["idle","working","paused","error"],"default":"idle"},"model":{"editor":"enum","options":["local","cloud","none"],"default":"local"},"modelName":{"editor":"text","default":""},"repo":{"editor":"text","default":""},"changes":{"editor":"text","default":""},"branch":{"editor":"text","default":""},"runner":{"editor":"text","default":""},"deviceName":{"editor":"text","default":""},"pr":{"editor":"text","default":""},"prState":{"editor":"enum","options":["open","draft","merged"],"default":"open"},"checks":{"editor":"enum","options":["","passing","failing","running"],"default":""},"timer":{"editor":"text","default":""},"placeholder":{"editor":"text","default":""},"$preview":{"width":720,"height":150}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"platform":{"editor":"enum","options":["mac","web","phone","ipad"],"default":"mac"},"state":{"editor":"enum","options":["idle","working","paused","error"],"default":"idle"},"model":{"editor":"enum","options":["local","cloud","none"],"default":"local"},"modelName":{"editor":"text","default":""},"repo":{"editor":"text","default":""},"changes":{"editor":"text","default":""},"branch":{"editor":"text","default":""},"runner":{"editor":"text","default":""},"deviceName":{"editor":"text","default":""},"pr":{"editor":"text","default":""},"prState":{"editor":"enum","options":["open","draft","merged"],"default":"open"},"checks":{"editor":"enum","options":["","passing","failing","running"],"default":""},"timer":{"editor":"text","default":""},"placeholder":{"editor":"text","default":""},"$preview":{"width":720,"height":150}}'>
 class Component extends DCLogic {
   renderVals() {
     const p = this.props.platform || 'mac', st = this.props.state || 'idle', m = this.props.model || (p === 'mac' ? 'local' : 'cloud');
@@ -137,7 +137,7 @@ class Component extends DCLogic {
     const pick = defs.length > 1;
     const runOpen = pick && !!(this.state && this.state.run);
     return {
-      theme: this.props.theme ?? 'light',
+      theme: this.props.theme ?? 'dark',
       pad: phone ? '8px 12px' : '6px 0',
       radius: phone ? '22px' : '24px',
       inner: phone ? '9px 9px 9px 14px' : '12px 10px 10px 16px',

@@ -17,7 +17,7 @@
       "title": "Composer \u00b7 shared",
       "w": 760,
       "x": 1560,
-      "y": 16540
+      "y": 14440
     },
     "Device.dc.html": {
       "expand": "fill",
@@ -28,13 +28,6 @@
       "x": 2800,
       "y": 4780
     },
-    "DeviceDark.dc.html": {
-      "h": 860,
-      "title": "Connect a terminal \u00b7 dark",
-      "w": 1280,
-      "x": 4200,
-      "y": 14440
-    },
     "HardTask.dc.html": {
       "h": 860,
       "is_interactive": true,
@@ -42,13 +35,6 @@
       "w": 1280,
       "x": 3020,
       "y": 2860
-    },
-    "HardTaskDark.dc.html": {
-      "h": 860,
-      "title": "Hard task \u00b7 dark",
-      "w": 1280,
-      "x": 1400,
-      "y": 14440
     },
     "IOSApp.dc.html": {
       "h": 1080,
@@ -67,13 +53,6 @@
       "x": 3860,
       "y": 560
     },
-    "LandingDark.dc.html": {
-      "h": 860,
-      "title": "frog.toys \u00b7 dark",
-      "w": 1280,
-      "x": 0,
-      "y": 14440
-    },
     "Main.dc.html": {
       "expand": "fill",
       "h": 860,
@@ -83,13 +62,6 @@
       "x": 0,
       "y": 4780
     },
-    "MainDark.dc.html": {
-      "h": 860,
-      "title": "Sign in \u00b7 dark",
-      "w": 1280,
-      "x": 2800,
-      "y": 14440
-    },
     "Plans.dc.html": {
       "expand": "fill",
       "h": 1040,
@@ -97,13 +69,6 @@
       "w": 1280,
       "x": 1400,
       "y": 8880
-    },
-    "PlansDark.dc.html": {
-      "h": 1040,
-      "title": "Pricing \u00b7 dark",
-      "w": 1280,
-      "x": 5600,
-      "y": 14440
     },
     "SiteDocs.dc.html": {
       "expand": "fill",
@@ -124,10 +89,11 @@
     },
     "Unify.dc.html": {
       "h": 1400,
-      "title": "Early rules \u00b7 reference, partly superseded",
+      "title": "One Frog \u00b7 the rules and decisions",
       "w": 1280,
-      "x": 4830,
-      "y": 16540
+      "x": 0,
+      "y": -1840,
+      "is_interactive": false
     },
     "WebApp.dc.html": {
       "h": 900,
@@ -180,7 +146,7 @@
       "title": "Workspace \u00b7 the shared window",
       "w": 1440,
       "x": 0,
-      "y": 16540
+      "y": 14440
     },
     "SiteMacAlt.dc.html": {
       "expand": "fill",
@@ -191,11 +157,11 @@
       "y": 10980
     },
     "Cards.dc.html": {
-      "h": 1000,
+      "h": 640,
       "title": "Cards \u00b7 when to show which",
       "w": 1880,
       "x": 2830,
-      "y": 16540
+      "y": 14440
     },
     "PromoCard.dc.html": {
       "h": 300,
@@ -203,7 +169,7 @@
       "title": "Card \u00b7 shared",
       "w": 270,
       "x": 2440,
-      "y": 16540
+      "y": 14440
     }
   },
   "createdOnFiles": {
@@ -223,13 +189,13 @@
     "view": "canvas"
   },
   "noteOrder": [
+    "s0",
     "s1",
     "s2",
     "s3",
     "s4",
     "s5",
     "s6",
-    "s7",
     "s8"
   ],
   "notes": {
@@ -281,24 +247,25 @@
       "y": 10420,
       "maxW": 4080
     },
-    "s7": {
+    "s8": {
       "kind": "title1",
-      "text": "7 \u00b7 Dark mode",
+      "text": "7 \u00b7 Building blocks",
       "w": 240,
       "x": 0,
       "y": 13880,
-      "maxW": 6880
+      "maxW": 4710
     },
-    "s8": {
+    "s0": {
       "kind": "title1",
-      "text": "8 \u00b7 Building blocks",
+      "text": "Start here \u00b7 the rules",
       "w": 240,
       "x": 0,
-      "y": 15980,
-      "maxW": 6110
+      "y": -2400,
+      "maxW": 1280
     }
   },
   "order": [
+    "Unify.dc.html",
     "MacApp.dc.html",
     "WebApp.dc.html",
     "Landing.dc.html",
@@ -315,16 +282,10 @@
     "SiteMacAlt.dc.html",
     "SiteMac.dc.html",
     "SiteDocs.dc.html",
-    "LandingDark.dc.html",
-    "HardTaskDark.dc.html",
-    "MainDark.dc.html",
-    "DeviceDark.dc.html",
-    "PlansDark.dc.html",
     "Workspace.dc.html",
     "Composer.dc.html",
     "PromoCard.dc.html",
-    "Cards.dc.html",
-    "Unify.dc.html"
+    "Cards.dc.html"
   ],
   "pages": [],
   "title": "Frog \u00b7 design review"

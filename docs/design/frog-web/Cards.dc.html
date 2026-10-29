@@ -12,7 +12,7 @@
 <helmet>
 <style>body{margin:0}</style>
 </helmet>
-<div class="f-root" style="width: 1880px; box-sizing: border-box; padding: 48px 56px; background: var(--bg); display: flex; flex-direction: column; gap: 28px;">
+<div data-theme="dark" class="f-root" style="width: 1880px; box-sizing: border-box; padding: 48px 56px; background: var(--bg); display: flex; flex-direction: column; gap: 28px;">
   <div>
     <h1 style="margin: 0; font-family: var(--font-display); font-size: 40px; letter-spacing: -0.03em;">Cards</h1>
     <p style="margin: 6px 0 0; font-size: 17px; color: var(--muted); max-width: 820px;">Small illustrated cards for the sidebar and empty states. Each one is the Frog face in a little scene, with one line of why and one action. Show at most one at a time, only where it's true: no Mac card on a Mac, no Pro card for Pro users.</p>
@@ -22,13 +22,8 @@
       <div style="display: flex; flex-direction: column; gap: 8px;">
         <div style="font-size: 13px; font-weight: 600;">{{k.label}}</div>
         <div style="font-size: 12px; color: var(--muted); min-height: 34px;">{{k.when}}</div>
-        <dc-import name="PromoCard" kind="{{k.id}}" theme="light" hint-size="270px,290px"></dc-import>
+        <dc-import name="PromoCard" kind="{{k.id}}" theme="dark" hint-size="270px,290px"></dc-import>
       </div>
-    </sc-for>
-  </div>
-  <div data-theme="dark" style="display: grid; grid-template-columns: repeat(6, 270px); gap: 24px; padding: 24px; border-radius: 20px; background: #161616;">
-    <sc-for list="{{kinds}}" as="k" hint-placeholder-count="6">
-      <dc-import name="PromoCard" kind="{{k.id}}" theme="dark" hint-size="270px,290px"></dc-import>
     </sc-for>
   </div>
 </div>

@@ -242,12 +242,12 @@ body{margin:0}
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":2530,"height":1080}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":2530,"height":1080}}'>
 class Component extends DCLogic {
   renderVals() {
     const s = (this.state && this.state.step) || 'ask';
     return {
-      theme: this.props.theme ?? 'light',
+      theme: this.props.theme ?? 'dark',
       phoneState: s === 'allowed' ? 'working' : 'idle',
       asking: s === 'ask', done: s !== 'ask', allowed: s === 'allowed',
       outcome: s === 'allowed' ? 'Allowed from iPhone' : 'Denied from iPhone',

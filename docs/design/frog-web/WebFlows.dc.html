@@ -57,7 +57,7 @@ a{color:var(--frog)}a:hover{color:var(--fg)}
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":2900,"height":840}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":2900,"height":840}}'>
 class Component extends DCLogic {
   renderVals() {
     const repos = [
@@ -72,7 +72,7 @@ class Component extends DCLogic {
       { title: 'Add credit', body: 'Pay as you go. No subscription, no card until now.', cta: 'Add $10', btn: bord, edge: 'var(--line)' },
       { title: 'Go Pro', body: 'Cloud usage included every month, plus routines while you sleep.', cta: 'See plans', btn: bord, edge: 'var(--line)' },
     ];
-    return { theme: this.props.theme ?? 'light', repos, outs };
+    return { theme: this.props.theme ?? 'dark', repos, outs };
   }
 }
 </script>

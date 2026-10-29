@@ -142,7 +142,7 @@ model = "qwen/qwen3-coder-30b"</pre>
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"page":{"editor":"enum","options":["model","changelog"],"default":"model"},"$preview":{"width":1280,"height":1100}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"page":{"editor":"enum","options":["model","changelog"],"default":"model"},"$preview":{"width":1280,"height":1100}}'>
 class Component extends DCLogic {
   renderVals() {
     const page = (this.state && this.state.page) || this.props.page || 'model';
@@ -174,7 +174,7 @@ class Component extends DCLogic {
     const isModel = page === 'model';
     const toc = (isModel ? ['Where models run', 'Add your own', 'When the cloud is out'] : releases.map((r) => r.date)).map((label, i) => ({ label, cur: i === 0 ? 'true' : 'false' }));
     return {
-      theme: this.props.theme ?? 'light', groups, releases, toc,
+      theme: this.props.theme ?? 'dark', groups, releases, toc,
       isModel, isChangelog: !isModel,
       crumb: isModel ? 'Models › Choosing a model' : "What's new",
       clCur: isModel ? 'false' : 'page',

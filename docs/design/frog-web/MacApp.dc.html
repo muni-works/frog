@@ -66,7 +66,7 @@ body{margin:0}
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"pane":{"editor":"enum","options":["changes","terminal","preview"],"default":"changes"},"$preview":{"width":2180,"height":1240}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"pane":{"editor":"enum","options":["changes","terminal","preview"],"default":"changes"},"$preview":{"width":2180,"height":1240}}'>
 class Component extends DCLogic {
   renderVals() {
     const pane = (this.state && this.state.pane) || this.props.pane || 'changes';
@@ -78,7 +78,7 @@ class Component extends DCLogic {
       { title: 'Fix login redirect', detail: 'Merged · #209', where: '', age: 'Mon', bg: 'transparent', sym: '✓', symBg: 'rgba(127,127,127,.25)', symBorder: '0', color: 'var(--muted)' },
     ];
     return {
-      theme: this.props.theme ?? 'light', sessions,
+      theme: this.props.theme ?? 'dark', sessions,
       pc: pane === 'changes', pt: pane === 'terminal', pp: pane === 'preview',
       showC: () => this.setState({ pane: 'changes' }), showT: () => this.setState({ pane: 'terminal' }), showP: () => this.setState({ pane: 'preview' }),
     };

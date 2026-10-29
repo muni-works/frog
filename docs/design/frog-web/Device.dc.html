@@ -74,12 +74,12 @@ Open frog.toys/device and enter KXRT-4QPM · waiting
   </main>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":1280,"height":860}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":1280,"height":860}}'>
 class Component extends DCLogic {
   renderVals() {
     const s = (this.state && this.state.step) || 'ask';
     return {
-      theme: this.props.theme ?? 'light',
+      theme: this.props.theme ?? 'dark',
       asking: s === 'ask',
       approved: s === 'ok',
       denied: s === 'no',

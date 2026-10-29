@@ -16,19 +16,20 @@ Each `*.dc.html` file is one board. `canvas.json` holds the layout. `ds/frog/` h
 - **frog.toys opens straight into the app.** Marketing lives at /mac. `SiteMacAlt` is the proposed /mac. `SiteMac` is the current page, with the atom story.
 - **iPhone is a full app, not a remote.** It works straight from the App Store. Starting from the composer is the default; voice from anywhere is a stretch goal.
 - **Removed:** race, the house screen on iPhone, and the $0.50 trial. $5 of credits on sign-up is the only free offer.
+- **Dark is the default.** Every board renders dark, and each has a theme switch to view it in light.
 - **Open:** onboarding without sign-up, i.e. a guest allowance on web and iPhone. This is under discussion and not designed yet.
 
 ## Board index
 
 | Section | Boards |
 |---|---|
+| Start here | `Unify`: the rules, decisions and what changes per platform |
 | 1 · One app on Mac and web | `MacApp`, `WebApp`, `Landing` |
 | 2 · Key moments | `WebFlows`, `HardTask` |
 | 3 · Signing in | `Main`, `CheckEmail`, `Device` |
 | 4 · iPhone, iPad and Watch | `IOSApp`, `IOSFull`, `Tablets` |
 | 5 · Account and plans | `WebSettings`, `Plans` |
 | 6 · Website | `SiteMacAlt`, `SiteMac`, `SiteDocs` |
-| 7 · Dark mode | `*Dark` |
-| 8 · Building blocks | `Workspace`, `Composer`, `PromoCard`, `Cards`, `Unify` (early rules, partly superseded) |
+| 7 · Building blocks | `Workspace`, `Composer`, `PromoCard`, `Cards` |
 
 The boards need the Claude Design runtime (`support.js`) to render. They aren't standalone pages.

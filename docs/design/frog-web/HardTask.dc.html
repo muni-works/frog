@@ -19,12 +19,12 @@ a{color:var(--frog)}a:hover{color:var(--fg)}
   <dc-import name="Workspace" platform="mac" scene="hardTask" height="800" theme="{{theme}}" hint-size="1220px,800px"></dc-import>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":1280,"height":860}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":1280,"height":860}}'>
 class Component extends DCLogic {
   renderVals() {
     const c = (this.state && this.state.choice) || 'ask';
     return {
-      theme: this.props.theme ?? 'light',
+      theme: this.props.theme ?? 'dark',
       asking: c === 'ask',
       onCloud: c === 'cloud',
       stayed: c === 'local',

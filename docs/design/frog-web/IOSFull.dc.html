@@ -253,11 +253,11 @@ Time:   2.1 s
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":3590,"height":1080}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":3590,"height":1080}}'>
 class Component extends DCLogic {
   renderVals() {
     return {
-      theme: this.props.theme ?? 'light',
+      theme: this.props.theme ?? 'dark',
       apps: ['#3a7bd5','#e94e3c','#f5a623','#7ed321','#9013fe','#50e3c2','#4a4a4a','#ff6f91','#2d9cdb','#f2c94c','#6fcf97','#bb6bd9','#eb5757','#56ccf2','#27ae60','#f2994a'],
       dock: ['#34c759','#007aff','#ff9500','#5856d6'],
       kb: 'qwertyuiopasdfghjkl⇧zxcvbnm⌫'.split('').slice(0,30),

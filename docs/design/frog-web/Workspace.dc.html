@@ -211,7 +211,7 @@ Tests:  <span style="color: #58cc6f;">14 passed</span>, 14 total
       </sc-if>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"platform":{"editor":"enum","options":["mac","web"],"default":"mac"},"scene":{"editor":"enum","options":["session","pickRepo","resumed","credits","hardTask"],"default":"session"},"pane":{"editor":"enum","options":["changes","terminal","preview"],"default":"changes"},"height":{"editor":"int","default":900},"signedOut":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"platform":{"editor":"enum","options":["mac","web"],"default":"mac"},"scene":{"editor":"enum","options":["session","pickRepo","resumed","credits","hardTask"],"default":"session"},"pane":{"editor":"enum","options":["changes","terminal","preview"],"default":"changes"},"height":{"editor":"int","default":900},"signedOut":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
 class Component extends DCLogic {
   renderVals() {
     const p = this.props.platform || 'mac', web = p === 'web';
@@ -226,7 +226,7 @@ class Component extends DCLogic {
     // On the web every session runs in Frog Cloud.
     if (web) sessions.forEach((x) => { x.where = '☁'; });
     return {
-      theme: this.props.theme ?? 'light', sessions, platform: p,
+      theme: this.props.theme ?? 'dark', sessions, platform: p,
       ...(() => {
         const sc = this.props.scene || 'session';
         const T = { session: ['Fix the failing tests in auth/', 'ledger · frog/fix-auth · step 2 of 4'], pickRepo: ['New session', 'Pick a repo to start'], resumed: ['Review my open PR', 'ledger · dates-to-temporal · PR #212'], credits: ['Move dates to Temporal', 'ledger · frog/temporal · paused'], hardTask: ['Move dates to Temporal', 'ledger · frog/temporal · 6m'] }[sc];

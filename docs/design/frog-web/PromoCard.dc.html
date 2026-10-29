@@ -72,7 +72,7 @@ body{margin:0}
   <a href="{{href}}" class="f-btn f-btn--bordered" style="text-decoration: none; justify-content: center; font-size: 13px; color: var(--fg);">{{cta}}</a>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"kind":{"editor":"enum","options":["mac","iphone","cloud","watch","routines","oss"],"default":"mac"},"$preview":{"width":260,"height":300}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"kind":{"editor":"enum","options":["mac","iphone","cloud","watch","routines","oss"],"default":"mac"},"$preview":{"width":260,"height":300}}'>
 class Component extends DCLogic {
   renderVals() {
     const k = this.props.kind || 'mac';
@@ -85,7 +85,7 @@ class Component extends DCLogic {
       oss: { title: 'Free to read, fork and run', body: 'The engine and every app are open source under MIT or Apache 2.0.', cta: 'View on GitHub', href: '#', alt: 'A branching git graph', face: [112, 70, .55], wash: 'var(--frog-pad)' },
     }[k];
     return {
-      theme: this.props.theme ?? 'light', ...C,
+      theme: this.props.theme ?? 'dark', ...C,
       faceX: C.face[0], faceY: C.face[1], faceS: C.face[2],
       isMac: k === 'mac', isPhone: k === 'iphone', isCloud: k === 'cloud', isWatch: k === 'watch', isMoon: k === 'routines', isOss: k === 'oss',
     };

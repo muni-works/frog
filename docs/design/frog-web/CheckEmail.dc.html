@@ -54,12 +54,12 @@ a{color:var(--frog)}a:hover{color:var(--fg)}
   </main>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"variant":{"editor":"enum","options":["sent","expired"],"default":"sent"},"$preview":{"width":1280,"height":860}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"variant":{"editor":"enum","options":["sent","expired"],"default":"sent"},"$preview":{"width":1280,"height":860}}'>
 class Component extends DCLogic {
   renderVals() {
     const v = (this.state && this.state.variant) || this.props.variant || 'sent';
     return {
-      theme: this.props.theme ?? 'light',
+      theme: this.props.theme ?? 'dark',
       sent: v === 'sent',
       expired: v === 'expired',
       resend: () => this.setState({ variant: 'sent' }),

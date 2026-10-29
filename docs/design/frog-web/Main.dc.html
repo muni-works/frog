@@ -85,12 +85,12 @@ a{color:var(--frog)}a:hover{color:var(--fg)}
   </footer>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"failed":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":860}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"failed":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":860}}'>
 class Component extends DCLogic {
   renderVals() {
     const done = !!(this.state && this.state.done);
     return {
-      theme: this.props.theme ?? 'light',
+      theme: this.props.theme ?? 'dark',
       failed: !!this.props.failed,
       done,
       showForm: !done,
