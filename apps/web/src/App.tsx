@@ -9,7 +9,7 @@ import { idOf, spec, useModels } from './models'
 import { outOfCredits, starters, turnError, useCloud, useRepos, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Inspector } from './ui/Inspector'
-import { Palette, Settings, tasksLine, type Command } from './ui/Overlays'
+import { creditLine, Palette, Settings, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
@@ -128,7 +128,7 @@ export default function App() {
     finishSignIn().then(async (done) => {
       if (done) {
         setKey(done.key); setAccount(done.account)
-        setBanner(`Hi ${firstName(done.account) ?? 'there'}. ${tasksLine(done.account)}.`)
+        setBanner(`Hi ${firstName(done.account) ?? 'there'}. ${creditLine(done.account)} to spend on Frog Cloud.`)
         if (done.after) { setDraft(done.after); setView({ kind: 'new', pick: true }) }
         return
       }
@@ -379,7 +379,7 @@ export default function App() {
           <Mark size={28} />
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
             <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
-            <div className="det" style={{ color: account && account.tasks_left <= 0 ? 'var(--warn)' : undefined }}>{account ? tasksLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
+            <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
           </div>
           <span className="det">⚙</span>
         </button>
@@ -493,7 +493,7 @@ export default function App() {
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} onSignOut={() => { setSettings(false); signOut(); setKey(null); setAccount(null); setGate(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
+      {settings && <Settings account={account} models={models} onSignOut={() => { setSettings(false); signOut(); setKey(null); setAccount(null); setGate(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   )

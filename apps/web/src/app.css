@@ -225,3 +225,6 @@ button.tool:hover { color: var(--fg); }
   .turn-foot .copy { opacity: 1; }
   .plan { margin: 0 4px 6px; }
 }
+.set-prices { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.set-price-h, .set-price { display: grid; grid-template-columns: 1fr 64px 64px 64px; gap: 8px; }
+.set-price-h { color: var(--muted); font-size: 11.5px; } .set-price span:not(:first-child), .set-price-h span:not(:first-child) { text-align: right; }

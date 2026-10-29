@@ -16,6 +16,9 @@ export interface Account {
   name?: string | null
   handle: string | null
   email: string | null
+  /** Live credit in cents (may be fractional): Frog Cloud bills per token, at each model's
+   * prices, against this. The edge still sends tasks_left (credit / $0.25), which no app shows. */
+  credit_cents: number
   tasks_left: number
   tasks_limit: number | null
   resets_at: string | null
