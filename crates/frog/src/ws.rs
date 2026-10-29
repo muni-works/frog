@@ -7,7 +7,7 @@
 //! `{"ok":true,"protocol":1}`.
 
 use anyhow::{Context, Result};
-use frog_engine::{Handle, Op};
+use frog_engine::{Event, Handle, Op};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -27,6 +27,10 @@ struct State {
     last_seq: u64,
     /// Durable envelopes this process has emitted, as sent, for a peer's `resume_after`.
     durable: Vec<(u64, String)>,
+    /// Asks still waiting on an answer (permission requests, questions, elicitations), as
+    /// sent. They're ephemeral, so `durable` never has them, but a peer that attaches
+    /// mid-ask has to see them to answer. Cleared by their resolution or the turn's end.
+    open: Vec<(String, u64, String)>,
     /// The current peer's outbox, and which connection it is.
     peer: Option<(u64, mpsc::UnboundedSender<String>)>,
     next_peer: u64,
@@ -74,6 +78,16 @@ pub async fn serve(mut h: Handle, addr: &str) -> Result<()> {
         s.last_seq = env.seq;
         if env.event.is_durable() {
             s.durable.push((env.seq, text.clone()));
+        }
+        match &env.event {
+            Event::PermissionRequest { id, .. }
+            | Event::Question { id, .. }
+            | Event::Elicitation { id, .. } => s.open.push((id.clone(), env.seq, text.clone())),
+            Event::PermissionResolved { id, .. }
+            | Event::QuestionResolved { id, .. }
+            | Event::ElicitationDone { id } => s.open.retain(|(open, _, _)| open != id),
+            Event::TurnEnded { .. } => s.open.clear(),
+            _ => {}
         }
         if let Some((_, tx)) = &s.peer
             && tx.send(text).is_err()
@@ -133,7 +147,12 @@ async fn conn(
             "last_seq": s.last_seq,
         }});
         let _ = tx.send(welcome.to_string());
-        for (_, text) in s.durable.iter().filter(|(seq, _)| *seq > after) {
+        // Open asks go in at their own seq, so the replay stays in order: a client drops
+        // anything at or below the last seq it has seen.
+        let mut replay: Vec<(u64, &String)> = s.durable.iter().map(|(seq, t)| (*seq, t)).collect();
+        replay.extend(s.open.iter().map(|(_, seq, t)| (*seq, t)));
+        replay.sort_by_key(|(seq, _)| *seq);
+        for (_, text) in replay.into_iter().filter(|(seq, _)| *seq > after) {
             let _ = tx.send(text.clone());
         }
         s.next_peer += 1;

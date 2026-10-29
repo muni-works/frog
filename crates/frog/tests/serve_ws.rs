@@ -389,6 +389,47 @@ async fn ask_waits_for_the_peers_permission() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_peer_that_attaches_mid_ask_gets_the_ask() {
+    let bash = tool_reply(
+        "Bash",
+        json!({"command": "echo hi > made.txt && cat made.txt", "unsandboxed": true}),
+    );
+    let f = frog(vec![bash, text_reply("done")], &["--ask"]).await;
+    let mut a = connect(&f.addr).await;
+    hello(&mut a, 0).await;
+    send(&mut a, json!({"op": "submit", "text": "run it"})).await;
+    let asked = until(&mut a, "permission_request").await;
+    let ask = asked.last().unwrap().clone();
+
+    // A reload, or another device: the ask is in the replay, in seq order, and answerable.
+    let mut b = connect(&f.addr).await;
+    hello(&mut b, 0).await;
+    let replay = until(&mut b, "permission_request").await;
+    assert_eq!(replay.last().unwrap()["id"], ask["id"]);
+    assert!(
+        replay
+            .windows(2)
+            .all(|w| w[0]["seq"].as_u64() < w[1]["seq"].as_u64()),
+        "{replay:?}"
+    );
+    send(
+        &mut b,
+        json!({"op": "permission", "id": ask["id"], "decision": "allow"}),
+    )
+    .await;
+    until(&mut b, "turn_ended").await;
+
+    // Answered and finished: a later peer's replay has no open ask.
+    let mut c = connect(&f.addr).await;
+    hello(&mut c, 0).await;
+    let replay = until(&mut c, "turn_ended").await;
+    assert!(
+        replay.iter().all(|e| e["event"] != "permission_request"),
+        "{replay:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn without_ask_headless_denies() {
     let bash = tool_reply(
         "Bash",
