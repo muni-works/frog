@@ -56,7 +56,7 @@ interface EngineClient {
 | `Status { model, mode, context_tokens, context_window }`, `ModelChanged`, `ModeChanged` | The composer's model pill and mode chip, and the context line in the title bar. Changed with `Op::SetModel { spec: "cloud/<id>" }` and `Op::SetMode { mode }`. |
 | `TurnEnded { reason }` | Stops the turn. An `error` mentioning `insufficient_credit` (the edge's 402) shows the out-of-credits card. |
 
-Models come from the edge's `GET /v1/models` (with prices). A new session starts on the picked model (`POST /v1/sessions {repo, model: "cloud/<id>"}`) and mode (`Op::SetMode` before the first message).
+Models come from the edge's `GET /v1/models` (with prices). A new session starts on the picked model (`POST /v1/sessions {repo, model: "cloud/<id>"}`) and mode (`Op::SetMode` before the first message; Auto by default).
 
 Sessions come from `GET /v1/sessions` (refreshed every 15 s), new ones from `POST /v1/sessions {repo}`. The app streams the open session and any whose sandbox is `running` or `starting`. It doesn't attach to `sleeping` ones, because attaching would wake them. Commit, Push and Open PR are messages to the agent, so they show up in the conversation like any other step.
 
@@ -64,7 +64,7 @@ Sessions come from `GET /v1/sessions` (refreshed every 15 s), new ones from `POS
 
 Each of these needs an API that doesn't exist yet, so the UI leaves it out instead of faking it:
 
-- A list of the repos the GitHub App can see. The picker takes `owner/name` or a URL.
+- A list of the repos the GitHub App can see. The composer's repo menu offers recent repos and takes `owner/name` or a URL.
 - PR checks. The PR number shows when the session summary has one.
 - MCP servers, routines and skills.
 - The Preview tab. It needs a sandbox port.

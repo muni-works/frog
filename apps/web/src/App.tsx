@@ -8,10 +8,11 @@ import { idOf, spec, useModels } from './models'
 import { outOfCredits, starters, useCloud, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Inspector } from './ui/Inspector'
-import { Palette, RepoPicker, Settings, tasksLine, type Command } from './ui/Overlays'
+import { Palette, Settings, tasksLine, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 
-type View = { kind: 'session'; id: string } | { kind: 'new'; repo?: string } | { kind: 'pickRepo' }
+/** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
+type View = { kind: 'session'; id: string } | { kind: 'new'; repo?: string; pick?: boolean }
 
 /** Dev only: a key for the mock gateway (any non-empty key is an account there). Skips sign-in. */
 const DEV_KEY = import.meta.env.DEV ? (import.meta.env.VITE_DEV_KEY as string | undefined) : undefined
@@ -62,12 +63,11 @@ export default function App() {
   const [banner, setBanner] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [draft, setDraft] = useState<string | undefined>()
-  const [pending, setPending] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [conn, setConn] = useState<Record<string, ConnectionState>>({})
   // What a new session starts with: null model = the gateway's default.
   const [newModel, setNewModel] = useState<string | null>(null)
-  const [newMode, setNewMode] = useState<Mode>('default')
+  const [newMode, setNewMode] = useState<Mode>('auto')
   const toastTimer = useRef(0)
 
   const cloud = useCloud(key)
@@ -91,7 +91,7 @@ export default function App() {
       if (done) {
         setKey(done.key); setAccount(done.account)
         setBanner(`Signed in as ${done.account.handle ?? done.account.email ?? 'you'}. ${tasksLine(done.account)}.`)
-        if (done.after) { setPending(done.after); setView({ kind: 'pickRepo' }) }
+        if (done.after) { setDraft(done.after); setView({ kind: 'new', pick: true }) }
         return
       }
       const k = savedKey()
@@ -114,7 +114,6 @@ export default function App() {
       const s = await cloud.gateway.create({ repo, ...(newModel ? { model: spec(newModel) } : {}) })
       setSessions((all) => [{ ...s, title: s.title || text }, ...all.filter((x) => x.id !== s.id)])
       setView({ kind: 'session', id: s.id })
-      setPending(null)
       if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
       send(s.id, text) // queued until the session's socket is live
     } catch (e) {
@@ -152,7 +151,7 @@ export default function App() {
 
   const commands: Command[] = [
     { id: 'c-new', label: 'New session', hint: '⌘N', run: () => key && setView({ kind: 'new' }) },
-    { id: 'c-repo', label: 'Connect a repo', run: () => key && setView({ kind: 'pickRepo' }) },
+    { id: 'c-repo', label: 'Connect a repo', run: () => key && setView({ kind: 'new', pick: true }) },
     { id: 'c-settings', label: 'Settings', hint: '⌘,', run: () => key && setSettings(true) },
     { id: 'c-insp', label: inspector ? 'Hide inspector' : 'Show inspector', run: () => setInspector(!inspector) },
     { id: 'c-theme', label: 'Toggle dark mode', run: () => { const r = document.documentElement; r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark' } },
@@ -224,7 +223,7 @@ export default function App() {
           <div className="dock"><Composer repo="Connect a repo" onSend={setGate} /></div>
         </main>
       ) : (
-        <main className="main hero">
+        <main className="main home">
           {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
           <Mark size={56} />
           <h1>What should we work on?</h1>
@@ -304,7 +303,7 @@ export default function App() {
         <div className="titlebar">
           <div style={{ flex: 1, minWidth: 0 }}>
             <b style={{ fontSize: 14 }}>{current ? title(current) : 'New session'}</b>
-            <div className="det">{current ? `${current.repo} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}${ct?.context?.used ? ` · ${Math.round(ct.context.used / 1000)}k of ${Math.round(ct.context.window / 1000)}k context` : ''}` : view.kind === 'pickRepo' ? 'Pick a repo to start' : 'Runs in a private Frog Cloud sandbox'}</div>
+            <div className="det">{current ? `${current.repo} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}${ct?.context?.used ? ` · ${Math.round(ct.context.used / 1000)}k of ${Math.round(ct.context.window / 1000)}k context` : ''}` : 'Runs in a private Frog Cloud sandbox'}</div>
           </div>
           {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? 'In Frog Cloud' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
           {current && <button type="button" className="f-btn f-btn--plain" onClick={() => setInspector(!inspector)} aria-pressed={inspector}>{inspector ? 'Hide inspector' : 'Inspector'}</button>}
@@ -343,14 +342,15 @@ export default function App() {
         </>)}
 
         {view.kind === 'new' && (
-          <div className="main hero">
+          <div className="main home">
             {banner && <div role="status" className="banner"><span style={{ color: 'var(--place-cloud)' }}>✓</span><span style={{ flex: 1 }}>{banner}</span><button type="button" className="f-btn f-btn--plain" aria-label="Dismiss" onClick={() => setBanner(null)}>✕</button></div>}
             <Mark size={56} />
             <h1>What should we work on?</h1>
             <div style={{ width: '100%', maxWidth: 680 }}>
-              <Composer repo={view.repo} draft={draft} autoFocus onRepo={() => setView({ kind: 'pickRepo' })}
+              <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} busy={busy}
+                recent={[...new Set(sessions.map((s) => s.repo))]} onRepo={(repo) => setView({ kind: 'new', repo })}
                 model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
-                onSend={(text) => { setDraft(undefined); if (view.repo) start(text, view.repo); else { setPending(text); setView({ kind: 'pickRepo' }) } }} />
+                onSend={(text) => { setDraft(undefined); if (view.repo) start(text, view.repo) }} />
             </div>
             <div className="starters">
               {starters.map((t) => <button key={t.title} type="button" className="cz-chip" onClick={() => setDraft(t.title)}>{t.i} {t.title}</button>)}
@@ -358,16 +358,6 @@ export default function App() {
           </div>
         )}
 
-        {view.kind === 'pickRepo' && (
-          <div className="main" style={{ alignItems: 'center', padding: '60px 22px 0', gap: 14 }}>
-            {banner && <div role="status" className="banner" style={{ width: '100%', maxWidth: 560 }}><span style={{ color: 'var(--place-cloud)' }}>✓</span><span style={{ flex: 1 }}>{banner}</span><button type="button" className="f-btn f-btn--plain" aria-label="Dismiss" onClick={() => setBanner(null)}>✕</button></div>}
-            <Mark size={44} />
-            <h2 style={{ margin: 0, fontSize: 22, letterSpacing: '-0.02em' }}>Which repo?</h2>
-            {pending && <div className="me" style={{ alignSelf: 'center' }}>{pending}</div>}
-            <RepoPicker busy={busy} recent={[...new Set(sessions.map((s) => s.repo))]} onPick={(r) => { if (pending) start(pending, r); else setView({ kind: 'new', repo: r }) }} />
-            <div className="det">Frog clones it into a private cloud sandbox. Nothing is pushed until you say so.</div>
-          </div>
-        )}
       </main>
 
       {view.kind === 'session' && current && ct && inspector && (

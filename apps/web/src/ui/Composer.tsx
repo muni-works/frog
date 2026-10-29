@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Mode } from '../cloud/protocol'
 import { modes, price, type Model } from '../models'
+import { parseRepo } from '../store'
 
 // Port of Composer.dc.html with platform="web": the run-on chip is fixed to Frog Cloud.
 
@@ -24,7 +25,14 @@ export interface ComposerProps {
   onMode?: (mode: Mode) => void
   onSend: (text: string) => void
   onStop?: () => void
-  onRepo?: () => void
+  /** A new session's repo picker, in the composer: recent repos, search, or a pasted URL.
+   * With `onRepo`, sending without a repo opens it instead. */
+  onRepo?: (repo: string) => void
+  recent?: string[]
+  /** Open the repo menu on mount (e.g. back from sign-in with a message but no repo). */
+  pickRepo?: boolean
+  /** Starting a session: the send button waits. */
+  busy?: boolean
   onGit?: () => void
   autoFocus?: boolean
 }
@@ -44,16 +52,19 @@ function useTimer(since?: number) {
 
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
-  const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | null>(null)
+  const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | null>(p.pickRepo ? 'repo' : null)
+  const [q, setQ] = useState('')
   const ref = useRef<HTMLTextAreaElement>(null)
   const working = p.state === 'working', paused = p.state === 'paused'
   const timer = useTimer(working ? p.startedAt : undefined)
   useEffect(() => { if (p.draft !== undefined) setText(p.draft) }, [p.draft])
   useEffect(() => { if (p.autoFocus) ref.current?.focus() }, [p.autoFocus])
+  useEffect(() => { if (p.pickRepo) setMenu('repo') }, [p.pickRepo])
 
   const send = () => {
     const t = text.trim()
-    if (!t || paused) return
+    if (!t || paused || p.busy) return
+    if (p.onRepo && !p.repo) return setMenu('repo')
     p.onSend(t)
     setText('')
   }
@@ -81,6 +92,29 @@ export function Composer(p: ComposerProps) {
           ))}
         </div>
       )}
+      {menu === 'repo' && p.onRepo && (() => {
+        const typed = parseRepo(q)
+        const list = (p.recent ?? []).filter((r) => r.toLowerCase().includes(q.trim().toLowerCase()))
+        const pick = (r: string) => { p.onRepo!(r); setMenu(null); setQ(''); ref.current?.focus() }
+        return (
+          <div className="f-card cz-menu cz-repos" role="menu" aria-label="Repo" style={{ left: 150, width: 320 }}>
+            <input className="cz-search" autoFocus value={q} placeholder="Search repos, or paste a GitHub URL" aria-label="Repo"
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setMenu(null)
+                if (e.key === 'Enter') { e.preventDefault(); const r = typed ?? list[0]; if (r) pick(r) }
+              }} />
+            {typed && !list.includes(typed) && <button type="button" role="menuitem" onClick={() => pick(typed)}><span style={{ flex: 1 }}>{typed}</span><span className="det">from GitHub</span></button>}
+            {list.length > 0 && <div className="cz-menu-h">Recent</div>}
+            {list.map((r) => (
+              <button key={r} type="button" role="menuitemradio" aria-checked={r === p.repo} onClick={() => pick(r)}>
+                <span style={{ flex: 1 }}>{r}</span><span style={{ color: 'var(--frog)', opacity: r === p.repo ? 1 : 0 }}>✓</span>
+              </button>
+            ))}
+            {!typed && list.length === 0 && <div className="det wrap" style={{ padding: '6px 10px' }}>Type owner/name or paste a GitHub URL. Private repos need the Frog GitHub App.</div>}
+          </div>
+        )
+      })()}
       {menu === 'mode' && (
         <div className="f-card cz-menu" role="menu" aria-label="When Frog asks" style={{ left: 150, width: 300 }}>
           <div className="cz-menu-h">When Frog asks</div>
@@ -146,7 +180,7 @@ export function Composer(p: ComposerProps) {
             </button>
           )}
           {!p.branch && (
-            <button type="button" className="cz-chip" onClick={p.onRepo}>
+            <button type="button" className="cz-chip" disabled={!p.onRepo} aria-expanded={menu === 'repo'} onClick={() => setMenu(menu === 'repo' ? null : 'repo')}>
               <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h6l2 2h10v10H3z" /></svg>
               {p.repo || 'Connect a repo'}
             </button>
