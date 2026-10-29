@@ -9709,3 +9709,30 @@ async fn a_chief_grant_never_routes_a_never_delegable_call() {
     assert_eq!(asked(&evs), 1);
     assert_eq!(layers(&evs, "push").first(), Some(&("never-delegable".to_string(), "ask".to_string())));
 }
+
+#[tokio::test]
+async fn memory_tool_is_offered_only_with_compiled_memory() {
+    // The scripted provider has no memory endpoints: no Memory tool, no prompt line.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, sent) = engine_sent(
+        vec![reply(vec![text("hi")], Stop::End)],
+        Some(dir.path().join("sessions")),
+        None,
+        None,
+        dir.path().to_path_buf(),
+    );
+    until_idle(&mut h).await;
+    h.ops
+        .send(Op::Submit {
+            text: "hello".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    until_idle(&mut h).await;
+    let req = sent.lock().unwrap().last().cloned().expect("a model call");
+    assert!(req.contains("<tool Read>"));
+    assert!(!req.contains(&format!("<tool {}>", crate::compiled_memory::TOOL)));
+    assert!(!req.contains(crate::compiled_memory::PROMPT.trim()));
+    shutdown(h).await;
+}

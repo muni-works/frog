@@ -1039,6 +1039,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         agent.mcp.shutdown();
         shared.mcp.lock().unwrap().take();
         shared.panes.shutdown();
+        agent.finish_compiled_memory().await;
         agent.sync_log();
         agent.write_summary();
         // The worktree is free before the client hears the engine is gone.
@@ -1373,6 +1374,8 @@ struct Agent {
     /// The user's memory notes (none for subagents or in-memory engines), loaded when the
     /// session starts and after `/remember` or `/forget`, so the system prompt stays put.
     memory: Option<crate::memory::Store>,
+    /// Compiled memory, while this model's server keeps it (see `compiled_memory`).
+    compiled: Option<crate::compiled_memory::Session>,
     notes: Vec<crate::memory::Note>,
     /// Notes that didn't fit the current model's index.
     notes_omitted: usize,
@@ -1672,6 +1675,7 @@ impl Agent {
             loaded_tools,
             skills,
             memory,
+            compiled: None,
             notes,
             notes_omitted: 0,
             rules,

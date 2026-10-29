@@ -327,6 +327,9 @@ pub struct Config {
     /// never-delegable set, always — cards the user. Absent: today's behavior.
     #[serde(default)]
     pub delegation: Delegation,
+    /// `[memory]`: `compiled = "auto" | "on" | "off"` (see `compiled_memory`).
+    #[serde(default)]
+    pub memory: crate::compiled_memory::Settings,
 }
 
 /// `[delegation]`: who a still-flagged call is offered to before the user.

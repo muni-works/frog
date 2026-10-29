@@ -48,6 +48,10 @@ impl Agent {
             self.system
                 .push_str("\nRecall searches your notes and past sessions in this project.\n");
         }
+        // The store's contents never go in the prompt (that's the point): only how to reach it.
+        if self.compiled.is_some() {
+            self.system.push_str(crate::compiled_memory::PROMPT);
+        }
         // Last, since it's the one part that changes between turns.
         self.system.push_str(&self.repo_map.text);
     }
@@ -439,9 +443,52 @@ Not saved: the next session starts on {from} again"
             self.repo_map = Default::default();
             self.refresh_repo_map(&[]);
         }
+        self.start_compiled_memory().await;
         self.sync_specs();
         self.apply_harness();
         self.warm(None);
+    }
+
+    /// Compiled memory for this model, if its server keeps it (`compiled_memory`): ends the
+    /// previous model's first, so a model switch saves what it held.
+    pub(super) async fn start_compiled_memory(&mut self) {
+        self.finish_compiled_memory().await;
+        let setting = self.cfg.memory.compiled;
+        if self.subagent || self.cfg.hermetic || setting == crate::compiled_memory::Compiled::Off {
+            return;
+        }
+        let (Some(remote), Some(store)) = (self.provider.memory_remote(), self.memory.as_ref())
+        else {
+            if setting == crate::compiled_memory::Compiled::On {
+                self.notice(
+                    Level::Warn,
+                    "[memory] compiled = \"on\", but this model's provider has no compiled memory.",
+                );
+            }
+            return;
+        };
+        let blob = crate::compiled_memory::blob_path(store);
+        let key = self.conv.session_id.clone();
+        match crate::compiled_memory::Session::start(setting, remote, &key, blob).await {
+            Ok(Some(s)) => {
+                self.notice(
+                    Level::Info,
+                    format!("compiled memory: on ({})", s.blob().display()),
+                );
+                self.compiled = Some(s);
+            }
+            Ok(None) => {}
+            Err(e) => self.notice(Level::Warn, format!("{e:#}")),
+        }
+    }
+
+    /// Save compiled memory and end the server's session for it.
+    pub(super) async fn finish_compiled_memory(&mut self) {
+        if let Some(m) = self.compiled.take()
+            && let Some(n) = m.finish().await
+        {
+            self.notice(Level::Warn, n);
+        }
     }
 
     /// Have the server prefill this conversation as it stands (it was just opened or shown,

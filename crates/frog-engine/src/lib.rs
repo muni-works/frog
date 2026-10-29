@@ -8,6 +8,7 @@ pub mod catalog;
 pub mod chapter;
 pub mod checkpoint;
 pub mod codemap;
+pub mod compiled_memory;
 pub mod config;
 pub mod context;
 pub mod delegation;

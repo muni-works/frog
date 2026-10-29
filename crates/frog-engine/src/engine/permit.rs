@@ -46,7 +46,9 @@ impl Agent {
             crate::background::MONITOR => return Decision::Allow,
             n => n,
         };
-        let kind = if crate::panes::is_read(name, input) {
+        let kind = if crate::panes::is_read(name, input)
+            || (name == crate::compiled_memory::TOOL && crate::compiled_memory::is_read(input))
+        {
             Kind::Read
         } else {
             tools::kind(name)
