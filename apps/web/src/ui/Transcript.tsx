@@ -148,7 +148,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
       )}
       {thread.elicitation && <ElicitationCard e={thread.elicitation} onReply={onElicit} />}
       {thread.running && thread.activity && !thread.ask && !thread.question && !thread.elicitation && (
-        <div className="tool" style={{ color: thread.activity.warn ? 'var(--notice)' : undefined }}>… {thread.activity.text}</div>
+        <div className={`thinking${thread.activity.warn ? ' warn' : ''}`} role="status"><span className="thinking-dot" aria-hidden="true" />{thread.activity.text}</div>
       )}
       {outbox.map((m) => (
         <div key={`out-${m.id}`} className="turn">
