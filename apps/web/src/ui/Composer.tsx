@@ -9,6 +9,8 @@ import { parseRepo } from '../store'
 export interface ComposerProps {
   /** Context used of the window, from the engine's status: a ring by the send button. */
   context?: { used: number | null; window: number } | null
+  /** The account's plan usage and credit, shown in the ring's popover as in Claude's. */
+  usage?: { sub: { name: string; windows: { kind: '5h' | 'weekly'; used: number; limit: number; resets_at: string }[]; over: boolean } | null; credit: string; onBilling: () => void }
   /** Summarize the conversation so far to free up context (the ring's button, or /compact). */
   onCompact?: (focus?: string) => void
   compacting?: boolean
@@ -323,23 +325,35 @@ export function Composer(p: ComposerProps) {
             {p.model ?? 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
           </button>
         )}
-        {p.context?.window ? <ContextRing used={p.context.used} window={p.context.window} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}
+        {p.context?.window || p.usage?.sub ? <ContextRing used={p.context?.used ?? null} window={p.context?.window ?? 0} usage={p.usage} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}
       </div>
     </div>
   )
 }
 
 /** How full the context is, as a ring (the Mac's ContextRing); click it for the numbers. */
-function ContextRing({ used, window, onCompact, compacting }: { used: number | null; window: number; onCompact?: () => void; compacting?: boolean }) {
+function ContextRing({ used, window, usage, onCompact, compacting }: { used: number | null; window: number; usage?: ComposerProps['usage']; onCompact?: () => void; compacting?: boolean }) {
   const [open, setOpen] = useState(false)
-  const f = used ? Math.min(1, used / window) : 0
-  const color = f > 0.8 ? 'var(--warn)' : f > 0.6 ? 'var(--notice)' : 'var(--muted)'
-  const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
+  const root = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const down = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false) }
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    addEventListener('mousedown', down); addEventListener('keydown', key)
+    return () => { removeEventListener('mousedown', down); removeEventListener('keydown', key) }
+  }, [open])
+  const sub = usage?.sub
+  const plan = sub ? Math.max(0, ...sub.windows.filter((w) => w.limit > 0).map((w) => Math.min(1, w.used / w.limit))) : 0
+  const ctx = used && window ? Math.min(1, used / window) : 0
+  // The ring shows whichever is fuller, the plan or the context; red once the plan is used up.
+  const f = Math.max(plan, ctx)
+  const tone = (x: number) => (x >= 1 ? 'var(--warn)' : x > 0.8 ? 'var(--warn)' : x > 0.6 ? 'var(--notice)' : 'var(--muted)')
+  const color = sub?.over ? 'var(--warn)' : tone(f)
+  const bar = (x: number) => (x >= 1 ? 'var(--warn)' : x > 0.8 ? 'var(--notice)' : 'var(--frog)')
   const r = 6.5, c = 2 * Math.PI * r
   return (
-    <span className="ctx">
-      <button type="button" className="ctx-ring" aria-expanded={open} onClick={() => setOpen(!open)}
-        aria-label={`Context ${Math.round(f * 100)}% full`} title={`${k(used ?? 0)} of ${k(window)} tokens (${Math.round(f * 100)}%)`}>
+    <span className="ctx" ref={root}>
+      <button type="button" className="ctx-ring" aria-expanded={open} onClick={() => setOpen(!open)} aria-label={`Usage and context, ${Math.round(f * 100)}%`}>
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
           <circle cx="9" cy="9" r={r} fill="none" stroke="var(--line-strong)" strokeWidth="2.5" />
           <circle cx="9" cy="9" r={r} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"
@@ -347,18 +361,34 @@ function ContextRing({ used, window, onCompact, compacting }: { used: number | n
         </svg>
       </button>
       {open && (
-        <div className="f-card ctx-card" role="dialog" aria-label="Context">
-          <div className="ctx-h"><b>Context</b><b style={{ color: f > 0.6 ? color : undefined }}>{Math.round(f * 100)}%</b></div>
-          <div className="ctx-bar"><span style={{ width: `${f * 100}%`, background: f > 0.6 ? color : 'var(--frog)' }} /></div>
-          <div className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens</div>
-          {(onCompact || compacting) && (
-            <>
+        <div className="f-card ctx-card" role="dialog" aria-label="Usage and context">
+          {sub && (<>
+            <div className="ctx-h"><span className="det">Plan usage · {sub.name}</span>{usage && <button type="button" className="ctx-link" onClick={() => { setOpen(false); usage.onBilling() }}>See all →</button>}</div>
+            {sub.windows.filter((w) => w.limit > 0).map((w) => {
+              const x = Math.min(1, w.used / w.limit)
+              const when = new Date(w.resets_at).toLocaleString(undefined, w.kind === '5h' ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+              return (
+                <div key={w.kind} className="ctx-row">
+                  <div className="ctx-h"><span>{w.kind === '5h' ? 'Session limit' : 'Weekly'}</span><span className="det">{w.used ? `Resets ${when}` : 'Starts when a message is sent'} · {Math.round(x * 100)}%</span></div>
+                  <div className="ctx-bar"><span style={{ width: `${x * 100}%`, background: bar(x) }} /></div>
+                </div>
+              )
+            })}
+          </>)}
+          {usage && (
+            <div className="ctx-h"><span>Usage credits</span><span className="det">{sub?.over ? `paying now · ${usage.credit} left` : `${usage.credit} left`}</span></div>
+          )}
+          {window > 0 && (<>
+            {usage && <div className="ctx-sep" />}
+            <div className="ctx-h"><span>Context</span><span className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens · {Math.round(ctx * 100)}%</span></div>
+            <div className="ctx-bar"><span style={{ width: `${ctx * 100}%`, background: bar(ctx) }} /></div>
+            {(onCompact || compacting) && (
               <button type="button" className="f-btn f-btn--bordered ctx-compact" disabled={compacting || !onCompact} onClick={() => { onCompact?.(); setOpen(false) }}>
                 {compacting ? 'Compacting…' : 'Compact now'}
               </button>
-              <div className="det wrap">Summarizes the conversation so far to free up room. Or type /compact.</div>
-            </>
-          )}
+            )}
+          </>)}
+          {!usage && !sub && window === 0 && <div className="det">Nothing to show yet.</div>}
         </div>
       )}
     </span>

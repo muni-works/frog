@@ -9,7 +9,7 @@ import { clearThreads, outOfCredits, pickStarters, useCloud, useRepos, useSessio
 import { Composer } from './ui/Composer'
 import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
-import { SessionList, UsageMeter } from './ui/SessionList'
+import { SessionList } from './ui/SessionList'
 import { Starting } from './ui/Starting'
 import { creditLine, Palette, Settings, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
@@ -362,7 +362,6 @@ export default function App() {
         <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
           onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
           onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
-        {account?.subscription && <UsageMeter sub={account.subscription} onOpen={() => setSettings(true)} />}
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
           {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} /> : <Mark size={28} />}
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
@@ -462,7 +461,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} autoFocus context={ct.context} compacting={!!compacting[current.id]}
+            <Composer key={current.id} autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => setSettings(true) } : undefined} context={ct.context} compacting={!!compacting[current.id]}
               onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
@@ -484,7 +483,7 @@ export default function App() {
               <HowItWorks />
             </div>
             <div className="dock">
-              <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
+              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => setSettings(true) } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images) }} />
