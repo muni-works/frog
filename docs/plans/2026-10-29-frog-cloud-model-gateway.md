@@ -1,20 +1,24 @@
 # Frog Cloud as the model gateway
 
-Status: draft · 2026-10-29 · decisions marked **Open** are Cam's
+Status: draft v2 · 2026-10-29 · decisions recorded below; **Open** ones still need Cam
 
 ## Goal
 
-The apps don't have providers. In the Mac, iPhone and web apps, a user picks a model from two
-places: **This Mac** (local) and **Frog Cloud**. Everything remote goes through the Frog Cloud
-gateway (zest `edge/`), which decides where each request actually runs: tang's own GPUs,
-Cloudflare AI Gateway, Vercel AI Gateway, or a provider's API directly. Upstreams are an
-implementation detail of the gateway, never something the app shows or holds keys for.
+By default, a user picks a model from two places: **This Mac** (local) and **Frog Cloud**.
+Frog Cloud models go through the Frog Cloud gateway (zest `edge/`), which decides where each
+request actually runs: tang's own GPUs, Cloudflare AI Gateway, Vercel AI Gateway, or a
+provider's API directly. Upstreams are the gateway's business: the app never holds keys for
+them.
+
+Users stay free to bring their own providers, the way opencode lets you: a short list of
+presets plus any OpenAI-compatible server, kept simple and never pushed aside. Frog Cloud is
+the default, not the only way.
 
 This gets frog off Vercel without the app noticing, and lets us swap or add upstreams per model
 without shipping an app.
 
-Non-goals: removing providers from the open-source engine (see Open decision 1), in-app billing
-(zest owns checkout), team accounts.
+Non-goals: removing your-own-provider support, in-app billing (zest owns checkout), team
+accounts.
 
 ## Today
 
@@ -96,8 +100,9 @@ Rules:
   separate frog models, or one is chosen deliberately, never silently substituted.
 - **Health.** Upstreams that fail repeatedly are skipped for a cooldown, like the router fleet's
   misses today (`fleet.ts`).
-- **Transparency.** Every response carries `x-frog-upstream: cloudflare-aig`. The engine logs it
-  in the session and the transcript can show it on hover; it's for debugging, not a choice.
+- **Transparency.** Every response carries `x-frog-upstream: cloudflare-aig`, plus the timing
+  and usage the gateway saw. The engine records it per model call, and the app shows it
+  (section 7).
 - **Streaming** passes through unbuffered. The edge is a Worker, so Cloudflare AI Gateway is
   in-network and the extra hop is small; measure time to first token against Vercel before
   switching defaults.
@@ -141,13 +146,21 @@ pin it go away once cloud traffic is off Vercel keys.
 
 ### 7. App changes
 
-- Model picker: **This Mac** and **Frog Cloud**, nothing else (subject to Open decision 1).
-- Settings loses the providers list and key entry; Frog Cloud is sign-in only (account design,
-  2026-10-21).
-- Logged out: local models, plus Frog Cloud's built-in list shown as "sign in to use".
-- Price and model info come from the Frog Cloud catalog.
-- Remove: `ProviderStore`, per-provider rows in `ModelPicker`/`SettingsView`, the gateway cases in
-  `TurnCosts`. The iPhone `ModelSheet` and `SettingsSheet` follow.
+- Model picker: **This Mac**, **Frog Cloud**, then **Your providers** (only when you've added
+  one). Frog Cloud is sign-in only (account design, 2026-10-21).
+- Your providers: one small Settings section, "Add a provider": a short preset list (OpenRouter,
+  Anthropic, OpenAI, Ollama, LM Studio, Cloudflare, Vercel) or any OpenAI-compatible URL, then a
+  key. No nags, no warnings that it's second-class.
+- Logged out: local models and your providers work; Frog Cloud's built-in list shows as
+  "sign in to use".
+- Frog Cloud prices and model info come from its catalog; your providers keep today's catalog
+  sources.
+- **Where it ran, shown well.** Each turn's details (the `TurnCosts` popover) show, per model
+  call: who served it (frog's GPUs, or "Anthropic via Cloudflare"), time to first token,
+  tokens per second, cache hit rate, cost, and energy. Quiet by default, one hover or tap away,
+  designed with the same care as the transcript, not a debug dump.
+- Remove the Codex (ChatGPT sign-in) route: `provider/codex.rs`, the `codex/` specs and their
+  picker rows. The iPhone `ModelSheet` and `SettingsSheet` follow the same layout.
 
 ### 8. Cloud sandbox
 
@@ -182,25 +195,25 @@ User code now passes through frog's infrastructure and then an upstream.
 4. **Routing.** Sticky sessions, upstream health and failover, TTFT comparison across
    upstreams.
 
+## Decisions
+
+1. **Your own providers stay, in the apps too** (Cam, 2026-10-29). Freedom like opencode's,
+   kept simple: a short preset list plus any OpenAI-compatible server, one Settings section
+   (section 7).
+2. **Remove Codex and any subscription sign-in route** (Cam, 2026-10-29). Providers are API
+   keys or servers; frog doesn't ride on other products' consumer subscriptions.
+6. **Show where each call ran, beautifully** (Cam, 2026-10-29). Upstream, speed, cache, cost and
+   energy per model call, in the turn details (section 7).
+7. **Flat model ids** (Cam, 2026-10-29): `frog/claude-opus-5.5`.
+8. **Design for other users, not Cam's keys** (Cam, 2026-10-29). Most users have no Cloudflare
+   or Vercel account: they sign in to Frog Cloud, or add a key they already have. The engine's
+   Cloudflare and Vercel presets stay as two of the "your providers" options (Cloudflare's
+   handles `anthropic/*` over its Messages API since `1ad4a4c7`), not as how frog itself reaches
+   models.
+
 ## Open decisions
 
-1. **Bring your own key and custom servers.** Keep providers (OpenRouter, Ollama, LM Studio,
-   custom servers) in the open-source engine and CLI, and hide them in the apps or put them under
-   an Advanced section? Or drop them from the apps entirely? Dropping them from the engine would
-   break "free, open source, works logged out". **Open.** Recommendation: keep in engine and
-   CLI, hide in the apps behind Advanced.
-2. **Codex (ChatGPT sign-in).** It's the user's own subscription, so it can't go through the
-   gateway. Keep it as CLI-only, keep it in the apps as a "your accounts" exception, or drop it?
+3. **Launch models.** Which Frog Cloud models ship first, given price and demand. **Open.**
+4. **Margin.** Where frog makes money on third-party tokens. **Open.**
+5. **The free offer.** What new users get instead of, or besides, a one-time $5 credit.
    **Open.**
-3. **Launch models.** Which frog models ship first beyond tang's (Claude Opus 5.5? Sonnet? GLM
-   5.3? DeepSeek V4.1 Flash?). **Open.**
-4. **Margin.** Pass-through, a flat percentage, or per model? **Open.**
-5. **Plan gating.** The $5 sign-up credit lasts about one long Opus session. Gate frontier models
-   by plan, cap per-session spend, or let credit run out? **Open.**
-6. **Showing the upstream.** `x-frog-upstream` in the transcript on hover, or logs only?
-   **Open.**
-7. **Model naming.** Flat ids (`frog/claude-opus-5.5`) as proposed, or keep the vendor
-   (`frog/anthropic/claude-opus-5.5`)? **Open.** Recommendation: flat.
-8. **Engine Cloudflare provider.** `1ad4a4c7` made the engine's `cloudflare` preset an AI
-   Gateway client (Claude over `/ai/v1/messages`) for your own key. Keep it as a CLI provider, or
-   revert now that the real integration lives in zest? **Open.**
