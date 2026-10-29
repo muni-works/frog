@@ -39,7 +39,6 @@ struct TurnView: View {
     @AppStorage(Verbosity.key) private var defaultVerbosity = Verbosity.standard.rawValue
     @Environment(\.turnSpace) private var space
 
-    @Environment(\.models) private var models
     @Environment(\.transcriptTrack) private var track
 
     init(turn: TurnState, conversation: Conversation, actions: TurnActions, part: TurnPart, gap: CGFloat = 0, pinsFooter: Bool = true) {
@@ -70,12 +69,6 @@ struct TurnView: View {
     private var liveAnswerID: String? {
         guard let last = turn.items.last, last.kind == .message, !last.done else { return nil }
         return last.id
-    }
-
-    /// The model that answered (or is answering): the prompt takes its place's color.
-    private var promptTint: Color {
-        guard let spec = turn.usage?.model ?? conversation.status?.model else { return .accentColor }
-        return ModelIdentity.of(spec, in: models).place.color
     }
 
     private var verbosity: Verbosity {
@@ -141,9 +134,9 @@ struct TurnView: View {
         VStack(alignment: .trailing, spacing: TurnSpace.Inset.hair) {
             // Messages queued while the last turn ran go together: a bubble each.
             VStack(alignment: .trailing, spacing: TurnSpace.Inset.snug) {
-                UserPrompt(text: turn.input, images: turn.images, tint: promptTint)
+                UserPrompt(text: turn.input, images: turn.images)
                 ForEach(Array(turn.more.enumerated()), id: \.offset) { _, part in
-                    UserPrompt(text: part.text, images: part.images, tint: promptTint)
+                    UserPrompt(text: part.text, images: part.images)
                 }
             }
                 // Sent like an iMessage: up from the composer, a little small, then a
