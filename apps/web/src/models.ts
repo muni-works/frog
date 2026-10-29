@@ -5,7 +5,7 @@ import type { Mode } from './cloud/protocol'
 // Frog Cloud's models, from the edge's OpenAI-style /v1/models (prices are USD per token).
 // The engine names them `cloud/<id>`.
 
-export interface Model { id: string; context: number | null; input: number | null; output: number | null }
+export interface Model { id: string; context: number | null; input: number | null; output: number | null; cached: number | null }
 
 export const spec = (id: string) => `cloud/${id}`
 export const idOf = (spec: string | null) => (spec?.startsWith('cloud/') ? spec.slice(6) : spec)
@@ -24,13 +24,14 @@ export function useModels(key: string | null) {
     let live = true
     fetch(`${API}/v1/models`, { headers: { authorization: `Bearer ${key}` } })
       .then((r) => (r.ok ? r.json() : { data: [] }))
-      .then((v: { data?: { id: string; context_length?: number; pricing?: { prompt?: string; completion?: string } }[] }) => {
+      .then((v: { data?: { id: string; context_length?: number; pricing?: { prompt?: string; completion?: string; input_cache_read?: string } }[] }) => {
         if (!live) return
         setModels((v.data ?? []).map((m) => ({
           id: m.id,
           context: m.context_length ?? null,
           input: m.pricing?.prompt != null ? Number(m.pricing.prompt) : null,
           output: m.pricing?.completion != null ? Number(m.pricing.completion) : null,
+          cached: m.pricing?.input_cache_read != null ? Number(m.pricing.input_cache_read) : null,
         })))
       })
       .catch(() => live && setModels([]))
@@ -46,3 +47,4 @@ export const modes: { id: Mode; label: string; note: string }[] = [
   { id: 'auto', label: 'Auto', note: 'Runs what plainly serves the task; asks about the rest' },
   { id: 'yolo', label: 'Never ask', note: "Runs everything. It's your sandbox; nothing is pushed unless you ask" },
 ]
+

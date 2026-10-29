@@ -53,9 +53,24 @@ export type Delta =
 
 export type EndReason = { type: "complete" | "max_tokens" | "denied" | "looping" | "step_limit" | "cancelled" } | { type: "error"; error: unknown };
 
+/** protocol.rs `TurnUsage`: what a turn's model calls took. */
+export interface TurnUsage {
+  context_tokens: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  /** The part of input read from the provider's cache, and the part written to it. */
+  cached_tokens?: number;
+  cache_write_tokens?: number;
+  model_calls: number;
+  tokens_per_sec?: number | null;
+  /** The model spec the turn ran on, e.g. `cloud/qwen3-coder-next`. */
+  model?: string | null;
+  timing?: { wall_ms: number; prefill_ms: number; decode_ms: number; think_ms?: number; tool_ms: number } | null;
+}
+
 export type Event =
   | { event: "turn_started"; turn: number; input: string }
-  | { event: "turn_ended"; turn: number; reason: EndReason }
+  | { event: "turn_ended"; turn: number; reason: EndReason; usage?: TurnUsage }
   | { event: "item_started"; id: string; kind: ItemKind }
   | { event: "item_completed"; id: string; item: Item }
   | { event: "item_delta"; id: string; delta: Delta }

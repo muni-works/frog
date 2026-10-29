@@ -1,4 +1,4 @@
-import type { EndReason, Envelope, Event, FileDiff, Mode, ToolOutcome } from '../cloud/protocol'
+import type { EndReason, Envelope, Event, FileDiff, Mode, ToolOutcome, TurnUsage } from '../cloud/protocol'
 
 // Folds a session's envelopes into what the transcript draws. Pure, so replay and
 // live streaming share one path: `reduce(thread, envelope)` for every envelope in order.
@@ -20,7 +20,8 @@ export interface Ask { id: string; item: string; name: string; arg: string; prev
 
 export interface Thread {
   lastSeq: number
-  turns: { turn: number; input: string; entries: Entry[] }[]
+  /** Each turn's input and items; `usage` and `reason` once it ends. */
+  turns: { turn: number; input: string; entries: Entry[]; usage?: TurnUsage; reason?: EndReason }[]
   running: boolean
   ask: Ask | null
   ended: EndReason | null
@@ -54,8 +55,10 @@ function apply(t: Thread, ev: Event, created: number): Thread {
   switch (ev.event) {
     case 'turn_started':
       return { ...t, running: true, ended: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, entries: [] }] }
-    case 'turn_ended':
-      return { ...t, running: false, ask: null, ended: ev.reason, activity: null }
+    case 'turn_ended': {
+      const turns = t.turns.map((u) => (u.turn === ev.turn ? { ...u, usage: ev.usage, reason: ev.reason } : u))
+      return { ...t, turns, running: false, ask: null, ended: ev.reason, activity: null }
+    }
     case 'progress':
       return t.running ? { ...t, activity: { text: ev.label, warn: false } } : t
     case 'notice':

@@ -42,3 +42,11 @@ test("progress and notices show what a running turn is doing, until output or th
   t = reduce(t, env({ event: "turn_ended", turn: 1, reason: { type: "complete" } }));
   assert.equal(t.activity, null);
 });
+
+test("a finished turn keeps its usage and end reason for the footer", () => {
+  let t = reduce(emptyThread, env({ event: "turn_started", turn: 7, input: "hi" }));
+  const usage = { context_tokens: 8000, input_tokens: 8000, output_tokens: 12, cached_tokens: 6000, model_calls: 1, tokens_per_sec: 74, model: "cloud/qwen3-coder-next", timing: { wall_ms: 400, prefill_ms: 250, decode_ms: 150, tool_ms: 0 } };
+  t = reduce(t, env({ event: "turn_ended", turn: 7, reason: { type: "complete" }, usage }));
+  assert.equal(t.turns[0].usage?.tokens_per_sec, 74);
+  assert.equal(t.turns[0].reason?.type, "complete");
+});
