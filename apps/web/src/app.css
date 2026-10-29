@@ -505,3 +505,4 @@ body.resizing { cursor: col-resize; user-select: none; }
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%); }
 .slist-more { height: 1px; }
+.hover-row.mine { align-self: flex-end; justify-content: flex-end; margin-left: auto; }
