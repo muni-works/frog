@@ -60,6 +60,14 @@ export default function App() {
   const [restore, setRestore] = useState<{ text: string; images: Image[] } | null>(null)
   const [conn, setConn] = useState<Record<string, ConnectionState>>({})
   const [menuOpen, setMenuOpen] = useState(false)
+  // The title menu closes on Escape, a click outside it, or a session switch.
+  useEffect(() => {
+    if (!menuOpen) return
+    const down = (e: MouseEvent) => { if (!(e.target as Element).closest('.title-menu')) setMenuOpen(false) }
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
+    addEventListener('mousedown', down); addEventListener('keydown', key)
+    return () => { removeEventListener('mousedown', down); removeEventListener('keydown', key) }
+  }, [menuOpen])
   // Phone layout: the sidebar is a drawer, closed whenever you go somewhere.
   const [drawer, setDrawer] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -76,6 +84,7 @@ export default function App() {
   const repoList = useRepos(cloud)
   const { sessions, error: listError, setSessions } = useSessions(cloud)
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined
+  useEffect(() => setMenuOpen(false), [view])
   // Stream only the open session. Attaching to a session wakes its sandbox, and the sockets
   // reconnect after a sandbox sleeps, so streaming every running session kept them all awake
   // (and the account at its running-sandbox limit). Other sessions show the listed state.
@@ -350,7 +359,7 @@ export default function App() {
         {current ? (<div className="titlebar">
           <Burger />
           {collapsed && sideToggle(false)}
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="title-wrap">
             {current && renaming === current.id ? (
               <input className="f-field title-edit" autoFocus defaultValue={title(current)} aria-label="Session name"
                 onBlur={(e) => rename(current, e.target.value)}
@@ -358,25 +367,26 @@ export default function App() {
             ) : (
               <b style={{ fontSize: 14 }} onDoubleClick={() => current && setRenaming(current.id)} title={current ? 'Double-click to rename' : undefined}>{current ? title(current) : 'New session'}</b>
             )}
+            {current && (
+              <div className="title-menu">
+                <button type="button" className="ic-btn title-chev" aria-label="Session menu" title="Session menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                </button>
+                {menuOpen && (
+                  <div className="f-card cz-menu" role="menu" style={{ top: 30, bottom: 'auto', left: 0, right: 'auto', width: 200 }} onMouseLeave={() => setMenuOpen(false)}>
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename</button>
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); archive(current, !current.archived) }}>{current.archived ? 'Unarchive' : 'Archive'}</button>
+                    <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setMenuOpen(false); remove(current) }}>Delete session</button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+          <span style={{ flex: 1 }} />
           {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? '' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
           {current && <button type="button" className="ic-btn" onClick={() => setInspector(!inspector)} aria-pressed={inspector} aria-label={inspector ? 'Hide inspector' : 'Show inspector'} title={inspector ? 'Hide inspector' : 'Inspector'}>
             <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" />{inspector && <path d="M15 4h3a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-3z" fill="currentColor" stroke="none" opacity=".35" />}</svg>
           </button>}
-          {current && (
-            <div className="title-menu">
-              <button type="button" className="ic-btn" aria-label="Session menu" title="Session menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
-                <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
-              </button>
-              {menuOpen && (
-                <div className="f-card cz-menu" role="menu" style={{ top: 30, bottom: 'auto', right: 0, left: 'auto', width: 180 }} onMouseLeave={() => setMenuOpen(false)}>
-                  <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename</button>
-                  <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); archive(current, !current.archived) }}>{current.archived ? 'Unarchive' : 'Archive'}</button>
-                  <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setMenuOpen(false); remove(current) }}>Delete session</button>
-                </div>
-              )}
-            </div>
-          )}
         </div>) : <>{collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div></>}
 
         {view.kind === 'session' && current && ct && (<>

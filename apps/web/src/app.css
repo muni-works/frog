@@ -418,3 +418,17 @@ body.resizing { cursor: col-resize; user-select: none; }
 .stag, .ssearch kbd { background: var(--hover); }
 .cz-box { background: var(--card); }
 .cz-box:focus-within { box-shadow: 0 0 0 1px var(--frog-pad), 0 8px 24px -14px rgba(0,0,0,.35); }
+/* The title, then its menu chevron right beside it, as in Claude. */
+.title-wrap { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.title-wrap > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title-wrap .title-menu { position: relative; }
+.title-chev { width: 24px; height: 24px; }
+/* What Frog is doing: quiet sans, the words shimmering past, a breathing dot. */
+.thinking { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: .005em;
+  background: linear-gradient(90deg, var(--faint) 0%, var(--faint) 35%, var(--fg) 50%, var(--faint) 65%, var(--faint) 100%) 0 0 / 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer-text 2.4s linear infinite; }
+.thinking.warn { background: none; color: var(--notice); animation: none; }
+.thinking-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--frog); flex: none; animation: breathe 1.6s ease-in-out infinite; }
+@keyframes shimmer-text { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+@keyframes breathe { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .thinking { animation: none; background: none; color: var(--muted); } .thinking-dot { animation: none; } }
