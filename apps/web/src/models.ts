@@ -21,6 +21,9 @@ export function price(m: Model) {
 // still wants one), the picker shows Frog Cloud's public default.
 const SIGNED_OUT: Model[] = [{ id: 'qwen3-coder-next', context: null, input: null, output: null, cached: null }]
 
+/** The smallest context window worth offering for agent sessions. */
+const MIN_AGENT_CONTEXT = 64_000
+
 export function useModels(key: string | null) {
   const [models, setModels] = useState<Model[]>([])
   useEffect(() => {
@@ -30,7 +33,9 @@ export function useModels(key: string | null) {
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((v: { data?: { id: string; context_length?: number; pricing?: { prompt?: string; completion?: string; input_cache_read?: string } }[] }) => {
         if (!live || !v.data?.length) return
-        setModels((v.data ?? []).map((m) => ({
+        // Agent work needs room: the system prompt and tools alone take ~9k tokens, so models
+        // with a small window (the 8B helpers the engine uses for side jobs) aren't offered.
+        setModels((v.data ?? []).filter((m) => (m.context_length ?? MIN_AGENT_CONTEXT) >= MIN_AGENT_CONTEXT).map((m) => ({
           id: m.id,
           context: m.context_length ?? null,
           input: m.pricing?.prompt != null ? Number(m.pricing.prompt) : null,
