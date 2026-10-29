@@ -299,14 +299,15 @@ export default function App() {
             <b style={{ fontSize: 14 }}>{current ? title(current) : 'New session'}</b>
             <div className="det">{current ? `${current.repo} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}` : view.kind === 'pickRepo' ? 'Pick a repo to start' : 'Runs in a private Frog Cloud sandbox'}</div>
           </div>
-          {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? 'In Frog Cloud' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Needs a newer page' : cs?.state === 'closed' ? 'Disconnected' : ''}</span>}
+          {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? 'In Frog Cloud' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
           {current && <button type="button" className="f-btn f-btn--plain" onClick={() => setInspector(!inspector)} aria-pressed={inspector}>{inspector ? 'Hide inspector' : 'Inspector'}</button>}
         </div>
 
         {view.kind === 'session' && current && ct && (<>
           <div className="scroll" ref={(el) => { if (el) el.scrollTop = el.scrollHeight }}><div className="col">
             {banner && <div role="status" className="banner"><span style={{ color: 'var(--place-cloud)' }}>✓</span><span style={{ flex: 1 }}>{banner}</span><button type="button" className="f-btn f-btn--plain" aria-label="Dismiss" onClick={() => setBanner(null)}>✕</button></div>}
-            {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>This sandbox speaks a newer protocol than this page. Reload to update.</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button></div>}
+            {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{cs.refused.upgrade ? <a className="f-btn f-btn--bordered f-btn--small" href={cs.refused.upgrade} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
+            {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
             {ct.turns.length === 0 && cs?.state !== 'refused' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? 'Starting the sandbox and cloning the repo…' : 'Nothing here yet.'}</div>}
             <Transcript thread={ct} onDecide={(a) => decide(current.id, a)} />
             {paused && (
