@@ -265,7 +265,8 @@ export default function App() {
         const dead = conn[id]?.state === 'refused' || conn[id]?.state === 'closed'
         // Delivered: a turn with this text started since it was sent.
         const kept = list.filter((m) => started(m.text) <= m.seen).map((m) => {
-          const state: Out['state'] = m.state === 'failed' || dead || (!live && Date.now() - m.at > 20_000) ? 'failed' : live ? 'sent' : 'sending'
+          // Sent but never started (the engine didn't pick it up): after 45s, say so and offer a resend.
+          const state: Out['state'] = m.state === 'failed' || dead || (!live && Date.now() - m.at > 20_000) || (live && !thread(id).running && Date.now() - m.at > 45_000) ? 'failed' : live ? 'sent' : 'sending'
           return state === m.state ? m : { ...m, state }
         })
         if (kept.length !== list.length || kept.some((m, i) => m !== list[i])) changed = true
@@ -274,6 +275,10 @@ export default function App() {
       return changed ? next : o
     })
   })
+  // Re-check now and then while anything's waiting, so the 45s nudge appears without other activity.
+  const [, setTick] = useState(0)
+  const waiting = Object.values(outbox).some((l) => l.length)
+  useEffect(() => { if (!waiting) return; const t = setInterval(() => setTick((n) => n + 1), 5000); return () => clearInterval(t) }, [waiting])
   const resend = (id: string, n: number) => {
     const m = outbox[id]?.find((x) => x.id === n)
     if (!m) return

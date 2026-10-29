@@ -155,7 +155,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
             {m.text}
           </div>
           {m.state !== 'failed' && <div className="hover-row mine waiting"><Ticks n={m.state === 'sent' ? 1 : 0} /></div>}
-          {m.state === 'failed' && <div className="me-fail">Not sent · <button type="button" onClick={() => onResend?.(m.id)}>Try again</button></div>}
+          {m.state === 'failed' && <div className="me-fail">Frog didn't pick this up · <button type="button" onClick={() => onResend?.(m.id)}>Try again</button></div>}
         </div>
       ))}
     </>
