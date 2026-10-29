@@ -26,9 +26,12 @@ jobs:
             os: macos-14
             zig: false
             bundle: true
+          # zig pins glibc 2.36 so the binary runs on debian trixie
+          # (node:24-trixie-slim, the Frog Cloud sandbox base)
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            zig: false
+            zig: true
+            glibc: ".2.36"
             bundle: false
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
@@ -52,9 +55,10 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
           ZIG: ${{ matrix.zig }}
+          GLIBC: ${{ matrix.glibc }}
         run: |
           if [ "$ZIG" = "true" ]; then
-            cargo zigbuild --release -p frog --target "$TARGET"
+            cargo zigbuild --release -p frog --target "$TARGET$GLIBC"
           else
             cargo build --release -p frog --target "$TARGET"
           fi
@@ -62,15 +66,14 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
-          ZIG: ${{ matrix.zig }}
           # the macOS app bundle is release-only; dry runs skip it
           BUNDLE: ${{ matrix.bundle && startsWith(github.ref, 'refs/tags/') }}
         run: |
           name="frog-${GITHUB_REF_NAME//\//-}-${TARGET}"
           mkdir -p "dist/$name"
           cp "target/${TARGET}/release/frog" "dist/$name/"
-          # host strip can't read zig's cross output; native builds only
-          if [ "$ZIG" != "true" ]; then strip "dist/$name/frog"; fi
+          # host strip can't read the aarch64 cross output
+          if [ "$TARGET" != aarch64-unknown-linux-gnu ]; then strip "dist/$name/frog"; fi
           cp README.md "dist/$name/"
           if [ "$BUNDLE" = "true" ]; then
             # For macOS, also build and package the app for unsigned releases
