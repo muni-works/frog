@@ -28,3 +28,17 @@ test("an ask replayed after a reconnect is answerable, and its answer clears it"
   t = reduce(t, env({ event: "permission_resolved", id: "p1", decision: "allow" }));
   assert.equal(t.ask, null);
 });
+
+test("progress and notices show what a running turn is doing, until output or the end", () => {
+  let t = reduce(emptyThread, env({ event: "turn_started", turn: 1, input: "hi" }));
+  t = reduce(t, env({ event: "progress", label: "thinking" }));
+  assert.deepEqual(t.activity, { text: "thinking", warn: false });
+  t = reduce(t, env({ event: "notice", level: "warn", message: "429 too many concurrent requests — retrying in 4s (2/6)" }));
+  assert.equal(t.activity?.warn, true);
+  t = reduce(t, env({ event: "item_started", id: "m", kind: { type: "message" } }));
+  t = reduce(t, env({ event: "item_delta", id: "m", delta: { type: "text", text: "Hi!" } }));
+  assert.equal(t.activity, null);
+  t = reduce(t, env({ event: "progress", label: "thinking" }));
+  t = reduce(t, env({ event: "turn_ended", turn: 1, reason: { type: "complete" } }));
+  assert.equal(t.activity, null);
+});

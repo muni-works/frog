@@ -63,6 +63,8 @@ export type Event =
   | { event: "permission_resolved"; id: string; decision: Decision }
   | { event: "titled"; title: string }
   | { event: "status"; model: string; mode: Mode; context_tokens: number | null; context_window: number }
+  | { event: "progress"; label: string; completed?: number; total?: number }
+  | { event: "notice"; level: "info" | "warn"; message: string }
   | { event: "model_changed"; model: string }
   | { event: "mode_changed"; mode: Mode }
   | { event: "error"; message?: string }

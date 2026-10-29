@@ -67,6 +67,9 @@ export function Transcript({ thread, onDecide }: { thread: Thread; onDecide: (al
           })}
         </div>
       ))}
+      {thread.running && thread.activity && !thread.ask && (
+        <div className="tool" style={{ color: thread.activity.warn ? 'var(--notice)' : undefined }}>… {thread.activity.text}</div>
+      )}
     </>
   )
 }

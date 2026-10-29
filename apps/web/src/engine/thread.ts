@@ -36,9 +36,12 @@ export interface Thread {
   mode: Mode | null
   /** Context used and the window, from the latest `status`. */
   context: { used: number | null; window: number } | null
+  /** What the engine says it's doing right now (`progress`, or a `notice` such as a retry),
+   * while a turn runs. Ephemeral: cleared when output arrives or the turn ends. */
+  activity: { text: string; warn: boolean } | null
 }
 
-export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null }
+export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null, activity: null }
 
 /** Item ids are only unique within a turn, so updates go to the latest turn. */
 function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
@@ -52,7 +55,11 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     case 'turn_started':
       return { ...t, running: true, ended: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, entries: [] }] }
     case 'turn_ended':
-      return { ...t, running: false, ask: null, ended: ev.reason }
+      return { ...t, running: false, ask: null, ended: ev.reason, activity: null }
+    case 'progress':
+      return t.running ? { ...t, activity: { text: ev.label, warn: false } } : t
+    case 'notice':
+      return t.running ? { ...t, activity: { text: ev.message, warn: ev.level === 'warn' } } : t
     case 'item_started': {
       const k = ev.kind
       const entry: Entry = k.type === 'tool_call'
@@ -65,6 +72,7 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     }
     case 'item_delta': {
       const d = ev.delta
+      if (t.activity) t = { ...t, activity: null }
       if (d.type === 'image_preview') return t
       const next = patch(t, ev.id, (e) => (d.type === 'output' ? { ...e, output: e.output + d.text } : { ...e, text: e.text + d.text }))
       return d.type === 'output' ? { ...next, terminal: next.terminal + d.text } : next

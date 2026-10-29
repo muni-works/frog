@@ -290,7 +290,6 @@ export default function App() {
             </div>
           ))}
         </div>
-        <div className="row maccta"><span style={{ color: 'var(--place-local)' }}>▭</span><div style={{ flex: 1 }}><div>Frog for Mac</div><div className="det">Local models, your files, free</div></div><a href="/mac" style={{ fontSize: 12 }}>Get it</a></div>
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
           <Mark size={28} />
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
