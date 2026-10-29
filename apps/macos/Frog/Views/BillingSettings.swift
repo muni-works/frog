@@ -1,0 +1,83 @@
+import SwiftUI
+
+/// Settings › Billing, as on the web: the plan and its allowance windows (or the plans to pick
+/// from), then credit, which pays past the plan or for every turn without one. Checkout is
+/// Stripe, in the browser.
+struct BillingSettings: View {
+    @State private var account = CloudAccount.shared
+    @State private var amount = 10
+
+    var body: some View {
+        Form {
+            if !account.signedIn {
+                Section {
+                    Text("Add a Frog Cloud key in Settings › Models to see your plan and credit.")
+                        .foregroundStyle(.secondary)
+                }
+            } else if let me = account.me {
+                plan(me)
+                credit(me)
+                Section {
+                    Text("Frog Cloud bills per token, at each model's prices.")
+                        .font(.frog(size: 11)).foregroundStyle(.secondary)
+                }
+            } else if account.error == nil {
+                Section { ProgressView().frame(maxWidth: .infinity) }
+            }
+            if let error = account.error {
+                Section { Text(error).foregroundStyle(.red) }
+            }
+        }
+        .formStyle(.grouped)
+        .task { await account.refresh() }
+    }
+
+    @ViewBuilder
+    private func plan(_ me: CloudAccount.Me) -> some View {
+        if let sub = me.subscription {
+            Section(sub.name) {
+                ForEach(sub.windows, id: \.self) { WindowBar(window: $0) }
+                Link("Change or cancel your plan", destination: CloudAccount.origin.appending(path: "account"))
+                    .font(.frog(size: 12))
+            }
+        } else {
+            Section {
+                Text("Subscribe for an included allowance every 5 hours and every week. Past it, you keep going on credit at usage prices.")
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    ForEach(CloudAccount.plans, id: \.id) { p in
+                        Button { Task { await account.subscribe(p.id) } } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(p.name).font(.frog(size: 13, weight: .semibold))
+                                Text("$\(p.price)/mo").font(.frog(size: 16, weight: .semibold))
+                                Text(p.blurb).font(.frog(size: 11)).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Tokens.raised, in: .rect(cornerRadius: 10))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            } header: {
+                Text("Usage pricing · no subscription")
+            }
+        }
+    }
+
+    private func credit(_ me: CloudAccount.Me) -> some View {
+        Section {
+            LabeledContent("Usage credit", value: CloudFormat.dollars(me.credit_cents))
+            Text(me.subscription == nil ? "Each turn pays from credit at the model's prices." : "Used only past your plan's allowance.")
+                .font(.frog(size: 11)).foregroundStyle(.secondary)
+            Picker("Add credit", selection: $amount) {
+                ForEach(CloudAccount.topUps, id: \.self) { Text("$\($0)").tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Button("Add $\(amount)") { Task { await account.topUp(amount) } }
+                .buttonStyle(.borderedProminent)
+            Text("Paid through Stripe. Credit doesn't expire.")
+                .font(.frog(size: 11)).foregroundStyle(.secondary)
+        }
+    }
+}
