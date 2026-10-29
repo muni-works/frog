@@ -49,6 +49,17 @@ npx wrangler pages dev site
 
 This starts a local dev server at `http://localhost:8788`.
 
+## install.sh sync
+
+`site/install.sh` is a synced copy of `scripts/install.sh` (the source of truth). When
+`scripts/install.sh` changes, update `site/install.sh` in the same commit — the release
+manager does this at tag time. CI can't easily diff them today: this is a known sync risk.
+Check with:
+
+```bash
+diff scripts/install.sh site/install.sh
+```
+
 ## Deprecated Vercel config
 
 The `site/vercel.json` file is kept for now but is deprecated. It will be removed once the Cloudflare Pages deployment is stable.

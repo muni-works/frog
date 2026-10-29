@@ -42,6 +42,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # Only the macOS bundle needs tang: build-engine.sh requires tang-llm when
+      # FROG_REQUIRE_TANG=1, and the Linux CLI tarballs don't ship the app.
+      - uses: actions/checkout@v4
+        if: matrix.bundle
+        with:
+          repository: muni-works/tang
+          ref: main
+          path: tang
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -70,6 +78,9 @@ jobs:
           TARGET: ${{ matrix.target }}
           # the macOS app bundle is release-only; dry runs skip it
           BUNDLE: ${{ matrix.bundle && startsWith(github.ref, 'refs/tags/') }}
+          # tang checkout for the macOS bundle leg; build-engine.sh resolves TANG_DIR
+          # directly (not relative to the repo), so this picks up the checkout above.
+          TANG_DIR: ${{ matrix.bundle && format('{0}/tang', github.workspace) || '' }}
         run: |
           name="frog-${GITHUB_REF_NAME//\//-}-${TARGET}"
           mkdir -p "dist/$name"
@@ -80,6 +91,7 @@ jobs:
           if [ "$BUNDLE" = "true" ]; then
             # For macOS, also build and package the app for unsigned releases
             # Signed releases use the full release.sh script
+            brew install xcodegen
             cd apps/macos
             xcodegen generate --quiet
             xcodebuild build -quiet \
@@ -93,19 +105,22 @@ jobs:
               CODE_SIGN_STYLE="Manual"
             APP="build/dist/${GITHUB_REF_NAME#v}/Frog.app"
             ditto "build/release/Build/Products/Release/Frog.app" "$APP"
-            ditto -c -k --keepParent "$APP" "$APP/../Frog.zip"
+            # Zip lands at dist/ root, not inside dist/$name/.
+            ditto -c -k --keepParent "$APP" "../../dist/Frog.zip"
             cd -
-            cp "apps/macos/build/dist/${GITHUB_REF_NAME#v}/Frog.zip" "dist/$name/"
           fi
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           cd dist
           if command -v sha256sum >/dev/null; then
             sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+            if [ "$BUNDLE" = "true" ]; then
+              sha256sum "Frog.zip" > "Frog.zip.sha256"
+            fi
           else
             shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
-          fi
-          if [ "$BUNDLE" = "true" ]; then
-            sha256sum "Frog.zip" > "Frog.zip.sha256"
+            if [ "$BUNDLE" = "true" ]; then
+              shasum -a 256 "Frog.zip" > "Frog.zip.sha256"
+            fi
           fi
           # Unversioned asset for the Frog Cloud sandbox image (zest pins
           # FROG_VERSION and fetches this from releases/download/<tag>/).

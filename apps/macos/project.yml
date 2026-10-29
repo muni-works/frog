@@ -41,15 +41,15 @@ targets:
         CFBundleDisplayName: Frog
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        # Sparkle: frog.eco redirects to the latest release's appcast, so hosting can move
+        # Sparkle: frog.toys redirects to the latest release's appcast, so hosting can move
         # without shipping an update. Only the release build (eco.frog) ever checks it.
-        SUFeedURL: https://frog.eco/appcast.xml
+        SUFeedURL: https://frog.toys/appcast.xml
         SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
         LSApplicationCategoryType: public.app-category.developer-tools
         NSUserActivityTypes: [eco.frog.conversation]
         NSLocalNetworkUsageDescription: "frog on your iPhone connects to this Mac over your network."
         NSBonjourServices: [_frog._tcp]
-        NSHumanReadableCopyright: "© 2026 Cam Pedersen"
+        NSHumanReadableCopyright: "© 2026 Municipal Robotics"
         NSMicrophoneUsageDescription: "Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it."
         NSCalendarsFullAccessUsageDescription: "Frog reads your calendar on this Mac to shape your brief around your day. It never leaves this Mac."
         NSSpeechRecognitionUsageDescription: "Frog turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else."

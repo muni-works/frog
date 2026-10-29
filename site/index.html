@@ -7,7 +7,7 @@
 <meta name="description" content="A coding agent for your Mac, built for local models.">
 <meta property="og:title" content="Frog">
 <meta property="og:description" content="A coding agent for your Mac, built for local models.">
-<meta property="og:image" content="https://frog.eco/icon.png">
+<meta property="og:image" content="https://frog.toys/icon.png">
 <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -760,7 +760,7 @@
   // Not on a Mac: say so where the requirements are.
   const ua = navigator.userAgent;
   const req = document.querySelector(".req");
-  if (/iPhone|iPad|Android/.test(ua)) req.textContent = "Frog is a Mac app. Open frog.eco on your Mac to get it.";
+  if (/iPhone|iPad|Android/.test(ua)) req.textContent = "Frog is a Mac app. Open frog.toys on your Mac to get it.";
   else if (!/Mac/.test(ua)) req.textContent = "Frog is a Mac app, for macOS 26 on Apple silicon.";
 
   // The terminal's copy button copies the alias, and says so.
