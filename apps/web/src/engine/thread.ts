@@ -23,6 +23,9 @@ export interface Question { id: string; item: string; question: string; options:
 /** An MCP server waiting on input (`elicitation`), answered with Op::Elicit. */
 export interface Elicitation { id: string; server: string; message: string; schema?: ElicitSchema; url?: string }
 
+/** A terminal (or preview) pane the engine opened: its latest screen, and whether it closed. */
+export interface Pane { id: string; kind: 'terminal' | 'preview'; title: string; cwd?: string; url?: string; closed: boolean; exit?: number; screen?: { cols: number; rows: number; lines: string[]; cursor: [number, number]; seq: number } }
+
 export interface Thread {
   lastSeq: number
   /** Each turn's input and items; `usage` and `reason` once it ends. */
@@ -51,9 +54,10 @@ export interface Thread {
   todos: Todo[]
   /** Whether the session's model reads images (status.vision); null until the engine says. */
   vision: boolean | null
+  panes: Record<string, Pane>
 }
 
-export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null, activity: null, question: null, elicitation: null, todos: [], vision: null }
+export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null, activity: null, question: null, elicitation: null, todos: [], vision: null, panes: {} }
 
 /** Item ids are only unique within a turn, so updates go to the latest turn. */
 function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
@@ -106,6 +110,18 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       return { ...t, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, preview: ev.preview, reason: ev.reason } }
     case 'status':
       return { ...t, model: ev.model, mode: ev.mode, context: { used: ev.context_tokens, window: ev.context_window }, todos: ev.todos ?? t.todos, vision: ev.vision ?? t.vision }
+    case 'pane_opened':
+      return { ...t, panes: { ...t.panes, [ev.id]: { id: ev.id, kind: ev.kind, title: ev.title, cwd: ev.cwd, url: ev.url, closed: false } } }
+    case 'pane_closed': {
+      const p = t.panes[ev.id]
+      return p ? { ...t, panes: { ...t.panes, [ev.id]: { ...p, closed: true, exit: ev.exit } } } : t
+    }
+    case 'pane_screen': {
+      const p = t.panes[ev.id]
+      // Screens can arrive out of order across a reconnect; keep the newest.
+      if (!p || (p.screen && p.screen.seq >= ev.screen_seq)) return t
+      return { ...t, panes: { ...t.panes, [ev.id]: { ...p, screen: { cols: ev.cols, rows: ev.rows, lines: ev.lines, cursor: ev.cursor, seq: ev.screen_seq } } } }
+    }
     case 'question':
       return { ...t, question: { id: ev.id, item: ev.item, question: ev.question, options: ev.options ?? [], multi: !!ev.multi, allowOther: !!ev.allow_other } }
     case 'question_resolved':

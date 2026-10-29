@@ -10,6 +10,11 @@ export type Op =
   | { op: "answer"; id: string; choices?: string[]; other?: string }
   | { op: "elicit"; id: string; action: "accept" | "decline" | "cancel"; content?: unknown }
   | { op: "set_title"; title: string }
+  | { op: "set_client_caps"; panes?: boolean; ask?: boolean; sessions?: boolean; irc?: boolean }
+  | { op: "pane_open"; kind: "terminal" | "preview"; cwd?: string; url?: string; cols?: number; rows?: number }
+  | { op: "pane_input"; id: string; data: string }
+  | { op: "pane_resize"; id: string; cols: number; rows: number }
+  | { op: "pane_close"; id: string }
   | { op: "set_model"; spec: string }
   | { op: "set_mode"; mode: Mode };
 
@@ -100,6 +105,9 @@ export type Event =
   | { event: "question_resolved"; id: string; choices?: string[]; other?: string }
   | { event: "elicitation"; id: string; server: string; message: string; schema?: ElicitSchema; url?: string }
   | { event: "elicitation_done"; id: string }
+  | { event: "pane_opened"; id: string; kind: "terminal" | "preview"; title: string; cwd?: string; url?: string }
+  | { event: "pane_closed"; id: string; exit?: number }
+  | { event: "pane_screen"; id: string; cols: number; rows: number; lines: string[]; cursor: [number, number]; screen_seq: number }
   | { event: "progress"; label: string; completed?: number; total?: number }
   | { event: "notice"; level: "info" | "warn"; message: string }
   | { event: "model_changed"; model: string }

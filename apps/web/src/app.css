@@ -183,3 +183,9 @@ button.tool:hover { color: var(--fg); }
 .cz-img button { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; font-size: 10px; cursor: pointer; }
 .me-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .me-imgs img { max-width: 220px; max-height: 160px; border-radius: 8px; display: block; }
+.term-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.term.live { outline: none; cursor: text; white-space: pre; overflow: hidden; position: relative; }
+.term.live:focus-within { box-shadow: inset 0 0 0 1px #3a6; }
+.term-field { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; }
+.term-line { min-height: 19px; }
+.term-probe { position: absolute; visibility: hidden; white-space: pre; }
