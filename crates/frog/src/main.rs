@@ -358,12 +358,9 @@ async fn run() -> Result<bool> {
         .filter(|u| !u.is_empty());
     let chosen = match &cli.model {
         Some(m) => Some(m.clone()),
-        None if provider_base.is_some()
-            || std::env::var_os("FROG_MODEL").is_some()
-            || cfg.default_model.is_some() =>
-        {
-            None
-        }
+        None if std::env::var_os("FROG_MODEL").is_some() || cfg.default_model.is_some() => None,
+        // The gateway names a model only when the session picked one; otherwise Frog Cloud's.
+        None if provider_base.is_some() => Some("cloud/qwen3-coder-next".into()),
         None => match frog_engine::models::last_used() {
             Some(m) => Some(m),
             None => match frog_engine::models::pick_default().await {

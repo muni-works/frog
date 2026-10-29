@@ -91,20 +91,26 @@ fn tool_reply(name: &str, args: Value) -> String {
 
 /// An OpenAI-compatible server that answers each turn request with the next scripted reply
 /// (then "ok"), and anything else (model lists, titles) blandly. Returns its `/v1` base.
-async fn fake_model(script: Vec<String>) -> String {
+async fn fake_model(script: Vec<String>, models: Arc<Mutex<Vec<String>>>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let script = Arc::new(Mutex::new(VecDeque::from(script)));
     tokio::spawn(async move {
         loop {
             let (mut sock, _) = listener.accept().await.unwrap();
-            let script = script.clone();
+            let (script, models) = (script.clone(), models.clone());
             tokio::spawn(async move {
                 let Some((first, body)) = read_request(&mut sock).await else {
                     return;
                 };
                 if !first.starts_with("POST") {
                     return respond(&mut sock, "application/json", r#"{"data":[]}"#).await;
+                }
+                if let Ok(v) = serde_json::from_str::<Value>(&body) {
+                    models
+                        .lock()
+                        .unwrap()
+                        .push(v["model"].as_str().unwrap_or("").into());
                 }
                 // A turn carries the tools; side requests (titles, summaries) don't.
                 let next = body
@@ -122,6 +128,8 @@ async fn fake_model(script: Vec<String>) -> String {
 struct Frog {
     child: tokio::process::Child,
     addr: String,
+    /// The model each request named.
+    models: Arc<Mutex<Vec<String>>>,
 }
 
 impl Drop for Frog {
@@ -131,7 +139,12 @@ impl Drop for Frog {
 }
 
 async fn frog(script: Vec<String>, extra: &[&str]) -> Frog {
-    let base = fake_model(script).await;
+    frog_on(script, Some("openai/scripted"), extra).await
+}
+
+async fn frog_on(script: Vec<String>, model: Option<&str>, extra: &[&str]) -> Frog {
+    let models: Arc<Mutex<Vec<String>>> = Default::default();
+    let base = fake_model(script, models.clone()).await;
     let home = temp_dir("home");
     let work = temp_dir("work");
     let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -142,8 +155,11 @@ async fn frog(script: Vec<String>, extra: &[&str]) -> Frog {
     let addr = format!("127.0.0.1:{port}");
     let store = home.join("store");
     let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_frog"));
-    c.args(["--serve", "--serve-ws", &addr, "-m", "openai/scripted"])
-        .arg("--store")
+    c.args(["--serve", "--serve-ws", &addr]);
+    if let Some(m) = model {
+        c.args(["-m", m]);
+    }
+    c.arg("--store")
         .arg(&store)
         .args(extra)
         .current_dir(&work)
@@ -156,7 +172,11 @@ async fn frog(script: Vec<String>, extra: &[&str]) -> Frog {
         .stdout(Stdio::null())
         .kill_on_drop(true);
     let child = c.spawn().unwrap();
-    let f = Frog { child, addr };
+    let f = Frog {
+        child,
+        addr,
+        models,
+    };
     for _ in 0..600 {
         if let Some(v) = health(&f.addr).await {
             assert_eq!(v, json!({"ok": true, "protocol": 1}));
@@ -470,4 +490,17 @@ async fn git_credential_gateway_flag_installs_the_helper() {
     let out = out["item"]["output"].as_str().unwrap();
     assert!(out.contains("git-credential"), "{out}");
     assert!(out.contains("gw=http://gateway.internal"), "{out}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_a_model_the_gateway_gets_frog_clouds() {
+    // The gateway sets FROG_MODEL only when the session picked a model.
+    let f = frog_on(vec![text_reply("hi")], None, &[]).await;
+    let mut ws = connect(&f.addr).await;
+    hello(&mut ws, 0).await;
+    send(&mut ws, json!({"op": "submit", "text": "hi"})).await;
+    until(&mut ws, "turn_ended").await;
+    let models = f.models.lock().unwrap().clone();
+    assert!(!models.is_empty());
+    assert!(models.iter().all(|m| m == "qwen3-coder-next"), "{models:?}");
 }
