@@ -316,7 +316,7 @@ export default function App() {
             {banner && <div role="status" className="banner"><span style={{ color: 'var(--place-cloud)' }}>✓</span><span style={{ flex: 1 }}>{banner}</span><button type="button" className="f-btn f-btn--plain" aria-label="Dismiss" onClick={() => setBanner(null)}>✕</button></div>}
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{cs.refused.upgrade ? <a className="f-btn f-btn--bordered f-btn--small" href={cs.refused.upgrade} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
-            {ct.turns.length === 0 && cs?.state !== 'refused' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? 'Starting the sandbox and cloning the repo…' : 'Nothing here yet.'}</div>}
+            {ct.turns.length === 0 && cs?.state !== 'refused' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Nothing here yet.'}</div>}
             <Transcript thread={ct} onDecide={(a) => decide(current.id, a)} />
             {turnError(ct) && (
               <div role="status" className="banner warn">
