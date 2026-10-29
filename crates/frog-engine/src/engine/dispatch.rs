@@ -164,6 +164,15 @@ impl Agent {
             };
             return crate::recall::run(&sources, input, self.harness.tier);
         }
+        if name == crate::compiled_memory::TOOL
+            && let Some(m) = &self.compiled
+        {
+            let (out, notice) = m.run(input).await?;
+            if let Some(n) = notice {
+                self.notice(Level::Warn, n);
+            }
+            return Ok(tools::Output::text(out));
+        }
         if name == crate::subagent::TOOL {
             return self.run_task(id, input).await;
         }

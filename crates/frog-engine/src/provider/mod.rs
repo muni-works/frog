@@ -232,6 +232,19 @@ impl Provider {
         self
     }
 
+    /// The server's compiled-memory endpoints, for an OpenAI-compatible server that may
+    /// have them (not OpenAI's own API).
+    pub fn memory_remote(&self) -> Option<crate::compiled_memory::Remote> {
+        match self {
+            Self::OpenAi(c) if !c.is_openai() => Some(crate::compiled_memory::Remote::new(
+                c.http.clone(),
+                &c.base,
+                c.key.clone(),
+            )),
+            _ => None,
+        }
+    }
+
     pub fn take_codex_items(&self) -> Vec<(String, String, serde_json::Value)> {
         match self {
             Self::Codex(c) => c.take_items(),
