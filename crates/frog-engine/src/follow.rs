@@ -210,7 +210,7 @@ mod tests {
     async fn replays_then_streams_log_and_live_events_like_a_live_session() {
         let dir = std::env::temp_dir().join(format!("frog-follow-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let header = Header { version: VERSION, id: "s".into(), cwd: "/x".into(), model: "m".into(), created: 0, forked_from: None };
+        let header = Header { version: VERSION, id: "s".into(), cwd: "/x".into(), model: "m".into(), created: 0, forked_from: None, worker: false };
         let mut owner = Log::create(&dir, header).unwrap();
         owner.append(&env(1, "first")).unwrap();
 
@@ -236,7 +236,7 @@ mod tests {
     async fn names_the_workers_model_and_open_turn_on_subscribe() {
         let dir = std::env::temp_dir().join(format!("frog-follow-status-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let header = Header { version: VERSION, id: "s".into(), cwd: "/x".into(), model: "cloud/qwen3-coder-next".into(), created: 0, forked_from: None };
+        let header = Header { version: VERSION, id: "s".into(), cwd: "/x".into(), model: "cloud/qwen3-coder-next".into(), created: 0, forked_from: None, worker: false };
         let mut owner = Log::create(&dir, header).unwrap();
         owner.append(&Record::Event {
             env: Envelope {

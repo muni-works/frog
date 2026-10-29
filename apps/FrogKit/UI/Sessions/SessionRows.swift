@@ -50,7 +50,7 @@ struct LiveGlyph: View {
             Image(systemName: "hand.raised.fill")
                 .font(.caption)
                 .foregroundStyle(.orange)
-                .symbolEffect(.pulse)
+                .symbolEffect(.pulse, options: .repeat(3))
         case .unread: Circle().fill(.tint).frame(width: 7, height: 7)
         case nil: EmptyView()
         }

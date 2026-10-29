@@ -4,7 +4,7 @@
 // Files starting with _ aren't functions; push.js is the endpoint.
 
 const HOSTS = { production: "https://api.push.apple.com", sandbox: "https://api.sandbox.push.apple.com" };
-const TOPIC = /^eco\.frog\.remote(\.push-type\.liveactivity)?$/;
+const TOPIC = /^toys\.frog\.remote(\.push-type\.liveactivity)?$/;
 
 const enc = new TextEncoder();
 

@@ -16,11 +16,11 @@ This doc starts from what `WatchApp.swift` does today and proposes what to chang
 
 | | Today |
 |---|---|
-| **List** | Waiting rows first (orange question; ✕ / ✓ for a permission; an Ask's options as buttons, plus "Say something else" by voice), then running (title, activity), then unread (title, the start of frog's last reply). Empty: "All quiet" / "frog will tap you when it needs you." |
-| **Reply screen** | Opens from running and unread rows. Frog's last reply scrolled with the Crown, the turn's stats, and next-step buttons that run a turn on the Mac. A long press shows it on the phone; Handoff offers it on the Mac. |
+| **List** | Sections: **Needs you** (orange; the question, then the command in monospace or the file and its +/−, and why it asks; **Deny** / **Allow** as words, Allow in `Color.frog`, plus *Always allow "git push"* when offered; an Ask's options as buttons, plus "Say something else" by voice), **Working** (title, activity, a live timer), **Done** (title, the start of frog's last reply). In always-on the question dims and the buttons hide. Empty: "All quiet" / "frog will tap you when it needs you." |
+| **Reply screen** | Opens from running and done rows. Frog's last reply scrolled with the Crown, the turn's stats, and next-step buttons that run a turn on the Mac. Bottom bar: **Stop** while running (`interrupt`), **Reply** by voice when done (`submit`). A long press shows it on the phone; Handoff offers it on the Mac. |
 | **Routes** | Answers go straight to the Mac when the watch holds it (`WatchBridge`, a `wss://` URL the phone hands over, the pairing code as token), else through the phone (gives up after 5 s), else the Mac anyway. The list's footer says "Straight to your Mac" or why it's offline: "Your phone is out of reach", "Reaching your Mac…", "Can't reach your Mac", "Pair your phone again". |
 | **Haptics** | `.notification` for a new question, `.success` for a finished turn, `.click` / `.failure` for a sent / failed answer, `.directionUp` for show on phone. |
-| **Ops** | `permission` (allow / deny), `answer` (an Ask's choice, or other words), `act` (a next step). |
+| **Ops** | `permission` (allow / deny / allow_always), `answer` (an Ask's choice, or other words), `act` (a next step), `submit` (a reply), `interrupt` (stop). |
 | **Complication** | The iPhone's `StatusWidget`, not yet tried on a watch face. |
 
 These hold up against the HIG: answers in a tap, the Crown for reading, haptics that mean one
@@ -128,11 +128,11 @@ When `isLuminanceReduced`:
 
 | Today | Needed for |
 |---|---|
-| A row has `question` text and a `permission` id | `name`, `arg`, `reason`, `always`, and the diff summary (file, +/−): proposal 1 |
-| `decision`: allow / deny | `allow_always`: proposal 1 |
-| `permission`, `answer`, `act` | `submit` (a reply) and `interrupt`: proposal 3 |
-| `activity` only | when the activity started, and the last few step summaries: proposal 3 |
+| A row has `question`, `arg`, `reason`, `always`, `change` ("fetch.ts +12 −3") and `since` | done (proposals 1, 3, 4, 6 in part) |
+| `decision`: allow / deny / allow_always; `submit`; `interrupt` | done |
+| `activity` and `since` only | the last few step summaries: proposal 3 |
 | No notification categories on the watch | `permission`, `ask` and `finished` categories with the actions above: proposal 2 |
+| A tap on a permission row answers inline | the Request screen for a command too long to trust from three lines: proposal 1 |
 
 All of these come from the Mac's `RemoteBridge`, which already has the fields (`PermissionRequest`
 carries `reason`, `always` and `preview`) and the ops (`submit`, `interrupt`). Mostly they need

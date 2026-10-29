@@ -10,12 +10,13 @@ use crate::message::Message;
 use crate::prompt::{self, Action};
 use crate::provider::{Provider, Request, Response, ToolSpec};
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     Strong,
@@ -24,7 +25,7 @@ pub enum Tier {
 }
 
 /// What a model demonstrably does, from [`probe`].
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Caps {
     /// Calls a tool correctly through the API's native tool calling.
     pub native_tools: bool,
@@ -234,6 +235,77 @@ pub fn choose_mode(p: &Profile, caps: Option<&Caps>, tier: Tier) -> ToolMode {
         // Nothing passed. Text mode can't be rejected by the server (native tools can: ollama
         // 400s for models without tool support), and at worst the model just answers.
         ToolMode::Text
+    }
+}
+
+/// The model-dependent half of an engine: tool-call mode, tier and capabilities for the
+/// current profile, plus what this session learned about the model at run time. Built fresh
+/// for each model; nothing here outlives a model switch.
+#[derive(Debug)]
+pub struct Harness {
+    /// The tool-call mode in effect (the profile's, or resolved from `auto`).
+    pub tool_mode: ToolMode,
+    pub tier: Tier,
+    pub caps: Option<Caps>,
+    /// Tool-call format failures under `auto`; enough of them switches modes.
+    pub mode_failures: u32,
+    /// Why this session fell back to text tool calls, when it did. Session-only: it survives
+    /// `apply` but is never written to the capability cache.
+    pub text_fallback: Option<String>,
+    /// Why the session moved to text tool calls at run time, for the degraded status.
+    pub text_why: Option<String>,
+    /// A stale capability probe was measured again (or tried) this session, for this model.
+    pub reprobed: bool,
+}
+
+impl Harness {
+    /// Cached or shipped capabilities for `p`, with tier and mode resolved from them.
+    pub fn for_profile(p: &Profile) -> Self {
+        let caps = (!native_known(p)).then(|| cached(p)).flatten();
+        let tier = tier(p, caps.as_ref());
+        let tool_mode = choose_mode(p, caps.as_ref(), tier);
+        Harness {
+            tool_mode,
+            tier,
+            caps,
+            mode_failures: 0,
+            text_fallback: None,
+            text_why: None,
+            reprobed: false,
+        }
+    }
+
+    /// Recompute tier and mode from `p` and the capabilities, keeping a run-time text fallback.
+    pub fn apply(&mut self, p: &Profile) {
+        self.tier = tier(p, self.caps.as_ref());
+        self.tool_mode = choose_mode(p, self.caps.as_ref(), self.tier);
+        if self.text_fallback.is_some() && p.tool_mode == ToolMode::Auto {
+            self.tool_mode = ToolMode::Text;
+        }
+    }
+
+    /// Text-looking tool calls are real calls (to parse and run) rather than quoted examples.
+    pub fn recovers_text_calls(&self, p: &Profile) -> bool {
+        self.tool_mode == ToolMode::Text || !native_known(p)
+    }
+
+    /// Count a tool-call format failure. Under `auto`, the second one moves this session to
+    /// text calls and returns the mode it left; a model whose native tools are known to work
+    /// never moves.
+    pub fn note_format_failure(&mut self, p: &Profile, why: &str) -> Option<ToolMode> {
+        if p.tool_mode != ToolMode::Auto || self.tool_mode == ToolMode::Text || native_known(p) {
+            return None;
+        }
+        self.mode_failures += 1;
+        if self.mode_failures < 2 {
+            return None;
+        }
+        let from = self.tool_mode;
+        self.tool_mode = ToolMode::Text;
+        self.mode_failures = 0;
+        self.text_why = Some(why.to_string());
+        self.text_fallback = Some(why.to_string());
+        Some(from)
     }
 }
 

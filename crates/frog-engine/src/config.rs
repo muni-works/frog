@@ -1,10 +1,11 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     Openai,
@@ -13,7 +14,7 @@ pub enum ProviderKind {
     Codex,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolMode {
     /// Pick per model from its capability profile (see `harness.rs`).
@@ -30,7 +31,7 @@ pub enum ToolMode {
 }
 
 /// When a reasoning model thinks before answering (see `thinking.rs`).
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Thinking {
     /// Think where it pays (planning, after errors, after reading); answer directly on routine
@@ -45,7 +46,7 @@ pub enum Thinking {
 
 /// How an Anthropic model thinks (`thinking` on the Messages API). Unset picks per model:
 /// adaptive for `claude-opus-*` that support it, nothing otherwise.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AnthropicThinking {
     /// `{type: "adaptive"}`: the model decides when and how much to think (Opus 4.6+).
@@ -244,6 +245,19 @@ pub struct Config {
     /// Empty by default: nothing widens unless configured.
     #[serde(default)]
     pub sandbox: SandboxConfig,
+    /// `[egress]`: the hosts sandboxed commands may reach, and which sessions enforce it
+    /// (agent-started ones by default). See `egress`.
+    #[serde(default)]
+    pub egress: crate::egress::EgressConfig,
+    /// This session was started by an agent (`--worker`, which the app passes for
+    /// `StartSession`; kept in the session log so a resume stays one). Not a config.toml key.
+    #[serde(skip)]
+    pub worker: bool,
+    /// Set on a subagent's config by its parent: the parent's egress state, so the subagent's
+    /// commands obey the same list and grants and its hits surface in the parent's
+    /// transcript. Not a config.toml key.
+    #[serde(skip)]
+    pub egress_parent: Option<std::sync::Arc<crate::egress::Egress>>,
     /// Start read-only tool calls (Read, Grep, Glob, public web reads, read-only shell
     /// commands) as soon as their arguments arrive, while the model is still writing the rest
     /// of its reply, and run a reply's leading reads side by side. Results, history and events
@@ -310,7 +324,7 @@ pub struct Config {
 }
 
 /// How far a `[mcp_trust]` grant goes for one MCP server.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum McpTrust {
     /// Reads only: the same as no grant (read-only tools never card).

@@ -1,10 +1,12 @@
 mod acp;
 mod complete;
+mod git_credential;
 mod headless;
 mod listen;
 mod render;
 mod replay;
 mod tui;
+mod ws;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -31,8 +33,18 @@ struct Cli {
     /// Speak the engine protocol over stdio (Op JSON lines in, Event JSON lines out).
     #[arg(long, conflicts_with = "print")]
     serve: bool,
-    /// Answer one turn per HTTP request on ADDR (e.g. a Tailscale IP:8915), for the iOS app and
-    /// Siri. Needs FROG_LISTEN_TOKEN (the bearer token). See docs/ios-siri.md.
+    /// With --serve: speak it over a websocket on ADDR (e.g. 0.0.0.0:7070) instead of stdio,
+    /// one peer at a time, with `GET /health` on the same port. For Frog Cloud's gateway.
+    #[arg(long, value_name = "ADDR", requires = "serve")]
+    serve_ws: Option<String>,
+    /// With --serve-ws: session store root (default: frog's data dir).
+    #[arg(long, value_name = "DIR")]
+    store: Option<std::path::PathBuf>,
+    /// Git's credentials come from GET <URL>/internal/git-credential, never from disk.
+    #[arg(long, value_name = "URL")]
+    git_credential_gateway: Option<String>,
+    /// Answer one turn per HTTP request on ADDR (e.g. a Tailscale IP:8915): POST /v1/turn,
+    /// GET /v1/session/<id>/answer, GET /v1/health. Needs FROG_LISTEN_TOKEN (the bearer token).
     #[arg(long, value_name = "ADDR", conflicts_with_all = ["print", "serve", "acp"])]
     listen: Option<String>,
     /// With --serve: the client can answer MCP elicitations and host MCP Apps.
@@ -69,6 +81,10 @@ struct Cli {
     /// Don't sandbox shell commands; every command asks instead (unless allowed or --yolo).
     #[arg(long)]
     no_shell_sandbox: bool,
+    /// This session is an agent's (the app passes it for `StartSession`): its shell commands
+    /// reach only the `[egress]` allow-list unless `workers_deny_by_default = false`.
+    #[arg(long)]
+    worker: bool,
     /// Measure each turn's energy from the Mac's power sensor, and report it with the turn.
     #[arg(long)]
     energy: bool,
@@ -190,8 +206,9 @@ struct Cli {
     #[arg(long, value_name = "ON|OFF", num_args = 0..=1, default_missing_value = "")]
     background: Option<String>,
     /// Print a prompt for a conversation about an item in the brief, with what GitHub says
-    /// about it (JSON with --json: {"prompt", "repo"}).
-    #[arg(long, value_name = "ID")]
+    /// about it (JSON with --json: {"prompt", "repo"}). Bare, with --serve-ws: ask the peer
+    /// for permission (Op::Permission) instead of denying.
+    #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
     ask: Option<String>,
     /// You looked at the brief: what's in it is no longer new.
     #[arg(long)]
@@ -260,7 +277,15 @@ async fn run() -> Result<bool> {
         }
         return Ok(true);
     }
+    // `frog git-credential get`: git's credential helper under --git-credential-gateway.
+    if args.get(1).map(String::as_str) == Some("git-credential") {
+        git_credential::helper(args.get(2).map(String::as_str)).await?;
+        return Ok(true);
+    }
     let cli = Cli::parse();
+    if let Some(url) = &cli.git_credential_gateway {
+        git_credential::install(url)?;
+    }
     if cli.attempts.is_some() || cli.apply_attempt.is_some() || !cli.discard_attempt.is_empty() {
         return attempts(&cli);
     }
@@ -279,6 +304,7 @@ async fn run() -> Result<bool> {
     if cli.no_shell_sandbox {
         cfg.sandbox_shell = false;
     }
+    cfg.worker |= cli.worker;
     if cli.models {
         return list_models(&cfg, cli.json).await;
     }
@@ -326,9 +352,15 @@ async fn run() -> Result<bool> {
     if let Some(done) = pond(&cli, &cfg).await? {
         return Ok(done);
     }
+    // Frog Cloud's sandbox: an OpenAI-compatible endpoint that adds the key itself.
+    let provider_base = std::env::var("FROG_PROVIDER_BASE_URL")
+        .ok()
+        .filter(|u| !u.is_empty());
     let chosen = match &cli.model {
         Some(m) => Some(m.clone()),
         None if std::env::var_os("FROG_MODEL").is_some() || cfg.default_model.is_some() => None,
+        // The gateway names a model only when the session picked one; otherwise Frog Cloud's.
+        None if provider_base.is_some() => Some("cloud/qwen3-coder-next".into()),
         None => match frog_engine::models::last_used() {
             Some(m) => Some(m),
             None => match frog_engine::models::pick_default().await {
@@ -353,6 +385,14 @@ async fn run() -> Result<bool> {
         }
         profile.base_url = Some(b);
     }
+    if let Some(b) = provider_base {
+        profile.provider = frog_engine::config::ProviderKind::Openai;
+        profile.base_url = Some(b);
+        profile.api_key = None;
+        profile.api_key_env = None;
+        profile.sidecar = None;
+        profile.draft_model = None;
+    }
     if cli.text_tools {
         profile.tool_mode = ToolMode::Text;
     }
@@ -363,7 +403,7 @@ async fn run() -> Result<bool> {
         return probe(&profile_name, &profile).await;
     }
     let cwd = std::env::current_dir()?;
-    let store = session::default_dir();
+    let store = cli.store.clone().unwrap_or_else(session::default_dir);
     if let Some(r) = &cli.rename {
         session::retitle(&store, &r[0], &r[1])?;
         return Ok(true);
@@ -555,7 +595,11 @@ async fn run() -> Result<bool> {
         profile,
         cwd,
         mode,
-        can_ask: !cli.print,
+        // Over a websocket, only with --ask: otherwise headless and denying, as with -p.
+        can_ask: match cli.serve_ws {
+            Some(_) => cli.ask.as_deref() == Some(""),
+            None => !cli.print,
+        },
         resume,
         store: Some(store),
         sandbox: cli.sandbox,
@@ -565,6 +609,10 @@ async fn run() -> Result<bool> {
     })?;
 
     let mut prompt = cli.prompt.join(" ");
+    if let Some(addr) = &cli.serve_ws {
+        ws::serve(handle, addr).await?;
+        return Ok(true);
+    }
     if cli.serve {
         headless::serve(handle).await?;
         return Ok(true);
@@ -810,7 +858,7 @@ async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
         }
         return Ok(Some(true));
     }
-    if let Some(id) = &cli.ask {
+    if let Some(id) = cli.ask.as_ref().filter(|id| !id.is_empty()) {
         let (prompt, repo) = pond::ask::prompt(id).await?;
         if cli.json {
             println!("{}", serde_json::json!({ "prompt": prompt, "repo": repo }));

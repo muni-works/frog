@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ComposerView: View {
+    @Environment(\.paneWidth) private var paneWidth
     let workspace: Workspace
     let conversation: Conversation
     var window: WindowState?
@@ -171,12 +172,31 @@ struct ComposerView: View {
             if !conversation.queue.isEmpty {
                 QueuedMessages(conversation: conversation)
             }
+            if let next = conversation.next, next.act, !conversation.busy {
+                // An outward step (push, send, deploy) takes a deliberate click, never a Tab.
+                Button {
+                    conversation.act(Present.Choice(label: next.text, send: nil))
+                } label: {
+                    Label(next.text, systemImage: "arrow.up.forward")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.opacity)
+            }
             if !attachments.isEmpty {
                 AttachmentStrip(images: $attachments, blind: conversation.status?.vision == false ? conversation.status?.model : nil)
             }
             HStack(alignment: .bottom, spacing: 10) {
                 ZStack(alignment: .topLeading) {
-                    if text.isEmpty {
+                    if text.isEmpty, let ghost {
+                        (Text(ghost) + Text("  ⇥").foregroundStyle(.quaternary))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .padding(.leading, 5)
+                            .padding(.top, 1)
+                            .allowsHitTesting(false)
+                    } else if text.isEmpty {
                         Text(placeholder)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
@@ -204,6 +224,11 @@ struct ComposerView: View {
                             mention = query
                         },
                         onMentionKey: handleMentionKey,
+                        onTab: {
+                            guard text.isEmpty, let ghost else { return false }
+                            text = ghost
+                            return true
+                        },
                         onPasteImages: { attachments += $0 }
                     )
                     .frame(height: height)
@@ -293,6 +318,12 @@ struct ComposerView: View {
         conversation.send(.warm(draft: usable ? text : nil))
     }
 
+    /// The model's suggested next prompt, as ghost text Tab accepts; outward ones are a button.
+    private var ghost: String? {
+        guard let next = conversation.next, !next.act, !conversation.busy else { return nil }
+        return next.text
+    }
+
     private var placeholder: String {
         if let model = workspace.pendingDownloadModel {
             return "Downloading \(model.name)… messages send when it’s ready"
@@ -314,14 +345,17 @@ struct ComposerView: View {
     private var controls: some View {
         HStack(spacing: 8) {
             plusMenu
-            DictationButton(dictation: dictation, toggle: toggleDictation)
+            // A narrow pane keeps the controls you reach for: add, mode, model.
+            if paneWidth > .narrow {
+                DictationButton(dictation: dictation, toggle: toggleDictation)
+            }
             ModePicker(conversation: conversation)
             Spacer()
             if let e = workspace.raceError {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
             }
             ModelPicker(workspace: workspace, conversation: conversation)
-            if let status = conversation.status {
+            if let status = conversation.status, paneWidth == .wide {
                 ContextButton(conversation: conversation, status: status)
             }
         }

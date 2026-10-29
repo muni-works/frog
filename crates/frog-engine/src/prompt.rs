@@ -61,6 +61,16 @@ fn memory_files(cwd: &Path, cfg: &Config) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Extra instructions from whatever started this frog, in `FROG_INSTRUCTIONS` (a voice front end
+/// asking for spoken-style replies, say). Appended last, after the user's own instruction files.
+fn client_instructions(s: &mut String) {
+    if let Ok(text) = std::env::var("FROG_INSTRUCTIONS")
+        && !text.trim().is_empty()
+    {
+        s.push_str(&format!("\n# Instructions from the client\n{}\n", text.trim()));
+    }
+}
+
 pub fn system_prompt(cwd: &Path, cfg: &Config, model: &str) -> String {
     let git = cwd.ancestors().any(|d| d.join(".git").exists());
     let mut s = format!(
@@ -80,6 +90,7 @@ pub fn system_prompt(cwd: &Path, cfg: &Config, model: &str) -> String {
             ));
         }
     }
+    client_instructions(&mut s);
     s
 }
 
@@ -142,6 +153,7 @@ pub fn chat_prompt(cfg: &Config, model: &str) -> String {
             ));
         }
     }
+    client_instructions(&mut s);
     s
 }
 

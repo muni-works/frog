@@ -243,7 +243,16 @@ struct ActivitySteps: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(steps.enumerated()), id: \.element.id) { i, step in
                         if i > 0 { Divider().opacity(0.4) }
-                        ActivityStepRow(item: step, conversation: conversation)
+                        if case .tool("Task", let arg) = step.kind, !step.done {
+                            // A running agent keeps its live row open too: what it's doing now,
+                            // its plan, Stop, and its run a click away (a plain step row said
+                            // only "Agent: …" for as long as it worked).
+                            AgentStepRow(arg: arg, item: step, conversation: conversation)
+                                .padding(.horizontal, TurnSpace.Inset.card)
+                                .padding(.vertical, TurnSpace.Inset.snug)
+                        } else {
+                            ActivityStepRow(item: step, conversation: conversation)
+                        }
                     }
                 }
                 .padding(.vertical, TurnSpace.Inset.hair)

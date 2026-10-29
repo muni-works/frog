@@ -5,17 +5,25 @@ import SwiftUI
 struct ResumedBanner: View {
     let conversation: Conversation
     @State private var autoContinue = true
+    @Environment(\.paneWidth) private var paneWidth
 
     var body: some View {
         if conversation.resumedAfterRestart, let id = conversation.sessionID {
             HStack(spacing: 8) {
                 Image(systemName: conversation.suspendedByUpdate ? "arrow.down.circle" : "arrow.clockwise.circle")
-                Text(conversation.suspendedByUpdate ? "Resumed after app update" : "Resumed after restart")
+                // Gives way in a narrow split pane: a line that couldn't shrink widened the whole
+                // pane past its frame, pushing its rail into the next pane and text over text.
+                if paneWidth > .narrow {
+                    Text(conversation.suspendedByUpdate ? "Resumed after app update" : "Resumed after restart")
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
                 Spacer(minLength: 8)
-                Toggle("Resume automatically", isOn: $autoContinue)
-                    .toggleStyle(.checkbox)
-                    .help("Pick this conversation's running turn back up after frog restarts")
-                    .onChange(of: autoContinue) { _, on in SessionRegistry.shared.setAutoContinue(id, on) }
+                Toggle(paneWidth == .wide ? "Resume automatically" : "Auto", isOn: $autoContinue)
+                .toggleStyle(.checkbox)
+                .fixedSize()
+                .help("Pick this conversation's running turn back up after frog restarts")
+                .onChange(of: autoContinue) { _, on in SessionRegistry.shared.setAutoContinue(id, on) }
                 if conversation.busy {
                     Button("Stop") { conversation.interrupt() }
                         .buttonStyle(.link)

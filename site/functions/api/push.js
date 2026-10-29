@@ -1,8 +1,10 @@
 // POST /api/push: a Mac running frog asks for a push to a phone it's paired with. The APNs key
 // lives here (APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID), never in the app. Callers identify with the
-// shared relay secret: `Authorization: Bearer <PUSH_RELAY_SECRET>` (the Mac reads the same value
-// from FROG_PUSH_SECRET; TODO: wire the Mac to send it, from the pairing secret or a setting).
-const { checkAuth, validate, jwt, request, send, rateLimit } = await import("./_apns.js");
+// shared relay secret: `Authorization: Bearer <PUSH_RELAY_SECRET>` (the Mac sends what Settings ›
+// General holds, or FROG_PUSH_SECRET). Secrets: `npx wrangler secret put <NAME>` from site/.
+// A static import: Pages' module workers hoist top-level await badly across bundling modes, and
+// the first deploy failed on `await import` at the top level.
+import { checkAuth, validate, jwt, request, send, rateLimit } from "./_apns.js";
 
 export async function onRequest(context) {
   const { request: req, env } = context;

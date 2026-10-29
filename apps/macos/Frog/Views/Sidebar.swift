@@ -768,8 +768,9 @@ struct SessionList: View {
     @ViewBuilder
     private func moveMenu(_ s: SessionInfo) -> some View {
         let current = library.parents[s.id]
+        let parents = Set(library.parents.values)
         let heads = active
-            .filter { $0.id != s.id && (library.parents.values.contains($0.id) || library.pinned.contains($0.id)) }
+            .filter { $0.id != s.id && (parents.contains($0.id) || library.pinned.contains($0.id)) }
             .sorted { $0.displayTitle.localizedStandardCompare($1.displayTitle) == .orderedAscending }
         if !heads.isEmpty || current != nil {
             Menu("Move to…") {
@@ -1110,11 +1111,9 @@ private struct ChiefTile: View {
     private var status: some View {
         switch live {
         case .running:
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                ProgressView().controlSize(.mini)
-            }
+            ProgressView().controlSize(.mini)
         case .waiting:
-            Image(systemName: "ellipsis.bubble").foregroundStyle(.orange).symbolEffect(.pulse)
+            Image(systemName: "ellipsis.bubble").foregroundStyle(.orange).symbolEffect(.pulse, options: .repeat(3))
         case .unread:
             Circle().fill(.tint).frame(width: 7, height: 7)
         case nil:
@@ -1186,15 +1185,13 @@ private struct CompactSessionRow<Menu: View>: View {
     var body: some View {
         // The tick re-checks the 30 s activity rule so the indicator and the title
         // emphasis fade together.
-        TimelineView(.periodic(from: .now, by: 5)) { ctx in
-            content(working: live == nil && ctx.date.timeIntervalSince(session.modifiedDate) < 30)
-        }
+        content(working: live == nil && SidebarClock.shared.now.timeIntervalSince(session.modifiedDate) < 30)
         .padding(.vertical, expandTitle ? 4 : 0)
         .frame(minHeight: 28)
         .padding(.trailing, 3)
         .background(selected ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
         .contentShape(.rect)
-        .contextMenu { menu() }
+        .contextMenu { DeferredMenu(make: menu) }
         .paneDraggable(.session(session), title: session.displayTitle)
         .help(helpText)
         .onHover { hovering = $0 }
@@ -1257,15 +1254,16 @@ private struct CompactSessionRow<Menu: View>: View {
                     .padding(.leading, 5)
             }
             if !expandTitle, !nested {
-                TimelineView(.periodic(from: .now, by: freshComplete ? 5 : 30)) { ctx in
+                let now = SidebarClock.shared.now
+                Group {
                     // Running shows the spinner whether the app knows it live (a conversation
                     // open here, following a worker included) or only from recent activity.
-                    if live == .running || live == nil, ctx.date.timeIntervalSince(session.modifiedDate) < 30 {
-                        Text(SessionAgeShort.age(session.modifiedDate, now: ctx.date))
+                    if live == .running || live == nil, now.timeIntervalSince(session.modifiedDate) < 30 {
+                        Text(SessionAgeShort.age(session.modifiedDate, now: now))
                             .font(.system(size: 11, design: .rounded).monospacedDigit())
                             .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
                     } else {
-                        Text(SessionAgeShort.age(session.modifiedDate, now: ctx.date))
+                        Text(SessionAgeShort.age(session.modifiedDate, now: now))
                             .font(.system(size: 11, design: .rounded).monospacedDigit())
                             .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
                     }
@@ -1460,7 +1458,7 @@ struct ConversationRow<Menu: View>: View {
         .padding(.vertical, showPlace ? 6 : 5)
         .background(background, in: .rect(cornerRadius: 9))
         .onHover { hovering = $0 }
-        .contextMenu { menu() }
+        .contextMenu { DeferredMenu(make: menu) }
         // Onto a pane: its edge opens this beside it, its middle shows it there.
         .paneDraggable(.session(session), title: session.displayTitle)
         .help(helpText)
@@ -1528,5 +1526,30 @@ struct ConversationRow<Menu: View>: View {
         if let f = session.folder, !session.isChat { parts.append(f.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
         parts.append(session.model)
         return parts.joined(separator: "\n")
+    }
+}
+
+/// A row's context menu, built when it opens: `.contextMenu { menu() }` ran every row's menu
+/// (its "Move to…" list sorts every session) on each sidebar redraw, nearly a second of a
+/// session switch with ~1,000 sessions.
+private struct DeferredMenu<Content: View>: View {
+    let make: () -> Content
+    var body: some View { make() }
+}
+
+/// The sidebar's one clock for its age labels and 30 s activity rule. A `TimelineView` per row
+/// was re-checked on every frame anything else animated (~50 rows × 30 a second while a session
+/// worked); rows that read this redraw only when it ticks.
+@MainActor
+@Observable
+final class SidebarClock {
+    static let shared = SidebarClock()
+    private(set) var now = Date()
+    @ObservationIgnored private var timer: Timer?
+
+    private init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            MainActor.assumeIsolated { SidebarClock.shared.now = Date() }
+        }
     }
 }

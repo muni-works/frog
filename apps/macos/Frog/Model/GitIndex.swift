@@ -338,10 +338,15 @@ final class GitIndex {
             if b.ahead == 0 {
                 // In base. A fresh branch is too (it was made there): it landed only if a merge
                 // brought it in, or it moved since it was made.
-                let brought = repo.merges.contains { $0.brought.contains(tip) }
-                let created = head.branch.flatMap { created(repo.common, $0) }
-                if brought || (created != nil && created != tip) || repo.pr[tip] != nil {
-                    b.landed = repo.pr[tip].map { .pr($0) } ?? .ancestor
+                let brought: Bool = repo.merges.contains { $0.brought.contains(tip) }
+                // Named apart from the static `created(_:_:)`: a local that shares the name and is
+                // used in its own initializer crashes older Swift type-checkers.
+                var madeAt: String? = nil
+                if let branch = head.branch { madeAt = Self.created(repo.common, branch) }
+                let moved: Bool = madeAt != nil && madeAt != tip
+                let pr: Int? = repo.pr[tip]
+                if brought || moved || pr != nil {
+                    b.landed = pr.map { GitBadge.Landed.pr($0) } ?? .ancestor
                 }
             } else if let n = repo.pr[tip] {
                 b.landed = .pr(n)

@@ -441,6 +441,7 @@ mod tests {
             model: "m".into(),
             created: 1_000,
             forked_from: None,
+            worker: false,
         }
     }
 

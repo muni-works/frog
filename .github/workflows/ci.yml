@@ -62,9 +62,14 @@ jobs:
             -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
       - name: test
+        # xcodebuild passes TEST_RUNNER_* to the test process without the prefix: the tests see
+        # CI and give wall-clock budgets runner room (FrogTests TestRunner). A failing test gets
+        # up to 2 more tries (the window benchmarks share a VM's frames); it must pass once.
+        env:
+          TEST_RUNNER_CI: "true"
         run: |
           cd apps/macos
-          xcodebuild test -quiet \
+          xcodebuild test -quiet -retry-tests-on-failure -test-iterations 3 \
             -project Frog.xcodeproj -scheme Frog -configuration Debug \
             -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
@@ -98,3 +103,20 @@ jobs:
             -project FrogRemote.xcodeproj -scheme FrogWatch -configuration Debug \
             -derivedDataPath build/ci -destination 'generic/platform=watchOS Simulator' \
             CODE_SIGNING_ALLOWED=NO
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build

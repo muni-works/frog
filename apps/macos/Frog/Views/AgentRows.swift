@@ -79,13 +79,12 @@ struct AgentRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if !agent.finished {
-                TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                    if let words = Self.progress(agent, now: ctx.date) {
-                        Text(words)
-                            .font(.system(size: 11.5).monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                            .fixedSize()
-                    }
+                // The shared seconds clock, not a timeline per row (re-checked every frame).
+                if let words = Self.progress(agent, now: SecondsClock.shared.now) {
+                    Text(words)
+                        .font(.system(size: 11.5).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .fixedSize()
                 }
             }
         }
@@ -130,11 +129,24 @@ struct SessionAgents: View {
     let conversation: Conversation
     let depth: Int
     let open: () -> Void
-    @State private var foldOpen = false
 
     var body: some View {
-        let list = conversation.agentList
-        let depth = min(depth, SessionNesting.maxDepth)
+        // Read on every streamed flush (`agentList` walks the turn), but the rows below only
+        // redraw when the list itself changes: they re-ran ~160 times a second while working.
+        AgentListRows(list: conversation.agentList, depth: min(depth, SessionNesting.maxDepth), open: open)
+            .equatable()
+    }
+}
+
+private struct AgentListRows: View, Equatable {
+    let list: AgentList
+    let depth: Int
+    let open: () -> Void
+    @State private var foldOpen = false
+
+    nonisolated static func == (a: Self, b: Self) -> Bool { a.list == b.list && a.depth == b.depth }
+
+    var body: some View {
         ForEach(list.rows) { agent in
             AgentRow(agent: agent, depth: depth).onTapGesture(perform: open)
         }
@@ -180,5 +192,21 @@ struct AgentFoldRow: View {
         }
         .buttonStyle(.plain)
         .help(open ? "Hide finished agents" : "Show \(list.folded.count) finished agent\(list.folded.count == 1 ? "" : "s")")
+    }
+}
+
+/// One clock for the sidebar's running-agent timers ("4 steps · 42s"): only rows that read it
+/// redraw, once a second.
+@MainActor
+@Observable
+final class SecondsClock {
+    static let shared = SecondsClock()
+    private(set) var now = Date()
+    @ObservationIgnored private var timer: Timer?
+
+    private init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            MainActor.assumeIsolated { SecondsClock.shared.now = Date() }
+        }
     }
 }
