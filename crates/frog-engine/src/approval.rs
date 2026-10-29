@@ -21,7 +21,7 @@ pub fn program(cmd: &str) -> String {
 
 /// Shell words, best effort: whitespace split with quotes stripped. Enough to
 /// find path arguments; the permission logic itself never relies on it.
-fn words(cmd: &str) -> Vec<String> {
+pub(crate) fn words(cmd: &str) -> Vec<String> {
     cmd.split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')'))
         .map(|w| w.trim_matches(|c| c == '\'' || c == '"' || c == '`'))
         .filter(|w| !w.is_empty())
@@ -29,7 +29,7 @@ fn words(cmd: &str) -> Vec<String> {
         .collect()
 }
 
-fn expand(word: &str, cwd: &Path) -> PathBuf {
+pub(crate) fn expand(word: &str, cwd: &Path) -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
     let p = if let Some(rest) = word.strip_prefix("~/") {
         home.join(rest)

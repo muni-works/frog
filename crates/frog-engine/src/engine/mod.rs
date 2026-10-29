@@ -215,6 +215,47 @@ const CLASSIFIER_RETRY: Duration = Duration::from_secs(60);
 const CLASSIFIER_DOWN_ASK: &str =
     "no built-in rule covers it (the classifier is down, so rules decide alone)";
 
+/// The hosts a command opens a remote shell or copy to (`ssh`, `scp`, `rsync`,
+/// `mosh`): `user@host` stripped to the host, `host:path` to the host.
+fn remote_hosts(cmd: &str) -> Vec<String> {
+    let segments = crate::shell::segments(cmd).unwrap_or_else(|| vec![cmd.to_string()]);
+    let mut out = Vec::new();
+    for seg in segments {
+        let ws = crate::approval::words(&seg);
+        let Some(prog) = ws.first() else { continue };
+        let prog = prog.rsplit('/').next().unwrap_or(prog);
+        if !matches!(prog, "ssh" | "scp" | "rsync" | "mosh" | "sftp") {
+            continue;
+        }
+        let mut skip = false;
+        for w in &ws[1..] {
+            if skip {
+                skip = false;
+                continue;
+            }
+            if w.starts_with('-') {
+                // ssh options that take a value.
+                skip = prog == "ssh" && matches!(w.as_str(), "-p" | "-i" | "-l" | "-o" | "-F" | "-J" | "-L" | "-R" | "-D");
+                continue;
+            }
+            let host = w.split_once('@').map_or(w.as_str(), |(_, h)| h);
+            let remote = prog == "ssh" || prog == "mosh" || prog == "sftp" || host.contains(':') || w.contains('@');
+            if !remote {
+                continue;
+            }
+            let host = host.split(':').next().unwrap_or(host);
+            if !host.is_empty() && !out.iter().any(|h: &String| h == host) {
+                out.push(host.to_string());
+            }
+            // ssh's first operand is the host; the rest is the remote command.
+            if prog == "ssh" || prog == "mosh" {
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// One tool call's identity for the repeat-denial checks: its tool and its exact arguments.
 fn call_hash(name: &str, input: &Value) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -222,6 +263,16 @@ fn call_hash(name: &str, input: &Value) -> u64 {
     name.hash(&mut h);
     input.to_string().hash(&mut h);
     h.finish()
+}
+
+/// How the chief route ended for a still-flagged call (docs/design/delegation.md).
+enum Chief {
+    /// The chief answered: run or deny, no card.
+    Decided(Decision),
+    /// The chief was asked but couldn't decide (no broker, error, timeout, unreadable).
+    Fallback,
+    /// No chief route: no chief configured, or the class isn't granted.
+    NoRoute,
 }
 
 /// How a batch of tool calls ended.
@@ -762,6 +813,13 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         {
             agent.notice(Level::Warn, format!("{e:#}"));
             agent.emit_status();
+        }
+        let unknown = agent.cfg.delegation.unknown_classes().join(", ");
+        if !unknown.is_empty() {
+            agent.notice(
+                Level::Warn,
+                format!("[delegation] chief_classes: ignoring unknown class(es) {unknown}"),
+            );
         }
         agent.connect_mcp();
         // Restore MCP tools that were loaded in a previous session
@@ -1357,6 +1415,10 @@ struct Agent {
     /// `CLASSIFIER_RETRY` it's skipped instead of costing every call a timeout.
     classifier_down: Option<(Instant, String)>,
     classifier_fallback_down: Option<(Instant, String)>,
+    /// Today's delegation roll-up (docs/design/delegation.md): what the second
+    /// pass allowed, what the chief decided, what carded the user. Date-keyed,
+    /// midnight rollover; advisory (lost on crash, next session starts at 0).
+    digest: crate::digest::Digest,
     /// While the classifier is down: what judges instead and why, one line for the
     /// status (`None` while the classifier answers).
     classifier_degraded: Option<String>,
@@ -1628,6 +1690,7 @@ impl Agent {
             classifier: None,
             classifier_fallback: None,
             classifier_down: None,
+            digest: crate::digest::Digest::default(),
             classifier_fallback_down: None,
             classifier_degraded: None,
             classifier_told: HashSet::new(),
@@ -2162,6 +2225,10 @@ impl Agent {
                 self.turn(&note, Vec::new()).await?
             }
             Op::Shell { command } => self.shell(&command).await,
+            Op::ApprovalDigest => {
+                let summary = self.digest.summary();
+                self.emit(Event::ApprovalDigest { summary });
+            }
             Op::Wake => self.wake(Vec::new()).await?,
             Op::SetMode { mode } => {
                 self.mode = mode;

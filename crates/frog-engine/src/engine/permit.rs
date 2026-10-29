@@ -353,31 +353,52 @@ impl Agent {
                 (false, false) => crate::auto::Sandbox::Off,
             };
             let started = Instant::now();
-            let verdict = self.auto_judge(item, name, input, sandbox).await;
+            let verdict = self.auto_judge(item, name, arg, input, sandbox).await;
             let took = ms(started.elapsed());
             self.timing.classifier_ms += took;
             match verdict {
-                Ok(()) => {
-                    self.decision(
-                        item,
-                        "classifier",
-                        "allow",
-                        "the classifier approved it",
-                        took,
-                    );
+                Ok((layer, why)) => {
+                    self.digest.count(match layer {
+                        "classifier" => crate::digest::Which::AutoAllowed,
+                        _ => crate::digest::Which::SecondPass,
+                    });
+                    self.decision(item, layer, "allow", &why, took);
                     return Decision::Allow;
                 }
-                Err(why) => {
-                    let layer = if why == CLASSIFIER_DOWN_ASK {
-                        "fallback"
-                    } else {
-                        "classifier"
-                    };
+                Err((layer, why)) => {
                     self.decision(item, layer, "ask", &why, took);
                     reason = Some(format!(
                         "Auto mode asked because {}.",
                         why.trim_end_matches('.')
-                    ))
+                    ));
+                    // Still flagged after the second pass: the chief decides what
+                    // the user shouldn't have to, when its grant list covers the
+                    // class (docs/design/delegation.md). Only a `second-pass` flag
+                    // may route: `never-delegable`, a classifier outage and a hard
+                    // rule with no classifier always card the user.
+                    let routed = if layer == "second-pass" {
+                        self.delegate_flagged(
+                            item,
+                            name,
+                            arg,
+                            input,
+                            reason.clone().unwrap_or_default(),
+                        )
+                        .await
+                    } else {
+                        Chief::NoRoute
+                    };
+                    match routed {
+                        Chief::Decided(decision) => return decision,
+                        // Counted as a chief fallback already; it cards like any other.
+                        Chief::Fallback => {}
+                        Chief::NoRoute => self.digest.count(if layer == "never-delegable" {
+                            crate::digest::Which::NeverDelegable
+                        } else {
+                            crate::digest::Which::Blocked
+                        }),
+                    }
+                    self.daily_digest_notice();
                 }
             }
         }
@@ -771,21 +792,43 @@ impl Agent {
         decision
     }
 
-    /// Auto mode: hard rules, then the classifier, then `auto_classifier_fallback`, then the
-    /// built-in rules alone. `Ok` runs the call (and records why); `Err` says why the user
-    /// should decide.
+    /// Auto mode (docs/design/delegation.md): never-delegable classes, hard rules, the
+    /// classifier (then `auto_classifier_fallback`, then the built-in rules alone), then the
+    /// context-rich second pass over a flag. `Ok((layer, why))` runs the call;
+    /// `Err((layer, why))` says why the user should decide. The caller records either.
     pub(super) async fn auto_judge(
         &mut self,
         item: &str,
         name: &str,
+        arg: &str,
         input: &Value,
         sandbox: crate::auto::Sandbox,
-    ) -> std::result::Result<(), String> {
-        if let Some(why) = crate::auto::hard_rule(name, input, &self.ctx.root) {
-            return Err(format!("it {why}"));
+    ) -> std::result::Result<(&'static str, String), (&'static str, String)> {
+        // Hard classes override every allow and always reach the user: no classifier,
+        // no second pass, no chief.
+        if let Some(why) =
+            crate::delegation::hard_class(name, input, &self.ctx.cwd, &self.ctx.root, &self.created)
+        {
+            return Err(("never-delegable", format!("it {why} (never delegated)")));
         }
         let preview = tools::fs::preview(name, input, &self.ctx);
         let action = crate::auto::describe(name, input, preview.as_ref(), sandbox);
+        // A hard rule is a flag without asking the first pass: it goes straight to the
+        // second, which can only clear it with context (rm and ssh are always
+        // double-checked, never single-checked). With no classifier it cards.
+        if let Some(why) = crate::auto::hard_rule(name, input, &self.ctx.root) {
+            if self.classifier.is_none()
+                && let Ok(c) = crate::auto::Classifier::new(&self.cfg, &self.ctx.root)
+            {
+                self.classifier = Some(c);
+            }
+            if self.classifier.is_none() {
+                return Err(("classifier", format!("it {why}")));
+            }
+            return self
+                .second_pass(item, name, arg, input, &action, format!("it {why}"))
+                .await;
+        }
         let verdict = match self.classifier_verdict(false, &action).await {
             Ok(v) => {
                 self.classifier_back();
@@ -813,12 +856,22 @@ impl Agent {
                     item: item.to_string(),
                     reason,
                 });
-                Ok(())
+                Ok(("classifier", "the classifier approved it".into()))
             }
-            Some(crate::auto::Verdict::Ask(reason)) => {
-                Err(format!("the classifier said: {reason}"))
+            // The first pass flagged it: the flag is usually missing context, and
+            // context is cheap. (The first pass never names Cam; it's a flag too.)
+            Some(crate::auto::Verdict::Ask(why)) | Some(crate::auto::Verdict::Cam(why)) => {
+                self.second_pass(
+                    item,
+                    name,
+                    arg,
+                    input,
+                    &action,
+                    format!("the classifier said: {why}"),
+                )
+                .await
             }
-            Some(crate::auto::Verdict::Failed(why)) => Err(why),
+            Some(crate::auto::Verdict::Failed(why)) => Err(("classifier", why)),
             // Nothing could judge: the built-in rules decide alone. A down classifier never
             // cards a call by itself; only a call no rule can prove harmless asks.
             None => match crate::auto::rules_fallback(name, input) {
@@ -827,11 +880,310 @@ impl Agent {
                         item: item.to_string(),
                         reason: format!("{rule}; the classifier is down, rules decided"),
                     });
-                    Ok(())
+                    Ok((
+                        "fallback",
+                        format!("{rule}; the classifier is down, rules decided"),
+                    ))
                 }
-                None => Err(CLASSIFIER_DOWN_ASK.into()),
+                None => Err(("fallback", CLASSIFIER_DOWN_ASK.into())),
             },
         }
+    }
+
+    /// The second, context-rich classifier pass over a flagged call: the session's
+    /// brief, recent actions, who owns the targets, what the user asked for. It can
+    /// only upgrade the flag (to an allow with a reason, audited) or confirm it; a
+    /// `cam` answer or any failure keeps the card. `flag` is why it was flagged.
+    pub(super) async fn second_pass(
+        &mut self,
+        item: &str,
+        name: &str,
+        arg: &str,
+        input: &Value,
+        action: &str,
+        flag: String,
+    ) -> std::result::Result<(&'static str, String), (&'static str, String)> {
+        let ctx = crate::auto::Context {
+            brief: self.agent_reason(),
+            actions: self.history_tail(),
+            ownership: self.ownership_lines(name, input),
+            need: self.conv.inputs.clone(),
+        };
+        let verdict = match self.classifier.as_mut() {
+            Some(c) => c.rejudge(action, &ctx).await,
+            None => crate::auto::Verdict::Failed("the classifier is unavailable".into()),
+        };
+        match verdict {
+            crate::auto::Verdict::Allow(why) => {
+                self.notice(
+                    Level::Info,
+                    format!("second pass: `{name} {arg}` allowed with context ({why})"),
+                );
+                self.emit(Event::AutoApproved {
+                    item: item.to_string(),
+                    reason: format!("second pass: {why}"),
+                });
+                Ok(("second-pass", why))
+            }
+            crate::auto::Verdict::Ask(why) => {
+                Err(("second-pass", format!("{flag}; with context: {why}")))
+            }
+            crate::auto::Verdict::Cam(why) => Err((
+                "never-delegable",
+                format!("{flag}; with context: {why} (never delegated)"),
+            )),
+            // Fail closed: the flag stands, the card goes up.
+            crate::auto::Verdict::Failed(why) => Err((
+                "second-pass",
+                format!("{flag}; the second pass couldn't finish ({why})"),
+            )),
+        }
+    }
+
+    /// A call still flagged after the second pass: offer it to the chief before
+    /// it cards the user (docs/design/delegation.md). `Decided` when the chief
+    /// answered; `Fallback` when it was asked but couldn't decide (counted and
+    /// audited here); `NoRoute` when there's no chief route (no chief configured,
+    /// the class isn't granted). The chief answers over the session wire
+    /// (`SessionRequest` `DelegateApproval` → the broker → the chief's
+    /// `ResolveDelegated` → `SessionReply`); a client that doesn't know
+    /// `DelegateApproval` errors or never answers, and the card falls back.
+    pub(super) async fn delegate_flagged(
+        &mut self,
+        item: &str,
+        name: &str,
+        arg: &str,
+        input: &Value,
+        reason: String,
+    ) -> Chief {
+        let chiefs = self.cfg.delegation.chief.clone();
+        let Some(chief) = chiefs.first().cloned() else {
+            return Chief::NoRoute;
+        };
+        let Some(class) = crate::delegation::soft_class(
+            name,
+            input,
+            &self.ctx.cwd,
+            &self.ctx.root,
+            &self.created,
+            &self.cfg,
+        ) else {
+            return Chief::NoRoute;
+        };
+        if !self.cfg.delegation.grants(class) {
+            return Chief::NoRoute;
+        }
+        if !self.shared.sessions.enabled() {
+            return self.chief_fallback(item, "no session broker to reach the chief");
+        }
+        let (id, rx) = self.shared.sessions.open();
+        let request = serde_json::json!({
+            "chief": chief,
+            "chiefs": chiefs,
+            "approval_id": id,
+            "tool": name,
+            "arg": arg,
+            "class": class,
+            "reason": reason,
+            "agent_says": self.agent_reason(),
+            "timeout_secs": self.cfg.delegation.chief_timeout_secs,
+        });
+        self.notice(
+            Level::Info,
+            format!("delegated:chief: asking {chief} about `{name} {arg}` ({class})"),
+        );
+        self.emit(Event::SessionRequest {
+            id: id.clone(),
+            item: item.into(),
+            tool: "DelegateApproval".into(),
+            input: request,
+        });
+        let timeout = self.cfg.delegation.chief_timeout_secs;
+        let waited = Instant::now();
+        // `rx` resolves to `Result<Value, String>` (the chief's reply or the
+        // broker's error); the wait itself can time out or be dropped.
+        let answer = if timeout == 0 {
+            Ok(rx.await)
+        } else {
+            tokio::time::timeout(Duration::from_secs(timeout), rx).await
+        };
+        self.timing.user_ms += ms(waited.elapsed());
+        let reply = match answer {
+            Ok(Ok(Ok(r))) => r,
+            Ok(Ok(Err(e))) => return self.chief_fallback(item, &format!("{chief}: {e}")),
+            Ok(Err(_)) => return self.chief_fallback(item, "the broker went away"),
+            Err(_) => {
+                return self.chief_fallback(item, &format!("{chief} didn't answer in {timeout}s"));
+            }
+        };
+        let Some((allowed, note)) = crate::delegation::parse_reply(&reply) else {
+            return self.chief_fallback(item, &format!("{chief}'s answer was unreadable"));
+        };
+        let note = note.map(|n| format!(" ({n})")).unwrap_or_default();
+        if allowed {
+            self.digest.count(crate::digest::Which::DelegatedChief);
+            let why = format!("{chief} approved it{note} [{class}]");
+            self.notice(
+                Level::Info,
+                format!("delegated:chief: `{name} {arg}` — approved by {chief}{note}"),
+            );
+            self.decision(item, "delegated", "allow", &why, 0);
+            Chief::Decided(Decision::Allow)
+        } else {
+            self.digest.count(crate::digest::Which::Blocked);
+            let why = format!("{chief} declined it{note} [{class}]");
+            self.notice(
+                Level::Warn,
+                format!("delegated:chief: `{name} {arg}` — declined by {chief}{note}"),
+            );
+            self.decision(item, "delegated", "deny", &why, 0);
+            self.record_denial(call_hash(name, input), format!("the chief declined: {why}"));
+            self.last_note = Some(why);
+            Chief::Decided(Decision::Deny)
+        }
+    }
+
+    /// The chief couldn't take a delegated call: count it, audit it, card the user.
+    pub(super) fn chief_fallback(&mut self, item: &str, why: &str) -> Chief {
+        self.digest.count(crate::digest::Which::ChiefFallback);
+        self.notice(
+            Level::Warn,
+            format!("delegated:chief: fell back to the user ({why})"),
+        );
+        self.decision(
+            item,
+            "delegated",
+            "ask",
+            &format!("delegation fell back to the user: {why}"),
+            0,
+        );
+        Chief::Fallback
+    }
+
+    /// The day's single digest notice, at the first card after midnight.
+    pub(super) fn daily_digest_notice(&mut self) {
+        if !self.cfg.delegation.digest {
+            return;
+        }
+        if !self.digest.needs_daily_notice() {
+            return;
+        }
+        // Once per session per day, and once per day across the sessions
+        // sharing this store: the first card after midnight carries it.
+        self.digest.mark_noticed();
+        let day = self.digest.day();
+        if crate::digest::claim_daily(self.store.as_deref(), &day) {
+            let summary = self.digest.summary();
+            self.notice(Level::Info, summary);
+        }
+    }
+
+    /// The session's last few steps, short, for the second pass's context: what the
+    /// agent said and which tools it ran, oldest first.
+    pub(super) fn history_tail(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for m in self
+            .conv
+            .messages
+            .iter()
+            .rev()
+            .filter(|m| m.role == Role::Assistant)
+        {
+            for b in m.content.iter().rev() {
+                let line = match b {
+                    Block::Text { text } if !text.trim().is_empty() => {
+                        format!("said: {}", text.trim())
+                    }
+                    Block::ToolUse { name, input, .. } => {
+                        let what = input["command"]
+                            .as_str()
+                            .or(input["file_path"].as_str())
+                            .map(String::from)
+                            .unwrap_or_else(|| input.to_string());
+                        format!("ran {name}: {what}")
+                    }
+                    _ => continue,
+                };
+                out.push(tools::truncate_middle(&line, 200));
+            }
+            if out.len() >= 6 {
+                break;
+            }
+        }
+        out.truncate(6);
+        out.reverse();
+        out
+    }
+
+    /// Who owns what this call touches, one line per path, for the second pass.
+    pub(super) fn ownership_lines(&self, name: &str, input: &Value) -> Vec<String> {
+        let cmd = input["command"].as_str().unwrap_or("");
+        let paths: Vec<PathBuf> = if name == "Bash" && !cmd.is_empty() {
+            crate::approval::paths(cmd, &self.ctx.cwd)
+        } else if let Some(p) = input["file_path"].as_str() {
+            vec![crate::approval::normalize(&self.ctx.resolve(p))]
+        } else if let Some(p) = input["url"].as_str().filter(|_| name == "Screenshot") {
+            vec![crate::approval::normalize(&self.ctx.resolve(p))]
+        } else {
+            Vec::new()
+        };
+        let root = crate::approval::normalize(&self.ctx.root);
+        let temp = crate::approval::normalize(&std::env::temp_dir());
+        let mut out: Vec<String> = paths
+            .into_iter()
+            // A remote `host:path` operand is a host, below, not a local path.
+            .filter(|p| !p.to_string_lossy().contains(':'))
+            .map(|p| {
+                let note = if p.starts_with(&root) {
+                    "in this session's project"
+                } else if crate::approval::created_here(&p, &self.created) {
+                    "created by this session"
+                } else if p.starts_with(&temp)
+                    || p.starts_with("/private/tmp")
+                    || p.starts_with("/tmp")
+                {
+                    if p.exists() {
+                        "under the shared temp dir (may predate this session)"
+                    } else {
+                        "fresh scratch under the shared temp dir"
+                    }
+                } else {
+                    "outside the project and not created by this session"
+                };
+                format!("{} — {}", p.display(), note)
+            })
+            .collect();
+        // Remote shells: is the host something this session brought up or already used?
+        if name == "Bash" {
+            for host in remote_hosts(cmd) {
+                let note = if self.seen_in_session(&host) {
+                    "remote host seen earlier in this session (it created or used it)"
+                } else {
+                    "remote host not seen earlier in this session (foreign)"
+                };
+                out.push(format!("{host} — {note}"));
+            }
+        }
+        out
+    }
+
+    /// Whether `needle` appears in an earlier tool call or result this session (a pod
+    /// it created, a host it printed). Only the session's own history counts.
+    pub(super) fn seen_in_session(&self, needle: &str) -> bool {
+        // The newest assistant message is the call being judged; it doesn't count.
+        let upto = self
+            .conv
+            .messages
+            .iter()
+            .rposition(|m| m.role == Role::Assistant)
+            .unwrap_or(self.conv.messages.len());
+        self.conv.messages[..upto].iter().any(|m| {
+            m.content.iter().any(|b| match b {
+                Block::ToolResult { content, .. } => content.contains(needle),
+                Block::ToolUse { input, .. } => input.to_string().contains(needle),
+                _ => false,
+            })
+        })
     }
 
     /// One classifier's verdict (`fallback`: `auto_classifier_fallback`'s), started on first

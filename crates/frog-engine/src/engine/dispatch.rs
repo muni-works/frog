@@ -570,8 +570,28 @@ Don't repeat it. Change the arguments or try a different approach.",
                         }
                     }
                 };
-                self.created
-                    .extend(before.into_iter().filter(|p| p.exists()));
+                // A command that creates nested paths (`mkdir -p a/b`) made the
+                // parents too: they're provenance for later deletes the same as
+                // the leaf. Ancestors under the shared temp dir count; ones
+                // above it (the temp dir itself, /private) don't.
+                let mut made: HashSet<PathBuf> =
+                    before.into_iter().filter(|p| p.exists()).collect();
+                let temp = crate::approval::normalize(&std::env::temp_dir());
+                let temp_alts = [temp.clone(), PathBuf::from("/tmp"), PathBuf::from("/private/tmp")];
+                for p in made.clone() {
+                    // All ancestors of a made path under the shared temp dir
+                    // were made too (`mkdir -p a/b` creates both) — but stop
+                    // at the temp dir itself, which belongs to nobody.
+                    for dir in p.ancestors().skip(1) {
+                        if !temp_alts.iter().any(|t| dir.starts_with(t)) {
+                            break;
+                        }
+                        if !temp_alts.contains(&dir.to_path_buf()) {
+                            made.insert(dir.to_path_buf());
+                        }
+                    }
+                }
+                self.created.extend(made);
                 let took = ms(started.elapsed());
                 self.timing.tool_ms += took;
                 self.timing.early_ms += early.unwrap_or(0);

@@ -539,6 +539,10 @@ final class SessionBroker {
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
+        case "DelegateApproval":
+            delegate(r, from: c)
+        case "ResolveDelegated":
+            resolveDelegated(r, from: c)
         case "MoveSession":
             // Re-file a session under a new parent — the nesting the sidebar derives from.
             // Sidebar organization only: the log, model, mode and history stay the session's
@@ -574,6 +578,91 @@ final class SessionBroker {
         default:
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
         }
+    }
+
+    // MARK: Delegated approvals (docs/design/delegation.md)
+
+    /// A delegated approval waiting on its chief: who asked, on which request.
+    private struct Delegated {
+        weak var asker: Conversation?
+        var request: String
+        var chief: String
+    }
+    /// By approval id. An entry outlives the asker's wait only until the chief answers;
+    /// a late answer finds the asker's request already closed and changes nothing.
+    private var delegated: [String: Delegated] = [:]
+
+    /// An engine's still-flagged call in a class its `[delegation]` grants the chief: send
+    /// the chief the card and hold the asker's request until the chief answers with
+    /// `ResolveDelegated`. Any reason it can't go (no such chief, it's the asker, it's
+    /// waiting on the user itself, unreachable) is an error, and the asker cards the user.
+    private func delegate(_ r: SessionRequest, from c: Conversation) {
+        let sender = c.sessionID ?? ""
+        let input = r.input
+        let approval = input["approval_id"]?.string ?? r.id
+        var names = (input["chiefs"]?.array ?? []).compactMap(\.string)
+        if names.isEmpty, let one = input["chief"]?.string { names = [one] }
+        var why = "no chief is configured"
+        var found: Entry?
+        for n in names {
+            switch resolve(n) {
+            case .success(let e): found = e
+            case .failure(let e): why = e.message
+            }
+            if found != nil { break }
+        }
+        guard let chief = found else { return c.replySession(r.id, error: why) }
+        guard chief.id != sender else {
+            return c.replySession(r.id, error: "The chief's own calls go to the user.")
+        }
+        guard chief.state != "waiting" else {
+            return c.replySession(r.id, error: "\(chief.name) is waiting on the user itself.")
+        }
+        let text = Self.delegation(input, approval: approval, session: sender, name: name(of: c))
+        guard reach(chief.id, "system", "system", text) else {
+            return c.replySession(r.id, error: "Couldn't reach \(chief.name): its folder may be gone.")
+        }
+        delegated[approval] = Delegated(asker: c, request: r.id, chief: chief.id)
+    }
+
+    /// The chief's answer: only the session it was sent to may give it, once.
+    private func resolveDelegated(_ r: SessionRequest, from c: Conversation) {
+        let sender = c.sessionID ?? ""
+        let approval = r.input["approval_id"]?.string ?? ""
+        guard let d = delegated[approval] else {
+            return c.replySession(r.id, error: "No delegated approval \(approval) is waiting: it may have timed out and gone to the user.")
+        }
+        guard d.chief == sender else {
+            return c.replySession(r.id, error: "Only the session it was delegated to can answer it.")
+        }
+        let decision = r.input["decision"]?.string?.lowercased() ?? ""
+        guard decision == "approve" || decision == "deny" else {
+            return c.replySession(r.id, error: "`decision` must be approve or deny.")
+        }
+        delegated[approval] = nil
+        guard let asker = d.asker else {
+            return c.replySession(r.id, error: "The asking session is gone.")
+        }
+        var out: [String: JSONValue] = ["decision": .string(decision == "approve" ? "allow" : "deny")]
+        if let n = r.input["note"]?.string, !n.isEmpty { out["note"] = .string(n) }
+        asker.replySession(d.request, result: .object(out))
+        c.replySession(r.id, result: .string("Recorded: \(decision) for \(approval)."))
+    }
+
+    /// The message a chief gets for a delegated approval.
+    static func delegation(_ input: JSONValue, approval: String, session: String, name: String) -> String {
+        var lines = [
+            "Delegated approval from session \"\(name)\" (\(session)).",
+            "approval_id: \(approval)",
+            "class: \(input["class"]?.string ?? "?")",
+            "tool: \(input["tool"]?.string ?? "?")",
+            "command: \(input["arg"]?.string ?? input["command"]?.string ?? "")",
+        ]
+        if let r = input["reason"]?.string, !r.isEmpty { lines.append("reason: \(r)") }
+        if let a = input["agent_says"]?.string, !a.isEmpty { lines.append("agent says: \(a)") }
+        let secs = input["timeout_secs"]?.int ?? 300
+        lines.append("The user granted you this class. Decide it with ResolveDelegated (approval_id, decision approve or deny, a short note). If you don't answer in \(secs / 60 > 0 ? "\(secs / 60) min" : "\(secs)s"), it goes to the user.")
+        return lines.joined(separator: "\n")
     }
 
     /// One pending approval, as ListApprovals reports it.
