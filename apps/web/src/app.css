@@ -259,7 +259,10 @@ button.tool:hover { color: var(--fg); }
 
 /* Sidebar sessions: quiet one-line rows, a glyph only when it means something. */
 .slist { flex: 1; display: flex; flex-direction: column; }
-.ssearch { display: flex; align-items: center; gap: 8px; margin: 8px 2px 2px; padding: 0 9px; height: 30px; border-radius: 8px; background: var(--hover); border: 0; color: var(--faint); }
+.sbar { position: relative; display: flex; align-items: center; gap: 4px; margin: 8px 2px 2px; }
+.ssearch { flex: 1; display: flex; align-items: center; gap: 8px; padding: 0 9px; height: 30px; border-radius: 8px; background: var(--hover); border: 0; color: var(--faint); font: inherit; font-size: 12.5px; cursor: pointer; text-align: left; }
+.ssearch span { flex: 1; }
+.ssearch:hover { color: var(--muted); }
 .ssearch:focus-within { color: var(--muted); }
 .ssearch input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font: inherit; font-size: 12.5px; }
 .ssearch input::placeholder { color: var(--faint); }
@@ -355,3 +358,10 @@ button.tool:hover { color: var(--fg); }
 .ctx-bar { height: 4px; border-radius: 2px; background: var(--well); overflow: hidden; }
 .ctx-bar span { display: block; height: 100%; border-radius: 2px; }
 .cz-row > .cz-ic { width: 32px; height: 32px; border-radius: 50%; }
+.sview { position: absolute; right: 0; top: calc(100% + 6px); z-index: 8; width: 200px; padding: 6px; box-shadow: var(--shadow-float); }
+.sview button { display: flex; align-items: center; width: 100%; border: 0; background: transparent; padding: 6px 10px; border-radius: var(--radius-plate); font: 13px/18px var(--font-sans); color: var(--fg); cursor: pointer; text-align: left; }
+.sview button:hover { background: var(--hover); }
+.sview .ok { color: var(--frog); }
+.sview-sep { height: 1px; background: var(--line); margin: 4px 6px; }
+.slist.compact .srow { padding-top: 3px; padding-bottom: 3px; font-size: 12.5px; }
+.slist.compact .sdetail, .slist.compact .srepo { display: none; }

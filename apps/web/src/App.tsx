@@ -306,7 +306,7 @@ export default function App() {
         <div className="brand"><Mark /><b>Frog</b></div>
         <Nav />
         <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
-          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} />
+          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)} />
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
           {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} /> : <Mark size={28} />}
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>

@@ -41,6 +41,13 @@ function age(ms: number, now: number) {
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+type View = { group: 'date' | 'repo' | 'none'; sort: 'activity' | 'name'; compact: boolean }
+const VIEW = 'frog.sidebar'
+function loadView(): View {
+  const d: View = { group: 'date', sort: 'activity', compact: false }
+  try { return { ...d, ...JSON.parse(localStorage.getItem(VIEW) ?? '{}') } } catch { return d }
+}
+
 // When you last opened each session, so a finish you haven't seen gets a dot.
 const SEEN = 'frog.seen'
 function loadSeen(): Record<string, number> { try { return JSON.parse(localStorage.getItem(SEEN) ?? '{}') } catch { return {} } }
@@ -51,15 +58,20 @@ export function SessionList(p: {
   title: (s: SessionSummary) => string
   current: string | null
   onOpen: (id: string) => void
+  /** The search button opens the ⌘K palette, which searches sessions and their transcripts. */
+  onSearch: () => void
   onClear: (ids: string[]) => void
   error: string | null
 }) {
-  const [q, setQ] = useState('')
+  // View options, as on the Mac (sidebarGroup, sidebarSort, compactSidebar), kept per browser.
+  const [view, setViewOpts] = useState<View>(loadView)
+  const [menu, setMenu] = useState(false)
+  const setView = (v: Partial<View>) => { const next = { ...view, ...v }; setViewOpts(next); try { localStorage.setItem(VIEW, JSON.stringify(next)) } catch { /* private mode */ } }
   const [failedOpen, setFailedOpen] = useState(false)
   const [seen, setSeen] = useState(loadSeen)
   const now = Date.now()
   const list = useRef<HTMLDivElement>(null)
-  const search = useRef<HTMLInputElement>(null)
+  const opts = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!p.current) return
@@ -70,33 +82,38 @@ export function SessionList(p: {
     try { localStorage.setItem(SEEN, JSON.stringify(next)) } catch { /* private mode */ }
   }, [p.current, p.sessions, seen])
 
-  // ⌘K is the palette; "/" jumps to the sidebar's own filter.
+  // "/" opens the palette too, like ⌘K.
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement).closest('input, textarea, [contenteditable]')
-      if (e.key === '/' && !typing) { e.preventDefault(); search.current?.focus() }
+      if (e.key === '/' && !typing) { e.preventDefault(); p.onSearch() }
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
-  }, [])
+  }, [p.onSearch]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!menu) return
+    const down = (e: MouseEvent) => { if (!opts.current?.contains(e.target as Node)) setMenu(false) }
+    addEventListener('mousedown', down)
+    return () => removeEventListener('mousedown', down)
+  }, [menu])
 
   const { groups, failed } = useMemo(() => {
-    const needle = q.trim().toLowerCase()
-    const match = (s: SessionSummary) => !needle || `${p.title(s)} ${s.repo} ${s.branch} ${s.pr ?? ''}`.toLowerCase().includes(needle)
     // A sandbox that never got a turn in, and isn't open, is clutter: it folds.
     const neverStarted = (s: SessionSummary) => s.state === 'error' && s.id !== p.current && !p.thread(s.id).turns.length
-    const shown = p.sessions.filter(match)
-    const failed = needle ? [] : shown.filter(neverStarted)
-    const rest = needle ? shown : shown.filter((s) => !neverStarted(s))
+    const failed = p.sessions.filter(neverStarted)
+    const rest = p.sessions.filter((s) => !neverStarted(s))
+      .sort(view.sort === 'name' ? (a, b) => p.title(a).localeCompare(p.title(b)) : (a, b) => b.updated - a.updated)
+    const key = (s: SessionSummary) => view.group === 'date' ? day(s.updated, now) : view.group === 'repo' ? (s.repo || 'No repo') : ''
     const groups: { name: string; rows: SessionSummary[] }[] = []
-    for (const s of [...rest].sort((a, b) => b.updated - a.updated)) {
-      const name = day(s.updated, now)
-      const g = groups[groups.length - 1]
-      if (g?.name === name) g.rows.push(s)
+    for (const s of rest) {
+      const name = key(s)
+      const g = groups.find((x) => x.name === name)
+      if (g) g.rows.push(s)
       else groups.push({ name, rows: [s] })
     }
     return { groups, failed }
-  }, [q, p.sessions, p.current, p.thread, p.title, now])
+  }, [view, p.sessions, p.current, p.thread, p.title, now])
 
   // ↑/↓ move between rows, ⏎ opens (buttons already do), Esc leaves the filter.
   const move = (e: React.KeyboardEvent) => {
@@ -140,19 +157,42 @@ export function SessionList(p: {
   }
 
   return (
-    <div className="slist" ref={list} onKeyDown={move}>
-      <label className="ssearch">
-        <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
-        <input ref={search} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search sessions" aria-label="Search sessions"
-          onKeyDown={(e) => { if (e.key === 'Escape') { setQ(''); search.current?.blur() } }} />
-        {!q && <kbd>/</kbd>}
-      </label>
+    <div className={`slist${view.compact ? ' compact' : ''}`} ref={list} onKeyDown={move}>
+      <div className="sbar" ref={opts}>
+        <button type="button" className="ssearch" onClick={p.onSearch} aria-label="Search sessions (⌘K)">
+          <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+          <span>Search</span>
+          <kbd>⌘K</kbd>
+        </button>
+        <button type="button" className="ic-btn" aria-label="View options" title="View options" aria-expanded={menu} onClick={() => setMenu(!menu)}>
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>
+        </button>
+        {menu && (
+          <div className="f-card sview" role="menu" aria-label="View options">
+            <div className="cz-menu-h">Group by</div>
+            {(['date', 'repo', 'none'] as const).map((g) => (
+              <button key={g} type="button" role="menuitemradio" aria-checked={view.group === g} onClick={() => setView({ group: g })}>
+                <span style={{ flex: 1 }}>{{ date: 'Date', repo: 'Repo', none: 'None' }[g]}</span>{view.group === g && <span className="ok">✓</span>}
+              </button>
+            ))}
+            <div className="cz-menu-h">Sort by</div>
+            {(['activity', 'name'] as const).map((o) => (
+              <button key={o} type="button" role="menuitemradio" aria-checked={view.sort === o} onClick={() => setView({ sort: o })}>
+                <span style={{ flex: 1 }}>{{ activity: 'Last activity', name: 'Name' }[o]}</span>{view.sort === o && <span className="ok">✓</span>}
+              </button>
+            ))}
+            <div className="sview-sep" />
+            <button type="button" role="menuitemcheckbox" aria-checked={view.compact} onClick={() => setView({ compact: !view.compact })}>
+              <span style={{ flex: 1 }}>Compact</span>{view.compact && <span className="ok">✓</span>}
+            </button>
+          </div>
+        )}
+      </div>
       {p.error && <div className="det wrap" style={{ padding: '10px 8px', color: 'var(--warn)' }}>Couldn't load sessions: {p.error}</div>}
       {!p.error && p.sessions.length === 0 && <div className="det wrap" style={{ padding: '14px 8px' }}>No sessions yet. Start one and it shows up here, and in Frog on your other devices.</div>}
-      {q && !groups.length && <div className="det" style={{ padding: '14px 8px' }}>No sessions match “{q}”.</div>}
       {groups.map((g) => (
         <div key={g.name}>
-          <div className="h"><span>{g.name}</span></div>
+          {g.name && <div className="h"><span>{g.name}</span></div>}
           {g.rows.map(row)}
         </div>
       ))}
