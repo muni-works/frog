@@ -299,6 +299,25 @@ async fn handshake_then_a_turn() {
     );
 }
 
+/// A restored container is a new process whose engine counts from 1, while the gateway
+/// resumes after the seqs it already has: everything sent from then on is numbered above them.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_resuming_past_this_process_gets_seqs_above_it() {
+    let f = frog(vec![text_reply("again")], &[]).await;
+    let mut ws = connect(&f.addr).await;
+    let w = hello(&mut ws, 500).await;
+    assert_eq!(w["last_seq"], 500, "{w}");
+    send(&mut ws, json!({"op": "submit", "text": "hi"})).await;
+    let seen = until(&mut ws, "turn_ended").await;
+    assert!(
+        seen.iter().any(|e| e["event"] == "turn_started"),
+        "{seen:?}"
+    );
+    let seqs: Vec<u64> = seen.iter().filter_map(|e| e["seq"].as_u64()).collect();
+    assert!(seqs.iter().all(|&s| s > 500), "{seqs:?}");
+    assert!(seqs.windows(2).all(|p| p[0] < p[1]), "{seqs:?}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn refuses_other_protocols_with_4001() {
     let f = frog(vec![], &[]).await;
