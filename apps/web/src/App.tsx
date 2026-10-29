@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAlerts } from './alerts'
-import { finishSignIn, firstName, me, savedKey, signIn, signOut, topUp, API, AuthError, type Account } from './auth'
+import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topUp, API, AuthError, type Account } from './auth'
 import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
@@ -498,7 +498,7 @@ export default function App() {
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSignOut={() => { setSettings(false); signOut(); clearThreads(); setKey(null); setAccount(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
+      {settings && <Settings account={account} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onSignOut={() => { setSettings(false); signOut(); clearThreads(); setKey(null); setAccount(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   )

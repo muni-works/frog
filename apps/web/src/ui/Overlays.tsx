@@ -1,4 +1,4 @@
-import { TOP_UPS } from '../auth'
+import { PLANS, TOP_UPS } from '../auth'
 import { useEffect, useMemo, useState } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
 import { API, firstName, type Account } from '../auth'
@@ -60,6 +60,43 @@ export function dollars(d: number) {
   return d > 0 && d < 0.01 ? '<$0.01' : `$${d.toFixed(2)}`
 }
 
+/** The plan and its allowance, or (without one) the plans to pick from. */
+function Subscription({ account, onSubscribe }: { account: Account | null; onSubscribe?: (plan: string) => Promise<void> }) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const sub = account?.subscription
+  if (sub) return (
+    <div className="bill-card">
+      <div className="bill-h"><b>{sub.name}</b>{sub.over ? <span className="bill-over">Using credit</span> : <span className="det">Included allowance</span>}</div>
+      {sub.windows.map((w) => {
+        const f = w.limit ? Math.min(1, w.used / w.limit) : 0
+        return (
+          <div key={w.kind} className="allow">
+            <div className="allow-h"><span>{w.kind === '5h' ? 'This 5 hours' : 'This week'}</span><span className="det">{Math.round(f * 100)}% · resets {new Date(w.resets_at).toLocaleString(undefined, w.kind === '5h' ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short' })}</span></div>
+            <div className="ctx-bar"><span style={{ width: `${f * 100}%`, background: f >= 1 ? 'var(--warn)' : f > 0.8 ? 'var(--notice)' : 'var(--frog)' }} /></div>
+          </div>
+        )
+      })}
+      <a className="det" href={`${API}/billing`} target="_blank" rel="noreferrer">Change or cancel your plan</a>
+    </div>
+  )
+  return (
+    <div className="bill-card">
+      <div className="bill-h"><b>Usage pricing</b><span className="det">No subscription</span></div>
+      <div className="det wrap">Subscribe for an included allowance every 5 hours and every week. Past it, you keep going on credit at usage prices.</div>
+      {onSubscribe && (
+        <div className="plans">
+          {PLANS.map((p) => (
+            <button key={p.id} type="button" className="plan-pick" disabled={!!busy}
+              onClick={() => { setBusy(p.id); onSubscribe(p.id).catch(() => setBusy(null)) }}>
+              <b>{p.name}</b><span className="plan-price">${p.price}<span className="det">/mo</span></span><span className="det">{busy === p.id ? 'Opening Stripe…' : p.blurb}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Add credit: pick an amount, then Stripe Checkout. */
 function TopUp({ onTopUp }: { onTopUp: (dollars: number) => Promise<void> }) {
   const [amount, setAmount] = useState(TOP_UPS[1])
@@ -83,7 +120,7 @@ function TopUp({ onTopUp }: { onTopUp: (dollars: number) => Promise<void> }) {
 
 const tabs = ['Account', 'Billing'] as const
 
-export function Settings({ account, models = [], onSignOut, onClose, onTopUp }: { account: Account | null; models?: Model[]; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void> }) {
+export function Settings({ account, models = [], onSignOut, onClose, onTopUp, onSubscribe }: { account: Account | null; models?: Model[]; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void>; onSubscribe?: (plan: string) => Promise<void> }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>('Account')
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -112,11 +149,14 @@ export function Settings({ account, models = [], onSignOut, onClose, onTopUp }: 
           </>)}
           {tab === 'Billing' && (<>
             <h2>Billing</h2>
-            <div className="set-row">
-              <div style={{ flex: 1 }}><b style={{ textTransform: 'capitalize' }}>{account?.plan ?? '…'}</b><div className="det">{creditLine(account)} left{account?.resets_at ? ` · resets ${new Date(account.resets_at).toLocaleDateString()}` : ''}</div></div>
+            <Subscription account={account} onSubscribe={onSubscribe} />
+            <div className="bill-card">
+              <div className="bill-h"><b>Usage credit</b><b className="num">{creditLine(account)}</b></div>
+              <div className="det wrap">{account?.subscription
+                ? account.subscription.over ? 'Your plan’s allowance is used up, so turns are paying from credit at the prices below until it resets.' : 'Used only past your plan’s allowance, at the prices below.'
+                : 'Each turn pays from credit at the model’s prices below.'}</div>
+              {onTopUp && <TopUp onTopUp={onTopUp} />}
             </div>
-            {onTopUp && <TopUp onTopUp={onTopUp} />}
-            <p className="det wrap">Frog Cloud is pay per token: each turn costs what its model calls used, at the model's prices below. Frog for Mac is free with local models.</p>
             {models.length > 0 && (
               <div className="set-prices">
                 <div className="set-price-h"><span>Model</span><span>Input</span><span>Cached</span><span>Output</span></div>

@@ -463,7 +463,18 @@ body.resizing { cursor: col-resize; user-select: none; }
 .ctx-mark.failed { color: var(--warn); }
 .ctx-compact { justify-content: center; margin-top: 2px; }
 /* Add credit. */
-.topup { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: var(--card); margin: 10px 0; }
+.topup { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
 .topup-amts { display: flex; gap: 6px; }
 .topup-amts button { flex: 1; border: 0; border-radius: 8px; padding: 8px 0; background: var(--hover); color: var(--fg); font: 600 13px var(--font-sans); cursor: pointer; }
 .topup-amts button.on { background: var(--frog-pad); color: var(--frog); }
+/* Billing: the plan and its allowance, then usage credit. */
+.bill-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: var(--card); margin: 10px 0; }
+.bill-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.bill-over { font-size: 11.5px; color: var(--notice); background: var(--notice-bg); border-radius: 6px; padding: 1px 7px; }
+.allow { display: flex; flex-direction: column; gap: 5px; }
+.allow-h { display: flex; justify-content: space-between; font-size: 12.5px; }
+.plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.plan-pick { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; text-align: left; border: 0; border-radius: 10px; padding: 12px; background: var(--hover); color: var(--fg); font: inherit; cursor: pointer; }
+.plan-pick:hover:not(:disabled) { background: var(--frog-pad); }
+.plan-price { font-size: 18px; font-weight: 600; }
+@media (max-width: 760px) { .plans { grid-template-columns: 1fr; } }
