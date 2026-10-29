@@ -26,7 +26,17 @@ final class RemotePush {
         URL(string: ProcessInfo.processInfo.environment["FROG_PUSH_RELAY"] ?? "https://frog.toys/api/push")!
     }
 
+    /// What the relay wants to hear from a Mac (`PUSH_RELAY_SECRET` there): Settings › General,
+    /// or FROG_PUSH_SECRET. Empty, pushes to real phones stay home; the Simulator path doesn't
+    /// need it. One shared secret is the beta's answer; a per-Mac secret minted at pairing is the
+    /// plan (docs/ios/surfaces.md).
+    static let secretKey = "pushRelaySecret"
+    static var secret: String {
+        ProcessInfo.processInfo.environment["FROG_PUSH_SECRET"] ?? UserDefaults.standard.string(forKey: secretKey) ?? ""
+    }
+
     private(set) var devices: [Device]
+    private var warnedNoSecret = false
 
     private init() {
         let data = UserDefaults.standard.data(forKey: "remoteDevices") ?? Data()
@@ -265,9 +275,16 @@ final class RemotePush {
                 try? FileManager.default.removeItem(at: file)
             }
         case "apns":
+            let secret = Self.secret
+            guard !secret.isEmpty else {
+                if !warnedNoSecret { EngineProcess.log("remote: no push relay secret; set it in Settings › General") }
+                warnedNoSecret = true
+                return
+            }
             var req = URLRequest(url: Self.relay)
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
             var body: [String: Any] = [
                 "token": activityToken ?? d.address,
                 "env": d.env ?? "production",
@@ -278,9 +295,14 @@ final class RemotePush {
             if let collapse { body["collapse_id"] = collapse }
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
             let address = d.address
-            URLSession.shared.dataTask(with: req) { _, response, _ in
+            URLSession.shared.dataTask(with: req) { body, response, error in
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                if status != 200 {
+                    let why = body.flatMap { String(data: $0, encoding: .utf8) } ?? error?.localizedDescription ?? ""
+                    EngineProcess.log("remote: push relay said \(status) \(why.prefix(200))")
+                }
                 // 410: the app was deleted or pushes turned off; stop sending to it.
-                guard (response as? HTTPURLResponse)?.statusCode == 410, activityToken == nil else { return }
+                guard status == 410, activityToken == nil else { return }
                 Task { @MainActor in RemotePush.shared.forget(address) }
             }.resume()
         default:

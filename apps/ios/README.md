@@ -66,7 +66,8 @@ a paid team's APNs key and isn't deployed yet.
 
 ## Not done yet
 
-- A paid team: a real device, APNs (and deploying the relay, with rate limits), TestFlight.
+- TestFlight. (A real device and APNs work: the relay runs at frog.toys/api/push, with a caller
+  secret and rate limits; the Mac's Settings › General holds the secret.)
 - The complication is built and fed, but hasn't been placed on a watch face in the Simulator.
 - Still Mac-only: races, the morning brief, the terminal and preview panes, the timeline rail,
   moving a conversation to another folder, `@file` and `/skill` in the composer, and Settings
