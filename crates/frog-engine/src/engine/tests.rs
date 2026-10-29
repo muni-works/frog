@@ -9409,7 +9409,11 @@ async fn second_pass_allows_deleting_the_sessions_own_scratch() {
 /// user even when the second pass (and a chief grant) would have allowed it.
 #[tokio::test]
 async fn rm_rf_outside_scratch_is_never_delegated() {
-    let dir = scratch_path("theirs");
+    // Outside the shared temp dir: on Linux the test engine's project root *is*
+    // /tmp, so a tree there would count as in-project.
+    let dir = crate::approval::normalize(
+        &std::path::Path::new("/var/tmp").join(format!("deleg-theirs-{}", new_id())),
+    );
     std::fs::create_dir_all(&dir).unwrap();
     crate::auto::script_judge(
         &dir.display().to_string(),
