@@ -64,7 +64,6 @@ struct ActivityLabel: View {
     /// the empty page and decorative spots); `playful` now only flavors the words.
     private func icon(@ViewBuilder plain: () -> some View) -> some View {
         plain().frame(width: 14)
->>>>>>> ff633a9 (premium shell 11: mascot out of the live flow — plain symbols in the pill and typing bubble, frog keeps the empty page)
     }
 
     /// A permission prompt or a server's question, in a few words.
