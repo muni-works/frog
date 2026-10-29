@@ -19,9 +19,6 @@ const Icon = ({ d }: { d: string }) => (
 const icons = {
   new: 'M12 5v14M5 12h14',
   search: 'M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M20 20l-4-4',
-  repos: 'M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2zM4 19V5',
-  routines: 'M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16M12 8v4l3 2',
-  skills: 'M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z',
 }
 
 function Mark({ size = 22 }: { size?: number }) {
@@ -121,15 +118,10 @@ export default function App() {
     { id: 'c-theme', label: 'Toggle dark mode', run: () => { const r = document.documentElement; r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark' } },
   ]
 
-  const Nav = ({ full }: { full: boolean }) => (
+  const Nav = () => (
     <nav aria-label="Main" className="nav">
       <button type="button" className="row big" onClick={() => (signedIn ? setView({ kind: 'new' }) : setGate(null))}><Icon d={icons.new} /><span style={{ flex: 1 }}>New session</span><span className="kb">⌘N</span></button>
       <button type="button" className="row big" onClick={() => setPalette(true)}><Icon d={icons.search} /><span style={{ flex: 1 }}>Search</span><span className="kb">⌘K</span></button>
-      {full && <>
-        <button type="button" className={`row big ${view.kind === 'pickRepo' ? 'on' : ''}`} onClick={() => setView({ kind: 'pickRepo' })}><Icon d={icons.repos} /><span style={{ flex: 1 }}>Repos</span></button>
-        <button type="button" className="row big" onClick={() => say('Routines are part of Pro')}><Icon d={icons.routines} /><span style={{ flex: 1 }}>Routines</span></button>
-        <button type="button" className="row big" onClick={() => say('Skills: none installed yet')}><Icon d={icons.skills} /><span style={{ flex: 1 }}>Skills</span></button>
-      </>}
     </nav>
   )
 
@@ -157,7 +149,7 @@ export default function App() {
     <div className="win">
       <aside className="side f-glass">
         <div className="brand"><Mark /><b>Frog</b></div>
-        <Nav full={false} />
+        <Nav />
         <div className="h"><span>Try one</span></div>
         {starters.map((t) => (
           <button key={t.title} type="button" className="row" onClick={() => setGate(t.title)}>
@@ -210,7 +202,7 @@ export default function App() {
     <div className="win">
       <aside className="side f-glass">
         <div className="brand"><Mark /><b>Frog</b></div>
-        <Nav full />
+        <Nav />
         {asks.length > 0 && <>
           <div className="h"><span>Needs you</span><span style={{ color: 'var(--notice)' }}>{asks.length}</span></div>
           {asks.map((s) => {
