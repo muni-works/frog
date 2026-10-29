@@ -1344,6 +1344,8 @@ final class SessionBrokerTests: XCTestCase {
         b.handle(delegationRequest("ap3", chief: chief.id), from: chiefConv)
         XCTAssertEqual(link.sent.last?["error"] as? String, "The chief's own calls go to the user.")
         XCTAssertTrue(delivered.isEmpty, "nothing was sent")
+    }
+
     /// Switching away from any session (not only agents') keeps a turn in flight running; an
     /// engine still starting up with nothing asked of it is let go. A message sent before the
     /// engine named its session is held until it does, then it's that session's engine.
