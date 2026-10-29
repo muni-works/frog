@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Frog</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main id="signin" class="signin" hidden>
+      <form id="signin-form" class="glass card">
+        <h1>Frog Cloud</h1>
+        <p class="muted">Paste your Frog Cloud key to continue.</p>
+        <input id="token" type="password" autocomplete="off" placeholder="Key" />
+        <button class="btn primary" type="submit">Continue</button>
+      </form>
+    </main>
+
+    <div id="shell" class="shell" hidden>
+      <aside class="sidebar glass">
+        <form id="connect-form" class="connect">
+          <input id="repo" placeholder="owner/repo" autocomplete="off" />
+          <button class="btn primary" type="submit">Connect</button>
+        </form>
+        <nav id="sessions"></nav>
+      </aside>
+      <section class="main">
+        <header id="title" class="title"></header>
+        <div id="banner" class="banner" hidden></div>
+        <div id="transcript" class="transcript"></div>
+        <p id="placeholder" class="placeholder muted">Pick a session, or connect a repo to start one.</p>
+        <form id="composer" class="composer glass" hidden>
+          <textarea id="text" rows="1" placeholder="Ask Frog"></textarea>
+          <button class="btn primary" type="submit" aria-label="Send">Send</button>
+        </form>
+      </section>
+    </div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

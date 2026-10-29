@@ -25,3 +25,20 @@ jobs:
       # No -D warnings yet: frog-engine has outstanding clippy warnings.
       - run: cargo clippy -p frog -p frog-engine
       - run: cargo test -p frog-engine -p frog
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
