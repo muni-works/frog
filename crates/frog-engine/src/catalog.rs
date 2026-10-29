@@ -107,6 +107,8 @@ pub fn cached(spec: &str) -> Option<Model> {
 /// frog cloud while you're logged out. (id, name, context, inputs, vision)
 const STATIC_CLOUD: &[(&str, &str, u64, &[&str], bool)] = &[
     ("qwen3-coder-next", "Qwen3 Coder Next", 131_072, &["text"], false),
+    // DeepSeek-V4.1-Flash, served by tang (see tang's docs/deepseek-v41-plan.md)
+    ("bull", "Bull (DeepSeek V4.1 Flash)", 131_072, &["text"], false),
     ("qwen3-8b", "Qwen3 8B", 16_384, &["text"], false),
     ("qwen3-vl-8b", "Qwen3 VL 8B", 16_384, &["text", "image"], true),
 ];
