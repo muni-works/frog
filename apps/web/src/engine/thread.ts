@@ -110,8 +110,11 @@ function apply(t: Thread, ev: Event, created: number): Thread {
         ? { ...e, done: true, outcome: it.outcome, display: it.display, diff: it.diff, output: it.output }
         : { ...e, done: true, text: it.text })
       if (it.type === 'tool_call' && it.diff && it.outcome === 'ok') {
+        // A file edited several times keeps every edit's hunks and the summed counts.
         const d = it.diff
-        return { ...next, changes: [...next.changes.filter((c) => c.path !== d.path), d] }
+        const was = next.changes.find((c) => c.path === d.path)
+        const merged = was ? { ...d, created: was.created || d.created, added: was.added + d.added, removed: was.removed + d.removed, hunks: [...was.hunks, ...d.hunks] } : d
+        return { ...next, changes: [...next.changes.filter((c) => c.path !== d.path), merged] }
       }
       return next
     }

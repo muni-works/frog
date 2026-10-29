@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { Op } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
+import { FileRow } from './Diff'
 import { TerminalPane } from './TerminalPane'
 
 export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thread; branch?: string; hasPr: boolean; onCommit: () => void; onPr: () => void; send: (op: Op) => void }) {
@@ -20,6 +21,9 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thr
     addEventListener('pointermove', move); addEventListener('pointerup', up)
   }
   const [pane, setPane] = useState<'changes' | 'terminal' | 'log'>(() => { try { return (localStorage.getItem('frog.inspectorTab') as 'changes' | 'terminal' | 'log') || 'changes' } catch { return 'changes' } })
+  // Which changed files are open to their hunks; the only one opens by itself.
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  useEffect(() => { if (thread.changes.length === 1) setOpen(new Set([thread.changes[0].path])) }, [thread.changes.length === 1 ? thread.changes[0].path : '']) // eslint-disable-line react-hooks/exhaustive-deps
   // The newest terminal pane that's still open, else the newest one.
   const terms = Object.values(thread.panes).filter((p) => p.kind === 'terminal')
   const term = [...terms].reverse().find((p) => !p.closed) ?? terms[terms.length - 1]
@@ -40,12 +44,18 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thr
       {pane === 'changes' && (
         <div className="insp-body">
           {thread.changes.length === 0 && <div className="insp-empty det wrap">Files Frog changes in this session show up here, ready to commit or open as a PR.</div>}
-          <div className="insp-files">
+          {thread.changes.length > 0 && (
+            <div className="files-head">
+              <b>{thread.changes.length} file{thread.changes.length === 1 ? '' : 's'}</b>
+              <span className="file-add">+{thread.changes.reduce((n, c) => n + c.added, 0)}</span>
+              <span className="file-del">−{thread.changes.reduce((n, c) => n + c.removed, 0)}</span>
+              <span style={{ flex: 1 }} />
+              <button type="button" className="f-btn f-btn--plain" onClick={() => setOpen(open.size ? new Set() : new Set(thread.changes.map((c) => c.path)))}>{open.size ? 'Collapse all' : 'Expand all'}</button>
+            </div>
+          )}
+          <div className="files">
             {thread.changes.map((c) => (
-              <div key={c.path} style={{ display: 'flex' }}>
-                <span style={{ flex: 1 }}>{c.path}</span>
-                <span style={{ color: 'var(--frog)' }}>+{c.added}</span>&nbsp;<span style={{ color: 'var(--warn)' }}>−{c.removed}</span>
-              </div>
+              <FileRow key={c.path} diff={c} open={open.has(c.path)} onToggle={() => setOpen((o) => { const n = new Set(o); if (n.has(c.path)) n.delete(c.path); else n.add(c.path); return n })} />
             ))}
           </div>
           <span style={{ flex: 1 }} />
