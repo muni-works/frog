@@ -78,6 +78,9 @@ export function SessionList(p: {
   // View options, as on the Mac (sidebarGroup, sidebarSort, compactSidebar), kept per browser.
   const [view, setViewOpts] = useState<View>(loadView)
   const [menu, setMenu] = useState(false)
+  // Rows drawn so far: the first screenful or two, more as the list scrolls near its end.
+  const [shown, setShown] = useState(60)
+  const more = useRef<HTMLDivElement>(null)
   const [ctx, setCtx] = useState<{ s: SessionSummary; x: number; y: number } | null>(null)
   useEffect(() => {
     if (!ctx) return
@@ -102,6 +105,15 @@ export function SessionList(p: {
     try { localStorage.setItem(SEEN, JSON.stringify(next)) } catch { /* private mode */ }
   }, [p.current, p.sessions, seen])
 
+  // Draw more rows when the end of what's drawn scrolls into view.
+  useEffect(() => {
+    const el = more.current
+    if (!el) return
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) setShown((n) => n + 60) }, { root: list.current, rootMargin: '400px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [shown, p.sessions.length])
+
   // "/" opens the palette too, like ⌘K.
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -118,7 +130,7 @@ export function SessionList(p: {
     return () => removeEventListener('mousedown', down)
   }, [menu])
 
-  const { groups, failed } = useMemo(() => {
+  const { groups, failed, total } = useMemo(() => {
     // A sandbox that never got a turn in, and isn't open, is clutter: it folds.
     const neverStarted = (s: SessionSummary) => s.state === 'error' && s.id !== p.current && !p.thread(s.id).turns.length
     // Show: the active list, or what's been archived (the open session stays either way).
@@ -129,14 +141,14 @@ export function SessionList(p: {
       .sort(view.sort === 'name' ? (a, b) => p.title(a).localeCompare(p.title(b)) : (a, b) => when(b) - when(a))
     const key = (s: SessionSummary) => view.group === 'date' ? day(when(s), now) : view.group === 'repo' ? (s.repo || 'No repo') : ''
     const groups: { name: string; rows: SessionSummary[] }[] = []
-    for (const s of rest) {
+    for (const s of rest.slice(0, shown)) {
       const name = key(s)
       const g = groups.find((x) => x.name === name)
       if (g) g.rows.push(s)
       else groups.push({ name, rows: [s] })
     }
-    return { groups, failed }
-  }, [view, p.sessions, p.current, p.thread, p.title, now])
+    return { groups, failed, total: rest.length }
+  }, [view, p.sessions, p.current, p.thread, p.title, now, shown])
 
   // ↑/↓ move between rows, ⏎ opens (buttons already do), Esc leaves the filter.
   const move = (e: React.KeyboardEvent) => {
@@ -224,6 +236,7 @@ export function SessionList(p: {
           {g.rows.map(row)}
         </div>
       ))}
+      {total > shown && <div ref={more} className="slist-more" aria-hidden="true" />}
       {ctx && (
         <div className="f-card sctx" role="menu" style={{ left: ctx.x, top: ctx.y }} onMouseDown={(e) => e.stopPropagation()}>
           <button type="button" role="menuitem" onClick={() => { setCtx(null); p.onOpen(ctx.s.id); p.onRename(ctx.s) }}>Rename…</button>

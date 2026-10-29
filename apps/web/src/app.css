@@ -498,3 +498,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 .ctx-link { border: 0; background: none; color: var(--fg); font: inherit; font-size: 12.5px; cursor: pointer; padding: 0; }
 .ctx-link:hover { color: var(--frog); }
 .ctx-sep { height: 1px; background: color-mix(in srgb, var(--fg) 8%, transparent); margin: 2px 0; }
+/* The sidebar's header (wordmark, New session, Search) and footer stay put; only the list
+ * scrolls, fading softly at its edges. */
+.side { overflow: hidden; }
+.slist { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 -10px; padding: 0 10px 8px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%); }
+.slist-more { height: 1px; }
