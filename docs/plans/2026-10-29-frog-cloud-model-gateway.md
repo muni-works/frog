@@ -216,30 +216,41 @@ User code now passes through frog's infrastructure and then an upstream.
    models.
 
 3. **Launch with three models** (Cam, 2026-10-29): `frog/dart` (Qwen3-Coder-Next), `frog/tree`
-   (GLM 5.3), `frog/bull` (DeepSeek V4.1 Flash). No Claude or GPT on Frog Cloud at launch;
+   (GLM-5.3-Flash, 321B / ~18B active), `frog/bull` (DeepSeek-V4.1-Flash, ~760B stored / ~13B
+   active). No Claude or GPT on Frog Cloud at launch;
    people who want them add their own key.
 
 ## Serving the launch models
 
 Own GPUs are margin only when they're busy. Price each model at least at its third-party list
-price, so overflow breaks even and every token tang serves is margin. Break-even output
-throughput for one rented B300 ($8.99/hr), counting output revenue only:
+price, so overflow breaks even and every token tang serves is margin.
 
-| model | output $/M | tokens/s to break even | tang today |
-|---|---|---|---|
-| dart | (ours) | n/a | in production on the router fleet |
-| tree | $4.40 | ~570 | single stream ~130 tok/s (MTP, B300), no batching; `frog/glm5-forward`, paused |
-| bull | $1.20 | ~2,100 | no port |
+Where tang is (2026-10-29):
+
+| model | tang engine | hardware | single stream | batching | state |
+|---|---|---|---|---|---|
+| dart | Flash (Coder-Next) | 1× H100 class, fits at Q4 | production | yes (router fleet) | serving |
+| tree | `flash/glm5`, merged to main | 1× B300, UD-Q4_K_XL (186 GB) | ~100 plain, 129.6 with MTP | no | GPU work paused (`NOTES.md`, 2026-10-29) |
+| bull | `flash/deepseek`, branch `frog/deepseek-v41` | 4× H200, expert parallel | 24–43 decode; prefill ~50–60 | no | serves correctly, M3–M6 speed work open (`docs/deepseek-v41-plan.md`); a 17k-token frog prompt prefills in ~5 min |
+
+Break-even aggregate output throughput, counting output revenue only:
+
+| model | output $/M (third-party list) | hardware cost | tokens/s to break even | gap |
+|---|---|---|---|---|
+| tree | ~$4.40 (confirm the Flash price) | 1× B300, $8.99/hr | ~570 | ~4.5× single stream: needs batching |
+| bull | $1.20 | 4× H200, ~$14/hr (estimate) | ~3,300 | ~80× single stream, plus prefill |
 
 So:
 
 - **dart**: tang only at launch; add a third-party overflow upstream once one serves the same
   weights.
-- **tree**: third-party at launch, tang takes over once GLM batching lands and clears the
-  break-even line. Overflow must serve the same weights and defaults as tang (tang runs
-  UD-Q4_K_XL, 4-bit), or the two are different frog models: same name, same behavior.
-- **bull**: third-party only for now. At $1.20/M the GPU math is hard; worth it only if tang's
-  batched throughput gets there.
+- **tree**: third-party at launch (Vercel lists `zai/glm-5.3-flash`; check Cloudflare), tang
+  takes over once GLM batching lands and clears ~570 tok/s on a B300. Overflow must match
+  tang's behavior closely enough to share a name: tang runs 4-bit UD-Q4_K_XL, the upstream
+  likely FP8. Run frog-bench on both before calling them one model.
+- **bull**: third-party only (Workers AI, $0.30 / $1.20). Prefill is the blocker before
+  decode: agent prompts are 17k+ tokens and turns re-prefill without prefix reuse. Revisit
+  after M5–M6 and batching; the expert-parallel work also speeds up tree.
 
 ## Open decisions
 
