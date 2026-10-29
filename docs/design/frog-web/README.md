@@ -25,7 +25,7 @@ The boards are the starting point. The shipped web app (`apps/web`, live at frog
 
 ### Look
 
-- **True black.** Dark (the default) is `#000`, like the iPhone app. Surfaces step up from it, never down: sidebar and inspector glass `#0a0a0a`, cards, bubbles and the composer `--card` `#121212`, code and fields `--well` `#1a1a1a`, hover a 7% white wash. Light mode keeps the tokens' values.
+- **True black.** Dark (the default) is `#000`, like the iPhone app. Surfaces step up from it, never down: sidebar and inspector glass `#0a0a0a`, cards, bubbles and the composer `--card` `#121212`, code and fields `--well` `#1a1a1a`, hover a 7% white wash. Light mirrors it: `#fff` page, sidebar and inspector `#fafafa`, cards `#f4f4f4`, wells `#ececec`.
 - **No borders.** Nothing is outlined: not the sidebar, title bar, inspector, composer, bubbles, cards, chips, menus, buttons, fields or code blocks. Surfaces separate by fill and, for floating menus, a deep soft shadow with no ring. What used to be outlined sits on a fill: chips and bordered buttons on `--hover`, fields and code on `--well`, cards on `--card`. Focus is a soft frog-green glow (`--frog-pad`). The only lines are the thin rails that nest content (quotes, tool output) and status glyphs drawn as strokes (spinners, rings).
 - **Type: IBM Plex.** Plex Sans for the interface and replies, Plex Mono for code, diffs, tool arguments and the terminal (Google Fonts, `display=swap`, system faces as fallback).
 - **Colour carries meaning, sparingly.** Frog green for live, added and primary; orange (`--notice`) for needs-you and nearing a limit; red (`--warn`) for failed, removed and over a limit; amber only for the pond's fireflies.
