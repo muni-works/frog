@@ -147,17 +147,17 @@ fn public(provider: &str) -> bool {
     matches!(provider, "openrouter" | "vercel")
 }
 
-/// Cloudflare Workers AI's suggested models, built in: the account id in the base URL means
-/// the key alone can't list them yet. (id, name)
-const STATIC_CF: &[(&str, &str)] = providers::CF_MODELS;
+/// Cloudflare AI Gateway's suggested models, built in: the account id in the base URL means
+/// the key alone can't list them yet. (id, name, context)
+const STATIC_CF: &[(&str, &str, u64)] = providers::CF_MODELS;
 
-fn static_cf_model(&(id, name): &(&str, &str)) -> Model {
+fn static_cf_model(&(id, name, context): &(&str, &str, u64)) -> Model {
     Model {
         spec: format!("cloudflare/{id}"),
         provider: "cloudflare".into(),
         id: id.into(),
         name: name.into(),
-        context: Some(1_048_576),
+        context: Some(context),
         tools: true,
         ..Default::default()
     }
