@@ -241,24 +241,6 @@ export default function App() {
     </nav>
   )
 
-  const MacCard = () => (
-    <div className="promo">
-      <svg viewBox="0 0 224 120" role="img" aria-label="Frog on a MacBook on a lily pad, with its tools orbiting" style={{ display: 'block', margin: '0 -12px', width: 'calc(100% + 24px)', height: 'auto', background: 'linear-gradient(180deg, var(--frog-pad), transparent 85%)' }}>
-        <ellipse cx="112" cy="104" rx="88" ry="13" fill="var(--frog)" opacity=".18" />
-        <ellipse cx="112" cy="58" rx="86" ry="26" fill="none" stroke="var(--fg)" strokeOpacity=".12" strokeDasharray="2 5" />
-        <circle cx="31" cy="52" r="4" fill="var(--place-local)" /><circle cx="186" cy="74" r="3.5" fill="var(--notice)" /><circle cx="166" cy="36" r="3" fill="var(--frog)" />
-        <rect x="66" y="40" width="92" height="56" rx="6" fill="var(--icon-ground)" /><rect x="70" y="44" width="84" height="48" rx="3" fill="#20251f" />
-        <image href="/frog-mark.svg" x="96" y="52" width="32" height="32" />
-        <path d="M54 96 h116 a4 4 0 0 1 -4 6 h-108 a4 4 0 0 1 -4 -6z" fill="var(--line-strong)" />
-        <text x="31" y="66" textAnchor="middle" fontSize="7" fill="var(--muted)" fontFamily="var(--font-mono)">model</text>
-        <text x="186" y="88" textAnchor="middle" fontSize="7" fill="var(--muted)" fontFamily="var(--font-mono)">repo</text>
-        <text x="166" y="28" textAnchor="middle" fontSize="7" fill="var(--muted)" fontFamily="var(--font-mono)">tools</text>
-      </svg>
-      <div style={{ fontWeight: 600, fontSize: 14 }}>Frog runs best on your Mac</div>
-      <div className="det wrap">Free and private, with local models and your real repos.</div>
-      <a href="/mac" className="f-btn f-btn--bordered" style={{ textDecoration: 'none', justifyContent: 'center', color: 'var(--fg)' }}>Download for Mac</a>
-    </div>
-  )
 
   const GitHub = () => (
     <svg aria-hidden="true" width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8" /></svg>
@@ -277,12 +259,17 @@ export default function App() {
             <span className="sym starter">{t.i}</span><div style={{ flex: 1, minWidth: 0 }}><div>{t.title}</div><div className="det">{t.detail}</div></div>
           </button>
         ))}
-        <div style={{ margin: '14px 2px 0' }}><MacCard /></div>
         <span style={{ flex: 1 }} />
         <div className="signup">
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><Mark size={30} /><div><b style={{ fontSize: 14 }}>Sign up to start</b><div className="det">$5 of Frog Cloud, no card</div></div></div>
-          <button type="button" className="f-btn f-btn--prominent" style={{ justifyContent: 'center' }} disabled={leaving} onClick={() => leave(gate)}><GitHub />{leaving ? 'Opening GitHub…' : 'Sign up with GitHub'}</button>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: 12 }}><a href="#" style={{ color: 'var(--muted)' }} onClick={(e) => { e.preventDefault(); leave(gate) }}>Sign in</a></div>
+          <div className="signup-glow" aria-hidden="true" />
+          <b className="signup-h">Start with $5 free</b>
+          <ul className="signup-perks">
+            <li>No card, no subscription</li>
+            <li>Works on your GitHub repos</li>
+            <li>Pay per token after that</li>
+          </ul>
+          <button type="button" className="f-btn f-btn--prominent signup-go" disabled={leaving} onClick={() => leave(gate)}><GitHub />{leaving ? 'Opening GitHub…' : 'Continue with GitHub'}</button>
+          <div className="det" style={{ textAlign: 'center' }}>New or returning, it's the same button.</div>
         </div>
       </aside>
       {gate ? (
