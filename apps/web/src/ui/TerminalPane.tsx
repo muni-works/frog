@@ -64,12 +64,33 @@ export function TerminalPane({ pane, onInput, onResize }: { pane: Pane; onInput:
       <span className="term-probe" aria-hidden="true">0123456789</span>
       {s ? s.lines.map((line, r) => (
         <div key={r} className="term-line">
-          {r === s.cursor[0] && !pane.closed
-            ? <>{line.slice(0, s.cursor[1]).padEnd(s.cursor[1])}<span className="cursor">{line[s.cursor[1]] ?? ' '}</span>{line.slice(s.cursor[1] + 1)}</>
-            : line || ' '}
+          {styled(r === s.cursor[0] && !pane.closed ? line.padEnd(s.cursor[1] + 1) : line, r === s.cursor[0] && !pane.closed ? s.cursor[1] : -1)}
         </div>
       )) : <div className="term-line term-wait">Starting a shell<span className="cursor"> </span></div>}
       {pane.closed && <div className="det" style={{ marginTop: 6 }}>Shell exited{pane.exit != null ? ` (${pane.exit})` : ''}.</div>}
     </div>
   )
+}
+
+// The screen is plain text (no colours from the engine), so the one thing worth styling is
+// picked out by shape: a prompt at the start of a line, "repo # " or "~/x $ ". Its folder is
+// green and its sigil faint; the rest is as printed. `cursor` is a column, or -1.
+const PROMPT = /^(\S{1,60}) ([#$]) /
+function styled(line: string, cursor: number) {
+  const m = line.match(PROMPT)
+  const parts: { text: string; cls?: string }[] = m
+    ? [{ text: m[1], cls: 't-path' }, { text: ' ' }, { text: m[2], cls: 't-sigil' }, { text: ' ' }, { text: line.slice(m[0].length) }]
+    : [{ text: line || ' ' }]
+  let col = 0
+  return parts.flatMap((p, i) => {
+    const start = col
+    col += p.text.length
+    if (cursor < start || cursor >= col) return [<span key={i} className={p.cls}>{p.text}</span>]
+    const at = cursor - start
+    return [
+      <span key={`${i}a`} className={p.cls}>{p.text.slice(0, at)}</span>,
+      <span key={`${i}c`} className="cursor">{p.text[at] ?? ' '}</span>,
+      <span key={`${i}b`} className={p.cls}>{p.text.slice(at + 1)}</span>,
+    ]
+  })
 }
