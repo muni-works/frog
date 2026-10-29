@@ -305,10 +305,16 @@ export default function App() {
         <main className="main home">
           <div className="phone-bar floating"><Burger /><b>Frog</b></div>
           {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
-          <Mark size={56} />
-          <h1>What should we work on?</h1>
-          <div style={{ width: '100%', maxWidth: 680 }}><Composer repo="Connect a repo" onSend={setGate} autoFocus /></div>
-          <div className="det">Sending asks you to sign up first.</div>
+          <div className="home-hero">
+            <Pond />
+            <Mark size={56} />
+            <h1>What should we work on?</h1>
+            <HowItWorks />
+          </div>
+          <div className="dock"><div>
+            <Composer repo="Connect a repo" onSend={setGate} autoFocus />
+            <div className="det" style={{ textAlign: 'center' }}>Sending asks you to sign up first. $5 of Frog Cloud free, no card.</div>
+          </div></div>
         </main>
       )}
       {palette && <Palette commands={commands.slice(3)} sessions={[]} onOpen={() => undefined} onClose={() => setPalette(false)} />}

@@ -28,6 +28,8 @@ export function Pond() {
     const still = matchMedia('(prefers-reduced-motion: reduce)').matches
     let w = 0, h = 0, dpr = 1, horizon = 0
     let green: [number, number, number] = [88, 204, 111]
+    const amber: [number, number, number] = [255, 176, 64]
+    const glow = (a: number) => `rgba(${amber[0]},${amber[1]},${amber[2]},${a})`
     let rings: Ring[] = [], pads: Pad[] = [], flies: Fly[] = []
     let raf = 0, last = performance.now(), clock = 0, nextDrop = 0.6
 
@@ -42,7 +44,7 @@ export function Pond() {
         const y = rand(horizon + (h - horizon) * 0.25, h * 0.98)
         return { x: rand(0, w), y, r: rand(18, 38), a: rand(0, Math.PI * 2), spin: rand(-0.02, 0.02), vx: rand(2, 6), phase: rand(0, 9), notch: rand(0.35, 0.6) }
       })
-      flies = Array.from({ length: Math.round(Math.min(18, Math.max(8, w / 70))) }, () => ({
+      flies = Array.from({ length: Math.round(Math.min(7, Math.max(3, w / 200))) }, () => ({
         x: rand(0, w), y: rand(h * 0.15, h * 0.85), vx: rand(-8, 8), vy: rand(-5, 5), phase: rand(0, 9), speed: rand(0.6, 1.4),
       }))
       rings = []
@@ -132,10 +134,10 @@ export function Pond() {
         const pulse = Math.max(0, Math.sin(clock * f.speed * 1.4 + f.phase)) ** 2
         const a = 0.08 + pulse * 0.5
         const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 10 + pulse * 8)
-        g.addColorStop(0, c(a)); g.addColorStop(0.25, c(a * 0.35)); g.addColorStop(1, c(0))
+        g.addColorStop(0, glow(a)); g.addColorStop(0.25, glow(a * 0.35)); g.addColorStop(1, glow(0))
         ctx.fillStyle = g
         ctx.beginPath(); ctx.arc(f.x, f.y, 10 + pulse * 8, 0, Math.PI * 2); ctx.fill()
-        ctx.fillStyle = c(Math.min(0.9, a * 1.6))
+        ctx.fillStyle = glow(Math.min(0.9, a * 1.6))
         ctx.beginPath(); ctx.arc(f.x, f.y, 1.1, 0, Math.PI * 2); ctx.fill()
       }
     }
