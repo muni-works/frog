@@ -370,7 +370,8 @@ export default function App() {
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}
-              outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)} />
+              outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)}
+              onEdit={(text) => setRestore({ text, images: [] })} />
             {/* A sandbox that couldn't start says so here, by the composer, not above the conversation. */}
             {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ?? "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
             {paused && (
