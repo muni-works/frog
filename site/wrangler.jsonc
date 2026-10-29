@@ -6,6 +6,8 @@
   "assets": {
     // site/build.sh fills dist: the web app at /, marketing at /mac.
     "directory": "./dist",
+    // The worker serves the app's page for /s/<id> (a conversation's URL) through this.
+    "binding": "ASSETS",
     // /energy -> /energy/, /index.html -> /, like vercel.json's cleanUrls.
     "html_handling": "auto-trailing-slash",
     // No SPA fallback: unmatched paths go to the worker, which 404s.
