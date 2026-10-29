@@ -81,7 +81,6 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   onEdit?: (text: string) => void
 }) {
   const lastTurn = thread.turns[thread.turns.length - 1]?.turn
-  const lastDone = [...thread.turns].reverse().find((u) => u.usage && (u.reason?.type === 'complete' || u.reason?.type === 'denied'))?.turn
   return (
     <>
       {thread.turns.map((turn) => (
@@ -93,7 +92,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
                 {m.text}
               </div>
             ))}
-            <div className="hover-row mine">
+            <div className={`hover-row mine${turn.entries.length ? '' : ' waiting'}`}>
               {onEdit && <IconButton label="Edit (back to the composer)" onClick={() => onEdit([turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n'))} icon="edit" />}
               <CopyButton text={[turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n')} />
               <Ticks n={2} />
@@ -127,7 +126,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
             return <ToolLine key={e.id} e={e} />
           })}
           {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
-            <TurnFooter usage={turn.usage} models={models} pinned={turn.turn === lastDone}
+            <TurnFooter usage={turn.usage} models={models} pinned={false}
               answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
               onRetry={turn.turn === lastTurn && !thread.running ? onRetry : undefined} />
           )}
@@ -155,7 +154,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
             {m.images.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
             {m.text}
           </div>
-          {m.state !== 'failed' && <div className="hover-row mine"><Ticks n={m.state === 'sent' ? 1 : 0} /></div>}
+          {m.state !== 'failed' && <div className="hover-row mine waiting"><Ticks n={m.state === 'sent' ? 1 : 0} /></div>}
           {m.state === 'failed' && <div className="me-fail">Not sent · <button type="button" onClick={() => onResend?.(m.id)}>Try again</button></div>}
         </div>
       ))}

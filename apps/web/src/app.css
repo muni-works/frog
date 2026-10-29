@@ -329,3 +329,8 @@ button.tool:hover { color: var(--fg); }
 .hover-row .icon-plate, .hover-acts { opacity: 0; transition: opacity .12s; }
 .ask-block:hover .hover-row .icon-plate, .hover-row .icon-plate:focus-visible, .reply-block:hover .hover-acts, .hover-acts:focus-within { opacity: 1; }
 .hover-acts { display: inline-flex; gap: 2px; margin-left: -6px; }
+/* Rows under messages stay hidden until hovered; only the ticks show, until the reply starts. */
+.hover-row { opacity: 0; transition: opacity .12s; }
+.ask-block:hover .hover-row, .hover-row:focus-within, .hover-row.waiting { opacity: 1; }
+.hover-row.waiting .icon-plate { opacity: 0; }
+.ask-block:hover .hover-row.waiting .icon-plate { opacity: 1; }
