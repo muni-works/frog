@@ -100,6 +100,18 @@ function saveThread(id: string, t: Thread) {
   } catch { /* full or private mode: memory only */ }
 }
 
+/** A kept thread's last reply, for the sidebar's second line; cached by when it was saved. */
+const peeks = new Map<string, { at: number; text: string | null }>()
+export function lastReply(id: string, updated: number): string | null {
+  const hit = peeks.get(id)
+  if (hit && hit.at >= updated) return hit.text
+  const t = loadThread(id)
+  const msg = t ? [...t.turns].reverse().flatMap((u) => [...u.entries].reverse()).find((e) => e.kind === 'message') : undefined
+  const text = msg && 'text' in msg ? (msg.text as string) : null
+  peeks.set(id, { at: updated, text })
+  return text
+}
+
 /** Sign-out forgets every thread this browser kept. */
 export function clearThreads() {
   try { Object.keys(localStorage).filter((k) => k.startsWith(THREADS)).forEach((k) => localStorage.removeItem(k)) } catch { /* nothing kept */ }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionSummary } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
-import { outOfCredits } from '../store'
+import { lastReply, outOfCredits } from '../store'
 
 // The sidebar's sessions, after the Mac's: quiet one-line rows filed under days, a glyph only
 // when the state means something, a second line only while a session is live or wants you,
@@ -46,6 +46,18 @@ const VIEW = 'frog.sidebar'
 function loadView(): View {
   const d: View = { group: 'date', sort: 'activity', compact: false, archived: false }
   try { return { ...d, ...JSON.parse(localStorage.getItem(VIEW) ?? '{}') } } catch { return d }
+}
+
+/** The second line, when rows aren't compact: what's true of the session right now. */
+function second(s: SessionSummary, t: Thread, now: number): string {
+  const live = [...t.turns].reverse().flatMap((u) => [...u.entries].reverse()).find((e) => e.kind === 'message')
+  const said = (live && 'text' in live ? (live.text as string) : null) ?? lastReply(s.id, s.updated)
+  const snippet = said?.replace(/[#*_`>|]/g, '').replace(/\s+/g, ' ').trim()
+  const state = s.state === 'error' ? s.error ?? "Couldn't start"
+    : s.state === 'starting' ? 'Starting a sandbox'
+    : s.last_turn ? `${s.state === 'running' ? 'Awake' : 'Done'} ${age(s.last_turn, now)} ago` : s.state === 'running' ? 'Awake' : 'Asleep'
+  const where = s.repo ? s.repo.split('/')[1] ?? s.repo : null
+  return [where, s.state === 'error' ? state : snippet || state].filter(Boolean).join(' · ')
 }
 
 // When you last looked at each session, so a turn that ended since gets a dot. Keyed off the
@@ -150,13 +162,13 @@ export function SessionList(p: {
     const quiet = !glyph && s.id !== p.current
     const status = glyph === 'run' ? (s.state === 'starting' ? 'Starting' : 'Running') : glyph === 'ask' ? 'Needs you' : glyph === 'fail' ? 'Failed' : glyph === 'paused' ? 'Paused' : null
     return (
-      <button key={s.id} type="button" className={`srow${s.id === p.current ? ' on' : ''}${detail ? ' two' : ''}`} onClick={() => p.onOpen(s.id)}
+      <button key={s.id} type="button" className={`srow${s.id === p.current ? ' on' : ''}${detail || !view.compact ? ' two' : ''}`} onClick={() => p.onOpen(s.id)}
         onContextMenu={(e) => { e.preventDefault(); setCtx({ s, x: e.clientX, y: e.clientY }) }}
         title={s.state === 'error' ? s.error ?? "The sandbox couldn't start" : undefined}>
         <span className="sbody">
           <span className="sline">
             <span className={`stitle${quiet ? ' quiet' : ''}`}>{p.title(s)}</span>
-            {repo && <span className="srepo">{repo}</span>}
+            {view.compact && repo && <span className="srepo">{repo}</span>}
             {s.pr && (
               <span className="spr" title={`Pull request ${s.pr}`}>
                 <svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="18" r="2.5" /><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-4" /></svg>
@@ -167,7 +179,9 @@ export function SessionList(p: {
               : glyph === 'unread' ? <span className="sg sg-unread" aria-label="New" />
               : <span className="sage">{age(s.updated, now)}</span>}
           </span>
-          {detail && <span className={`sdetail${glyph === 'ask' ? ' ask' : ''}`}>{detail}</span>}
+          {view.compact
+            ? detail && <span className={`sdetail${glyph === 'ask' ? ' ask' : ''}`}>{detail}</span>
+            : <span className={`sdetail${glyph === 'ask' ? ' ask' : glyph === 'run' ? ' run' : glyph === 'fail' ? ' fail' : ''}`}>{detail ?? second(s, t, now)}</span>}
         </span>
       </button>
     )
