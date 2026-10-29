@@ -83,8 +83,11 @@ export default function App() {
   const [drawer, setDrawer] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   // What a new session starts with: null model = the gateway's default.
-  const [newModel, setNewModel] = useState<string | null>(null)
-  const [newMode, setNewMode] = useState<Mode>('auto')
+  // Kept across reloads (and the GitHub round trip), so what you picked signed out still holds.
+  const [newModel, setNewModelState] = useState<string | null>(() => { try { return localStorage.getItem('frog.newModel') } catch { return null } })
+  const [newMode, setNewModeState] = useState<Mode>(() => { try { return (localStorage.getItem('frog.newMode') as Mode) || 'auto' } catch { return 'auto' } })
+  const setNewModel = (m: string | null) => { setNewModelState(m); try { if (m) localStorage.setItem('frog.newModel', m); else localStorage.removeItem('frog.newModel') } catch { /* private mode */ } }
+  const setNewMode = (m: Mode) => { setNewModeState(m); try { localStorage.setItem('frog.newMode', m) } catch { /* private mode */ } }
   const toastTimer = useRef(0)
 
   const cloud = useCloud(key)
@@ -153,7 +156,7 @@ export default function App() {
 
 
   const [pending, setPending] = useState<string | null>(null)
-  const starterChips = useMemo(() => pickStarters().map((text) => ({ text })), [])
+  const starterChips = useMemo(() => pickStarters(3, !key).map((text) => ({ text })), [key])
   const start = useCallback(async (text: string, repo?: string, images: Image[] = []) => {
     if (!cloud) return
     // Open the session at once, as a placeholder, and swap in the real one when the gateway
@@ -261,7 +264,8 @@ export default function App() {
           <Trust />
         </div>
         <div className="dock"><div>
-          <Composer repo="Connect a repo" onSend={(text) => leave(text)} autoFocus chips={starterChips} />
+          <Composer repo="Connect a repo" onSend={(text) => leave(text)} onConnect={(text) => leave(text || null)} autoFocus chips={starterChips}
+            model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening GitHub… your message is saved.</div>}
         </div></div>
         <footer className="muni-foot"><a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a></footer>

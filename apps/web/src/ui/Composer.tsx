@@ -20,6 +20,8 @@ export interface ComposerProps {
   /** The model id (without `cloud/`) and the ones to pick from; the menu shows when there's a list. */
   model?: string | null
   models?: Model[]
+  /** Signed out: the repo chip asks to sign in (with what's typed) instead of opening the picker. */
+  onConnect?: (text: string) => void
   onModel?: (id: string) => void
   /** When the engine asks before acting; the chip shows once the engine (or a new session) says. */
   mode?: Mode | null
@@ -275,7 +277,7 @@ export function Composer(p: ComposerProps) {
             </button>
           )}
           {!p.branch && (
-            <button type="button" className="cz-chip" disabled={!p.onRepo} aria-expanded={menu === 'repo'} onClick={() => setMenu(menu === 'repo' ? null : 'repo')}>
+            <button type="button" className="cz-chip" disabled={!p.onRepo && !p.onConnect} aria-expanded={menu === 'repo'} onClick={() => (p.onConnect ? p.onConnect(text) : setMenu(menu === 'repo' ? null : 'repo'))}>
               <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h6l2 2h10v10H3z" /></svg>
               {p.repo || 'No repo'}
             </button>

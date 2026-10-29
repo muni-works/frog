@@ -29,8 +29,24 @@ const POOL = [
   'Add types where they’re missing',
 ]
 
-export function pickStarters(n = 3): string[] {
-  const a = [...POOL]
+// Signed out there's no repo yet, so these are cold starts: things worth doing from nothing.
+const COLD = [
+  'Build a tiny habit tracker web app',
+  'Write a CLI that renames photos by date taken',
+  'Make a Snake game in the browser',
+  'Scaffold a REST API with auth and tests',
+  'Explain how OAuth works, with a diagram',
+  'Write a script that turns a CSV into charts',
+  'Build a Markdown notes app that saves locally',
+  'Prototype a Discord bot that summarizes threads',
+  'Make a personal site from my GitHub profile',
+  'Write a web scraper for a recipe site',
+  'Compare three ways to build a job queue',
+  'Build a pomodoro timer in Rust',
+]
+
+export function pickStarters(n = 3, cold = false): string[] {
+  const a = [...(cold ? COLD : POOL)]
   for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] }
   return a.slice(0, n)
 }

@@ -17,10 +17,14 @@ export function price(m: Model) {
   return `${f(m.input)} in · ${f(m.output)} out per M tokens`
 }
 
+// Signed out, /v1/models needs a key, so the picker shows Frog Cloud's public default until
+// sign-in loads the real list.
+const SIGNED_OUT: Model[] = [{ id: 'qwen3-coder-next', context: null, input: null, output: null, cached: null }]
+
 export function useModels(key: string | null) {
   const [models, setModels] = useState<Model[]>([])
   useEffect(() => {
-    if (!key) return
+    if (!key) { setModels(SIGNED_OUT); return }
     let live = true
     fetch(`${API}/v1/models`, { headers: { authorization: `Bearer ${key}` } })
       .then((r) => (r.ok ? r.json() : { data: [] }))
