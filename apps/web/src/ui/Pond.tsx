@@ -2,14 +2,13 @@ import { useEffect, useRef } from 'react'
 
 // The home screen's backdrop: a dark pond seen at an angle. Drops land now and then and ring
 // out in perspective, lily pads drift and bob on the swell, fireflies wander and pulse above
-// the water, and reeds bend in a gusty wind. One canvas, drawn in the theme's frog green at low
+// the water. One canvas, drawn in the theme's frog green at low
 // alpha so it stays mood, not content. It pauses while the tab is hidden, follows the pointer a
 // little (a ripple where you click), and draws a single still frame for prefers-reduced-motion.
 
 type Ring = { x: number; y: number; t: number; life: number; size: number }
 type Pad = { x: number; y: number; r: number; a: number; spin: number; vx: number; phase: number; notch: number }
 type Fly = { x: number; y: number; vx: number; vy: number; phase: number; speed: number }
-type Reed = { x: number; h: number; lean: number; w: number; phase: number; head: boolean }
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a)
 
@@ -29,7 +28,7 @@ export function Pond() {
     const still = matchMedia('(prefers-reduced-motion: reduce)').matches
     let w = 0, h = 0, dpr = 1, horizon = 0
     let green: [number, number, number] = [88, 204, 111]
-    let rings: Ring[] = [], pads: Pad[] = [], flies: Fly[] = [], reeds: Reed[] = []
+    let rings: Ring[] = [], pads: Pad[] = [], flies: Fly[] = []
     let raf = 0, last = performance.now(), clock = 0, nextDrop = 0.6
 
     const theme = () => { green = rgb(getComputedStyle(canvas).getPropertyValue('--frog') || '#58cc6f') }
@@ -46,14 +45,6 @@ export function Pond() {
       flies = Array.from({ length: Math.round(Math.min(18, Math.max(8, w / 70))) }, () => ({
         x: rand(0, w), y: rand(h * 0.15, h * 0.85), vx: rand(-8, 8), vy: rand(-5, 5), phase: rand(0, 9), speed: rand(0.6, 1.4),
       }))
-      reeds = []
-      for (const side of [0, 1]) {
-        const n = Math.max(5, Math.round(w / 160))
-        for (let i = 0; i < n; i++) {
-          const x = side ? w - rand(0, w * 0.14) : rand(0, w * 0.14)
-          reeds.push({ x, h: rand(h * 0.16, h * 0.42), lean: (side ? -1 : 1) * rand(0.02, 0.12), w: rand(1, 2.2), phase: rand(0, 9), head: Math.random() < 0.45 })
-        }
-      }
       rings = []
     }
 
@@ -68,9 +59,6 @@ export function Pond() {
     }
 
     const drop = (x: number, y: number, t = 0) => rings.push({ x, y, t, life: rand(4.5, 7), size: rand(90, 190) })
-
-    // Gusty wind from layered sines: calm stretches, then a lean.
-    const wind = (t: number, x: number) => Math.sin(t * 0.5 + x * 0.004) * 0.6 + Math.sin(t * 1.7 + x * 0.01) * 0.25 + Math.max(0, Math.sin(t * 0.13)) ** 3 * 1.2
 
     const draw = (dt: number) => {
       clock += dt
@@ -131,31 +119,6 @@ export function Pond() {
         ctx.restore()
       }
 
-      // Reeds: tapered quadratic stalks bending with the wind, cattail heads on some.
-      for (const r of reeds) {
-        const bend = (r.lean + wind(clock, r.x) * 0.06 + Math.sin(clock * 1.3 + r.phase) * 0.015) * r.h
-        const tipX = r.x + bend, tipY = h - r.h
-        ctx.strokeStyle = c(0.12); ctx.lineCap = 'round'
-        for (let s = 0; s < 3; s++) {
-          ctx.lineWidth = r.w * (1 - s * 0.3)
-          const t0 = s / 3, t1 = (s + 1) / 3
-          const at = (t: number) => {
-            const mx = r.x + bend * 0.2, my = h - r.h * 0.5
-            const u = 1 - t
-            return [u * u * r.x + 2 * u * t * mx + t * t * tipX, u * u * h + 2 * u * t * my + t * t * tipY]
-          }
-          const [ax, ay] = at(t0), [bx, by] = at(t1)
-          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke()
-        }
-        if (r.head) {
-          const ang = Math.atan2(tipX - (r.x + bend * 0.2), (h - r.h * 0.5) - tipY)
-          ctx.save(); ctx.translate(tipX, tipY + 10); ctx.rotate(ang)
-          ctx.fillStyle = c(0.14)
-          ctx.beginPath(); ctx.ellipse(0, 0, 2.6, 9, 0, 0, Math.PI * 2); ctx.fill()
-          ctx.restore()
-        }
-      }
-
       // Fireflies: wander on smooth noise, pulse slowly, glow.
       for (const f of flies) {
         if (!still) {
@@ -203,22 +166,22 @@ export function Pond() {
   return <canvas ref={ref} className="pond" aria-hidden="true" />
 }
 
-const STEPS = [
-  { n: '1', title: 'Ask', text: 'Describe a change, a bug or a question. Pick a GitHub repo, or none to just talk.' },
-  { n: '2', title: 'Frog works in a sandbox', text: 'It clones the repo into its own cloud machine, reads, edits and runs tests. Watch every step, or leave.' },
-  { n: '3', title: 'Review and ship', text: 'See the diff, open a terminal, then commit or open a PR. You pay only for the tokens used.' },
+const PITCH = [
+  { i: '☾', title: 'Ship while you sleep', text: 'Hand Frog the bug before bed. Wake up to a tested pull request.' },
+  { i: '⧉', title: 'Five at once, laptop closed', text: 'Every session gets its own cloud machine. Start a few, go to lunch.' },
+  { i: '$', title: 'Open models, honest prices', text: 'Fast open-weight coders. Pay for the tokens you use. No seats, no subscription.' },
 ]
 
 export function HowItWorks() {
   return (
-    <ol className="how">
-      {STEPS.map((s) => (
-        <li key={s.n}>
-          <span className="how-n">{s.n}</span>
+    <ul className="how">
+      {PITCH.map((s) => (
+        <li key={s.title}>
+          <span className="how-n">{s.i}</span>
           <b>{s.title}</b>
           <span>{s.text}</span>
         </li>
       ))}
-    </ol>
+    </ul>
   )
 }
