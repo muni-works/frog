@@ -9,6 +9,9 @@ import { parseRepo } from '../store'
 export interface ComposerProps {
   /** Context used of the window, from the engine's status: a ring by the send button. */
   context?: { used: number | null; window: number } | null
+  /** Summarize the conversation so far to free up context (the ring's button, or /compact). */
+  onCompact?: (focus?: string) => void
+  compacting?: boolean
   state?: 'idle' | 'working' | 'paused'
   repo?: string
   branch?: string
@@ -125,6 +128,10 @@ export function Composer(p: ComposerProps) {
   const send = () => {
     const t = text.trim()
     if ((!t && !images.length) || paused || p.busy) return
+    // "/compact [what to keep]" asks the engine to summarize rather than sending a message.
+    const c = t.match(/^\/compact\b\s*(.*)$/s)
+    // While a turn runs it stays typed; compacting mid-turn isn't possible.
+    if (c && p.onCompact) { if (!working) { p.onCompact(c[1].trim() || undefined); setText('') } return }
     p.onSend(t, images)
     setText('')
     setImages([])
@@ -316,14 +323,14 @@ export function Composer(p: ComposerProps) {
             {p.model ?? 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
           </button>
         )}
-        {p.context?.window ? <ContextRing used={p.context.used} window={p.context.window} /> : null}
+        {p.context?.window ? <ContextRing used={p.context.used} window={p.context.window} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}
       </div>
     </div>
   )
 }
 
 /** How full the context is, as a ring (the Mac's ContextRing); click it for the numbers. */
-function ContextRing({ used, window }: { used: number | null; window: number }) {
+function ContextRing({ used, window, onCompact, compacting }: { used: number | null; window: number; onCompact?: () => void; compacting?: boolean }) {
   const [open, setOpen] = useState(false)
   const f = used ? Math.min(1, used / window) : 0
   const color = f > 0.8 ? 'var(--warn)' : f > 0.6 ? 'var(--notice)' : 'var(--muted)'
@@ -344,6 +351,14 @@ function ContextRing({ used, window }: { used: number | null; window: number }) 
           <div className="ctx-h"><b>Context</b><b style={{ color: f > 0.6 ? color : undefined }}>{Math.round(f * 100)}%</b></div>
           <div className="ctx-bar"><span style={{ width: `${f * 100}%`, background: f > 0.6 ? color : 'var(--frog)' }} /></div>
           <div className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens</div>
+          {(onCompact || compacting) && (
+            <>
+              <button type="button" className="f-btn f-btn--bordered ctx-compact" disabled={compacting || !onCompact} onClick={() => { onCompact?.(); setOpen(false) }}>
+                {compacting ? 'Compacting…' : 'Compact now'}
+              </button>
+              <div className="det wrap">Summarizes the conversation so far to free up room. Or type /compact.</div>
+            </>
+          )}
         </div>
       )}
     </span>

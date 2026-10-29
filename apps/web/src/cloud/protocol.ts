@@ -6,6 +6,7 @@ export type Decision = "allow" | "allow_always" | "deny";
 export type Op =
   | { op: "submit"; text: string; images?: Image[]; more?: Part[] }
   | { op: "interrupt" }
+  | { op: "compact"; focus?: string }
   | { op: "permission"; id: string; decision: Decision }
   | { op: "answer"; id: string; choices?: string[]; other?: string }
   | { op: "elicit"; id: string; action: "accept" | "decline" | "cancel"; content?: unknown }
@@ -100,6 +101,9 @@ export type Event =
   | { event: "permission_request"; id: string; item: string; name: string; arg: string; always: string; preview?: FileDiff; reason?: string }
   | { event: "permission_resolved"; id: string; decision: Decision }
   | { event: "titled"; title: string }
+  | { event: "compacted"; tokens_before: number; tokens_after: number }
+  | { event: "compaction_failed"; detail?: string }
+  | { event: "context_pruned"; results: number; tokens_before: number; tokens_after: number }
   | { event: "next_suggested"; turn: number; text: string; act?: boolean }
   | { event: "status"; model: string; mode: Mode; context_tokens: number | null; context_window: number; todos?: Todo[]; vision?: boolean }
   | { event: "question"; id: string; item: string; question: string; options: { label: string; detail?: string }[]; multi?: boolean; allow_other?: boolean }

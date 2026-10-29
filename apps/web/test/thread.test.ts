@@ -127,3 +127,12 @@ test("a file edited twice keeps both edits' hunks and summed counts", () => {
   assert.equal(t.changes[0].created, true);
   assert.equal(t.changes[0].hunks.length, 2);
 });
+
+test("compaction leaves a mark after the turn it followed", () => {
+  const t = [
+    { event: "turn_started", turn: 1, input: "hi" },
+    { event: "turn_ended", turn: 1, reason: "complete" },
+    { event: "compacted", tokens_before: 82_000, tokens_after: 9_100 },
+  ].reduce((t, e) => reduce(t, env(e as Event)), emptyThread);
+  assert.deepEqual(t.marks, [{ after: 1, text: "Compacted · 82k → 9k tokens" }]);
+});
