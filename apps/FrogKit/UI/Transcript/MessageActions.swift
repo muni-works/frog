@@ -16,7 +16,7 @@ struct MessageAction: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
+                .font(.frog(size: 12, weight: .medium))
                 .frame(width: 24, height: 22)
                 .foregroundStyle(hovering ? .primary : .tertiary)
                 .background(.quaternary.opacity(hovering ? 0.6 : 0), in: .rect(cornerRadius: 6))
@@ -52,7 +52,7 @@ struct ActionTooltip: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(.regularMaterial, in: .rect(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 0.5))
+            
             .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
             .allowsHitTesting(false)
     }

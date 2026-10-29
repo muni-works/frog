@@ -15,15 +15,15 @@ struct AgentRow: View {
             ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 12, height: 12)
                 .help("working")
         case .waiting:
-            Image(systemName: "hand.raised.fill").font(.system(size: 10))
+            Image(systemName: "hand.raised.fill").font(.frog(size: 10))
                 .foregroundStyle(.orange)
                 .help("needs your approval")
         case .failed:
-            Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+            Image(systemName: "xmark").font(.frog(size: 9, weight: .bold))
                 .foregroundStyle(.red)
                 .help("failed")
         case .done:
-            Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
+            Image(systemName: "checkmark").font(.frog(size: 9, weight: .bold))
                 .foregroundStyle(.green.opacity(0.75))
                 .help("reported back")
         }
@@ -65,13 +65,13 @@ struct AgentRow: View {
                 .frame(width: AttentionMetrics.disclosure)
             HStack(spacing: 5) {
                 Text(agent.title)
-                    .font(.system(size: 12))
+                    .font(.frog(size: 12))
                     .foregroundStyle(agent.finished ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
                     .lineLimit(1)
                     .layoutPriority(1)
                 if let detail {
                     Text("· " + detail.text)
-                        .font(.system(size: 11.5))
+                        .font(.frog(size: 11.5))
                         .foregroundStyle(detail.color.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -82,7 +82,7 @@ struct AgentRow: View {
                 // The shared seconds clock, not a timeline per row (re-checked every frame).
                 if let words = Self.progress(agent, now: SecondsClock.shared.now) {
                     Text(words)
-                        .font(.system(size: 11.5).monospacedDigit())
+                        .font(.frog(size: 11.5).monospacedDigit())
                         .foregroundStyle(.tertiary)
                         .fixedSize()
                 }
@@ -175,7 +175,7 @@ struct AgentFoldRow: View {
         Button(action: toggle) {
             HStack(spacing: 0) {
                 Color.clear.frame(width: AttentionMetrics.leading(depth))
-                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
                     .rotationEffect(.degrees(open ? 90 : 0))
                     .frame(width: AttentionMetrics.disclosure)
                 if list.done > 0 { Text("\(list.done) done") }
@@ -184,7 +184,7 @@ struct AgentFoldRow: View {
                 }
                 Spacer(minLength: 0)
             }
-            .font(.system(size: 11))
+            .font(.frog(size: 11))
             .foregroundStyle(.tertiary)
             .padding(.leading, 4)
             .frame(height: 22)

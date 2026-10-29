@@ -433,7 +433,7 @@ struct UserPrompt: View {
                                 .aspectRatio(contentMode: .fill)
                                 .frame(width: images.count == 1 ? 220 : 110, height: images.count == 1 ? 150 : 80)
                                 .clipShape(.rect(cornerRadius: 12))
-                                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+                                
                                 .opensInLightbox(images, at: i)
                         }
                     }
@@ -441,7 +441,7 @@ struct UserPrompt: View {
             }
             if !message.isEmpty {
                 Text(message)
-                    .font(.system(size: TurnType.body))
+                    .font(.frog(size: TurnType.body))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, TurnSpace.Inset.roomy + TurnSpace.Inset.hair)

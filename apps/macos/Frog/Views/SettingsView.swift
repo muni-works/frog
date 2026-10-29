@@ -175,7 +175,7 @@ struct ModelSettings: View {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(section.title)
                         if section.title == ProviderID.localName {
-                            Text("powered by tang").font(.caption2).foregroundStyle(.tertiary) // advanced: the one place the engine is named
+                            Text("powered by tang").font(.frog(size: 10)).foregroundStyle(.tertiary) // advanced: the one place the engine is named
                         }
                     }
                 }
@@ -285,7 +285,7 @@ struct ModelSettings: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(p.name)
                         Text(count(p) == 0 ? "No models in the picker yet" : "\(count(p)) model\(count(p) == 1 ? "" : "s") in the picker")
-                            .font(.caption)
+                            .font(.frog(size: 10))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -349,7 +349,7 @@ struct ModelSettings: View {
                                  ? "Running · \(count(p)) model\(count(p) == 1 ? "" : "s")"
                                  : up == false ? "Not responding" : "Checking…")
                         }
-                        .font(.caption)
+                        .font(.frog(size: 10))
                         .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -382,13 +382,13 @@ struct ModelSettings: View {
         Section {
             DisclosureGroup("Engine details") {
                 Text("Models on This Mac run on tang, frog's engine.") // advanced
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .foregroundStyle(.secondary)
                 ForEach(models) { m in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(m.spec).font(.callout.monospaced()) // advanced
                         Text("\(m.source) · \(m.toolMode) tool calls · \(m.tier) tier") // advanced
-                            .font(.caption)
+                            .font(.frog(size: 10))
                             .foregroundStyle(.secondary)
                     }
                     .textSelection(.enabled)
@@ -474,7 +474,7 @@ private struct CatalogRow: View {
         Toggle(isOn: Binding(get: { model.enabled ?? false }, set: toggle)) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.name)
-                Text(details).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(details).font(.frog(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
         }
         .disabled(!(provider?.connected ?? false) && model.enabled != true)
@@ -528,7 +528,7 @@ struct FrogCloudCard: View {
                         .foregroundStyle(.green)
                 }
                 Text(Self.keyLine(provider?.key) ?? "Fast hosted models from frog. Sign in or add a key to use them.")
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -573,17 +573,17 @@ struct KeySheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Connect \(provider.displayName)").font(.headline)
+            Text("Connect \(provider.displayName)").font(.frog(size: 13, weight: .semibold))
             SecureField("API key", text: $key)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(save)
             if let url = URL(string: provider.keyUrl), !provider.keyUrl.isEmpty {
-                Link("Get a key from \(provider.displayName)", destination: url).font(.callout)
+                Link("Get a key from \(provider.displayName)", destination: url).font(.frog(size: 12))
             }
             Text("Stored in your Keychain. frog sends it only to \(provider.displayName).")
-                .font(.caption)
+                .font(.frog(size: 10))
                 .foregroundStyle(.secondary)
-            if let e = store.error { Text(e).font(.caption).foregroundStyle(.red) }
+            if let e = store.error { Text(e).font(.frog(size: 10)).foregroundStyle(.red) }
             HStack {
                 if provider.key == "keychain" {
                     Button("Remove Key", role: .destructive) {
@@ -752,7 +752,7 @@ private struct AppearanceSettings: View {
             .pickerStyle(.segmented)
             .help("How much of the model's work a conversation shows. Session › Detail changes it for one conversation.")
             Text((Verbosity(rawValue: verbosity) ?? .normal).detail)
-                .font(.callout)
+                .font(.frog(size: 12))
                 .foregroundStyle(.secondary)
             Section {
                 Toggle("Playful frog", isOn: $playfulFrog)
@@ -853,13 +853,13 @@ private struct MCPSettings: View {
                             }
                         }
                         if let e = s.error {
-                            Text(e).font(.caption).foregroundStyle(.red).lineLimit(3)
+                            Text(e).font(.frog(size: 10)).foregroundStyle(.red).lineLimit(3)
                         } else if !s.tools.isEmpty {
-                            Text(s.tools.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                            Text(s.tools.joined(separator: " · ")).font(.frog(size: 10)).foregroundStyle(.secondary).lineLimit(3)
                         }
                         ForEach(s.quarantined, id: \.tool) { q in
                             Label("Withheld \(q.tool): its description \(q.reason)", systemImage: "exclamationmark.shield")
-                                .font(.caption)
+                                .font(.frog(size: 10))
                                 .foregroundStyle(.orange)
                         }
                     }
@@ -928,7 +928,7 @@ private struct PairingCard: View {
                     .background(.white, in: .rect(cornerRadius: 10))
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text(RemoteBridge.name).font(.headline)
+                Text(RemoteBridge.name).font(.frog(size: 13, weight: .semibold))
                 Text(code).font(.body.monospaced()).textSelection(.enabled)
                 Button("New Code", action: renew)
             }

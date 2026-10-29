@@ -197,7 +197,7 @@ struct PaneView: View {
                                labelWidth: max(80, min(300, width - insets.leading - insets.trailing - 340)))
             } else if workspace.race != nil {
                 Text("\(number)  \(workspace.name) · Racing")
-                    .font(.callout)
+                    .font(.frog(size: 12))
                     .padding(.horizontal, 12)
                     .frame(height: 30)
                     .glassEffect(.regular, in: .capsule)

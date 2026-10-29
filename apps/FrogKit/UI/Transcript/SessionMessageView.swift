@@ -74,7 +74,7 @@ struct SessionMessageCard: View {
         .padding(.horizontal, TurnSpace.Card.padding)
         .padding(.vertical, TurnSpace.Inset.card)
         .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: TurnSpace.Card.radius))
-        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.separator))
+        
         // As wide as your own prompt at most: it's a message, mirrored to the left.
         .frame(maxWidth: TurnSpace.promptWidth, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -32,7 +32,7 @@ struct RaceView: View {
         .sheet(item: $inspecting) { attempt in
             VStack(spacing: 0) {
                 HStack {
-                    Text("Attempt \(attempt.id + 1) · \(attempt.model)").font(.headline)
+                    Text("Attempt \(attempt.id + 1) · \(attempt.model)").font(.frog(size: 13, weight: .semibold))
                     Spacer()
                     Button("Done") { inspecting = nil }.keyboardShortcut(.cancelAction)
                 }
@@ -47,7 +47,7 @@ struct RaceView: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
                 Label("\(race.attempts.count) attempts in parallel", systemImage: "square.stack.3d.up")
-                    .font(.headline)
+                    .font(.frog(size: 13, weight: .semibold))
                 Text(race.prompt)
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
@@ -94,10 +94,10 @@ private struct AttemptCard: View {
         let parts = turn.map(TurnParts.init)
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Attempt \(attempt.id + 1)").font(.headline)
+                Text("Attempt \(attempt.id + 1)").font(.frog(size: 13, weight: .semibold))
                 Spacer()
                 ModelLabel(model: ModelIdentity.of(attempt.model, in: models), size: .caption)
-                    .font(.caption)
+                    .font(.frog(size: 10))
             }
             status(turn)
             if let turn, !turn.finished {
@@ -108,7 +108,7 @@ private struct AttemptCard: View {
             }
             if let answer = parts?.answer.last?.text, !answer.isEmpty {
                 Text(answer)
-                    .font(.callout)
+                    .font(.frog(size: 12))
                     .lineLimit(4)
                     .foregroundStyle(.secondary)
             }
@@ -155,7 +155,7 @@ private struct AttemptCard: View {
                     Text(liveLine(turn)).lineLimit(1).foregroundStyle(.secondary)
                 }
             }
-            .font(.callout)
+            .font(.frog(size: 12))
         }
     }
 
@@ -173,7 +173,7 @@ private struct AttemptCard: View {
     private func checkView(_ check: Race.Check) -> some View {
         switch check {
         case .running:
-            Label("Running check…", systemImage: "hourglass").font(.callout).foregroundStyle(.secondary)
+            Label("Running check…", systemImage: "hourglass").font(.frog(size: 12)).foregroundStyle(.secondary)
         case .passed:
             Label("Check passed", systemImage: "checkmark.seal.fill").font(.callout.weight(.medium)).foregroundStyle(.green)
         case .failed(let out):
@@ -211,7 +211,7 @@ private struct RecentSteps: View {
                         Text(item.text).lineLimit(1)
                     }
                 }
-                .font(.caption)
+                .font(.frog(size: 10))
                 .foregroundStyle(.secondary)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
@@ -238,7 +238,7 @@ private struct FlowChips: View {
                 .fileActions(c.path)
             }
             if changes.count > 3 {
-                Text("+\(changes.count - 3) more").font(.caption).foregroundStyle(.secondary)
+                Text("+\(changes.count - 3) more").font(.frog(size: 10)).foregroundStyle(.secondary)
             }
         }
     }
@@ -255,9 +255,9 @@ struct RaceSetup: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Race this prompt").font(.headline)
+            Text("Race this prompt").font(.frog(size: 13, weight: .semibold))
             Text("Runs several attempts at once, each in its own git worktree, so you can pick the best one.")
-                .font(.callout)
+                .font(.frog(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Stepper("\(count) attempts", value: $count, in: 2...4)
@@ -272,7 +272,7 @@ struct RaceSetup: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                 Text("Runs in each attempt's worktree when it finishes; passing attempts are highlighted.")
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .foregroundStyle(.secondary)
             }
             HStack {

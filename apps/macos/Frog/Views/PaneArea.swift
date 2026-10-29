@@ -133,8 +133,8 @@ private struct TabButton: View {
     var body: some View {
         Button(action: select) {
             HStack(spacing: 5) {
-                Image(systemName: symbol).font(.caption)
-                Text(title).font(.callout).lineLimit(1)
+                Image(systemName: symbol).font(.frog(size: 10))
+                Text(title).font(.frog(size: 12)).lineLimit(1)
                 if let close {
                     Button(action: close) {
                         Image(systemName: "xmark").font(.caption2.weight(.semibold)).frame(width: 14, height: 14)

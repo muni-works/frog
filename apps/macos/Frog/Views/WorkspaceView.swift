@@ -727,7 +727,7 @@ private struct DropOverlay: View {
                     }
                 }
                 Label("Drop to attach", systemImage: "paperclip")
-                    .font(.headline)
+                    .font(.frog(size: 13, weight: .semibold))
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .glassEffect(.regular, in: .capsule)
                     .position(center)
@@ -795,7 +795,7 @@ struct SessionTree: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Session tree", systemImage: "arrow.triangle.branch").font(.headline)
+            Label("Session tree", systemImage: "arrow.triangle.branch").font(.frog(size: 13, weight: .semibold))
             if let diagram, !diagram.nodes.isEmpty {
                 ScrollView([.horizontal, .vertical]) {
                     DiagramCanvas(diagram: diagram) { node in

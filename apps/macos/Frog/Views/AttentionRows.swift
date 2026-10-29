@@ -75,7 +75,7 @@ struct TreeRow<Menu: View>: View {
     private var disclosure: some View {
         if hasKids, let onToggle {
             Button(action: onToggle) {
-                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
                     .rotationEffect(.degrees(collapsed ? 0 : 90))
                     .frame(width: AttentionMetrics.disclosure, height: AttentionMetrics.rowHeight)
                     .contentShape(.rect)
@@ -91,13 +91,13 @@ struct TreeRow<Menu: View>: View {
     private var title: some View {
         HStack(spacing: 6) {
             Text(highlighted)
-                .font(.system(size: settledWeight ? 12 : 13, weight: manager && liveUnder ? .semibold : .regular))
+                .font(.frog(size: settledWeight ? 12 : 13, weight: manager && liveUnder ? .semibold : .regular))
                 .foregroundStyle(Color.primary.opacity(titleOpacity))
                 .lineLimit(1)
                 .truncationMode(.tail)
             if collapsed, let summary = counts.summary {
                 Text(summary)
-                    .font(.system(size: 11))
+                    .font(.frog(size: 11))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .fixedSize()
@@ -140,7 +140,7 @@ struct TreeRow<Menu: View>: View {
             ZStack {
                 glyph.opacity(hovering ? 0 : 1)
                 SwiftUI.Menu { menu() } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 10)).frame(width: 14, height: 18).contentShape(.rect)
+                    Image(systemName: "ellipsis").font(.frog(size: 10)).frame(width: 14, height: 18).contentShape(.rect)
                 }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                 .foregroundStyle(.secondary)
@@ -195,9 +195,9 @@ struct AttentionGlyph: View {
             Circle().fill(.red).frame(width: 6, height: 6).help("ended with an error")
         case .done:
             if pinned {
-                Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(.tertiary).help("pinned")
+                Image(systemName: "pin.fill").font(.frog(size: 9)).foregroundStyle(.tertiary).help("pinned")
             } else if nested && end == .complete {
-                Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
+                Image(systemName: "checkmark").font(.frog(size: 9, weight: .bold))
                     .foregroundStyle(.green.opacity(0.75)).help("done")
             } else {
                 Circle().strokeBorder(.tertiary, lineWidth: 1).frame(width: 9, height: 9).help("idle")
@@ -222,8 +222,8 @@ struct NeedsYouRow<Menu: View>: View {
                 .background(Circle().fill(.orange.opacity(0.25)).frame(width: 12, height: 12))
                 .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
             VStack(alignment: .leading, spacing: 1) {
-                Text(session.displayTitle).font(.system(size: 13)).lineLimit(1)
-                Text(ask).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                Text(session.displayTitle).font(.frog(size: 13)).lineLimit(1)
+                Text(ask).font(.frog(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text(SessionAgeShort.age(session.modifiedDate, now: .now))

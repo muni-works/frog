@@ -15,7 +15,7 @@ struct ModelPicker: View {
                 } else {
                     Text("Model")
                 }
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                Image(systemName: "chevron.down").font(.frog(size: 9, weight: .semibold))
             }
             .hoverPlate()
         }
@@ -220,7 +220,7 @@ struct ModelMenu: View {
         }
             .overlay(alignment: .bottomLeading) {
                 if m.spec == "codex/default" {
-                    Text("uses your ChatGPT plan").font(.caption).foregroundStyle(.secondary).padding(.leading, 36).offset(y: 14)
+                    Text("uses your ChatGPT plan").font(.frog(size: 10)).foregroundStyle(.secondary).padding(.leading, 36).offset(y: 14)
                 }
             }
             .padding(.horizontal, 8)
@@ -239,7 +239,7 @@ struct ModelMenu: View {
             Image(systemName: "cloud").foregroundStyle(.secondary).frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Cloud models")
-                Text("Add a key to use them").font(.caption).foregroundStyle(.secondary)
+                Text("Add a key to use them").font(.frog(size: 10)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
             Menu("Add Key…") {
@@ -278,12 +278,12 @@ struct CloudPermissionSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Use cloud models in \(workspace.policyName)?", systemImage: "cloud")
-                .font(.headline)
+                .font(.frog(size: 13, weight: .semibold))
             Text("\(model.name) runs at \(provider). The files you mention, the commands frog runs and their output are sent there to answer you.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text("You can change this anytime from the conversation's title menu.")
-                .font(.callout)
+                .font(.frog(size: 12))
                 .foregroundStyle(.tertiary)
             HStack {
                 Button("Keep It on Your Devices") {

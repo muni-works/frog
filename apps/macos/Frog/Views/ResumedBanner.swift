@@ -37,7 +37,7 @@ struct ResumedBanner: View {
                 .foregroundStyle(.tertiary)
                 .help("Dismiss")
             }
-            .font(.callout)
+            .font(.frog(size: 12))
             .foregroundStyle(.secondary)
             // On the transcript's column, a line on its edge like the tool rows (see
             // `TurnSpace`): a plate of its own would read as a card for nothing wrong.

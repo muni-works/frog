@@ -60,7 +60,7 @@ struct PondBrief: View {
             }
             if !brief.also.isEmpty {
                 Text(brief.also.count == 1 ? "1 quieter thing can wait" : "\(brief.also.count) quieter things can wait")
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
@@ -105,7 +105,7 @@ private struct NextUp: View {
                     .truncationMode(.tail)
             }
         }
-        .font(.callout)
+        .font(.frog(size: 12))
     }
 }
 
@@ -133,15 +133,15 @@ private struct PondRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: Self.symbol(line.kind))
-                .font(.system(size: 13, weight: .medium))
+                .font(.frog(size: 13, weight: .medium))
                 .foregroundStyle(Self.tint(line.kind))
                 .frame(width: 18, height: 18)
             VStack(alignment: .leading, spacing: 2) {
                 Text(line.title)
-                    .font(.callout)
+                    .font(.frog(size: 12))
                     .lineLimit(1)
                 Text(detail)
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -264,7 +264,7 @@ private struct ReceiptLine: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: brief.receipt.privateBytes == 0 ? "lock.fill" : "arrow.up.forward")
-                .font(.system(size: 9))
+                .font(.frog(size: 9))
             Text(brief.receipt.summary)
                 .lineLimit(1)
             Group {
@@ -278,7 +278,7 @@ private struct ReceiptLine: View {
             }
             .opacity(hovering || refreshing ? 1 : 0)
         }
-        .font(.caption2)
+        .font(.frog(size: 10))
         .foregroundStyle(.tertiary)
         .contentShape(.rect)
         .onHover { hovering = $0 }

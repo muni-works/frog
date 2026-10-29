@@ -238,7 +238,7 @@ struct TimelineRail: View {
         let titles = chapterTitles
         return ForEach(landmarks(in: h, gap: 18, current: current), id: \.chapter) { mark in
             Text(titles[mark.chapter])
-                .font(.caption)
+                .font(.frog(size: 10))
                 .foregroundStyle(mark.chapter == current ? .primary : .tertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -262,7 +262,7 @@ struct TimelineRail: View {
                 .lineLimit(1)
                 .frame(maxWidth: 260, alignment: .leading)
         }
-        .font(.callout)
+        .font(.frog(size: 12))
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .glassEffect(.regular, in: .capsule)

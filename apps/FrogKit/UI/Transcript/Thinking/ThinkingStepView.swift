@@ -49,15 +49,15 @@ struct ThinkingStepView: View {
     private var label: some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
             Image(systemName: "checkmark")
-                .font(.system(size: 9, weight: .bold))
+                .font(.frog(size: 9, weight: .bold))
                 .foregroundStyle(Color.frog.opacity(0.8))
             Text(.init(stepTitleMarkdown))
-                .font(.system(size: 12))
+                .font(.frog(size: 12))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
             if clickable {
                 Image(systemName: open ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.frog(size: 8, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
         }
@@ -94,11 +94,11 @@ struct ThinkingStepView: View {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
                         Text(ActivityWords.now(item))
-                            .font(.system(size: 12.5))
+                            .font(.frog(size: 12.5))
                             .foregroundStyle(.secondary)
                         if !arg.isEmpty {
                             Text(arg)
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.frog(size: 11, design: .monospaced))
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -135,7 +135,7 @@ struct ThoughtText: View {
                 paragraph(para, last: i == paragraphs.count - 1)
             }
         }
-        .font(.system(size: 12.5))
+        .font(.frog(size: 12.5))
         .lineSpacing(12.5 * 0.75)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -239,7 +239,7 @@ struct ThinkingCodeBlock: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             Text(Highlight.block(code, Highlight.lang(fence: language)))
-                .font(.system(size: 11.5, design: .monospaced))
+                .font(.frog(size: 11.5, design: .monospaced))
                 .padding(8)
                 .fixedSize(horizontal: true, vertical: true)
         }
@@ -255,10 +255,10 @@ struct DecidedCallout: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("DECIDED")
-                .font(.system(size: 8.5, weight: .heavy))
+                .font(.frog(size: 8.5, weight: .heavy))
                 .foregroundStyle(Color.frog)
             Text(.init(sentence.replacingOccurrences(of: "**", with: "")))
-                .font(.system(size: 12.5))
+                .font(.frog(size: 12.5))
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -278,11 +278,11 @@ struct OptionPills: View {
         FlowLayout(spacing: 5) {
             ForEach(options) { option in
                 HStack(spacing: 4) {
-                    if option.chosen { Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)) }
+                    if option.chosen { Image(systemName: "checkmark").font(.frog(size: 8, weight: .bold)) }
                     Text(option.text)
                         .strikethrough(!option.chosen)
                 }
-                .font(.system(size: 11))
+                .font(.frog(size: 11))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(option.chosen ? Color.frog.opacity(0.16) : Color.secondary.opacity(0.1), in: .capsule)

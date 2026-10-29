@@ -39,9 +39,9 @@ struct FolderChip: View {
                 Image(systemName: current == nil ? "bubble.left" : "folder")
                 Text(current?.lastPathComponent ?? "No folder")
                     .lineLimit(1)
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                Image(systemName: "chevron.down").font(.frog(size: 9, weight: .semibold))
             }
-            .font(.callout)
+            .font(.frog(size: 12))
             .foregroundStyle(.secondary)
             .hoverPlate()
         }

@@ -17,7 +17,7 @@ struct SendButton: View {
             Button { conversation.interrupt() } label: {
                 #if os(macOS)
                 Image(systemName: "stop.circle.fill")
-                    .font(.system(size: 17))
+                    .font(.frog(size: 17))
                     .foregroundStyle(.secondary)
                     .frame(width: 22, height: 22)
                     .hoverPlate(h: 3, v: 3)
@@ -37,7 +37,7 @@ struct SendButton: View {
             Button(action: send) {
                 #if os(macOS)
                 Image(systemName: "return")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.frog(size: 14, weight: .semibold))
                     .foregroundStyle(canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
                     .frame(width: 22, height: 22)
                     .hoverPlate(h: 3, v: 3)
@@ -70,14 +70,14 @@ struct QueuedMessages: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.row) {
             Text("QUEUED")
-                .font(.system(size: Tokens.Size.label, weight: .semibold))
+                .font(.frog(size: Tokens.Size.label, weight: .semibold))
                 .tracking(0.6)
                 .foregroundStyle(Tokens.textTertiary)
             VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
                 ForEach(Array(conversation.queue.map(\.text).enumerated()), id: \.offset) { i, text in
                     HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.snug) {
                         Text(text)
-                            .font(.system(size: Tokens.Size.secondary))
+                            .font(.frog(size: Tokens.Size.secondary))
                             .foregroundStyle(Tokens.textSecondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -86,7 +86,7 @@ struct QueuedMessages: View {
                             .help("Take it out of the queue and back into the field to edit")
                             .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
-                            .font(.system(size: Tokens.Size.label, weight: .semibold))
+                            .font(.frog(size: Tokens.Size.label, weight: .semibold))
                             .foregroundStyle(Tokens.textTertiary)
                     }
                 }
@@ -116,7 +116,7 @@ struct ModePicker: View {
         } label: {
             HStack(spacing: 4) {
                 Text(mode.label)
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                Image(systemName: "chevron.down").font(.frog(size: 9, weight: .semibold))
             }
             .foregroundStyle(mode == .yolo ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             .hoverPlate()

@@ -84,7 +84,7 @@ struct PreviewPane: View {
                     .textFieldStyle(.plain)
                     .onSubmit { go() }
             }
-            .font(.callout)
+            .font(.frog(size: 12))
             .padding(.horizontal, 8)
             .frame(height: 26)
             .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 8))
@@ -133,7 +133,7 @@ struct PreviewPane: View {
             .pickerStyle(.segmented)
             .fixedSize()
             if let turn = hub.comparing {
-                Text("Turn \(turn)").font(.caption).foregroundStyle(.secondary)
+                Text("Turn \(turn)").font(.frog(size: 10)).foregroundStyle(.secondary)
             }
             Spacer()
             Button { hub.comparing = nil } label: { Image(systemName: "xmark") }
@@ -166,7 +166,7 @@ struct PreviewPane: View {
                 }
                 if hub.inspecting {
                     Text("Click an element to mention it · Esc to stop")
-                        .font(.caption)
+                        .font(.frog(size: 10))
                         .padding(.horizontal, 10).padding(.vertical, 5)
                         .glassEffect(.regular, in: .capsule)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -188,7 +188,7 @@ struct PreviewPane: View {
         VStack(spacing: 8) {
             Image(systemName: "globe").font(.title).foregroundStyle(.tertiary)
             Text("Run your dev server, then enter its URL, or ask frog to open it.")
-                .font(.callout)
+                .font(.frog(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 260)
