@@ -70,8 +70,10 @@ export default function App() {
   const [banner, setBanner] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [draft, setDraft] = useState<string | undefined>()
-  /** Sessions shown before the gateway has created them: placeholder id → the first message. */
-  const [pending, setPending] = useState<Record<string, string>>({})
+  /** Sessions still opening: their first message (and repo), from the moment you send until the
+   * first turn starts. The placeholder and then the real session show the same bubble and one
+   * status line, so the hand-over doesn't flicker between two different "starting" states. */
+  const [opening, setOpening] = useState<Record<string, { text: string; repo?: string }>>({})
   // Follow-ups typed while Frog works wait here (per session) and go together, in order, as the
   // next turn once this one ends, like the Mac app. × takes one back into the field.
   const [queue, setQueue] = useState<Record<string, { text: string; images: Image[] }[]>>({})
@@ -100,13 +102,17 @@ export default function App() {
   const title = (s: SessionSummary) => thread(s.id).title ?? s.title
   // The turn ended: what was queued goes as the next turn, one Submit with the rest as `more`.
   useEffect(() => {
-    if (!current || !ct || ct.running || pending[current.id]) return
+    if (!current || !ct || ct.running || opening[current.id]) return
     const q = queue[current.id]
     if (!q?.length) return
     const [head, ...rest] = q
     cloud?.send(current.id, { op: 'submit', text: head.text, ...(head.images.length ? { images: head.images } : {}), ...(rest.length ? { more: rest.map((m) => ({ text: m.text, ...(m.images.length ? { images: m.images } : {}) })) } : {}) })
     setQueue((all) => ({ ...all, [current.id]: [] }))
-  }, [current, ct, queue, pending, cloud])
+  }, [current, ct, queue, opening, cloud])
+  // The first turn started: the session is open.
+  useEffect(() => {
+    if (current && ct && ct.turns.length > 0 && opening[current.id]) setOpening(({ [current.id]: _, ...rest }) => rest)
+  }, [current, ct, opening])
   // Alerts: the tab title's badge and background notifications, from every streamed session.
   useAlerts(useMemo(() => sessions.map((s) => {
     const t = thread(s.id)
@@ -152,7 +158,7 @@ export default function App() {
     // Open the session at once, as a placeholder, and swap in the real one when the gateway
     // answers: starting a conversation should feel instant, not wait on a round trip.
     const temp = `${PENDING}${Date.now()}`
-    setPending((p) => ({ ...p, [temp]: text }))
+    setOpening((o) => ({ ...o, [temp]: { text, repo } }))
     setSessions((all) => [{ id: temp, title: text.length > 60 ? text.slice(0, 57) + '…' : text, repo: repo ?? '', branch: '', state: 'starting', updated: Date.now() }, ...all])
     setView({ kind: 'session', id: temp })
     try {
@@ -160,16 +166,16 @@ export default function App() {
       // A session without a repo comes back titled "New session" until the engine names it.
       const s = { ...s0, title: s0.repo ? s0.title : text.length > 60 ? text.slice(0, 57) + '…' : text }
       setSessions((all) => [s, ...all.filter((x) => x.id !== s.id && x.id !== temp)])
+      setOpening(({ [temp]: first, ...rest }) => ({ ...rest, [s.id]: first ?? { text, repo } }))
       setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'session', id: s.id } : v))
       if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
       send(s.id, text, images) // queued until the session's socket is live
     } catch (e) {
       setSessions((all) => all.filter((x) => x.id !== temp))
+      setOpening(({ [temp]: _, ...rest }) => rest)
       setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'new', repo } : v))
       setDraft(text)
       say(`Couldn't start a sandbox: ${e instanceof Error ? e.message : e}`)
-    } finally {
-      setPending((p) => { const { [temp]: _, ...rest } = p; return rest })
     }
   }, [cloud, send, setSessions, newModel, newMode])
 
@@ -419,8 +425,13 @@ export default function App() {
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{cs.refused.upgrade ? <a className="f-btn f-btn--bordered f-btn--small" href={cs.refused.upgrade} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
             {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ?? "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
-            {ct.turns.length === 0 && !pending[current.id] && cs?.state !== 'refused' && current.state !== 'error' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Nothing here yet.'}</div>}
-            {pending[current.id] && <div className="turn"><div className="me">{pending[current.id]}</div><div className="tool">… Starting the sandbox</div></div>}
+            {ct.turns.length === 0 && !opening[current.id] && cs?.state !== 'refused' && current.state !== 'error' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Nothing here yet.'}</div>}
+            {opening[current.id] && ct.turns.length === 0 && current.state !== 'error' && (
+              <div className="turn">
+                <div className="me">{opening[current.id].text}</div>
+                <div className="tool">… {opening[current.id].repo ? `Starting a sandbox with ${opening[current.id].repo}` : 'Starting a sandbox'}</div>
+              </div>
+            )}
             <Transcript thread={ct} models={models} onDecide={(a) => decide(current.id, a)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })} />
@@ -456,13 +467,13 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} state={ct.running || pending[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
+            <Composer key={current.id} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
               queued={queue[current.id]} restore={restore} vision={ct.vision}
               onUnqueue={(i) => { const q = queue[current.id] ?? []; setRestore(q[i]); setQueue({ ...queue, [current.id]: q.filter((_, j) => j !== i) }) }}
-              onSend={(text, images) => (ct.running || pending[current.id]
+              onSend={(text, images) => (ct.running || opening[current.id]
                 ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images }] }))
                 : send(current.id, text, images))} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />
           </div>
