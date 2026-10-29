@@ -93,6 +93,18 @@ export default function App() {
   const live = useMemo(() => (current && !current.id.startsWith(PENDING) ? [current.id] : []), [current])
   const thread = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
+  // Plan usage and credit, near-live: after each turn (billing lands a moment later, through
+  // the usage queue), every 20s while the tab is visible, and when the ring is opened.
+  const refreshAccount = useCallback(() => { if (key && !DEV_KEY) me(key).then(setAccount).catch(() => undefined) }, [key])
+  useEffect(() => {
+    if (!ct || ct.running) return
+    const t = [2000, 8000].map((ms) => setTimeout(refreshAccount, ms))
+    return () => t.forEach(clearTimeout)
+  }, [ct?.running, ct?.turns.length, refreshAccount]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const t = setInterval(() => { if (!document.hidden) refreshAccount() }, 20_000)
+    return () => clearInterval(t)
+  }, [refreshAccount])
   // The open session's own changes show in the list at once, not at the next poll.
   useEffect(() => { refreshSessions() }, [ct?.running, ct?.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (current && compacting[current.id] && (ct?.marks ?? []).length >= compacting[current.id]) setCompacting(({ [current.id]: _, ...rest }) => rest) }, [current, ct?.marks, compacting]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -461,7 +473,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => setSettings(true) } : undefined} context={ct.context} compacting={!!compacting[current.id]}
+            <Composer key={current.id} autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => setSettings(true), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
               onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
@@ -483,7 +495,7 @@ export default function App() {
               <HowItWorks />
             </div>
             <div className="dock">
-              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => setSettings(true) } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
+              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => setSettings(true), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images) }} />
