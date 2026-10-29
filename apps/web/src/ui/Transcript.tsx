@@ -63,7 +63,7 @@ function ToolLine({ e }: { e: Entry }) {
   )
 }
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = [], outbox = [], onResend, onEdit, waiting }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = [], outbox = [], onResend, onEdit, waiting, onContinue }: {
   thread: Thread
   onDecide: (allow: boolean) => void
   onAnswer: (choices: string[], other?: string) => void
@@ -76,6 +76,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   onResend?: (id: number) => void
   /** Put one of your messages back in the composer to change and resend. */
   onEdit?: (text: string) => void
+  /** Ask Frog to carry on, offered when the last turn stopped short (length limit, a loop). */
+  onContinue?: () => void
   /** What a sent message is waiting on, in a few words ("waking the sandbox"). */
   waiting?: string
 }) {
@@ -135,6 +137,13 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
           </div>
           {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
           {turn.reason?.type === 'cancelled' && <div className="tool">Stopped</div>}
+          {/* Any other ending that isn't a finished answer says so, never silence. */}
+          {turn.reason && !['complete', 'cancelled', 'error', 'denied'].includes(turn.reason.type) && (
+            <div role="status" className="banner warn">
+              <span style={{ flex: 1 }}>{ending(turn.reason.type, turn.usage)}</span>
+              {turn.turn === lastTurn && !thread.running && onContinue && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onContinue}>Continue</button>}
+            </div>
+          )}
           {endError(turn.reason) && !/insufficient_credit|out_of_credits|402/.test(JSON.stringify(turn.reason)) && (
             <div role="status" className="banner warn">
               <span style={{ flex: 1 }}>{endError(turn.reason)}</span>
@@ -229,4 +238,13 @@ function Elapsed({ since }: { since: number }) {
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   const s = Math.max(0, Math.floor((now - since) / 1000))
   return <>{s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`}</>
+}
+
+/** Why a turn stopped without finishing, in a line. */
+function ending(type: string, usage?: { output_tokens?: number; model_calls?: number }) {
+  if (type === 'max_tokens') return `The reply hit the length limit before it finished${usage?.output_tokens ? ` (${usage.output_tokens.toLocaleString()} tokens written${usage.model_calls && usage.model_calls > 1 ? ` over ${usage.model_calls} tries` : ''})` : ''}.`
+  if (type === 'looping') return 'Frog stopped because it was repeating itself.'
+  if (type === 'blocked_on_approval') return 'Frog stopped: a step it needs was denied.'
+  if (type === 'suspended') return 'Paused for an update; send anything to pick it up.'
+  return `The turn stopped (${type.replace(/_/g, ' ')}).`
 }

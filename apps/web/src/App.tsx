@@ -440,7 +440,8 @@ export default function App() {
               waiting={cs?.state === 'connecting' ? (cs.attempt ? 'reconnecting to the sandbox' : 'connecting to the sandbox')
                 : current.state === 'sleeping' ? 'waking the sandbox' : current.state === 'starting' ? 'starting the sandbox'
                 : ct.running ? 'Frog is finishing the last turn' : undefined}
-              onEdit={(text) => setRestore({ text, images: [] })} />
+              onEdit={(text) => setRestore({ text, images: [] })}
+              onContinue={() => send(current.id, 'Continue.')} />
             {opening[current.id] && ct.turns.length === 0 && current.state !== 'error' && (
               <Starting repo={opening[current.id].repo} since={opening[current.id].at}
                 step={current.id.startsWith(PENDING) ? 0 : cs?.state === 'live' ? 2 : 1} />
