@@ -19,6 +19,17 @@ Each `*.dc.html` file is one board. `canvas.json` holds the layout. `ds/frog/` h
 - **Dark is the default.** Every board renders dark, and each has a theme switch to view it in light.
 - **Open:** onboarding without sign-up, i.e. a guest allowance on web and iPhone. This is under discussion and not designed yet.
 
+## The web app as built (supersedes the boards where they differ)
+
+The boards are the starting point. The shipped web app (`apps/web`) has moved on:
+
+- **Borders only where they hold something.** The composer keeps its hairline because it's the one control you type into. The sidebar, title bar, your message bubbles and the sidebar search are separated by surface color (`--bg`, `--card`, `--hover`), never by a line. Rules inside replies (Markdown `---`) stay, because they're content.
+- **Sidebar:** New session, an inline session filter (`/`), then sessions under days (Today, Yesterday, Previous 7 days, Previous 30 days, Older). Rows are one line with the title flush left; on the right sit the repo, the PR, and a status ("Running", "Needs you", "Failed", "Paused") or a dot for an unseen finish, else the age. "Sleeping" is never shown: it's every idle cloud session. Sandboxes that never started fold into "N couldn't start" with Clear. There is no "Needs you" section and no Repos, Routines or Skills.
+- **Signed out:** no sidebar. The landing is the new-session page (the pond, three benefit cards, trust lines) with the full composer. Send signs in with GitHub and starts the conversation on return; with nothing typed, the send button reads "Sign in".
+- **Composer:** the same component signed in and out. Suggestion chips float on one line above it: cold starts signed out, repo tasks signed in, and the model's `Next` suggestion in a session.
+- **Loading** is the conversation's shape shimmering, with no caption.
+- **Pricing** is per token in dollars; nothing says "tasks". Speed is tokens per second.
+
 ## Board index
 
 | Section | Boards |
