@@ -85,6 +85,15 @@ export async function finishSignIn(): Promise<{ key: string; account: Account; a
   return { ...r, after: pending.after }
 }
 
+/** Credit top-ups, in dollars (the edge's CREDIT_TOP_UPS). */
+export const TOP_UPS = [5, 10, 25, 50, 100]
+
+/** Leaves for Stripe Checkout to add credit; it comes back here with ?session_id. */
+export async function topUp(key: string, dollars: number) {
+  const r = await call<{ url: string }>('/v1/billing/topup', { method: 'POST', body: JSON.stringify({ amount: dollars * 1e6, return: location.origin }) }, key)
+  location.assign(r.url)
+}
+
 export async function me(key: string): Promise<Account> {
   return (await call<{ account: Account }>('/v1/me', {}, key)).account
 }

@@ -462,3 +462,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .ctx-mark::before, .ctx-mark::after { content: ''; flex: 1; height: 1px; background: color-mix(in srgb, var(--fg) 8%, transparent); }
 .ctx-mark.failed { color: var(--warn); }
 .ctx-compact { justify-content: center; margin-top: 2px; }
+/* Add credit. */
+.topup { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: var(--card); margin: 10px 0; }
+.topup-amts { display: flex; gap: 6px; }
+.topup-amts button { flex: 1; border: 0; border-radius: 8px; padding: 8px 0; background: var(--hover); color: var(--fg); font: 600 13px var(--font-sans); cursor: pointer; }
+.topup-amts button.on { background: var(--frog-pad); color: var(--frog); }
