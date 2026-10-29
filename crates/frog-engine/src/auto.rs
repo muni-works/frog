@@ -6,7 +6,10 @@
 //! the project always ask. Then a small local model (Apple's on-device model by default) judges
 //! the call against the user's recent requests, with grammar-constrained output. The call's
 //! arguments come from the agent, so they're marked untrusted: text in them that addresses the
-//! classifier carries no weight. Any failure (timeout, error, unparsable answer) means ask.
+//! classifier carries no weight. When the classifier can't answer (unreachable, timed out, an
+//! HTTP error, an unreadable answer), `auto_classifier_fallback` is tried, then the built-in
+//! rules alone ([`rules_fallback`]): a down classifier never cards a call by itself, only a
+//! call no rule can prove harmless.
 
 use crate::config::{Config, Profile};
 use crate::message::Message;
@@ -180,6 +183,136 @@ pub fn local_capture(input: &Value) -> bool {
     }
 }
 
+/// The rules-only judgement when no classifier can answer: the calls that reached the
+/// classifier but that a rule can still prove harmless. `Some(why)` runs it; `None` asks.
+/// Called after the hard rules and every earlier layer (read-only commands, MCP read verbs,
+/// own-scope builds and writes) already passed on the call, so this only covers what the
+/// classifier would otherwise have been the sole judge of. Conservative on purpose.
+pub fn rules_fallback(name: &str, input: &Value) -> Option<&'static str> {
+    let cmd = input["command"].as_str().unwrap_or("");
+    let read_only = !crate::shell::touches_credentials(cmd) && crate::shell::read_only(cmd);
+    match name {
+        // A read-only command reads whether it runs in a pane or unsandboxed.
+        "Bash" if read_only => Some("read-only command"),
+        crate::panes::TERMINAL if input["action"] == "run" && read_only => {
+            Some("read-only command")
+        }
+        // A capture of a public page is a GET of it, like WebFetch of a public host.
+        "Screenshot"
+            if local_capture(input)
+                || crate::tools::web::public_host(input["url"].as_str().unwrap_or("")) =>
+        {
+            Some("captures a public page or the session's own work")
+        }
+        _ if read_tool(name, input) => Some("read-only tool call"),
+        _ => None,
+    }
+}
+
+/// Whether a call may run concurrently with the reply's other reads (and before its own
+/// permission check, speculatively): it changes nothing, and the permission layers allow it
+/// without a card in every mode, so running it early can't run something the user would be
+/// asked about. The same rules the engine's `permit` applies: the read tools, WebSearch,
+/// WebFetch of a public host, and a shell command the parser proves read-only (sandboxed, no
+/// credential paths, not a long wait). MCP reads aren't here: they go through the session's
+/// MCP connections, which run one call at a time.
+pub fn parallel_read(name: &str, input: &Value) -> bool {
+    match name {
+        "Read" | "Grep" | "Glob" | "WebSearch" => true,
+        "WebFetch" => crate::tools::web::public_host(input["url"].as_str().unwrap_or("")),
+        "Bash" => {
+            let cmd = input["command"].as_str().unwrap_or("").trim();
+            input["unsandboxed"].as_bool() != Some(true)
+                && !crate::tools::bool_arg(input, "run_in_background")
+                && !crate::shell::touches_credentials(cmd)
+                && crate::shell::read_only(cmd)
+                && long_wait(cmd).is_none()
+                // A `cd` moves the session's directory, which a call run on the side can't.
+                && !crate::shell::segments(cmd)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|s| s.split_whitespace().next() == Some("cd"))
+        }
+        _ => false,
+    }
+}
+
+/// The shortest `sleep` that [`long_wait`] moves to the background, in seconds.
+pub const LONG_WAIT_S: f64 = 60.0;
+
+/// A Bash command that is only a long wait: one `sleep` of at least [`LONG_WAIT_S`] seconds,
+/// with nothing around it but read-only checks (`sleep 570; wc -l out.jsonl; tail -1 run.log`).
+/// Returns the sleep's length in whole seconds. Run inline, such a command holds the turn for
+/// minutes doing nothing (no events, no messages, a session that looks hung), so the engine
+/// runs it as a background job instead and the job's wake brings back the checks' output.
+/// Real work in it (`sleep 600 && cargo build`), a sleep piped into something, a short sleep,
+/// or anything the shell parser can't read: `None`, and it runs inline as written.
+pub fn long_wait(cmd: &str) -> Option<u64> {
+    // A newline separates commands like `;` does (quoted newlines aren't modeled: leave those).
+    let cmd = if cmd.contains(['\'', '"']) {
+        cmd.to_string()
+    } else {
+        cmd.trim().replace('\n', ";")
+    };
+    let segments = crate::shell::segments(&cmd)?;
+    let mut wait: Option<f64> = None;
+    for seg in &segments {
+        match sleep_seconds(seg) {
+            Some(secs) => {
+                // One wait only; two sleeps is a script with a rhythm, not a wait.
+                if wait.is_some() || piped(&cmd, seg) {
+                    return None;
+                }
+                wait = Some(secs);
+            }
+            None if crate::shell::read_only(seg) => {}
+            None => return None,
+        }
+    }
+    let secs = wait.filter(|s| *s >= LONG_WAIT_S)?;
+    Some(secs.round() as u64)
+}
+
+/// `sleep` with durations (`570`, `9m`, `1.5h`, `30s`; several add up, as GNU sleep does).
+fn sleep_seconds(seg: &str) -> Option<f64> {
+    let mut words = seg.split_whitespace();
+    if words.next()? != "sleep" {
+        return None;
+    }
+    let mut total = 0.0;
+    let mut any = false;
+    for w in words {
+        let (num, unit) = match w.char_indices().find(|(_, c)| c.is_ascii_alphabetic()) {
+            Some((i, _)) => w.split_at(i),
+            None => (w, ""),
+        };
+        let n: f64 = num
+            .parse()
+            .ok()
+            .filter(|n: &f64| n.is_finite() && *n >= 0.0)?;
+        total += n * match unit {
+            "" | "s" => 1.0,
+            "m" => 60.0,
+            "h" => 3_600.0,
+            "d" => 86_400.0,
+            _ => return None,
+        };
+        any = true;
+    }
+    any.then_some(total)
+}
+
+/// Whether `seg` sits in a pipeline in `cmd` (a lone `|` right before or after it).
+fn piped(cmd: &str, seg: &str) -> bool {
+    let Some(at) = cmd.find(seg) else {
+        return true;
+    };
+    let before = cmd[..at].trim_end();
+    let after = cmd[at + seg.len()..].trim_start();
+    (before.ends_with('|') && !before.ends_with("||"))
+        || (after.starts_with('|') && !after.starts_with("||"))
+}
+
 /// Why a call always asks in auto mode, if it does.
 pub fn hard_rule(name: &str, input: &Value, root: &Path) -> Option<&'static str> {
     static RULES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
@@ -286,6 +419,29 @@ impl Classifier {
             .ok_or_else(|| {
                 anyhow::anyhow!("no classifier model is configured and usable here")
             })?;
+        Self::build(cfg, name, profile)
+    }
+
+    /// The model `auto_classifier` names, or the default, for telling the user which one
+    /// is down when it couldn't even start.
+    pub fn primary_spec(cfg: &Config) -> String {
+        cfg.auto_classifier
+            .clone()
+            .unwrap_or_else(|| "cloud/qwen3-8b".into())
+    }
+
+    /// The second classifier, `auto_classifier_fallback`, when one is configured. `None`:
+    /// there is none, and the built-in rules are the fallback.
+    pub fn fallback(cfg: &Config, dir: &std::path::Path) -> Option<anyhow::Result<Self>> {
+        let spec = cfg.auto_classifier_fallback.as_ref()?;
+        Some((|| {
+            let (name, profile) = cfg.resolve(Some(spec))?;
+            crate::policy::check(dir, &name, &profile)?;
+            Self::build(cfg, name, profile)
+        })())
+    }
+
+    fn build(cfg: &Config, name: String, profile: Profile) -> anyhow::Result<Self> {
         let mode = profile.thinking.unwrap_or(cfg.thinking);
         let think = match crate::harness::cached(&profile) {
             Some(c) if !c.thinks => None,
@@ -662,6 +818,45 @@ mod tests {
     use std::collections::HashSet;
     use std::path::PathBuf;
 
+    /// The sleep guard: a bare long sleep (or one with only read-only checks around it, the
+    /// specimen that blocked a turn for 9.5 minutes) is a long wait; real work, pipelines and
+    /// short sleeps are not.
+    #[test]
+    fn long_wait_spots_bare_sleeps_and_leaves_real_work_inline() {
+        assert_eq!(long_wait("sleep 570"), Some(570));
+        assert_eq!(long_wait("  sleep 9m  "), Some(540));
+        assert_eq!(long_wait("sleep 1m 30s"), Some(90));
+        assert_eq!(long_wait("sleep 1.5h"), Some(5_400));
+        // The specimen, and its siblings from the same session.
+        assert_eq!(
+            long_wait(
+                "sleep 570; wc -l /tmp/out/baseline.jsonl; tail -1 /tmp/out/resume2.log 2>/dev/null"
+            ),
+            Some(570)
+        );
+        assert_eq!(
+            long_wait(
+                "sleep 570; tail -1 /tmp/out/resume.log 2>/dev/null; pgrep -f run_baseline.sh >/dev/null && echo RUNNING || echo DEAD"
+            ),
+            Some(570)
+        );
+        assert_eq!(long_wait("sleep 600\ntail -2 /tmp/job.log"), Some(600));
+        // Real work, a pipeline, two sleeps: inline as written.
+        assert_eq!(long_wait("sleep 570 && cargo build"), None);
+        assert_eq!(long_wait("sleep 570; npm test"), None);
+        assert_eq!(long_wait("sleep 600 | tee /tmp/x"), None);
+        assert_eq!(long_wait("cat big.log | sleep 600"), None);
+        assert_eq!(long_wait("sleep 300; ls; sleep 300"), None);
+        assert_eq!(long_wait("while true; do sleep 600; done"), None);
+        assert_eq!(long_wait("sleep $(cat n)"), None);
+        assert_eq!(long_wait("sleep forever"), None);
+        // Short waits stay inline.
+        assert_eq!(long_wait("sleep 59"), None);
+        assert_eq!(long_wait("sleep 5; tail -1 log"), None);
+        assert_eq!(long_wait("echo hi"), None);
+        assert_eq!(long_wait(""), None);
+    }
+
     #[test]
     fn hard_rules_catch_the_dangerous_and_leave_the_ordinary() {
         let root = Path::new("/work/proj");
@@ -873,6 +1068,32 @@ mod tests {
         }
         assert_eq!(mcp_write("mcp__x__frobnicate"), None);
         assert_eq!(mcp_write("Bash"), None);
+    }
+
+    #[test]
+    fn rules_fallback_passes_only_what_a_rule_proves_harmless() {
+        for (name, input) in [
+            ("Bash", json!({"command": "git log --oneline | head"})),
+            ("Terminal", json!({"action": "run", "command": "ls -la"})),
+            ("Screenshot", json!({"url": "https://example.com/"})),
+            ("Screenshot", json!({"url": "out/page.html"})),
+            ("mcp__runpod__list-pods", json!({})),
+        ] {
+            assert!(rules_fallback(name, &input).is_some(), "{name} {input}");
+        }
+        for (name, input) in [
+            ("Bash", json!({"command": "rm /private/tmp/not-mine"})),
+            ("Bash", json!({"command": "cat ~/.ssh/id_rsa"})),
+            ("Bash", json!({"command": "python3 x.py"})),
+            ("Terminal", json!({"action": "run", "command": "npm run dev"})),
+            ("Terminal", json!({"action": "type", "text": "ls\n"})),
+            ("Screenshot", json!({"url": "http://192.168.1.5/admin"})),
+            ("Preview", json!({"action": "eval", "js": "fetch('/x')"})),
+            ("Image", json!({"prompt": "a frog"})),
+            ("mcp__runpod__create-pod", json!({})),
+        ] {
+            assert!(rules_fallback(name, &input).is_none(), "{name} {input} must still ask");
+        }
     }
 
     #[test]

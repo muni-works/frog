@@ -28,6 +28,10 @@ struct WorkspaceView: View {
     @State private var window: NSWindow?
     @State private var renamingTitle = false
     @State private var newTitle = ""
+    // The sidebar's view options, for the quick-switch shortcuts' reading of it.
+    @AppStorage("sidebarGroup") private var sidebarGroup = SessionList.Grouping.org
+    @AppStorage("sidebarSort") private var sidebarSort = SessionList.Sort.activity
+    @AppStorage("sidebarScope") private var sidebarScope = AttentionTree.Scope.live
 
     struct Docked: Equatable {
         var sessions = false
@@ -80,6 +84,12 @@ struct WorkspaceView: View {
     /// quick-switch shortcuts (⌘1…9, ⇧⌘]/⇧⌘[) step through.
     private var sidebarOrder: [SessionInfo] {
         let library = Library.shared
+        if sidebarGroup == .org {
+            // The attention tree: the chief, then its top-level org rows, then yours.
+            let current = workspace.opening ?? workspace.conversation?.sessionID
+            let tree = SessionList.attention(library, sort: sidebarSort, scope: sidebarScope, current: current)
+            return [library.chiefSession].compactMap(\.self) + tree.layout.topLevels
+        }
         let active = library.sessions.filter { !library.archived.contains($0.id) }
         let pins = active.filter { library.pinned.contains($0.id) }
         let unpinned = active.filter { !$0.isChat && !library.pinned.contains($0.id) && $0.folder != nil }
@@ -118,9 +128,11 @@ struct WorkspaceView: View {
         return Self.margin + (open ? Self.sessionsWidth : SessionRail.width) + Self.gap
     }
 
-    private func extent(changes open: Bool, _ pane: Pane) -> CGFloat {
+    private func extent(changes open: Bool, _ pane: Pane, paneWidth: CGFloat = .infinity) -> CGFloat {
         guard pane.hasTabs || pane.hasRail else { return Self.gap }
-        let width = open ? pane.cardWidth : (pane.hasTabs ? Self.changesPill : TimelineRail.width)
+        // A narrow split pane's rail is its slim strip (see `PaneWidth`): it reserves only that.
+        let rail = panes.isSplit && PaneWidth(paneWidth) == .narrow ? TimelineRail.slimWidth : TimelineRail.width
+        let width = open ? pane.cardWidth : (pane.hasTabs ? Self.changesPill : rail)
         return Self.margin + width + Self.gap
     }
 
@@ -131,7 +143,8 @@ struct WorkspaceView: View {
     }
 
     /// Smallest a pane may be dragged to, across a divider.
-    static let minPane: CGFloat = 280
+    /// Smaller is unreadable even with a narrow pane's slimmed chrome.
+    static let minPane: CGFloat = 360
     /// The canvas's coordinate space, for dragging dividers.
     static let canvasSpace = "frog-canvas"
 
@@ -146,7 +159,7 @@ struct WorkspaceView: View {
         }
         // Split panes have a header to keep clear of.
         let top = panes.isSplit ? Self.headerClearance + Self.margin : 0
-        return (r, EdgeInsets(top: top, leading: leftmost ? ext : Self.gap, bottom: 0, trailing: extent(changes: changes, pane)))
+        return (r, EdgeInsets(top: top, leading: leftmost ? ext : Self.gap, bottom: 0, trailing: extent(changes: changes, pane, paneWidth: r.width)))
     }
 
     private func placement(_ pane: Pane) -> (frame: CGRect, insets: EdgeInsets) {
@@ -366,7 +379,10 @@ struct WorkspaceView: View {
                     toggleChanges: { toggleChanges(pane) },
                     window: window
                 )
-                .frame(width: max(0, place.frame.width), height: max(0, place.frame.height))
+                // Exactly its frame: content that wants more is cut at the pane's own edge, never
+                // centered out over its neighbors (the rail and text of one pane over the next).
+                .frame(width: max(0, place.frame.width), height: max(0, place.frame.height), alignment: .topLeading)
+                .clipped()
                 .offset(x: place.frame.minX, y: place.frame.minY)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }

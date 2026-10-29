@@ -1,64 +1,171 @@
 import SwiftUI
 
-/// The transcript's vertical rhythm, in one place. A turn is a paragraph of its own: the
-/// space between turns is larger than the space within one, so each reads as a unit, and
-/// the answer's footer sits a step further from the text than the text's own lines.
+/// The transcript's measure and vertical rhythm, in one place. One narrow column of text;
+/// a turn is a paragraph of its own (the space between turns is the loudest), the rows within
+/// a turn step down from there, and an activity line hangs close under the text it follows.
+///
+/// Comfortable / compact:
+///
+/// | gap        | pt    | where                                                      |
+/// |------------|-------|------------------------------------------------------------|
+/// | line       | 6 / 5 | extra leading under every line (wrapped or last)           |
+/// | list       | 6 / 5 | between items of one list                                  |
+/// | paragraph  | 16/14 | between a message's paragraphs, and text rows in a turn    |
+/// | section    | 28/24 | above a heading                                            |
+/// | heading    | 6 / 5 | below a heading: it belongs to what follows                |
+/// | activity   | 6 / 4 | above an activity line: tight to the paragraph before it   |
+/// | block      | 16/10 | other rows in a turn: prompt, cards, visuals, the tail     |
+/// | turn       | 32/16 | between turns                                              |
+/// | footer     | 4 / 2 | extra above the model/speed caption, on top of `block`     |
+///
+/// Inside a message TextKit puts `line` under a paragraph's last line too, so what you see
+/// between blocks is `line` + the gap: ≈22 between paragraphs, ≈12 between list items (vs 6
+/// for a wrapped line), ≈34 above a heading and ≈12 below it.
+///
+/// Compact tightens the chrome (rows, turns, the footer), and the prose only a notch: a message
+/// is read the same way at either density, and a squeezed list reads as one wrapped paragraph.
 enum TurnSpace {
-    /// Between turns: the loudest gap. A comfortable reading room by default, tighter when
-    /// the density setting asks for it.
-    static let betweenTurns: CGFloat = 28
-    static let betweenTurnsCompact: CGFloat = 14
+    /// The text column's widest, and the room kept either side of it in a narrow window.
+    /// About 90 characters of body text: a reading measure, with room left for code.
+    static let measure: CGFloat = 720
+    static let gutter: CGFloat = 32
+    /// Above the first turn and below the last.
+    static let top: CGFloat = 20
+    static let bottom: CGFloat = 12
+    /// What you asked, as a bubble: at most this wide, so it never reads as a second column.
+    static let promptWidth: CGFloat = 540
 
-    /// Within a turn: between the prompt, activity lines, the answer and its cards.
-    /// Never larger than the space between turns.
-    static let inTurn: CGFloat = 12
-    static let inTurnCompact: CGFloat = 8
+    /// Small fixed steps for the insides of rows and cards (padding, icon gaps), so they snap
+    /// to one scale instead of 5s, 7s and 9s. Not density-dependent.
+    enum Inset {
+        static let hair: CGFloat = 2
+        static let tight: CGFloat = 4
+        static let snug: CGFloat = 6
+        static let row: CGFloat = 8
+        static let card: CGFloat = 10
+        static let roomy: CGFloat = 12
+        /// A line's leading icon (tool rows, thoughts, event lines): one width for all of them,
+        /// so their titles line up down the column at `iconColumn`.
+        static let icon: CGFloat = 18
+        /// Where a line's title starts, and its detail is indented to: past the icon and its gap.
+        static let iconColumn: CGFloat = icon + row
+    }
 
-    /// A markdown message's own lines: extra leading between wrapped lines (line height),
-    /// and between its paragraphs, list items and other blocks.
-    static let lineHeight: CGFloat = 4
-    static let lineHeightCompact: CGFloat = 2
-    static let block: CGFloat = 12
-    static let blockCompact: CGFloat = 8
-    /// Between bullets of one list, tighter than between blocks.
-    static let listItem: CGFloat = 5
-    static let listItemCompact: CGFloat = 3
-
-    /// The footer (model, speed, cost) set off from the answer above it.
-    static let beforeFooter: CGFloat = 16
-    static let beforeFooterCompact: CGFloat = 10
+    /// Boxes in the column (code, diagrams, subagents, the plan, cards that need you): edges on
+    /// the column's edges, one corner, one inner padding, so what's inside any box starts at
+    /// the same place. Lines (activity, tool rows, notices, banners) aren't boxes: their content
+    /// sits on the column's edge, and a hover plate bleeds outward (see `linePlate`).
+    enum Card {
+        static let radius: CGFloat = 12
+        static let padding: CGFloat = Inset.roomy
+        /// A box inside a row or a card (a tool's output, a diff): a smaller corner.
+        static let nestedRadius: CGFloat = 8
+    }
 
     /// The values for the density setting (see `Density`).
     struct Scale: Equatable {
-        let betweenTurns: CGFloat
-        let inTurn: CGFloat
-        let lineHeight: CGFloat
+        let line: CGFloat
+        let list: CGFloat
+        let paragraph: CGFloat
+        let section: CGFloat
+        let heading: CGFloat
+        let activity: CGFloat
         let block: CGFloat
-        let listItem: CGFloat
-        let beforeFooter: CGFloat
+        let turn: CGFloat
+        let footer: CGFloat
 
-        static let comfortable = Scale(
-            betweenTurns: TurnSpace.betweenTurns,
-            inTurn: TurnSpace.inTurn,
-            lineHeight: TurnSpace.lineHeight,
-            block: TurnSpace.block,
-            listItem: TurnSpace.listItem,
-            beforeFooter: TurnSpace.beforeFooter
-        )
+        static let comfortable = Scale(line: 6, list: 6, paragraph: 16, section: 28, heading: 6,
+                                       activity: 6, block: 16, turn: 32, footer: 4)
+        static let compact = Scale(line: 5, list: 5, paragraph: 14, section: 24, heading: 5,
+                                   activity: 4, block: 10, turn: 16, footer: 2)
 
-        static let compact = Scale(
-            betweenTurns: TurnSpace.betweenTurnsCompact,
-            inTurn: TurnSpace.inTurnCompact,
-            lineHeight: TurnSpace.lineHeightCompact,
-            block: TurnSpace.blockCompact,
-            listItem: TurnSpace.listItemCompact,
-            beforeFooter: TurnSpace.beforeFooterCompact
-        )
+        /// Space above a markdown block, from the block before it in the same message (nil: it's
+        /// the first). The only gap between two blocks: nothing is added below a block, so two
+        /// gaps never stack (list items once sat further apart than paragraphs that way).
+        func gap(_ block: MarkdownBlock, after previous: MarkdownBlock?) -> CGFloat {
+            guard let previous else { return 0 }
+            if case .heading = block { return section }
+            if case .heading = previous { return heading }
+            if case .bullet = block, case .bullet = previous { return list }
+            return paragraph
+        }
+
+        /// Space above a turn's row, from what's above it in the same turn (nil: it opens the
+        /// turn). Worked out once per row list (see `TranscriptView.rows`), not per row view.
+        func gap(_ part: TurnPart, after previous: TurnPart?, first: Bool) -> CGFloat {
+            guard let previous else { return first ? 0 : turn }
+            guard case .segment(let segment) = part else { return block }
+            switch segment {
+            case .activity:
+                return activity
+            case .text:
+                if case .segment(.text) = previous { return paragraph }
+                if case .segment(.activity) = previous { return paragraph }
+                return block
+            case .visual, .notice:
+                return block
+            }
+        }
     }
 
     /// The scale for a raw density value (an `@AppStorage` string, not the enum).
     static func scale(_ raw: String) -> Scale {
         raw == Density.compact.rawValue ? .compact : .comfortable
+    }
+
+    /// The density setting's scale, read from defaults: for `MessageStyle`, which builds text on
+    /// AppKit's text queue at times, away from the environment.
+    static var current: Scale {
+        scale(UserDefaults.standard.string(forKey: "density") ?? "")
+    }
+}
+
+/// The transcript's type sizes. The answer reads a step larger than the system's 13pt UI text
+/// on the Mac, like a document; activity and captions stay at UI sizes, so they recede.
+enum TurnType {
+    #if os(macOS)
+    static let body: CGFloat = 14
+    #else
+    static let body: CGFloat = 17
+    #endif
+    /// Tables in a message: a step down, so a wide one fits the measure.
+    static let small: CGFloat = body - 2
+    /// A list item's marker column: its text starts this far in, whatever the marker ("•", "1.",
+    /// "10."), so a list's text lines up; a nested list steps in by one column, putting its
+    /// markers under its parent's text.
+    static let markerColumn: CGFloat = (body * 1.6).rounded()
+    /// Between a marker's right edge and the item's text.
+    static let markerGap: CGFloat = TurnSpace.Inset.row
+
+    /// The marker shown for a list item: numbers as written, bullets by depth (disc, circle,
+    /// square), like a browser's lists.
+    static func marker(_ marker: String, indent: Int) -> String {
+        guard marker == "•" else { return marker }
+        return ["•", "◦", "▪"][indent % 3]
+    }
+
+    /// Headings in a message, by level (1, 2, 3+).
+    static func heading(_ level: Int) -> CGFloat {
+        level == 1 ? body + 4 : level == 2 ? body + 2 : body
+    }
+}
+
+extension View {
+    /// On the transcript's column: at most `TurnSpace.measure` wide, centered, with the gutter
+    /// either side in a narrow window. The transcript, the banners above the composer and the
+    /// composer share it, so the page is one column from the first turn to the field you type in.
+    func turnColumn() -> some View {
+        frame(maxWidth: TurnSpace.measure)
+            .padding(.horizontal, TurnSpace.gutter)
+            .frame(maxWidth: .infinity)
+    }
+
+    /// A line's hover or open plate. It bleeds outward into the gutter rather than padding the
+    /// line in, so the line's icon and words stay on the column's edge, under the paragraphs.
+    func linePlate(_ opacity: Double) -> some View {
+        padding(.horizontal, TurnSpace.Inset.snug)
+            .background(.quaternary.opacity(opacity), in: .rect(cornerRadius: TurnSpace.Card.nestedRadius))
+            .padding(.horizontal, -TurnSpace.Inset.snug)
     }
 }
 

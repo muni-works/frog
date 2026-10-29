@@ -62,9 +62,61 @@ jobs:
             -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
       - name: test
+        # xcodebuild passes TEST_RUNNER_* to the test process without the prefix: the tests see
+        # CI and give wall-clock budgets runner room (FrogTests TestRunner). A failing test gets
+        # up to 2 more tries (the window benchmarks share a VM's frames); it must pass once.
+        env:
+          TEST_RUNNER_CI: "true"
         run: |
           cd apps/macos
-          xcodebuild test -quiet \
+          xcodebuild test -quiet -retry-tests-on-failure -test-iterations 3 \
             -project Frog.xcodeproj -scheme Frog -configuration Debug \
             -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
+      # Release builds break differently from Debug (DEBUG-only symbols used
+      # unconditionally, warnings as errors differences): the launch pipeline
+      # (release.yml) builds Release, so CI guards it too.
+      - name: build Release
+        run: |
+          cd apps/macos
+          xcodebuild build -quiet \
+            -project Frog.xcodeproj -scheme Frog -configuration Release \
+            -derivedDataPath build/ci-release -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
+
+      # The remote app's targets (iPhone, iPad, watch, extensions): the same Swift as the Mac,
+      # but these five targets compile FrogKit/UI/Basics without UI/Transcript, which is where
+      # cross-folder drift breaks them. Simulator destinations, so no signing is needed.
+      - name: generate iOS project
+        run: cd apps/ios && xcodegen generate --quiet
+      - name: build iOS app
+        run: |
+          cd apps/ios
+          xcodebuild build -quiet \
+            -project FrogRemote.xcodeproj -scheme Frog -configuration Debug \
+            -derivedDataPath build/ci -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+      - name: build watch app
+        run: |
+          cd apps/ios
+          xcodebuild build -quiet \
+            -project FrogRemote.xcodeproj -scheme FrogWatch -configuration Debug \
+            -derivedDataPath build/ci -destination 'generic/platform=watchOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build

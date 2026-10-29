@@ -16,6 +16,9 @@ struct PaneView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.controlActiveState) private var activeState
     @Namespace private var glass
+    /// This pane's width: when it can't fit the rail beside the transcript's column, the column
+    /// gives way rather than running under the rail.
+    @State private var width: CGFloat = 1_200
 
     static let headerHeight: CGFloat = 32
 
@@ -25,6 +28,11 @@ struct PaneView: View {
     private var focused: Bool { panes.focusedID == pane.id }
     private var changesVisible: Bool { changesDocked || (pane.peekChanges && pane.hasTabs) }
     private var margin: CGFloat { WorkspaceView.margin }
+
+    /// Room right of the centered 820 pt column, short of the rail (the rail's labels use it).
+    private func gutter(_ w: CGFloat) -> CGFloat {
+        max(0, (w - insets.leading - insets.trailing - 820) / 2 + insets.trailing - TimelineRail.width - margin - 12)
+    }
 
     var body: some View {
         paneBody
@@ -49,32 +57,41 @@ struct PaneView: View {
 
             GeometryReader { geo in
                 let room = max(120, geo.size.height - margin * 2)
+                // The transcript is a centered 820 pt column: what's right of it, short of the rail.
+                let gutter = gutter(geo.size.width)
                 GlassEffectContainer(spacing: 20) {
                     HStack(alignment: .top, spacing: 0) {
                         Spacer(minLength: 0)
-                        instruments(room: room)
+                        instruments(room: room, gutter: gutter)
                     }
                 }
                 .padding(margin)
             }
 
+        }
+        // Overlays, not stack members: a wide pill or find bar can't widen the pane (a split
+        // pane's fixed-size pill did, spilling its rail and text over the next pane).
+        .overlay(alignment: .top) {
             if let number {
                 header(number)
                     .padding(.leading, insets.leading)
                     .padding(.trailing, insets.trailing)
                     .padding(.top, margin)
-                    .frame(maxWidth: .infinity)
             }
-
+        }
+        .overlay(alignment: .top) {
             if ui.findShown, let conversation {
                 FindBar(state: ui, turns: conversation.turns)
                     .padding(.leading, insets.leading)
                     .padding(.trailing, insets.trailing)
-                    .frame(maxWidth: .infinity)
                     .padding(.top, margin + (number == nil ? 0 : Self.headerHeight + 8))
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        // Nothing (pill, rail, changes) draws into the pane beside it.
+        .clipped()
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
+        .environment(\.paneWidth, number == nil ? .wide : PaneWidth(width))
         .environment(\.canvasInsets, insets)
         .environment(\.projectFolder, workspace.folder)
         .environment(\.models, workspace.models)
@@ -112,10 +129,6 @@ struct PaneView: View {
         } message: {
             Text("Files frog edited in that turn go back to how they were, and the conversation continues from just before it. The current session is kept, so you can go back to it.")
         }
-        .onChange(of: workspace.conversation?.busy ?? false, initial: true) { _, busy in
-            DockActivity.shared.set(ObjectIdentifier(workspace), busy: busy)
-        }
-        .onDisappear { DockActivity.shared.set(ObjectIdentifier(workspace), busy: false) }
         // A new workspace in this pane starts its views fresh.
         .id(ObjectIdentifier(workspace))
     }
@@ -179,7 +192,9 @@ struct PaneView: View {
         let badge = ActivityViewer.PaneBadge(number: number, focused: focused) { panes.close(pane) }
         Group {
             if let c = workspace.conversation, workspace.race == nil {
-                ActivityViewer(workspace: workspace, conversation: c, jump: { ui.jumpTo = $0 }, pane: badge)
+                // The words give way in a narrow pane, so the capsule stays inside it.
+                ActivityViewer(workspace: workspace, conversation: c, jump: { ui.jumpTo = $0 }, pane: badge,
+                               labelWidth: max(80, min(300, width - insets.leading - insets.trailing - 340)))
             } else if workspace.race != nil {
                 Text("\(number)  \(workspace.name) · Racing")
                     .font(.callout)
@@ -195,7 +210,7 @@ struct PaneView: View {
 
     /// Changes (card or pill) above the timeline rail.
     @ViewBuilder
-    private func instruments(room: CGFloat) -> some View {
+    private func instruments(room: CGFloat, gutter: CGFloat = 0) -> some View {
         let top = number == nil ? 0 : WorkspaceView.headerClearance
         if let conversation, pane.hasTabs || pane.hasRail {
             VStack(alignment: .trailing, spacing: 8) {
@@ -242,11 +257,12 @@ struct PaneView: View {
                         conversation: conversation,
                         visible: ui.visibleTurns,
                         marked: ui.findShown ? Set(ui.matches(in: conversation.turns)) : [],
+                        labelRoom: gutter,
                         actions: turnActions,
                         jump: { ui.jumpTo = $0 }
                     )
                     // Grows with the conversation instead of standing full height from turn one.
-                    .frame(height: min(room - top, CGFloat(conversation.turns.count) * 22 + 28))
+                    .frame(height: TimelineRail.height(for: conversation.turns, room: room - top))
                     .glassEffect(.regular, in: .capsule)
                     .glassEffectID("timeline", in: glass)
                     .transition(.opacity)

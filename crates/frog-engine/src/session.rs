@@ -15,7 +15,7 @@ use crate::protocol::{EndReason, Envelope, Event};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Seek, Write};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
@@ -26,22 +26,35 @@ pub fn default_dir() -> PathBuf {
 }
 
 pub fn new_id() -> String {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    // A per-process random start plus a counter: unique within a process, and unlikely to
-    // collide across processes started in the same second.
-    static NEXT: std::sync::OnceLock<AtomicU32> = std::sync::OnceLock::new();
+    // The counter mixes the pid into the bits the salt keeps, so two processes started in the
+    // same second (with the same sub-second clock reading) still mint different ids; the
+    // counter then keeps ids unique within a process. A collision is still possible — handled
+    // by `Log::create` taking over the file — just vanishingly rare.
+    static NEXT: std::sync::OnceLock<std::sync::atomic::AtomicU32> = std::sync::OnceLock::new();
     let next = NEXT.get_or_init(|| {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .subsec_nanos();
-        AtomicU32::new(nanos ^ std::process::id().rotate_left(16))
+        std::sync::atomic::AtomicU32::new(salt_base(nanos, std::process::id()))
     });
-    let salt = next.fetch_add(1, Ordering::Relaxed) & 0xffff;
+    let salt = salt_of(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     format!(
         "{}-{salt:04x}",
         chrono::Local::now().format("%Y%m%d-%H%M%S")
     )
+}
+
+/// The counter a process mints salts from: its first salt (the clock's sub-second reading)
+/// with the pid hashed into the low bits the salt keeps (a multiplicative mix, so every bit of
+/// the pid reaches the salt, not just its low half).
+fn salt_base(nanos: u32, pid: u32) -> u32 {
+    nanos ^ pid.wrapping_mul(0x9E37_79B9).rotate_left(16)
+}
+
+/// The salt an already-counted value yields.
+fn salt_of(n: u32) -> u32 {
+    n & 0xffff
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -54,6 +67,9 @@ pub struct Header {
     pub created: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<ForkPoint>,
+    /// An agent started it (`--worker`): a resume keeps its worker egress policy.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub worker: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -107,6 +123,10 @@ pub enum Record {
     RepoMap {
         map: crate::repomap::Map,
     },
+    /// MCP tools that were loaded via `McpTools` and should be restored on resume.
+    LoadedTools {
+        tools: Vec<String>,
+    },
 }
 
 fn path(dir: &Path, id: &str) -> PathBuf {
@@ -135,13 +155,27 @@ pub struct Log {
 impl Log {
     pub fn create(dir: &Path, header: Header) -> Result<Self> {
         std::fs::create_dir_all(dir)?;
-        let file = OpenOptions::new()
-            .append(true)
-            .create_new(true)
-            .open(path(dir, &header.id))
-            .with_context(|| format!("creating session {}", header.id))?;
+        let path = path(dir, &header.id);
+        let file = match OpenOptions::new().append(true).create_new(true).open(&path) {
+            Ok(f) => f,
+            // Two engines minted the same id (the same second and salt) or the previous holder
+            // died without cleaning up. Try to take the file over: the flock in `locked`
+            // arbitrates — acquiring it means the previous holder is gone and this process may
+            // continue the log; failing it means the session genuinely is in use.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .with_context(|| format!("creating session {}", header.id))?,
+            Err(e) => return Err(e).with_context(|| format!("creating session {}", header.id)),
+        };
         let mut log = Self::locked(file, &header.id)?;
-        log.append(&Record::Header(header))?;
+        // A taken-over log already has its header; a fresh one — including a truncated file
+        // left by a crash before the header landed — starts with it. An offset of 0 on a
+        // non-empty file would mean someone truncated it under us; appending nevertheless
+        // keeps `fold` happy (its first record must be the header, and it has one).
+        if log.file.seek(std::io::SeekFrom::End(0))? == 0 {
+            log.append(&Record::Header(header))?;
+        }
         Ok(log)
     }
 
@@ -233,6 +267,8 @@ pub struct Loaded {
     pub checkpoints: Vec<(u64, PathBuf, String)>,
     /// The repo map last sent, if one was logged.
     pub repo_map: Option<crate::repomap::Map>,
+    /// MCP tools that were loaded via `McpTools` and should be restored on resume.
+    pub loaded: Vec<String>,
 }
 
 impl Loaded {
@@ -285,6 +321,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
     let mut snapshots = Vec::new();
     let mut checkpoints = Vec::new();
     let mut repo_map = None;
+    let mut loaded: Vec<String> = Vec::new();
     for r in records {
         match r {
             Record::Header(_) => bail!("session {id} has a second header"),
@@ -299,6 +336,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
             Record::Checkpoint { turn, root, commit } => checkpoints.push((turn, root, commit)),
             Record::Reset { messages: m } => messages = m,
             Record::RepoMap { map } => repo_map = Some(map),
+            Record::LoadedTools { tools } => loaded = tools,
         }
     }
     Ok(Loaded {
@@ -308,6 +346,7 @@ fn fold(id: &str, records: impl IntoIterator<Item = Record>) -> Result<Loaded> {
         snapshots,
         checkpoints,
         repo_map,
+        loaded,
     })
 }
 
@@ -330,21 +369,45 @@ pub fn header(dir: &Path, id: &str) -> Result<Header> {
     }
 }
 
-/// Durable events with `seq > after`.
+/// Durable events with `seq > after`, read without parsing the rest of the log: a long
+/// session's log is mostly the model's messages (screenshots in tool results among them), and
+/// a client replaying its transcript needs none of them. Records lead with their tag, so a line
+/// that isn't an event is skipped unparsed, and an event's seq is its first field, so with
+/// `after` set the ones already seen are too. A torn last line is ignored, as on load.
 pub fn events_after(dir: &Path, id: &str, after: u64) -> Result<Vec<Envelope>> {
-    Ok(read_records(dir, id)?
-        .into_iter()
-        .filter_map(|r| match r {
-            Record::Event { env } if env.seq > after => Some(env),
-            _ => None,
-        })
-        .collect())
+    const RECORD: &[u8] = br#"{"type":""#;
+    const EVENT: &[u8] = br#"{"type":"event""#;
+    const SEQ: &[u8] = br#"{"type":"event","env":{"seq":"#;
+    let file = File::open(path(dir, id)).with_context(|| format!("no session {id}"))?;
+    let mut lines = BufReader::new(file).split(b'\n').peekable();
+    let mut out = Vec::new();
+    while let Some(line) = lines.next() {
+        let line = line?;
+        if line.starts_with(RECORD) && !line.starts_with(EVENT) {
+            continue;
+        }
+        if after > 0 && line.starts_with(SEQ) {
+            let digits = &line[SEQ.len()..];
+            let n = digits.iter().take_while(|b| b.is_ascii_digit()).count();
+            let seq = std::str::from_utf8(&digits[..n]).ok().and_then(|d| d.parse::<u64>().ok());
+            if seq.is_some_and(|seq| seq <= after) {
+                continue;
+            }
+        }
+        match serde_json::from_slice::<Record>(&line) {
+            Ok(Record::Event { env }) if env.seq > after => out.push(env),
+            Ok(_) => {}
+            Err(_) if lines.peek().is_none() => break,
+            Err(e) => bail!("session {id} is corrupt: {e}"),
+        }
+    }
+    Ok(out)
 }
 
 /// How a session's last turn ended, for listings: is it still going, and if not, how did it
 /// stop? Derived from the last `TurnStarted`/`TurnEnded` pair; `None` means the session never
 /// finished a turn (idle, or one that only ever crashed).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EndState {
     /// The last turn is still open (or ended mid-run: torn tail, crash) — live readers should
     /// consult the `.live` file for what's happening now.
@@ -390,11 +453,114 @@ pub struct Info {
     pub end: Option<EndState>,
 }
 
+/// What `list` reads out of one log: everything but whether it's in use right now.
+#[derive(Clone, Serialize, Deserialize)]
+struct Scanned {
+    header: Header,
+    first_input: Option<String>,
+    title: Option<String>,
+    end: Option<EndState>,
+    /// The newest turn is still open.
+    open: bool,
+    /// Last conversation activity, ms.
+    active: i64,
+}
+
+/// `list`'s summaries, keyed by session id and stamped with the log's size and mtime: reading
+/// every log in full (screenshots and all, ~2 GB for 1,300 sessions) took over a second, and the
+/// app lists every few seconds while anything streams. Only a log that changed is read again.
+#[derive(Default, Serialize, Deserialize)]
+struct ListIndex {
+    entries: std::collections::HashMap<String, (u64, i128, Scanned)>,
+}
+
+const LIST_INDEX: &str = ".list-index.json";
+
+/// A log's (size, mtime ns), the index's validity stamp.
+fn stamp(meta: &std::fs::Metadata) -> Option<(u64, i128)> {
+    let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((meta.len(), mtime.as_nanos() as i128))
+}
+
+fn scan(p: &Path) -> Option<Scanned> {
+    let file = File::open(p).ok()?;
+    let mut lines = BufReader::new(file).lines().map_while(|l| l.ok());
+    let Some(Ok(Record::Header(header))) = lines.next().map(|l| serde_json::from_str(&l)) else {
+        return None;
+    };
+    let (mut first_input, mut title) = (None, None);
+    // The end of the newest turn that closed, and whether a later one is still open.
+    let mut end: Option<EndState> = None;
+    let mut open = false;
+    // Last conversation activity: when a turn last started or ended. Not the file's mtime,
+    // since merely resuming a session appends bookkeeping records, which would reorder the
+    // list every time you open one.
+    let mut active = header.created;
+    for l in lines {
+        // Only these three events matter: skip parsing the rest (tool output, screenshots),
+        // which is nearly all of a log's bytes.
+        if !(l.contains("\"turn_started\"") || l.contains("\"turn_ended\"") || l.contains("\"titled\"")) {
+            continue;
+        }
+        match serde_json::from_str(&l) {
+            Ok(Record::Event {
+                env:
+                    Envelope {
+                        event: Event::TurnStarted { input, .. },
+                        created,
+                        ..
+                    },
+            }) => {
+                active = active.max(created);
+                open = true;
+                if first_input.is_none() {
+                    first_input = Some(input);
+                }
+            }
+            Ok(Record::Event {
+                env:
+                    Envelope {
+                        event: Event::TurnEnded { reason, .. },
+                        created,
+                        ..
+                    },
+            }) => {
+                active = active.max(created);
+                open = false;
+                end = EndState::new(&reason);
+            }
+            Ok(Record::Event {
+                env:
+                    Envelope {
+                        event: Event::Titled { title: t },
+                        ..
+                    },
+            }) => title = Some(t),
+            _ => {}
+        }
+    }
+    Some(Scanned {
+        header,
+        first_input,
+        title,
+        end,
+        open,
+        active,
+    })
+}
+
 /// Sessions started in `cwd` (every folder's, with `None`), most recently active first.
 pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(Vec::new());
     };
+    let index_path = dir.join(LIST_INDEX);
+    let old: ListIndex = std::fs::read(&index_path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let mut index = ListIndex::default();
+    let mut dirty = false;
     let mut out = Vec::new();
     for e in entries.filter_map(|e| e.ok()) {
         let p = e.path();
@@ -404,61 +570,29 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
         let Some(id) = p.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        let Ok(file) = File::open(&p) else { continue };
-        let mut lines = BufReader::new(file).lines().map_while(|l| l.ok());
-        let Some(Ok(Record::Header(header))) = lines.next().map(|l| serde_json::from_str(&l))
-        else {
+        let Some((len, mtime)) = e.metadata().ok().as_ref().and_then(stamp) else {
             continue;
         };
-        if cwd.is_some_and(|c| header.cwd != c) {
+        let scanned = match old.entries.get(id) {
+            Some((l, m, s)) if *l == len && *m == mtime => s.clone(),
+            _ => {
+                dirty = true;
+                let Some(s) = scan(&p) else { continue };
+                s
+            }
+        };
+        index.entries.insert(id.to_string(), (len, mtime, scanned.clone()));
+        if cwd.is_some_and(|c| scanned.header.cwd != c) {
             continue;
         }
-        let (mut first_input, mut title) = (None, None);
-        // The end of the newest turn that closed, and whether a later one is still open.
-        let mut end: Option<EndState> = None;
-        let mut open = false;
-        // Last conversation activity: when a turn last started or ended. Not the file's mtime,
-        // since merely resuming a session appends bookkeeping records, which would reorder the
-        // list every time you open one.
-        let mut active = header.created;
-        for l in lines {
-            match serde_json::from_str(&l) {
-                Ok(Record::Event {
-                    env:
-                        Envelope {
-                            event: Event::TurnStarted { input, .. },
-                            created,
-                            ..
-                        },
-                }) => {
-                    active = active.max(created);
-                    open = true;
-                    if first_input.is_none() {
-                        first_input = Some(input);
-                    }
-                }
-                Ok(Record::Event {
-                    env:
-                        Envelope {
-                            event: Event::TurnEnded { reason, .. },
-                            created,
-                            ..
-                        },
-                }) => {
-                    active = active.max(created);
-                    open = false;
-                    end = EndState::new(&reason);
-                }
-                Ok(Record::Event {
-                    env:
-                        Envelope {
-                            event: Event::Titled { title: t },
-                            ..
-                        },
-                }) => title = Some(t),
-                _ => {}
-            }
-        }
+        let Scanned {
+            header,
+            first_input,
+            title,
+            end,
+            open,
+            active,
+        } = scanned;
         let modified =
             std::time::UNIX_EPOCH + std::time::Duration::from_millis(active.max(0) as u64);
         out.push(Info {
@@ -476,6 +610,16 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
                 end
             },
         });
+    }
+    // Deleted logs drop out too. Written whole and renamed in, so a concurrent listing reads
+    // the old index or the new one, never half; a failed write only costs the next a rescan.
+    if dirty || index.entries.len() != old.entries.len() {
+        let tmp = dir.join(format!("{LIST_INDEX}.{}", std::process::id()));
+        if let Ok(bytes) = serde_json::to_vec(&index)
+            && std::fs::write(&tmp, bytes).is_ok()
+        {
+            let _ = std::fs::rename(&tmp, &index_path);
+        }
     }
     out.sort_by_key(|i| std::cmp::Reverse(i.modified));
     Ok(out)
@@ -607,6 +751,8 @@ pub fn fork(dir: &Path, id: &str, upto: Option<u64>) -> Result<String> {
             session: id.to_string(),
             seq: last_seq,
         }),
+        // A fork of an agent's session is still an agent's.
+        worker: src.worker,
     };
     let mut log = Log::create(dir, header)?;
     for r in kept {
@@ -643,6 +789,7 @@ mod tests {
             model: "m".into(),
             created: 0,
             forked_from: None,
+            worker: false,
         }
     }
 
@@ -734,6 +881,28 @@ mod tests {
         let appended = events_after(&dir, "a", first[0].seq).unwrap();
         assert_eq!(appended.len(), 1);
         assert_eq!(appended[0].seq, 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn events_after_skips_messages_and_seen_events_unparsed() {
+        let dir = tmp();
+        let mut log = Log::create(&dir, header("a")).unwrap();
+        for seq in 1..=3 {
+            log.append(&ev(seq, Event::Titled { title: format!("t{seq}") })).unwrap();
+            log.append(&Record::Push { message: Message::user("hi") }).unwrap();
+        }
+        log.sync().unwrap();
+        drop(log);
+        // A message line that wouldn't parse is never read; a torn event at the end is dropped.
+        let mut f = OpenOptions::new().append(true).open(path(&dir, "a")).unwrap();
+        writeln!(f, r#"{{"type":"push","message":{{not json"#).unwrap();
+        write!(f, r#"{{"type":"event","env":{{"seq":4,"#).unwrap();
+        drop(f);
+        let all = events_after(&dir, "a", 0).unwrap();
+        assert_eq!(all.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
+        let newer = events_after(&dir, "a", 2).unwrap();
+        assert_eq!(newer.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![3]);
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -842,6 +1011,72 @@ mod tests {
         assert!(t.elapsed() >= std::time::Duration::from_millis(150));
         release.join().unwrap();
         assert!(Log::open(&dir, "w").is_ok());
+    }
+
+    #[test]
+    fn creates_with_the_same_id_take_over_a_released_log() {
+        let dir = tmp();
+        // Two engines minted the same id: the second `create` finds the file there, but the
+        // first holder is gone, so the flock lets it continue the log — no second header.
+        let mut first = Log::create(&dir, header("a")).unwrap();
+        first.append(&ev(1, Event::Titled { title: "one".into() })).unwrap();
+        first.sync().unwrap();
+        drop(first);
+        let mut second = Log::create(&dir, header("a")).unwrap();
+        second.append(&ev(2, Event::Titled { title: "two".into() })).unwrap();
+        second.sync().unwrap();
+        drop(second);
+        let l = load(&dir, "a").unwrap();
+        assert_eq!(
+            l.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+
+        // But a live holder means the session genuinely is in use: one clean error, no
+        // take-over, and the file is left as the holder had it.
+        let held = Log::open(&dir, "a").unwrap();
+        let err = match Log::create(&dir, header("a")) {
+            Err(e) => e,
+            Ok(_) => panic!("a held log was taken over"),
+        };
+        assert!(err.to_string().contains("open in another frog process"), "{err:#}");
+        drop(held);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_empty_file_left_behind_gets_a_header_on_create() {
+        let dir = tmp();
+        // A crash between creating the file and writing the header: the takeover appends one.
+        std::fs::write(path(&dir, "a"), "").unwrap();
+        let mut log = Log::create(&dir, header("a")).unwrap();
+        log.append(&ev(1, Event::Titled { title: "one".into() })).unwrap();
+        drop(log);
+        let l = load(&dir, "a").unwrap();
+        assert_eq!(l.events.len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ids_mix_the_pid_into_the_salt_and_stay_well_formed() {
+        let before = [
+            salt_of(salt_base(1, 100)),
+            salt_of(salt_base(1, 101)),
+            salt_of(salt_base(1, 100 << 16 | 100)),
+        ];
+        // The pid must reach the bits the salt keeps: different pids, same clock, different
+        // salts — in either half of the counter.
+        assert_ne!(before[0], before[1]);
+        assert_ne!(before[0], before[2]);
+        // And the id keeps its shape: YYYYMMDD-HHMMSS-xxxx.
+        let (a, b) = (new_id(), new_id());
+        assert_ne!(a, b);
+        let salt = a.rsplit('-').next().unwrap();
+        assert_eq!(salt.len(), 4);
+        assert!(salt.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(a.len(), b.len());
+        let dashes = a.matches('-').count();
+        assert_eq!(dashes, 2, "{a}");
     }
 
     #[test]

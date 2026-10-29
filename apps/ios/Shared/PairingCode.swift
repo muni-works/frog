@@ -6,8 +6,8 @@ import Security
 /// the lock screen still works.
 enum PairingCode {
     private static let account = "pairing-code"
-    private static let service = "eco.frog.remote"
-    /// `$(AppIdentifierPrefix)eco.frog.remote`, from Info.plist.
+    private static let service = "toys.frog.remote"
+    /// `$(AppIdentifierPrefix)toys.frog.remote`, from Info.plist.
     private static var group: String? { Bundle.main.object(forInfoDictionaryKey: "FrogKeychainGroup") as? String }
 
     private static var query: [String: Any] {

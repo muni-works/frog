@@ -44,6 +44,23 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(delivered, [Delivery(to: eng.id, from: chief.id, name: chief.name, message: "hi")])
     }
 
+    /// The no-response opt: an informational send goes to `inform` (read, no turn), never to
+    /// `reach`, so nothing sits in the target's inbox; a plain send still delivers.
+    func testAnInformationalSendIsReadWithoutATurn() throws {
+        let b = broker([chief, eng])
+        var informed: [Delivery] = []
+        b.inform = { to, from, name, message in
+            informed.append(Delivery(to: to, from: from, name: name, message: message))
+            return true
+        }
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "received", notifyWhenIdle: true, informational: true).get()
+        XCTAssertEqual(informed.map(\.message), ["received"])
+        XCTAssertTrue(delivered.isEmpty, "no turn-starting delivery")
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "is the pod up?", notifyWhenIdle: false).get()
+        XCTAssertEqual(delivered.map(\.message), ["is the pod up?"])
+        XCTAssertEqual(informed.count, 1)
+    }
+
     /// A dead engine (process gone, stale `.live`) shows as idle: sending restarts it with
     /// `-r`, on the session's stored model and mode, and the message starts its next turn.
     func testSendToADeadEngineRestartsItAndStartsATurn() throws {
@@ -651,6 +668,33 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertTrue(toolsOnly.contains("TOOL Bash"))
         XCTAssertFalse(toolsOnly.contains("ASSISTANT:"))
     }
+    /// Item 3 (org reliability): a degraded engine status reaches SessionStatus (and the
+    /// header badge's words): what's degraded and why, each; nothing when it's healthy.
+    func testDegradedStatusReachesSessionStatusAndTheBadge() throws {
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-degraded"))
+        c.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"status","model":"ollama/glm-flash","mode":"auto","cwd":"/tmp","messages":0,"context_tokens":null,"context_window":1,"tool_mode":"text","tier":"weak","tokens_per_sec":null,"todos":[],"degraded":[{"kind":"text_tools","what":"text tool calls","why":"native tool calls failed twice this session"},{"kind":"model","what":"on ollama/glm-flash","why":"this session was on anthropic/claude-opus-5-5; it came back on another model nobody picked"}]}"#.utf8)))
+        let degraded = c.status?.degraded ?? []
+        XCTAssertEqual(degraded.map(\.kind), ["text_tools", "model"])
+        XCTAssertEqual(Degraded.badge(degraded), "text tool calls +1")
+        XCTAssertTrue(Degraded.detail(degraded).contains("on ollama/glm-flash: this session was on anthropic/claude-opus-5-5"))
+
+        var info = SessionBroker.StatusInfo()
+        info.degraded = degraded
+        guard case .object(let o) = info.json, case .array(let rows)? = o["degraded"] else {
+            return XCTFail("no degraded in SessionStatus")
+        }
+        XCTAssertEqual(rows.count, 2)
+        guard case .object(let first) = rows[0] else { return XCTFail() }
+        XCTAssertEqual(first["what"], .string("text tool calls"))
+        XCTAssertEqual(first["why"], .string("native tool calls failed twice this session"))
+
+        // Healthy (or an older engine with no field): no badge, no key.
+        XCTAssertNil(Degraded.badge([]))
+        guard case .object(let healthy) = SessionBroker.StatusInfo().json else { return XCTFail() }
+        XCTAssertNil(healthy["degraded"])
+    }
+
     func testStatusInfoJsonCarriesTheFields() throws {
         var info = SessionBroker.StatusInfo()
         info.engineAlive = true
@@ -708,6 +752,54 @@ final class SessionBrokerTests: XCTestCase {
         // The same name again gets its own.
         let (_, second, _) = try SessionBroker.makeWorktree(from: repo, name: "Fix the Parser!")
         XCTAssertEqual(second, "frog/fix-the-parser-2")
+    }
+
+    /// Item 2c (org reliability): StartSession without worktree:true refuses the user's main
+    /// checkout (the repo that owns .frog/worktrees, from anywhere in it) unless forced,
+    /// reuses an existing free worktree as-is, and refuses one another engine holds,
+    /// naming the session.
+    func testWorkerSessionsStayOutOfTheMainCheckout() throws {
+        let repo = FileManager.default.temporaryDirectory.appending(path: "frog-broker-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo.appending(path: "src"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try SessionBroker.git(["init", "-q", "-b", "main"], in: repo)
+        try "hi\n".write(to: repo.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+        try SessionBroker.git(["add", "."], in: repo)
+        try SessionBroker.git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], in: repo)
+
+        // A repo never used for worker worktrees is just a folder.
+        XCTAssertEqual(SessionBroker.checkout(of: repo), .plain)
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(repo, allowMainCheckout: false))
+
+        let (wt, _, _) = try SessionBroker.makeWorktree(from: repo, name: "worker")
+        // Now it owns .frog/worktrees: the root and any folder in it are refused…
+        for folder in [repo, repo.appending(path: "src")] {
+            XCTAssertThrowsError(try SessionBroker.checkWorkerFolder(folder, allowMainCheckout: false)) { e in
+                let m = (e as? SessionBroker.BrokerError)?.message ?? "\(e)"
+                XCTAssertTrue(m.contains("main checkout"), m)
+                XCTAssertTrue(m.contains("worktree:true"), m)
+                XCTAssertTrue(m.contains(".frog/worktrees/worker"), "suggests the worktree to reuse: \(m)")
+            }
+        }
+        // …unless explicitly forced.
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(repo, allowMainCheckout: true))
+
+        // An existing worktree is reused as-is.
+        guard case .worktree(_, let gitDir) = SessionBroker.checkout(of: wt) else { return XCTFail("not a worktree") }
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(wt, allowMainCheckout: false))
+
+        // One another engine holds (its lock, as the engine writes it) is refused by name.
+        let lock = gitDir.appending(path: "frog-engine.lock")
+        try "eng-0002 4242\n".write(to: lock, atomically: true, encoding: .utf8)
+        let fd = open(lock.path, O_RDONLY)
+        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+        XCTAssertThrowsError(try SessionBroker.checkWorkerFolder(wt, allowMainCheckout: false)) { e in
+            let m = (e as? SessionBroker.BrokerError)?.message ?? "\(e)"
+            XCTAssertTrue(m.contains("session eng-0002"), m)
+        }
+        // Its engine gone (the flock with it), the worktree is free again.
+        close(fd)
+        XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(wt, allowMainCheckout: false))
     }
 
     /// A worktree bases on the repo's remote default branch (origin/HEAD → origin/main), not
@@ -876,6 +968,68 @@ final class SessionBrokerTests: XCTestCase {
         b.handle(SessionRequest(id: "r3", item: "t3", tool: "StopSession", input: .object(["id": .string(chief.id)])), from: chiefConv)
     }
 
+    /// Item 2b (org reliability): StopSession with `clear_queue` leaves zero queued messages
+    /// (the engine's inbox, the broker's count and its re-send list), so nothing queued
+    /// restarts the stopped session. Without the flag the queue stays, as before.
+    @MainActor
+    func testStopSessionWithClearQueueLeavesNothingQueued() throws {
+        let b = broker([chief, eng, ops])
+        let chiefConv = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-chief"))
+        let busyTurn = { (id: String) in
+            try JSONDecoder.frog.decode(Envelope.self, from: Data(
+                #"{"seq":1,"session":"\#(id)","created":1,"event":"turn_started","turn":1,"input":"long task"}"#.utf8))
+        }
+        var targets: [String: Conversation] = [:]
+        for id in [eng.id, ops.id] {
+            let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-\(id)"))
+            targets[id] = target
+            target.ingest(try busyTurn(id))
+            b.track(target, as: id)
+            for m in ["one", "two"] {
+                _ = try b.send(from: chief.id, name: chief.name, to: id, message: m, notifyWhenIdle: false).get()
+                // What the real `reach` does: the engine gets it, behind the running turn.
+                target.deliver(from: chief.id, name: chief.name, message: m)
+            }
+            XCTAssertEqual(b.pendingInbound(id), 2)
+            XCTAssertEqual(target.pendingDeliveries, 2)
+        }
+        let target = targets[eng.id]!
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "StopSession",
+                                input: .object(["id": .string(eng.id), "clear_queue": .bool(true)])), from: chiefConv)
+        XCTAssertTrue(target.userStopped)
+        XCTAssertEqual(b.pendingInbound(eng.id), 0, "nothing queued after a clearing stop")
+        XCTAssertEqual(target.pendingDeliveries, 0, "the engine's inbox was cleared")
+
+        // A plain stop keeps the queue: the next message runs, as documented.
+        let other = targets[ops.id]!
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "StopSession",
+                                input: .object(["id": .string(ops.id)])), from: chiefConv)
+        XCTAssertTrue(other.userStopped)
+        XCTAssertEqual(b.pendingInbound(ops.id), 2)
+        XCTAssertEqual(other.pendingDeliveries, 2)
+    }
+
+    /// Item 2b: archiving cancels what's queued for the session — inbox, re-send list and a
+    /// first prompt waiting to be replayed — so nothing starts an archived session again.
+    @MainActor
+    func testArchiveSessionCancelsItsQueuedMessages() throws {
+        let b = broker([chief, eng])
+        var archived: [String: Bool] = [:]
+        b.archiver = { archived[$0] = $1 }
+        let chiefConv = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-chief"))
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-archive"))
+        b.track(target, as: eng.id)
+        b.recordBirth(eng.id, prompt: "the first prompt")
+        _ = try b.send(from: chief.id, name: chief.name, to: eng.id, message: "queued", notifyWhenIdle: false).get()
+        target.deliver(from: chief.id, name: chief.name, message: "queued")
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "ArchiveSession",
+                                input: .object(["id": .string(eng.id)])), from: chiefConv)
+        XCTAssertEqual(archived[eng.id], true)
+        XCTAssertEqual(b.pendingInbound(eng.id), 0)
+        XCTAssertEqual(target.pendingDeliveries, 0)
+        XCTAssertNil(b.births[eng.id], "an archived session's first prompt is never replayed")
+    }
+
     /// ListApprovals collects the pending permission cards across sessions (read-only,
     /// with age) and clears their age once they stop waiting.
     @MainActor
@@ -917,6 +1071,107 @@ final class SessionBrokerTests: XCTestCase {
         // An empty title is refused.
         b.handle(SessionRequest(id: "r2", item: "t2", tool: "RenameSession",
                                 input: .object(["id": .string(eng.id), "title": .string("  ")])), from: probe)
+    }
+
+    // MARK: MoveSession
+
+    /// A scratch parentage store, so broker tests never touch the app's defaults.
+    private final class Parentage {
+        var map: [String: String] = [:]
+    }
+
+    /// A broker whose mover records into `store`, mirroring `Library.move`'s contract
+    /// (nil unparents, a cycle within the moved session's own subtree is refused).
+    private func brokerWithMover(_ store: Parentage) -> SessionBroker {
+        let b = broker([chief, eng, ops])
+        b.directoryIncludingArchived = { [self.chief, self.eng, self.ops] }
+        b.mover = { id, parent in
+            guard !Library.wouldCycle(id, parent: parent, in: store.map) else {
+                return .failure(SessionBroker.BrokerError("cycle"))
+            }
+            if let parent { store.map[id] = parent } else { store.map.removeValue(forKey: id) }
+            return .success(parent)
+        }
+        return b
+    }
+
+    /// MoveSession end to end: the target resolves (by id or name), the parent resolves,
+    /// the mover re-files it, and the unparent form clears the record. The reply names
+    /// the new parent, not the raw id.
+    @MainActor
+    func testMoveSessionReparentsAndUnparents() throws {
+        let store = Parentage()
+        let b = brokerWithMover(store)
+        let probe = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-move"))
+
+        // By id; a nil parent unparents. Move under the chief by name.
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .string("Chief of Staff")])), from: probe)
+        XCTAssertEqual(store.map[ops.id], chief.id, "re-filed under the chief")
+
+        // Reparent by id: ops moves under eng.
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .string(eng.id)])), from: probe)
+        XCTAssertEqual(store.map[ops.id], eng.id)
+
+        // Unparent: explicit null.
+        b.handle(SessionRequest(id: "r3", item: "t3", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .null])), from: probe)
+        XCTAssertNil(store.map[ops.id], "a top-level row again")
+
+        // Absent parent is the same unparent.
+        b.handle(SessionRequest(id: "r4", item: "t4", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id)])), from: probe)
+        XCTAssertNil(store.map[ops.id])
+    }
+
+    /// Failure cases leave everything untouched: a target that doesn't resolve, a parent
+    /// that doesn't resolve, itself as parent, and a cycle (a session under its own
+    /// descendant) all refuse without touching the store.
+    @MainActor
+    func testMoveSessionFailuresLeaveStateUntouched() throws {
+        let store = Parentage()
+        // ops under the chief, eng under ops: moving ops under eng would nest it in its
+        // own subtree (eng is ops' descendant).
+        store.map[ops.id] = chief.id
+        store.map[eng.id] = ops.id
+        let before = store.map
+        let b = brokerWithMover(store)
+        let probe = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-move2"))
+
+        // An unknown target doesn't resolve.
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "MoveSession",
+                                input: .object(["id": .string("nobody-9999"), "parent": .string(chief.id)])), from: probe)
+        // An unknown parent doesn't resolve either.
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .string("nobody-9999")])), from: probe)
+        // A session can't be its own parent.
+        b.handle(SessionRequest(id: "r3", item: "t3", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .string(ops.id)])), from: probe)
+        // A cycle: eng sits under ops, so ops can't move under eng.
+        b.handle(SessionRequest(id: "r4", item: "t4", tool: "MoveSession",
+                                input: .object(["id": .string(ops.id), "parent": .string(eng.id)])), from: probe)
+        XCTAssertEqual(store.map, before, "no move recorded on any refusal")
+    }
+
+    /// `Library.wouldCycle` is the guard the recording half relies on: a session under
+    /// itself, under its own descendant (any depth), never; an unparent never cycles; an
+    /// existing cycle in the map still terminates the walk.
+    @MainActor
+    func testWouldCycleWalksTheParentChain() {
+        // chief -> eng -> ops (eng's parent is chief, ops' parent is eng).
+        let chain: [String: String] = [eng.id: chief.id, ops.id: eng.id]
+        XCTAssertTrue(Library.wouldCycle(chief.id, parent: ops.id, in: chain),
+                      "ops is chief's descendant: would close the loop")
+        XCTAssertTrue(Library.wouldCycle(chief.id, parent: eng.id, in: chain),
+                      "eng already sits under chief")
+        XCTAssertTrue(Library.wouldCycle(eng.id, parent: eng.id, in: chain), "itself, one step in")
+        XCTAssertFalse(Library.wouldCycle(ops.id, parent: chief.id, in: chain), "downward is fine")
+        XCTAssertFalse(Library.wouldCycle(eng.id, parent: nil, in: chain), "unparenting never cycles")
+        XCTAssertFalse(Library.wouldCycle(ops.id, parent: "stranger-9999", in: chain), "a fresh parent can't cycle")
+        // An existing loop (a -> b -> a) doesn't hang the walk.
+        let loop: [String: String] = ["a": "b", "b": "a"]
+        XCTAssertFalse(Library.wouldCycle("c", parent: "a", in: loop), "a stranger escapes the loop")
     }
 
     /// SetSessionMode / SetSessionModel with no engine running: persisted (not refused), said
@@ -1089,5 +1344,26 @@ final class SessionBrokerTests: XCTestCase {
         b.handle(delegationRequest("ap3", chief: chief.id), from: chiefConv)
         XCTAssertEqual(link.sent.last?["error"] as? String, "The chief's own calls go to the user.")
         XCTAssertTrue(delivered.isEmpty, "nothing was sent")
+    /// Switching away from any session (not only agents') keeps a turn in flight running; an
+    /// engine still starting up with nothing asked of it is let go. A message sent before the
+    /// engine named its session is held until it does, then it's that session's engine.
+    func testAPaneLettingGoKeepsAnyWorkingSessionAndLetsAnIdleStartupGo() throws {
+        let b = broker([])
+        let idle = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: QueueLink(), replay: false)
+        XCTAssertFalse(b.keep(idle), "a new thread nobody wrote in")
+
+        let link = QueueLink()
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: false)
+        c.submit("hello")
+        XCTAssertNil(c.sessionID)
+        XCTAssertTrue(b.keep(c), "a message queued while the engine starts up")
+        try link.event(#""event":"idle""#)
+        XCTAssertEqual(c.sessionID, "s")
+        b.observe("s", running: true, waiting: false)
+        XCTAssertTrue(b.adopt("s") === c, "the held engine is session s's now")
+
+        try link.event(#""event":"turn_started","turn":1,"input":"hello""#)
+        XCTAssertTrue(b.keep(c), "a turn in flight, in a session no one started")
+        XCTAssertTrue(b.adopt("s") === c)
     }
 }

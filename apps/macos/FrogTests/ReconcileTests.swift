@@ -87,7 +87,7 @@ private final class DeadLink: ConversationLink {
 }
 
 @MainActor
-private final class LiveLink: ConversationLink {
+final class LiveLink: ConversationLink {
     var onEvent: (Envelope?) -> Void = { _ in }
     func send(_ op: Op) {}
     func stop() {}

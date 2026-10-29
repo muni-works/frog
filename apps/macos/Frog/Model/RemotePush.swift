@@ -23,10 +23,20 @@ final class RemotePush {
 
     /// Where pushes for real phones go.
     static var relay: URL {
-        URL(string: ProcessInfo.processInfo.environment["FROG_PUSH_RELAY"] ?? "https://frog.eco/api/push")!
+        URL(string: ProcessInfo.processInfo.environment["FROG_PUSH_RELAY"] ?? "https://frog.toys/api/push")!
+    }
+
+    /// What the relay wants to hear from a Mac (`PUSH_RELAY_SECRET` there): Settings › General,
+    /// or FROG_PUSH_SECRET. Empty, pushes to real phones stay home; the Simulator path doesn't
+    /// need it. One shared secret is the beta's answer; a per-Mac secret minted at pairing is the
+    /// plan (docs/ios/surfaces.md).
+    static let secretKey = "pushRelaySecret"
+    static var secret: String {
+        ProcessInfo.processInfo.environment["FROG_PUSH_SECRET"] ?? UserDefaults.standard.string(forKey: secretKey) ?? ""
     }
 
     private(set) var devices: [Device]
+    private var warnedNoSecret = false
 
     private init() {
         let data = UserDefaults.standard.data(forKey: "remoteDevices") ?? Data()
@@ -121,8 +131,6 @@ final class RemotePush {
         if let reason = obj["reason"] { request["reason"] = reason }
         if let preview = obj["preview"] as? [String: Any] { request["preview"] = Self.trim(preview) }
         payload["request"] = request
-        // APNs takes 4 KB; the diff is the first thing to go.
-        if (try? JSONSerialization.data(withJSONObject: payload))?.count ?? 0 > 3800 { request["preview"] = nil; payload["request"] = request }
         send(payload, collapse: "perm-\(session)")
         let creating = (obj["preview"] as? [String: Any])?["created"] as? Bool ?? false
         let question = PermissionRequest.question(name: name, arg: arg, outsideSandbox: obj["reason"] is String, creating: creating)
@@ -239,8 +247,60 @@ final class RemotePush {
 
     // MARK: Delivering
 
+    /// An alert to every phone: sealed for real ones (the relay and Apple see a placeholder),
+    /// as is for the Simulator on this Mac.
     private func send(_ payload: [String: Any], collapse: String?) {
-        for d in devices { deliver(payload, to: d, collapse: collapse, activityToken: nil) }
+        let sealed = Self.sealed(payload, code: RemoteBridge.token)
+        for d in devices {
+            let p = d.transport == "apns" ? sealed : Self.fitted(payload)
+            guard let p else { continue }
+            deliver(p, to: d, collapse: collapse, activityToken: nil)
+        }
+    }
+
+    /// APNs takes 4 KB; the diff is the first thing to go, then the request's detail.
+    private static func fitted(_ payload: [String: Any], limit: Int = 3800) -> [String: Any]? {
+        var p = payload
+        for strip in [[], ["preview"], ["preview", "card"], ["*"]] {
+            if let data = try? JSONSerialization.data(withJSONObject: p), data.count <= limit { return p }
+            guard var request = p["request"] as? [String: Any] else { break }
+            if strip == ["*"] { p["request"] = nil; p["arg"] = (p["arg"] as? String).map { String($0.prefix(120)) }; continue }
+            for k in strip { request[k] = nil }
+            p["request"] = request
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: p), data.count <= limit { return p }
+        return nil
+    }
+
+    /// `payload` sealed for the phone paired with `code` (`PushCrypto`), inside what iOS needs in
+    /// the clear: the category, thread and sound as given, `mutable-content` so the phone's
+    /// extension runs, and a placeholder alert for a phone that can't open it.
+    static func sealed(_ payload: [String: Any], code: String, limit: Int = 4000) -> [String: Any]? {
+        guard !code.isEmpty, let aps = payload["aps"] as? [String: Any] else { return nil }
+        var outerAps: [String: Any] = ["alert": ["title": "frog", "body": placeholder(category: aps["category"] as? String)],
+                                       "mutable-content": 1]
+        for k in ["category", "thread-id", "sound", "interruption-level"] where aps[k] != nil { outerAps[k] = aps[k] }
+        // Sealing and base64 cost about a third: fit the plain payload into what's left.
+        var budget = Int(Double(limit - 220) * 0.74)
+        while budget > 400 {
+            guard let inner = fitted(payload, limit: budget),
+                  let data = try? JSONSerialization.data(withJSONObject: inner),
+                  let enc = try? PushCrypto.seal(data, code: code) else { return nil }
+            let outer: [String: Any] = ["aps": outerAps, PushCrypto.field: enc, "v": PushCrypto.version]
+            if (try? JSONSerialization.data(withJSONObject: outer))?.count ?? .max <= limit { return outer }
+            budget -= 300
+        }
+        return nil
+    }
+
+    /// What a phone shows when it can't open the push: enough to know to look at the Mac.
+    private static func placeholder(category: String?) -> String {
+        switch category {
+        case "PERMISSION": "frog needs you"
+        case "ASK": "frog has a question"
+        case "DONE": "frog finished"
+        default: "frog"
+        }
     }
 
     private func deliver(_ payload: [String: Any], to d: Device, collapse: String?, activityToken: String?) {
@@ -265,9 +325,16 @@ final class RemotePush {
                 try? FileManager.default.removeItem(at: file)
             }
         case "apns":
+            let secret = Self.secret
+            guard !secret.isEmpty else {
+                if !warnedNoSecret { EngineProcess.log("remote: no push relay secret; set it in Settings › General") }
+                warnedNoSecret = true
+                return
+            }
             var req = URLRequest(url: Self.relay)
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
             var body: [String: Any] = [
                 "token": activityToken ?? d.address,
                 "env": d.env ?? "production",
@@ -278,9 +345,14 @@ final class RemotePush {
             if let collapse { body["collapse_id"] = collapse }
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
             let address = d.address
-            URLSession.shared.dataTask(with: req) { _, response, _ in
+            URLSession.shared.dataTask(with: req) { body, response, error in
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                if status != 200 {
+                    let why = body.flatMap { String(data: $0, encoding: .utf8) } ?? error?.localizedDescription ?? ""
+                    EngineProcess.log("remote: push relay said \(status) \(why.prefix(200))")
+                }
                 // 410: the app was deleted or pushes turned off; stop sending to it.
-                guard (response as? HTTPURLResponse)?.statusCode == 410, activityToken == nil else { return }
+                guard status == 410, activityToken == nil else { return }
                 Task { @MainActor in RemotePush.shared.forget(address) }
             }.resume()
         default:

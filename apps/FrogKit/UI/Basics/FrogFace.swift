@@ -16,19 +16,34 @@ struct FrogFace: View {
     var size: CGFloat = 16
     /// Bump to make the frog hop once, whatever its mood.
     var hop: Int = 0
+    /// Off, the frog holds its pose and nothing ticks (a hidden frog's loop still redraws).
+    var animating = true
+    /// Drawn at this moment instead of ticking on its own: for a frog snapshotted where nothing
+    /// drives a timeline (the Dock tile).
+    var at: Date?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// When the current mood began; its loop starts from frame 0 here.
     @State private var since = Date()
     /// When the last one-off hop began.
     @State private var hopped: Date?
+    /// Off screen (a scrolled-away row, a closed tab), the timeline stops: hidden frogs ticked at
+    /// 30 a second each and kept an idle app's main thread busy.
+    @State private var onScreen = false
+    /// Its window on screen at all: a covered, minimized or other-Space window's frog stops too.
+    /// Every frame it forced also re-resolved the window's interactive glass.
+    @State private var windowVisible = true
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion || !animating || !onScreen || !windowVisible || at != nil)) { timeline in
+            #if DEBUG
+            let _ = PillProbe.frog()
+            #endif
+            let now = at ?? timeline.date
             let pose = FrogPose(
                 mood: mood,
-                t: reduceMotion ? 0 : timeline.date.timeIntervalSince(since),
-                hop: reduceMotion ? nil : hopped.map { timeline.date.timeIntervalSince($0) })
+                t: reduceMotion ? 0 : now.timeIntervalSince(at == nil ? since : .distantPast),
+                hop: reduceMotion ? nil : hopped.map { now.timeIntervalSince($0) })
             let unit = size / FrogMark.box.width
             MarkCanvas(eyes: pose.eyes, frown: mood == .sad)
                 .frame(width: size, height: size)
@@ -37,11 +52,60 @@ struct FrogFace: View {
                 .offset(x: pose.body.tx * unit, y: pose.body.ty * unit)
         }
         .frame(width: size, height: size)
+        .onAppear { onScreen = true }
+        .onDisappear { onScreen = false }
+        #if os(macOS)
+        .background(WindowVisibility(visible: $windowVisible))
+        #endif
         .onChange(of: mood) { since = .now }
         .onChange(of: hop) { hopped = .now }
         .accessibilityHidden(true)
     }
 }
+
+#if os(macOS)
+/// Reports whether the hosting window is visible (its occlusion state), live.
+private struct WindowVisibility: NSViewRepresentable {
+    @Binding var visible: Bool
+
+    func makeNSView(context: Context) -> Probe { Probe(visible: $visible) }
+    func updateNSView(_ view: Probe, context: Context) { view.visible = $visible }
+
+    final class Probe: NSView {
+        var visible: Binding<Bool>
+        private var observer: NSObjectProtocol?
+
+        init(visible: Binding<Bool>) {
+            self.visible = visible
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
+            guard let window else { return }
+            observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.report() }
+            }
+            report()
+        }
+
+        private func report() {
+            let now = window?.occlusionState.contains(.visible) ?? false
+            if visible.wrappedValue != now { visible.wrappedValue = now }
+        }
+
+        isolated deinit {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
+    }
+}
+#endif
 
 /// The mark itself, painted in one pass: head, spots clipped to it, pupils with their two
 /// glints (moved together by `eyes`, about each pupil's centre), and the mouth.

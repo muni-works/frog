@@ -33,7 +33,10 @@ struct ActivityLine: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        #if DEBUG
+        let _ = TranscriptProbe.row()
+        #endif
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
             // Running steps aren't in the sentence yet; the live line says what's happening.
             if !group.done.isEmpty {
                 line
@@ -61,7 +64,9 @@ struct ActivityLine: View {
         Button {
             withAnimation(.snappy(duration: 0.25)) { expanded.toggle() }
         } label: {
+            // A UI size under the 14pt answer, secondary: it reads as a margin note, not text.
             Text("\(ActivityText(pieces: group.summary).text)\(gistText)  \(chevron)")
+                .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -95,8 +100,8 @@ struct ActivityLine: View {
                 LiveThought(text: item.text)
             }
         case .tool("Task", let arg):
-            // A subagent works for a while; show it working, with its Stop button.
-            SubagentCard(arg: arg, item: item, conversation: conversation)
+            // An agent works for a while; show its step row, with its Stop button.
+            AgentStepRow(arg: arg, item: item, conversation: conversation)
         default:
             EmptyView()
         }
@@ -119,6 +124,39 @@ struct ActivityText {
             }
         }
         .monospacedDigit()
+    }
+}
+
+/// A finished thought, opened: its first `cap` lines, then "Show all". A model can think for
+/// minutes; opened whole, a thought outweighs the answer it led to.
+struct CappedThought: View {
+    let text: String
+    static let cap = 12
+    @State private var all = false
+
+    /// More than fits under the cap, by lines or by characters (a long unbroken paragraph
+    /// wraps to many lines in the measure).
+    private var long: Bool {
+        text.split(separator: "\n", omittingEmptySubsequences: true).count > Self.cap || text.count > Self.cap * 100
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
+            Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(all ? nil : Self.cap)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if long {
+                Button(all ? "Show less" : "Show all") {
+                    withAnimation(.snappy(duration: 0.2)) { all.toggle() }
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(.tint)
+            }
+        }
     }
 }
 
@@ -195,25 +233,30 @@ struct ActivitySteps: View {
             if steps.count == 1, let thought = steps.first, thought.kind == .reasoning {
                 // A lone thought's line already says "Thought for 12s"; open, it's the thought,
                 // set off like a quote rather than boxed.
-                Text(thought.text.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 12)
+                CappedThought(text: thought.text)
+                    .padding(.leading, TurnSpace.Inset.roomy)
                     .overlay(alignment: .leading) {
                         Rectangle().fill(.separator).frame(width: 2)
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, TurnSpace.Inset.hair)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(steps.enumerated()), id: \.element.id) { i, step in
                         if i > 0 { Divider().opacity(0.4) }
-                        ActivityStepRow(item: step, conversation: conversation)
+                        if case .tool("Task", let arg) = step.kind, !step.done {
+                            // A running agent keeps its live row open too: what it's doing now,
+                            // its plan, Stop, and its run a click away (a plain step row said
+                            // only "Agent: …" for as long as it worked).
+                            AgentStepRow(arg: arg, item: step, conversation: conversation)
+                                .padding(.horizontal, TurnSpace.Inset.card)
+                                .padding(.vertical, TurnSpace.Inset.snug)
+                        } else {
+                            ActivityStepRow(item: step, conversation: conversation)
+                        }
                     }
                 }
-                .padding(.vertical, 2)
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
+                .padding(.vertical, TurnSpace.Inset.hair)
+                .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.nestedRadius).strokeBorder(.separator, lineWidth: 0.5))
             }
         }
     }
@@ -231,15 +274,16 @@ struct ActivityStepRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
             Button {
                 withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
             } label: {
-                HStack(spacing: 6) {
-                    Text(ActivityWords.row(item))
+                HStack(spacing: TurnSpace.Inset.snug) {
+                    Text(rowTitle)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     outcome
+                    runningClock
                     Spacer(minLength: 8)
                     status
                 }
@@ -251,31 +295,67 @@ struct ActivityStepRow: View {
             if expanded {
                 detail.transition(.opacity)
             } else if !item.done, item.kind != .reasoning {
-                ToolDetail(name: name, item: item, expanded: false)
+                ToolDetail(name: name, item: item, expanded: false, root: conversation.folder.path)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, TurnSpace.Inset.card)
+        .padding(.vertical, TurnSpace.Inset.snug)
+    }
+
+    /// The row's words. A shell row running now says the intent ("Running git log…" from the
+    /// elided command) rather than the raw text; done, it reads as always ("Ran …"), with a
+    /// gist replacing the raw command when one arrived.
+    private var rowTitle: String {
+        guard name == "Bash" || name == "!" else { return ActivityWords.row(item) }
+        if !item.done {
+            let elided = CommandElision.elide(item.arg, from: conversation.folder.path)
+            return ActivityWords.isTest(item.arg) ? "Running the tests…" : "Running \(elided)…"
+        }
+        if let gist = CommandGists.shared.gist(for: item.arg) {
+            return gist
+        }
+        return "Ran \(CommandElision.elide(item.arg, from: conversation.folder.path))"
+    }
+
+    /// A running shell row's honest elapsed timer ("1m 40s"), counting while it runs, and a
+    /// subtle hint that output is streaming (its newest line), so a silent-looking wait
+    /// reads as live.
+    @ViewBuilder
+    private var runningClock: some View {
+        if !item.done, let since = item.startedAt {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                HStack(spacing: TurnSpace.Inset.snug) {
+                    if !item.output.isEmpty {
+                        Image(systemName: "text.alignleft")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .help("Output is streaming")
+                    }
+                    Text(ActivityWords.duration(ctx.date.timeIntervalSince(since)))
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                }
+                .fixedSize()
+                .contentTransition(.opacity)
+            }
+        }
     }
 
     @ViewBuilder
     private var detail: some View {
         switch item.kind {
         case .reasoning:
-            Text(item.text)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            CappedThought(text: item.text)
         case .tool("Task", let arg):
-            SubagentCard(arg: arg, item: item, conversation: conversation)
+            // The row above already says "Agent: X · failed"; opened, its report.
+            AgentReport(arg: arg, item: item, conversation: conversation)
         case .tool(let name, _):
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
                 if !item.displayImages.isEmpty {
                     ToolImages(images: item.displayImages, preview: !item.done)
                     if !item.done { Text("Approximate step preview").font(.caption).foregroundStyle(.secondary) }
                 }
-                ToolDetail(name: name, item: item)
+                ToolDetail(name: name, item: item, root: conversation.folder.path)
                 if let why = item.autoReason {
                     Label("Auto: \(why)", systemImage: "wand.and.sparkles")
                         .font(.caption)
@@ -292,7 +372,10 @@ struct ActivityStepRow: View {
     /// How it went, after the name: "· passed", "+3 −1", "Read 8 lines".
     @ViewBuilder
     private var outcome: some View {
-        if let r = item.result {
+        if name == "Task", !item.done, let plan = item.subagent?.plan {
+            // An agent at work: how far along its own plan is.
+            Text("· \(plan.done)/\(plan.total)").foregroundStyle(.tertiary).monospacedDigit()
+        } else if let r = item.result {
             let tests = (name == "Bash" || name == "!") && ActivityWords.isTest(item.arg)
             switch r.outcome {
             case .denied: Text("· denied").foregroundStyle(.orange)
@@ -336,10 +419,11 @@ struct LiveStatus: View {
     var preview: String?
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: TurnSpace.Inset.row) {
             ProgressView().controlSize(.mini)
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 Text(text + elapsed(at: ctx.date))
+                    .font(.callout)
                     .monospacedDigit()
                     .contentTransition(.opacity)
             }
@@ -371,8 +455,8 @@ struct ModelLoadingStatus: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.08)) { timeline in
             let elapsed = max(0, timeline.date.timeIntervalSince(since))
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.snug) {
+                HStack(spacing: TurnSpace.Inset.row) {
                     Image(systemName: "cpu")
                         .foregroundStyle(.tint)
                     Text("Loading \(model) into memory")

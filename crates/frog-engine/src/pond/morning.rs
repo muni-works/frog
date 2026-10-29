@@ -112,12 +112,20 @@ fn decide(brief: &Brief, notified_on: Option<NaiveDate>, today: NaiveDate) -> Op
         .filter(|l| l.new)
         .map(|l| super::brief::short_title(&l.title))
         .collect();
-    if new.is_empty() {
+    // Blocked egress is news on its own: an agent tried to send something off the list.
+    let blocked = brief.egress.as_ref().map(super::brief::egress_line);
+    if new.is_empty() && blocked.is_none() {
         return None;
     }
     let mut body = new[..new.len().min(2)].join(" · ");
     if new.len() > 2 {
         body.push_str(&format!(" · {} more", new.len() - 2));
+    }
+    if let Some(b) = &blocked {
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        body.push_str(b);
     }
     if let Some(e) = brief
         .today
@@ -131,7 +139,10 @@ fn decide(brief: &Brief, notified_on: Option<NaiveDate>, today: NaiveDate) -> Op
         ));
     }
     Some(Notice {
-        title: brief.headline.clone(),
+        title: match (&blocked, new.is_empty()) {
+            (Some(b), true) => b.clone(),
+            _ => brief.headline.clone(),
+        },
         body,
     })
 }
@@ -166,7 +177,31 @@ mod tests {
             today: vec![],
             receipt: Receipt::default(),
             trouble: vec![],
+            egress: None,
         }
+    }
+
+    /// Blocked egress makes the day's notice even with nothing new, and joins it otherwise.
+    #[test]
+    fn blocked_egress_is_worth_a_notice() {
+        let today = NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
+        let digest = crate::egress::Digest {
+            blocked: 3,
+            sessions: 2,
+            hosts: vec![("oss-cn-beijing.aliyuncs.com".into(), 2), ("evil.example".into(), 1)],
+        };
+        let mut b = brief(vec![]);
+        b.egress = Some(digest.clone());
+        let n = decide(&b, None, today).unwrap();
+        assert_eq!(
+            n.title,
+            "Blocked 3 network attempts from 2 sessions: oss-cn-beijing.aliyuncs.com ×2, evil.example"
+        );
+        let mut b = brief(vec![line("a", true)]);
+        b.egress = Some(digest);
+        let n = decide(&b, None, today).unwrap();
+        assert_eq!(n.title, "Review “a”");
+        assert!(n.body.starts_with("a\nBlocked 3 network attempts"), "{}", n.body);
     }
 
     #[test]

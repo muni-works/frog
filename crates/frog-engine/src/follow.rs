@@ -66,6 +66,7 @@ impl Running {
             tokens_per_sec: None,
             todos: Vec::new(),
             vision: false,
+            degraded: Vec::new(),
         }
     }
 }
@@ -96,11 +97,15 @@ pub fn follow(store: PathBuf, id: String) -> Handle {
                     Some(Op::Subscribe { after }) => {
                         // A turn the history ends in the middle of: the worker is running it
                         // now, so the follower shows it as working (like a live session).
+                        // Judged from the whole log: a client that already has the history
+                        // up to `after` (it read the log itself) asks only for what's newer,
+                        // and the open turn or the model may be older than that.
                         let mut open = false;
-                        for env in session::events_after(&store, &id, after).unwrap_or_default() {
+                        for env in session::events_after(&store, &id, 0).unwrap_or_default() {
                             last = last.max(env.seq);
                             open = turn_state(&env.event).unwrap_or(open);
                             running.apply(&env.event);
+                            if env.seq <= after { continue; }
                             if ev_tx.send(env).is_err() { return; }
                         }
                         // Name the session like a starting engine would: a follower that
@@ -205,7 +210,7 @@ mod tests {
     async fn replays_then_streams_log_and_live_events_like_a_live_session() {
         let dir = std::env::temp_dir().join(format!("frog-follow-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let header = Header { version: VERSION, id: "s".into(), cwd: "/x".into(), model: "m".into(), created: 0, forked_from: None };
+        let header = Header { version: VERSION, id: "s".into(), cwd: "/x".into(), model: "m".into(), created: 0, forked_from: None, worker: false };
         let mut owner = Log::create(&dir, header).unwrap();
         owner.append(&env(1, "first")).unwrap();
 
@@ -231,7 +236,7 @@ mod tests {
     async fn names_the_workers_model_and_open_turn_on_subscribe() {
         let dir = std::env::temp_dir().join(format!("frog-follow-status-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let header = Header { version: VERSION, id: "s".into(), cwd: "/x".into(), model: "cloud/qwen3-coder-next".into(), created: 0, forked_from: None };
+        let header = Header { version: VERSION, id: "s".into(), cwd: "/x".into(), model: "cloud/qwen3-coder-next".into(), created: 0, forked_from: None, worker: false };
         let mut owner = Log::create(&dir, header).unwrap();
         owner.append(&Record::Event {
             env: Envelope {

@@ -39,6 +39,26 @@ pub struct Brief {
     /// Senses that couldn't be read this time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trouble: Vec<String>,
+    /// Shell commands blocked by the egress allow-list in the last day, when any were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress: Option<crate::egress::Digest>,
+}
+
+/// One line on blocked egress: how many, from how many sessions, the hosts tried most.
+pub fn egress_line(d: &crate::egress::Digest) -> String {
+    let hosts = d
+        .hosts
+        .iter()
+        .map(|(h, n)| if *n > 1 { format!("{h} ×{n}") } else { h.clone() })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Blocked {} network attempt{} from {} session{}: {hosts}",
+        d.blocked,
+        if d.blocked == 1 { "" } else { "s" },
+        d.sessions,
+        if d.sessions == 1 { "" } else { "s" },
+    )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -142,6 +162,8 @@ pub async fn write(
             )),
         }
     }
+    let egress = Some(crate::egress::digest((now - chrono::Duration::days(1)).timestamp_millis()))
+        .filter(|d| d.blocked > 0);
     Brief {
         at: now,
         headline,
@@ -150,6 +172,7 @@ pub async fn write(
         today,
         receipt,
         trouble,
+        egress,
     }
 }
 

@@ -1,10 +1,11 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     Openai,
@@ -13,7 +14,7 @@ pub enum ProviderKind {
     Codex,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolMode {
     /// Pick per model from its capability profile (see `harness.rs`).
@@ -30,7 +31,7 @@ pub enum ToolMode {
 }
 
 /// When a reasoning model thinks before answering (see `thinking.rs`).
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Thinking {
     /// Think where it pays (planning, after errors, after reading); answer directly on routine
@@ -45,7 +46,7 @@ pub enum Thinking {
 
 /// How an Anthropic model thinks (`thinking` on the Messages API). Unset picks per model:
 /// adaptive for `claude-opus-*` that support it, nothing otherwise.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AnthropicThinking {
     /// `{type: "adaptive"}`: the model decides when and how much to think (Opus 4.6+).
@@ -244,15 +245,33 @@ pub struct Config {
     /// Empty by default: nothing widens unless configured.
     #[serde(default)]
     pub sandbox: SandboxConfig,
-    /// Start read-only tool calls (Read, Grep, Glob) as soon as their arguments arrive, while
-    /// the model is still writing the rest of its reply. Results, history and events are the
-    /// same as without it; only the waiting overlaps.
+    /// `[egress]`: the hosts sandboxed commands may reach, and which sessions enforce it
+    /// (agent-started ones by default). See `egress`.
+    #[serde(default)]
+    pub egress: crate::egress::EgressConfig,
+    /// This session was started by an agent (`--worker`, which the app passes for
+    /// `StartSession`; kept in the session log so a resume stays one). Not a config.toml key.
+    #[serde(skip)]
+    pub worker: bool,
+    /// Set on a subagent's config by its parent: the parent's egress state, so the subagent's
+    /// commands obey the same list and grants and its hits surface in the parent's
+    /// transcript. Not a config.toml key.
+    #[serde(skip)]
+    pub egress_parent: Option<std::sync::Arc<crate::egress::Egress>>,
+    /// Start read-only tool calls (Read, Grep, Glob, public web reads, read-only shell
+    /// commands) as soon as their arguments arrive, while the model is still writing the rest
+    /// of its reply, and run a reply's leading reads side by side. Results, history and events
+    /// are the same as without it; only the waiting overlaps.
     #[serde(default = "default_true")]
     pub early_tools: bool,
     /// The model auto mode's classifier uses (a profile or provider/model). Default:
     /// `cloud/qwen3-8b`, then Apple's on-device model; with neither usable, it asks.
     #[serde(default)]
     pub auto_classifier: Option<String>,
+    /// A second classifier model, tried when `auto_classifier` can't answer (unreachable,
+    /// timed out, an HTTP error). With neither answering, frog's built-in rules decide alone.
+    #[serde(default)]
+    pub auto_classifier_fallback: Option<String>,
     /// Seconds a permission prompt waits for an answer before frog takes the safe path
     /// (denies the call, tells the agent, and carries on). 0 waits forever.
     #[serde(default = "default_approval_timeout")]
@@ -261,6 +280,11 @@ pub struct Config {
     /// on-device model when available, else the default model if it runs on your devices.
     #[serde(default)]
     pub brief_model: Option<String>,
+    /// The model that writes shell-command gists for tool rows (a profile or
+    /// provider/model). Default: `cloud/qwen3-8b`, then Apple's on-device model. With
+    /// neither usable, rows show the elided command.
+    #[serde(default)]
+    pub gist_model: Option<String>,
     /// The model `Task` subagents use (a profile or provider/model) unless a call names one.
     /// Default: the session's model. One that can't be resolved or isn't allowed here falls
     /// back to the session's model.
@@ -378,7 +402,7 @@ pub mod grant {
 }
 
 /// How far a `[mcp_trust]` grant goes for one MCP server.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum McpTrust {
     /// Reads only: the same as no grant (read-only tools never card).

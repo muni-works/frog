@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ComposerView: View {
+    @Environment(\.paneWidth) private var paneWidth
     let workspace: Workspace
     let conversation: Conversation
     var window: WindowState?
@@ -56,11 +57,10 @@ struct ComposerView: View {
                 field
                 controls
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
-            .frame(maxWidth: 860)
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, TurnSpace.gutter)
+            .padding(.top, TurnSpace.top)
+            .padding(.bottom, TurnSpace.Inset.snug)
+            .turnColumn()
         )
         // The canvas's margins keep the transcript clear of the cards; popovers opened from
         // here (the model picker, suggestions) mustn't inherit them.
@@ -163,15 +163,40 @@ struct ComposerView: View {
                 DictationProblemView(problem: problem) { dictation.problem = nil }
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+            // What flushes at the next boundary (parked wakes, queued session messages).
+            let pending = PendingEvents(queued: conversation.queuedEvents, messages: conversation.pendingMessages, jobs: conversation.jobs)
+            if !pending.isEmpty {
+                PendingEventsStrip(pending: pending, busy: conversation.busy) { conversation.dismissWakes() }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
             if !conversation.queue.isEmpty {
                 QueuedMessages(conversation: conversation)
+            }
+            if let next = conversation.next, next.act, !conversation.busy {
+                // An outward step (push, send, deploy) takes a deliberate click, never a Tab.
+                Button {
+                    conversation.act(Present.Choice(label: next.text, send: nil))
+                } label: {
+                    Label(next.text, systemImage: "arrow.up.forward")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.opacity)
             }
             if !attachments.isEmpty {
                 AttachmentStrip(images: $attachments, blind: conversation.status?.vision == false ? conversation.status?.model : nil)
             }
             HStack(alignment: .bottom, spacing: 10) {
                 ZStack(alignment: .topLeading) {
-                    if text.isEmpty {
+                    if text.isEmpty, let ghost {
+                        (Text(ghost) + Text("  ⇥").foregroundStyle(.quaternary))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .padding(.leading, 5)
+                            .padding(.top, 1)
+                            .allowsHitTesting(false)
+                    } else if text.isEmpty {
                         Text(placeholder)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
@@ -199,6 +224,11 @@ struct ComposerView: View {
                             mention = query
                         },
                         onMentionKey: handleMentionKey,
+                        onTab: {
+                            guard text.isEmpty, let ghost else { return false }
+                            text = ghost
+                            return true
+                        },
                         onPasteImages: { attachments += $0 }
                     )
                     .frame(height: height)
@@ -288,6 +318,12 @@ struct ComposerView: View {
         conversation.send(.warm(draft: usable ? text : nil))
     }
 
+    /// The model's suggested next prompt, as ghost text Tab accepts; outward ones are a button.
+    private var ghost: String? {
+        guard let next = conversation.next, !next.act, !conversation.busy else { return nil }
+        return next.text
+    }
+
     private var placeholder: String {
         if let model = workspace.pendingDownloadModel {
             return "Downloading \(model.name)… messages send when it’s ready"
@@ -309,14 +345,17 @@ struct ComposerView: View {
     private var controls: some View {
         HStack(spacing: 8) {
             plusMenu
-            DictationButton(dictation: dictation, toggle: toggleDictation)
+            // A narrow pane keeps the controls you reach for: add, mode, model.
+            if paneWidth > .narrow {
+                DictationButton(dictation: dictation, toggle: toggleDictation)
+            }
             ModePicker(conversation: conversation)
             Spacer()
             if let e = workspace.raceError {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
             }
             ModelPicker(workspace: workspace, conversation: conversation)
-            if let status = conversation.status {
+            if let status = conversation.status, paneWidth == .wide {
                 ContextButton(conversation: conversation, status: status)
             }
         }

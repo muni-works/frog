@@ -18,6 +18,8 @@ regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# JSON Schema for the wire protocol (see schema.rs); already in the lockfile via rmcp.
+schemars = "1.2"
 similar.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

@@ -11,6 +11,8 @@ struct ActivityViewer: View {
     var jump: (TurnState.ID) -> Void = { _ in }
     /// In a split window: the pane's number leads the pill and a close button ends it.
     var pane: PaneBadge? = nil
+    /// How wide the activity words may get before truncating (narrower in a split pane).
+    var labelWidth: CGFloat = 300
 
     struct PaneBadge {
         let number: Int
@@ -23,6 +25,7 @@ struct ActivityViewer: View {
     @State private var library = Library.shared
     @AppStorage("playfulFrog") private var playful = true
     @Environment(\.openSession) private var openSession
+    @Environment(\.paneWidth) private var paneWidth
 
     /// A permission prompt or a server's question: the pill turns amber and takes you there.
     private var waiting: String? { ActivityLabel.waiting(conversation) }
@@ -40,6 +43,9 @@ struct ActivityViewer: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = PillProbe.viewer()
+        #endif
         HStack(spacing: 10) {
             if let pane {
                 Text("\(pane.number)")
@@ -86,11 +92,12 @@ struct ActivityViewer: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
             }
-            if let s = conversation.status {
+            // A narrow pane keeps what it's doing; the model is in its composer anyway.
+            if let s = conversation.status, paneWidth > .narrow {
                 Divider().frame(height: 14)
                 readout(s)
             }
-            if !others.isEmpty {
+            if !others.isEmpty, paneWidth > .narrow {
                 Divider().frame(height: 14)
                 othersMenu
             }
@@ -125,11 +132,12 @@ struct ActivityViewer: View {
         .animation(.snappy(duration: 0.2), value: others.count)
     }
 
-    /// The frog in the pill, or the plain symbol when the playful frog is off.
+    /// The frog in the pill, or the plain symbol when the playful frog is off. DEBUG churn
+    /// benchmarking holds its pose through `PillChurn.noFrog` (the Reduce Motion path).
     @ViewBuilder
     private func icon(_ mood: FrogMood, @ViewBuilder plain: () -> some View) -> some View {
         if playful {
-            FrogFace(mood: mood, size: 16).frame(width: 16)
+            FrogFace(mood: mood, size: 16, animating: !PillChurn.noFrog).frame(width: 16)
         } else {
             plain().frame(width: 14)
         }
@@ -187,7 +195,7 @@ struct ActivityViewer: View {
     // MARK: Left: what's happening
 
     private var activity: some View {
-        ActivityLabel(conversation: conversation, playful: playful)
+        ActivityLabel(conversation: conversation, playful: playful, maxWidth: labelWidth)
     }
 
     // MARK: Right: the readout
@@ -227,34 +235,75 @@ struct ActivityViewer: View {
                     pickingModel = false
                 }
             }
-            if let tps = s.tokensPerSec, tps > 0 {
+            if let tps = s.tokensPerSec, tps > 0, paneWidth == .wide {
                 Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                     .contentTransition(.numericText())
             }
+            if let degraded = s.degraded, !degraded.isEmpty {
+                DegradedBadge(degraded: degraded, compact: paneWidth < .wide)
+            }
         }
     }
 }
 
-/// Dock tile progress, like Xcode's: while any window has a turn running, the icon gets a
-/// spinning ring; it goes away when everything is idle.
+/// A small warm badge for a session running degraded: what (text tool calls, a model nobody
+/// picked, auto mode on fallback) in the pill, each one's why on hover and a click away.
+struct DegradedBadge: View {
+    let degraded: [Degraded]
+    /// Just the warning sign (a split pane): the words are on hover and a click away.
+    var compact = false
+    @State private var open = false
+
+    var body: some View {
+        if let label = Degraded.badge(degraded) {
+            Button { open.toggle() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill").imageScale(.small)
+                    if !compact { Text(label).lineLimit(1) }
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(.orange.opacity(0.14), in: .capsule)
+                .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help(Degraded.detail(degraded))
+            .popover(isPresented: $open, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(degraded, id: \.kind) { d in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(d.what).font(.callout.weight(.semibold))
+                            Text(d.why).font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(width: 300, alignment: .leading)
+            }
+        }
+    }
+}
+
+/// The Dock tile: the plain icon while frog works (it nearly always is), and its frog alive,
+/// head tilted and wide-eyed, while a session waits on you (an approval, a question).
 @MainActor
 final class DockActivity {
     static let shared = DockActivity()
 
-    private var busy: Set<ObjectIdentifier> = []
-    private var timer: Timer?
-    private var phase: CGFloat = 0
-    private lazy var view = DockTileView(frame: NSRect(x: 0, y: 0, width: 128, height: 128))
-
-    func set(_ id: ObjectIdentifier, busy isBusy: Bool) {
-        if isBusy { busy.insert(id) } else { busy.remove(id) }
-        update()
+    var attention = false {
+        didSet { if attention != oldValue { update() } }
     }
+    private var timer: Timer?
+    private lazy var view = NSHostingView(rootView: DockFrog(at: .now))
 
     private func update() {
-        if busy.isEmpty {
+        guard attention else {
             timer?.invalidate()
             timer = nil
             NSApp.dockTile.contentView = nil
@@ -262,37 +311,38 @@ final class DockActivity {
             return
         }
         guard timer == nil else { return }
+        view.frame = NSRect(x: 0, y: 0, width: 128, height: 128)
         NSApp.dockTile.contentView = view
-        timer = Timer.scheduledTimer(withTimeInterval: 1 / 12, repeats: true) { [weak self] _ in
+        // The Dock takes a snapshot per display(): at the frog's own 30 a second, as in the
+        // app. Only while it wants you, so it costs nothing the rest of the time.
+        timer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.phase = (self.phase + 1 / 24).truncatingRemainder(dividingBy: 1)
-                self.view.phase = self.phase
+                self.view.rootView = DockFrog(at: .now)
                 NSApp.dockTile.display()
             }
         }
     }
 }
 
-private final class DockTileView: NSView {
-    var phase: CGFloat = 0
+/// The app icon redrawn live: its dark squircle (AppIcon.icon's fill, on the macOS icon grid)
+/// and the frog in it, posed at `at`.
+private struct DockFrog: View {
+    let at: Date
 
-    override func draw(_ dirtyRect: NSRect) {
-        NSApp.applicationIconImage?.draw(in: bounds)
-        let inset = bounds.insetBy(dx: 10, dy: 10)
-        let center = NSPoint(x: inset.midX, y: inset.midY)
-        let radius = inset.width / 2
-        let track = NSBezierPath()
-        track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
-        NSColor.black.withAlphaComponent(0.25).setStroke()
-        track.lineWidth = 7
-        track.stroke()
-        let arc = NSBezierPath()
-        let start = 90 - phase * 360
-        arc.appendArc(withCenter: center, radius: radius, startAngle: start, endAngle: start - 100, clockwise: true)
-        (NSColor(named: "AccentColor") ?? .systemGreen).setStroke()
-        arc.lineWidth = 7
-        arc.lineCapStyle = .round
-        arc.stroke()
+    var body: some View {
+        GeometryReader { geo in
+            let side = geo.size.width * 0.8125
+            ZStack {
+                RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
+                    .fill(LinearGradient(colors: [Color(red: 0.090, green: 0.102, blue: 0.094),
+                                                  Color(red: 0.059, green: 0.067, blue: 0.059)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .frame(width: side, height: side)
+                    .shadow(color: .black.opacity(0.35), radius: geo.size.width * 0.02, y: geo.size.width * 0.01)
+                FrogFace(mood: .waiting, size: side * 0.78, at: at)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
     }
 }

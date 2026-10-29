@@ -12,9 +12,10 @@ use crate::config::ToolMode;
 use crate::harness::Tier;
 use crate::tools::todo::Todo;
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use std::path::PathBuf;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Mode {
     /// Ask before edits and shell commands.
@@ -47,7 +48,7 @@ impl Mode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Decision {
     Allow,
@@ -62,7 +63,7 @@ pub enum Decision {
 
 /// What a permission prompt shows so the user can decide quickly: why the agent
 /// wants it, what triggered the prompt, what it touches, and frog's advice.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ApprovalCard {
     /// What the agent said it was doing, from its message before the call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -84,7 +85,7 @@ pub struct ApprovalCard {
 }
 
 /// One path a command touches.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Touch {
     pub path: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -111,10 +112,10 @@ pub const SUSPENDED_NOTE: &str =
 
 /// Client → engine.
 ///
-/// `Interrupt`, `Permission`, `Answer`, `Elicit`, `AppCall`, `Drain`, `DrainAbort` and
-/// `StopSubagent` take effect immediately. Everything else is queued
+/// `Interrupt`, `ClearInbox`, `Permission`, `Answer`, `Elicit`, `AppCall`, `Drain`,
+/// `DrainAbort` and `StopSubagent` take effect immediately. Everything else is queued
 /// and handled in order; each queued op ends with [`Event::Idle`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Op {
     Submit {
@@ -171,6 +172,20 @@ pub enum Op {
     },
     Compact {
         focus: Option<String>,
+    },
+    /// The rescue for a session whose context overflowed and compaction failed (see
+    /// [`Event::CompactionFailed`]): start a carried-forward session. The engine refuses when
+    /// the client can't host sessions (it answers the request with an error instead, so the
+    /// model is never told a rescue happened when none did). The client that knows how to
+    /// carry forward owns the rest: the old session's structured summary as the new session's
+    /// opening context, and `continued from <old id>` lineage.
+    ContinueSession {
+        /// The overflowed session's id, the one being carried forward from.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        from: String,
+        /// One line on the context of the rescue, folded into the new session's prompt.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        why: String,
     },
     /// Replay this session's durable events with `seq > after`, then [`Event::Synced`].
     /// Replayed envelopes keep their original `seq`, so gaps (where ephemeral events were) are expected.
@@ -313,6 +328,38 @@ pub enum Op {
         from_name: String,
         message: String,
     },
+    /// A message from another session that's pure status ("received", "going idle"): marked
+    /// read without a reply turn. Queued like [`Op::Deliver`], but no turn starts and nothing
+    /// wakes: it's logged ([`Event::MessageRead`]) and goes along with the next turn as context.
+    Inform {
+        from: String,
+        #[serde(default)]
+        from_name: String,
+        message: String,
+    },
+    /// Drop every [`Op::Deliver`] sent so far that no turn has taken yet: the messages
+    /// queued behind the running turn never run. Immediate, like `Interrupt`; a stop that
+    /// should leave the session quiet sends both (`StopSession` with `clear_queue`,
+    /// `ArchiveSession`), or the queued message starts the next turn. Messages sent after it
+    /// queue as usual.
+    ClearInbox,
+    /// The pending strip's "Dismiss all": drop every background wake parked for the next turn
+    /// and stop every pending timer and monitor (stale watches). Jobs and Tasks are real
+    /// work and keep running. Immediate, like `Interrupt`; the running turn is untouched.
+    DismissWakes,
+    /// Re-file session `session` under `parent` in the client's sidebar — the nesting its
+    /// rows derive from. `None` unparents (a top-level row again). Parentage is the client's
+    /// (the engine never reads it), so the move travels as a `MoveSession` tool call: the
+    /// engine emits [`Event::SessionRequest`] and the client that owns the sessions answers
+    /// with [`Op::SessionReply`]. This op exists as the protocol shape of that move (the
+    /// app-side enum mirrors it); sent by a client it's a no-op — the engine has no parentage
+    /// to change. A mis-filed session stops being stuck.
+    MoveSession {
+        session: String,
+        /// The new parent's id or name; `None` unparents.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+    },
     /// The user picked an element in a preview pane. `context` (tag, text, selector, source
     /// location) is inlined the next time `mention` (e.g. `@button.submit`) appears in a message.
     PaneMention {
@@ -324,14 +371,14 @@ pub enum Op {
     Shutdown,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneKind {
     Terminal,
     Preview,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportKind {
     Console,
@@ -341,7 +388,7 @@ pub enum ReportKind {
     Title,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportLevel {
     Info,
@@ -350,7 +397,7 @@ pub enum ReportLevel {
 }
 
 /// What the engine can ask a preview pane to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneAction {
     Read,
@@ -381,7 +428,7 @@ impl PaneAction {
 }
 
 /// Wrapper for every event.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Envelope {
     /// Monotonic within a session; starts at 1.
     pub seq: u64,
@@ -393,7 +440,7 @@ pub struct Envelope {
 }
 
 /// Engine → client.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
     // ---- durable ----
@@ -419,6 +466,36 @@ pub enum Event {
         id: String,
         item: Item,
     },
+    /// A one-line gist of a finished `Bash` tool call's command, written by a small
+    /// side-model in one batched call per turn flush (see `gist`). Live only: a
+    /// replaying client regenerates nothing, and shows the raw (elided) command.
+    CommandGisted {
+        /// The tool call's item id.
+        item: String,
+        /// The command it ran, for hashing on the client (cache).
+        command: String,
+        /// The gist, one line; empty never arrives (the event is only sent when there is one).
+        gist: String,
+    },
+    /// The model's suggested next prompt (its `Next` tool), sent just before a completed
+    /// turn's [`Event::TurnEnded`]. Live only: a replaying client shows no stale suggestion.
+    NextSuggested {
+        turn: u64,
+        /// One line in the user's voice; empty never arrives.
+        text: String,
+        /// It acts outside the project (push, send, deploy): show a button, not ghost text.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        act: bool,
+    },
+    /// A chapter's title, written by a small side-model when the next chapter opened (see
+    /// `chapter`). The app derives chapters and a heuristic title itself; this one, when it
+    /// arrives, wins. Durable, so a replaying client shows it too.
+    ChapterTitled {
+        /// The turn the chapter starts at.
+        turn: u64,
+        /// A few lowercase words; empty never arrives.
+        title: String,
+    },
     /// A retryable model call failed after its reply had started streaming; the client should
     /// drop these partial items (and their deltas) — the step is re-run from scratch. Durable,
     /// so a replaying client also sees the partials come and go.
@@ -440,6 +517,25 @@ pub enum Event {
         item: String,
         reason: String,
     },
+    /// A sandboxed command tried to reach a host off the session's egress allow-list (see
+    /// `egress`): blocked at connect time (`enforced`), or only recorded (`flag` mode). The
+    /// exfil tripwire: shown as a notice row, logged to `egress.jsonl`, counted in the brief.
+    EgressBlocked {
+        host: String,
+        /// 0 when the sandbox stopped the lookup itself (a client that ignored the proxy).
+        #[serde(default)]
+        port: u16,
+        /// The tool call whose command tried it, when it was still running (a background
+        /// job's later attempts have none).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<String>,
+        /// `Bash` or `Monitor`.
+        tool: String,
+        /// The start of the command.
+        command: String,
+        #[serde(default)]
+        enforced: bool,
+    },
     /// How one permission check was decided, for measuring the ask rate:
     /// which layer answered (rule, classifier, fallback, user) and how long it took.
     PermissionDecision {
@@ -460,6 +556,21 @@ pub enum Event {
     Compacted {
         tokens_before: u64,
         tokens_after: u64,
+        /// What the compaction kept, as a receipt (the structured summary's fields: files
+        /// with +/−, turns with their requests and outcomes, tests run and whether each
+        /// passed). Absent in older logs and in engines with no session store, so the token
+        /// counts stand alone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<KeptSummary>,
+    },
+    /// Compaction failed and the history can't be shrunk to fit the window: the session is
+    /// stuck until something changes. The rescue is [`Op::ContinueSession`] (a new session
+    /// carried forward from this one); the raw provider payload stays in the engine log, not
+    /// the transcript. Durable, so a replaying client also knows the session stalled.
+    CompactionFailed {
+        /// The provider's rejection, for the engine log.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        detail: String,
     },
     /// Old tool output was trimmed (no LLM call) to stay inside the window.
     ContextPruned {
@@ -591,6 +702,9 @@ pub enum Event {
         id: String,
         kind: String,
         label: String,
+        /// A shell job's output file, for clients to link the job's row to its log.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        log: Option<String>,
     },
     /// Live output from background work (a subagent's step, a job's output, a monitor poll).
     BackgroundProgress {
@@ -610,6 +724,27 @@ pub enum Event {
     /// work in flight and mustn't be let go. Live only: a new engine starts with none.
     Background {
         running: usize,
+    },
+    /// The background wakes waiting for the next turn boundary, in the order they came in
+    /// (each as the model will get it: `<job-done …>`, `<monitor-done …>`, …). Sent whenever
+    /// one is parked and when a turn takes them (then empty), so a client can show what will
+    /// flush next. Live only.
+    QueuedEvents {
+        items: Vec<String>,
+    },
+    /// The wakes turn `turn` opened with, in order: delivered as one batch with its input
+    /// (a message, a session message), ahead of it. A turn started on wakes alone carries
+    /// them as its input instead.
+    WakesDelivered {
+        turn: u64,
+        wakes: Vec<String>,
+    },
+    /// An informational message ([`Op::Inform`]) was read: recorded, no turn started. It goes
+    /// along with the next turn as context.
+    MessageRead {
+        from: String,
+        from_name: String,
+        message: String,
     },
     /// Progress reported by a running MCP tool.
     ToolProgress {
@@ -719,24 +854,37 @@ impl Event {
                 | Self::PermissionResolved { .. }
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
+                | Self::EgressBlocked { .. }
             | Self::PermissionDecision { .. }
                 | Self::Compacted { .. }
+            | Self::CompactionFailed { .. }
                 | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }
                 | Self::FolderChanged { .. }
                 | Self::ShellCwd { .. }
                 | Self::ModeChanged { .. }
                 | Self::Titled { .. }
+                | Self::ChapterTitled { .. }
                 | Self::PaneOpened { .. }
                 | Self::PaneClosed { .. }
                 | Self::PaneCheckpoint { .. }
                 | Self::BackgroundStarted { .. }
                 | Self::BackgroundDone { .. }
+                | Self::WakesDelivered { .. }
+                | Self::MessageRead { .. }
+        ) || matches!(
+            // A subagent's steps are worth keeping: without them a reopened session shows
+            // only the Task's report. Text deltas stay live-only, as in the main transcript.
+            self,
+            Self::Subagent {
+                inner,
+                ..
+            } if matches!(**inner, Event::ItemStarted { .. } | Event::ItemCompleted { .. })
         )
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ItemKind {
     Message,
@@ -744,7 +892,7 @@ pub enum ItemKind {
     ToolCall { name: String, arg: String },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 // Serialized data, built once per item; boxing the big variant buys nothing.
 #[allow(clippy::large_enum_variant)]
@@ -783,7 +931,7 @@ pub enum Item {
 }
 
 /// One choice offered by `Ask`.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AskOption {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -792,7 +940,7 @@ pub struct AskOption {
 
 /// What the user picked for a question: the chosen labels, their own words, or (both empty)
 /// nothing, because they dismissed it.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Answer {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<String>,
@@ -806,7 +954,7 @@ impl Answer {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Image {
     pub mime: String,
     /// Base64.
@@ -814,7 +962,7 @@ pub struct Image {
 }
 
 /// One message the user typed, when several go as one turn (see [`Op::Submit`]'s `more`).
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Part {
     pub text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -823,7 +971,7 @@ pub struct Part {
 
 /// An MCP App (`ui://` resource) to render for a tool result. The HTML and the raw
 /// `CallToolResult` can be large, so they live in files under the frog data dir.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AppView {
     pub server: String,
     /// The tool's name on the server.
@@ -836,7 +984,7 @@ pub struct AppView {
 }
 
 /// A file change as data, so clients can draw it however they like.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct FileDiff {
     pub path: String,
     /// The file didn't exist before.
@@ -846,12 +994,12 @@ pub struct FileDiff {
     pub hunks: Vec<Hunk>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Hunk {
     pub lines: Vec<DiffLine>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct DiffLine {
     pub kind: LineKind,
     /// 1-based line numbers in the old and new file.
@@ -860,7 +1008,7 @@ pub struct DiffLine {
     pub text: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LineKind {
     Context,
@@ -868,7 +1016,7 @@ pub enum LineKind {
     Remove,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolOutcome {
     Ok,
@@ -878,7 +1026,7 @@ pub enum ToolOutcome {
     Skipped,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Delta {
     Text {
@@ -900,7 +1048,7 @@ pub enum Delta {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EndReason {
     /// The model finished its answer.
@@ -931,7 +1079,7 @@ pub enum EndReason {
 }
 
 /// Closed set of failures a client can react to.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EngineError {
     /// The provider answered with an error status.
@@ -965,14 +1113,14 @@ impl std::fmt::Display for EngineError {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Level {
     Info,
     Warn,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct TurnUsage {
     /// Tokens in the context window after the last model call. `None` if the provider didn't say.
     pub context_tokens: Option<u64>,
@@ -999,9 +1147,56 @@ pub struct TurnUsage {
     pub energy: Option<TurnEnergy>,
 }
 
+/// What a compaction kept, as a receipt ([`Event::Compacted`]'s `summary`): the structured
+/// summary's fields, trimmed to what a banner's expander shows. Built from the session log
+/// without a model call (see `summary::build`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct KeptSummary {
+    /// The session it summarizes (the one compacted).
+    pub id: String,
+    /// Files edited, with lines added and removed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<KeptFile>,
+    /// Turns as one line each: what was asked, and how it ended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub turns: Vec<KeptTurn>,
+    /// How the last turn ended (`complete`, `cancelled`, …), for the banner's tail.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub outcome: String,
+}
+
+/// One file the compaction kept: its path and the lines added and removed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct KeptFile {
+    pub path: String,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// One turn the compaction kept: what was asked, which tools ran, the tests run and whether
+/// each passed, and how the turn ended.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct KeptTurn {
+    pub request: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    /// Test commands run, and whether each passed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<KeptTest>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub outcome: String,
+}
+
+/// One test the compaction kept: the command and whether it passed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct KeptTest {
+    pub command: String,
+    pub passed: bool,
+}
+
 /// A turn's energy in watt-hours: the whole Mac above its idle power just before, and for a
 /// hosted model an estimate of its data center's share (see `energy::cloud`).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct TurnEnergy {
     pub local_wh: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1018,7 +1213,7 @@ pub struct TurnEnergy {
 
 /// A turn's wall time split by what it was waiting on, in milliseconds. `other` is whatever
 /// the rest don't cover (context fitting, MCP refresh, profiling, retries, the engine itself).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct TurnTiming {
     pub wall_ms: u64,
     /// Request sent → first streamed token, summed over the turn's model calls.
@@ -1050,7 +1245,7 @@ pub struct TurnTiming {
 }
 
 /// One model request.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct CallTiming {
     /// Prompt tokens as the provider reported them (including cache reads).
     pub prompt_tokens: u64,
@@ -1084,7 +1279,7 @@ pub struct CallTiming {
 }
 
 /// One tool call that got as far as the permission check.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ToolTiming {
     /// The tool call's item id.
     pub id: String,
@@ -1105,7 +1300,7 @@ fn is_zero(n: &u64) -> bool {
     *n == 0
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Status {
     pub model: String,
     pub mode: Mode,
@@ -1120,6 +1315,31 @@ pub struct Status {
     /// The model can see images.
     #[serde(default)]
     pub vision: bool,
+    /// What's running degraded right now, each with its one-line why (empty when nothing is):
+    /// the session header shows them, and SessionStatus reports them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degraded: Vec<Degraded>,
+}
+
+/// One way a session runs degraded, for the header badge and SessionStatus.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct Degraded {
+    pub kind: DegradedKind,
+    /// What's degraded, short and lowercase ("text tool calls").
+    pub what: String,
+    /// Why, in one line.
+    pub why: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DegradedKind {
+    /// Tool calls written as text (native tool calls off) though the profile didn't ask for it.
+    TextTools,
+    /// Running on another model than the one the session was started or set to.
+    Model,
+    /// Auto mode's classifier is down; a fallback model or the built-in rules decide.
+    Classifier,
 }
 
 #[cfg(test)]
@@ -1221,6 +1441,43 @@ mod tests {
         assert!(!asked.is_durable());
     }
 
+    /// A subagent's steps survive a reopen: started/completed items inside a `subagent`
+    /// wrapper are durable (the log keeps them), while its deltas stay live-only.
+    #[test]
+    fn subagent_steps_are_durable_and_deltas_are_not() {
+        let started = Event::Subagent {
+            item: "t1".into(),
+            inner: Box::new(Event::ItemStarted {
+                id: "s1".into(),
+                kind: ItemKind::ToolCall {
+                    name: "Read".into(),
+                    arg: "main.rs".into(),
+                },
+            }),
+        };
+        assert!(started.is_durable());
+        let completed = Event::Subagent {
+            item: "t1".into(),
+            inner: Box::new(Event::ItemCompleted {
+                id: "s1".into(),
+                item: Item::Message { text: "done".into() },
+            }),
+        };
+        assert!(completed.is_durable());
+        let delta = Event::Subagent {
+            item: "t1".into(),
+            inner: Box::new(Event::ItemDelta {
+                id: "s1".into(),
+                delta: Delta::Text { text: "hi".into() },
+            }),
+        };
+        assert!(!delta.is_durable());
+        // Round-trip: the serde shape is unchanged.
+        let json = serde_json::to_string(&started).unwrap();
+        let back: Event = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, Event::Subagent { .. }));
+    }
+
     #[test]
     fn client_caps_default_off() {
         let old: Op = serde_json::from_str(r#"{"op":"set_client_caps","panes":true}"#).unwrap();
@@ -1267,6 +1524,24 @@ mod tests {
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["event"], "session_request");
         assert!(!e.is_durable());
+        // The move's op shape: session + parent, parent omitted when unparenting.
+        let m: Op = serde_json::from_str(
+            r#"{"op":"move_session","session":"eng-0002","parent":"chief-0001"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            m,
+            Op::MoveSession {
+                ref session,
+                ref parent
+            } if session == "eng-0002" && parent.as_deref() == Some("chief-0001")
+        ));
+        let unparented: Op =
+            serde_json::from_str(r#"{"op":"move_session","session":"eng-0002"}"#).unwrap();
+        assert!(matches!(
+            unparented,
+            Op::MoveSession { ref session, parent: None } if session == "eng-0002"
+        ));
     }
 
     #[test]

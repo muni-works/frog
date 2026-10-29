@@ -53,8 +53,8 @@ struct QuestionCard: View {
                     .help("Let frog decide (esc)")
             }
         }
-        .padding(14)
-        .glassEffect(.regular.tint(.blue.opacity(0.10)), in: .rect(cornerRadius: 14))
+        .padding(TurnSpace.Card.padding)
+        .glassEffect(.regular.tint(.blue.opacity(0.10)), in: .rect(cornerRadius: TurnSpace.Card.radius))
     }
 
     private func option(_ o: Question.Option, index: Int) -> some View {
@@ -168,9 +168,9 @@ struct PresentCard: View {
                             Text(d).font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    .padding(12)
+                    .padding(TurnSpace.Card.padding)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: 12))
+                    .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: TurnSpace.Card.radius))
                 }
             }
         case .actions(let prompt, let options):
@@ -195,10 +195,10 @@ struct PresentCard: View {
             Text(s.label).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
             Text(s.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(TurnSpace.Card.padding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary, lineWidth: 0.5))
+        .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: TurnSpace.Card.radius))
+        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.quaternary, lineWidth: 0.5))
     }
 
     @ViewBuilder
@@ -206,7 +206,7 @@ struct PresentCard: View {
         if let c = current, i < c {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         } else if let c = current, i == c {
-            Image(systemName: "circle.dotted").foregroundStyle(.blue).symbolEffect(.pulse)
+            Image(systemName: "circle.dotted").foregroundStyle(.blue).symbolEffect(.pulse, options: .repeat(3))
         } else {
             Image(systemName: "circle").foregroundStyle(.tertiary)
         }
@@ -295,8 +295,8 @@ private struct PresentChart: View {
         .chartLegend(series.count > 1 ? .visible : .hidden)
         .chartYAxisLabel(unit ?? "")
         .frame(height: 180)
-        .padding(12)
-        .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: 12))
+        .padding(TurnSpace.Card.padding)
+        .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: TurnSpace.Card.radius))
     }
 }
 
@@ -321,10 +321,10 @@ private struct PresentTable: View {
                     }
                 }
             }
-            .padding(12)
+            .padding(TurnSpace.Card.padding)
         }
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-        .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary, lineWidth: 0.5))
+        .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: TurnSpace.Card.radius))
+        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.quaternary, lineWidth: 0.5))
     }
 }

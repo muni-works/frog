@@ -59,8 +59,12 @@ enum Frog {
         let extra = ["\(home)/.cargo/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
         let current = env["PATH", default: "/usr/bin:/bin:/usr/sbin:/sbin"]
         env["PATH"] = (extra + [current]).joined(separator: ":")
-        return env
+        return env.merging(overrides) { $1 }
     }
+
+    /// Variables every `frog` this app runs gets on top of its own (tests point an engine at a
+    /// stand-in model and a scratch HOME). Empty in the app.
+    nonisolated(unsafe) static var overrides: [String: String] = [:]
 
     /// Run a one-shot `frog` command for its effect.
     static func run(args: [String], cwd: URL) async throws {
@@ -165,6 +169,12 @@ final class EngineProcess {
     /// How the process ended, for error messages.
     var exitDescription: String { Self.describeExit(process) }
 
+    /// The signal that ended the process, if one did.
+    var exitSignal: Int32? {
+        guard !process.isRunning, process.terminationReason == .uncaughtSignal else { return nil }
+        return process.terminationStatus
+    }
+
     private nonisolated static func describeExit(_ process: Process) -> String {
         guard !process.isRunning else { return "still running" }
         let how = process.terminationReason == .uncaughtSignal ? "signal" : "status"
@@ -260,8 +270,9 @@ final class EngineProcess {
     nonisolated static func log(_ line: String) {
         guard let data = "\(Date.now.ISO8601Format()) \(line)\n".data(using: .utf8) else { return }
         if let h = try? FileHandle(forWritingTo: logURL) {
-            h.seekToEndOfFile()
-            h.write(data)
+            // The throwing APIs: the legacy ones raise an ObjC exception (e.g. disk full) and abort the app.
+            _ = try? h.seekToEnd()
+            try? h.write(contentsOf: data)
             try? h.close()
         } else {
             try? data.write(to: logURL)
