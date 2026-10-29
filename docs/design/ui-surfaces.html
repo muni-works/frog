@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>frog · ui surfaces</title>
+<style>
+/* tokens: chief design/system/tokens.json v0.1.0 */
+:root{
+  --ui:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  --rounded:ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --quick:220ms cubic-bezier(.25,1,.5,1); --panel:420ms cubic-bezier(.34,1.3,.64,1); --hov:120ms cubic-bezier(0,0,.58,1);
+}
+body.dark{
+  --bg:#1e1e1e;--surface:#292929;--hover:#303030;--line:#343434;--lineStrong:#3e3e3e;
+  --text:#e8e8e6;--muted:#8f9297;--faint:#6b6e73;--accent:#58cc6f;--onAccent:#0f2419;
+  --success:#30d158;--warning:#ff9f0a;--danger:#ff453a;--info:#0a84ff;--codebg:#262626;
+  --dart:#429cff;--tree:#51da60;--bull:#a45cff;--side:#232323;--desk:#2b2d31;
+  --menu:0 2px 6px rgba(0,0,0,.25);--float:0 10px 24px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+body.light{
+  --bg:#f4f4f4;--surface:#e8e8e8;--hover:#e0e0e0;--line:#dcdcdc;--lineStrong:#d2d2d2;
+  --text:#15171a;--muted:#6b6f75;--faint:#9a9da2;--accent:#2e9e4f;--onAccent:#ffffff;
+  --success:#34c759;--warning:#ff9500;--danger:#ff3b30;--info:#007aff;--codebg:#ebebeb;
+  --dart:#3a89e0;--tree:#47c054;--bull:#9051e0;--side:#ececec;--desk:#d9dbe0;
+  --menu:0 2px 6px rgba(0,0,0,.18);--float:0 10px 24px rgba(0,0,0,.18);
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font:13px/20px var(--ui);background:var(--desk);color:var(--text);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+.mono{font-family:var(--mono)}
+.muted{color:var(--muted)} .faint{color:var(--faint)}
+.cap{font-size:10px;line-height:14px} .callout{font-size:12px;line-height:17px}
+.semi{font-weight:600} .med{font-weight:500}
+.num{font-variant-numeric:tabular-nums}
+
+/* page chrome */
+#nav{position:sticky;top:0;z-index:50;display:flex;gap:4px;flex-wrap:wrap;align-items:center;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line)}
+#nav b{margin-right:8px;font-family:var(--rounded)}
+#nav button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:2px 10px;font-size:12px;cursor:pointer;margin:2px}
+#nav .sp{flex:1}
+.state{padding:28px 0 36px;display:flex;flex-direction:column;align-items:center}
+.state>h2{font:600 15px/20px var(--ui);margin:0 0 4px;width:1180px}
+.state>p.lede{margin:0 0 14px;width:1180px;color:var(--muted);font-size:12px}
+body.only #nav{display:none} body.only .state{padding:20px 0}
+body.only .state>h2,body.only .state>p.lede{display:none}
+
+/* mac window */
+.win{width:1180px;height:760px;background:var(--bg);border-radius:12px;border:1px solid var(--lineStrong);box-shadow:var(--float);display:flex;flex-direction:column;overflow:hidden;position:relative}
+.tb{height:44px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line)}
+.tb .sp{flex:1}
+.lights{display:flex;gap:8px;margin-right:6px}.lights i{width:12px;height:12px;border-radius:50%;background:#ff5f57;display:block}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.body{flex:1;display:flex;min-height:0}
+.side{width:248px;flex:none;background:var(--side);border-right:1px solid var(--line);padding:6px 8px;overflow:hidden}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.scroll{flex:1;overflow:auto;padding:18px 0}
+.col{width:560px;margin:0 auto}
+
+/* sidebar rows */
+.srow{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;font-size:13px;line-height:17px}
+.srow:hover{background:var(--hover)}
+.srow.sel{background:color-mix(in srgb,var(--accent) 18%,transparent)}
+.srow .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srow .d{font-size:10px;color:var(--muted);line-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srow.kid{padding-left:24px}
+.mg{width:20px;height:20px;border-radius:5.6px;flex:none;display:grid;place-items:center;font:600 9px/1 var(--rounded);position:relative}
+.gl{position:absolute;right:-5px;top:-5px;width:12px;height:12px;border-radius:50%;background:var(--side);display:grid;place-items:center}
+.spin{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--faint);border-top-color:var(--text);animation:sp .9s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.ring{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--faint)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+.hand{color:var(--warning);font-size:9px;line-height:1}
+.side .sec{font-size:10px;color:var(--faint);padding:8px 8px 2px;font-weight:600}
+.wrow{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;margin-bottom:2px;font-weight:500;cursor:pointer}
+.wrow:hover{background:var(--hover)}
+.wrow.sel{background:color-mix(in srgb,var(--accent) 18%,transparent)}
+.count{margin-left:auto;font:600 11px/16px var(--ui);color:var(--warning);font-variant-numeric:tabular-nums}
+.more{color:var(--muted);font-size:12px}
+
+/* chips */
+.chip{display:inline-flex;align-items:center;gap:5px;font:11px/16px var(--mono);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:1px 6px;white-space:nowrap;color:var(--text)}
+.chip .dot{width:6px;height:6px}
+.chip.danger{border-color:color-mix(in srgb,var(--danger) 55%,transparent)}
+.chip.danger .dot{background:var(--danger)}
+.chip.warn .dot{background:var(--warning)}
+.chip.ok .dot{background:var(--success)}
+.chip.hollow .dot{border:1px solid var(--muted)}
+
+/* buttons */
+.btn{border-radius:8px;padding:3px 11px;font-size:12px;line-height:18px;border:1px solid var(--line);background:var(--surface);cursor:pointer;white-space:nowrap;transition:background var(--hov)}
+.btn:hover{background:var(--hover)}
+.btn:active{opacity:.8}
+.btn.pri{background:var(--accent);color:var(--onAccent);border-color:transparent;font-weight:600}
+.btn.pri:hover{filter:brightness(1.06)}
+.btn.q{background:none;border-color:transparent;color:var(--muted)}
+.btn.q:hover{background:var(--hover)}
+.btn.dtext{color:var(--danger)}
+.btn kbd{font:10px var(--ui);opacity:.7;margin-left:5px}
+.btn.sm{padding:1px 9px;font-size:11px}
+
+/* code */
+.code{font:12px/18px var(--mono);background:var(--codebg);border:.5px solid var(--line);border-radius:8px;padding:6px 10px;white-space:pre-wrap;word-break:break-all}
+
+/* approval card */
+.card{position:relative;border-radius:14px;padding:14px;background:color-mix(in srgb,var(--surface) 72%,transparent);backdrop-filter:blur(20px) saturate(1.6);border:1px solid color-mix(in srgb,var(--warning) 45%,transparent)}
+.card.danger{border:1.5px solid color-mix(in srgb,var(--danger) 60%,transparent)}
+.card .h{display:flex;align-items:center;gap:8px}
+.card .h .g{width:18px;display:grid;place-items:center;flex:none}
+.card .h .who{font-weight:500}
+.card .h .wants{font-weight:600}
+.card .h .age{margin-left:auto;font-size:10px;color:var(--muted)}
+.trail{font-size:10px;line-height:14px;color:var(--muted);margin:3px 0 10px 26px}
+.trail b{font-weight:500;color:var(--text)}
+.trail i{font-style:normal;color:var(--faint);padding:0 4px}
+.card .code{margin:0 0 6px 26px}
+.agent{margin:0 0 10px 26px;font-size:12px;color:var(--muted);border-left:2px solid var(--line);padding-left:8px;line-height:17px}
+.rows{margin-left:26px;display:grid;grid-template-columns:70px 1fr;gap:6px 8px;font-size:12px;line-height:18px;align-items:start}
+.rows .l{font-size:10px;color:var(--faint);font-weight:600;padding-top:1px}
+.rows .v{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}
+.take{font-weight:500}
+.acts{display:flex;gap:8px;align-items:center;margin-top:14px}
+.acts .sp{flex:1}
+.gw{color:var(--warning)} .gd{color:var(--danger)}
+.dollar{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;border:1.5px solid var(--warning);color:var(--warning);font:700 9px/1 var(--ui)}
+.meter{position:relative;height:6px;border-radius:3px;background:var(--line);overflow:hidden;width:100%;margin:6px 0 3px}
+.meter .u{position:absolute;left:0;top:0;bottom:0;background:var(--accent)}
+.meter .c{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(45deg,var(--warning) 0 3px,transparent 3px 6px)}
+.meter .o{position:absolute;top:0;bottom:0;background:var(--danger)}
+.hold{position:relative;overflow:hidden;user-select:none;-webkit-user-select:none}
+.hold .fill{position:absolute;inset:0;background:color-mix(in srgb,var(--danger) 25%,transparent);transform-origin:left;transform:scaleX(0)}
+.hold.holding .fill{transform:scaleX(1);transition:transform 1.2s linear}
+.hold span{position:relative}
+.folded{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--line);font-size:12px;margin-bottom:8px}
+.folded .sp{flex:1}
+.undo{color:var(--accent);cursor:pointer;font-weight:500;background:none;border:0;padding:0;font-size:12px}
+.okc{color:var(--success)}
+.scope{position:absolute;z-index:20;width:330px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--menu);padding:6px;font-size:12px;line-height:16px}
+.scope .o{display:flex;gap:8px;padding:7px 8px;border-radius:6px;cursor:pointer}
+.scope .o:hover{background:var(--hover)}
+.scope .o .r{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--faint);flex:none;margin-top:2px}
+.scope .o.on .r{border:4px solid var(--accent)}
+.scope .x{font-size:10px;color:var(--muted)}
+
+/* transcript bits */
+.turn{font-size:13px;line-height:20px;margin-bottom:12px}
+.irow{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:3px 0}
+.irow .w{color:var(--text);font-weight:500}
+.irow .sp{flex:1}
+.notice{text-align:center;font-size:10px;color:var(--muted);margin:10px 0}
+.ububble{margin-left:auto;width:fit-content;max-width:420px;background:var(--dart);color:#fff;border-radius:18px;padding:8px 14px;margin-bottom:14px;font-size:13px}
+
+/* composer */
+.composer{margin:0 auto 14px;width:600px;border:1px solid var(--lineStrong);background:color-mix(in srgb,var(--bg) 95%,var(--text));border-radius:16px;padding:10px 14px;flex:none}
+.composer .ph{color:var(--faint);height:22px}
+.composer .bar{display:flex;align-items:center;gap:8px;font-size:12px;margin-top:6px}
+.composer .bar .sp{flex:1}
+.mpill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 9px 2px 6px;background:color-mix(in srgb,var(--surface) 72%,transparent);border:1px solid var(--line);font-weight:500;cursor:pointer}
+
+/* toolbar header */
+.crumbs{display:flex;align-items:center;gap:2px;font-size:12px;color:var(--muted);white-space:nowrap}
+.crumbs a{color:inherit;cursor:pointer;padding:1px 4px;border-radius:6px}
+.crumbs a:hover{background:var(--hover)}
+.crumbs a.cur{color:var(--text);font-weight:500}
+.crumbs .sep{color:var(--faint)}
+.capsule{display:flex;align-items:center;gap:10px;height:30px;padding:0 14px;border-radius:999px;background:color-mix(in srgb,var(--surface) 72%,transparent);border:1px solid var(--line);font-size:12px;white-space:nowrap}
+.capsule .div{width:1px;height:14px;background:var(--line)}
+.ctx{height:30px;flex:none;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line);font-size:10px;color:var(--muted);position:relative}
+.ctx .sp{flex:1}
+.badge{display:inline-flex;align-items:center;gap:5px;font:500 10px/14px var(--ui);color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:1px 8px;cursor:pointer}
+.badge .dot{width:6px;height:6px;background:var(--warning)}
+.badge.open{border-color:color-mix(in srgb,var(--warning) 55%,transparent)}
+.pop{position:absolute;z-index:20;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--menu);padding:12px;width:300px;font-size:12px;line-height:17px;color:var(--text)}
+.pop h4{margin:0 0 2px;font-size:12px}
+.pop p{margin:0 0 10px;color:var(--muted)}
+.ret{display:flex;align-items:center;gap:10px;margin:0 auto 6px;width:600px;padding:8px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--line);font-size:12px;line-height:17px;transition:opacity var(--quick)}
+.ret .sp{flex:1}
+.gut{position:relative}
+.gut::before{content:"✋";position:absolute;left:-24px;top:2px;font-size:10px;color:var(--warning)}
+
+/* inbox */
+.ibhead{display:flex;align-items:center;gap:14px;padding:16px 28px 10px}
+.ibhead h1{font:600 17px/22px var(--ui);margin:0}
+.ibhead .sp{flex:1}
+.tabs{display:flex;gap:2px;background:var(--surface);border-radius:8px;padding:2px}
+.tabs button{border:0;background:none;padding:2px 12px;border-radius:6px;font-size:12px;cursor:pointer;color:var(--muted)}
+.tabs button.on{background:var(--bg);color:var(--text);font-weight:500;box-shadow:0 0 0 .5px var(--line)}
+.ib{padding:0 28px 24px;overflow:auto;flex:1}
+.lane{border:1px solid color-mix(in srgb,var(--danger) 45%,transparent);border-radius:12px;padding:4px;margin-bottom:14px}
+.lh{font-size:10px;font-weight:600;color:var(--muted);padding:4px 10px 2px;display:flex;gap:6px;align-items:center}
+.grp{margin-bottom:12px}
+.gh{display:flex;align-items:center;gap:8px;padding:4px 10px;font-size:12px}
+.gh .n{font-weight:600}
+.gh .s{color:var(--muted);font-size:10px}
+.ir{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;font-size:12px;cursor:pointer;transition:background var(--hov)}
+.ir:hover{background:var(--hover)}
+.ir .lead{width:18px;display:grid;place-items:center;flex:none}
+.ir .who{font-weight:500;white-space:nowrap}
+.ir .wh{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.ir .age{font-size:10px;color:var(--muted);width:24px;text-align:right;flex:none}
+.ir .chev{color:var(--faint);font-size:10px;width:10px}
+.ir.open{background:color-mix(in srgb,var(--surface) 45%,transparent)}
+.exp{padding:6px 0 10px 28px}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center}
+.empty h1{font:600 17px/22px var(--ui);margin:12px 0 0}
+
+/* digest */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.stat .v{font:600 22px/28px var(--ui);font-variant-numeric:tabular-nums}
+.stat .k{font-size:10px;color:var(--muted);line-height:14px}
+.dg{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.panel h3{margin:0 0 8px;font-size:12px;font-weight:600}
+.bars{display:flex;align-items:flex-end;gap:10px;height:120px;position:relative}
+.bars .b{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;font-size:10px;line-height:14px;color:var(--muted);height:100%;position:relative;z-index:1}
+.bars .b i{display:block;width:100%;background:var(--accent);border-radius:4px 4px 0 0}
+.bars .b.over i{background:var(--warning)}
+.line5{position:absolute;left:0;right:0;height:0;border-top:1px dashed var(--text);opacity:.6;z-index:0;font-size:9px;color:var(--muted);text-align:right;line-height:12px}
+.line5 span{position:relative;top:-14px}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl td{padding:4px 0;border-top:1px solid var(--line)}
+.tbl tr:first-child td{border-top:0}
+.tbl td.r{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.sug{display:flex;gap:8px;align-items:center;padding:7px 0;border-top:1px solid var(--line);font-size:12px;line-height:16px}
+.sug:first-of-type{border-top:0}
+.sug .sp{flex:1}
+
+/* picker */
+.picker{position:absolute;width:480px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--float);padding:10px;font-size:12px;z-index:10}
+.auto{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);cursor:pointer}
+.auto.sel,.mate.sel{box-shadow:0 0 0 2px var(--accent);border-color:transparent}
+.faces{display:flex;flex:none}.faces svg{margin-right:-6px}
+.lineup{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:8px 0}
+.mate{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--bg);cursor:pointer;display:flex;flex-direction:column;gap:6px}
+.mate:hover{border-color:var(--lineStrong)}
+.mate .nm{font:600 15px/18px var(--ui)}
+.mate .role{font-size:10px;line-height:13px;color:var(--muted);min-height:26px}
+.q10{height:4px;border-radius:2px;background:var(--line);position:relative;overflow:hidden}
+.q10 i{position:absolute;left:0;top:0;bottom:0;border-radius:2px}
+.kv{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);line-height:14px}
+.kv b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums}
+.psec{font-size:10px;font-weight:600;color:var(--faint);padding:8px 6px 2px}
+.prow{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:7px;font-size:12px}
+.prow:hover{background:var(--hover)}
+.prow .sp{flex:1}
+.pfoot{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);margin-top:6px;padding:8px 6px 0;font-size:11px;color:var(--muted)}
+.hovercard{position:absolute;width:260px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--float);padding:12px;font-size:12px;line-height:17px;z-index:11}
+.hovercard .kv{font-size:11px;padding:2px 0}
+
+/* desktop (notifications) */
+.desk{width:1180px;height:760px;border-radius:12px;overflow:hidden;position:relative;background:linear-gradient(160deg,color-mix(in srgb,var(--desk) 82%,var(--info)) 0%,var(--desk) 55%,color-mix(in srgb,var(--desk) 85%,var(--tree)) 100%);border:1px solid var(--lineStrong)}
+.mbar{height:26px;background:color-mix(in srgb,var(--bg) 70%,transparent);backdrop-filter:blur(20px);display:flex;align-items:center;gap:16px;padding:0 14px;font-size:12px}
+.mbar .sp{flex:1}
+.mbface{display:flex;align-items:center;gap:4px;padding:1px 6px;border-radius:5px;background:color-mix(in srgb,var(--text) 14%,transparent);font-weight:600;font-variant-numeric:tabular-nums}
+.mmenu{position:absolute;top:30px;width:340px;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(30px);border:1px solid var(--line);border-radius:10px;box-shadow:var(--float);padding:6px;font-size:12px}
+.mmenu .mi{display:flex;gap:8px;align-items:center;padding:4px 8px;border-radius:5px}
+.mmenu .mi:hover{background:var(--info);color:#fff}
+.mmenu .mi .sp{flex:1}
+.mmenu .mh{font-size:10px;color:var(--muted);font-weight:600;padding:6px 8px 2px}
+.mmenu hr{border:0;border-top:1px solid var(--line);margin:4px 6px}
+.note{position:absolute;right:14px;width:370px;background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(30px);border:1px solid var(--line);border-radius:16px;box-shadow:var(--float);padding:10px 12px;font-size:12px;line-height:17px}
+.note .nh{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted)}
+.note .nh .sp{flex:1}
+.note .nb{display:flex;gap:6px;margin-top:8px}
+.note .nb .btn{flex:1;text-align:center}
+.dock{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:10px;padding:6px 10px;border-radius:18px;background:color-mix(in srgb,var(--bg) 60%,transparent);backdrop-filter:blur(20px);border:1px solid var(--line)}
+.dock .ic{width:48px;height:48px;border-radius:11px;background:var(--surface);display:grid;place-items:center;position:relative}
+.dock .ic.frog{background:#15171a}
+.dock .bd{position:absolute;top:-4px;right:-4px;background:var(--danger);color:#fff;font:600 11px/18px var(--ui);min-width:18px;height:18px;border-radius:9px;text-align:center;padding:0 5px}
+.lbl{position:absolute;font-size:10px;line-height:14px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:3px 8px;max-width:240px}
+
+/* face motion */
+.face g{transform-origin:50% 70%;animation:breathe 3.2s ease-in-out infinite}
+.face.working g{animation:pump 1.1s ease-in-out infinite}
+.face.waiting g{animation:tilt 1.8s ease-in-out infinite}
+.face.sad g{animation:none;transform:translateY(1px)}
+@keyframes breathe{50%{transform:scale(1.03,.97)}}
+@keyframes pump{50%{transform:translateY(-1.5px) scale(1.02)}}
+@keyframes tilt{25%{transform:rotate(-5deg)}75%{transform:rotate(5deg)}}
+@media (prefers-reduced-motion:reduce){.face g,.spin{animation:none}}
+body.still .face g,body.still .spin{animation:none}
+</style>
+</head>
+<body class="dark">
+<div id="nav"><b>frog · ui surfaces</b><span id="navbtns"></span><span class="sp"></span><button id="theme">light / dark (t)</button></div>
+<div id="states"></div>
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+/* ---------- primitives ---------- */
+const ACC = { dart: 'var(--dart)', tree: 'var(--tree)', bull: 'var(--bull)' };
+function face(color, s = 16, mood = 'idle', w = 13) {
+  const smile = mood === 'sad' ? 'M11.5 25 Q16 21.5 20.5 25' : 'M10.5 21 Q16 26.5 21.5 21';
+  return `<svg class="face ${mood}" width="${s}" height="${s}" viewBox="0 0 32 32" aria-hidden="true"><g>
+  <ellipse cx="16" cy="19.5" rx="${w}" ry="10" fill="${color}"/>
+  <circle cx="10" cy="10.5" r="5.6" fill="${color}"/><circle cx="22" cy="10.5" r="5.6" fill="${color}"/>
+  <circle cx="10" cy="10.5" r="3.5" fill="#fbfbf9"/><circle cx="22" cy="10.5" r="3.5" fill="#fbfbf9"/>
+  <circle cx="10.5" cy="11" r="2" fill="#15171a"/><circle cx="22.5" cy="11" r="2" fill="#15171a"/>
+  <circle cx="11.2" cy="10.2" r=".6" fill="#fff"/><circle cx="23.2" cy="10.2" r=".6" fill="#fff"/>
+  <path d="${smile}" stroke="#15171a" stroke-width="1.8" fill="none" stroke-linecap="round"/></g></svg>`;
+}
+const mface = (m, s = 16, mood = 'idle') => face(ACC[m], s, mood, { dart: 11, tree: 13, bull: 14.6 }[m]);
+
+// folder tints: hsb(hash, .5, .72) per tokens, skipping the brown hues 15-50
+function tint(name) {
+  let h = 2166136261; for (const c of name) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  let hue = (h >>> 8) % 360; if (hue >= 15 && hue <= 50) hue += 40;
+  return `hsl(${hue} 45% 54%)`;
+}
+function mono(name, folder, glyph = '') {
+  const c = tint(folder || name);
+  const init = (name.match(/[a-z0-9]/i) || ['?'])[0].toUpperCase();
+  return `<span class="mg" style="background:color-mix(in srgb,${c} 16%,transparent);color:${c};box-shadow:inset 0 0 0 .5px color-mix(in srgb,var(--text) 15%,transparent)">${init}${glyph ? `<span class="gl">${glyph}</span>` : ''}</span>`;
+}
+const G = {
+  run: '<span class="spin"></span>',
+  idle: '<span class="ring"></span>',
+  wait: '<span class="hand">✋</span>',
+  fail: '<span class="dot" style="background:var(--danger)"></span>',
+};
+const chip = (t, k = '') => `<span class="chip ${k}">${k ? '<span class="dot"></span>' : ''}${t}</span>`;
+const trail = (steps) => `<div class="trail">${steps.map((s, i) => i === steps.length - 1 ? `<b>${s}</b>` : s).join('<i>→</i>')}</div>`;
+const lights = '<div class="lights"><i></i><i></i><i></i></div>';
+
+const SELN = { okc: 'okc manager', bf16: 'okc bf16 proj', serving: 'okc serving patch', tang: 'tang manager' };
+/* ---------- sidebar: the shape of Cam's screenshot ---------- */
+function sidebar(sel = 'inbox', waiting = 6, away = false) {
+  const r = (name, folder, g, detail, cls = '', style = '') =>
+    `<div class="srow ${cls} ${SELN[sel] === name ? 'sel' : ''}">${mono(name, folder, G[g] || '')}<div style="flex:1;min-width:0"><div class="t" style="${style}">${name}</div>${detail ? `<div class="d">${detail}</div>` : ''}</div></div>`;
+  return `<div class="side"><div style="height:30px;display:flex;align-items:center;padding-left:6px">${lights}</div>
+    <div class="wrow ${sel === 'inbox' ? 'sel' : ''}" data-go="inbox"><span class="hand" style="font-size:12px;width:20px;text-align:center">✋</span>waiting on you<span class="count">${waiting || ''}</span></div>
+    <div class="srow"><span style="width:20px;text-align:center" class="muted">◷</span><span class="t" style="flex:1">activity</span><span class="cap muted num">11 live</span></div>
+    <div class="sec">org</div>
+    ${r('chief', 'chief', 'run', 'running · reading 3 reports')}
+    ${r('okc manager', 'okc', 'idle', away || !waiting ? '5 workers · 1 failed' : '5 workers · 2 asks')}
+    ${r('okc attn decode', 'okc', 'run', 'attn v3 check · 4m', 'kid')}
+    ${away ? r('okc serving patch', 'okc', 'run', 'serving bench · 1h', 'kid') : r('okc serving patch', 'okc', 'wait', 'wants to ssh into its pod · 9m', 'kid')}
+    ${r('okc decode layer', 'okc', 'run', 'bench 3 of 6 · 12m', 'kid')}
+    ${r('okc bf16 proj', 'okc', waiting && !away ? 'wait' : 'run', waiting && !away ? 'wants to launch a pod · 4m' : 'bench running · 1h', 'kid')}
+    ${r('okc prefill layer', 'okc', 'fail', !waiting ? 'failed · bench exited 1 · pod stopped' : 'failed · bench exited 1 · pod billing', 'kid', 'color:var(--danger)')}
+    <div class="srow kid more"><span style="width:20px;text-align:center">⋯</span>+18 done</div>
+    ${r('frog manager', 'frog', 'run', waiting ? '4 workers · 1 ask' : '4 workers')}
+    ${r('tang manager', 'tang', 'idle', waiting ? '3 workers · 1 ask' : '3 workers')}
+    ${r('frog cloud manager', 'zest', 'run', 'edge deploy prep')}
+    ${r('blaze distill', 'blaze', 'run', 'cad baseline 41 of 50')}
+    <div class="sec">today</div>
+    ${r('challenges spec', 'frog', '', 'frog · 2h')}
+  </div>`;
+}
+
+/* ---------- approval cards: one component, three weights ---------- */
+function budget(used, cap, add) {
+  const pct = (x) => Math.min(100, (x / cap) * 100);
+  const over = used + add > cap;
+  const left = Math.max(0, cap - used);
+  return `<div style="width:100%">
+    <div class="meter"><span class="u" style="width:${pct(used)}%"></span>
+      <span class="c" style="left:${pct(used)}%;width:${pct(Math.min(add, left))}%"></span>
+      ${over ? `<span class="o" style="left:${pct(used + left) - 1.5}%;width:1.5%"></span>` : ''}</div>
+    <div class="num" style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);line-height:14px">
+      <span><b style="color:var(--text);font-weight:500">$${used.toFixed(2)}</b> of $${cap} this week · dg4 bench pods</span>
+      <span>${over ? `<span class="gd">+$${add.toFixed(2)} at its cap · $${(used + add - cap).toFixed(2)} over</span>` : `+$${add.toFixed(2)} at its 4h cap`}</span></div></div>`;
+}
+
+const CARD = {
+  routine: {
+    weight: 'routine', who: 'okc serving patch', wants: 'ssh into its pod', age: '9m',
+    trail: ['auto flagged', 'context pass kept it', "chief didn't answer in 5m", 'you'],
+    call: "ssh root@213.173.98.4 -p 22091 'cd /workspace/sglang && ./bench_serving.sh --tp 1'",
+    agent: '“running the serving bench on the pod i started 20m ago. it reads the patch and writes results to /workspace only.”',
+    rows: [
+      ['why you', 'ssh-scratch is the chief’s class. the chief was busy with the tang manager for 5m.'],
+      ['touches', chip('pod wm3z…ld8j · made by this session', 'ok') + chip('host 213.173.98.4') + chip('writes /workspace', 'hollow')],
+      ['undo', 'stoppable · ending the ssh ends the bench'],
+    ],
+    take: 'allow once · its own pod, a read-mostly bench script',
+  },
+  spend: (over) => ({
+    weight: 'spend', who: 'okc bf16 proj', wants: 'launch a pod', age: '4m',
+    trail: ['auto flagged', 'context pass kept it', over ? 'chief: over dg4’s weekly budget' : 'chief: spend over $25 needs you', 'you'],
+    call: 'runpod pod create --name bf16-proj-3 --gpu "H200 SXM" --count 1 \\\n  --image ghcr.io/muni-works/okc-bench@sha256:4be1… --max-runtime 4h --self-terminate',
+    agent: '“third bf16 projection run. needs a clean H200 because okc’s shared one is queued for 40m.”',
+    rows: [
+      ['why you', over ? 'pod-spend: this would pass the dg4 budget the chief holds' : 'pod-spend over $25 in one call goes to you, not the chief'],
+      ['touches', chip('$10.58/hr', 'warn') + chip('cap 4h = $42.32') + chip('self-terminates', 'ok') + chip('image pinned', 'ok') + chip('host runpod.io')],
+      ['budget', budget(over ? 48.1 : 12.4, 60, 42.32)],
+      ['undo', 'stoppable · billing stops when the pod does'],
+    ],
+    take: over ? 'allow at a $11.90 cap · that’s what dg4 has left, about 1h of bench' : 'allow once · pinned image, self-terminating, inside the week’s budget',
+    over,
+  }),
+  danger: {
+    weight: 'danger', who: 'tang kda port', wants: 'delete a worktree', age: '2m',
+    trail: ['hard rule: rm -rf outside scratch', 'never-delegable', 'you'],
+    call: 'rm -rf ~/Developer/tang/.worktrees/glm5-kda',
+    agent: '“cleaning up. the KDA work moved to glm5-kda-v2, this one is stale.”',
+    rows: [
+      ['undo', '<span class="semi">can’t be undone</span> · not in a scratch dir, not made by this session'],
+      ['touches', chip('2.1 GB · 412 files') + chip('3 uncommitted changes', 'danger') + chip('branch glm5-kda not pushed', 'danger') + chip('worktree of tang manager', 'hollow')],
+      ['why you', 'deletes outside scratch are never delegable. no grant or chief can take this.'],
+    ],
+    take: 'deny · 3 changes and an unpushed branch exist nowhere else. ask it to push first.',
+  },
+};
+
+function card(c, id) {
+  const glyph = c.weight === 'danger' ? '<span class="gd" style="font-size:14px">⚠</span>'
+    : c.weight === 'spend' ? '<span class="dollar">$</span>' : '<span class="gw">✋</span>';
+  const rows = c.rows.map(([l, v]) => `<div class="l">${l}</div><div class="v">${v}</div>`).join('');
+  let acts;
+  if (c.weight === 'danger') {
+    acts = `<button class="btn pri" data-ans="denied · asked it to push glm5-kda first" >Deny <kbd>⌘.</kbd></button>
+      <button class="btn" data-ans="asked why · waiting on tang kda port">Ask why…</button>
+      <span class="sp"></span>
+      <button class="btn q" data-ans="denied with a note">Deny with note…</button>
+      <button class="btn dtext hold" data-hold="deleted glm5-kda · 2.1 GB"><span class="fill"></span><span>Hold to delete</span></button>`;
+  } else if (c.over) {
+    acts = `<button class="btn pri" data-ans="allowed at an $11.90 cap · pod bf16-proj-3 starts in 4s">Allow at $11.90 cap <kbd>⌘↩</kbd></button>
+      <button class="btn" data-ans="allowed once · $42.32 cap · dg4 now $30.42 over">Allow once</button>
+      <span class="sp"></span>
+      <button class="btn q" data-ans="asked why">Ask why…</button>
+      <button class="btn" data-ans="denied">Deny <kbd>⌘.</kbd></button>`;
+  } else {
+    const what = c.weight === 'spend' ? 'pod bf16-proj-3 starts' : 'ssh starts';
+    acts = `<button class="btn pri" data-ans="allowed once · ${what} in 4s">Allow once <kbd>⌘↩</kbd></button>
+      <button class="btn" data-always>Always…</button>
+      <span class="sp"></span>
+      <button class="btn q" data-ans="asked why · waiting on ${c.who}">Ask why…</button>
+      <button class="btn q" data-ans="denied with a note">Deny with note…</button>
+      <button class="btn" data-ans="denied">Deny <kbd>⌘.</kbd></button>`;
+  }
+  return `<div class="card ${c.weight === 'danger' ? 'danger' : ''}" ${id ? `id="${id}"` : ''} data-weight="${c.weight}">
+    <div class="h"><span class="g">${glyph}</span><span><span class="who">${c.who}</span> <span class="muted">wants to</span> <span class="wants">${c.wants}</span></span><span class="age">${c.age}</span></div>
+    ${trail(c.trail)}
+    <div class="code">${c.call}</div>
+    <div class="agent">${c.agent}</div>
+    <div class="rows">${rows}<div class="l">frog’s take</div><div class="v take">${c.take}</div></div>
+    <div class="acts">${acts}</div></div>`;
+}
+function folded(text, undo = true, icon = '<span class="okc">✓</span>') {
+  return `<div class="folded">${icon}<span>${text}</span><span class="sp"></span>${undo ? '<button class="undo" data-undo>Undo</button><span class="cap muted num" data-tick>4s</span>' : ''}</div>`;
+}
+
+/* ---------- a bit of transcript for context ---------- */
+function transcriptHead(who) {
+  if (who === 'okc serving patch') return `<div class="turn">the patch builds. i’ll run the serving bench on the pod i started, then post numbers to the okc manager.</div>
+    <div class="irow"><span class="gw">✋</span><span class="w">Bash</span><span>ssh root@213.173.98.4 …</span><span class="cap semi gw">needs you</span><span class="sp"></span></div>`;
+  if (who === 'tang kda port') return `<div class="turn">the KDA kernel moved to glm5-kda-v2 and passes parity there. cleaning up the old worktree.</div>
+    <div class="irow"><span class="gw">✋</span><span class="w">Bash</span><span>rm -rf ~/Developer/tang/.worktrees/glm5-kda</span><span class="cap semi gw">needs you</span><span class="sp"></span></div>`;
+  if (who === 'okc bf16 proj') return `<div class="turn">run 2 finished at 412 µs per layer. i’ll start run 3 on a clean H200, since the shared one is queued for 40 minutes.</div>
+    <div class="irow"><span class="gw">✋</span><span class="w">Bash</span><span>runpod pod create …</span><span class="cap semi gw">needs you</span><span class="sp"></span></div>`;
+  return `<div class="ububble">run the third bf16 projection bench and compare with run 2</div>
+    <div class="turn">run 2 finished at 412 µs per layer. i’ll start run 3 on a clean H200, since the shared one is queued for 40 minutes.</div>
+    <div class="irow"><span>✓</span><span class="w">Read</span><span>bench/bf16_proj.py</span><span class="sp"></span><span class="chip">+0 −0</span></div>
+    <div class="irow"><span>✓</span><span class="w">Bash</span><span>python bench/compare.py run1 run2</span><span class="sp"></span><span class="okc">✓</span></div>
+    <div class="irow"><span class="gw">✋</span><span class="w">Bash</span><span>runpod pod create …</span><span class="cap semi gw">needs you</span><span class="sp"></span></div>`;
+}
+
+/* ---------- session header: toolbar line + context row ---------- */
+function toolbar(o = {}) {
+  const crumbs = (o.crumbs || ['chief', 'okc manager', 'okc bf16 proj'])
+    .map((c, i, a) => `<a class="${i === a.length - 1 ? 'cur' : ''}">${c}</a>`).join('<span class="sep">›</span>');
+  const act = o.waiting
+    ? `<span class="gw">✋</span><span class="med gw">${o.waiting}</span>`
+    : `${face('var(--tree)', 16, 'working')}<span>${o.activity || 'running bench_bf16.py · 2m'}</span>`;
+  const model = o.model || { m: 'tree', name: 'glm-5.3-flash', speed: '61 tok/s' };
+  return `<div class="tb"><div class="crumbs">${crumbs}</div><span class="sp"></span>
+    <div class="capsule">${act}<span class="div"></span>
+      <span style="display:flex;align-items:center;gap:5px" class="med">${model.m ? mface(model.m, 14) : ''}${model.name}</span><span class="muted num">${model.speed}</span>
+      ${o.elsewhere ? `<span class="div"></span><span class="gw med">${o.elsewhere}</span>` : ''}
+    </div><span class="sp"></span>
+    <span class="num med" title="hover: by model, tokens, energy">${o.cost || '$4.12'}</span>${o.team ? `<span class="cap muted num">team ${o.team}</span>` : ''}
+  </div>`;
+}
+function ctxrow(o = {}) {
+  const badges = (o.badges || []).map((b, i) => `<span class="badge ${o.open === i ? 'open' : ''}" data-badge="${i}"><span class="dot"></span>${b.what}</span>`).join('');
+  return `<div class="ctx"><span class="chip" style="font-size:10px">${o.wt || 'muse_bf16_proj · muse/bf16-proj'}</span>
+    <span>${o.age || '3h'}</span><span>·</span><span>${o.mode || 'auto'}</span>
+    ${badges ? `<span style="width:6px"></span>${badges}` : ''}<span class="sp"></span>
+    <span class="faint">${o.right || ''}</span></div>`;
+}
+const DEG = [
+  { kind: 'model', what: 'on glm-5.3-flash, not opus', why: 'this session was on anthropic/claude-opus-5.5. it resumed without -m, so it took the global default.', fix: 'Switch back to opus' },
+  { kind: 'text_tools', what: 'text tool calls', why: 'two native tool replies failed this session, so frog reads tool calls from text. slower, and calls fail more.', fix: 'Try native tools again' },
+  { kind: 'classifier', what: 'classifier down · asking more', why: 'auto’s classifier (cloud/qwen3-8b) isn’t answering. apple on-device decides instead; gray-area calls ask.', fix: 'Use on-device check' },
+];
+
+function win(side, main, o = {}) {
+  return `<div class="win">${side ? '' : ''}<div class="body">${side || ''}<div class="main">${main}</div></div></div>`;
+}
+
+/* ---------- screens ---------- */
+const S = [];
+function screen(id, title, lede, html, after) { S.push({ id, title, lede, html, after }); }
+
+/* 1-3: the three weights */
+function cardScreen(c, sel, extra = '') {
+  return win(sidebar(sel), `${toolbar({ waiting: `${c.who} wants to ${c.wants}`, crumbs: ['chief', 'okc manager', c.who].map((x) => x === 'okc manager' && c.who.startsWith('tang') ? 'tang manager' : x) })}
+    ${ctxrow({ wt: { 'okc serving patch': 'serving-sglang · okc/serving', 'okc bf16 proj': 'muse_bf16_proj · muse/bf16-proj', 'tang kda port': 'glm5-kda-v2 · glm5/kda-v2' }[c.who], age: c.who.startsWith('tang') ? '5h' : '3h' })}
+    <div class="scroll"><div class="col">${transcriptHead(c.who)}${extra}<div data-slot>${card(c)}</div></div></div>
+    <div class="composer"><div class="ph">steer, or press esc to stop…</div><div class="bar"><span class="mpill">${mface('tree', 14)}tree</span><span class="muted">auto</span><span class="sp"></span></div></div>`);
+}
+screen('card-routine', '1 · approval card: routine class',
+  'the residue of a soft class: the chief would take it, but it didn’t answer in 5m. the trail says so. warning border, allow once is primary (⌘↩).',
+  cardScreen(CARD.routine, 'serving'));
+screen('card-spend', '2 · approval card: spend class',
+  'adds the budget row: this week against the grant, with this call’s worst case hatched. click “over budget” to see the primary slot become a capped allow.',
+  `<div style="width:1180px;margin:-6px 0 8px;display:flex;gap:6px"><button class="btn sm" data-spend="0">inside budget</button><button class="btn sm" data-spend="1">over budget</button></div>` +
+  cardScreen(CARD.spend(false), 'bf16'));
+screen('card-danger', '3 · approval card: irreversible (hard class)',
+  'never-delegable: no chief, no grant. danger border, deny is primary, allow is “hold to delete” for 1.2s with no shortcut. try holding it.',
+  cardScreen(CARD.danger, 'tang'));
+
+/* 4: answering */
+screen('card-answer', '4 · answering: always… scopes, and the answered fold',
+  'always… never means a blank yes: it opens scopes, narrowest first. answered cards fold to one line with the consequence and 4s of undo (the call waits for the grace).',
+  win(sidebar('serving'), `${toolbar({ crumbs: ['chief', 'okc manager', 'okc serving patch'], activity: 'running bench_serving.sh · 1m' })}${ctxrow({ wt: 'serving-sglang · okc/serving' })}
+    <div class="scroll"><div class="col">
+      <div class="cap muted" style="margin:0 0 6px">answered, as they read in the transcript and the inbox</div>
+      ${folded('allowed once · ssh started on pod wm3z…ld8j')}
+      ${folded('allowed at an $11.90 cap · pod bf16-proj-3 running · stops itself at $11.90', false)}
+      ${folded('denied · “push glm5-kda first, then delete it” sent to tang kda port', false, '<span class="gd">✕</span>')}
+      ${folded('asked why · tang kda port answered: “pushed. nothing left unique.” · card back in your inbox', false, '<span class="muted">↩</span>')}
+      <div class="cap muted" style="margin:16px 0 6px">a routine card with always… open</div>
+      <div style="position:relative">${card(CARD.routine)}
+        <div class="scope" style="left:110px;bottom:50px;box-shadow:var(--float)">
+          <div class="o"><span class="r"></span><div><div>this command prefix, this session</div><div class="x">ssh root@213.173.98.4 … · until the session ends</div></div></div>
+          <div class="o on"><span class="r"></span><div><div>ssh-scratch for okc serving patch</div><div class="x">any pod this session made · 4 weeks</div></div></div>
+          <div class="o"><span class="r"></span><div><div>ssh-scratch for okc manager and its workers</div><div class="x">becomes grant dg8 · pods they made · 4 weeks · revoke in one click</div></div></div>
+          <div style="display:flex;justify-content:flex-end;gap:6px;padding:6px 4px 2px"><button class="btn sm q">Cancel</button><button class="btn sm pri">Allow always</button></div>
+        </div>
+      </div>
+      <div style="height:150px"></div>
+    </div></div>`));
+
+/* 5-6: the inbox */
+const ASKS = [
+  { id: 'a1', lane: 'money', lead: '<span class="gd">⌁</span>', who: 'okc prefill layer', wh: 'failed 22m ago · its pod is still billing, nobody listening', chips: chip('$10.58/hr · $3.88 so far', 'danger'), age: '22m', first: 'Stop pod', mgr: 'okc' },
+  { id: 'a2', who: 'okc bf16 proj', lead: '<span class="dollar">$</span>', wh: 'wants to launch a pod · H200 for 4h', chips: chip('≤$42.32', 'warn'), age: '4m', first: 'Allow once', mgr: 'okc', card: () => card(CARD.spend(false)) },
+  { id: 'a3', who: 'okc serving patch', lead: '<span class="gw">✋</span>', wh: "wants to ssh into its pod · chief didn't answer", chips: chip('its own pod', 'ok'), age: '9m', first: 'Allow once', mgr: 'okc', card: () => card(CARD.routine) },
+  { id: 'a4', who: 'tang kda port', lead: '<span class="gd">⚠</span>', wh: 'wants to delete a worktree', chips: chip('2.1 GB · can’t undo', 'danger'), age: '2m', first: 'Deny', mgr: 'tang', card: () => card(CARD.danger) },
+  { id: 'a5', who: 'frog manager', lead: '<span style="color:var(--info)">?</span>', wh: 'decision: how the inbox groups asks', chips: chip('blocks 1 worker'), age: '31m', first: 'By manager', mgr: 'frog', decision: ['By manager (recommended)', 'By consequence', 'Flat by age'] },
+  { id: 'a6', who: 'frog cloud manager', lead: '<span style="color:var(--info)">?</span>', wh: 'asks: deploy the edge with the accounts routes now or after the app build?', chips: chip('blocks deploy'), age: '48m', first: 'After the app', mgr: 'zest', decision: ['After the app build (recommended)', 'Now, behind a flag', 'Hold'] },
+];
+const MGR = {
+  okc: { n: 'okc manager', f: 'okc', g: 'idle', s: '5 workers · 1 failed · +18 done' },
+  tang: { n: 'tang manager', f: 'tang', g: 'idle', s: '3 workers' },
+  frog: { n: 'frog manager', f: 'frog', g: 'run', s: '4 workers · running' },
+  zest: { n: 'frog cloud manager', f: 'zest', g: 'run', s: 'running' },
+};
+function irow(a, open) {
+  return `<div class="ir ${open ? 'open' : ''}" data-ask="${a.id}"><span class="chev">${a.card || a.decision ? (open ? '▾' : '▸') : ''}</span><span class="lead">${a.lead}</span>
+    <span class="who">${a.who}</span><span class="wh">${a.wh}</span>${a.chips}
+    <span class="age">${a.age}</span><button class="btn sm ${a.first === 'Deny' || a.first === 'Stop pod' ? '' : 'pri'}" data-quick="${a.id}">${a.first}</button></div>
+    ${open ? `<div class="exp">${a.card ? a.card() : `<div class="card" style="border-color:color-mix(in srgb,var(--info) 45%,transparent)"><div class="h"><span class="g" style="color:var(--info)">?</span><span class="wants">${a.wh.replace(/^decision: |^asks: /, '')}</span><span class="age">${a.age}</span></div>${trail(['relayed by the chief', 'you'])}<div class="acts" style="margin-top:4px">${a.decision.map((d, i) => `<button class="btn ${i ? '' : 'pri'}" data-ans="${d.replace(' (recommended)', '')} · sent to ${a.who}">${d}</button>`).join('')}</div></div>`}</div>` : ''}`;
+}
+function inbox(openId = 'a2') {
+  const money = ASKS.filter((a) => a.lane === 'money');
+  const order = ['tang', 'okc', 'frog', 'zest']; // worst consequence first: irreversible, spend, decisions
+  const groups = order.map((m) => {
+    const items = ASKS.filter((a) => a.mgr === m && a.lane !== 'money');
+    if (!items.length) return '';
+    const g = MGR[m];
+    return `<div class="grp"><div class="gh">${mono(g.n, g.f, G[g.g])}<span class="n">${g.n}</span><span class="s">${g.s} · ${items.length} ask${items.length > 1 ? 's' : ''}</span></div>${items.map((a) => irow(a, a.id === openId)).join('')}</div>`;
+  }).join('');
+  return `<div class="ibhead"><h1>waiting on you</h1><div class="tabs"><button class="on" data-tab="inbox">Now · 6</button><button data-tab="digest">Week</button></div><span class="sp"></span>
+    <span class="cap muted">j/k move · ⏎ open · ⌘⏎ frog’s take · e ask why</span></div>
+    <div class="ib">
+      <div class="lane"><div class="lh"><span class="gd">●</span>costing money now</div>${money.map((a) => irow(a)).join('')}</div>
+      ${groups}
+    </div>`;
+}
+screen('inbox', '5 · waiting on you: the inbox',
+  'one place for every ask across the org. grouped by manager, worst consequence first; a “costing money now” strip on top. click rows to open them; the first button answers inline. the sidebar is Cam’s screenshot’s shape: okc manager, 5 workers, the red failed row, +18 done.',
+  win(sidebar('inbox'), `<div class="tb"><span class="sp"></span><span class="cap muted">⌘⇧0</span></div><div id="ibx" style="display:flex;flex-direction:column;flex:1;min-height:0">${inbox()}</div>`));
+
+screen('inbox-empty', '6 · waiting on you: empty',
+  'everything’s handled. the face works when anything runs. numbers come from the ledger and the roll-up. no suggestion card: an empty inbox shouldn’t invite work.',
+  win(sidebar('inbox', 0, true), `<div class="tb"><span class="sp"></span><span class="cap muted">⌘⇧0</span></div>
+    <div class="ibhead"><h1>waiting on you</h1><div class="tabs"><button class="on">Now</button><button data-tab="digest">Week</button></div></div>
+    <div class="empty">${face('var(--tree)', 96, 'working')}<h1>everything’s handled</h1>
+      <div class="muted">frog is working on 8 sessions · the chief decided 4 today · 212 allowed on their own</div>
+      <div style="margin-top:10px"><button class="btn" data-tab="digest">See this week</button></div></div>`));
+
+/* 7: the digest */
+function digest() {
+  const days = [['mon', 9], ['tue', 7], ['wed', 5], ['thu', 4], ['fri', 3], ['sat', 2], ['sun', 2]];
+  const max = 10;
+  const bars = days.map(([d, n]) => `<div class="b ${n > 5 ? 'over' : ''}"><span class="num" style="color:var(--text);background:var(--surface);padding:0 3px;border-radius:3px">${n}</span><i style="height:${(n / max) * 92}px"></i><span>${d}</span></div>`).join('');
+  return `<div class="ibhead"><h1>waiting on you</h1><div class="tabs"><button data-tab="inbox">Now · 6</button><button class="on">Week</button></div><span class="sp"></span><span class="cap muted">oct 19 – 25 · illustrative numbers, shape from delegation.md’s counters</span></div>
+  <div class="ib">
+    <div class="stats">
+      <div class="stat"><div class="v">9,412</div><div class="k">calls checked</div></div>
+      <div class="stat"><div class="v">9,268</div><div class="k">allowed on their own · 78 by the context pass</div></div>
+      <div class="stat"><div class="v">112</div><div class="k">the chief decided · 3 undone by you</div></div>
+      <div class="stat"><div class="v">32</div><div class="k">reached you · target ≤35 (5 a day) · median wait 3m</div></div>
+    </div>
+    <div class="dg">
+      <div class="panel"><h3>reached you, by day</h3><div class="bars"><div class="line5" style="bottom:${(5 / max) * 92 + 17}px"><span>5 a day</span></div>${bars}</div></div>
+      <div class="panel"><h3>what reached you</h3><table class="tbl">
+        <tr><td>pod-spend over a cap</td><td class="r">9 · 8 allowed</td></tr>
+        <tr><td>chief didn’t answer · ssh-scratch</td><td class="r">7 · 7 allowed</td></tr>
+        <tr><td>deletes outside scratch <span class="gd">⚠</span></td><td class="r">6 · 5 denied</td></tr>
+        <tr><td>decisions relayed by the chief</td><td class="r">6 · 6 answered</td></tr>
+        <tr><td>chief didn’t answer · own-scope writes</td><td class="r">4 · 4 allowed</td></tr></table></div>
+      <div class="panel"><h3>frog suggests</h3>
+        <div class="sug"><span>you allowed <span class="mono">ssh-scratch</span> for okc workers 7 times, all into pods they made</span><span class="sp"></span><button class="btn sm pri">Grant to okc manager</button></div>
+        <div class="sug"><span>8 of 9 over-cap pods were allowed · dg4 is $60 a week</span><span class="sp"></span><button class="btn sm">Raise dg4 to $90</button></div>
+        <div class="sug"><span><span class="mono">dg7</span> restart engines: unused 3 weeks</span><span class="sp"></span><button class="btn sm">Revoke</button></div></div>
+      <div class="panel"><h3>near-misses · a grant said no</h3>
+        <div class="sug"><span><span class="mono">dg5</span> blocked a push from tang kda port: the refspec resolved to <span class="mono">main</span></span><span class="sp"></span><span class="cap muted">wed</span></div>
+        <div class="sug"><span><span class="mono">dg3</span> blocked ssh to mew: a second path in a heredoc, outside ~/scratch</span><span class="sp"></span><span class="cap muted">fri</span></div>
+        <div class="sug"><span>the chief allowed 112 · <a class="undo">open the audit stream</a></span></div></div>
+    </div></div>`;
+}
+screen('digest', '7 · the digest: Cam’s weekly approvals roll-up',
+  'the receipt for trust, read by exception. one monday notification, and the inbox’s week tab. suggestions are one click, never a sheet.',
+  win(sidebar('inbox'), `<div class="tb"><span class="sp"></span><span class="cap muted">⌘⇧0</span></div><div style="display:flex;flex-direction:column;flex:1;min-height:0">${digest()}</div>`));
+
+/* 8: notification entry points */
+screen('notify', '8 · entry points: notifications, menu bar, dock',
+  'routine cards can be answered from the notification. spend cards open. irreversible cards have no allow anywhere outside the full card. the dock badge is the ask count and nothing else.',
+  `<div class="desk"><div class="mbar"><span class="semi"></span><span class="semi">frog</span><span>File</span><span>Edit</span><span>View</span><span>Window</span><span class="sp"></span>
+    <span class="mbface">${face('var(--tree)', 14, 'waiting')}6</span><span>Sun 15:42</span></div>
+    <div class="mmenu" style="right:96px">
+      <div class="mh">waiting on you · 6</div>
+      <div class="mi"><span class="gd">⌁</span>okc prefill layer · pod billing<span class="sp"></span><span class="cap">22m</span></div>
+      <div class="mi"><span class="gd">⚠</span>tang kda port · delete a worktree<span class="sp"></span><span class="cap">2m</span></div>
+      <div class="mi"><span class="dollar">$</span>okc bf16 proj · launch a pod<span class="sp"></span><span class="cap">4m</span></div>
+      <div class="mi"><span class="gw">✋</span>okc serving patch · ssh into its pod<span class="sp"></span><span class="cap">9m</span></div>
+      <div class="mi"><span style="color:var(--info)">?</span>frog manager · a decision<span class="sp"></span><span class="cap">31m</span></div>
+      <div class="mi muted">Open the inbox… <span class="sp"></span>⌘⇧0</div>
+      <hr><div class="mh">running</div>
+      <div class="mi">${face('var(--tree)', 14, 'working')}chief, okc ×3, frog manager, blaze<span class="sp"></span><span class="cap">11 live</span></div>
+      <hr><div class="mh">spend today</div>
+      <div class="mi num">$31.70 of $45 · $15.87/hr · 2 pods</div>
+      <hr><div class="mi">Pause alerts for 1 hour</div></div>
+    
+    <div class="note" style="top:478px;right:14px">
+      <div class="nh">${face('var(--tree)', 14)}<span class="semi" style="color:var(--text)">frog</span><span class="sp"></span>9m</div>
+      <div><span class="semi">okc serving patch wants to ssh into its pod</span></div>
+      <div class="muted">chief didn’t answer in 5m · its own pod · stoppable</div>
+      <div class="nb"><button class="btn pri">Allow once</button><button class="btn">Deny</button></div></div>
+    <div class="note" style="top:608px;right:14px">
+      <div class="nh">${face('var(--tree)', 14)}<span class="semi" style="color:var(--text)">frog</span><span class="sp"></span>2m</div>
+      <div><span class="gd">⚠</span> <span class="semi">tang kda port wants to delete a worktree</span></div>
+      <div class="muted">2.1 GB · 3 uncommitted changes · can’t be undone</div>
+      <div class="nb"><button class="btn">Open</button></div></div>
+    <div class="lbl" style="top:500px;right:394px">routine: answer from here</div>
+    <div class="lbl" style="top:630px;right:394px">irreversible: open only · spend: open</div>
+    <div class="lbl" style="top:40px;left:420px;max-width:300px">menu bar face: mood = the org (waiting here), the count, the first asks, then running and spend</div>
+    <div class="dock"><div class="ic">📁</div><div class="ic">🧭</div><div class="ic frog">${face('var(--tree)', 34)}<span class="bd">6</span></div><div class="ic">⚙︎</div></div>
+  </div>`);
+
+/* 9-10: the header */
+screen('header', '9 · session header: org context, cost, degraded badges',
+  'line 1: the breadcrumb (each crumb opens that session), the activity capsule, cost so far. line 2: worktree, age, mode, then one badge per degraded kind, each with its fix. click a badge.',
+  win(sidebar('bf16', 6), `${toolbar({ model: { m: 'tree', name: 'glm-5.3-flash', speed: '61 tok/s' } })}
+    <div id="hdrctx">${ctxrow({ badges: DEG, open: 0, right: '' })}</div>
+    <div class="pop" id="degpop" style="display:none"></div>
+    <div class="scroll"><div class="col">${transcriptHead().replace(/<div class="irow"><span class="gw">✋<\/span>.*$/s, '')}
+      <div class="irow"><span class="spin"></span><span class="w">Bash</span><span>python bench/bf16_proj.py --run 3</span><span class="sp"></span><span class="cap">2m</span></div></div></div>
+    <div style="padding:0 0 14px;display:flex;justify-content:center"><div style="width:820px">
+      <div class="cap muted" style="margin-bottom:6px">a manager’s header reads its team’s cost too</div>
+      <div style="border:1px solid var(--line);border-radius:12px;overflow:hidden">${toolbar({ crumbs: ['chief', 'okc manager'], activity: 'idle · 5 workers', model: { m: 'tree', name: 'glm-5.3-flash', speed: '' }, cost: '$1.90', team: '$31.70', elsewhere: '2 waiting elsewhere' })}${ctxrow({ wt: 'okc · main', age: '2d', badges: [DEG[2]] })}</div>
+    </div></div>`));
+
+screen('header-return', '10 · session header: the return state',
+  'opening a session that had events while you were away: one strip, one look. show jumps to the first; each is marked in the gutter. it agrees with the inbox because both read the ledger.',
+  win(sidebar('okc', 4, true), `${toolbar({ crumbs: ['chief', 'okc manager'], activity: 'idle · 5 workers', model: { m: 'tree', name: 'glm-5.3-flash', speed: '' }, cost: '$1.90', team: '$31.70' })}
+    ${ctxrow({ wt: 'okc · main', age: '2d' })}
+    <div style="padding-top:12px"><div class="ret" id="ret">${face('var(--tree)', 20)}<span><span class="semi">while you were away · 2h</span> — 3 things waited for you: 2 approvals (the chief took 1, you took 1 on your phone), 1 answer done</span><span class="sp"></span><button class="btn sm" data-show>Show</button><button class="btn sm q" data-x>✕</button></div></div>
+    <div class="scroll" style="padding-top:8px"><div class="col">
+      <div class="notice">13:40 · you left</div>
+      <div class="irow gut"><span class="okc">✓</span><span class="w">okc serving patch</span><span>ssh into its pod</span><span class="sp"></span><span class="cap">allowed by the chief · ssh-scratch</span></div>
+      <div class="irow gut"><span class="okc">✓</span><span class="w">okc bf16 proj</span><span>launch a pod · $42.32 cap</span><span class="sp"></span><span class="cap">allowed by you · on your phone · 14:12</span></div>
+      <div class="irow gut"><span class="okc">✓</span><span class="w">okc attn decode</span><span>report: FP8 P·V verify passed, 25.6 → 15.4 µs</span><span class="sp"></span><span class="cap">answer done</span></div>
+      <div class="turn" style="margin-top:12px">attn v3 is verified and 40% faster on the 3090. bf16 run 3 is going on its own pod, capped at $42.32. prefill layer failed at 15:20 and its pod is still up. that one is in your inbox.</div>
+      <div class="notice">15:42 · you’re back</div>
+    </div></div>`));
+
+/* 11-12: the model picker */
+const LINEUP = [
+  { m: 'dart', role: 'quick hands · edits, tests, renames', q: 2.6, fails: 3, cost: '~18¢', tasks: '1 task', speed: '226 tok/s', back: 'qwen3-coder-next' },
+  { m: 'tree', role: 'steady · features, reviews, runs agents', q: 6.3, fails: 0, cost: '~37¢', tasks: '2 tasks', speed: '—', back: 'glm-5.3-flash' },
+  { m: 'bull', role: 'deep · hard bugs, long plans', q: 7.1, fails: 0, cost: '~$1.10', tasks: '6 tasks', speed: '—', back: 'deepseek-v4.1-flash', cand: true },
+];
+function mate(l, sel, dim) {
+  return `<div class="mate ${sel ? 'sel' : ''}" data-mate="${l.m}" style="${dim ? 'opacity:.55' : ''}">
+    <div style="display:flex;align-items:center;gap:8px">${mface(l.m, 30, sel ? 'working' : 'idle')}<div style="min-width:0"><div class="nm" style="color:${ACC[l.m]}">${l.m}</div><div class="cap faint" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.back}${l.cand ? ' · tbd' : ''}</div></div></div>
+    <div class="role">${l.role}</div>
+    <div class="kv"><span>chief eval</span><b>${l.q.toFixed(1)}</b></div>
+    <div class="q10"><i style="width:${l.q * 10}%;background:${ACC[l.m]}"></i></div>
+    <div style="height:20px;display:flex;align-items:center">${l.fails ? chip(l.fails + ' safety fails', 'danger') : '<span class="cap muted">0 safety fails</span>'}</div>
+    <div class="kv"><span>a task</span><b>${l.cost}</b></div>
+    <div class="kv"><span>speed</span><b>${l.speed}</b></div></div>`;
+}
+function picker(sel = 'auto', signedIn = true) {
+  return `<div class="auto ${sel === 'auto' ? 'sel' : ''}" data-mate="auto">
+      <div class="faces">${mface('dart', 26)}${mface('tree', 26)}${mface('bull', 26)}</div>
+      <div style="flex:1;margin-left:6px"><div style="display:flex;align-items:baseline;gap:8px"><span class="semi" style="font-size:15px">auto</span><span class="cap muted">recommended</span></div>
+        <div class="callout">dart for most steps, leaps to tree when a turn is hard, to bull for long plans. never puts dart in charge of other agents.</div>
+        <div class="cap muted num" style="margin-top:3px">${signedIn ? 'last 7 days · 80% dart · 15% tree · 5% bull · ~25¢ a task' : 'signed out · auto stays on this mac · sign in adds the lineup'}</div></div></div>
+    <div class="lineup">${LINEUP.map((l) => mate(l, sel === l.m, !signedIn)).join('')}</div>
+    ${signedIn ? '' : '<div class="cap muted" style="padding:0 6px 4px">frog cloud · sign in adds dart, tree and bull · $5 of credit, no card · nothing here changes if you don’t</div>'}
+    <div class="psec">This Mac</div>
+    <div class="prow">${face('var(--faint)', 18)}<span class="med">qwen3-4b</span><span class="cap muted">48 tok/s · ready</span><span class="sp"></span><span class="cap faint">not in the chief eval yet</span><span class="cap semi" style="color:var(--accent)">free</span></div>
+    <div class="prow"><span style="width:18px;text-align:center" class="muted"></span><span class="med">apple on-device</span><span class="cap muted">built in</span><span class="sp"></span><span class="cap faint">not in the chief eval yet</span><span class="cap semi" style="color:var(--accent)">free</span></div>
+    <div class="prow"><span style="width:18px;text-align:center" class="muted">↓</span><span class="med muted">qwen3-coder-30b</span><span class="cap muted">18 GB · fits this mac</span><span class="sp"></span><button class="btn sm">Download</button></div>
+    <div class="psec">Other clouds</div>
+    <div class="prow"><span style="width:18px;text-align:center" class="muted">☁︎</span><span class="med">opus 5.5</span><span class="cap muted">vercel</span><span class="sp"></span><span class="cap muted num">chief eval 7.3 · ~$1–3 a task</span></div>
+    <div class="pfoot"><span>${signedIn ? 'frog cloud · 38 tasks left this week' : 'frog cloud · <a class="undo">Sign in with GitHub</a>'}</span><span>Manage models…</span></div>`;
+}
+function pickerScreen(sel, signedIn, hover) {
+  return win(sidebar('bf16', 6), `${toolbar({ model: signedIn ? { m: 'tree', name: 'tree', speed: '' } : { name: 'qwen3-4b', speed: '48 tok/s' }, cost: signedIn ? '$4.12' : 'free' })}${ctxrow({})}
+    <div class="scroll"><div class="col">${transcriptHead().replace(/<div class="irow"><span class="gw">✋<\/span>.*$/s, '')}</div></div>
+    <div style="position:relative;flex:none">
+      <div class="picker" style="left:calc(50% - 300px);bottom:84px">${picker(sel, signedIn)}</div>
+      ${hover ? `<div class="hovercard" style="left:calc(50% + 194px);bottom:240px">
+        <div style="display:flex;gap:8px;align-items:center">${mface('tree', 28)}<div><div class="semi" style="color:var(--tree)">tree <span class="cap muted" style="font-weight:400">· needs sign-in</span></div><div class="cap muted">glm-5.3-flash · MIT · 321B, 18B active</div></div></div>
+        <div style="margin:8px 0 6px">the one to hand a feature or a team. scored 6.3 on the chief eval with no safety fails; full glm-5.3 scored 7.1.</div>
+        <div class="kv"><span>chief eval · 10 org scenarios · opus-graded</span><b>6.3</b></div>
+        <div class="kv"><span>safety fails</span><b>0</b></div>
+        <div class="kv"><span>a task (~800k in, 79% cached, 30k out)</span><b>~37¢</b></div>
+        <div class="kv"><span>credit</span><b>2× dart</b></div>
+        <div class="kv"><span>runs on</span><b>frog cloud · 2×H200</b></div>
+        <div class="cap faint" style="margin-top:6px">cloud/tree</div></div>` : ''}
+      <div class="composer"><div class="ph">steer, or press esc to stop…</div><div class="bar"><span class="mpill" style="box-shadow:0 0 0 2px var(--accent)">${signedIn ? mface('tree', 14) + 'auto · tree' : face('var(--faint)', 14) + 'auto · qwen3-4b'}</span><span class="muted">auto</span><span class="sp"></span></div></div>
+    </div>`);
+}
+screen('picker', '11 · model picker: the lineup',
+  'choosing a colleague, not a row: auto first with what it did this week, then dart, tree and bull with their chief eval score, safety fails, cost a task and speed. this mac and other clouds stay below, as today. click a card.',
+  pickerScreen('auto', true, false));
+screen('picker-hover', '12 · model picker: hovering a colleague, and signed out',
+  'hover tells you where the numbers come from. signed out, auto means this mac: sign-in adds, never unlocks.',
+  pickerScreen('auto', false, true));
+
+/* ---------- render ---------- */
+const params = new URLSearchParams(location.search);
+const only = params.get('only');
+if (params.get('t') === 'light') document.body.className = 'light';
+if (params.get('still')) document.body.classList.add('still');
+if (only) document.body.classList.add('only');
+$('#navbtns').innerHTML = S.map((s) => `<button data-nav="${s.id}">${s.title.split(' · ')[1] ? s.title : s.id}</button>`).join('');
+$('#states').innerHTML = S.filter((s) => !only || s.id === only)
+  .map((s) => `<section class="state" id="s-${s.id}"><h2>${s.title}</h2><p class="lede">${s.lede}</p>${s.html}</section>`).join('');
+
+/* ---------- interactions ---------- */
+function theme() { document.body.classList.toggle('dark'); document.body.classList.toggle('light'); }
+$('#theme').onclick = theme;
+document.addEventListener('keydown', (e) => { if (e.key === 't' && !e.metaKey && e.target.tagName !== 'INPUT') theme(); });
+
+function fold(cardEl, text, undoable = true) {
+  const slot = document.createElement('div');
+  const keep = cardEl;
+  cardEl.replaceWith(slot);
+  slot.innerHTML = folded(text, undoable, text.startsWith('denied') ? '<span class="gd">✕</span>' : text.startsWith('asked') ? '<span class="muted">↩</span>' : '<span class="okc">✓</span>');
+  if (!undoable) return;
+  let n = 4; const tick = $('[data-tick]', slot);
+  const t = setInterval(() => { n--; if (tick) tick.textContent = n + 's'; if (n <= 0) { clearInterval(t); const u = $('[data-undo]', slot); if (u) u.remove(); if (tick) tick.remove(); } }, 1000);
+  $('[data-undo]', slot).onclick = () => { clearInterval(t); slot.replaceWith(keep); };
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('button,[data-ask],[data-mate],[data-badge],[data-go],[data-nav]');
+  if (!t) return;
+  if (t.dataset.nav) { document.getElementById('s-' + t.dataset.nav).scrollIntoView({ behavior: 'smooth' }); return; }
+  if (t.dataset.ans) { const c = t.closest('.card'); if (!c) return; const ex = c.closest('.exp'); if (ex) { const ir = ex.previousElementSibling; ex.innerHTML = folded(t.dataset.ans, false); ir.classList.remove('open'); ir.style.opacity = .4; } else fold(c, t.dataset.ans, !t.dataset.ans.startsWith('asked')); return; }
+  if (t.dataset.quick) { e.stopPropagation(); const ir = t.closest('.ir'); const a = ASKS.find((x) => x.id === t.dataset.quick); ir.outerHTML = folded(`${a.first.toLowerCase()} · ${a.who}`, true); return; }
+  if (t.dataset.ask) { const id = t.dataset.ask; const open = t.classList.contains('open'); $('#ibx').innerHTML = inbox(open ? null : id); return; }
+  if (t.dataset.tab) { const box = t.closest('.main'); box.innerHTML = `<div class="tb"><span class="sp"></span><span class="cap muted">⌘⇧0</span></div><div id="ibx" style="display:flex;flex-direction:column;flex:1;min-height:0">${t.dataset.tab === 'digest' ? digest() : inbox()}</div>`; return; }
+  if (t.dataset.spend !== undefined) { const sec = t.closest('.state'); const slot = $('[data-slot]', sec); slot.innerHTML = card(CARD.spend(t.dataset.spend === '1')); return; }
+  if (t.dataset.badge !== undefined) { showDeg(t.closest('.state'), +t.dataset.badge, t); return; }
+  if (t.dataset.mate) { const box = t.closest('.picker'); const signed = !box.textContent.includes('signed out'); box.innerHTML = picker(t.dataset.mate, signed); return; }
+  if (t.hasAttribute('data-x')) { $('#ret').style.opacity = 0; return; }
+  if (t.hasAttribute('data-show')) { $('.gut').scrollIntoView({ block: 'center' }); return; }
+});
+
+function showDeg(sec, i, el) {
+  const pop = $('#degpop', sec); if (!pop) return;
+  $$('.badge', sec).forEach((b) => b.classList.toggle('open', b === el));
+  const d = DEG[i];
+  pop.innerHTML = `<h4>${d.what}</h4><p>${d.why}</p><div style="display:flex;gap:6px"><button class="btn pri sm">${d.fix}</button><button class="btn q sm">Keep for now</button></div>`;
+  pop.style.display = 'block'; const r = el.getBoundingClientRect(), w = pop.offsetParent.getBoundingClientRect();
+  pop.style.left = (r.left - w.left) + 'px'; pop.style.top = (r.bottom - w.top + 6) + 'px';
+  pop.style.display = 'block';
+}
+if (params.get('over')) { const sec = $('#s-card-spend'); if (sec) $('[data-slot]', sec).innerHTML = card(CARD.spend(true)); }
+if (params.get('holding')) { const b = $('.hold'); if (b) { b.classList.add('holding'); b.querySelector('.fill').style.transition = 'none'; b.querySelector('.fill').style.transform = 'scaleX(.6)'; } }
+const hs = $('#s-header'); if (hs) showDeg(hs, 0, $('.badge', hs));
+
+// hold to delete: 1.2 s, cancels on release
+document.addEventListener('pointerdown', (e) => {
+  const h = e.target.closest('.hold'); if (!h) return;
+  h.classList.add('holding');
+  const timer = setTimeout(() => { const c = h.closest('.card'); if (c.closest('.exp')) c.closest('.exp').innerHTML = folded(h.dataset.hold, false, '<span class="gd">⚠</span>'); else fold(c, h.dataset.hold, false); }, 1200);
+  const stop = () => { clearTimeout(timer); h.classList.remove('holding'); window.removeEventListener('pointerup', stop); h.removeEventListener('pointerleave', stop); };
+  window.addEventListener('pointerup', stop); h.addEventListener('pointerleave', stop);
+});
+
+</script>
+</body>
+</html>
