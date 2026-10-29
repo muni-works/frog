@@ -3,13 +3,13 @@ import { useAlerts } from './alerts'
 import { finishSignIn, firstName, me, savedKey, signIn, signOut, API, AuthError, type Account } from './auth'
 import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
-import type { Thread } from './engine/thread'
 import type { Image, Mode } from './cloud/protocol'
 import { idOf, spec, useModels } from './models'
 import { outOfCredits, pickStarters, useCloud, useRepos, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
+import { SessionList } from './ui/SessionList'
 import { creditLine, Palette, Settings, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 
@@ -34,29 +34,7 @@ function Mark({ size = 22 }: { size?: number }) {
   return <span className="mark" style={{ width: size, height: size }} aria-hidden="true" />
 }
 
-function age(ms: number) {
-  const s = (Date.now() - ms) / 1000
-  if (s < 60) return 'now'
-  if (s < 3600) return `${Math.floor(s / 60)}m`
-  if (s < 86_400) return `${Math.floor(s / 3600)}h`
-  return new Date(ms).toLocaleDateString(undefined, { weekday: 'short' })
-}
 
-/** Status symbol for a session row: the live thread when we have one, else the sandbox state. */
-function sym(s: SessionSummary, t: Thread) {
-  if (t.ask) return { ch: '!', cls: 'sym ask', detail: `Waiting on you · ${t.ask.name.toLowerCase()} ${t.ask.arg}` }
-  if (t.question) return { ch: '?', cls: 'sym ask', detail: `Asks: ${t.question.question}` }
-  if (t.elicitation) return { ch: '!', cls: 'sym ask', detail: `${t.elicitation.server} needs your input` }
-  if (outOfCredits(t)) return { ch: '', cls: 'sym paused', detail: 'Paused · out of credits' }
-  if (t.running) return { ch: '', cls: 'sym ring', detail: 'Working…' }
-  if (s.state === 'starting') return { ch: '', cls: 'sym ring', detail: 'Starting the sandbox…' }
-  if (s.state === 'error') return { ch: '!', cls: 'sym paused', detail: s.error ?? "The sandbox couldn't start" }
-  if (s.state === 'sleeping') return { ch: '', cls: 'sym merged', detail: s.pr ? `Sleeping · ${s.pr}` : 'Sleeping' }
-  if (t.ended?.type === 'error') return { ch: '!', cls: 'sym paused', detail: 'Stopped on an error' }
-  if (t.ended?.type === 'denied') return { ch: '✕', cls: 'sym merged', detail: 'Stopped · you denied a step' }
-  if (t.ended) return { ch: '✓', cls: 'sym done', detail: 'Finished' }
-  return { ch: '', cls: 'sym merged', detail: s.pr ? `Bound to ${s.pr}` : s.branch }
-}
 
 export default function App() {
   const [key, setKey] = useState<string | null>(DEV_KEY ?? savedKey())
@@ -207,6 +185,13 @@ export default function App() {
     }
   }
 
+  // Sandboxes that never started have nothing to lose: clear them together, without a prompt each.
+  const clear = async (ids: string[]) => {
+    const gone = (await Promise.allSettled(ids.map((id) => cloud!.gateway.remove(id)))).map((r, i) => (r.status === 'fulfilled' ? ids[i] : null)).filter(Boolean)
+    setSessions((all) => all.filter((x) => !gone.includes(x.id)))
+    if (gone.length < ids.length) say(`Couldn't clear ${ids.length - gone.length} of them. Try again.`)
+  }
+
   // Commit and push are asks to the agent, so they show up in the conversation like any step.
   const commit = (s: SessionSummary) => send(s.id, 'Commit the changes with a clear message.')
   const push = (s: SessionSummary) => send(s.id, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
@@ -274,10 +259,7 @@ export default function App() {
   )
 
   // ---------- signed in ----------
-  const asks = sessions.filter((s) => thread(s.id).ask)
-  // Questions and MCP prompts need you too; they're answered in the session, not inline.
-  const queries = sessions.filter((s) => !thread(s.id).ask && (thread(s.id).question || thread(s.id).elicitation))
-  const byRepo = [...new Set(sessions.map((s) => s.repo))]
+  const running = sessions.filter((s) => thread(s.id).running || s.state === 'running' || s.state === 'starting').length
   const adds = ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
   const dels = ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
   const paused = ct ? outOfCredits(ct) : false
@@ -289,60 +271,13 @@ export default function App() {
       <aside className="side f-glass">
         <div className="brand"><Mark /><b>Frog</b></div>
         <Nav />
-        {asks.length + queries.length > 0 && <>
-          <div className="h"><span>Needs you</span><span style={{ color: 'var(--notice)' }}>{asks.length + queries.length}</span></div>
-          {queries.map((s) => {
-            const t = thread(s.id)
-            return (
-              <button key={s.id} type="button" className="needs needs-top" onClick={() => setView({ kind: 'session', id: s.id })}>
-                <Mark size={26} /><div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-                  <b className="ellip" style={{ display: 'block' }}>{t.question ? t.question.question : `${t.elicitation!.server} needs your input`}</b>
-                  <div className="det">{title(s)} · Answer in the session</div></div>
-              </button>
-            )
-          })}
-          {asks.map((s) => {
-            const a = thread(s.id).ask!
-            return (
-              <div key={s.id} className="needs">
-                <button type="button" className="needs-top" onClick={() => setView({ kind: 'session', id: s.id })}>
-                  <Mark size={26} /><div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}><b className="ellip" style={{ display: 'block' }}>Can I {a.name.toLowerCase()} {a.arg}?</b>
-                    <div className="det">{title(s)}{a.preview && <> · <span style={{ color: 'var(--frog)' }}>+{a.preview.added}</span> <span style={{ color: 'var(--warn)' }}>−{a.preview.removed}</span></>}</div></div>
-                </button>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button type="button" className="pill deny" onClick={() => decide(s.id, false)}>Deny</button>
-                  <button type="button" className="pill allow" onClick={() => decide(s.id, true)}>Allow ⌘↩</button>
-                </div>
-              </div>
-            )
-          })}
-        </>}
-        <div className="sessions">
-          {listError && <div className="det wrap" style={{ padding: '10px 8px', color: 'var(--warn)' }}>Couldn't load sessions: {listError}</div>}
-          {!listError && sessions.length === 0 && <div className="det wrap" style={{ padding: '14px 8px' }}>No sessions yet. Start one and it shows up here, and in Frog on your other devices.</div>}
-          {byRepo.map((repo) => (
-            <div key={repo}>
-              <div className="h"><span>{repo ? (repo.split('/')[1] ?? repo) : 'No repo'}</span></div>
-              {sessions.filter((s) => s.repo === repo).map((s) => {
-                const y = sym(s, thread(s.id))
-                return (
-                  <button key={s.id} type="button" className={`row ${current?.id === s.id ? 'on' : ''}`} onClick={() => setView({ kind: 'session', id: s.id })}>
-                    <span className={y.cls}>{y.ch}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}><span className="ellip">{title(s)}</span><span className="det" style={{ flex: 'none' }}>☁ {age(s.updated)}</span></div>
-                      <div className="det">{y.detail}</div>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          ))}
-        </div>
+        <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
+          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} />
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
           {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} /> : <Mark size={28} />}
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
             <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
-            <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
+            <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}{running ? ` · ${running} running` : ''}</div>
           </div>
           <span className="det">⚙</span>
         </button>
