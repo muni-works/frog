@@ -40,6 +40,8 @@ function age(ms: number) {
 /** Status symbol for a session row: the live thread when we have one, else the sandbox state. */
 function sym(s: SessionSummary, t: Thread) {
   if (t.ask) return { ch: '!', cls: 'sym ask', detail: `Waiting on you · ${t.ask.name.toLowerCase()} ${t.ask.arg}` }
+  if (t.question) return { ch: '?', cls: 'sym ask', detail: `Asks: ${t.question.question}` }
+  if (t.elicitation) return { ch: '!', cls: 'sym ask', detail: `${t.elicitation.server} needs your input` }
   if (outOfCredits(t)) return { ch: '', cls: 'sym paused', detail: 'Paused · out of credits' }
   if (t.running) return { ch: '', cls: 'sym ring', detail: 'Working…' }
   if (s.state === 'starting') return { ch: '', cls: 'sym ring', detail: 'Starting the sandbox…' }
@@ -239,6 +241,8 @@ export default function App() {
 
   // ---------- signed in ----------
   const asks = sessions.filter((s) => thread(s.id).ask)
+  // Questions and MCP prompts need you too; they're answered in the session, not inline.
+  const queries = sessions.filter((s) => !thread(s.id).ask && (thread(s.id).question || thread(s.id).elicitation))
   const byRepo = [...new Set(sessions.map((s) => s.repo))]
   const adds = ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
   const dels = ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
@@ -251,8 +255,18 @@ export default function App() {
       <aside className="side f-glass">
         <div className="brand"><Mark /><b>Frog</b></div>
         <Nav />
-        {asks.length > 0 && <>
-          <div className="h"><span>Needs you</span><span style={{ color: 'var(--notice)' }}>{asks.length}</span></div>
+        {asks.length + queries.length > 0 && <>
+          <div className="h"><span>Needs you</span><span style={{ color: 'var(--notice)' }}>{asks.length + queries.length}</span></div>
+          {queries.map((s) => {
+            const t = thread(s.id)
+            return (
+              <button key={s.id} type="button" className="needs needs-top" onClick={() => setView({ kind: 'session', id: s.id })}>
+                <Mark size={26} /><div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                  <b className="ellip" style={{ display: 'block' }}>{t.question ? t.question.question : `${t.elicitation!.server} needs your input`}</b>
+                  <div className="det">{title(s)} · Answer in the session</div></div>
+              </button>
+            )
+          })}
           {asks.map((s) => {
             const a = thread(s.id).ask!
             return (
@@ -316,7 +330,9 @@ export default function App() {
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{cs.refused.upgrade ? <a className="f-btn f-btn--bordered f-btn--small" href={cs.refused.upgrade} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
             {ct.turns.length === 0 && cs?.state !== 'refused' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Nothing here yet.'}</div>}
-            <Transcript thread={ct} models={models} onDecide={(a) => decide(current.id, a)} />
+            <Transcript thread={ct} models={models} onDecide={(a) => decide(current.id, a)}
+              onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
+              onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })} />
             {turnError(ct) && (
               <div role="status" className="banner warn">
                 <span style={{ flex: 1 }}>{turnError(ct)}</span>
@@ -340,7 +356,16 @@ export default function App() {
             )}
           </div></div>
           <div className="dock">
-            <Composer key={current.id} state={ct.running ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!ct.ask}
+            {ct.todos.length > 0 && ct.todos.some((t) => t.status !== 'completed') && (
+              <div className="plan" aria-label="Plan">
+                {ct.todos.map((t, i) => (
+                  <div key={i} className={`plan-item ${t.status}`}>
+                    <span aria-hidden="true">{t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '●' : '○'}</span>{t.content}
+                  </div>
+                ))}
+              </div>
+            )}
+            <Composer key={current.id} state={ct.running ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}

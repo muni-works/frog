@@ -134,3 +134,42 @@ a { color: var(--frog); }
 .turn-card-h { display: flex; justify-content: space-between; font-size: 13px; }
 .turn-card-row { display: flex; gap: 8px; }
 .turn-card-time { color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; }
+
+/* tool rows */
+.tool-row { display: flex; flex-direction: column; gap: 4px; }
+button.tool { border: 0; background: transparent; padding: 0; text-align: left; cursor: pointer; color: var(--muted); font: 12px/18px var(--font-mono); }
+button.tool:hover { color: var(--fg); }
+.tool-chev { display: inline-block; width: 12px; color: var(--faint); }
+.tool-row.err button.tool { color: var(--warn); }
+.tool-body { margin-left: 12px; border-left: 2px solid var(--line); padding: 4px 0 4px 10px; display: flex; flex-direction: column; gap: 4px; }
+.tool-arg { font: 12px/18px var(--font-mono); color: var(--fg); white-space: pre-wrap; word-break: break-word; }
+.tool-out { margin: 0; max-height: 320px; overflow: auto; background: rgba(127,127,127,.08); border-radius: 8px; padding: 8px 10px; font: 12px/18px var(--font-mono); color: var(--fg); white-space: pre-wrap; word-break: break-word; }
+
+/* markdown */
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md p { margin: 0 0 10px; }
+.md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; font-size: 15px; } .md h4, .md h5, .md h6 { font-size: 14px; }
+.md ul, .md ol { margin: 0 0 10px; padding-left: 22px; } .md li { margin: 2px 0; }
+.md code { font: 12.5px var(--font-mono); background: rgba(127,127,127,.14); border-radius: 4px; padding: 1px 4px; }
+.md blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--muted); }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+.md-code { margin: 0 0 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.md-code-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 4px 12px; font-size: 11.5px; color: var(--faint); background: rgba(127,127,127,.08); }
+.md-code pre { margin: 0; padding: 10px 12px; overflow-x: auto; font: 12.5px/19px var(--font-mono); }
+.md-code pre code { background: none; padding: 0; font: inherit; }
+.md-table { overflow-x: auto; margin: 0 0 10px; }
+.md table { border-collapse: collapse; font-size: 13px; } .md th, .md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; } .md th { background: rgba(127,127,127,.08); }
+
+/* questions and MCP prompts */
+.ask-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow-float); }
+.ask-options { display: flex; flex-direction: column; gap: 6px; }
+.ask-option { display: flex; gap: 10px; align-items: flex-start; text-align: left; border: 1px solid var(--line); border-radius: 10px; background: transparent; padding: 8px 10px; cursor: pointer; font-size: 13px; }
+.ask-option:hover { background: var(--hover); } .ask-option.on { border-color: var(--frog); background: var(--frog-pad); }
+.ask-n { width: 18px; height: 18px; flex: none; border-radius: 50%; background: rgba(127,127,127,.18); font-size: 11px; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.ask-acts { display: flex; gap: 8px; justify-content: flex-end; }
+.ask-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+
+/* the session's plan, above the composer */
+.plan { margin: 0 8px 6px; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; max-height: 140px; overflow-y: auto; }
+.plan-item { display: flex; gap: 8px; color: var(--muted); } .plan-item.in_progress { color: var(--fg); } .plan-item.completed { color: var(--faint); text-decoration: line-through; }
+.plan-item span { width: 12px; flex: none; color: var(--frog); }

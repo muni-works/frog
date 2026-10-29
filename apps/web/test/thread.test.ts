@@ -50,3 +50,20 @@ test("a finished turn keeps its usage and end reason for the footer", () => {
   assert.equal(t.turns[0].usage?.tokens_per_sec, 74);
   assert.equal(t.turns[0].reason?.type, "complete");
 });
+
+test("questions and MCP prompts wait for an answer and clear when resolved or the turn ends", () => {
+  let t = reduce(emptyThread, env({ event: "turn_started", turn: 1, input: "go" }));
+  t = reduce(t, env({ event: "question", id: "q1", item: "i1", question: "Which?", options: [{ label: "A" }, { label: "B" }], allow_other: true }));
+  assert.equal(t.question?.allowOther, true);
+  t = reduce(t, env({ event: "question_resolved", id: "q1", choices: ["A"] }));
+  assert.equal(t.question, null);
+  t = reduce(t, env({ event: "elicitation", id: "e1", server: "linear", message: "Pick a team" }));
+  assert.equal(t.elicitation?.server, "linear");
+  t = reduce(t, env({ event: "turn_ended", turn: 1, reason: { type: "complete" } }));
+  assert.equal(t.elicitation, null);
+});
+
+test("the plan comes from status todos", () => {
+  const t = reduce(emptyThread, env({ event: "status", model: "cloud/x", mode: "auto", context_tokens: null, context_window: 1, todos: [{ content: "write it", status: "in_progress" }] }));
+  assert.equal(t.todos[0].status, "in_progress");
+});
