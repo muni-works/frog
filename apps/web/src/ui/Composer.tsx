@@ -7,6 +7,8 @@ import { parseRepo } from '../store'
 // chip (the Mac's "this Mac / Frog Cloud" choice).
 
 export interface ComposerProps {
+  /** Context used of the window, from the engine's status: a ring by the send button. */
+  context?: { used: number | null; window: number } | null
   state?: 'idle' | 'working' | 'paused'
   repo?: string
   branch?: string
@@ -288,6 +290,7 @@ export function Composer(p: ComposerProps) {
             </button>
           )}
           <span style={{ flex: 1 }} />
+          {p.context?.window ? <ContextRing used={p.context.used} window={p.context.window} /> : null}
           <span style={{ fontSize: 12, color: paused ? 'var(--warn)' : p.waiting ? 'var(--notice)' : 'var(--muted)', whiteSpace: 'nowrap' }}>
             {working && p.waiting ? 'Waiting on you' : working ? `Working · ${timer}` : paused ? 'Out of credits' : ''}
           </span>
@@ -308,5 +311,33 @@ export function Composer(p: ComposerProps) {
         </div>
       </div>
     </div>
+  )
+}
+
+/** How full the context is, as a ring (the Mac's ContextRing); click it for the numbers. */
+function ContextRing({ used, window }: { used: number | null; window: number }) {
+  const [open, setOpen] = useState(false)
+  const f = used ? Math.min(1, used / window) : 0
+  const color = f > 0.8 ? 'var(--warn)' : f > 0.6 ? 'var(--notice)' : 'var(--muted)'
+  const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
+  const r = 6.5, c = 2 * Math.PI * r
+  return (
+    <span className="ctx">
+      <button type="button" className="ctx-ring" aria-expanded={open} onClick={() => setOpen(!open)}
+        aria-label={`Context ${Math.round(f * 100)}% full`} title={`${k(used ?? 0)} of ${k(window)} tokens (${Math.round(f * 100)}%)`}>
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <circle cx="9" cy="9" r={r} fill="none" stroke="var(--line-strong)" strokeWidth="2.5" />
+          <circle cx="9" cy="9" r={r} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"
+            strokeDasharray={`${f * c} ${c}`} transform="rotate(-90 9 9)" style={{ transition: 'stroke-dasharray .4s' }} />
+        </svg>
+      </button>
+      {open && (
+        <div className="f-card ctx-card" role="dialog" aria-label="Context">
+          <div className="ctx-h"><b>Context</b><b style={{ color: f > 0.6 ? color : undefined }}>{Math.round(f * 100)}%</b></div>
+          <div className="ctx-bar"><span style={{ width: `${f * 100}%`, background: f > 0.6 ? color : 'var(--frog)' }} /></div>
+          <div className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens</div>
+        </div>
+      )}
+    </span>
   )
 }

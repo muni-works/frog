@@ -344,3 +344,10 @@ button.tool:hover { color: var(--fg); }
 .starting li.now .starting-g { border-color: var(--frog-pad); border-top-color: var(--frog); animation: spin 1s linear infinite; }
 .starting-t { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .starting li.now .starting-g { animation: none; border-color: var(--frog); } }
+.ctx { position: relative; display: inline-flex; }
+.ctx-ring { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; cursor: pointer; padding: 0; }
+.ctx-ring:hover { background: var(--hover); }
+.ctx-card { position: absolute; right: -6px; bottom: calc(100% + 10px); width: 220px; padding: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-float); z-index: 6; }
+.ctx-h { display: flex; justify-content: space-between; font-size: 13px; }
+.ctx-bar { height: 4px; border-radius: 2px; background: var(--well); overflow: hidden; }
+.ctx-bar span { display: block; height: 100%; border-radius: 2px; }

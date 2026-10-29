@@ -328,9 +328,8 @@ export default function App() {
             ) : (
               <b style={{ fontSize: 14 }} onDoubleClick={() => current && setRenaming(current.id)} title={current ? 'Double-click to rename' : undefined}>{current ? title(current) : 'New session'}</b>
             )}
-            <div className="det">{current ? `${current.repo || 'No repo'} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}${ct?.context?.used ? ` · ${Math.round(ct.context.used / 1000)}k of ${Math.round(ct.context.window / 1000)}k context` : ''}` : 'Runs in a private Frog Cloud sandbox'}</div>
           </div>
-          {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? 'In Frog Cloud' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
+          {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? '' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
           {current && <button type="button" className="ic-btn" onClick={() => setInspector(!inspector)} aria-pressed={inspector} aria-label={inspector ? 'Hide inspector' : 'Show inspector'} title={inspector ? 'Hide inspector' : 'Inspector'}>
             <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" />{inspector && <path d="M15 4h3a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-3z" fill="currentColor" stroke="none" opacity=".35" />}</svg>
           </button>}
@@ -402,7 +401,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} autoFocus chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
+            <Composer key={current.id} autoFocus context={ct.context} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
