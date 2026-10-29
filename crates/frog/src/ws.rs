@@ -31,6 +31,9 @@ struct State {
     /// sent. They're ephemeral, so `durable` never has them, but a peer that attaches
     /// mid-ask has to see them to answer. Cleared by their resolution or the turn's end.
     open: Vec<(String, u64, String)>,
+    /// The latest `status` (model, mode, context), as sent: state, not history, so it's
+    /// ephemeral too, but a peer that attaches between turns needs it.
+    status: Option<(u64, String)>,
     /// The current peer's outbox, and which connection it is.
     peer: Option<(u64, mpsc::UnboundedSender<String>)>,
     next_peer: u64,
@@ -87,6 +90,7 @@ pub async fn serve(mut h: Handle, addr: &str) -> Result<()> {
             | Event::QuestionResolved { id, .. }
             | Event::ElicitationDone { id } => s.open.retain(|(open, _, _)| open != id),
             Event::TurnEnded { .. } => s.open.clear(),
+            Event::Status(_) => s.status = Some((env.seq, text.clone())),
             _ => {}
         }
         if let Some((_, tx)) = &s.peer
@@ -151,6 +155,7 @@ async fn conn(
         // anything at or below the last seq it has seen.
         let mut replay: Vec<(u64, &String)> = s.durable.iter().map(|(seq, t)| (*seq, t)).collect();
         replay.extend(s.open.iter().map(|(_, seq, t)| (*seq, t)));
+        replay.extend(s.status.iter().map(|(seq, t)| (*seq, t)));
         replay.sort_by_key(|(seq, _)| *seq);
         for (_, text) in replay.into_iter().filter(|(seq, _)| *seq > after) {
             let _ = tx.send(text.clone());
