@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Mode } from '../cloud/protocol'
+import { modes, price, type Model } from '../models'
+import { parseRepo } from '../store'
 
 // Port of Composer.dc.html with platform="web": the run-on chip is fixed to Frog Cloud.
 
@@ -13,11 +16,23 @@ export interface ComposerProps {
   /** The running turn is blocked on a permission ask. */
   waiting?: boolean
   draft?: string
-  /** Shown when the gateway reports one; there's no model list to pick from yet. */
-  model?: string
+  /** The model id (without `cloud/`) and the ones to pick from; the menu shows when there's a list. */
+  model?: string | null
+  models?: Model[]
+  onModel?: (id: string) => void
+  /** When the engine asks before acting; the chip shows once the engine (or a new session) says. */
+  mode?: Mode | null
+  onMode?: (mode: Mode) => void
   onSend: (text: string) => void
   onStop?: () => void
-  onRepo?: () => void
+  /** A new session's repo picker, in the composer: recent repos, search, or a pasted URL.
+   * With `onRepo`, sending without a repo opens it instead. */
+  onRepo?: (repo: string) => void
+  recent?: string[]
+  /** Open the repo menu on mount (e.g. back from sign-in with a message but no repo). */
+  pickRepo?: boolean
+  /** Starting a session: the send button waits. */
+  busy?: boolean
   onGit?: () => void
   autoFocus?: boolean
 }
@@ -37,16 +52,33 @@ function useTimer(since?: number) {
 
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
-  const [menu, setMenu] = useState<'plus' | null>(null)
+  const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | null>(p.pickRepo ? 'repo' : null)
+  const [q, setQ] = useState('')
   const ref = useRef<HTMLTextAreaElement>(null)
   const working = p.state === 'working', paused = p.state === 'paused'
   const timer = useTimer(working ? p.startedAt : undefined)
   useEffect(() => { if (p.draft !== undefined) setText(p.draft) }, [p.draft])
   useEffect(() => { if (p.autoFocus) ref.current?.focus() }, [p.autoFocus])
+  useEffect(() => { if (p.pickRepo) setMenu('repo') }, [p.pickRepo])
+  // A menu closes on any click outside it (its own toggle chip toggles it), or Escape.
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!menu) return
+    const down = (e: MouseEvent) => {
+      const t = e.target as Element
+      if (root.current?.contains(t) && t.closest('.cz-menu, [aria-expanded]')) return
+      setMenu(null)
+    }
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
+    document.addEventListener('mousedown', down)
+    document.addEventListener('keydown', key)
+    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key) }
+  }, [menu])
 
   const send = () => {
     const t = text.trim()
-    if (!t || paused) return
+    if (!t || paused || p.busy) return
+    if (p.onRepo && !p.repo) return setMenu('repo')
     p.onSend(t)
     setText('')
   }
@@ -56,10 +88,56 @@ export function Composer(p: ComposerProps) {
   const hasGit = (p.adds ?? 0) + (p.dels ?? 0) > 0
 
   return (
-    <div className="cz">
+    <div className="cz" ref={root}>
       {menu === 'plus' && (
         <div className="f-card cz-menu" role="menu" style={{ left: 8 }}>
           <button type="button" role="menuitem" onClick={() => { setText(text + '@'); setMenu(null); ref.current?.focus() }}><span>@</span>Mention a file</button>
+        </div>
+      )}
+
+      {menu === 'model' && (
+        <div className="f-card cz-menu" role="menu" aria-label="Model" style={{ left: 150, width: 300 }}>
+          <div className="cz-menu-h">Model on Frog Cloud</div>
+          {p.models?.map((m) => (
+            <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null) }}>
+              <span style={{ flex: 1, minWidth: 0 }}><b style={{ fontWeight: 600 }}>{m.id}</b><br /><span className="det">{[price(m), m.context ? `${Math.round(m.context / 1000)}k context` : ''].filter(Boolean).join(' · ')}</span></span>
+              <span style={{ color: 'var(--frog)', opacity: m.id === p.model ? 1 : 0 }}>✓</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {menu === 'repo' && p.onRepo && (() => {
+        const typed = parseRepo(q)
+        const list = (p.recent ?? []).filter((r) => r.toLowerCase().includes(q.trim().toLowerCase()))
+        const pick = (r: string) => { p.onRepo!(r); setMenu(null); setQ(''); ref.current?.focus() }
+        return (
+          <div className="f-card cz-menu cz-repos" role="menu" aria-label="Repo" style={{ left: 150, width: 320 }}>
+            <input className="cz-search" autoFocus value={q} placeholder="Search repos, or paste a GitHub URL" aria-label="Repo"
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setMenu(null)
+                if (e.key === 'Enter') { e.preventDefault(); const r = typed ?? list[0]; if (r) pick(r) }
+              }} />
+            {typed && !list.includes(typed) && <button type="button" role="menuitem" onClick={() => pick(typed)}><span style={{ flex: 1 }}>{typed}</span><span className="det">from GitHub</span></button>}
+            {list.length > 0 && <div className="cz-menu-h">Recent</div>}
+            {list.map((r) => (
+              <button key={r} type="button" role="menuitemradio" aria-checked={r === p.repo} onClick={() => pick(r)}>
+                <span style={{ flex: 1 }}>{r}</span><span style={{ color: 'var(--frog)', opacity: r === p.repo ? 1 : 0 }}>✓</span>
+              </button>
+            ))}
+            {!typed && list.length === 0 && <div className="det wrap" style={{ padding: '6px 10px' }}>Type owner/name or paste a GitHub URL. Private repos need the Frog GitHub App.</div>}
+          </div>
+        )
+      })()}
+      {menu === 'mode' && (
+        <div className="f-card cz-menu" role="menu" aria-label="When Frog asks" style={{ left: 150, width: 300 }}>
+          <div className="cz-menu-h">When Frog asks</div>
+          {modes.map((m) => (
+            <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.mode} onClick={() => { p.onMode?.(m.id); setMenu(null) }}>
+              <span style={{ flex: 1, minWidth: 0 }}><b style={{ fontWeight: 600 }}>{m.label}</b><br /><span className="det wrap">{m.note}</span></span>
+              <span style={{ color: 'var(--frog)', opacity: m.id === p.mode ? 1 : 0 }}>✓</span>
+            </button>
+          ))}
         </div>
       )}
 
@@ -100,16 +178,23 @@ export function Composer(p: ComposerProps) {
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           </button>
           <span className="cz-chip" title="Web sessions run in a private Frog Cloud sandbox" style={{ color: 'var(--place-cloud)', cursor: 'default' }}>
-            <span aria-hidden="true">☁</span>Frog Cloud
+            <span aria-hidden="true">☁</span><span className="cz-label">Frog Cloud</span>
           </span>
-          {p.model && (
-            <span className="f-pill f-pill--cloud" style={{ cursor: 'default' }} title={`Model: ${p.model} on Frog Cloud`}>
+          {(!!p.model || !!p.models?.length) && (
+            <button type="button" className="f-pill f-pill--cloud" aria-label={`Model: ${p.model ?? 'default'} on Frog Cloud`} aria-expanded={menu === 'model'}
+              disabled={!p.models?.length || !p.onModel} onClick={() => setMenu(menu === 'model' ? null : 'model')}>
               <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z" /></svg>
-              {p.model}
-            </span>
+              {p.model ?? 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
+            </button>
+          )}
+          {p.mode && p.onMode && (
+            <button type="button" className="f-pill" style={{ color: p.mode === 'yolo' ? 'var(--notice)' : 'var(--muted)' }} aria-expanded={menu === 'mode'}
+              title="When Frog asks before acting" onClick={() => setMenu(menu === 'mode' ? null : 'mode')}>
+              {modes.find((m) => m.id === p.mode)?.label} <span className="chev">▾</span>
+            </button>
           )}
           {!p.branch && (
-            <button type="button" className="cz-chip" onClick={p.onRepo}>
+            <button type="button" className="cz-chip" disabled={!p.onRepo} aria-expanded={menu === 'repo'} onClick={() => setMenu(menu === 'repo' ? null : 'repo')}>
               <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h6l2 2h10v10H3z" /></svg>
               {p.repo || 'Connect a repo'}
             </button>

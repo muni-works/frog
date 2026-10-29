@@ -6,7 +6,12 @@ export type Decision = "allow" | "allow_always" | "deny";
 export type Op =
   | { op: "submit"; text: string }
   | { op: "interrupt" }
-  | { op: "permission"; id: string; decision: Decision };
+  | { op: "permission"; id: string; decision: Decision }
+  | { op: "set_model"; spec: string }
+  | { op: "set_mode"; mode: Mode };
+
+/** protocol.rs `Mode` (kebab-case): when the engine asks before acting. */
+export type Mode = "default" | "accept-edits" | "auto" | "yolo";
 
 export type LineKind = "context" | "add" | "remove";
 export interface DiffLine {
@@ -57,6 +62,9 @@ export type Event =
   | { event: "permission_request"; id: string; item: string; name: string; arg: string; always: string; preview?: FileDiff; reason?: string }
   | { event: "permission_resolved"; id: string; decision: Decision }
   | { event: "titled"; title: string }
+  | { event: "status"; model: string; mode: Mode; context_tokens: number | null; context_window: number }
+  | { event: "model_changed"; model: string }
+  | { event: "mode_changed"; mode: Mode }
   | { event: "error"; message?: string }
   | { event: "idle" };
 
