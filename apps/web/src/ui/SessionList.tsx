@@ -245,3 +245,23 @@ export function SessionList(p: {
     </div>
   )
 }
+
+/** Above the sidebar's footer, on a plan: how much of its allowance is used, by whichever
+ * window is closer to its limit, and once past it, that turns are paying from credit. */
+export function UsageMeter({ sub, onOpen }: { sub: { name: string; windows: { kind: '5h' | 'weekly'; used: number; limit: number; resets_at: string }[]; over: boolean }; onOpen: () => void }) {
+  const ws = sub.windows.filter((w) => w.limit > 0)
+  if (!ws.length) return null
+  const w = ws.reduce((a, b) => (b.used / b.limit > a.used / a.limit ? b : a))
+  const f = Math.min(1, w.used / w.limit)
+  const resets = new Date(w.resets_at).toLocaleString(undefined, w.kind === '5h' ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short' })
+  return (
+    <button type="button" className="meter" onClick={onOpen} title="Billing">
+      <span className="meter-h">
+        <span>{sub.over ? 'Plan limit reached' : `${sub.name} · ${w.kind === '5h' ? 'this 5 hours' : 'this week'}`}</span>
+        <span className={sub.over ? 'meter-over' : ''}>{sub.over ? 'Using credit' : `${Math.round(f * 100)}%`}</span>
+      </span>
+      <span className="ctx-bar"><span style={{ width: `${f * 100}%`, background: f >= 1 ? 'var(--warn)' : f > 0.8 ? 'var(--notice)' : 'var(--frog)' }} /></span>
+      <span className="meter-sub">Resets {resets}</span>
+    </button>
+  )
+}

@@ -9,7 +9,7 @@ import { clearThreads, outOfCredits, pickStarters, useCloud, useRepos, useSessio
 import { Composer } from './ui/Composer'
 import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
-import { SessionList } from './ui/SessionList'
+import { SessionList, UsageMeter } from './ui/SessionList'
 import { Starting } from './ui/Starting'
 import { creditLine, Palette, Settings, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
@@ -363,6 +363,7 @@ export default function App() {
         <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
           onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
           onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
+        {account?.subscription && <UsageMeter sub={account.subscription} onOpen={() => setSettings(true)} />}
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
           {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} /> : <Mark size={28} />}
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
