@@ -253,12 +253,6 @@ export default function App() {
       <aside className="side f-glass">
         <div className="brand"><Mark /><b>Frog</b></div>
         <Nav />
-        <div className="h"><span>Try one</span></div>
-        {starters.map((t) => (
-          <button key={t.title} type="button" className="row" onClick={() => setGate(t.title)}>
-            <span className="sym starter">{t.i}</span><div style={{ flex: 1, minWidth: 0 }}><div>{t.title}</div><div className="det">{t.detail}</div></div>
-          </button>
-        ))}
         <span style={{ flex: 1 }} />
         <div className="signup">
           <div className="signup-glow" aria-hidden="true" />
