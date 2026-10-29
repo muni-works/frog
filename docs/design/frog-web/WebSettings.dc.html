@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog settings, on the web</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--frog)}a:hover{color:var(--fg)}
+.st-tab{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:var(--radius-plate);background:transparent;font:13px/18px var(--font-sans);color:var(--fg);cursor:pointer;text-align:left}
+.st-tab:hover{background:var(--hover)}
+.st-tab[aria-selected=true]{background:var(--frog);color:var(--on-frog);font-weight:600}
+.st-ico{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;flex:none}
+.st-grp{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-card);overflow:hidden}
+.st-row{display:flex;align-items:center;gap:12px;padding:11px 14px;border-top:1px solid var(--line);font-size:13px}
+.st-row:first-child{border-top:0}
+.st-h{font-size:12px;font-weight:600;color:var(--muted);margin:18px 2px 6px}
+.st-h:first-child{margin-top:0}
+.st-sel{font:13px var(--font-sans);color:var(--fg);background:var(--well);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+.st-tog{width:34px;height:20px;border-radius:10px;background:var(--frog);position:relative;flex:none}
+.st-tog::after{content:"";position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff}
+.st-tog.off{background:var(--line-strong)}.st-tog.off::after{right:auto;left:2px}
+.pl{flex:1;border:1px solid var(--line);border-radius:var(--radius-card);padding:14px;display:flex;flex-direction:column;gap:8px;background:var(--card)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="position: relative; width: 1280px; height: 860px; overflow: hidden; background: var(--canvas); font-size: 14px; line-height: 1.45;">
+
+  <!-- the app behind, dimmed -->
+  <div aria-hidden="true" style="position: absolute; inset: 0;"><dc-import name="Workspace" platform="web" height="860" theme="{{theme}}" hint-size="1280px,860px"></dc-import></div>
+  <div aria-hidden="true" style="position: absolute; inset: 0; background: rgba(0,0,0,.25);"></div>
+
+  <!-- settings window -->
+  <section role="dialog" aria-label="Settings" style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 900px; height: 680px; display: flex; border-radius: 18px; overflow: hidden; background: var(--canvas); border: 1px solid var(--line-strong); box-shadow: 0 30px 80px -20px rgba(0,0,0,.5);">
+    <nav aria-label="Settings sections" class="f-glass" style="width: 210px; flex: none; border-radius: 0; padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; box-shadow: none; border-right: 1px solid var(--line);">
+      <div style="display: flex; align-items: center; gap: 10px; padding: 4px 6px 14px;">
+        <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 34px; height: 34px;">
+        <div><div style="font-weight: 600; font-size: 13px;">Pip</div><div style="font-size: 12px; color: var(--muted);">samr · Free</div></div>
+      </div>
+      <sc-for list="{{tabs}}" as="t" hint-placeholder-count="8">
+        <button type="button" role="tab" class="st-tab" aria-selected="{{t.on}}" onClick="{{t.go}}"><span class="st-ico" style="background: {{t.c}};">{{t.i}}</span>{{t.label}}</button>
+      </sc-for>
+      <span style="flex: 1;"></span>
+      <button type="button" class="st-tab" style="color: var(--muted);">Sign out</button>
+    </nav>
+
+    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+      <header style="display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--line);">
+        <h1 style="margin: 0; font-size: 17px; font-weight: 700;">{{title}}</h1>
+        <button type="button" class="f-btn f-btn--plain" aria-label="Close settings" style="font-size: 13px;">Done <span style="color: var(--faint);">esc</span></button>
+      </header>
+      <div style="flex: 1; overflow: hidden; padding: 18px 20px;">
+
+        <sc-if value="{{isAccount}}" hint-placeholder-val="{{ true }}">
+          <div>
+            <div class="st-grp"><div class="st-row" style="gap: 14px; padding: 14px;">
+              <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 48px; height: 48px;">
+              <div style="flex: 1;"><div style="font-weight: 600; font-size: 15px;">Pip</div><div style="color: var(--muted);">Named Oct 23 on Sam's MacBook Pro · 38 notes across 4 repos · 2 routines</div></div>
+              <button type="button" class="f-btn f-btn--bordered">Open memory</button>
+            </div></div>
+            <div class="st-h">Signed in</div>
+            <div class="st-grp">
+              <div class="st-row"><span style="flex: 1;">GitHub</span><span style="color: var(--muted);">samr</span></div>
+              <div class="st-row"><span style="flex: 1;">Email</span><span style="color: var(--muted);">sam@hey.com</span></div>
+            </div>
+            <div class="st-h">This week</div>
+            <div class="st-grp"><div class="st-row" style="padding: 14px;">
+              <div style="flex: 1;"><div style="font-size: 22px; font-weight: 600;">41</div><div style="color: var(--muted); font-size: 12px;">Tasks</div></div>
+              <div style="flex: 1;"><div style="font-size: 22px; font-weight: 600;">12</div><div style="color: var(--muted); font-size: 12px;">PRs merged</div></div>
+              <div style="flex: 1;"><div style="font-size: 22px; font-weight: 600;">~6h</div><div style="color: var(--muted); font-size: 12px;">Saved</div></div>
+              <div style="flex: 1;"><div style="font-size: 22px; font-weight: 600;">$1.80</div><div style="color: var(--muted); font-size: 12px;">Spent in the cloud</div></div>
+            </div></div>
+            <div class="st-h">Devices</div>
+            <div class="st-grp">
+              <sc-for list="{{devices}}" as="d" hint-placeholder-count="3">
+                <div class="st-row"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{d.dot}};"></span><div style="flex: 1;"><div style="font-weight: 600;">{{d.name}}</div><div style="color: var(--muted); font-size: 12px;">{{d.detail}}</div></div><button type="button" class="f-btn f-btn--plain">Remove</button></div>
+              </sc-for>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-top: 16px; font-size: 13px;"><a href="Device.dc.html">Connect a terminal</a><button type="button" class="f-btn f-btn--plain" style="color: var(--warn);">Delete account…</button></div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isPlan}}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div class="st-grp"><div class="st-row" style="padding: 14px; gap: 18px;">
+              <div style="flex: 1;"><div style="font-weight: 600; font-size: 15px;">Cloud credits</div><div style="color: var(--muted);">When they run out, Frog finishes the step and offers your Mac. No card on file.</div></div>
+              <div style="text-align: right;"><div style="font-size: 22px; font-weight: 600;">$3.20</div><div style="color: var(--muted); font-size: 12px;">left of $5.00</div></div>
+              <button type="button" class="f-btn f-btn--bordered">Add credit</button>
+            </div>
+            <div style="height: 6px; background: var(--well); margin: 0 14px 14px; border-radius: 3px;"><div style="width: 64%; height: 100%; background: var(--frog); border-radius: 3px;"></div></div></div>
+            <div class="st-h">Plans</div>
+            <div style="display: flex; gap: 10px;">
+              <sc-for list="{{plans}}" as="p" hint-placeholder-count="4">
+                <div class="pl" style="border-color: {{p.edge}};">
+                  <div style="display: flex; align-items: center; gap: 6px;"><b>{{p.name}}</b><sc-if value="{{p.current}}" hint-placeholder-val="{{ false }}"><span class="f-badge">Your plan</span></sc-if></div>
+                  <div><span style="font-size: 24px; font-weight: 600;">{{p.price}}</span> <span style="color: var(--muted); font-size: 12px;">{{p.per}}</span></div>
+                  <div style="font-size: 12px; color: var(--muted); flex: 1;">{{p.blurb}}</div>
+                  <span class="{{p.btn}}" style="justify-content: center; font-size: 12px;">{{p.cta}}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div class="st-h">Billing</div>
+            <div class="st-grp">
+              <div class="st-row"><span style="flex: 1;">Monthly cap</span><select class="st-sel" aria-label="Monthly cap"><option>No cap</option><option>$20</option><option>$50</option></select></div>
+              <div class="st-row"><span style="flex: 1;">Receipts</span><a href="#">View history</a></div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isGeneral}}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div class="st-grp">
+              <div class="st-row"><span style="flex: 1;">New sessions start in</span><select class="st-sel" aria-label="New sessions start in"><option>Last repo used</option><option>Ask every time</option></select></div>
+              <div class="st-row"><span style="flex: 1;">New conversations use</span><select class="st-sel" aria-label="New conversations use"><option>dart · Frog Cloud</option><option>My Mac when it's online</option></select></div>
+              <div class="st-row"><span style="flex: 1;">Notify me when Frog needs me</span><span class="st-tog"></span></div>
+              <div class="st-row"><span style="flex: 1;">Frog sounds</span><span class="st-tog off"></span></div>
+            </div>
+            <div class="st-h">Your Mac</div>
+            <div class="st-grp">
+              <div class="st-row"><span style="width: 8px; height: 8px; border-radius: 50%; background: var(--frog);"></span><span style="flex: 1;">Sam's MacBook Pro · online</span><span style="color: var(--muted);">Sessions sync both ways</span></div>
+              <div class="st-row"><span style="flex: 1;">Use my Mac's models from the web</span><span class="st-tog"></span></div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isModels}}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div class="st-h">Frog Cloud</div>
+            <div class="st-grp">
+              <div class="st-row"><span style="color: var(--place-cloud);">●</span><span style="flex: 1;">dart</span><span style="color: var(--muted);">fast · default</span></div>
+              <div class="st-row"><span style="color: var(--place-cloud);">●</span><span style="flex: 1;">tree</span><span style="color: var(--muted);">bigger · Pro</span></div>
+              <div class="st-row"><span style="color: var(--place-cloud);">●</span><span style="flex: 1;">qwen3-8b, qwen3-vl-8b</span><span style="color: var(--muted);">cheap</span></div>
+            </div>
+            <div class="st-h">Your Mac</div>
+            <div class="st-grp"><div class="st-row"><span style="color: var(--place-local);">●</span><span style="flex: 1;">qwen3-4b on Sam's MacBook Pro</span><span style="color: var(--muted);">free, when online</span></div></div>
+            <div class="st-h">Your keys</div>
+            <div class="st-grp">
+              <div class="st-row"><span style="flex: 1;">OpenAI</span><span style="color: var(--muted);">Uses your ChatGPT plan</span><button type="button" class="f-btn f-btn--plain">Change key…</button></div>
+              <div class="st-row"><span style="flex: 1;">Anthropic</span><button type="button" class="f-btn f-btn--bordered">Add a key</button></div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isPerms}}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div class="st-grp">
+              <div class="st-row"><span style="flex: 1;">Ask before editing files</span><span class="st-tog"></span></div>
+              <div class="st-row"><span style="flex: 1;">Ask before pushing or opening PRs</span><span class="st-tog"></span></div>
+              <div class="st-row"><span style="flex: 1;">Sandbox network access</span><select class="st-sel" aria-label="Sandbox network"><option>Package registries only</option><option>Open</option><option>Off</option></select></div>
+            </div>
+            <div class="st-h">Always-allowed commands</div>
+            <div class="st-grp">
+              <div class="st-row" style="font-family: var(--font-mono); font-size: 12px;"><span style="flex: 1;">npm test</span><button type="button" class="f-btn f-btn--plain">Remove</button></div>
+              <div class="st-row" style="font-family: var(--font-mono); font-size: 12px;"><span style="flex: 1;">cargo check</span><button type="button" class="f-btn f-btn--plain">Remove</button></div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isMcp}}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div class="st-grp">
+              <div class="st-row"><span style="color: var(--frog);">●</span><span style="flex: 1;">GitHub</span><span style="color: var(--muted);">12 tools</span></div>
+              <div class="st-row"><span style="color: var(--frog);">●</span><span style="flex: 1;">Linear</span><span style="color: var(--muted);">8 tools</span></div>
+              <div class="st-row"><span style="color: var(--notice);">●</span><span style="flex: 1;">notes-server</span><span style="color: var(--notice);">Withheld 1 tool</span></div>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 12px;"><button type="button" class="f-btn f-btn--bordered">Add server…</button><button type="button" class="f-btn f-btn--plain">Refresh</button></div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isLook}}" hint-placeholder-val="{{ false }}">
+          <div class="st-grp">
+            <div class="st-row"><span style="flex: 1;">Appearance</span><select class="st-sel" aria-label="Appearance"><option>Match system</option><option>Light</option><option>Dark</option></select></div>
+            <div class="st-row"><span style="flex: 1;">Density</span><select class="st-sel" aria-label="Density"><option>Comfortable</option><option>Compact</option></select></div>
+            <div class="st-row"><span style="flex: 1;">Detail</span><select class="st-sel" aria-label="Detail"><option>Show tool steps</option><option>Answers only</option></select></div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{isKeys}}" hint-placeholder-val="{{ false }}">
+          <div class="st-grp">
+            <sc-for list="{{shortcuts}}" as="k" hint-placeholder-count="6">
+              <div class="st-row"><span style="flex: 1;">{{k.a}}</span><span style="font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 0 6px;">{{k.k}}</span></div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"tab":{"editor":"enum","options":["account","plan","general","models","permissions","mcp","appearance","shortcuts"],"default":"account"},"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const tab = (this.state && this.state.tab) || this.props.tab || 'account';
+    const defs = [
+      ['account', 'Account', '#8e8e93', '◉'], ['plan', 'Plan and billing', '#34c759', '$'],
+      ['general', 'General', '#8e8e93', '⚙'], ['models', 'Models', '#007aff', '◆'],
+      ['permissions', 'Permissions', '#ff9500', '✓'], ['mcp', 'MCP servers', '#5856d6', '⇄'],
+      ['appearance', 'Appearance', '#1c1c1e', '◐'], ['shortcuts', 'Shortcuts', '#8e8e93', '⌘'],
+    ];
+    const tabs = defs.map(([id, label, c, i]) => ({ label, c, i, on: id === tab, go: () => this.setState({ tab: id }) }));
+    const prom = 'f-btn f-btn--prominent', bord = 'f-btn f-btn--bordered';
+    const plans = [
+      { name: 'Free', price: '$0', per: 'forever', current: true, cta: 'Current', btn: bord, blurb: 'The full agent. $5 in credits when you sign in.', edge: 'var(--line)' },
+      { name: 'API', price: 'Pay', per: 'as you go', cta: 'Get a key', btn: bord, blurb: 'Frog Cloud models for your own tools.', edge: 'var(--line)' },
+      { name: 'Pro', price: '$20', per: 'a month', cta: 'Upgrade', btn: prom, blurb: 'Cloud speed for daily work, routines while you sleep.', edge: 'var(--frog)' },
+      { name: 'Max', price: '$200', per: 'a month', cta: 'Get Max', btn: bord, blurb: 'For running Frog all day. Max 5x at $100.', edge: 'var(--line)' },
+    ].map((p) => ({ ...p, current: !!p.current }));
+    const devices = [
+      { name: "Sam's MacBook Pro", detail: 'Mac app · active now', dot: 'var(--frog)' },
+      { name: 'studio.local', detail: 'Frog CLI 0.9 · 2h ago', dot: 'var(--faint)' },
+      { name: "Sam's iPhone", detail: 'Approvals and steering · 1h ago', dot: 'var(--faint)' },
+    ];
+    const shortcuts = [
+      { a: 'New session', k: '⌘N' }, { a: 'Search and commands', k: '⌘K' }, { a: 'Allow', k: '⌘↩' },
+      { a: 'Deny', k: '⌘.' }, { a: 'Hide side pane', k: '⌥⌘0' }, { a: 'Settings', k: '⌘,' },
+    ];
+    return {
+      theme: this.props.theme ?? 'light', tabs, plans, devices, shortcuts,
+      title: defs.find((d) => d[0] === tab)[1],
+      isAccount: tab === 'account', isPlan: tab === 'plan', isGeneral: tab === 'general', isModels: tab === 'models',
+      isPerms: tab === 'permissions', isMcp: tab === 'mcp', isLook: tab === 'appearance', isKeys: tab === 'shortcuts',
+    };
+  }
+}
+</script>
+</body>
+</html>

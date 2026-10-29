@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>One Frog: the rules</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--frog)}a:hover{color:var(--fg)}
+</style>
+</helmet>
+<div class="f-root" style="width: 1280px; height: 1400px; box-sizing: border-box; padding: 64px 72px; background: var(--bg); display: flex; flex-direction: column; gap: 36px; font-size: 16px; line-height: 1.5;">
+  <div style="display: flex; flex-direction: column; gap: 10px; max-width: 860px;">
+    <h1 style="margin: 0; font-family: var(--font-display); font-size: 56px; line-height: 1.05; letter-spacing: -0.03em;">One Frog</h1>
+    <p style="margin: 0; font-size: 21px; line-height: 1.4; color: var(--muted);">One shell in three frames. Glass carries the chrome, a clean column carries the work, and only the frame changes between Mac, web and iPhone.</p>
+  </div>
+
+  <section aria-label="Anatomy" style="display: flex; gap: 12px; height: 300px; padding: 12px; border-radius: 20px; background: var(--canvas); border: 1px solid var(--line);">
+    <div class="f-glass" style="width: 220px; padding: 16px; display: flex; flex-direction: column; gap: 6px;">
+      <b>1 · Sidebar</b><span style="font-size: 14px; color: var(--muted);">Glass, floats 10px in. Sessions by repo, account at the foot.</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; justify-content: space-between;">
+        <div class="f-glass f-glass--capsule" style="padding: 8px 16px; font-size: 14px;"><b>2 · Toolbar capsules</b> · model, mode</div>
+        <div class="f-glass f-glass--capsule" style="padding: 8px 16px; font-size: 14px;">changes · share</div>
+      </div>
+      <div style="flex: 1; display: flex; justify-content: center;">
+        <div style="width: 520px; display: flex; flex-direction: column; gap: 8px; padding: 12px 0;">
+          <b>3 · The column</b>
+          <span style="font-size: 14px; color: var(--muted);">Flat, 720 max, centered. Messages, tool rows and cards on canvas with hairlines. Never glass.</span>
+          <div class="f-card" style="font-size: 13px;">Permission and diff cards: flat card, real buttons</div>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: center;">
+        <div class="f-glass" style="width: 560px; border-radius: 24px; padding: 12px 18px; font-size: 14px;"><b>4 · Composer</b> · glass, 24 radius, floats over the column</div>
+      </div>
+    </div>
+  </section>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px;">
+    <section class="f-card" style="padding: 24px 28px; border-radius: var(--radius-field); display: flex; flex-direction: column; gap: 12px;">
+      <h2 style="margin: 0; font-size: 21px;">The web takes from the app</h2>
+      <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+        <li><b>Liquid Glass for chrome.</b> <code>f-glass</code>: blur 24 + saturate 1.6 over the canvas, solid fallback under Reduce Transparency.</li>
+        <li><b>Floating sidebar and capsules,</b> not a full-width header bar.</li>
+        <li><b>The model pill and its place colors:</b> blue on your hardware, green in the cloud.</li>
+        <li><b>The same transcript parts:</b> tool rows in mono, diff and permission cards, FrogFace moods.</li>
+        <li><b>Springs:</b> bouncy 0.42s as <code>cubic-bezier(.34,1.56,.64,1)</code>; fades 120–220ms.</li>
+      </ul>
+    </section>
+    <section class="f-card" style="padding: 24px 28px; border-radius: var(--radius-field); display: flex; flex-direction: column; gap: 12px;">
+      <h2 style="margin: 0; font-size: 21px;">The app takes from the web</h2>
+      <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+        <li><b>One centered column</b> at 720, with the composer under it, on every window size.</li>
+        <li><b>A roomy empty state:</b> the mark, one question, the composer, three ideas. Nothing else.</li>
+        <li><b>One prominent action per view.</b> Everything else is bordered or plain.</li>
+        <li><b>Bigger type where it's quiet:</b> 30pt display for empty states and sheet titles; 13pt stays for work.</li>
+        <li><b>Asks are cards, not modals:</b> sign-in, cloud moments and nudges sit in the column.</li>
+      </ul>
+    </section>
+  </div>
+
+  <section style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 21px;">Only the frame changes</h2>
+    <div style="overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card);">
+      <table style="width: 100%; border-collapse: collapse; font-size: 15px;">
+        <thead>
+          <tr style="text-align: left; color: var(--muted);">
+            <th style="padding: 12px 16px; font-weight: 600;"></th><th style="padding: 12px 16px; font-weight: 600;">Mac</th><th style="padding: 12px 16px; font-weight: 600;">Web</th><th style="padding: 12px 16px; font-weight: 600;">iPhone</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-top: 1px solid var(--line);"><th scope="row" style="padding: 12px 16px; text-align: left;">Top of sidebar</th><td style="padding: 12px 16px;">Window controls</td><td style="padding: 12px 16px;">Mark and "Frog"</td><td style="padding: 12px 16px;">Sidebar is a sheet from the menu capsule</td></tr>
+          <tr style="border-top: 1px solid var(--line);"><th scope="row" style="padding: 12px 16px; text-align: left;">Default model</th><td style="padding: 12px 16px;">This Mac (blue)</td><td style="padding: 12px 16px;">Frog Cloud (green)</td><td style="padding: 12px 16px;">Your Mac, remotely (blue)</td></tr>
+          <tr style="border-top: 1px solid var(--line);"><th scope="row" style="padding: 12px 16px; text-align: left;">Glass</th><td style="padding: 12px 16px;"><code>.glassEffect</code></td><td style="padding: 12px 16px;"><code>f-glass</code> + backdrop-filter</td><td style="padding: 12px 16px;"><code>.glassEffect</code></td></tr>
+          <tr style="border-top: 1px solid var(--line);"><th scope="row" style="padding: 12px 16px; text-align: left;">Shortcuts shown</th><td style="padding: 12px 16px;">Yes (⌘N, ⌘K, ⌘↩)</td><td style="padding: 12px 16px;">On hover only</td><td style="padding: 12px 16px;">No</td></tr>
+          <tr style="border-top: 1px solid var(--line);"><th scope="row" style="padding: 12px 16px; text-align: left;">Signed out</th><td style="padding: 12px 16px;">Everything works</td><td style="padding: 12px 16px;">Sign in top right for $5 in credits</td><td style="padding: 12px 16px;">Pairs with your Mac</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1400}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

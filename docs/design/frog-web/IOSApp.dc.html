@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog on iPhone and Watch</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.ph{width:390px;height:844px;border-radius:52px;border:10px solid #111;box-sizing:content-box;overflow:hidden;position:relative;background:var(--canvas);display:flex;flex-direction:column;flex:none}
+.ph-status{height:50px;display:flex;align-items:center;justify-content:space-between;padding:0 30px;font:600 15px var(--font-sans);flex:none}
+.ph-island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:120px;height:34px;border-radius:20px;background:#000}
+.ph-home{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--fg);opacity:.85}
+.cap{font:600 15px var(--font-sans);color:var(--fg);margin:0 0 6px}
+.sub{font-size:13px;color:var(--muted);margin:0 0 14px;max-width:390px}
+.lt{font-size:34px;font-weight:700;letter-spacing:-.02em;margin:4px 0 0}
+.grp{background:var(--card);border-radius:12px;overflow:hidden}
+.grp>div{display:flex;align-items:center;gap:12px;padding:11px 14px;font-size:16px;border-top:.5px solid var(--line)}
+.grp>div:first-child{border-top:0}
+.sh{font-size:13px;color:var(--muted);padding:18px 16px 6px;text-transform:none}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}
+.big{height:50px;border-radius:14px;border:0;font:600 17px var(--font-sans);width:100%;cursor:pointer}
+.wa{width:198px;height:242px;border-radius:54px;border:10px solid #111;background:#000;color:#fff;overflow:hidden;display:flex;flex-direction:column;padding:22px 16px;box-sizing:border-box;gap:8px;font-family:var(--font-sans)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="width: 2530px; height: 1080px; box-sizing: border-box; padding: 48px 56px; background: var(--bg); display: flex; flex-direction: column; gap: 28px;">
+  <div>
+    <h1 style="margin: 0; font-family: var(--font-display); font-size: 40px; letter-spacing: -0.03em;">Frog on iPhone and Apple Watch</h1>
+    <p style="margin: 6px 0 0; font-size: 17px; color: var(--muted);">Your Mac does the work. The phone answers when Frog needs you, and steers from anywhere.</p>
+  </div>
+
+  <div style="display: flex; gap: 40px; align-items: flex-start;">
+
+    <!-- 1 first launch -->
+    <div>
+      <p class="cap">1 · First launch</p><p class="sub">Works out of the box from the App Store, like the Mac app. No Mac, no pairing, no setup: one tap to sign in, and Frog Cloud runs it.</p>
+      <div class="ph"><div class="ph-island"></div>
+        <div class="ph-status"><span>9:41</span><span>●●●</span></div>
+        <div style="flex: 1; display: flex; flex-direction: column; align-items: center; padding: 70px 24px 30px; gap: 14px; text-align: center;">
+          <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 96px; height: 96px;">
+          <h2 style="margin: 0; font-size: 30px; letter-spacing: -0.02em;">What should we work on?</h2>
+          <p style="margin: 0; font-size: 16px; color: var(--muted);">Point Frog at a GitHub repo and say what you want. It works in a private cloud sandbox and opens a PR when it's done.</p>
+          <div style="width: 100%; display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+            <div class="grp" style="text-align: left;">
+              <div><span style="color: var(--place-cloud);">☁</span><span style="flex: 1;">Runs in Frog Cloud</span><span style="font-size: 13px; color: var(--muted);">$5 free, no card</span></div>
+              <div><span style="color: var(--frog);">✓</span><span style="flex: 1;">Asks before it edits or pushes</span></div>
+              <div><span style="color: var(--place-local);">▭</span><span style="flex: 1;">Got Frog on a Mac? Its cloud sessions show up here</span></div>
+            </div>
+          </div>
+          <span style="flex: 1;"></span>
+          <button type="button" class="big" style="background: var(--fg); color: var(--bg); display: flex; align-items: center; justify-content: center; gap: 8px;"><span style="font-size: 20px;"></span>Sign in with Apple</button>
+          <button type="button" class="big" style="background: var(--card); color: var(--fg); border: 1px solid var(--line-strong);">Continue with GitHub</button>
+          <p style="margin: 0; font-size: 13px; color: var(--muted);">Pair a Mac later in Settings to run sessions on it for free.</p>
+        </div>
+        <div class="ph-home"></div>
+      </div>
+    </div>
+
+    <!-- 2 sessions -->
+    <div>
+      <p class="cap">2 · Sessions</p><p class="sub">An inset list, like Mail. What needs you is pinned on top with Allow and Deny right there; swipe a row to archive or pin.</p>
+      <div class="ph" style="background: var(--well);"><div class="ph-island"></div>
+        <div class="ph-status"><span>9:41</span><span>●●●</span></div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; padding: 2px 16px 0;">
+          <span class="f-glass" style="width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--fg);" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"></path></svg></span>
+        </div>
+        <div style="padding: 0 20px;"><h2 class="lt" style="margin-top: 0;">Frog</h2></div>
+        <div style="padding: 8px 16px 0;">
+          <div style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px; border-radius: 12px; background: rgba(127,127,127,.14); color: var(--muted); font-size: 16px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
+            <span style="flex: 1;">Search conversations</span>
+            <svg width="14" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg>
+          </div>
+        </div>
+        <div style="flex: 1; overflow: hidden; padding: 0 16px;">
+          <div class="sh" style="padding-top: 16px;">Needs you</div>
+          <div class="grp" style="padding: 14px; display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; gap: 12px; align-items: flex-start;">
+              <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 40px; height: 40px; flex: none;">
+              <div style="flex: 1; min-width: 0;">
+                <div style="display: flex; justify-content: space-between;"><b style="font-size: 16px;">Can I edit auth/session.ts?</b><span style="font-size: 14px; color: var(--muted);">now</span></div>
+                <div style="font-size: 14px; color: var(--muted);">Fix the failing tests · ledger · <span style="color: var(--frog);">+2</span> <span style="color: var(--warn);">−1</span></div>
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px; padding-left: 52px;">
+              <span style="flex: 1; text-align: center; padding: 8px; border-radius: 999px; background: rgba(127,127,127,.14); font-weight: 600; font-size: 15px;">Deny</span>
+              <span style="flex: 1; text-align: center; padding: 8px; border-radius: 999px; background: var(--frog); color: var(--on-frog); font-weight: 600; font-size: 15px;">Allow</span>
+            </div>
+          </div>
+
+          <div class="sh">ledger</div>
+          <div class="grp">
+            <div style="gap: 12px;">
+              <span style="width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid var(--frog-pad); border-top-color: var(--frog); box-sizing: border-box; flex: none;"></span>
+              <div style="flex: 1; min-width: 0;"><div style="display: flex; justify-content: space-between;"><span>Move dates to Temporal</span><span style="font-size: 14px; color: var(--muted);">☁ 2m</span></div><div style="font-size: 14px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Step 4 of 6 · rewriting reports/</div></div>
+            </div>
+            <div style="padding: 0; position: relative; overflow: hidden;">
+              <div style="position: absolute; right: 0; top: 0; bottom: 0; display: flex;">
+                <span style="width: 74px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: #ff9500; color: #fff; font-size: 12px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15 3l6 6-3 1-4 4 1 5-2 1-4-4-5 5-1-1 5-5-4-4 1-2 5 1 4-4z"></path></svg>Pin</span>
+                <span style="width: 74px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: #8e8e93; color: #fff; font-size: 12px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"></rect><path d="M5 9v10h14V9M10 13h4"></path></svg>Archive</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px; padding: 11px 14px; background: var(--card); transform: translateX(-148px); width: 100%; box-sizing: border-box;">
+                <span style="width: 22px; height: 22px; border-radius: 50%; background: var(--place-local); color: #fff; font-size: 13px; display: flex; align-items: center; justify-content: center; flex: none;">✓</span>
+                <div style="flex: 1; min-width: 0;"><div style="display: flex; justify-content: space-between;"><span>Bump vitest</span><span style="font-size: 14px; color: var(--muted);">2h</span></div><div style="font-size: 14px; color: var(--muted);">Finished while you were away</div></div>
+              </div>
+            </div>
+            <div style="gap: 12px;">
+              <span style="width: 22px; height: 22px; border-radius: 50%; background: rgba(127,127,127,.18); color: var(--muted); font-size: 13px; display: flex; align-items: center; justify-content: center; flex: none;">✓</span>
+              <div style="flex: 1; min-width: 0;"><div style="display: flex; justify-content: space-between;"><span style="color: var(--muted);">Fix login redirect</span><span style="font-size: 14px; color: var(--muted);">Mon</span></div><div style="font-size: 14px; color: var(--muted);">Merged · #209</div></div>
+            </div>
+          </div>
+        </div>
+        <div style="position: absolute; left: 12px; right: 12px; bottom: 26px; display: flex; align-items: center; gap: 10px;">
+          <div class="f-glass f-glass--capsule" style="flex: 1; display: flex; align-items: center; gap: 8px; padding: 11px 16px; font-size: 14px; color: var(--muted);"><span class="dot" style="background: var(--frog);"></span>Sam's MacBook Pro · 2 running</div>
+          <span class="f-glass" style="width: 46px; height: 46px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--frog);" aria-label="New chat"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg></span>
+        </div>
+        <div class="ph-home"></div>
+      </div>
+    </div>
+
+    <!-- 3 session -->
+    <div>
+      <p class="cap">3 · A session</p><p class="sub">The same transcript as the Mac, sized for a thumb. Changes are one tap away.</p>
+      <div class="ph"><div class="ph-island"></div>
+        <div class="ph-status"><span>9:41</span><span>●●●</span></div>
+        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 12px 8px;">
+          <span style="color: var(--frog); font-size: 22px;">‹</span>
+          <div style="flex: 1; text-align: center;"><div style="font-weight: 600; font-size: 16px;">Fix the failing tests</div><div style="font-size: 12px; color: var(--place-local);">qwen3-4b · on your Mac</div></div>
+          <span class="f-glass f-glass--capsule" style="font-size: 13px; padding: 5px 10px;">3 files</span>
+        </div>
+        <div style="flex: 1; overflow: hidden; padding: 4px 14px; display: flex; flex-direction: column; gap: 10px; font-size: 15px;">
+          <div style="align-self: flex-end; max-width: 80%; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 9px 13px;">Fix the failing tests in auth/</div>
+          <div style="font: 12px/18px var(--font-mono); color: var(--muted);">✓ ran the tests · 2 failing<br>✓ read auth/session.ts</div>
+          <div>The refresh token is read before the cookie is parsed, so a fresh login looks expired. I'll parse first.</div>
+          <div class="f-card" style="padding: 0; overflow: hidden;">
+            <div style="padding: 10px 12px 6px; font-size: 14px; display: flex; justify-content: space-between;"><b>Edit auth/session.ts</b><span style="color: var(--muted);">+2 −1</span></div>
+            <pre style="margin: 0; padding: 8px 12px; background: rgba(127,127,127,.08); font: 11px/17px var(--font-mono); overflow: hidden;">- const t = readRefresh(req)
++ const jar = parseCookies(req)
++ const t = readRefresh(jar)</pre>
+            <sc-if value="{{asking}}" hint-placeholder-val="{{ true }}">
+              <div style="display: flex; gap: 8px; padding: 10px 12px;">
+                <button type="button" onClick="{{deny}}" class="f-btn f-btn--bordered" style="flex: 1; justify-content: center; font-size: 15px; padding: 9px;">Deny</button>
+                <button type="button" onClick="{{allow}}" class="f-btn f-btn--prominent" style="flex: 1; justify-content: center; font-size: 15px; padding: 9px;">Allow</button>
+              </div>
+            </sc-if>
+            <sc-if value="{{done}}" hint-placeholder-val="{{ false }}">
+              <div style="padding: 9px 12px; font-size: 13px; color: var(--muted);">{{outcome}}</div>
+            </sc-if>
+          </div>
+          <sc-if value="{{allowed}}" hint-placeholder-val="{{ false }}">
+            <div style="font: 12px/18px var(--font-mono); color: var(--muted);">… running the tests · 3s</div>
+          </sc-if>
+        </div>
+        <div style="padding: 0 0 26px;"><dc-import name="Composer" platform="phone" state="{{phoneState}}" theme="{{theme}}" hint-size="100%,62px"></dc-import></div>
+        <div class="ph-home"></div>
+      </div>
+    </div>
+
+    <!-- 4 lock screen -->
+    <div>
+      <p class="cap">4 · Lock screen</p><p class="sub">Approve without unlocking. A Live Activity shows the long ones.</p>
+      <div class="ph" style="background: linear-gradient(160deg, #1d3b2a, #0c1a12 60%, #070d09);"><div class="ph-island"></div>
+        <div class="ph-status" style="color: #fff;"><span></span><span>●●●</span></div>
+        <div style="text-align: center; color: #fff; padding-top: 10px;">
+          <div style="font-size: 18px; opacity: .8;">Tuesday, October 28</div>
+          <div style="font-size: 86px; font-weight: 600; letter-spacing: -0.02em; line-height: 1;">9:41</div>
+        </div>
+        <div style="flex: 1;"></div>
+        <div style="padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="background: rgba(40,40,42,.72); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-radius: 22px; padding: 12px 14px; color: #fff; display: flex; gap: 12px; align-items: center;">
+            <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 38px; height: 38px;">
+            <div style="flex: 1;">
+              <div style="display: flex; justify-content: space-between; font-size: 13px; opacity: .7;"><span>Move dates to Temporal</span><span>Still working</span></div>
+              <div style="font-weight: 600; font-size: 15px;">Step 4 of 6 · rewriting reports/</div>
+              <div style="height: 4px; border-radius: 2px; background: rgba(255,255,255,.18); margin-top: 6px;"><div style="width: 66%; height: 100%; border-radius: 2px; background: #58cc6f;"></div></div>
+            </div>
+          </div>
+          <div style="background: rgba(40,40,42,.72); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-radius: 22px; color: #fff; overflow: hidden;">
+            <div style="display: flex; gap: 10px; padding: 12px 14px;">
+              <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 38px; height: 38px;">
+              <div style="flex: 1;">
+                <div style="display: flex; justify-content: space-between; font-size: 13px;"><b>Frog</b><span style="opacity: .6;">now</span></div>
+                <div style="font-weight: 600; font-size: 15px;">Can I edit auth/session.ts?</div>
+                <div style="font-size: 14px; opacity: .8;">Parse cookies before reading the refresh token. +2 −1</div>
+              </div>
+            </div>
+            <div style="display: flex; border-top: .5px solid rgba(255,255,255,.18);">
+              <span style="flex: 1; text-align: center; padding: 11px; font-size: 16px; border-right: .5px solid rgba(255,255,255,.18);">Deny</span>
+              <span style="flex: 1; text-align: center; padding: 11px; font-size: 16px; font-weight: 600; color: #58cc6f;">Allow</span>
+            </div>
+          </div>
+        </div>
+        <div style="display: flex; justify-content: space-between; padding: 10px 48px 40px; color: #fff; font-size: 22px; opacity: .9;"><span>🔦</span><span>📷</span></div>
+        <div class="ph-home" style="background: #fff;"></div>
+      </div>
+    </div>
+
+    <!-- 5 cloud consent -->
+    <div>
+      <p class="cap">5 · Cloud, asked first</p><p class="sub">The phone never quietly moves your code. It asks, once per workspace.</p>
+      <div class="ph"><div class="ph-island"></div>
+        <div class="ph-status"><span>9:41</span><span>●●●</span></div>
+        <div style="flex: 1; background: rgba(0,0,0,.28); display: flex; flex-direction: column; justify-content: flex-end;">
+          <div style="background: var(--canvas); border-radius: 28px 28px 0 0; padding: 12px 20px 40px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="align-self: center; width: 38px; height: 5px; border-radius: 3px; background: var(--line-strong);"></div>
+            <svg aria-hidden="true" width="40" height="40" viewBox="0 0 24 24" fill="var(--place-cloud)" style="align-self: center; margin-top: 8px;"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z"></path></svg>
+            <h2 style="margin: 0; text-align: center; font-size: 22px; letter-spacing: -0.01em;">Use cloud models in ledger?</h2>
+            <p style="margin: 0; text-align: center; font-size: 15px; color: var(--muted);">dart on Frog Cloud would finish this in about 40 seconds. Your code goes to Frog Cloud only for this task. You have $3.20 in credits.</p>
+            <button type="button" class="big" style="background: var(--frog); color: var(--on-frog); margin-top: 6px;">Always allow</button>
+            <button type="button" class="big" style="background: var(--card); color: var(--fg); border: 1px solid var(--line-strong);">Just this conversation</button>
+            <button type="button" class="big" style="background: transparent; color: var(--muted);">Keep it on your devices</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- watch -->
+    <div>
+      <p class="cap">Apple Watch</p><p class="sub">A tap on the wrist, Allow or Deny, done.</p>
+      <div style="display: flex; flex-direction: column; gap: 24px;">
+        <div class="wa">
+          <div style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #58cc6f;"><img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 18px; height: 18px;">Frog</div>
+          <div style="font-weight: 600; font-size: 16px; line-height: 1.2;">Edit auth/session.ts?</div>
+          <div style="font-size: 13px; opacity: .7;">+2 −1 · Fix the failing tests</div>
+          <span style="flex: 1;"></span>
+          <div style="border-radius: 20px; background: #58cc6f; color: #0d1a10; text-align: center; padding: 8px; font-weight: 600; font-size: 15px;">Allow</div>
+          <div style="border-radius: 20px; background: #2a2a2b; text-align: center; padding: 8px; font-size: 15px;">Deny</div>
+        </div>
+        <div class="wa" style="justify-content: center; align-items: center; text-align: center;">
+          <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 54px; height: 54px;">
+          <div style="font-weight: 600; font-size: 17px;">All quiet</div>
+          <div style="font-size: 13px; opacity: .7;">Frog will tap you when it needs you.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":2530,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const s = (this.state && this.state.step) || 'ask';
+    return {
+      theme: this.props.theme ?? 'light',
+      phoneState: s === 'allowed' ? 'working' : 'idle',
+      asking: s === 'ask', done: s !== 'ask', allowed: s === 'allowed',
+      outcome: s === 'allowed' ? 'Allowed from iPhone' : 'Denied from iPhone',
+      allow: () => this.setState({ step: 'allowed' }),
+      deny: () => this.setState({ step: 'denied' }),
+    };
+  }
+}
+</script>
+</body>
+</html>

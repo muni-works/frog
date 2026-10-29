@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog on iPhone, the whole app</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.ph{width:390px;height:844px;border-radius:52px;border:10px solid #111;box-sizing:content-box;overflow:hidden;position:relative;background:var(--canvas);display:flex;flex-direction:column;flex:none}
+.ph-status{height:50px;display:flex;align-items:center;justify-content:space-between;padding:0 30px;font:600 15px var(--font-sans);flex:none}
+.ph-island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:120px;height:34px;border-radius:20px;background:#000}
+.ph-home{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--fg);opacity:.85}
+.cap{font:600 15px var(--font-sans);margin:0 0 6px}
+.sub{font-size:13px;color:var(--muted);margin:0 0 14px;max-width:390px}
+.grp{background:var(--card);border-radius:12px;overflow:hidden}
+.grp>div{display:flex;align-items:center;gap:12px;padding:11px 14px;font-size:16px;border-top:.5px solid var(--line)}
+.grp>div:first-child{border-top:0}
+.sh{font-size:13px;color:var(--muted);padding:18px 16px 6px}
+.nav{display:flex;align-items:center;gap:8px;padding:4px 14px 8px}
+.seg{display:flex;margin:0 14px 8px;padding:2px;border-radius:9px;background:rgba(127,127,127,.16)}
+.seg span{flex:1;text-align:center;padding:6px 0;border-radius:7px;font-size:13px;color:var(--fg)}
+.seg span.on{background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.12);font-weight:600}
+.chev{color:var(--faint);font-size:15px}
+.val{color:var(--muted);font-size:15px}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}
+.big{height:50px;border-radius:14px;border:0;font:600 17px var(--font-sans);width:100%}
+.ripple{position:absolute;left:50%;top:50%;border-radius:50%;border:1.5px solid var(--frog);transform:translate(-50%,-50%);animation:rip 2.4s cubic-bezier(.2,.7,.2,1) infinite;opacity:0}
+@keyframes rip{0%{width:90px;height:90px;opacity:.7}100%{width:360px;height:360px;opacity:0}}
+.tok{display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border-radius:999px;font-size:17px;font-weight:600;vertical-align:1px}
+.word{opacity:.35}.word.on{opacity:1}
+@media (prefers-reduced-motion: reduce){.ripple{animation:none;opacity:.25;width:220px;height:220px}}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="width: 3590px; height: 1080px; box-sizing: border-box; padding: 48px 56px; background: var(--bg); display: flex; flex-direction: column; gap: 28px;">
+  <div>
+    <h1 style="margin: 0; font-family: var(--font-display); font-size: 40px; letter-spacing: -0.03em;">The whole Frog, on iPhone</h1>
+    <p style="margin: 6px 0 0; font-size: 17px; color: var(--muted);">Not a remote. Start a conversation, pick a repo and model, run in Frog Cloud or on your Mac, review changes, ship PRs and change settings, all from the phone.</p>
+  </div>
+
+  <div style="display: flex; gap: 40px; align-items: flex-start;">
+
+    <!-- 4 type it -->
+    <div>
+      <p class="cap">Start a conversation <span style="font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--badge-bg); color: var(--place-cloud); vertical-align: 2px;">Default</span></p><p class="sub">Open Frog and the composer is ready, with the keyboard up. Repo, where it runs and the model sit right in the composer, same as on the Mac.</p>
+      <div class="ph"><div class="ph-island"></div>
+        <div class="ph-status"><span>9:41</span><span>●●●</span></div>
+        <div class="nav"><span style="color: var(--frog); font-size: 22px;">‹</span><div style="flex: 1; text-align: center; font-weight: 600; font-size: 16px;">New conversation</div><span style="width: 22px;"></span></div>
+        <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 0 20px;">
+          <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 52px; height: 52px;">
+          <h2 style="margin: 0; font-size: 22px; letter-spacing: -0.02em;">What should we work on?</h2>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;">
+            <span class="f-glass f-glass--capsule" style="padding: 7px 12px; font-size: 13px;">Fix the failing tests</span>
+            <span class="f-glass f-glass--capsule" style="padding: 7px 12px; font-size: 13px;">Review my open PR</span>
+          </div>
+        </div>
+        <div style="padding: 0 0 4px;">
+          <div style="display: flex; gap: 6px; padding: 0 14px 6px;">
+            <span style="display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); font-size: 13px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"></path></svg>ecto/ledger <span style="font-size: 9px; color: var(--muted);">▾</span></span>
+            <span style="display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); font-size: 13px; color: var(--muted);">main</span>
+          </div>
+          <dc-import name="Composer" platform="phone" placeholder="Ask Frog to do something · @ a file" theme="{{theme}}" hint-size="100%,96px"></dc-import>
+        </div>
+        <div style="height: 236px; background: #d1d3d9; display: grid; grid-template-columns: repeat(10, 1fr); gap: 7px 5px; padding: 10px 4px 0; align-content: start; flex: none;">
+          <sc-for list="{{kb}}" as="k" hint-placeholder-count="20"><span style="height: 40px; border-radius: 6px; background: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #111; box-shadow: 0 1px 0 rgba(0,0,0,.3);">{{k}}</span></sc-for>
+        </div>
+      </div>
+    </div>
+
+    <!-- session: changes -->
+    <div>
+      <p class="cap">A session · Changes</p><p class="sub">Chat, Changes, Terminal and Preview, one tap apart. Changes is the Mac's inspector, sized for a thumb.</p>
+      <div class="ph"><div class="ph-island"></div>
+        <div class="ph-status"><span>9:41</span><span>●●●</span></div>
+        <div class="nav"><span style="color: var(--frog); font-size: 22px;">‹</span><div style="flex: 1; text-align: center;"><div style="font-weight: 600; font-size: 16px;">Fix the failing tests</div><div style="font-size: 12px; color: var(--place-cloud);">☁ Frog Cloud · dart</div></div><span style="width: 22px;"></span></div>
+        <div class="seg"><span>Chat</span><span class="on">Changes</span><span>Terminal</span><span>Preview</span></div>
+        <div style="flex: 1; overflow: hidden; padding: 0 14px;">
+          <div class="grp">
+            <div style="font-family: var(--font-mono); font-size: 13px;"><span style="flex: 1;">auth/session.ts</span><span style="color: var(--frog);">+2</span><span style="color: var(--warn);">−1</span></div>
+            <div style="font-family: var(--font-mono); font-size: 13px;"><span style="flex: 1;">auth/session.test.ts</span><span style="color: var(--frog);">+34</span><span style="color: var(--warn);">−9</span></div>
+            <div style="font-family: var(--font-mono); font-size: 13px;"><span style="flex: 1;">auth/refresh.ts</span><span style="color: var(--frog);">+2</span><span style="color: var(--warn);">−2</span></div>
+          </div>
+          <div class="grp" style="margin-top: 12px;">
+            <div style="justify-content: space-between; font-size: 14px;"><b>auth/session.ts</b><span style="color: var(--muted);">1 of 3</span></div>
+            <pre style="margin: 0; padding: 10px 14px; background: rgba(127,127,127,.08); font: 12px/19px var(--font-mono); overflow: hidden; border-top: .5px solid var(--line);">  export function session(req) {
+<span style="color: var(--warn);">-   const t = readRefresh(req)</span>
+<span style="color: var(--frog);">+   const jar = parseCookies(req)</span>
+<span style="color: var(--frog);">+   const t = readRefresh(jar)</span>
+    if (!t) return null</pre>
+          </div>
+        </div>
+        <div style="padding: 10px 14px 34px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card); font-size: 14px;"><span style="color: var(--muted); flex: 1;">frog/fix-auth · 3 files</span><span style="color: var(--frog);">+38</span><span style="color: var(--warn);">−12</span></div>
+          <div style="display: flex; gap: 8px;"><button type="button" class="big" style="flex: 1; background: var(--card); color: var(--fg); border: 1px solid var(--line-strong); font-size: 16px; height: 46px;">Commit</button><button type="button" class="big" style="flex: 1; background: var(--frog); color: var(--on-frog); font-size: 16px; height: 46px;">Open PR</button></div>
+        </div>
+        <div class="ph-home"></div>
+      </div>
+    </div>
+
+    <!-- terminal -->
+    <div>
+      <p class="cap">Terminal and Preview</p><p class="sub">A real shell in the sandbox, with a key bar for the keys a phone lacks. Preview shows the app it's building.</p>
+      <div class="ph" style="background: #111;"><div class="ph-island"></div>
+        <div class="ph-status" style="color: #fff;"><span>9:41</span><span>●●●</span></div>
+        <div class="nav" style="color: #fff;"><span style="color: #58cc6f; font-size: 22px;">‹</span><div style="flex: 1; text-align: center;"><div style="font-weight: 600; font-size: 16px;">Fix the failing tests</div><div style="font-size: 12px; color: #9a9a96;">sandbox · ledger</div></div><span style="width: 22px;"></span></div>
+        <div class="seg" style="background: rgba(255,255,255,.12);"><span style="color: #ddd;">Chat</span><span style="color: #ddd;">Changes</span><span class="on" style="background: #2c2c2e; color: #fff;">Terminal</span><span style="color: #ddd;">Preview</span></div>
+        <pre style="flex: 1; margin: 0; padding: 10px 16px; color: #ecebe6; font: 12px/19px var(--font-mono); overflow: hidden;">~/ledger (frog/fix-auth) $ npm test auth
+
+ <span style="color: #58cc6f;">PASS</span>  auth/session.test.ts
+ <span style="color: #58cc6f;">PASS</span>  auth/refresh.test.ts
+
+Tests:  <span style="color: #58cc6f;">14 passed</span>, 14 total
+Time:   2.1 s
+
+~/ledger (frog/fix-auth) $ <span style="background: #ecebe6;"> </span></pre>
+        <div style="display: flex; gap: 6px; padding: 8px 10px; background: #1c1c1e;">
+          <sc-for list="{{keys}}" as="k" hint-placeholder-count="7"><span style="flex: 1; text-align: center; padding: 8px 0; border-radius: 7px; background: #3a3a3c; color: #fff; font: 13px var(--font-sans);">{{k}}</span></sc-for>
+        </div>
+        <div style="height: 210px; background: #2c2c2e; display: flex; align-items: center; justify-content: center; color: #8e8e93; font-size: 13px;">keyboard</div>
+      </div>
+    </div>
+
+    <!-- pr -->
+    <div>
+      <p class="cap">The bound PR</p><p class="sub">The session's PR, its checks and reviews. Ask Frog to fix a failing check or answer a review, then merge.</p>
+      <div class="ph"><div class="ph-island"></div>
+        <div class="ph-status"><span>9:41</span><span>●●●</span></div>
+        <div class="nav"><span style="color: var(--frog); font-size: 22px;">‹</span><div style="flex: 1; text-align: center; font-weight: 600; font-size: 16px;">#214</div><span style="color: var(--frog); font-size: 15px;">GitHub</span></div>
+        <div style="flex: 1; overflow: hidden; padding: 0 16px; display: flex; flex-direction: column;">
+          <h2 style="margin: 4px 0 2px; font-size: 22px; letter-spacing: -0.02em;">Parse cookies before reading the refresh token</h2>
+          <div style="font-size: 14px; color: var(--muted);"><span style="color: var(--frog);">● Open</span> · frog/fix-auth → main · <span style="color: var(--frog);">+38</span> <span style="color: var(--warn);">−12</span></div>
+          <div class="sh" style="padding-left: 0;">Checks</div>
+          <div class="grp">
+            <div><span style="color: var(--frog);">✓</span><span style="flex: 1;">test</span><span class="val">1m 12s</span></div>
+            <div><span style="color: var(--frog);">✓</span><span style="flex: 1;">lint</span><span class="val">18s</span></div>
+            <div><span style="color: var(--warn);">✕</span><span style="flex: 1;">typecheck</span><span style="color: var(--frog); font-size: 15px;">Ask Frog to fix</span></div>
+          </div>
+          <div class="sh" style="padding-left: 0;">Reviews</div>
+          <div class="grp">
+            <div style="align-items: flex-start;"><span style="width: 28px; height: 28px; border-radius: 50%; background: var(--place-local); color: #fff; font-size: 13px; display: flex; align-items: center; justify-content: center; flex: none;">J</span><span style="flex: 1; font-size: 15px;"><b>jo</b> <span style="color: var(--muted);">commented</span><br>Can we keep the old reader behind a flag for one release?</span></div>
+            <div style="color: var(--frog); font-size: 15px;"><span style="flex: 1;">Ask Frog to answer</span><span class="chev">›</span></div>
+          </div>
+        </div>
+        <div style="padding: 10px 16px 34px; display: flex; gap: 8px;"><button type="button" class="big" style="flex: 1; background: var(--card); color: var(--muted); border: 1px solid var(--line-strong); font-size: 16px; height: 46px;">Merge when green</button></div>
+        <div class="ph-home"></div>
+      </div>
+    </div>
+
+    <!-- settings -->
+    <div>
+      <p class="cap">Settings</p><p class="sub">Account, plan, models, permissions and MCP: the same sections as on the Mac and web, as an iOS settings list.</p>
+      <div class="ph" style="background: var(--well);"><div class="ph-island"></div>
+        <div class="ph-status"><span>9:41</span><span>●●●</span></div>
+        <div style="padding: 0 20px;"><h2 style="font-size: 34px; font-weight: 700; letter-spacing: -0.02em; margin: 4px 0 8px;">Settings</h2></div>
+        <div style="flex: 1; overflow: hidden; padding: 0 16px;">
+          <div class="grp"><div style="gap: 14px; padding: 12px 14px;"><img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 54px; height: 54px;"><span style="flex: 1;"><b style="font-size: 18px;">Pip</b><br><span style="font-size: 14px; color: var(--muted);">samr · Free · $3.20 credits</span></span><span class="chev">›</span></div></div>
+          <div class="grp" style="margin-top: 18px;">
+            <sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+              <div><span style="width: 29px; height: 29px; border-radius: 7px; background: {{r.c}}; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; flex: none;">{{r.i}}</span><span style="flex: 1;">{{r.t}}</span><span class="val">{{r.v}}</span><span class="chev">›</span></div>
+            </sc-for>
+          </div>
+          <div class="grp" style="margin-top: 18px;">
+            <div><span style="flex: 1;">Devices</span><span class="val">3</span><span class="chev">›</span></div>
+            <div><span style="flex: 1;">Apple Watch</span><span class="val">On</span><span class="chev">›</span></div>
+          </div>
+        </div>
+        <div class="ph-home"></div>
+      </div>
+    </div>
+
+    <div style="width: 1px; align-self: stretch; background: var(--line-strong); margin: 0 4px;"></div>
+
+    <!-- 1 summon -->
+    <div>
+      <p class="cap">Voice 1 · Ask from anywhere <span style="font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--notice-bg); color: var(--notice); vertical-align: 2px;">Stretch</span></p><p class="sub">Hold the Action button, or long-press the Frog icon. No app to open, no form. Frog listens over whatever you're doing.</p>
+      <div class="ph" style="background: linear-gradient(180deg, #2a3b46, #18242c);"><div class="ph-island"></div>
+        <div class="ph-status" style="color: #fff;"><span>9:41</span><span>●●●</span></div>
+        <div aria-hidden="true" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 26px 0; padding: 26px 24px; opacity: .35; filter: blur(2px);">
+          <sc-for list="{{apps}}" as="a" hint-placeholder-count="16"><div style="justify-self: center; width: 62px; height: 62px; border-radius: 15px; background: {{a}};"></div></sc-for>
+        </div>
+        <div style="position: absolute; inset: 0; background: linear-gradient(180deg, transparent 30%, rgba(8,14,10,.82) 70%);"></div>
+        <div style="position: absolute; left: 0; right: 0; bottom: 120px; height: 300px;">
+          <span class="ripple"></span><span class="ripple" style="animation-delay: .8s;"></span><span class="ripple" style="animation-delay: 1.6s;"></span>
+          <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="position: absolute; left: 50%; top: 50%; width: 84px; height: 84px; transform: translate(-50%, -50%); filter: drop-shadow(0 8px 30px rgba(88,204,111,.5));">
+        </div>
+        <div style="position: absolute; left: 28px; right: 28px; bottom: 64px; color: #fff; font-size: 24px; line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; text-align: center;">
+          <span class="word on">Add a dark mode toggle</span> <span class="word on">to settings in</span> <span class="word on">ledger,</span> <span class="word">and remember it</span>
+        </div>
+        <div style="position: absolute; left: 0; right: 0; bottom: 30px; text-align: center; color: rgba(255,255,255,.6); font-size: 13px;">Listening · let go to send</div>
+        <div class="ph-home" style="background: #fff;"></div>
+      </div>
+    </div>
+
+    <!-- 2 understood -->
+    <div>
+      <p class="cap">Voice 2 · Understood, in place <span style="font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--notice-bg); color: var(--notice); vertical-align: 2px;">Stretch</span></p><p class="sub">Your words come back as one sentence with the guesses inline. Tap a chip to change it. It starts by itself in 3 seconds.</p>
+      <div class="ph" style="background: linear-gradient(180deg, #2a3b46, #18242c);"><div class="ph-island"></div>
+        <div class="ph-status" style="color: #fff;"><span>9:41</span><span>●●●</span></div>
+        <div style="position: absolute; inset: 0; background: rgba(8,14,10,.78); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);"></div>
+        <div style="position: relative; flex: 1; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 22px 40px; color: #fff; gap: 18px;">
+          <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 44px; height: 44px;">
+          <div style="font-size: 25px; line-height: 1.45; font-weight: 600; letter-spacing: -0.01em;">
+            Add a dark mode toggle to settings and remember the choice, in
+            <span class="tok" style="background: rgba(255,255,255,.14);">ecto/ledger <span style="opacity: .5; font-size: 12px;">▾</span></span>
+            on
+            <span class="tok" style="background: rgba(48,209,88,.22); color: #6ee08a;">☁ Frog Cloud <span style="opacity: .6; font-size: 12px;">▾</span></span>
+            with
+            <span class="tok" style="background: rgba(48,209,88,.22); color: #6ee08a;">dart <span style="opacity: .6; font-size: 12px;">▾</span></span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 7px; font-size: 15px; color: rgba(255,255,255,.72);">
+            <div>1  Find where settings are stored</div>
+            <div>2  Add the toggle and a theme store</div>
+            <div>3  Run the tests, open a PR</div>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <span style="flex: 1; height: 54px; border-radius: 27px; background: var(--frog); color: var(--on-frog); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 17px; position: relative; overflow: hidden;">
+              <span style="position: absolute; left: 0; top: 0; bottom: 0; width: 66%; background: rgba(255,255,255,.18);"></span><span style="position: relative;">Starting in 2</span>
+            </span>
+            <span style="width: 54px; height: 54px; border-radius: 50%; background: rgba(255,255,255,.14); display: flex; align-items: center; justify-content: center; font-size: 20px;" aria-label="Cancel">✕</span>
+          </div>
+          <div style="text-align: center; font-size: 13px; color: rgba(255,255,255,.5);">Keep holding to add more · <span style="color: #6ee08a; font-weight: 600;">Edit as text</span> · swipe down to cancel</div>
+        </div>
+        <div class="ph-home" style="background: #fff;"></div>
+      </div>
+    </div>
+
+    <!-- 3 off it goes -->
+    <div>
+      <p class="cap">Voice 3 · Off it goes <span style="font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--notice-bg); color: var(--notice); vertical-align: 2px;">Stretch</span></p><p class="sub">It shrinks into the Dynamic Island and works while you do something else. Long-press it to steer; it taps you when it needs you.</p>
+      <div class="ph" style="background: linear-gradient(180deg, #2a3b46, #18242c);">
+        <div style="position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 340px; height: 74px; border-radius: 38px; background: #000; display: flex; align-items: center; gap: 12px; padding: 0 18px; box-sizing: border-box; color: #fff; z-index: 2;">
+          <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 36px; height: 36px;">
+          <div style="flex: 1; min-width: 0;"><div style="font-size: 14px; font-weight: 600;">Dark mode toggle</div><div style="font-size: 12px; color: #9a9a9a;">☁ ledger · step 2 of 3 · adding the theme store</div></div>
+          <svg width="30" height="30" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15" fill="none" stroke="#333" stroke-width="4"></circle><circle cx="18" cy="18" r="15" fill="none" stroke="#58cc6f" stroke-width="4" stroke-dasharray="94" stroke-dashoffset="40" transform="rotate(-90 18 18)" stroke-linecap="round"></circle></svg>
+        </div>
+        <div class="ph-status" style="color: #fff;"><span></span><span></span></div>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 26px 0; padding: 60px 24px 0;">
+          <sc-for list="{{apps}}" as="a" hint-placeholder-count="16"><div style="justify-self: center; width: 62px; height: 62px; border-radius: 15px; background: {{a}};"></div></sc-for>
+        </div>
+        <span style="flex: 1;"></span>
+        <div style="margin: 0 14px 30px; height: 92px; border-radius: 32px; background: rgba(255,255,255,.18); display: flex; justify-content: space-around; align-items: center;">
+          <sc-for list="{{dock}}" as="a" hint-placeholder-count="4"><div style="width: 62px; height: 62px; border-radius: 15px; background: {{a}};"></div></sc-for>
+        </div>
+        <div class="ph-home" style="background: #fff;"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":3590,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: this.props.theme ?? 'light',
+      apps: ['#3a7bd5','#e94e3c','#f5a623','#7ed321','#9013fe','#50e3c2','#4a4a4a','#ff6f91','#2d9cdb','#f2c94c','#6fcf97','#bb6bd9','#eb5757','#56ccf2','#27ae60','#f2994a'],
+      dock: ['#34c759','#007aff','#ff9500','#5856d6'],
+      kb: 'qwertyuiopasdfghjkl⇧zxcvbnm⌫'.split('').slice(0,30),
+      keys: ['esc', 'tab', 'ctrl', '↑', '↓', '|', '~'],
+      rows: [
+        { t: 'Plan and billing', v: 'Free', c: '#34c759', i: '$' },
+        { t: 'Models', v: 'dart', c: '#007aff', i: '◆' },
+        { t: 'Permissions', v: 'Ask', c: '#ff9500', i: '✓' },
+        { t: 'MCP servers', v: '3', c: '#5856d6', i: '⇄' },
+        { t: 'Notifications', v: '', c: '#ff3b30', i: '●' },
+        { t: 'Appearance', v: 'System', c: '#1c1c1e', i: '◐' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>
