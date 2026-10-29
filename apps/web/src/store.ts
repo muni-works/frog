@@ -70,9 +70,16 @@ export function useSessions(cloud: CloudEngine | null) {
   }, [cloud])
   useEffect(() => {
     if (!cloud) return setSessions([])
+    // Near-live while you're looking (every 3s), slow when the tab is hidden, and at once on
+    // coming back. One cheap read of the account's session index each time.
     refresh()
-    const t = setInterval(refresh, 15_000)
-    return () => clearInterval(t)
+    let t = 0
+    const arm = () => { clearInterval(t); t = window.setInterval(refresh, document.hidden ? 30_000 : 3_000) }
+    const back = () => { if (!document.hidden) refresh(); arm() }
+    arm()
+    document.addEventListener('visibilitychange', back)
+    addEventListener('focus', back)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', back); removeEventListener('focus', back) }
   }, [cloud, refresh])
   return { sessions, error, refresh, setSessions }
 }

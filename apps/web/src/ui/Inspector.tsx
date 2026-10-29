@@ -20,7 +20,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thr
     }
     addEventListener('pointermove', move); addEventListener('pointerup', up)
   }
-  const [pane, setPane] = useState<'changes' | 'terminal' | 'log'>(() => { try { return (localStorage.getItem('frog.inspectorTab') as 'changes' | 'terminal' | 'log') || 'changes' } catch { return 'changes' } })
+  const [pane, setPane] = useState<'changes' | 'terminal'>(() => { try { return localStorage.getItem('frog.inspectorTab') === 'terminal' ? 'terminal' : 'changes' } catch { return 'changes' } })
   // Which changed files are open to their hunks; the only one opens by itself.
   const [open, setOpen] = useState<Set<string>>(new Set())
   useEffect(() => { if (thread.changes.length === 1) setOpen(new Set([thread.changes[0].path])) }, [thread.changes.length === 1 ? thread.changes[0].path : '']) // eslint-disable-line react-hooks/exhaustive-deps
@@ -34,9 +34,9 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thr
         onDoubleClick={() => { setWidth(330); try { localStorage.removeItem('frog.inspectorWidth') } catch { /* private mode */ } }} />
       <div className="insp-top">
         <div className="seg" role="tablist" style={{ flex: 1 }}>
-          {(['changes', 'terminal', 'log'] as const).map((p) => (
+          {(['changes', 'terminal'] as const).map((p) => (
             <button key={p} type="button" role="tab" aria-selected={pane === p} onClick={() => { setPane(p); try { localStorage.setItem('frog.inspectorTab', p) } catch { /* private mode */ } }}>
-              {{ changes: 'Changes', terminal: 'Terminal', log: 'Frog’s log' }[p]}
+              {{ changes: 'Changes', terminal: 'Terminal' }[p]}
             </button>
           ))}
         </div>
@@ -90,13 +90,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thr
           )}
         </div>
       )}
-      {pane === 'log' && (
-        <div className="insp-body">
-          {thread.terminal
-            ? <pre className="term">{thread.terminal}</pre>
-            : <div className="term-empty"><b>Nothing run yet</b><span className="det wrap">Commands Frog runs in this session, and what they print, collect here.</span></div>}
-        </div>
-      )}
+
 
     </section>
   )

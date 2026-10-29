@@ -81,7 +81,7 @@ function TopUp({ onTopUp }: { onTopUp: (dollars: number) => Promise<void> }) {
   )
 }
 
-const tabs = ['Account', 'Plan'] as const
+const tabs = ['Account', 'Billing'] as const
 
 export function Settings({ account, models = [], onSignOut, onClose, onTopUp }: { account: Account | null; models?: Model[]; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void> }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>('Account')
@@ -110,8 +110,8 @@ export function Settings({ account, models = [], onSignOut, onClose, onTopUp }: 
             <div className="set-row"><span style={{ flex: 1 }}>Devices and keys</span><a href={`${API}/account`} target="_blank" rel="noreferrer">Manage</a></div>
             {notifySupported() && <Notify />}
           </>)}
-          {tab === 'Plan' && (<>
-            <h2>Plan</h2>
+          {tab === 'Billing' && (<>
+            <h2>Billing</h2>
             <div className="set-row">
               <div style={{ flex: 1 }}><b style={{ textTransform: 'capitalize' }}>{account?.plan ?? '…'}</b><div className="det">{creditLine(account)} left{account?.resets_at ? ` · resets ${new Date(account.resets_at).toLocaleDateString()}` : ''}</div></div>
             </div>
