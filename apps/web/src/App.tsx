@@ -63,7 +63,6 @@ export default function App() {
   const [account, setAccount] = useState<Account | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
   const [leaving, setLeaving] = useState(false)
-  const [gate, setGate] = useState<string | null>(null)
   const [view, setView] = useState<View>({ kind: 'new' })
   const [palette, setPalette] = useState(false)
   const [settings, setSettings] = useState(false)
@@ -134,7 +133,8 @@ export default function App() {
     finishSignIn().then(async (done) => {
       if (done) {
         setKey(done.key); setAccount(done.account)
-        if (done.after) { setDraft(done.after); setView({ kind: 'new', pick: true }) }
+        // The message typed before signing in starts its conversation as soon as we're in.
+        if (done.after) setPending(done.after)
         return
       }
       const k = savedKey()
@@ -152,6 +152,7 @@ export default function App() {
     cloud?.send(id, { op: 'submit', text, ...(images.length ? { images } : {}) }), [cloud])
 
 
+  const [pending, setPending] = useState<string | null>(null)
   const start = useCallback(async (text: string, repo?: string, images: Image[] = []) => {
     if (!cloud) return
     // Open the session at once, as a placeholder, and swap in the real one when the gateway
@@ -177,6 +178,7 @@ export default function App() {
       say(`Couldn't start a sandbox: ${e instanceof Error ? e.message : e}`)
     }
   }, [cloud, send, setSessions, newModel, newMode])
+  useEffect(() => { if (pending && cloud) { setPending(null); start(pending) } }, [pending, cloud, start])
 
   const decide = useCallback((id: string, allow: boolean) => {
     const ask = thread(id).ask
@@ -236,64 +238,30 @@ export default function App() {
 
   const Nav = () => (
     <nav aria-label="Main" className="nav">
-      <button type="button" className="row big" onClick={() => (key ? setView({ kind: 'new' }) : setGate(null))}><Icon d={icons.new} /><span style={{ flex: 1 }}>New session</span><span className="kb">⌘N</span></button>
+      <button type="button" className="row big" onClick={() => setView({ kind: 'new' })}><Icon d={icons.new} /><span style={{ flex: 1 }}>New session</span><span className="kb">⌘N</span></button>
       <button type="button" className="row big" onClick={() => setPalette(true)}><Icon d={icons.search} /><span style={{ flex: 1 }}>Search</span><span className="kb">⌘K</span></button>
     </nav>
   )
 
 
-  const GitHub = () => (
-    <svg aria-hidden="true" width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8" /></svg>
-  )
+
 
   // ---------- signed out ----------
   if (!key) return (
-    <div className={`win ${drawer ? 'drawer' : ''}`}>
-      <div className="side-scrim" onClick={() => setDrawer(false)} />
-      <aside className="side f-glass">
-        <div className="brand"><Mark /><b>Frog</b></div>
-        <span style={{ flex: 1 }} />
-        <div className="pitch">
-          <h2>Hand it off.<br /><span>Come back to a PR.</span></h2>
-          <button type="button" className="f-btn f-btn--prominent signup-go" disabled={leaving} onClick={() => leave(gate)}><GitHub />{leaving ? 'Opening GitHub…' : 'Continue with GitHub'}</button>
-          <div className="det">$5 free · no card</div>
+    <div className="win">
+      <main className="main home">
+        {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
+        <div className="home-hero">
+          <Pond />
+          <Mark size={56} />
+          <h1>What should we work on?</h1>
+          <HowItWorks />
         </div>
-        <span style={{ flex: 1 }} />
-        <div className="det pitch-foot">Made by Municipal Robotics</div>
-      </aside>
-      {gate ? (
-        <main className="main">
-          <div className="phone-bar"><Burger /><b>Frog</b></div>
-          <div className="scroll"><div className="col">
-            {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
-            <div className="me">{gate}</div>
-            <section className="cardx gate" aria-label="Sign up to run this">
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}><Mark size={34} /><div><b style={{ fontSize: 15 }}>Sign up and Frog starts on this</b><div className="det wrap">Every session runs in its own private Frog Cloud sandbox. You get $5 of credits, no card.</div></div></div>
-              <button type="button" className="f-btn f-btn--prominent" style={{ justifyContent: 'center', padding: '9px 14px' }} disabled={leaving} onClick={() => leave(gate)}>
-                <GitHub />{leaving ? 'Opening GitHub…' : 'Sign in with GitHub'}
-              </button>
-              <div className="det" style={{ textAlign: 'right' }}>Your message is saved</div>
-            </section>
-          </div></div>
-          <div className="dock"><Composer repo="Connect a repo" onSend={setGate} /></div>
-        </main>
-      ) : (
-        <main className="main home">
-          <div className="phone-bar floating"><Burger /><b>Frog</b></div>
-          {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
-          <div className="home-hero">
-            <Pond />
-            <Mark size={56} />
-            <h1>What should we work on?</h1>
-            <HowItWorks />
-          </div>
-          <div className="dock"><div>
-            <Composer repo="Connect a repo" onSend={setGate} autoFocus />
-            <div className="det" style={{ textAlign: 'center' }}>Sending asks you to sign up first. $5 of Frog Cloud free, no card.</div>
-          </div></div>
-        </main>
-      )}
-      {palette && <Palette commands={commands.slice(3)} sessions={[]} onOpen={() => undefined} onClose={() => setPalette(false)} />}
+        <div className="dock"><div>
+          <Composer repo="Connect a repo" onSend={(text) => leave(text)} autoFocus />
+          <div className="det" style={{ textAlign: 'center' }}>{leaving ? 'Opening GitHub… your message is saved.' : 'Send signs you in with GitHub and starts right here. $5 free, no card.'}</div>
+        </div></div>
+      </main>
     </div>
   )
 
@@ -483,7 +451,7 @@ export default function App() {
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} models={models} onSignOut={() => { setSettings(false); signOut(); setKey(null); setAccount(null); setGate(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
+      {settings && <Settings account={account} models={models} onSignOut={() => { setSettings(false); signOut(); setKey(null); setAccount(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   )
