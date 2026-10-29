@@ -368,3 +368,8 @@ button.tool:hover { color: var(--fg); }
 .sctx { position: fixed; z-index: 30; width: 170px; padding: 6px; box-shadow: var(--shadow-float); }
 .sctx button { display: flex; width: 100%; border: 0; background: transparent; padding: 6px 10px; border-radius: var(--radius-plate); font: 13px/18px var(--font-sans); color: var(--fg); cursor: pointer; text-align: left; }
 .sctx button:hover { background: var(--hover); }
+/* The sidebar folds away on wide screens; on phones it's the drawer, so the toggle hides. */
+.win.collapsed > .side { display: none; }
+.side-float { position: absolute; top: 11px; left: 12px; z-index: 5; }
+.brand .side-toggle { margin-right: -4px; }
+@media (max-width: 760px) { .side-toggle, .side-float { display: none !important; } .win.collapsed > .side { display: flex; } }
