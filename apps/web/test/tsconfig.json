@@ -8,7 +8,8 @@
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "jsx": "react-jsx"
   },
-  "include": [".", "../src/cloud", "../src/engine"]
+  "include": [".", "../src/cloud", "../src/engine", "../src/ui/Markdown.tsx", "../src/ui/TerminalPane.tsx", "../src/usage.ts"]
 }

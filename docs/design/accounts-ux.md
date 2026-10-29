@@ -1,6 +1,13 @@
 # frog cloud accounts: the sign-in experience
 
-Spec, written 2026-10-25. Status: proposed. Owner: frog manager. Mockups:
+Spec, written 2026-10-25. Status: proposed.
+
+> **Superseded on pricing (Cam, 2026-10-29): Frog Cloud is pay per token, like everyone
+> else, and the apps never show "tasks".** The edge always metered per token; "tasks" was
+> only a display (credit ÷ $0.25). Every screen below that says "N tasks left" shows the
+> credit in dollars instead (`$22.04 credit`, from `credit_cents`), and per-turn cost stays
+> in dollars at the model's per-token prices. The account shape keeps `tasks_left` /
+> `tasks_limit` / `task_cost_cents` for old clients only; nothing new reads them. Owner: frog manager. Mockups:
 [accounts-ux.html](accounts-ux.html) (every state, dark and light; `t` flips the theme,
 `?only=<id>` shows one state). Captures: [accounts-ux-shots/](accounts-ux-shots/).
 
@@ -581,7 +588,8 @@ the guarantees can't.
   "credit_cents": 1400, "task_cost_cents": 25 }
 ```
 
-- **Tasks are the edge's number.** The edge computes
+- **Tasks are the edge's number** *(superseded: apps show `credit_cents` as dollars; see the
+  note at the top).* The edge computes
   `tasks_left = floor(credit_cents / task_cost_cents)` from live credit (the Durable Object).
   If the price per task changes, every screen is right the next time `/me` answers. The app
   never does money math; it renders `tasks_left` and nothing else.

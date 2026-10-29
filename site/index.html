@@ -10,8 +10,8 @@
 <meta property="og:image" content="https://frog.toys/icon.png">
 <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.png">
 <style>
   :root {
     --bg: #f6f5f1;
@@ -352,7 +352,7 @@
   .pal li.sel span { color: inherit; opacity: .7; }
   .pal li.gone { display: none; }
 
-  /* Energy: one wide card, from the bench's own export (data/bench-v1.json). */
+  /* Energy: one wide card, from the bench's own export (/data/bench-v1.json). */
   .card.wide { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 8px; align-items: center; }
   .stage.energy { flex-direction: row; align-items: center; gap: 24px; height: 150px; padding: 18px 22px; }
   .energy .big { display: flex; align-items: baseline; gap: 6px; flex: none; }
@@ -445,8 +445,8 @@
   </section>
 
   <picture class="shot">
-    <source srcset="shot-dark.png" media="(prefers-color-scheme: dark)">
-    <img src="shot-light.png" width="2292" height="1612" fetchpriority="high"
+    <source srcset="/shot-dark.png" media="(prefers-color-scheme: dark)">
+    <img src="/shot-light.png" width="2292" height="1612" fetchpriority="high"
          alt="Frog's window: a flaky test found and fixed on Qwen3 Coder 30B, running on this Mac, with the two changed files underneath.">
   </picture>
 
@@ -1009,7 +1009,7 @@
     $$(el, ".fill").forEach(f => (f.style.width = f.dataset.w));
   };
   try {
-    const data = await (await fetch("data/bench-v1.json")).json();
+    const data = await (await fetch("/data/bench-v1.json")).json();
     const solved = data.models.filter(m => m.wh_per_solve != null).sort((a, b) => a.wh_per_solve - b.wh_per_solve);
     const best = solved.find(m => !m.estimated);
     if (best) {

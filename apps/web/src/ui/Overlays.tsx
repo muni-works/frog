@@ -1,16 +1,29 @@
 import { useEffect, useMemo, useState } from 'react'
-import { API, type Account } from '../auth'
+import { notifyOn, notifySupported, setNotify } from '../alerts'
+import { API, firstName, type Account } from '../auth'
+import type { Model } from '../models'
 import type { SessionSummary } from '../cloud/protocol'
 
 export interface Command { id: string; label: string; hint?: string; run: () => void }
 
-export function Palette({ commands, sessions, onOpen, onClose }: { commands: Command[]; sessions: SessionSummary[]; onOpen: (id: string) => void; onClose: () => void }) {
+export function Palette({ commands, sessions, onOpen, onClose, text }: { commands: Command[]; sessions: SessionSummary[]; onOpen: (id: string) => void; onClose: () => void; text?: (id: string) => string }) {
   const [q, setQ] = useState('')
   const [hi, setHi] = useState(0)
   const items = useMemo(() => {
-    const all: Command[] = [...commands, ...sessions.map((s) => ({ id: s.id, label: s.title, hint: s.repo.split('/')[1], run: () => onOpen(s.id) }))]
-    return all.filter((c) => c.label.toLowerCase().includes(q.toLowerCase()))
-  }, [q, commands, sessions, onOpen])
+    const needle = q.trim().toLowerCase()
+    const named = [...commands, ...sessions.map((s) => ({ id: s.id, label: s.title, hint: s.repo.split('/')[1] ?? 'No repo', run: () => onOpen(s.id) }))]
+      .filter((c) => c.label.toLowerCase().includes(needle))
+    // Sessions whose loaded conversation mentions it, with the line it's on.
+    const said: Command[] = needle.length < 3 || !text ? [] : sessions.flatMap((s) => {
+      if (named.some((c) => c.id === s.id)) return []
+      const body = text(s.id)
+      const at = body.toLowerCase().indexOf(needle)
+      if (at < 0) return []
+      const line = body.slice(Math.max(0, body.lastIndexOf('\n', at) + 1), body.indexOf('\n', at) < 0 ? undefined : body.indexOf('\n', at)).trim()
+      return [{ id: `t-${s.id}`, label: s.title, hint: line.length > 60 ? line.slice(0, 57) + '…' : line, run: () => onOpen(s.id) }]
+    })
+    return [...named, ...said]
+  }, [q, commands, sessions, onOpen, text])
   const run = (c?: Command) => { if (!c) return; onClose(); c.run() }
   return (
     <div className="scrim" onMouseDown={onClose}>
@@ -36,14 +49,19 @@ export function Palette({ commands, sessions, onOpen, onClose }: { commands: Com
   )
 }
 
-export function tasksLine(a: Account | null) {
+/** "$22.04 credit": what's left to spend on tokens. */
+export function creditLine(a: Account | null) {
   if (!a) return ''
-  return `${a.tasks_left} ${a.tasks_left === 1 ? 'task' : 'tasks'} left`
+  return `${dollars(a.credit_cents / 100)} credit`
+}
+
+export function dollars(d: number) {
+  return d > 0 && d < 0.01 ? '<$0.01' : `$${d.toFixed(2)}`
 }
 
 const tabs = ['Account', 'Plan'] as const
 
-export function Settings({ account, onSignOut, onClose }: { account: Account | null; onSignOut: () => void; onClose: () => void }) {
+export function Settings({ account, models = [], onSignOut, onClose }: { account: Account | null; models?: Model[]; onSignOut: () => void; onClose: () => void }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>('Account')
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -63,22 +81,49 @@ export function Settings({ account, onSignOut, onClose }: { account: Account | n
             <h2>Account</h2>
             <div className="f-account">
               <span className="mark" style={{ width: 28, height: 28 }} />
-              <div className="grow"><div className="name"><b>{account?.handle ?? account?.email ?? 'Signed in'}</b>{account?.handle && <span className="f-badge">GitHub</span>}</div><div className="detail">{account?.email ?? ''}</div></div>
+              <div className="grow"><div className="name"><b>{account?.name ?? firstName(account) ?? 'Signed in'}</b>{account?.handle && <span className="f-badge">GitHub</span>}</div><div className="detail">{[account?.handle && `@${account.handle}`, account?.email].filter(Boolean).join(' · ')}</div></div>
               <div className="acts"><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onSignOut}>Sign out</button></div>
             </div>
             <p className="det wrap">Cloud sessions belong to your account, so they show up on every device you sign in on.</p>
             <div className="set-row"><span style={{ flex: 1 }}>Devices and keys</span><a href={`${API}/account`} target="_blank" rel="noreferrer">Manage</a></div>
+            {notifySupported() && <Notify />}
           </>)}
           {tab === 'Plan' && (<>
             <h2>Plan</h2>
             <div className="set-row">
-              <div style={{ flex: 1 }}><b style={{ textTransform: 'capitalize' }}>{account?.plan ?? '…'}</b><div className="det">{tasksLine(account)}{account?.resets_at ? ` · resets ${new Date(account.resets_at).toLocaleDateString()}` : ''}</div></div>
+              <div style={{ flex: 1 }}><b style={{ textTransform: 'capitalize' }}>{account?.plan ?? '…'}</b><div className="det">{creditLine(account)} left{account?.resets_at ? ` · resets ${new Date(account.resets_at).toLocaleDateString()}` : ''}</div></div>
               <a className="f-btn f-btn--bordered" href={`${API}/billing`} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Billing</a>
             </div>
-            <p className="det wrap">Frog for Mac is free with local models. Credits only pay for Frog Cloud.</p>
+            <p className="det wrap">Frog Cloud is pay per token: each turn costs what its model calls used, at the model's prices below. Frog for Mac is free with local models.</p>
+            {models.length > 0 && (
+              <div className="set-prices">
+                <div className="set-price-h"><span>Model</span><span>Input</span><span>Cached</span><span>Output</span></div>
+                {models.map((m) => (
+                  <div key={m.id} className="set-price">
+                    <span>{m.id}</span><span>{perM(m.input)}</span><span>{perM(m.cached)}</span><span>{perM(m.output)}</span>
+                  </div>
+                ))}
+                <div className="det">Per million tokens.</div>
+              </div>
+            )}
           </>)}
         </div>
       </div>
     </div>
   )
+}
+
+function Notify() {
+  const [on, setOn] = useState(notifyOn())
+  return (
+    <label className="set-row">
+      <div style={{ flex: 1 }}><b>Notifications</b><div className="det wrap">When a session needs you or finishes while Frog is in the background.</div></div>
+      <input type="checkbox" role="switch" checked={on} onChange={async (e) => setOn(await setNotify(e.target.checked))} />
+    </label>
+  )
+}
+
+/** A per-token price as dollars per million tokens: "$0.20". */
+function perM(p: number | null) {
+  return p == null ? '—' : `$${(p * 1e6).toFixed(2)}`
 }

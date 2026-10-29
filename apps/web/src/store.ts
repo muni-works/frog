@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Gateway } from './cloud/client'
-import type { SessionSummary } from './cloud/protocol'
+import type { EndReason, RepoList, SessionSummary } from './cloud/protocol'
 import { CloudEngine } from './engine/cloud'
 import { emptyThread, reduce, type Thread } from './engine/thread'
 
@@ -10,12 +10,46 @@ import { emptyThread, reduce, type Thread } from './engine/thread'
 /** The gateway's origin. In dev, Vite proxies /v1 to $GATEWAY (default the mock). */
 export const GATEWAY = (import.meta.env.VITE_GATEWAY as string | undefined) ?? location.origin
 
-export const starters = [
-  { i: '✓', title: 'Fix the failing tests', detail: 'Runs them, finds why, fixes it' },
-  { i: '⑂', title: 'Review my open PR', detail: 'Reads the diff, leaves notes' },
-  { i: '?', title: 'Explain this codebase', detail: 'A map of how it fits together' },
-  { i: '+', title: 'Add a small feature', detail: 'Plans it, builds it, opens a PR' },
+// New-session suggestions: three drawn at random from this pool on each visit. Concrete,
+// worth a sandbox, and each one shows a different thing Frog is good at.
+const POOL = [
+  'Fix the failing tests',
+  'Review my open PR and leave notes',
+  'Explain how this codebase fits together',
+  'Find and fix a bug from the open issues',
+  'Add tests for the least-covered module',
+  'Upgrade outdated dependencies and fix what breaks',
+  'Speed up the slowest test',
+  'Write a README for this repo',
+  'Find dead code and remove it',
+  'Add a dark mode',
+  'Make the CI faster',
+  'Audit this repo for security issues',
+  'Turn the TODOs into a plan',
+  'Add types where they’re missing',
 ]
+
+// Signed out there's no repo yet, so these are cold starts: things worth doing from nothing.
+const COLD = [
+  'Build a tiny habit tracker web app',
+  'Write a CLI that renames photos by date taken',
+  'Make a Snake game in the browser',
+  'Scaffold a REST API with auth and tests',
+  'Explain how OAuth works, with a diagram',
+  'Write a script that turns a CSV into charts',
+  'Build a Markdown notes app that saves locally',
+  'Prototype a Discord bot that summarizes threads',
+  'Make a personal site from my GitHub profile',
+  'Write a web scraper for a recipe site',
+  'Compare three ways to build a job queue',
+  'Build a pomodoro timer in Rust',
+]
+
+export function pickStarters(n = 3, cold = false): string[] {
+  const a = [...(cold ? COLD : POOL)]
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] }
+  return a.slice(0, n)
+}
 
 export function useCloud(key: string | null) {
   return useMemo(() => (key ? new CloudEngine(new Gateway({ origin: GATEWAY, token: key })) : null), [key])
@@ -44,17 +78,57 @@ export function useSessions(cloud: CloudEngine | null) {
 }
 
 /** Subscribe to these sessions' streams and keep a folded `Thread` per session. */
+// Threads are kept in this browser too, so opening a session shows it at once (even after a
+// reload) and the socket only fetches what came after. Capped: the newest few, none too big.
+const THREADS = 'frog.thread.'
+const KEEP = 24
+const MAX_BYTES = 400_000
+function loadThread(id: string): Thread | null {
+  try { const v = localStorage.getItem(THREADS + id); return v ? { ...emptyThread, ...JSON.parse(v) } : null } catch { return null }
+}
+function saveThread(id: string, t: Thread) {
+  try {
+    // Kept whole: resuming after lastSeq delivers whatever ended or changed since. Only the
+    // live activity line is dropped, since it's stale by the time anyone reads it back.
+    const json = JSON.stringify({ ...t, activity: null })
+    if (json.length > MAX_BYTES) return
+    localStorage.setItem(THREADS + id, json)
+    const index: string[] = JSON.parse(localStorage.getItem(THREADS + 'index') ?? '[]').filter((x: string) => x !== id)
+    index.unshift(id)
+    for (const old of index.splice(KEEP)) localStorage.removeItem(THREADS + old)
+    localStorage.setItem(THREADS + 'index', JSON.stringify(index))
+  } catch { /* full or private mode: memory only */ }
+}
+
+/** Sign-out forgets every thread this browser kept. */
+export function clearThreads() {
+  try { Object.keys(localStorage).filter((k) => k.startsWith(THREADS)).forEach((k) => localStorage.removeItem(k)) } catch { /* nothing kept */ }
+}
+
 export function useThreads(cloud: CloudEngine | null, ids: string[]) {
   const [threads, setThreads] = useState<Record<string, Thread>>({})
+  const cache = useRef(threads)
+  cache.current = threads
   const key = ids.join(',')
   useEffect(() => {
     if (!cloud) return
-    const offs = ids.map((id) => cloud.subscribe(id, 0, (env) =>
-      setThreads((all) => ({ ...all, [id]: reduce(all[id] ?? emptyThread, env) }))))
+    const offs = ids.map((id) => {
+      const known = cache.current[id] ?? loadThread(id)
+      if (known && !cache.current[id]) setThreads((all) => ({ ...all, [id]: known }))
+      return cloud.subscribe(id, known?.lastSeq ?? 0, (env) =>
+        setThreads((all) => ({ ...all, [id]: reduce(all[id] ?? known ?? emptyThread, env) })))
+    })
     return () => offs.forEach((off) => off())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, key])
-  return useCallback((id: string) => threads[id] ?? emptyThread, [threads])
+  // Saved a moment after it settles, not on every streamed token.
+  useEffect(() => {
+    const t = setTimeout(() => ids.forEach((id) => threads[id] && saveThread(id, threads[id])), 800)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threads, key])
+  // A session not streaming yet still shows what this browser kept of it.
+  return useCallback((id: string) => threads[id] ?? (ids.includes(id) ? loadThread(id) : null) ?? emptyThread, [threads, key]) // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 /** The edge answers 402 `insufficient_credit` on inference; the engine ends the turn with that error. */
@@ -71,10 +145,29 @@ export function parseRepo(s: string): string | null {
 
 /** Why a turn stopped on an error, in a line, unless it's the out-of-credits case (it has its own card). */
 export function turnError(t: Thread): string | null {
-  if (t.ended?.type !== 'error' || outOfCredits(t)) return null
-  const e = (t.ended as { error?: { type?: string; status?: number; message?: string } }).error ?? {}
+  return outOfCredits(t) ? null : endError(t.ended)
+}
+
+/** Why a turn ended on an error, in a line; null for any other ending. */
+export function endError(reason: EndReason | null | undefined): string | null {
+  if (reason?.type !== 'error') return null
+  const e = (reason as { error?: { type?: string; status?: number; message?: string } }).error ?? {}
   let detail = e.message ?? ''
   try { detail = JSON.parse(detail)?.error?.message ?? detail } catch { /* not JSON */ }
   if (e.status === 401) return `The model provider refused this session's key${detail ? ` (${detail})` : ''}.`
+  if (e.status === 429) return 'Frog Cloud was too busy to answer, even after retrying. Try again in a moment.'
+  if (e.status === 503) return 'No model was free on Frog Cloud, even after retrying. Try again in a moment.'
   return [e.type === 'provider' ? 'The model call failed' : 'The turn stopped', e.status ? `(${e.status})` : '', detail ? `: ${detail}` : ''].join(' ').replace(' :', ':').trim() + '.'
+}
+
+/** The account's repos for the composer menu; empty until the gateway answers (or if it can't). */
+export function useRepos(cloud: CloudEngine | null) {
+  const [list, setList] = useState<RepoList>({ repos: [] })
+  useEffect(() => {
+    if (!cloud) return
+    let live = true
+    cloud.gateway.repos().then((r) => live && setList(r), () => live && setList({ repos: [] }))
+    return () => { live = false }
+  }, [cloud])
+  return list
 }

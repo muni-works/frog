@@ -521,7 +521,7 @@ struct EndView: View {
                     if let c = ModelStats.shared.cost(of: usage) {
                         PriceHint(cost: c, usage: usage)
                     } else if let tps = usage.tokensPerSec, tps > 0 {
-                        Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
+                        Text(ModelStats.speedText(tps))
                             .help("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s") · \(usage.inputTokens.tokens) in, \(usage.outputTokens.tokens) out") // advanced
                     }
                     if showEnergy, let e = usage.energy {

@@ -2,3 +2,5 @@
 apps/macos/build/
 apps/macos/Frog.xcodeproj/
 .claude/
+site/dist/
+site/.wrangler/

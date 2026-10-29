@@ -1,8 +1,15 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
+import type { Op } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
+import { TerminalPane } from './TerminalPane'
 
-export function Inspector({ thread, branch, onCommit, onPr, hasPr }: { thread: Thread; branch: string; hasPr: boolean; onCommit: () => void; onPr: () => void }) {
+export function Inspector({ thread, branch, onCommit, onPr, hasPr, send }: { thread: Thread; branch: string; hasPr: boolean; onCommit: () => void; onPr: () => void; send: (op: Op) => void }) {
   const [pane, setPane] = useState<'changes' | 'terminal' | 'preview'>('changes')
+  const [log, setLog] = useState(false)
+  // The newest terminal pane that's still open, else the newest one.
+  const terms = Object.values(thread.panes).filter((p) => p.kind === 'terminal')
+  const term = [...terms].reverse().find((p) => !p.closed) ?? terms[terms.length - 1]
+  const resize = useCallback((cols: number, rows: number) => { if (term && !term.closed) send({ op: 'pane_resize', id: term.id, cols, rows }) }, [term?.id, term?.closed, send]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <section className="insp" aria-label="Inspector">
       <div className="insp-top">
@@ -34,7 +41,27 @@ export function Inspector({ thread, branch, onCommit, onPr, hasPr }: { thread: T
         </div>
       )}
       {pane === 'terminal' && (
-        <pre className="term">{thread.terminal || `sandbox (${branch}) $ `}<span className="cursor"> </span></pre>
+        <div className="insp-body">
+          <div className="term-bar">
+            <div className="seg" role="tablist" style={{ width: 200 }}>
+              <button type="button" role="tab" aria-selected={!log} onClick={() => setLog(false)}>Shell</button>
+              <button type="button" role="tab" aria-selected={log} onClick={() => setLog(true)}>Frog's commands</button>
+            </div>
+            <span style={{ flex: 1 }} />
+            {!log && term && !term.closed && <button type="button" className="f-btn f-btn--plain" onClick={() => send({ op: 'pane_close', id: term.id })}>Close</button>}
+          </div>
+          {log ? (
+            <pre className="term">{thread.terminal || `sandbox (${branch}) $ `}<span className="cursor"> </span></pre>
+          ) : term && !term.closed ? (
+            <TerminalPane pane={term} onInput={(data) => send({ op: 'pane_input', id: term.id, data })} onResize={resize} />
+          ) : (
+            <div className="term" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
+              {term?.closed && <span className="det">Shell exited{term.exit != null ? ` (${term.exit})` : ''}.</span>}
+              <span style={{ color: '#9a9a96' }}>A shell in this session's sandbox, in the repo.</span>
+              <button type="button" className="f-btn f-btn--bordered" onClick={() => send({ op: 'pane_open', kind: 'terminal', cols: 80, rows: 24 })}>Open a terminal</button>
+            </div>
+          )}
+        </div>
       )}
       {pane === 'preview' && (
         <div className="insp-body" style={{ alignItems: 'center', justifyContent: 'center', padding: 24 }}>

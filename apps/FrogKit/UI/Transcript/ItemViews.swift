@@ -614,7 +614,7 @@ struct TypingBubble: View {
     @ViewBuilder
     private var speed: some View {
         if let s = conversation.status?.tokensPerSec, s > 0 {
-            Text(ModelStats.speedText(s * ModelStats.wordsPerToken))
+            Text(ModelStats.speedText(s))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.tertiary)
                 .fixedSize()
