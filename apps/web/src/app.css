@@ -546,3 +546,14 @@ button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
   --canvas: #000; --bg: #000; --card: #121212; --well: #1a1a1a; --line: #222; --line-strong: #2e2e2e;
   --hover: rgba(255,255,255,.07); --glass-fill: rgba(10,10,10,.72); --glass-fallback: #0a0a0a;
 }
+
+/* Light is true white, the mirror of dark's true black: surfaces step down from white. */
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --canvas: #fff; --bg: #fff; --card: #f4f4f4; --well: #ececec; --hover: rgba(0,0,0,.05);
+  --glass-fill: rgba(250,250,250,.78); --glass-fallback: #fafafa;
+  --shadow-float: 0 16px 40px -14px rgba(0,0,0,.22);
+} }
+:root[data-theme="light"] {
+  --canvas: #fff; --bg: #fff; --card: #f4f4f4; --well: #ececec; --hover: rgba(0,0,0,.05);
+  --glass-fill: rgba(250,250,250,.78); --glass-fallback: #fafafa;
+}
