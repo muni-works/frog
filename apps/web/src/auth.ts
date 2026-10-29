@@ -22,6 +22,9 @@ export interface Account {
   tasks_left: number
   tasks_limit: number | null
   resets_at: string | null
+  /** The plan, if subscribed: its allowance windows and whether it's past them (then credit
+   * pays at usage prices). Null on usage pricing alone. Older edges leave it out. */
+  subscription?: { plan: string; name: string; windows: { kind: '5h' | 'weekly'; used: number; limit: number; resets_at: string }[]; over: boolean } | null
 }
 
 const KEY = 'frog.key'
@@ -83,6 +86,19 @@ export async function finishSignIn(): Promise<{ key: string; account: Account; a
   })
   store.set(localStorage, KEY, r.key)
   return { ...r, after: pending.after }
+}
+
+/** Subscriptions: an allowance each, then usage pricing from credit past it. */
+export const PLANS = [
+  { id: 'pro', name: 'Pro', price: 20, blurb: 'For steady daily use' },
+  { id: 'max5', name: 'Max 5x', price: 100, blurb: '5× Pro, more at once' },
+  { id: 'max', name: 'Max 20x', price: 200, blurb: '20× Pro, for heavy use' },
+] as const
+
+/** Leaves for Stripe Checkout to start a plan. */
+export async function subscribe(key: string, plan: string) {
+  const r = await call<{ url: string }>('/v1/billing/subscribe', { method: 'POST', body: JSON.stringify({ plan, return: location.origin }) }, key)
+  location.assign(r.url)
 }
 
 /** Credit top-ups, in dollars (the edge's CREDIT_TOP_UPS). */
