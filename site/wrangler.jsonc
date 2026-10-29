@@ -15,7 +15,7 @@
   "vars": {
     // The Frog Cloud gateway the app's /v1 requests (and session websockets) go to. Same
     // origin for the browser, so no CORS. Placeholder until the production gateway exists.
-    "GATEWAY_ORIGIN": "https://cloud.frog.toys"
+    "GATEWAY_ORIGIN": "https://api.frog.toys"
   },
   "routes": [
     { "pattern": "frog.toys", "custom_domain": true },
