@@ -1,4 +1,4 @@
-import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Mode, Todo, ToolOutcome, TurnUsage } from '../cloud/protocol'
+import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, Todo, ToolOutcome, TurnUsage } from '../cloud/protocol'
 
 // Folds a session's envelopes into what the transcript draws. Pure, so replay and
 // live streaming share one path: `reduce(thread, envelope)` for every envelope in order.
@@ -26,7 +26,7 @@ export interface Elicitation { id: string; server: string; message: string; sche
 export interface Thread {
   lastSeq: number
   /** Each turn's input and items; `usage` and `reason` once it ends. */
-  turns: { turn: number; input: string; entries: Entry[]; usage?: TurnUsage; reason?: EndReason }[]
+  turns: { turn: number; input: string; images?: Image[]; more?: Part[]; entries: Entry[]; usage?: TurnUsage; reason?: EndReason }[]
   running: boolean
   ask: Ask | null
   ended: EndReason | null
@@ -49,9 +49,11 @@ export interface Thread {
   elicitation: Elicitation | null
   /** The session's plan (TodoWrite), from the latest `status`. */
   todos: Todo[]
+  /** Whether the session's model reads images (status.vision); null until the engine says. */
+  vision: boolean | null
 }
 
-export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null, activity: null, question: null, elicitation: null, todos: [] }
+export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null, activity: null, question: null, elicitation: null, todos: [], vision: null }
 
 /** Item ids are only unique within a turn, so updates go to the latest turn. */
 function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
@@ -63,7 +65,7 @@ function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
 function apply(t: Thread, ev: Event, created: number): Thread {
   switch (ev.event) {
     case 'turn_started':
-      return { ...t, running: true, ended: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, entries: [] }] }
+      return { ...t, running: true, ended: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, images: ev.images, more: ev.more, entries: [] }] }
     case 'turn_ended': {
       const turns = t.turns.map((u) => (u.turn === ev.turn ? { ...u, usage: ev.usage, reason: ev.reason } : u))
       return { ...t, turns, running: false, ask: null, question: null, elicitation: null, ended: ev.reason, activity: null }
@@ -103,7 +105,7 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     case 'permission_request':
       return { ...t, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, preview: ev.preview, reason: ev.reason } }
     case 'status':
-      return { ...t, model: ev.model, mode: ev.mode, context: { used: ev.context_tokens, window: ev.context_window }, todos: ev.todos ?? t.todos }
+      return { ...t, model: ev.model, mode: ev.mode, context: { used: ev.context_tokens, window: ev.context_window }, todos: ev.todos ?? t.todos, vision: ev.vision ?? t.vision }
     case 'question':
       return { ...t, question: { id: ev.id, item: ev.item, question: ev.question, options: ev.options ?? [], multi: !!ev.multi, allowOther: !!ev.allow_other } }
     case 'question_resolved':

@@ -4,7 +4,7 @@
 export type Decision = "allow" | "allow_always" | "deny";
 
 export type Op =
-  | { op: "submit"; text: string }
+  | { op: "submit"; text: string; images?: Image[]; more?: Part[] }
   | { op: "interrupt" }
   | { op: "permission"; id: string; decision: Decision }
   | { op: "answer"; id: string; choices?: string[]; other?: string }
@@ -56,6 +56,11 @@ export type Delta =
 
 export type EndReason = { type: "complete" | "max_tokens" | "denied" | "looping" | "step_limit" | "cancelled" } | { type: "error"; error: unknown };
 
+/** protocol.rs `Image`: base64 data with its mime type. */
+export interface Image { mime: string; data: string }
+/** One message of several sent as one turn (Op::Submit's `more`). */
+export interface Part { text: string; images?: Image[] }
+
 /** The TodoWrite list (tools/todo.rs); status is pending, in_progress or completed. */
 export interface Todo { content: string; status: string }
 
@@ -82,7 +87,7 @@ export interface TurnUsage {
 }
 
 export type Event =
-  | { event: "turn_started"; turn: number; input: string }
+  | { event: "turn_started"; turn: number; input: string; images?: Image[]; more?: Part[] }
   | { event: "turn_ended"; turn: number; reason: EndReason; usage?: TurnUsage }
   | { event: "item_started"; id: string; kind: ItemKind }
   | { event: "item_completed"; id: string; item: Item }
@@ -90,7 +95,7 @@ export type Event =
   | { event: "permission_request"; id: string; item: string; name: string; arg: string; always: string; preview?: FileDiff; reason?: string }
   | { event: "permission_resolved"; id: string; decision: Decision }
   | { event: "titled"; title: string }
-  | { event: "status"; model: string; mode: Mode; context_tokens: number | null; context_window: number; todos?: Todo[] }
+  | { event: "status"; model: string; mode: Mode; context_tokens: number | null; context_window: number; todos?: Todo[]; vision?: boolean }
   | { event: "question"; id: string; item: string; question: string; options: { label: string; detail?: string }[]; multi?: boolean; allow_other?: boolean }
   | { event: "question_resolved"; id: string; choices?: string[]; other?: string }
   | { event: "elicitation"; id: string; server: string; message: string; schema?: ElicitSchema; url?: string }

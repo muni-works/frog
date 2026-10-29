@@ -67,3 +67,10 @@ test("the plan comes from status todos", () => {
   const t = reduce(emptyThread, env({ event: "status", model: "cloud/x", mode: "auto", context_tokens: null, context_window: 1, todos: [{ content: "write it", status: "in_progress" }] }));
   assert.equal(t.todos[0].status, "in_progress");
 });
+
+test("a turn keeps its images and the follow-ups sent with it", () => {
+  const img = { mime: "image/png", data: "iVBOR" };
+  const t = reduce(emptyThread, env({ event: "turn_started", turn: 1, input: "look", images: [img], more: [{ text: "and this" }] }));
+  assert.equal(t.turns[0].images?.[0].mime, "image/png");
+  assert.equal(t.turns[0].more?.[0].text, "and this");
+});

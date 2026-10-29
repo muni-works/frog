@@ -4,7 +4,7 @@ import { finishSignIn, firstName, me, savedKey, signIn, signOut, API, AuthError,
 import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Thread } from './engine/thread'
-import type { Mode } from './cloud/protocol'
+import type { Image, Mode } from './cloud/protocol'
 import { idOf, spec, useModels } from './models'
 import { outOfCredits, starters, turnError, useCloud, useRepos, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
@@ -72,6 +72,10 @@ export default function App() {
   const [draft, setDraft] = useState<string | undefined>()
   /** Sessions shown before the gateway has created them: placeholder id → the first message. */
   const [pending, setPending] = useState<Record<string, string>>({})
+  // Follow-ups typed while Frog works wait here (per session) and go together, in order, as the
+  // next turn once this one ends, like the Mac app. × takes one back into the field.
+  const [queue, setQueue] = useState<Record<string, { text: string; images: Image[] }[]>>({})
+  const [restore, setRestore] = useState<{ text: string; images: Image[] } | null>(null)
   const [conn, setConn] = useState<Record<string, ConnectionState>>({})
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -92,6 +96,15 @@ export default function App() {
   const thread = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
   const title = (s: SessionSummary) => thread(s.id).title ?? s.title
+  // The turn ended: what was queued goes as the next turn, one Submit with the rest as `more`.
+  useEffect(() => {
+    if (!current || !ct || ct.running || pending[current.id]) return
+    const q = queue[current.id]
+    if (!q?.length) return
+    const [head, ...rest] = q
+    cloud?.send(current.id, { op: 'submit', text: head.text, ...(head.images.length ? { images: head.images } : {}), ...(rest.length ? { more: rest.map((m) => ({ text: m.text, ...(m.images.length ? { images: m.images } : {}) })) } : {}) })
+    setQueue((all) => ({ ...all, [current.id]: [] }))
+  }, [current, ct, queue, pending, cloud])
   // Alerts: the tab title's badge and background notifications, from every streamed session.
   useAlerts(useMemo(() => sessions.map((s) => {
     const t = thread(s.id)
@@ -121,9 +134,11 @@ export default function App() {
 
   useEffect(() => cloud?.watch((id, s) => setConn((all) => ({ ...all, [id]: s }))), [cloud])
 
-  const send = useCallback((id: string, text: string) => cloud?.send(id, { op: 'submit', text }), [cloud])
+  const send = useCallback((id: string, text: string, images: Image[] = []) =>
+    cloud?.send(id, { op: 'submit', text, ...(images.length ? { images } : {}) }), [cloud])
 
-  const start = useCallback(async (text: string, repo?: string) => {
+
+  const start = useCallback(async (text: string, repo?: string, images: Image[] = []) => {
     if (!cloud) return
     // Open the session at once, as a placeholder, and swap in the real one when the gateway
     // answers: starting a conversation should feel instant, not wait on a round trip.
@@ -138,7 +153,7 @@ export default function App() {
       setSessions((all) => [s, ...all.filter((x) => x.id !== s.id && x.id !== temp)])
       setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'session', id: s.id } : v))
       if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
-      send(s.id, text) // queued until the session's socket is live
+      send(s.id, text, images) // queued until the session's socket is live
     } catch (e) {
       setSessions((all) => all.filter((x) => x.id !== temp))
       setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'new', repo } : v))
@@ -431,7 +446,11 @@ export default function App() {
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
-              onSend={(text) => send(current.id, text)} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />
+              queued={queue[current.id]} restore={restore} vision={ct.vision}
+              onUnqueue={(i) => { const q = queue[current.id] ?? []; setRestore(q[i]); setQueue({ ...queue, [current.id]: q.filter((_, j) => j !== i) }) }}
+              onSend={(text, images) => (ct.running || pending[current.id]
+                ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images }] }))
+                : send(current.id, text, images))} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />
           </div>
         </>)}
 
@@ -444,7 +463,7 @@ export default function App() {
               <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
-                onSend={(text) => { setDraft(undefined); start(text, view.repo) }} />
+                onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images) }} />
             </div>
             <div className="starters">
               {starters.map((t) => <button key={t.title} type="button" className="cz-chip" onClick={() => setDraft(t.title)}>{t.i} {t.title}</button>)}

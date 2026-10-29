@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Mode } from '../cloud/protocol'
+import type { Image, Mode } from '../cloud/protocol'
 import { modes, price, type Model } from '../models'
 import { parseRepo } from '../store'
 
@@ -23,7 +23,14 @@ export interface ComposerProps {
   /** When the engine asks before acting; the chip shows once the engine (or a new session) says. */
   mode?: Mode | null
   onMode?: (mode: Mode) => void
-  onSend: (text: string) => void
+  onSend: (text: string, images: Image[]) => void
+  /** Messages sent while Frog works: they go together when the turn ends. × takes one back. */
+  queued?: { text: string; images: Image[] }[]
+  onUnqueue?: (i: number) => void
+  /** False when the session's model can't read images (the engine's status.vision). */
+  vision?: boolean | null
+  /** A message taken back out of the queue, for the field. */
+  restore?: { text: string; images: Image[] } | null
   onStop?: () => void
   /** A new session's repo picker, in the composer: recent repos, the account's repos, search, or
    * a pasted URL. Optional: a session can start without one. */
@@ -79,11 +86,29 @@ export function Composer(p: ComposerProps) {
     return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key) }
   }, [menu])
 
+  const [images, setImages] = useState<Image[]>([])
+  const file = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (!p.restore) return
+    setText((t) => (t ? `${p.restore!.text}\n${t}` : p.restore!.text))
+    setImages((im) => [...p.restore!.images, ...im])
+  }, [p.restore])
+  /** Images from paste, drop or the file picker, as base64 (Op::Submit images). Up to 8, 5 MB each. */
+  const attach = async (files: Iterable<File>) => {
+    const add: Image[] = []
+    for (const f of files) {
+      if (!f.type.startsWith('image/') || f.size > 5 * 1024 * 1024) continue
+      const data = await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] ?? ''); r.readAsDataURL(f) })
+      add.push({ mime: f.type, data })
+    }
+    if (add.length) setImages((im) => [...im, ...add].slice(0, 8))
+  }
   const send = () => {
     const t = text.trim()
-    if (!t || paused || p.busy) return
-    p.onSend(t)
+    if ((!t && !images.length) || paused || p.busy) return
+    p.onSend(t, images)
     setText('')
+    setImages([])
   }
   const placeholder = working ? 'Working… Esc interrupts · Return queues a follow-up'
     : paused ? 'Paused · out of credits'
@@ -94,6 +119,7 @@ export function Composer(p: ComposerProps) {
     <div className="cz" ref={root}>
       {menu === 'plus' && (
         <div className="f-card cz-menu" role="menu" style={{ left: 8 }}>
+          <button type="button" role="menuitem" onClick={() => { setMenu(null); file.current?.click() }}><span>▣</span>Attach images…</button>
           <button type="button" role="menuitem" onClick={() => { setText(text + '@'); setMenu(null); ref.current?.focus() }}><span>@</span>Mention a file</button>
         </div>
       )}
@@ -181,18 +207,43 @@ export function Composer(p: ComposerProps) {
         </div>
       )}
 
-      <div className="f-glass cz-box">
+      {!!p.queued?.length && (
+        <div className="cz-queue" aria-label="Queued messages">
+          {p.queued.map((q, i) => (
+            <div key={i} className="cz-queued">
+              <span className="det">Queued</span><span className="ellip" style={{ flex: 1 }}>{q.text || `${q.images.length} image${q.images.length === 1 ? '' : 's'}`}</span>
+              <button type="button" className="f-btn f-btn--plain" aria-label="Take back" title="Take back to edit" onClick={() => p.onUnqueue?.(i)}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="f-glass cz-box"
+        onDragOver={(e) => { if ([...e.dataTransfer.items].some((i) => i.type.startsWith('image/'))) e.preventDefault() }}
+        onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); attach(e.dataTransfer.files) } }}>
+        <input ref={file} type="file" accept="image/*" multiple hidden onChange={(e) => { if (e.target.files) attach(e.target.files); e.target.value = '' }} />
+        {images.length > 0 && (
+          <div className="cz-imgs">
+            {images.map((im, i) => (
+              <div key={i} className="cz-img">
+                <img src={`data:${im.mime};base64,${im.data}`} alt="" />
+                <button type="button" aria-label="Remove image" onClick={() => setImages(images.filter((_, j) => j !== i))}>✕</button>
+              </div>
+            ))}
+            {p.vision === false && <span className="det wrap" style={{ color: 'var(--notice)' }}>This model can't see images; it gets a note that one was attached.</span>}
+          </div>
+        )}
         <label htmlFor="cz" className="sr">Message Frog</label>
         <textarea
           id="cz" ref={ref} rows={working ? 1 : 2} placeholder={placeholder} value={text}
           onChange={(e) => setText(e.target.value)}
+          onPaste={(e) => { const fs = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/')); if (fs.length) { e.preventDefault(); attach(fs) } }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) { e.preventDefault(); send() }
             if (e.key === 'Escape' && working) p.onStop?.()
           }}
         />
         <div className="cz-row">
-          <button type="button" className="cz-ic" onClick={() => setMenu(menu === 'plus' ? null : 'plus')} aria-label="Mention a file" aria-expanded={menu === 'plus'} style={{ width: 28, height: 28, border: '1px solid var(--line)' }}>
+          <button type="button" className="cz-ic" onClick={() => setMenu(menu === 'plus' ? null : 'plus')} aria-label="Attach images or mention a file" aria-expanded={menu === 'plus'} style={{ width: 28, height: 28, border: '1px solid var(--line)' }}>
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           </button>
           <span className="cz-chip" title="Web sessions run in a private Frog Cloud sandbox" style={{ color: 'var(--place-cloud)', cursor: 'default' }}>

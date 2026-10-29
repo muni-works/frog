@@ -78,7 +78,12 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, models = [] }
     <>
       {thread.turns.map((turn) => (
         <div key={turn.turn} className="turn">
-          <div className="me">{turn.input}</div>
+          {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => (
+            <div key={i} className="me">
+              {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
+              {m.text}
+            </div>
+          ))}
           {turn.entries.map((e) => {
             if (e.kind === 'reasoning') return (
               <div key={e.id} className="decided"><b>Decided</b> · {e.text}</div>
