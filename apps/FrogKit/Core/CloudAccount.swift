@@ -52,7 +52,7 @@ final class CloudAccount {
     var signedIn: Bool { Self.key() != nil }
 
     func refresh() async {
-        guard let key = Self.key() else { me = nil; return }
+        guard let key = Self.key() else { me = nil; error = nil; return }
         loading = true
         defer { loading = false }
         do {
