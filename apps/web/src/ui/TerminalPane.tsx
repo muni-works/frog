@@ -68,7 +68,7 @@ export function TerminalPane({ pane, onInput, onResize }: { pane: Pane; onInput:
             ? <>{line.slice(0, s.cursor[1]).padEnd(s.cursor[1])}<span className="cursor">{line[s.cursor[1]] ?? ' '}</span>{line.slice(s.cursor[1] + 1)}</>
             : line || ' '}
         </div>
-      )) : <div className="det">Starting a shell in the sandbox…</div>}
+      )) : <div className="term-line term-wait">Starting a shell<span className="cursor"> </span></div>}
       {pane.closed && <div className="det" style={{ marginTop: 6 }}>Shell exited{pane.exit != null ? ` (${pane.exit})` : ''}.</div>}
     </div>
   )
