@@ -1,7 +1,7 @@
 //! Session titles: a short name for the sidebar, `--sessions` and `Recall`.
 //!
-//! The model names the session with the `SetTitle` tool once, when the work has identified
-//! itself; before that (headless runs, models that never call it) the first input is cleaned
+//! The model names the session with the `SetTitle` tool in its first reply, and again when
+//! the work identifies itself better or changes; before that (headless runs, models that never call it) the first input is cleaned
 //! up as a fallback: leading boilerplate the client prepends is stripped, so
 //! "RULES: ... Continue this branch: fix the login bug" titles as "fix the login bug".
 
@@ -17,12 +17,13 @@ pub const MAX: usize = 80;
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: TOOL.into(),
-        description: "Name this session, so it's recognizable in the session list later. Call it \
-once, as soon as the real work is clear, with the topic of the task. A title is 2-3 words (a \
+        description: "Name this session, so it's recognizable in the session list later. Call it in \
+your first reply, from the first message, with the topic of the task. A title is 2-3 words (a \
 third only if needed), lowercase, no punctuation, no file paths, no wrapping quotes or markdown. \
 It names the work itself, not any instructions, rules or context wrapped around the request — \
-\"fix login timeout\", not \"rules and constraints\". Call it again only when the topic clearly \
-changes. Don't call it just because a turn started or ended."
+\"fix login timeout\", not \"rules and constraints\". Call it again when the real task becomes \
+clearer than the first message said, or the topic clearly changes. Don't call it just because a \
+turn started or ended."
             .into(),
         schema: json!({
             "type": "object",
