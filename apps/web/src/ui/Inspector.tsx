@@ -3,20 +3,19 @@ import type { Op } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
 import { TerminalPane } from './TerminalPane'
 
-export function Inspector({ thread, branch, onCommit, onPr, hasPr, send }: { thread: Thread; branch: string; hasPr: boolean; onCommit: () => void; onPr: () => void; send: (op: Op) => void }) {
-  const [pane, setPane] = useState<'changes' | 'terminal'>('changes')
-  const [log, setLog] = useState(false)
+export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thread; branch?: string; hasPr: boolean; onCommit: () => void; onPr: () => void; send: (op: Op) => void }) {
+  const [pane, setPane] = useState<'changes' | 'terminal' | 'log'>('changes')
   // The newest terminal pane that's still open, else the newest one.
   const terms = Object.values(thread.panes).filter((p) => p.kind === 'terminal')
   const term = [...terms].reverse().find((p) => !p.closed) ?? terms[terms.length - 1]
   const resize = useCallback((cols: number, rows: number) => { if (term && !term.closed) send({ op: 'pane_resize', id: term.id, cols, rows }) }, [term?.id, term?.closed, send]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <section className="insp" aria-label="Inspector">
+    <section className="insp f-glass" aria-label="Inspector">
       <div className="insp-top">
         <div className="seg" role="tablist" style={{ flex: 1 }}>
-          {(['changes', 'terminal'] as const).map((p) => (
+          {(['changes', 'terminal', 'log'] as const).map((p) => (
             <button key={p} type="button" role="tab" aria-selected={pane === p} onClick={() => setPane(p)}>
-              {p[0].toUpperCase() + p.slice(1)}
+              {{ changes: 'Changes', terminal: 'Terminal', log: 'Frog’s log' }[p]}
             </button>
           ))}
         </div>
@@ -43,25 +42,32 @@ export function Inspector({ thread, branch, onCommit, onPr, hasPr, send }: { thr
       )}
       {pane === 'terminal' && (
         <div className="insp-body">
-          <div className="term-bar">
-            <div className="seg" role="tablist" style={{ width: 200 }}>
-              <button type="button" role="tab" aria-selected={!log} onClick={() => setLog(false)}>Shell</button>
-              <button type="button" role="tab" aria-selected={log} onClick={() => setLog(true)}>Frog's commands</button>
+          {term && !term.closed ? (<>
+            <div className="term-head">
+              <span className="term-dot" aria-hidden="true" />
+              <span className="term-title">{term.title || 'bash'}</span>
+              <span className="term-cwd">{term.cwd?.replace(/^\/workspace\/?/, '~/') || '~/'}</span>
+              <span style={{ flex: 1 }} />
+              <button type="button" className="icon-plate" aria-label="Close the shell" title="Close the shell" onClick={() => send({ op: 'pane_close', id: term.id })}>
+                <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
             </div>
-            <span style={{ flex: 1 }} />
-            {!log && term && !term.closed && <button type="button" className="f-btn f-btn--plain" onClick={() => send({ op: 'pane_close', id: term.id })}>Close</button>}
-          </div>
-          {log ? (
-            <pre className="term">{thread.terminal || `sandbox (${branch}) $ `}<span className="cursor"> </span></pre>
-          ) : term && !term.closed ? (
             <TerminalPane pane={term} onInput={(data) => send({ op: 'pane_input', id: term.id, data })} onResize={resize} />
-          ) : (
-            <div className="term" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
-              {term?.closed && <span className="det">Shell exited{term.exit != null ? ` (${term.exit})` : ''}.</span>}
-              <span style={{ color: '#9a9a96' }}>A shell in this session's sandbox, in the repo.</span>
-              <button type="button" className="f-btn f-btn--bordered" onClick={() => send({ op: 'pane_open', kind: 'terminal', cols: 80, rows: 24 })}>Open a terminal</button>
+          </>) : (
+            <div className="term-empty">
+              <svg aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 9l3 3-3 3M12 15h5" /></svg>
+              <b>{term?.closed ? `The shell exited${term.exit != null ? ` (${term.exit})` : ''}` : 'A shell in the sandbox'}</b>
+              <span className="det wrap">Same machine Frog works in, at the repo. Nothing here touches your computer.</span>
+              <button type="button" className="f-btn f-btn--bordered" onClick={() => send({ op: 'pane_open', kind: 'terminal', cols: 80, rows: 24 })}>{term?.closed ? 'Open another' : 'Open a terminal'}</button>
             </div>
           )}
+        </div>
+      )}
+      {pane === 'log' && (
+        <div className="insp-body">
+          {thread.terminal
+            ? <pre className="term">{thread.terminal}</pre>
+            : <div className="term-empty"><b>Nothing run yet</b><span className="det wrap">Commands Frog runs in this session, and what they print, collect here.</span></div>}
         </div>
       )}
 
