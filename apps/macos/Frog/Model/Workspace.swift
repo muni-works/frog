@@ -26,7 +26,7 @@ final class Workspace {
     private(set) var pendingDownload: String?
     /// Parallel attempts in progress, shown instead of the transcript.
     var race: Race?
-    private(set) var raceError: String?
+    var raceError: String?
 
     func startRace(prompt: String, models: [String], check: String?) {
         raceError = nil
@@ -289,6 +289,31 @@ final class Workspace {
 
     func newSession() {
         start(arguments: [])
+    }
+
+    /// A Frog Cloud session on screen: the same transcript and composer, its engine in a
+    /// sandbox through the gateway instead of `frog --serve` here.
+    func openCloud(_ id: String) {
+        guard id != conversation?.sessionID, let gateway = CloudSessions.shared.gateway else { return }
+        let c = Conversation(folder: folder, link: CloudLink(gateway: gateway, session: id), replay: false, session: id)
+        c.cloudSession = id
+        incoming?.stop(reason: "open superseded")
+        incoming = c
+        selection = id
+        show(c)
+    }
+
+    /// "Run in Frog Cloud": a new sandbox on this folder's GitHub repo (none: an empty one),
+    /// opened here with `text` as its first message.
+    func runInCloud(_ text: String) async {
+        let repo = CloudSessions.githubRepo(of: folder)
+        do {
+            guard let s = try await CloudSessions.shared.create(repo: repo) else { return }
+            openCloud(s.id)
+            if !text.isEmpty { conversation?.submit(text) }
+        } catch {
+            raceError = error.localizedDescription
+        }
     }
 
     func open(_ id: String) {

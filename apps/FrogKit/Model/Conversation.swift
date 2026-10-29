@@ -51,6 +51,8 @@ final class Conversation {
     private(set) var status: Status?
     private(set) var turns: [TurnState] = []
     private(set) var busy = true
+    /// The Frog Cloud session this shows, when its engine is a sandbox (`CloudLink`).
+    var cloudSession: String?
     private(set) var progress: EngineProgress?
     /// The current progress update began. The UI uses this only to describe an in-flight
     /// request and animate its current stage; it never changes the engine's completion count.
