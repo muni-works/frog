@@ -386,7 +386,7 @@ export default function App() {
       </aside>
 
       <main className="main">
-        <div className="titlebar">
+        {current ? (<div className="titlebar">
           <Burger />
           <div style={{ flex: 1, minWidth: 0 }}>
             {current && renaming === current.id ? (
@@ -411,7 +411,7 @@ export default function App() {
               )}
             </div>
           )}
-        </div>
+        </div>) : <div className="phone-bar floating"><Burger /><b>Frog</b></div>}
 
         {view.kind === 'session' && current && ct && (<>
           <div className="scroll" ref={(el) => { if (el) el.scrollTop = el.scrollHeight }}><div className="col">
