@@ -506,3 +506,12 @@ body.resizing { cursor: col-resize; user-select: none; }
   mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%); }
 .slist-more { height: 1px; }
 .hover-row.mine { align-self: flex-end; justify-content: flex-end; margin-left: auto; }
+
+/* Type: IBM Plex (Sans for the interface and replies, Mono for code and the terminal),
+ * falling back to the system faces while it loads. */
+:root {
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-display: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+body { font-family: var(--font-sans); }
