@@ -60,6 +60,7 @@ a { color: var(--frog); }
 .diff .add { color: var(--frog); } .diff .remove { color: var(--warn); } .diff .context { color: var(--muted); }
 .diff-acts { display: flex; gap: 8px; justify-content: flex-end; align-items: center; padding: 10px 14px; }
 .banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; background: var(--badge-bg); }
+.banner.warn { background: var(--notice-bg); border: 1px solid var(--notice); }
 .gate { padding: 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow-float); }
 .outs { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .out { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid; border-radius: 12px; }

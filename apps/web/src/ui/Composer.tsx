@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { models } from '../store'
 
 // Port of Composer.dc.html with platform="web": the run-on chip is fixed to Frog Cloud.
 
@@ -8,15 +7,14 @@ export interface ComposerProps {
   repo?: string
   branch?: string
   pr?: string
-  checks?: 'passing' | 'failing' | 'running'
   adds?: number
   dels?: number
   startedAt?: number
   /** The running turn is blocked on a permission ask. */
   waiting?: boolean
   draft?: string
-  model: string
-  onModel: (m: string) => void
+  /** Shown when the gateway reports one; there's no model list to pick from yet. */
+  model?: string
   onSend: (text: string) => void
   onStop?: () => void
   onRepo?: () => void
@@ -24,8 +22,6 @@ export interface ComposerProps {
   autoFocus?: boolean
 }
 
-const checksText = { passing: '✓ checks', failing: '✕ checks', running: '● checks running' }
-const checksColor = { passing: 'var(--frog)', failing: 'var(--warn)', running: 'var(--notice)' }
 
 function useTimer(since?: number) {
   const [now, setNow] = useState(Date.now())
@@ -41,7 +37,7 @@ function useTimer(since?: number) {
 
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
-  const [menu, setMenu] = useState<'plus' | 'model' | null>(null)
+  const [menu, setMenu] = useState<'plus' | null>(null)
   const ref = useRef<HTMLTextAreaElement>(null)
   const working = p.state === 'working', paused = p.state === 'paused'
   const timer = useTimer(working ? p.startedAt : undefined)
@@ -63,20 +59,7 @@ export function Composer(p: ComposerProps) {
     <div className="cz">
       {menu === 'plus' && (
         <div className="f-card cz-menu" role="menu" style={{ left: 8 }}>
-          <button type="button" role="menuitem" onClick={() => setMenu(null)}><span>🖼</span>Attach images…</button>
           <button type="button" role="menuitem" onClick={() => { setText(text + '@'); setMenu(null); ref.current?.focus() }}><span>@</span>Mention a file</button>
-          <button type="button" role="menuitem" onClick={() => setMenu(null)}><span>✦</span>Use a skill</button>
-        </div>
-      )}
-      {menu === 'model' && (
-        <div className="f-card cz-menu" role="menu" aria-label="Model" style={{ left: 150, width: 260 }}>
-          <div className="cz-menu-h">Model on Frog Cloud</div>
-          {models.map((m) => (
-            <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel(m.id); setMenu(null) }}>
-              <span style={{ flex: 1 }}><b style={{ fontWeight: 600 }}>{m.id}</b><br /><span className="det">{m.note}</span></span>
-              <span style={{ color: 'var(--frog)', opacity: m.id === p.model ? 1 : 0 }}>✓</span>
-            </button>
-          ))}
         </div>
       )}
 
@@ -89,7 +72,6 @@ export function Composer(p: ComposerProps) {
             <a href="#" className="cz-plate" onClick={(e) => e.preventDefault()} title={`This session is bound to ${p.pr}. Pushes go there, and checks and reviews show up here.`}>
               <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--frog)" strokeWidth="2.2" strokeLinecap="round"><circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="18" r="2.5" /><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-4" /></svg>
               <span className="num">{p.pr}</span>
-              {p.checks && <span style={{ color: checksColor[p.checks] }}>{checksText[p.checks]}</span>}
             </a>
           )}
           {hasGit && (
@@ -114,16 +96,18 @@ export function Composer(p: ComposerProps) {
           }}
         />
         <div className="cz-row">
-          <button type="button" className="cz-ic" onClick={() => setMenu(menu === 'plus' ? null : 'plus')} aria-label="Attach images, mention a file, or use a skill" aria-expanded={menu === 'plus'} style={{ width: 28, height: 28, border: '1px solid var(--line)' }}>
+          <button type="button" className="cz-ic" onClick={() => setMenu(menu === 'plus' ? null : 'plus')} aria-label="Mention a file" aria-expanded={menu === 'plus'} style={{ width: 28, height: 28, border: '1px solid var(--line)' }}>
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           </button>
           <span className="cz-chip" title="Web sessions run in a private Frog Cloud sandbox" style={{ color: 'var(--place-cloud)', cursor: 'default' }}>
             <span aria-hidden="true">☁</span>Frog Cloud
           </span>
-          <button type="button" className="f-pill f-pill--cloud" aria-label={`Model: ${p.model} on Frog Cloud`} onClick={() => setMenu(menu === 'model' ? null : 'model')}>
-            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z" /></svg>
-            {p.model} <span className="chev">▾</span>
-          </button>
+          {p.model && (
+            <span className="f-pill f-pill--cloud" style={{ cursor: 'default' }} title={`Model: ${p.model} on Frog Cloud`}>
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z" /></svg>
+              {p.model}
+            </span>
+          )}
           {!p.branch && (
             <button type="button" className="cz-chip" onClick={p.onRepo}>
               <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h6l2 2h10v10H3z" /></svg>

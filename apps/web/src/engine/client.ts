@@ -1,8 +1,8 @@
-import type { Envelope, Op } from './protocol'
+import type { Envelope, Op } from '../cloud/protocol'
 
 /**
- * The one seam between the UI and an engine. Today it's `MockEngine`; later it's a
- * websocket to the session's Frog Cloud sandbox speaking the same JSONL protocol.
+ * The one seam between the UI and an engine: today a Frog Cloud sandbox through the
+ * gateway (`CloudEngine`). Anything that streams protocol envelopes can stand in.
  */
 export interface EngineClient {
   /** Deliver every envelope for `session` with `seq > after`, then live ones. Returns unsubscribe. */

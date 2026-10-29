@@ -34,23 +34,11 @@ export function Inspector({ thread, branch, onCommit, onPr, hasPr }: { thread: T
         </div>
       )}
       {pane === 'terminal' && (
-        <pre className="term">{thread.terminal.replace(/~\/ledger \$/g, `~/ledger (${branch}) $`) || `sandbox ~/ledger (${branch}) $ `}<span className="cursor"> </span></pre>
+        <pre className="term">{thread.terminal || `sandbox (${branch}) $ `}<span className="cursor"> </span></pre>
       )}
       {pane === 'preview' && (
-        <div className="insp-body">
-          <div style={{ display: 'flex', gap: 6, padding: 8, borderBottom: '1px solid var(--line)', alignItems: 'center' }}>
-            <span className="det">‹ ↻</span>
-            <input className="f-field" defaultValue="sandbox · :5173/login" aria-label="URL or port" style={{ flex: 1 }} />
-          </div>
-          <div style={{ flex: 1, background: 'var(--well)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div className="cardx" style={{ width: 210, padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <b>ledger</b>
-              <input className="f-field" placeholder="Email" aria-label="Email" />
-              <input className="f-field" placeholder="Password" type="password" aria-label="Password" />
-              <button type="button" className="f-btn f-btn--prominent" style={{ justifyContent: 'center' }}>Log in</button>
-            </div>
-          </div>
-          <div className="det" style={{ padding: '8px 12px', borderTop: '1px solid var(--line)' }}>Inspect: click an element to mention it</div>
+        <div className="insp-body" style={{ alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div className="det wrap" style={{ textAlign: 'center' }}>When Frog starts a dev server in the sandbox, its page shows up here.</div>
         </div>
       )}
     </section>

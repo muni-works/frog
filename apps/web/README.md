@@ -1,65 +1,74 @@
 # Frog web (frog.toys)
 
-A clickable prototype of the Frog web app. It's front-end only. Every session pretends to run in a private Frog Cloud sandbox, and there's no backend or auth yet. Design source: `docs/design/frog-web/` (`Workspace.dc.html` with `platform="web"`, `Composer.dc.html`, `PromoCard.dc.html`). `src/tokens.css` and `src/components.css` are copied unchanged from `ds/frog/`.
+The Frog web app. Every session runs in a private Frog Cloud sandbox, reached through the Frog Cloud gateway (`docs/plans/2026-10-28-frog-cloud-wire-contract.md`). There's no fake data: sessions, transcripts and the account all come from the gateway and the accounts edge. Design source: `docs/design/frog-web/` (`Workspace.dc.html` with `platform="web"`, `Composer.dc.html`, `PromoCard.dc.html`). `src/tokens.css` and `src/components.css` are copied unchanged from `ds/frog/`.
+
+## Run it locally
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
-npm run build
+npm run mock                    # mock gateway on :8788; any bearer key is an account
+VITE_DEV_KEY=dev npm run dev    # Vite proxies /v1 (HTTP and websockets) to $GATEWAY, default the mock
+npm run check && npm test && npm run build
 ```
 
-## What works
+`VITE_DEV_KEY` (dev builds only) skips sign-in and uses that key with the gateway. Without it you get the real sign-in, which needs the edge to allow your origin (below).
 
-- **Signed out** (`/`): "Try one" starters, the Mac card, a sign-up card and the composer. Sending a message, or clicking a starter, shows the sign-up gate. The fake "Sign in with GitHub" lands you in a new session that is already running your message.
-- **Signed in**: the sidebar (New session, Search, Repos, Routines, Skills), Needs you with inline Allow and Deny, and sessions grouped by repo with status symbols. The thread has tool lines, "Decided" steps, streamed replies and diff cards with Allow ⌘↩ / Deny ⌘.. The composer has a run-on chip fixed to Frog Cloud, a model pill and the context bar (repo, branch, bound PR with checks, changes with Commit or Push). The inspector has Changes, Terminal and Preview tabs.
-- **Connect a repo** picker, the **out-of-credits** card (in "Move dates to Temporal"), the **⌘K** palette and **Settings** (⌘,) with Account, Plan, Models, Permissions and MCP tabs.
+| Variable | Default | What |
+|---|---|---|
+| `VITE_API` | `https://api.frog.toys` | Accounts edge: sign-in, `/v1/auth/exchange`, `/v1/me` |
+| `VITE_GATEWAY` | the page's origin | Frog Cloud gateway (`/v1/sessions`, websockets) |
+| `GATEWAY` | `http://127.0.0.1:8788` | Where Vite's dev proxy sends `/v1` |
+| `VITE_DEV_KEY` | unset | Dev only: skip sign-in |
 
-To jump straight to a screen, add `?demo=` with `gate`, `workspace`, `credits`, `repos`, `palette` or `settings`. Add `?theme=light` or `?theme=dark` to pin the theme. These are for review and screenshots.
+## Sign-in
 
-The sign-up gate is one branch in `App.tsx` (`if (!signedIn)`), with `gate` holding the message the user sent. A guest allowance would replace that branch.
+GitHub on api.frog.toys, ending in a `frog_` key for this browser (`src/auth.ts`):
 
-## How the mock maps to the engine protocol
+1. `signIn()` makes a PKCE verifier, an S256 challenge and a state, keeps them in sessionStorage, and goes to `api.frog.toys/auth/web?challenge&state&device&return` (ecto/zest#77). The edge runs GitHub if you're signed out, then 302s back with `?code&state`.
+2. `finishSignIn()` checks the state and calls `POST /v1/auth/exchange {code, verifier, device_name}`, which returns `{key, account}`. The key goes in localStorage and is the bearer for the gateway and `/v1/me`.
+3. The device is `frog.toys web · xxxx`, one per browser, so it can be revoked on its own from api.frog.toys/account. Signing in again on the same browser replaces it.
 
-The UI talks to an engine only through `EngineClient` (`src/engine/client.ts`):
+If you typed a message before signing up, it survives the GitHub round trip, and the repo picker opens with it once you're back. The edge only redirects to origins in its `WEB_APP_ORIGINS` var. To sign in from localhost, add `http://localhost:5173` there.
+
+## How it maps to the engine protocol
+
+The UI talks to an engine only through `EngineClient` (`src/engine/client.ts`). `CloudEngine` (`src/engine/cloud.ts`) implements it over the gateway client in `src/cloud/client.ts`: one websocket per session, the §2 handshake, and reconnects with `resume_after`.
 
 ```ts
 interface EngineClient {
-  subscribe(session, after, onEnvelope): () => void   // Op::Subscribe { after }, then live events
+  subscribe(session, after, onEnvelope): () => void   // connect, replay seq > after, then live
   send(session, op: Op): void                         // Op::Submit / Permission / Interrupt
 }
 ```
 
-`src/engine/protocol.ts` is a TypeScript slice of `crates/frog-engine/src/protocol.rs`. It uses the same serde tags (`op`, `event`, `type`) and snake_case names, so real JSONL parses into it unchanged:
+`src/engine/thread.ts` folds envelopes into a `Thread` with a pure `reduce(thread, envelope)`, so replay and live use one path:
 
 | Protocol (Rust) | Used by the web app for |
 |---|---|
-| `Envelope { seq, session, created, ..event }` | Every event. `seq` starts at 1 and only grows; the reducer drops anything `<= lastSeq`, so replays that overlap live events are safe. |
+| `Envelope { seq, session, created, ..event }` | Every event. Anything `<= lastSeq` is dropped, so replays that overlap live events are safe. |
 | `TurnStarted { turn, input }` | The user's bubble, and the composer's timer (from `created`). |
-| `ItemStarted { id, kind }` | A new entry: `message`, `reasoning` (drawn as a "Decided" step) or `tool_call { name, arg }`. |
+| `ItemStarted { id, kind }` | A new entry: `message`, `reasoning` (drawn as a "Decided" step) or `tool_call { name, arg }`. Item ids are scoped to their turn. |
 | `ItemDelta { id, delta }` | `text` streams the reply. `output` streams a running tool and feeds the Terminal tab. |
-| `ItemCompleted { id, item }` | Finishes the entry. A `tool_call` with a `diff` (`FileDiff`) becomes a diff card and adds to the Changes tab. |
-| `PermissionRequest { id, item, name, arg, preview }` | The diff card's Allow and Deny, and the Needs you card in the sidebar. Answered with `Op::Permission { id, decision }`. |
+| `ItemCompleted { id, item }` | Finishes the entry. A `tool_call` with a `diff` becomes a diff card and adds to the Changes tab. |
+| `PermissionRequest { id, item, name, arg, preview, reason }` | A diff card (edits) or a command card, with Allow ⌘↩ / Deny ⌘., and the Needs you card in the sidebar. Answered with `Op::Permission`. |
 | `PermissionResolved` | Clears the ask. |
-| `TurnEnded { reason }` | Stops the turn. `error { error: { type: "out_of_credits" } }` shows the out-of-credits card. That error type is a placeholder until the gateway defines one. |
+| `Titled { title }` | The session's name in the sidebar and title bar. |
+| `TurnEnded { reason }` | Stops the turn. An `error` mentioning `insufficient_credit` (the edge's 402) shows the out-of-credits card. |
 
-`src/engine/thread.ts` folds envelopes into a `Thread` with a pure `reduce(thread, envelope)`. Replay and live streaming use the same code path.
-
-`src/engine/mock.ts` (`MockEngine`) keeps a log of envelopes for each session, replays it on `subscribe`, and plays scripted turns with delays. A script step can wait for `Op::Permission` before it goes on. Seeded sessions are made by running the same scripts with no delays, so the history comes through the protocol too.
-
-### Swapping in Frog Cloud
-
-Write a `CloudEngine implements EngineClient` that opens a websocket to the session's sandbox (via the gateway), sends `Op` JSON, and calls `onEnvelope` for each JSONL line. Then change one line in `src/store.ts` (`export const engine: EngineClient = …`). Session metadata (title, repo, branch, bound PR, checks) is in-memory in `store.ts` today. It belongs to the account API, not the engine stream.
+Sessions come from `GET /v1/sessions` (refreshed every 15 s), new ones from `POST /v1/sessions {repo}`. The app streams the open session and any whose sandbox is `running` or `starting`. It doesn't attach to `sleeping` ones, because attaching would wake them. Commit, Push and Open PR are messages to the agent, so they show up in the conversation like any other step.
 
 ## Not here yet
 
-Real auth, the account and session list API, billing, email sign-up, routines, skills, image attachments, and the Preview tab showing a real sandbox port.
+Each of these needs an API that doesn't exist yet, so the UI leaves it out instead of faking it:
+
+- A list of the repos the GitHub App can see. The picker takes `owner/name` or a URL.
+- PR checks. The PR number shows when the session summary has one.
+- A model list and model switching.
+- Permission modes, MCP servers, routines and skills.
+- The Preview tab. It needs a sandbox port.
+- Email sign-in.
+- Asks after a reconnect. `PermissionRequest` isn't durable, so a client that attaches mid-ask (after a reload, or on another device) doesn't see the open ask. The engine or gateway needs to re-send outstanding asks after replay.
 
 ## Frog Cloud transport
 
-`src/cloud/` talks to the Frog Cloud gateway (`docs/plans/2026-10-28-frog-cloud-wire-contract.md`): `client.ts` does the §2 handshake (refused, reconnect with `resume_after`) and the §4 routes, `protocol.ts` mirrors `crates/frog-engine/src/protocol.rs`, and `transcript.ts` folds envelopes into a transcript. `test/` runs it against the zest mock gateway, vendored in `test/mock/`.
-
-```bash
-npm run mock   # mock gateway on :8788; any key is an account
-npm run dev    # Vite proxies /v1 (and its websockets) to $GATEWAY, default the mock
-npm test
-```
+`src/cloud/` talks to the gateway: `client.ts` does the §2 handshake (refused, reconnect with `resume_after`) and the §4 routes, `protocol.ts` mirrors `crates/frog-engine/src/protocol.rs`, and `transcript.ts` is a standalone fold its tests use. `test/` runs them against the zest mock gateway, vendored in `test/mock/`.

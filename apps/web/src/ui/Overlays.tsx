@@ -1,30 +1,27 @@
 import { useEffect, useMemo, useState } from 'react'
-import { models, repos, type Session } from '../store'
+import { API, type Account } from '../auth'
+import type { SessionSummary } from '../cloud/protocol'
+import { parseRepo } from '../store'
 
-export function RepoPicker({ onPick }: { onPick: (repo: string) => void }) {
+/** No repo listing API yet, so this takes owner/name or a GitHub URL, plus the account's recent repos. */
+export function RepoPicker({ recent, onPick, busy }: { recent: string[]; onPick: (repo: string) => void; busy?: boolean }) {
   const [q, setQ] = useState('')
-  const [hi, setHi] = useState(0)
-  const list = repos.filter((r) => r.name.includes(q.toLowerCase()))
-  const url = q.match(/github\.com\/([\w.-]+\/[\w.-]+)/)?.[1]
+  const repo = parseRepo(q)
+  const list = recent.filter((r) => r.includes(q.trim().toLowerCase()))
   return (
     <div className="cardx picker">
-      <div style={{ padding: '10px 12px' }}>
-        <input className="f-field" autoFocus value={q} placeholder="Search your repos, or paste a GitHub URL" aria-label="Search repos" style={{ fontSize: 14, padding: '8px 10px' }}
-          onChange={(e) => { setQ(e.target.value); setHi(0) }}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') setHi(Math.min(hi + 1, list.length - 1))
-            if (e.key === 'ArrowUp') setHi(Math.max(hi - 1, 0))
-            if (e.key === 'Enter') { if (url) onPick(url); else if (list[hi]) onPick(list[hi].name) }
-          }} />
-      </div>
-      {url && <button type="button" className="row pick" onClick={() => onPick(url)}><span className="det">↗</span><span style={{ flex: 1 }}><b>{url}</b> <span className="det">from GitHub</span></span></button>}
-      {list.map((r, i) => (
-        <button key={r.name} type="button" className={`row pick ${i === hi ? 'on' : ''}`} onMouseEnter={() => setHi(i)} onClick={() => onPick(r.name)}>
-          <span className="det">▤</span><span style={{ flex: 1 }}><b style={{ fontWeight: 600 }}>{r.name}</b> <span className="det">{r.meta}</span></span><span className="det">{r.when}</span>
+      <form style={{ padding: '10px 12px', display: 'flex', gap: 8 }} onSubmit={(e) => { e.preventDefault(); if (repo) onPick(repo) }}>
+        <input className="f-field" autoFocus value={q} placeholder="owner/name, or paste a GitHub URL" aria-label="Repo" style={{ fontSize: 14, padding: '8px 10px' }}
+          onChange={(e) => setQ(e.target.value)} />
+        <button type="submit" className="f-btn f-btn--prominent" disabled={!repo || busy}>{busy ? 'Starting…' : 'Start'}</button>
+      </form>
+      {list.map((r) => (
+        <button key={r} type="button" className="row pick" disabled={busy} onClick={() => onPick(r)}>
+          <span className="det">▤</span><span style={{ flex: 1 }}><b style={{ fontWeight: 600 }}>{r}</b></span><span className="det">used before</span>
         </button>
       ))}
-      <div className="row pick" style={{ justifyContent: 'space-between', color: 'var(--muted)', cursor: 'default' }}>
-        <span>Don't see it? <a href="#" onClick={(e) => e.preventDefault()}>Give Frog access to more repos</a></span><span>Public repos work without access</span>
+      <div className="row pick" style={{ color: 'var(--muted)', cursor: 'default' }}>
+        <span>Private repos need the Frog GitHub App on that repo. Public repos work without it.</span>
       </div>
     </div>
   )
@@ -32,7 +29,7 @@ export function RepoPicker({ onPick }: { onPick: (repo: string) => void }) {
 
 export interface Command { id: string; label: string; hint?: string; run: () => void }
 
-export function Palette({ commands, sessions, onOpen, onClose }: { commands: Command[]; sessions: Session[]; onOpen: (id: string) => void; onClose: () => void }) {
+export function Palette({ commands, sessions, onOpen, onClose }: { commands: Command[]; sessions: SessionSummary[]; onOpen: (id: string) => void; onClose: () => void }) {
   const [q, setQ] = useState('')
   const [hi, setHi] = useState(0)
   const items = useMemo(() => {
@@ -64,12 +61,15 @@ export function Palette({ commands, sessions, onOpen, onClose }: { commands: Com
   )
 }
 
-const tabs = ['Account', 'Plan', 'Models', 'Permissions', 'MCP'] as const
+export function tasksLine(a: Account | null) {
+  if (!a) return ''
+  return `${a.tasks_left} ${a.tasks_left === 1 ? 'task' : 'tasks'} left`
+}
 
-export function Settings({ credits, model, onModel, onAddCredit, onSignOut, onClose }: { credits: number; model: string; onModel: (m: string) => void; onAddCredit: () => void; onSignOut: () => void; onClose: () => void }) {
+const tabs = ['Account', 'Plan'] as const
+
+export function Settings({ account, onSignOut, onClose }: { account: Account | null; onSignOut: () => void; onClose: () => void }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>('Account')
-  const [mode, setMode] = useState('ask')
-  const [mcp, setMcp] = useState([{ name: 'GitHub', on: true, note: 'Issues, PRs and checks' }, { name: 'Linear', on: false, note: 'Not connected' }, { name: 'Sentry', on: false, note: 'Not connected' }])
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', k)
@@ -86,42 +86,21 @@ export function Settings({ credits, model, onModel, onAddCredit, onSignOut, onCl
           <button type="button" className="f-btn f-btn--plain set-x" aria-label="Close" onClick={onClose}>✕</button>
           {tab === 'Account' && (<>
             <h2>Account</h2>
-            <div className="f-account"><span className="mark" style={{ width: 28, height: 28 }} /><div className="grow"><div className="name"><b>Pip</b><span className="f-badge">GitHub</span></div><div className="detail">samr · sam@example.com</div></div><div className="acts"><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onSignOut}>Sign out</button></div></div>
+            <div className="f-account">
+              <span className="mark" style={{ width: 28, height: 28 }} />
+              <div className="grow"><div className="name"><b>{account?.handle ?? account?.email ?? 'Signed in'}</b>{account?.handle && <span className="f-badge">GitHub</span>}</div><div className="detail">{account?.email ?? ''}</div></div>
+              <div className="acts"><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onSignOut}>Sign out</button></div>
+            </div>
             <p className="det wrap">Cloud sessions belong to your account, so they show up on every device you sign in on.</p>
-            <h3>GitHub access</h3>
-            <div className="set-row"><span style={{ flex: 1 }}>ecto · 4 repos</span><a href="#" onClick={(e) => e.preventDefault()}>Change access</a></div>
+            <div className="set-row"><span style={{ flex: 1 }}>Devices and keys</span><a href={`${API}/account`} target="_blank" rel="noreferrer">Manage</a></div>
           </>)}
           {tab === 'Plan' && (<>
             <h2>Plan</h2>
-            <div className="set-row"><div style={{ flex: 1 }}><b>Pay as you go</b><div className="det">{`$${credits.toFixed(2)} of Frog Cloud credit left`}</div></div><button type="button" className="f-btn f-btn--bordered" onClick={onAddCredit}>Add $10</button></div>
-            <div className="set-row"><div style={{ flex: 1 }}><b>Pro</b><div className="det wrap">Cloud usage included every month, plus routines while you sleep.</div></div><button type="button" className="f-btn f-btn--prominent">See plans</button></div>
+            <div className="set-row">
+              <div style={{ flex: 1 }}><b style={{ textTransform: 'capitalize' }}>{account?.plan ?? '…'}</b><div className="det">{tasksLine(account)}{account?.resets_at ? ` · resets ${new Date(account.resets_at).toLocaleDateString()}` : ''}</div></div>
+              <a className="f-btn f-btn--bordered" href={`${API}/billing`} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Billing</a>
+            </div>
             <p className="det wrap">Frog for Mac is free with local models. Credits only pay for Frog Cloud.</p>
-          </>)}
-          {tab === 'Models' && (<>
-            <h2>Models</h2>
-            {models.map((m) => (
-              <label key={m.id} className="set-row"><input type="radio" name="model" checked={m.id === model} onChange={() => onModel(m.id)} /><div style={{ flex: 1 }}><b>{m.id}</b><div className="det">{m.note}</div></div></label>
-            ))}
-            <h3>Your own key</h3>
-            <div className="set-row"><span className="det" style={{ flex: 1 }}>Use your own provider key in the sandbox. Not billed as credit.</span><button type="button" className="f-btn f-btn--bordered f-btn--small">Add a key</button></div>
-          </>)}
-          {tab === 'Permissions' && (<>
-            <h2>Permissions</h2>
-            <p className="det wrap">What Frog may do in your sandbox without asking. Nothing is pushed until you say so.</p>
-            {[['ask', 'Ask before edits and commands', 'The default'], ['edits', 'Allow edits, ask before commands', 'Good for small fixes'], ['auto', 'Allow everything in the sandbox', 'Still asks before anything leaves it']].map(([id, t, d]) => (
-              <label key={id} className="set-row"><input type="radio" name="mode" checked={mode === id} onChange={() => setMode(id)} /><div style={{ flex: 1 }}><b>{t}</b><div className="det">{d}</div></div></label>
-            ))}
-            <h3>Always allowed</h3>
-            <div className="set-row"><code style={{ flex: 1 }}>npm test</code><button type="button" className="f-btn f-btn--plain">Remove</button></div>
-          </>)}
-          {tab === 'MCP' && (<>
-            <h2>MCP servers</h2>
-            <p className="det wrap">Tools your cloud sessions can use.</p>
-            {mcp.map((s, i) => (
-              <label key={s.name} className="set-row"><div style={{ flex: 1 }}><b>{s.name}</b><div className="det">{s.on ? s.note : 'Not connected'}</div></div>
-                <input type="checkbox" role="switch" checked={s.on} onChange={() => setMcp(mcp.map((x, j) => (j === i ? { ...x, on: !x.on, note: x.on ? x.note : 'Connected' } : x)))} /></label>
-            ))}
-            <button type="button" className="f-btn f-btn--bordered" style={{ alignSelf: 'flex-start' }}>Add a server</button>
           </>)}
         </div>
       </div>

@@ -1,4 +1,4 @@
-import type { EndReason, Envelope, Event, FileDiff, ToolOutcome } from './protocol'
+import type { EndReason, Envelope, Event, FileDiff, ToolOutcome } from '../cloud/protocol'
 
 // Folds a session's envelopes into what the transcript draws. Pure, so replay and
 // live streaming share one path: `reduce(thread, envelope)` for every envelope in order.
@@ -16,7 +16,7 @@ export interface Entry {
   done: boolean
 }
 
-export interface Ask { id: string; item: string; name: string; arg: string; preview?: FileDiff }
+export interface Ask { id: string; item: string; name: string; arg: string; preview?: FileDiff; reason?: string }
 
 export interface Thread {
   lastSeq: number
@@ -28,12 +28,17 @@ export interface Thread {
   terminal: string
   /** When the running turn started (envelope `created`), for the composer's timer. */
   startedAt: number
+  /** From `titled`, when the engine names the session. */
+  title: string | null
 }
 
-export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0 }
+export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null }
 
+/** Item ids are only unique within a turn, so updates go to the latest turn. */
 function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
-  return { ...t, turns: t.turns.map((u) => ({ ...u, entries: u.entries.map((e) => (e.id === id ? f(e) : e)) })) }
+  const last = t.turns[t.turns.length - 1]
+  if (!last) return t
+  return { ...t, turns: [...t.turns.slice(0, -1), { ...last, entries: last.entries.map((e) => (e.id === id ? f(e) : e)) }] }
 }
 
 function apply(t: Thread, ev: Event, created: number): Thread {
@@ -49,11 +54,12 @@ function apply(t: Thread, ev: Event, created: number): Thread {
         : { id: ev.id, kind: k.type, text: '', output: '', done: false }
       const last = t.turns[t.turns.length - 1]
       if (!last) return t
-      const terminal = k.type === 'tool_call' && k.name === 'Bash' ? t.terminal + `sandbox ~/ledger $ ${k.arg}\n` : t.terminal
+      const terminal = k.type === 'tool_call' && k.name === 'Bash' ? t.terminal + `$ ${k.arg}\n` : t.terminal
       return { ...t, terminal, turns: [...t.turns.slice(0, -1), { ...last, entries: [...last.entries, entry] }] }
     }
     case 'item_delta': {
       const d = ev.delta
+      if (d.type === 'image_preview') return t
       const next = patch(t, ev.id, (e) => (d.type === 'output' ? { ...e, output: e.output + d.text } : { ...e, text: e.text + d.text }))
       return d.type === 'output' ? { ...next, terminal: next.terminal + d.text } : next
     }
@@ -69,7 +75,9 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       return next
     }
     case 'permission_request':
-      return { ...t, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, preview: ev.preview } }
+      return { ...t, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, preview: ev.preview, reason: ev.reason } }
+    case 'titled':
+      return { ...t, title: ev.title }
     case 'permission_resolved':
       return { ...t, ask: null }
     default:

@@ -1,4 +1,4 @@
-import type { FileDiff } from '../engine/protocol'
+import type { FileDiff } from '../cloud/protocol'
 import type { Ask, Entry, Thread } from '../engine/thread'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
@@ -34,6 +34,7 @@ function ToolLine({ e }: { e: Entry }) {
 }
 
 export function Transcript({ thread, onDecide }: { thread: Thread; onDecide: (allow: boolean) => void }) {
+  const lastTurn = thread.turns[thread.turns.length - 1]?.turn
   return (
     <>
       {thread.turns.map((turn) => (
@@ -44,10 +45,23 @@ export function Transcript({ thread, onDecide }: { thread: Thread; onDecide: (al
               <div key={e.id} className="decided"><b>Decided</b> · {e.text}</div>
             )
             if (e.kind === 'message') return <div key={e.id} className="say">{e.text}{!e.done && <span className="caret" />}</div>
-            const diff = e.diff ?? (thread.ask?.item === e.id ? thread.ask.preview : undefined)
+            const asking = turn.turn === lastTurn && thread.ask?.item === e.id ? thread.ask : null
+            const diff = e.diff ?? asking?.preview
             if (diff && e.outcome !== 'denied') return (
-              <DiffCard key={e.id} diff={diff} ask={thread.ask?.item === e.id ? thread.ask : null} onDecide={onDecide}
+              <DiffCard key={e.id} diff={diff} ask={asking} onDecide={onDecide}
                 note="Runs in your cloud sandbox. Nothing is pushed until you say so." />
+            )
+            const ask = asking
+            if (ask) return (
+              <div key={e.id} className="cardx">
+                <div style={{ padding: '10px 14px 6px' }}><b>Can I {ask.name.toLowerCase()} this?</b>{ask.reason && <div className="det wrap">{ask.reason}</div>}</div>
+                <div className="diff">{ask.arg}</div>
+                <div className="diff-acts">
+                  <span style={{ flex: 1 }} className="det">Runs in your cloud sandbox.</span>
+                  <button type="button" className="f-btn f-btn--bordered" onClick={() => onDecide(false)}>Deny ⌘.</button>
+                  <button type="button" className="f-btn f-btn--prominent" onClick={() => onDecide(true)}>Allow ⌘↩</button>
+                </div>
+              </div>
             )
             return <ToolLine key={e.id} e={e} />
           })}
