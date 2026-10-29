@@ -21,14 +21,48 @@ Each `*.dc.html` file is one board. `canvas.json` holds the layout. `ds/frog/` h
 
 ## The web app as built (supersedes the boards where they differ)
 
-The boards are the starting point. The shipped web app (`apps/web`) has moved on:
+The boards are the starting point. The shipped web app (`apps/web`, live at frog.toys) has moved on. This section is the source of truth.
 
-- **No borders.** Nothing is outlined: not the sidebar, title bar, inspector, composer, message bubbles, cards, chips, menus, buttons, fields or code blocks. Surfaces separate by fill (`--bg`, `--card`, `--well`, `--hover`) and, for floating menus, a soft shadow. Something that used to be outlined sits on a fill instead: chips and bordered buttons on `--hover`, fields and code on `--well`, cards on `--card`. Focus shows as a soft frog-green glow (`--frog-pad`), not an outline. Two exceptions: the thin left rails that nest content (quotes, tool output, reasoning), and status glyphs drawn as strokes (spinners, rings).
-- **Sidebar:** New session and Search (⌘K), then sessions under days (Today, Yesterday, Previous 7 days, Previous 30 days, Older). Rows are two lines: the title flush left, with the PR and status ("Running", "Needs you", "Failed", "Paused") or a dot for a turn that ended since you looked on the right, then what it's doing, its last reply, or its repo, turns and model. Compact (view options) makes them one line. Rows carry no timestamps; view options also group (date, repo, none), sort (activity, created, name) and show archived. "Sleeping" is never shown: it's every idle cloud session. Sandboxes that never started fold into "N couldn't start" with Clear. There is no "Needs you" section and no Repos, Routines or Skills.
-- **Signed out:** no sidebar. The landing is the new-session page (the pond, three benefit cards, trust lines) with the full composer. Send signs in with GitHub and starts the conversation on return; with nothing typed, the send button reads "Sign in".
-- **Composer:** the same component signed in and out. Suggestion chips float on one line above it: cold starts signed out, repo tasks signed in, and the model's `Next` suggestion in a session.
-- **Loading** is the conversation's shape shimmering, with no caption.
+### Look
+
+- **True black.** Dark (the default) is `#000`, like the iPhone app. Surfaces step up from it, never down: sidebar and inspector glass `#0a0a0a`, cards, bubbles and the composer `--card` `#121212`, code and fields `--well` `#1a1a1a`, hover a 7% white wash. Light mode keeps the tokens' values.
+- **No borders.** Nothing is outlined: not the sidebar, title bar, inspector, composer, bubbles, cards, chips, menus, buttons, fields or code blocks. Surfaces separate by fill and, for floating menus, a deep soft shadow with no ring. What used to be outlined sits on a fill: chips and bordered buttons on `--hover`, fields and code on `--well`, cards on `--card`. Focus is a soft frog-green glow (`--frog-pad`). The only lines are the thin rails that nest content (quotes, tool output) and status glyphs drawn as strokes (spinners, rings).
+- **Type: IBM Plex.** Plex Sans for the interface and replies, Plex Mono for code, diffs, tool arguments and the terminal (Google Fonts, `display=swap`, system faces as fallback).
+- **Colour carries meaning, sparingly.** Frog green for live, added and primary; orange (`--notice`) for needs-you and nearing a limit; red (`--warn`) for failed, removed and over a limit; amber only for the pond's fireflies.
+- **Motion is quiet and optional.** Spinners, a shimmer on "thinking", breathing dots and the pond all stop under `prefers-reduced-motion`.
+- **Scrollbars** are thin with no track: a soft rounded thumb that firms on hover.
+
+### Layout
+
+- **Sidebar:** the wordmark with view options and the collapse toggle (⌘\), then New session and Search (⌘K, the palette), then the session list. Only the list scrolls, fading at its edges and drawing rows lazily (60 at a time); the header and the account footer (avatar, name, credit) stay put. Sessions sit under days; a row is the title flush left, PR and status ("Running", "Needs you", "Failed", "Paused") or a dot for a turn that ended since you looked on the right, then a second line: what it's doing, its last reply, or its repo, turns and model. No timestamps and never "Sleeping". Compact makes rows one line, and only the open session expands while working. View options group (date, repo, none), sort (activity, created, name), show archived. Right-click: Rename, Archive, Delete. Sandboxes that never started fold into "N couldn't start · Clear".
+- **Title bar:** just the title, with a chevron menu beside it (Rename, Archive, Delete) and the inspector toggle on the right. No repo line, no "In Frog Cloud".
+- **Inspector:** the sidebar's glass, resizable from its left edge (a bar shows on hover; double-click resets), reopening as you left it. Changes lists files (name, folder, new, +/−) that open to hunks with line numbers and tinted rows; Commit and Open PR show only with changes. Terminal is part of the panel: a quiet header (live dot, shell, cwd, close), the prompt's folder green, a frog-green block cursor.
+- **URLs:** `/` is the new-session page; each conversation is `/s/<id>`, so refresh and back return to it.
+
+### Conversation
+
+- **Your message** sits in a bubble on the right. Under it, right-aligned and faint: a clock while sending, one tick on the wire with what it's waiting for ("Sent · waking the sandbox · 4s"), gone once Frog starts. Hover shows ✓✓, when you sent it ("3 minutes ago"), copy and edit. After 45 s with no start: "Frog didn't pick this up · Try again".
+- **Frog's reply** is plain Markdown on the page. Its row (copy and retry first, then model, cost, tok/s and time) shows only on hover.
+- **Tool calls** read as what they did: an icon per tool, a verb ("Ran", "Read", "Edited", "Searched the web for"; "Running…" with a spinner while live), then the argument in quiet mono. A failed or denied tag on those outcomes; a chevron on hover opens the output.
+- **"Thinking"** is a shimmering line with a breathing green dot, never monospace.
+- **Stopping short is never silent:** a length limit, a loop or a denied step says why under the turn, with Continue. Compaction leaves a quiet rule ("Compacted · 82k → 9k tokens").
+- **Starting a sandbox** is three steps (reserving, booting/cloning, Frog starting) with a timer. **Loading** a conversation is its shape shimmering, no caption.
+
+### Composer
+
+- One component, signed in and out, laid out like Claude's: a single line (+, the text, send) that grows as you write; below it, mode and repo on the left, the model and a ring on the right. Suggestion chips float on one line above it (cold starts signed out, repo tasks signed in, the model's `Next` in a session). Signed out with nothing typed, send reads "Sign in".
+- **The ring** fills to whichever is fuller, plan or context, and turns red past the plan. Its popover, as in Claude: plan usage (session and weekly limits with resets), usage credits, context, Compact now. `/compact [focus]` works too.
+- **Models:** only those with room for agent work (64k+ context) are offered; each shows its price per M tokens and window.
+
+### Billing
+
+- **Two tiers.** A plan (Pro $20, Max 5x $100, Max 20x $200) includes an allowance every 5 hours and every week; past it, turns pay from credit at the model's per-token prices. No plan means usage pricing only. Settings → Billing shows the plan's bars or the plans to pick, then credit with Add credit ($5–$100, Stripe Checkout).
 - **Pricing** is per token in dollars; nothing says "tasks". Speed is tokens per second.
+
+### Signed out
+
+- No sidebar. The landing is the new-session page: the night pond (ripples, lily pads, amber fireflies; click to drop), the frog, a beta pill, three benefit cards, trust lines and the full composer, with the Muni squiggle (orange on hover, muni.works) at the foot. Send signs in with GitHub and starts the conversation on return.
+- **Link previews:** `og.png` and a looping `og.mp4` of the same pond (`docs/design/frog-web/og.py`).
 
 ## Board index
 
