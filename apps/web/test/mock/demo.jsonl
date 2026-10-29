@@ -1,0 +1,13 @@
+{"event":"turn_started","turn":1,"input":"(recorded)"}
+{"event":"item_started","id":"i1","kind":{"type":"reasoning"}}
+{"event":"item_delta","id":"i1","delta":{"type":"reasoning","text":"Looking at package.json."}}
+{"event":"item_completed","id":"i1","item":{"type":"reasoning","text":"Looking at package.json."}}
+{"event":"item_started","id":"i2","kind":{"type":"tool_call","name":"Bash","arg":"npm install"}}
+{"event":"permission_request","id":"p1","item":"i2","name":"Bash","arg":"npm install","always":"Bash(npm install)"}
+{"event":"item_delta","id":"i2","delta":{"type":"output","text":"added 1 package"}}
+{"event":"item_completed","id":"i2","item":{"type":"tool_call","name":"Bash","arg":"npm install","input":{"command":"npm install"},"outcome":"ok","output":"added 1 package","display":null}}
+{"event":"item_started","id":"i3","kind":{"type":"message"}}
+{"event":"item_delta","id":"i3","delta":{"type":"text","text":"Dependencies are installed."}}
+{"event":"item_completed","id":"i3","item":{"type":"message","text":"Dependencies are installed."}}
+{"event":"titled","title":"install deps"}
+{"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"context_tokens":null,"input_tokens":120,"output_tokens":18,"model_calls":1,"tokens_per_sec":null,"timing":{"wall_ms":900,"prefill_ms":0,"decode_ms":0,"think_ms":0,"tool_ms":0,"user_ms":0,"classifier_ms":0,"compact_ms":0,"other_ms":0},"model":"cloud/qwen3-coder-next"}}

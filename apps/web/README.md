@@ -53,3 +53,13 @@ Write a `CloudEngine implements EngineClient` that opens a websocket to the sess
 ## Not here yet
 
 Real auth, the account and session list API, billing, email sign-up, routines, skills, image attachments, and the Preview tab showing a real sandbox port.
+
+## Frog Cloud transport
+
+`src/cloud/` talks to the Frog Cloud gateway (`docs/plans/2026-10-28-frog-cloud-wire-contract.md`): `client.ts` does the §2 handshake (refused, reconnect with `resume_after`) and the §4 routes, `protocol.ts` mirrors `crates/frog-engine/src/protocol.rs`, and `transcript.ts` folds envelopes into a transcript. `test/` runs it against the zest mock gateway, vendored in `test/mock/`.
+
+```bash
+npm run mock   # mock gateway on :8788; any key is an account
+npm run dev    # Vite proxies /v1 (and its websockets) to $GATEWAY, default the mock
+npm test
+```
