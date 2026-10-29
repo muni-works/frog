@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"
       - "v*-rc*"
+  # Dry run: builds and smoke-tests, publishes nothing.
+  workflow_dispatch:
+  pull_request:
+    paths: [".github/workflows/release.yml"]
 
 permissions:
   contents: write
@@ -22,9 +26,12 @@ jobs:
             os: macos-14
             zig: false
             bundle: true
+          # zig pins glibc 2.36 so the binary runs on debian trixie
+          # (node:24-trixie-slim, the Frog Cloud sandbox base)
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            zig: false
+            zig: true
+            glibc: ".2.36"
             bundle: false
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
@@ -48,9 +55,10 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
           ZIG: ${{ matrix.zig }}
+          GLIBC: ${{ matrix.glibc }}
         run: |
           if [ "$ZIG" = "true" ]; then
-            cargo zigbuild --release -p frog --target "$TARGET"
+            cargo zigbuild --release -p frog --target "$TARGET$GLIBC"
           else
             cargo build --release -p frog --target "$TARGET"
           fi
@@ -58,11 +66,14 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
-          BUNDLE: ${{ matrix.bundle }}
+          # the macOS app bundle is release-only; dry runs skip it
+          BUNDLE: ${{ matrix.bundle && startsWith(github.ref, 'refs/tags/') }}
         run: |
-          name="frog-${GITHUB_REF_NAME}-${TARGET}"
+          name="frog-${GITHUB_REF_NAME//\//-}-${TARGET}"
           mkdir -p "dist/$name"
           cp "target/${TARGET}/release/frog" "dist/$name/"
+          # host strip can't read the aarch64 cross output
+          if [ "$TARGET" != aarch64-unknown-linux-gnu ]; then strip "dist/$name/frog"; fi
           cp README.md "dist/$name/"
           if [ "$BUNDLE" = "true" ]; then
             # For macOS, also build and package the app for unsigned releases
@@ -94,6 +105,13 @@ jobs:
           if [ "$BUNDLE" = "true" ]; then
             sha256sum "Frog.zip" > "Frog.zip.sha256"
           fi
+          # Unversioned asset for the Frog Cloud sandbox image (zest pins
+          # FROG_VERSION and fetches this from releases/download/<tag>/).
+          # `frog` sits at the tarball root.
+          if [ "$TARGET" = x86_64-unknown-linux-gnu ]; then
+            tar -C "$name" -czf "frog-$TARGET.tar.gz" frog
+            sha256sum "frog-$TARGET.tar.gz" > "frog-$TARGET.tar.gz.sha256"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -103,8 +121,32 @@ jobs:
             dist/Frog.zip
             dist/Frog.zip.sha256
 
-  release:
+  # Run the cloud asset on the sandbox base image: frog starts, and bwrap
+  # can run frog's own probe (crates/frog-engine/src/tools/bash.rs).
+  # --privileged stands in for the microVM, where bwrap gets real namespaces.
+  smoke-cloud:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: x86_64-unknown-linux-gnu
+          path: dist
+      - name: smoke on node:24-trixie-slim
+        run: |
+          cd dist
+          sha256sum -c frog-x86_64-unknown-linux-gnu.tar.gz.sha256
+          docker run --rm --privileged -v "$PWD:/dist:ro" node:24-trixie-slim sh -euxc '
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends bubblewrap >/dev/null
+            tar -xzf /dist/frog-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin
+            frog --version
+            bwrap --ro-bind / / --dev-bind /dev /dev /bin/sh -c :
+          '
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, smoke-cloud]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
