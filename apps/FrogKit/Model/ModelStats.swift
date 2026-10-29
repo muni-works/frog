@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// What frog has seen models do on this Mac: how fast each writes (words/s, measured), how big
+/// What frog has seen models do on this Mac: how fast each writes (tokens/s, measured), how big
 /// a typical turn is, and what cloud turns have cost. Feeds the speed and cost shown next to
 /// models (docs/models.md, "Cost and speed"). Kept in the app's defaults; tokens stay internal.
 @MainActor
@@ -264,9 +264,10 @@ final class ModelStats {
         return p.cost(usage)
     }
 
-    /// Median words/s on this Mac, once there's a turn to measure.
+    /// Median tokens/s on this Mac, once there's a turn to measure. (Recorded speeds are kept in
+    /// words/s, as they always were, so existing history still reads; they're converted here.)
     func speed(_ spec: String) -> Double? {
-        store.models[spec].flatMap { Self.median($0.speeds) }
+        store.models[spec].flatMap { Self.median($0.speeds) }.map { $0 / Self.wordsPerToken }
     }
 
     /// What a typical turn costs on a model, from this person's recent turn sizes.
@@ -325,8 +326,8 @@ final class ModelStats {
 
     // MARK: Words
 
-    /// "38 words/s".
-    static func speedText(_ wordsPerSec: Double) -> String { "\(Int(wordsPerSec.rounded())) words/s" }
+    /// "38 tok/s". Speed is always shown in tokens per second, never words.
+    static func speedText(_ tokensPerSec: Double) -> String { "\(Int(tokensPerSec.rounded())) tok/s" }
 
     /// An amount spent: "$0", "4¢", "$1.84".
     static func spent(_ dollars: Double) -> String { dollars <= 0 ? "$0" : money(dollars) }

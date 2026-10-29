@@ -225,7 +225,7 @@ struct ActivityViewer: View {
                 }
             }
             if let tps = s.tokensPerSec, tps > 0, paneWidth == .wide {
-                Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
+                Text(ModelStats.speedText(tps))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                     .contentTransition(.numericText())

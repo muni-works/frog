@@ -219,7 +219,7 @@ struct ActivityPanel: View {
 
     private func stats(_ u: TurnUsage) -> some View {
         var parts = ["\(u.modelCalls) call\(u.modelCalls == 1 ? "" : "s")", "\(u.inputTokens.tokens) in", "\(u.outputTokens.tokens) out"]
-        if let tps = u.tokensPerSec, tps > 0 { parts.append(ModelStats.speedText(tps * ModelStats.wordsPerToken)) }
+        if let tps = u.tokensPerSec, tps > 0 { parts.append(ModelStats.speedText(tps)) }
         if let c = ModelStats.shared.cost(of: u) { parts.append(ModelStats.money(c)) }
         if UserDefaults.standard.bool(forKey: ModelStats.energyKey), let e = u.energy {
             parts.append(ModelStats.energy(e.totalWh, estimated: e.estimated))

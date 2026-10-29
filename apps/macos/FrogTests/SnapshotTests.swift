@@ -223,7 +223,7 @@ extension SnapshotTests {
                 HStack(spacing: 24) {
                     ModelLabel(model: model).frame(width: 190, alignment: .leading)
                     HStack {
-                        ModelLabel(model: model, size: .row, detail: "38 words/s")
+                        ModelLabel(model: model, size: .row, detail: "38 tok/s")
                         Spacer()
                         ModelStateAction(model: model)
                     }

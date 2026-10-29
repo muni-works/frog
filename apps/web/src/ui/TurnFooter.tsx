@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { TurnUsage } from '../cloud/protocol'
 import { idOf, type Model } from '../models'
-import { money, seconds, tokens, turnCost, WORDS_PER_TOKEN } from '../usage'
+import { money, seconds, tokens, turnCost } from '../usage'
 
 // Port of the Mac app's turn footer (FrogKit EndView): the model it ran on, what it cost
-// (opens the working, like PriceCard), how fast it wrote, and Copy answer. On the Mac every
+// (opens the working, like PriceCard), how fast it wrote in tokens/s, and Copy answer. On the Mac every
 // footer is hover-only; here the latest finished turn keeps its footer, like the phone.
 
 export function TurnFooter({ usage, models, answer, pinned }: { usage: TurnUsage; models: Model[]; answer: string; pinned: boolean }) {
@@ -23,7 +23,7 @@ export function TurnFooter({ usage, models, answer, pinned }: { usage: TurnUsage
   const model = models.find((m) => m.id === id)
   const cost = turnCost(usage, model)
   const tps = usage.tokens_per_sec ?? 0
-  const words = tps > 0 ? Math.round(tps * WORDS_PER_TOKEN) : null
+  const speed = tps > 0 ? Math.round(tps) : null
   const t = usage.timing
 
   return (
@@ -32,7 +32,7 @@ export function TurnFooter({ usage, models, answer, pinned }: { usage: TurnUsage
       {cost && (
         <button type="button" className="turn-plate" aria-expanded={open} title="Cost of this turn" onClick={() => setOpen(!open)}>{money(cost.total)}</button>
       )}
-      {words != null && <span title={`${Math.round(tps)} tokens/s`}>{words} words/s</span>}
+      {speed != null && <span title="Tokens per second">{speed} tok/s</span>}
       {t && <span title="Wall time for this turn">{seconds(t.wall_ms)}</span>}
       <span style={{ flex: 1 }} />
       {answer && (

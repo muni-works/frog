@@ -18,15 +18,15 @@ final class ModelStatsTests: XCTestCase {
         XCTAssertEqual(ModelStats.money(0.004), "<1¢")
         XCTAssertEqual(ModelStats.money(0.04), "4¢")
         XCTAssertEqual(ModelStats.money(1.8412), "$1.84")
-        XCTAssertEqual(ModelStats.speedText(38.4), "38 words/s")
+        XCTAssertEqual(ModelStats.speedText(38.4), "38 tok/s")
     }
 
-    func testSpeedIsAMedianInWords() {
+    func testSpeedIsAMedianInTokens() {
         let s = stats()
         XCTAssertNil(s.speed("tang/q"))
         for tps in [40.0, 60, 400] { s.record(usage(100, 10, tps: tps, model: "tang/q"), model: nil) }
-        // Median 60 tokens/s, in words.
-        XCTAssertEqual(s.speed("tang/q")!, 45, accuracy: 1e-9)
+        // Median 60 tokens/s (stored as 45 words/s, read back in tokens).
+        XCTAssertEqual(s.speed("tang/q")!, 60, accuracy: 1e-9)
     }
 
     func testTurnsArePricedAndAddedToTheWeek() {

@@ -5,9 +5,6 @@ import type { TurnUsage } from './cloud/protocol'
 /** The model's per-token list prices (from /v1/models). */
 export interface Prices { input: number | null; output: number | null; cached: number | null }
 
-/** The Mac app's reading speed rule (ModelStats.wordsPerToken). */
-export const WORDS_PER_TOKEN = 0.75
-
 /** A turn's cost in dollars at the model's list price, split like the Mac's PriceCard. Cache
  * writes are priced as fresh input. Null when the model's prices aren't known. */
 export function turnCost(u: TurnUsage, m: Prices | undefined) {
