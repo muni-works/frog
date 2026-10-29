@@ -231,14 +231,14 @@ Where tang is (2026-10-29):
 |---|---|---|---|---|---|
 | dart | Flash (Coder-Next) | 1× H100 class, fits at Q4 | production | yes (router fleet) | serving |
 | tree | `flash/glm5`, merged to main | 1× B300, UD-Q4_K_XL (186 GB) | ~100 plain, 129.6 with MTP | no | GPU work paused (`NOTES.md`, 2026-10-29) |
-| bull | `flash/deepseek`, branch `frog/deepseek-v41` | 4× H200, expert parallel | 24–43 decode; prefill ~50–60 | no | serves correctly, M3–M6 speed work open (`docs/deepseek-v41-plan.md`); a 17k-token frog prompt prefills in ~5 min |
+| bull | `flash/deepseek`, open PR muni-works/tang#140 | 8× H100, expert parallel | 193 greedy, 150–190 sampled (DSpark); prefill ~500 | no | serves through `deepseek-serve`; some late merges unmeasured on the real model; 169 commits behind main |
 
 Break-even aggregate output throughput, counting output revenue only:
 
 | model | output $/M (third-party list) | hardware cost | tokens/s to break even | gap |
 |---|---|---|---|---|
 | tree | ~$4.40 (confirm the Flash price) | 1× B300, $8.99/hr | ~570 | ~4.5× single stream: needs batching |
-| bull | $1.20 | 4× H200, ~$14/hr (estimate) | ~3,300 | ~80× single stream, plus prefill |
+| bull | $1.20 | 8× H100, ~$20/hr (estimate) | ~4,600 | ~24× single stream: needs batching |
 
 So:
 
@@ -248,9 +248,11 @@ So:
   takes over once GLM batching lands and clears ~570 tok/s on a B300. Overflow must match
   tang's behavior closely enough to share a name: tang runs 4-bit UD-Q4_K_XL, the upstream
   likely FP8. Run frog-bench on both before calling them one model.
-- **bull**: third-party only (Workers AI, $0.30 / $1.20). Prefill is the blocker before
-  decode: agent prompts are 17k+ tokens and turns re-prefill without prefix reuse. Revisit
-  after M5–M6 and batching; the expert-parallel work also speeds up tree.
+- **bull**: third-party at launch (Workers AI, $0.30 / $1.20). Tang's single stream is
+  already fast (193 tok/s, a 17k-token prompt prefills in ~35 s), so tang can serve bull for
+  latency and quality now, at a loss per GPU-hour until batching. Two ways it pays: batching
+  (~24× single stream on 8× H100), or reserved/owned GPUs well under the rental estimate.
+  Prefix reuse across turns matters as much as batching for agent traffic.
 
 ## Open decisions
 
