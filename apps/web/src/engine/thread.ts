@@ -62,9 +62,15 @@ export interface Thread {
   /** The model's suggested next message (its `Next` tool) for the last finished turn; `act`
    * means it acts outside the project (push, deploy). Cleared when the next turn starts. */
   next: { text: string; act: boolean } | null
+  /** Where the context was shrunk: after how many turns, and what it says ("82k → 9k tokens"). */
+  marks: { after: number; text: string; failed?: boolean }[]
+  /** A compaction asked for and not yet answered. */
+  compacting: boolean
 }
 
-export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null, activity: null, question: null, elicitation: null, todos: [], vision: null, panes: {}, next: null }
+export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null, activity: null, question: null, elicitation: null, todos: [], vision: null, panes: {}, next: null, marks: [], compacting: false }
+
+const kilo = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
 
 /** Item ids are only unique within a turn, so updates go to the latest turn. */
 function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
@@ -77,6 +83,12 @@ function apply(t: Thread, ev: Event, created: number): Thread {
   switch (ev.event) {
     case 'turn_started':
       return { ...t, running: true, ended: null, next: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, images: ev.images, more: ev.more, entries: [], at: created }] }
+    case 'compacted':
+      return { ...t, compacting: false, marks: [...(t.marks ?? []), { after: t.turns.length, text: `Compacted · ${kilo(ev.tokens_before)} → ${kilo(ev.tokens_after)} tokens` }] }
+    case 'compaction_failed':
+      return { ...t, compacting: false, marks: [...(t.marks ?? []), { after: t.turns.length, text: "Couldn't compact: the conversation doesn't fit even summarized. Start a new session.", failed: true }] }
+    case 'context_pruned':
+      return { ...t, marks: [...(t.marks ?? []), { after: t.turns.length, text: `Trimmed ${ev.results} old tool result${ev.results === 1 ? '' : 's'} · ${kilo(ev.tokens_before)} → ${kilo(ev.tokens_after)} tokens` }] }
     case 'next_suggested':
       return { ...t, next: { text: ev.text, act: !!ev.act } }
     case 'turn_ended': {

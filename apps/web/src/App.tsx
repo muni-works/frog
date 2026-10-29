@@ -60,6 +60,8 @@ export default function App() {
   const [restore, setRestore] = useState<{ text: string; images: Image[] } | null>(null)
   const [conn, setConn] = useState<Record<string, ConnectionState>>({})
   const [menuOpen, setMenuOpen] = useState(false)
+  // Sessions with a compaction in flight: how many marks there'll be when it's answered.
+  const [compacting, setCompacting] = useState<Record<string, number>>({})
   // The title menu closes on Escape, a click outside it, or a session switch.
   useEffect(() => {
     if (!menuOpen) return
@@ -91,6 +93,7 @@ export default function App() {
   const live = useMemo(() => (current && !current.id.startsWith(PENDING) ? [current.id] : []), [current])
   const thread = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
+  useEffect(() => { if (current && compacting[current.id] && (ct?.marks ?? []).length >= compacting[current.id]) setCompacting(({ [current.id]: _, ...rest }) => rest) }, [current, ct?.marks, compacting]) // eslint-disable-line react-hooks/exhaustive-deps
   const title = (s: SessionSummary) => thread(s.id).title ?? s.title
   // The turn ended: what was queued goes as the next turn, one Submit with the rest as `more`.
   useEffect(() => {
@@ -257,6 +260,7 @@ export default function App() {
     { id: 'c-settings', label: 'Settings', hint: '⌘,', run: () => key && setSettings(true) },
     ...(current ? [
       { id: 'c-rename', label: 'Rename session', run: () => setRenaming(current.id) },
+      { id: 'c-compact', label: 'Compact the conversation', run: () => { setCompacting((c) => ({ ...c, [current.id]: (thread(current.id).marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact' }) } },
       { id: 'c-archive', label: current.archived ? 'Unarchive session' : 'Archive session', run: () => archive(current, !current.archived) },
       { id: 'c-delete', label: 'Delete session', run: () => remove(current) },
     ] : []),
@@ -442,7 +446,8 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} autoFocus context={ct.context} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
+            <Composer key={current.id} autoFocus context={ct.context} compacting={!!compacting[current.id]}
+              onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}

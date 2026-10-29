@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { FileDiff, Image } from '../cloud/protocol'
 import type { Ask, Entry, Thread } from '../engine/thread'
 import type { Model } from '../models'
@@ -80,8 +80,9 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   const lastTurn = thread.turns[thread.turns.length - 1]?.turn
   return (
     <>
-      {thread.turns.map((turn) => (
-        <div key={turn.turn} className="turn">
+      {(thread.marks ?? []).filter((m) => m.after === 0).map((m, i) => <Mark key={`m0-${i}`} m={m} />)}
+      {thread.turns.map((turn, ti) => (<Fragment key={turn.turn}>
+        <div className="turn">
           <div className="ask-block">
             {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => (
               <div key={i} className="me">
@@ -139,7 +140,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
             </div>
           )}
         </div>
-      ))}
+        {(thread.marks ?? []).filter((m) => m.after === ti + 1).map((m, k) => <Mark key={`m${ti}-${k}`} m={m} />)}
+      </Fragment>))}
       {thread.question && !thread.turns[thread.turns.length - 1]?.entries.some((e) => e.id === thread.question?.item) && (
         <QuestionCard q={thread.question} onAnswer={onAnswer} />
       )}
@@ -207,4 +209,9 @@ function ago(ms: number) {
   if (s < 3600) { const m = Math.max(1, Math.round(s / 60)); return `${m} minute${m === 1 ? '' : 's'} ago` }
   if (s < 86_400) { const h = Math.round(s / 3600); return `${h} hour${h === 1 ? '' : 's'} ago` }
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+/** Where the context was shrunk: a quiet rule across the conversation, with what it saved. */
+function Mark({ m }: { m: { text: string; failed?: boolean } }) {
+  return <div className={`ctx-mark${m.failed ? ' failed' : ''}`} role="note"><span>{m.text}</span></div>
 }

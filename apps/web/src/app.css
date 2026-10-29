@@ -457,3 +457,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .file-add { color: var(--frog); font: 11.5px var(--font-mono); }
 .file-del { color: var(--warn); font: 11.5px var(--font-mono); }
 .file.open { background: color-mix(in srgb, var(--well) 50%, transparent); }
+/* Compaction: a quiet rule across the conversation saying what it kept. */
+.ctx-mark { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--faint); margin: 6px 0; }
+.ctx-mark::before, .ctx-mark::after { content: ''; flex: 1; height: 1px; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.ctx-mark.failed { color: var(--warn); }
+.ctx-compact { justify-content: center; margin-top: 2px; }
