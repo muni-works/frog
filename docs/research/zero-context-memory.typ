@@ -196,7 +196,9 @@ tensors equal the checkpoint bitwise in bf16, zero padding included: 2.44 billio
 *tang serves them on the GPU.* A chip window in the Coder engine uploads the emitted layers as
 sparse blocks and runs store calls as engine-internal windows. They never touch the base layers,
 the LM head or the KV cache. On an RTX 3090, a shadow-and-poison check found 0 mismatching layer
-steps over 126 tokens and 12 layers against the CPU path.
+steps over 126 tokens and 12 layers against the CPU path. Inside a running engine, on a slot
+holding a prompt, store calls returned the stored ids and file list. The slot's tokens and its
+greedy continuation stayed identical to a twin slot that never ran them.
 
 #figure(
   table(
