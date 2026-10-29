@@ -4,11 +4,11 @@
 <dict>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.eco.frog.remote</string>
+		<string>group.toys.frog.remote</string>
 	</array>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)eco.frog.remote</string>
+		<string>$(AppIdentifierPrefix)toys.frog.remote</string>
 	</array>
 </dict>
 </plist>

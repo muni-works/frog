@@ -1,0 +1,70 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Gateway } from './cloud/client'
+import type { SessionSummary } from './cloud/protocol'
+import { CloudEngine } from './engine/cloud'
+import { emptyThread, reduce, type Thread } from './engine/thread'
+
+// Sessions belong to the account and come from the gateway (GET /v1/sessions); what
+// happens inside one comes only from its event stream. Nothing here is made up.
+
+/** The gateway's origin. In dev, Vite proxies /v1 to $GATEWAY (default the mock). */
+export const GATEWAY = (import.meta.env.VITE_GATEWAY as string | undefined) ?? location.origin
+
+export const starters = [
+  { i: '✓', title: 'Fix the failing tests', detail: 'Runs them, finds why, fixes it' },
+  { i: '⑂', title: 'Review my open PR', detail: 'Reads the diff, leaves notes' },
+  { i: '?', title: 'Explain this codebase', detail: 'A map of how it fits together' },
+  { i: '+', title: 'Add a small feature', detail: 'Plans it, builds it, opens a PR' },
+]
+
+export function useCloud(key: string | null) {
+  return useMemo(() => (key ? new CloudEngine(new Gateway({ origin: GATEWAY, token: key })) : null), [key])
+}
+
+/** The account's sessions, refreshed every 15 s (the gateway has no push for the list). */
+export function useSessions(cloud: CloudEngine | null) {
+  const [sessions, setSessions] = useState<SessionSummary[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const refresh = useCallback(async () => {
+    if (!cloud) return
+    try {
+      setSessions((await cloud.gateway.list()).sort((a, b) => b.updated - a.updated))
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [cloud])
+  useEffect(() => {
+    if (!cloud) return setSessions([])
+    refresh()
+    const t = setInterval(refresh, 15_000)
+    return () => clearInterval(t)
+  }, [cloud, refresh])
+  return { sessions, error, refresh, setSessions }
+}
+
+/** Subscribe to these sessions' streams and keep a folded `Thread` per session. */
+export function useThreads(cloud: CloudEngine | null, ids: string[]) {
+  const [threads, setThreads] = useState<Record<string, Thread>>({})
+  const key = ids.join(',')
+  useEffect(() => {
+    if (!cloud) return
+    const offs = ids.map((id) => cloud.subscribe(id, 0, (env) =>
+      setThreads((all) => ({ ...all, [id]: reduce(all[id] ?? emptyThread, env) }))))
+    return () => offs.forEach((off) => off())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloud, key])
+  return useCallback((id: string) => threads[id] ?? emptyThread, [threads])
+}
+
+/** The edge answers 402 `insufficient_credit` on inference; the engine ends the turn with that error. */
+export function outOfCredits(t: Thread) {
+  if (t.ended?.type !== 'error') return false
+  return /insufficient_credit|out_of_credits|402/.test(JSON.stringify(t.ended.error ?? ''))
+}
+
+/** owner/name from "owner/name", a github.com URL, or a git remote. */
+export function parseRepo(s: string): string | null {
+  const m = s.trim().match(/^(?:https?:\/\/github\.com\/|git@github\.com:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/)
+  return m ? `${m[1]}/${m[2]}` : null
+}

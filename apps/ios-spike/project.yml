@@ -1,6 +1,6 @@
 name: TangSpike
 options:
-  bundleIdPrefix: eco.frog
+  bundleIdPrefix: toys.frog
   deploymentTarget:
     iOS: "18.0"
 settings:
@@ -22,7 +22,7 @@ targets:
       - sdk: Foundation.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.tangspike
+        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.tangspike
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES

@@ -396,8 +396,10 @@ final class Remote {
         }
     }
 
-    /// Tell the Mac how to reach this phone when the app is asleep.
-    private func registerForPushes() {
+    /// Tell the Mac how to reach this phone when the app is asleep. Called on connect, and again
+    /// when APNs hands over the token (the first time, that's after the permission prompt).
+    func registerForPushes() {
+        guard isConnected else { return }
         #if targetEnvironment(simulator)
         if let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] {
             send(["type": "register", "transport": "simctl", "address": udid, "bundle": Bundle.main.bundleIdentifier ?? ""])
@@ -443,6 +445,8 @@ struct RemoteSession: Identifiable, Hashable {
     let info: SessionInfo
     /// The step in hand, while it runs.
     let activity: String?
+    /// When the running turn began.
+    let since: Date?
     /// What frog is asking, while it waits.
     let question: Question?
     /// frog's own question (the `Ask` tool), while it waits on one.
@@ -457,6 +461,10 @@ struct RemoteSession: Identifiable, Hashable {
         let id: String
         let name: String
         let arg: String
+        var reason: String? = nil
+        var always: String? = nil
+        /// "fetch.ts +12 −3" for an edit.
+        var change: String? = nil
 
         /// What frog is asking, as the Mac's card says it.
         var text: String { PermissionRequest.question(name: name, arg: arg) }
@@ -476,6 +484,7 @@ struct RemoteSession: Identifiable, Hashable {
         archived = row["archived"] as? Bool ?? false
         live = (row["live"] as? String).flatMap(Live.init)
         activity = row["activity"] as? String
+        since = (row["since"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
         let wrist = Snapshot.Row(bridge: row)
         stats = wrist?.stats
         actions = wrist?.actions
@@ -487,7 +496,11 @@ struct RemoteSession: Identifiable, Hashable {
         ask = Snapshot.Ask(row["ask"])
         last = row["last"] as? String
         question = (row["question"] as? [String: Any]).flatMap { q in
-            (q["id"] as? String).map { Question(id: $0, name: q["name"] as? String ?? "", arg: q["arg"] as? String ?? "") }
+            (q["id"] as? String).map {
+                Question(id: $0, name: q["name"] as? String ?? "", arg: q["arg"] as? String ?? "",
+                         reason: q["reason"] as? String, always: q["always"] as? String,
+                         change: Snapshot.Row.change(q["change"]))
+            }
         }
     }
 
