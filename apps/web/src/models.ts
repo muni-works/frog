@@ -17,19 +17,19 @@ export function price(m: Model) {
   return `${f(m.input)} in · ${f(m.output)} out per M tokens`
 }
 
-// Signed out, /v1/models needs a key, so the picker shows Frog Cloud's public default until
-// sign-in loads the real list.
+// Signed out, /v1/models answers without a key; until it does (or on an older edge that
+// still wants one), the picker shows Frog Cloud's public default.
 const SIGNED_OUT: Model[] = [{ id: 'qwen3-coder-next', context: null, input: null, output: null, cached: null }]
 
 export function useModels(key: string | null) {
   const [models, setModels] = useState<Model[]>([])
   useEffect(() => {
-    if (!key) { setModels(SIGNED_OUT); return }
+    if (!key) setModels(SIGNED_OUT)
     let live = true
-    fetch(`${API}/v1/models`, { headers: { authorization: `Bearer ${key}` } })
+    fetch(`${API}/v1/models`, key ? { headers: { authorization: `Bearer ${key}` } } : {})
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((v: { data?: { id: string; context_length?: number; pricing?: { prompt?: string; completion?: string; input_cache_read?: string } }[] }) => {
-        if (!live) return
+        if (!live || !v.data?.length) return
         setModels((v.data ?? []).map((m) => ({
           id: m.id,
           context: m.context_length ?? null,
@@ -38,7 +38,7 @@ export function useModels(key: string | null) {
           cached: m.pricing?.input_cache_read != null ? Number(m.pricing.input_cache_read) : null,
         })))
       })
-      .catch(() => live && setModels([]))
+      .catch(() => live && setModels(key ? [] : SIGNED_OUT))
     return () => { live = false }
   }, [key])
   return models
