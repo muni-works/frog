@@ -396,8 +396,10 @@ final class Remote {
         }
     }
 
-    /// Tell the Mac how to reach this phone when the app is asleep.
-    private func registerForPushes() {
+    /// Tell the Mac how to reach this phone when the app is asleep. Called on connect, and again
+    /// when APNs hands over the token (the first time, that's after the permission prompt).
+    func registerForPushes() {
+        guard isConnected else { return }
         #if targetEnvironment(simulator)
         if let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] {
             send(["type": "register", "transport": "simctl", "address": udid, "bundle": Bundle.main.bundleIdentifier ?? ""])
