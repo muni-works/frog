@@ -249,7 +249,7 @@ export default function App() {
           <Trust />
         </div>
         <div className="dock"><div>
-          <Composer repo="Connect a repo" onSend={(text) => leave(text)} onConnect={(text) => leave(text || null)} autoFocus chips={starterChips}
+          <Composer repo="Connect a repo" onSend={(text) => leave(text)} onConnect={(text) => leave(text || null)} onSignIn={() => leave(null)} autoFocus chips={starterChips}
             model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening GitHub… your message is saved.</div>}
         </div></div>
