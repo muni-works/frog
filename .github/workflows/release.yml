@@ -25,7 +25,9 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-14
             zig: false
-            bundle: true
+            # The app needs a private tang checkout (FROG_REQUIRE_TANG), which CI doesn't
+            # have; signed app releases come from apps/macos/scripts/release.sh. CI ships the CLI.
+            bundle: false
           # zig pins glibc 2.36 so the binary runs on debian trixie
           # (node:24-trixie-slim, the Frog Cloud sandbox base)
           - target: x86_64-unknown-linux-gnu
