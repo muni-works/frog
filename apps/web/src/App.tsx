@@ -45,7 +45,9 @@ export default function App() {
   const [view, setView] = useState<View>({ kind: 'new' })
   const [palette, setPalette] = useState(false)
   const [settings, setSettings] = useState(false)
-  const [inspector, setInspector] = useState(false)
+  // Open or closed, kept per browser like its tab and width.
+  const [inspector, setInspectorState] = useState(() => { try { return localStorage.getItem('frog.inspector') === '1' } catch { return false } })
+  const setInspector = (v: boolean) => { setInspectorState(v); try { localStorage.setItem('frog.inspector', v ? '1' : '0') } catch { /* private mode */ } }
   const [toast, setToast] = useState<string | null>(null)
   const [draft, setDraft] = useState<string | undefined>()
   /** Sessions still opening: their first message (and repo), from the moment you send until the
