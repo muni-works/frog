@@ -1,4 +1,4 @@
-import type { EndReason, Envelope, Event, FileDiff, ToolOutcome } from '../cloud/protocol'
+import type { EndReason, Envelope, Event, FileDiff, Mode, ToolOutcome } from '../cloud/protocol'
 
 // Folds a session's envelopes into what the transcript draws. Pure, so replay and
 // live streaming share one path: `reduce(thread, envelope)` for every envelope in order.
@@ -30,9 +30,15 @@ export interface Thread {
   startedAt: number
   /** From `titled`, when the engine names the session. */
   title: string | null
+  /** The engine's model spec (e.g. `cloud/qwen3-coder-next`) and mode, from `status` and the
+   * `*_changed` events; null until the engine says. */
+  model: string | null
+  mode: Mode | null
+  /** Context used and the window, from the latest `status`. */
+  context: { used: number | null; window: number } | null
 }
 
-export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null }
+export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null }
 
 /** Item ids are only unique within a turn, so updates go to the latest turn. */
 function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
@@ -76,6 +82,12 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     }
     case 'permission_request':
       return { ...t, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, preview: ev.preview, reason: ev.reason } }
+    case 'status':
+      return { ...t, model: ev.model, mode: ev.mode, context: { used: ev.context_tokens, window: ev.context_window } }
+    case 'model_changed':
+      return { ...t, model: ev.model }
+    case 'mode_changed':
+      return { ...t, mode: ev.mode }
     case 'titled':
       return { ...t, title: ev.title }
     case 'permission_resolved':

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog composer</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.cz-ic{display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--muted);cursor:pointer;border-radius:50%}
+.cz-ic:hover{background:var(--hover);color:var(--fg)}
+.cz-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:var(--radius-pill);padding:3px 10px;font:12px/16px var(--font-sans);color:var(--muted);background:transparent;cursor:pointer;white-space:nowrap}
+.cz-menu button{display:flex;gap:10px;align-items:center;width:100%;border:0;background:transparent;padding:7px 10px;border-radius:var(--radius-plate);font:13px/18px var(--font-sans);color:var(--fg);cursor:pointer;text-align:left}
+.cz-menu button:hover{background:var(--hover)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="position: relative; width: 100%; box-sizing: border-box; padding: {{pad}}; background: transparent;">
+
+  <sc-if value="{{isError}}" hint-placeholder-val="{{ false }}">
+    <div role="status" style="display: flex; align-items: center; gap: 10px; margin: 0 6px 8px; padding: 8px 12px; border-radius: var(--radius-banner); background: var(--notice-bg); border: 1px solid var(--notice); font-size: 13px;">
+      <span style="flex: 1;">Frog cloud is unavailable. Your message is saved.</span>
+      <button type="button" class="f-btn f-btn--bordered f-btn--small">Retry</button>
+      <button type="button" class="f-btn f-btn--plain">Dismiss</button>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{menuOpen}}" hint-placeholder-val="{{ false }}">
+    <div class="f-card cz-menu" role="menu" style="position: absolute; bottom: calc(100% - 8px); left: 8px; z-index: 5; width: 230px; padding: 6px; box-shadow: var(--shadow-float);">
+      <button type="button" role="menuitem"><span>🖼</span>Attach images…</button>
+      <button type="button" role="menuitem"><span>@</span>Mention a file</button>
+      <button type="button" role="menuitem"><span>✦</span>Use a skill</button>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{runOpen}}" hint-placeholder-val="{{ false }}">
+    <div class="f-card cz-menu" role="menu" aria-label="Where this session runs" style="position: absolute; bottom: calc(100% - 8px); left: 44px; z-index: 6; width: 300px; padding: 6px; box-shadow: var(--shadow-float);">
+      <div style="padding: 4px 10px 6px; font-size: 12px; font-weight: 600; color: var(--muted);">Run on</div>
+      <sc-for list="{{devices}}" as="d" hint-placeholder-count="2">
+        <button type="button" role="menuitemradio" aria-checked="{{d.on}}" onClick="{{d.pick}}"><span style="color: {{d.color}};">{{d.glyph}}</span><span style="flex: 1;"><b style="font-weight: 600;">{{d.label}}</b><br><span style="font-size: 12px; color: var(--muted);">{{d.note}}</span></span><span style="color: var(--frog); opacity: {{d.tick}};">✓</span></button>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{showBar}}" hint-placeholder-val="{{ false }}">
+    <div title="Where this conversation works, and what's changed there" style="display: flex; align-items: center; gap: 12px; height: 38px; margin: 0 8px 6px; padding: 0 7px 0 14px; border-radius: 12px; background: var(--canvas); box-shadow: inset 0 0 0 100px rgba(127,127,127,.09); font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden;">
+      <span style="color: var(--fg);">{{repo}}</span>
+      <span style="color: var(--faint);">{{branch}}</span>
+      <span style="flex: 1;"></span>
+      <sc-if value="{{hasPr}}" hint-placeholder-val="{{ false }}">
+        <a href="#" title="This session is bound to {{pr}}. Pushes go there, and checks and reviews show up here." style="display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 7px; background: rgba(127,127,127,.12); color: var(--fg); text-decoration: none;">
+          <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{{prColor}}" stroke-width="2.2" stroke-linecap="round"><circle cx="6" cy="6" r="2.5"></circle><circle cx="6" cy="18" r="2.5"></circle><circle cx="18" cy="18" r="2.5"></circle><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-4"></path></svg>
+          <span style="font-variant-numeric: tabular-nums;">{{pr}}</span>
+          <span style="color: {{checksColor}};">{{checksText}}</span>
+        </a>
+      </sc-if>
+      <sc-if value="{{showGit}}" hint-placeholder-val="{{ false }}">
+        <span title="Files with uncommitted changes" style="display: inline-flex; gap: 6px; align-items: center; height: 26px; padding: 0 10px; border-radius: 7px; background: rgba(127,127,127,.12); font-variant-numeric: tabular-nums;"><span style="color: var(--frog);">{{adds}}</span><span style="color: var(--warn);">{{dels}}</span>{{fresh}}</span>
+        <button type="button" title="{{gitHelp}}" style="height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: rgba(127,127,127,.12); font: 13px var(--font-sans); color: var(--fg); cursor: pointer;">{{gitAction}}</button>
+      </sc-if>
+    </div>
+  </sc-if>
+
+  <div class="f-glass" style="border-radius: {{radius}}; padding: {{inner}}; display: flex; flex-direction: column; gap: 8px;">
+    <label for="cz" style="position: absolute; left: -9999px;">Message Frog</label>
+    <textarea id="cz" rows="{{rows}}" placeholder="{{placeholder}}" style="border: 0; background: transparent; resize: none; outline: none; font: {{font}} var(--font-sans); color: var(--fg); padding: 0 2px;"></textarea>
+    <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+      <button type="button" class="cz-ic" onClick="{{toggleMenu}}" aria-label="Attach images, mention a file, or use a skill" aria-expanded="{{menuOpen}}" style="width: 28px; height: 28px; border: 1px solid var(--line);">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+      </button>
+
+      <sc-if value="{{showDevice}}" hint-placeholder-val="{{ true }}">
+        <button type="button" class="cz-chip" onClick="{{toggleRun}}" title="{{runHelp}}" aria-haspopup="{{runPick}}" aria-expanded="{{runOpen}}" style="color: {{runColor}}; cursor: {{runCursor}};">
+          <span aria-hidden="true">{{runGlyph}}</span>{{runLabel}}<sc-if value="{{runPick}}" hint-placeholder-val="{{ false }}"><span class="chev" style="font-size: 9px; color: var(--muted);">▾</span></sc-if>
+        </button>
+      </sc-if>
+
+      <sc-if value="{{showModel}}" hint-placeholder-val="{{ true }}">
+        <button type="button" class="f-pill {{modelClass}}" aria-label="{{modelLabel}}">
+          <sc-if value="{{cloud}}" hint-placeholder-val="{{ false }}"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z"></path></svg></sc-if>
+          <sc-if value="{{local}}" hint-placeholder-val="{{ true }}"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="11" rx="1.5"></rect><path d="M2 19h20"></path></svg></sc-if>
+          {{modelName}} <span class="chev">▾</span>
+        </button>
+      </sc-if>
+
+      <sc-if value="{{showRepo}}" hint-placeholder-val="{{ false }}">
+        <button type="button" class="cz-chip"><svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h6l2 2h10v10H3z"></path></svg>{{repo}}</button>
+      </sc-if>
+
+      <span style="flex: 1;"></span>
+      <span style="font-size: 12px; color: {{statusColor}}; white-space: nowrap;">{{status}}</span>
+
+      <sc-if value="{{showMic}}" hint-placeholder-val="{{ false }}">
+        <button type="button" class="cz-ic" aria-label="Dictate (⌥⌘V). Transcribed on this Mac." style="width: 30px; height: 30px;">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg>
+        </button>
+      </sc-if>
+
+      <sc-if value="{{working}}" hint-placeholder-val="{{ false }}">
+        <button type="button" aria-label="Stop (Esc)" style="width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--fg); color: var(--bg); display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none;">
+          <svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"></rect></svg>
+        </button>
+      </sc-if>
+      <sc-if value="{{canSend}}" hint-placeholder-val="{{ true }}">
+        <button type="button" aria-label="Send" style="width: 32px; height: 32px; border-radius: 50%; border: 0; background: {{sendBg}}; color: var(--on-frog); display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none;">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>
+        </button>
+      </sc-if>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"platform":{"editor":"enum","options":["mac","web","phone","ipad"],"default":"mac"},"state":{"editor":"enum","options":["idle","working","paused","error"],"default":"idle"},"model":{"editor":"enum","options":["local","cloud","none"],"default":"local"},"modelName":{"editor":"text","default":""},"repo":{"editor":"text","default":""},"changes":{"editor":"text","default":""},"branch":{"editor":"text","default":""},"runner":{"editor":"text","default":""},"deviceName":{"editor":"text","default":""},"pr":{"editor":"text","default":""},"prState":{"editor":"enum","options":["open","draft","merged"],"default":"open"},"checks":{"editor":"enum","options":["","passing","failing","running"],"default":""},"timer":{"editor":"text","default":""},"placeholder":{"editor":"text","default":""},"$preview":{"width":720,"height":150}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props.platform || 'mac', st = this.props.state || 'idle', m = this.props.model || (p === 'mac' ? 'local' : 'cloud');
+    const phone = p === 'phone', working = st === 'working', paused = st === 'paused';
+    const ph = this.props.placeholder || (working ? 'Working… Esc interrupts · Return queues a follow-up'
+      : paused ? 'Paused · out of credits'
+      : p === 'web' ? 'Ask Frog to do something, or paste a GitHub repo'
+      : phone ? 'Steer Frog…' : 'Ask Frog to do something · @ mentions a file');
+    const ch = (this.props.changes || '').match(/^\s*(\+\d+)\s*(−\d+)?\s*(.*)$/);
+    const menuOpen = !!(this.state && this.state.menu);
+    // Where a session can run, per platform. Native lists the device it's on plus Frog Cloud;
+    // the web is cloud-only and can't name the computer it's on, so it lists Frog Cloud alone.
+    // iPhone and iPad have no shell of their own, so it offers Frog Cloud first and the paired Mac second.
+    const cloudDef = { id: 'cloud', kind: 'cloud', label: 'Frog Cloud', note: 'A private sandbox with this branch. Keeps going when this device sleeps.' };
+    const defs = p === 'mac' ? [{ id: 'here', kind: 'local', label: this.props.deviceName || 'This Mac', note: 'Your files, your models. Free.' }, cloudDef]
+      : phone || p === 'ipad' ? [cloudDef, { id: 'mac', kind: 'local', label: this.props.deviceName || "Sam's MacBook Pro", note: 'Your Mac runs it with its files and models, free.' }]
+      : [cloudDef];
+    const want = (this.state && this.state.runner) || ({ mac: 'here' }[this.props.runner] || this.props.runner) || defs[0].id;
+    const cur = defs.find((d) => d.id === want) || defs[0];
+    const pick = defs.length > 1;
+    const runOpen = pick && !!(this.state && this.state.run);
+    return {
+      theme: this.props.theme ?? 'dark',
+      pad: phone ? '8px 12px' : '6px 0',
+      radius: phone ? '22px' : '24px',
+      inner: phone ? '9px 9px 9px 14px' : '12px 10px 10px 16px',
+      rows: phone || working ? 1 : 2,
+      font: phone ? '15px/20px' : '15px/21px',
+      placeholder: ph,
+      showModel: m !== 'none', cloud: m === 'cloud', local: m === 'local',
+      modelClass: m === 'cloud' ? 'f-pill--cloud' : 'f-pill--local',
+      modelName: this.props.modelName || (m === 'cloud' ? 'dart' : 'qwen3-4b'),
+      modelLabel: 'Model: ' + (this.props.modelName || (m === 'cloud' ? 'dart on Frog Cloud' : 'qwen3-4b on this Mac')),
+      showRepo: !!this.props.repo && !phone && !this.props.branch, repo: this.props.repo || '',
+      showBar: !!this.props.branch && !phone, branch: this.props.branch || '',
+      hasPr: !!this.props.pr, pr: this.props.pr || '',
+      prColor: this.props.prState === 'merged' ? '#8e5cf7' : this.props.prState === 'draft' ? 'var(--faint)' : 'var(--frog)',
+      checksText: { passing: '✓ checks', failing: '✕ checks', running: '● checks running', merged: 'Merged' }[this.props.checks || ''] || '',
+      checksColor: this.props.checks === 'failing' ? 'var(--warn)' : this.props.checks === 'running' ? 'var(--notice)' : 'var(--frog)',
+      gitAction: this.props.pr ? 'Push to ' + this.props.pr : 'Commit changes',
+      gitHelp: this.props.pr ? 'Ask Frog to commit and push to the bound PR' : 'Ask Frog to commit the current changes',
+      showGit: !!ch && !phone, adds: ch ? ch[1] : '', dels: ch && ch[2] ? ch[2] : '', fresh: ch && ch[3] ? ' · ' + ch[3] : '',
+      status: working ? (this.props.timer ? 'Working · ' + this.props.timer : 'Working') : paused ? 'Out of credits' : '',
+      statusColor: paused ? 'var(--warn)' : 'var(--muted)',
+      showMic: p === 'mac' && !working,
+      working, canSend: !working, sendBg: paused ? 'var(--faint)' : 'var(--frog)',
+      isError: st === 'error',
+      menuOpen, toggleMenu: () => this.setState({ menu: !menuOpen, run: false }),
+      devices: defs.map((d) => ({ ...d, on: d.id === cur.id, tick: d.id === cur.id ? 1 : 0, glyph: d.kind === 'cloud' ? '☁' : '▭', color: d.kind === 'cloud' ? 'var(--place-cloud)' : 'var(--place-local)', pick: () => this.setState({ runner: d.id, run: false }) })),
+      showDevice: true, runPick: pick, runOpen,
+      runLabel: cur.label, runGlyph: cur.kind === 'cloud' ? '☁' : '▭',
+      runColor: cur.kind === 'cloud' ? 'var(--place-cloud)' : 'var(--place-local)',
+      runCursor: pick ? 'pointer' : 'default',
+      runHelp: pick ? 'Where this session runs' : 'Web sessions run in a private Frog Cloud sandbox',
+      toggleRun: () => { if (pick) this.setState({ run: !runOpen, menu: false }); },
+    };
+  }
+}
+</script>
+</body>
+</html>

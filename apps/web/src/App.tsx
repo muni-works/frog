@@ -3,13 +3,16 @@ import { finishSignIn, me, savedKey, signIn, signOut, API, AuthError, type Accou
 import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Thread } from './engine/thread'
-import { outOfCredits, starters, useCloud, useSessions, useThreads } from './store'
+import type { Mode } from './cloud/protocol'
+import { idOf, spec, useModels } from './models'
+import { outOfCredits, starters, turnError, useCloud, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Inspector } from './ui/Inspector'
-import { Palette, RepoPicker, Settings, tasksLine, type Command } from './ui/Overlays'
+import { Palette, Settings, tasksLine, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 
-type View = { kind: 'session'; id: string } | { kind: 'new'; repo?: string } | { kind: 'pickRepo' }
+/** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
+type View = { kind: 'session'; id: string } | { kind: 'new'; repo?: string; pick?: boolean }
 
 /** Dev only: a key for the mock gateway (any non-empty key is an account there). Skips sign-in. */
 const DEV_KEY = import.meta.env.DEV ? (import.meta.env.VITE_DEV_KEY as string | undefined) : undefined
@@ -42,6 +45,7 @@ function sym(s: SessionSummary, t: Thread) {
   if (s.state === 'starting') return { ch: '', cls: 'sym ring', detail: 'Starting the sandbox…' }
   if (s.state === 'error') return { ch: '!', cls: 'sym paused', detail: 'The sandbox hit an error' }
   if (s.state === 'sleeping') return { ch: '', cls: 'sym merged', detail: s.pr ? `Sleeping · ${s.pr}` : 'Sleeping' }
+  if (t.ended?.type === 'error') return { ch: '!', cls: 'sym paused', detail: 'Stopped on an error' }
   if (t.ended?.type === 'denied') return { ch: '✕', cls: 'sym merged', detail: 'Stopped · you denied a step' }
   if (t.ended) return { ch: '✓', cls: 'sym done', detail: 'Finished' }
   return { ch: '', cls: 'sym merged', detail: s.pr ? `Bound to ${s.pr}` : s.branch }
@@ -60,12 +64,15 @@ export default function App() {
   const [banner, setBanner] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [draft, setDraft] = useState<string | undefined>()
-  const [pending, setPending] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [conn, setConn] = useState<Record<string, ConnectionState>>({})
+  // What a new session starts with: null model = the gateway's default.
+  const [newModel, setNewModel] = useState<string | null>(null)
+  const [newMode, setNewMode] = useState<Mode>('auto')
   const toastTimer = useRef(0)
 
   const cloud = useCloud(key)
+  const models = useModels(DEV_KEY ? null : key)
   const { sessions, error: listError, setSessions } = useSessions(cloud)
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined
   // Stream the open session and any with a live sandbox (for Needs you), not sleeping ones:
@@ -85,7 +92,7 @@ export default function App() {
       if (done) {
         setKey(done.key); setAccount(done.account)
         setBanner(`Signed in as ${done.account.handle ?? done.account.email ?? 'you'}. ${tasksLine(done.account)}.`)
-        if (done.after) { setPending(done.after); setView({ kind: 'pickRepo' }) }
+        if (done.after) { setDraft(done.after); setView({ kind: 'new', pick: true }) }
         return
       }
       const k = savedKey()
@@ -105,17 +112,17 @@ export default function App() {
     if (!cloud) return
     setBusy(true)
     try {
-      const s = await cloud.gateway.create({ repo })
+      const s = await cloud.gateway.create({ repo, ...(newModel ? { model: spec(newModel) } : {}) })
       setSessions((all) => [{ ...s, title: s.title || text }, ...all.filter((x) => x.id !== s.id)])
       setView({ kind: 'session', id: s.id })
-      setPending(null)
+      if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
       send(s.id, text) // queued until the session's socket is live
     } catch (e) {
       say(`Couldn't start a sandbox: ${e instanceof Error ? e.message : e}`)
     } finally {
       setBusy(false)
     }
-  }, [cloud, send, setSessions])
+  }, [cloud, send, setSessions, newModel, newMode])
 
   const decide = useCallback((id: string, allow: boolean) => {
     const ask = thread(id).ask
@@ -145,7 +152,7 @@ export default function App() {
 
   const commands: Command[] = [
     { id: 'c-new', label: 'New session', hint: '⌘N', run: () => key && setView({ kind: 'new' }) },
-    { id: 'c-repo', label: 'Connect a repo', run: () => key && setView({ kind: 'pickRepo' }) },
+    { id: 'c-repo', label: 'Connect a repo', run: () => key && setView({ kind: 'new', pick: true }) },
     { id: 'c-settings', label: 'Settings', hint: '⌘,', run: () => key && setSettings(true) },
     { id: 'c-insp', label: inspector ? 'Hide inspector' : 'Show inspector', run: () => setInspector(!inspector) },
     { id: 'c-theme', label: 'Toggle dark mode', run: () => { const r = document.documentElement; r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark' } },
@@ -217,7 +224,7 @@ export default function App() {
           <div className="dock"><Composer repo="Connect a repo" onSend={setGate} /></div>
         </main>
       ) : (
-        <main className="main hero">
+        <main className="main home">
           {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
           <Mark size={56} />
           <h1>What should we work on?</h1>
@@ -287,7 +294,7 @@ export default function App() {
           <Mark size={28} />
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
             <b>{account?.handle ?? account?.email ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
-            <div className="det" style={{ color: account && account.tasks_left <= 0 ? 'var(--warn)' : undefined }}>{account ? tasksLine(account) : DEV_KEY ? 'mock gateway' : ''}</div>
+            <div className="det" style={{ color: account && account.tasks_left <= 0 ? 'var(--warn)' : undefined }}>{account ? tasksLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
           </div>
           <span className="det">⚙</span>
         </button>
@@ -297,7 +304,7 @@ export default function App() {
         <div className="titlebar">
           <div style={{ flex: 1, minWidth: 0 }}>
             <b style={{ fontSize: 14 }}>{current ? title(current) : 'New session'}</b>
-            <div className="det">{current ? `${current.repo} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}` : view.kind === 'pickRepo' ? 'Pick a repo to start' : 'Runs in a private Frog Cloud sandbox'}</div>
+            <div className="det">{current ? `${current.repo} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}${ct?.context?.used ? ` · ${Math.round(ct.context.used / 1000)}k of ${Math.round(ct.context.window / 1000)}k context` : ''}` : 'Runs in a private Frog Cloud sandbox'}</div>
           </div>
           {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? 'In Frog Cloud' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
           {current && <button type="button" className="f-btn f-btn--plain" onClick={() => setInspector(!inspector)} aria-pressed={inspector}>{inspector ? 'Hide inspector' : 'Inspector'}</button>}
@@ -310,6 +317,12 @@ export default function App() {
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
             {ct.turns.length === 0 && cs?.state !== 'refused' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? 'Starting the sandbox and cloning the repo…' : 'Nothing here yet.'}</div>}
             <Transcript thread={ct} onDecide={(a) => decide(current.id, a)} />
+            {turnError(ct) && (
+              <div role="status" className="banner warn">
+                <span style={{ flex: 1 }}>{turnError(ct)}</span>
+                <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => send(current.id, 'Try that again.')}>Try again</button>
+              </div>
+            )}
             {paused && (
               <section className="cardx outs" aria-label="Out of credits">
                 <b style={{ fontSize: 15 }}>You're out of cloud credits</b>
@@ -329,18 +342,22 @@ export default function App() {
           <div className="dock">
             <Composer key={current.id} state={ct.running ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!ct.ask}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
+              model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
+              mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
               onSend={(text) => send(current.id, text)} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />
           </div>
         </>)}
 
         {view.kind === 'new' && (
-          <div className="main hero">
+          <div className="main home">
             {banner && <div role="status" className="banner"><span style={{ color: 'var(--place-cloud)' }}>✓</span><span style={{ flex: 1 }}>{banner}</span><button type="button" className="f-btn f-btn--plain" aria-label="Dismiss" onClick={() => setBanner(null)}>✕</button></div>}
             <Mark size={56} />
             <h1>What should we work on?</h1>
             <div style={{ width: '100%', maxWidth: 680 }}>
-              <Composer repo={view.repo} draft={draft} autoFocus onRepo={() => setView({ kind: 'pickRepo' })}
-                onSend={(text) => { setDraft(undefined); if (view.repo) start(text, view.repo); else { setPending(text); setView({ kind: 'pickRepo' }) } }} />
+              <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} busy={busy}
+                recent={[...new Set(sessions.map((s) => s.repo))]} onRepo={(repo) => setView({ kind: 'new', repo })}
+                model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
+                onSend={(text) => { setDraft(undefined); if (view.repo) start(text, view.repo) }} />
             </div>
             <div className="starters">
               {starters.map((t) => <button key={t.title} type="button" className="cz-chip" onClick={() => setDraft(t.title)}>{t.i} {t.title}</button>)}
@@ -348,16 +365,6 @@ export default function App() {
           </div>
         )}
 
-        {view.kind === 'pickRepo' && (
-          <div className="main" style={{ alignItems: 'center', padding: '60px 22px 0', gap: 14 }}>
-            {banner && <div role="status" className="banner" style={{ width: '100%', maxWidth: 560 }}><span style={{ color: 'var(--place-cloud)' }}>✓</span><span style={{ flex: 1 }}>{banner}</span><button type="button" className="f-btn f-btn--plain" aria-label="Dismiss" onClick={() => setBanner(null)}>✕</button></div>}
-            <Mark size={44} />
-            <h2 style={{ margin: 0, fontSize: 22, letterSpacing: '-0.02em' }}>Which repo?</h2>
-            {pending && <div className="me" style={{ alignSelf: 'center' }}>{pending}</div>}
-            <RepoPicker busy={busy} recent={[...new Set(sessions.map((s) => s.repo))]} onPick={(r) => { if (pending) start(pending, r); else setView({ kind: 'new', repo: r }) }} />
-            <div className="det">Frog clones it into a private cloud sandbox. Nothing is pushed until you say so.</div>
-          </div>
-        )}
       </main>
 
       {view.kind === 'session' && current && ct && inspector && (

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog cards</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>body{margin:0}</style>
+</helmet>
+<div data-theme="dark" class="f-root" style="width: 1880px; box-sizing: border-box; padding: 48px 56px; background: var(--bg); display: flex; flex-direction: column; gap: 28px;">
+  <div>
+    <h1 style="margin: 0; font-family: var(--font-display); font-size: 40px; letter-spacing: -0.03em;">Cards</h1>
+    <p style="margin: 6px 0 0; font-size: 17px; color: var(--muted); max-width: 820px;">Small illustrated cards for the sidebar and empty states. Each one is the Frog face in a little scene, with one line of why and one action. Show at most one at a time, only where it's true: no Mac card on a Mac, no Pro card for Pro users.</p>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(6, 270px); gap: 24px;">
+    <sc-for list="{{kinds}}" as="k" hint-placeholder-count="6">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 13px; font-weight: 600;">{{k.label}}</div>
+        <div style="font-size: 12px; color: var(--muted); min-height: 34px;">{{k.when}}</div>
+        <dc-import name="PromoCard" kind="{{k.id}}" theme="dark" hint-size="270px,290px"></dc-import>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1880,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { kinds: [
+      { id: 'mac', label: 'Frog for Mac', when: 'Web and iPhone, when no Mac is paired.' },
+      { id: 'iphone', label: 'Frog for iPhone', when: 'Mac and web, when no iPhone is signed in.' },
+      { id: 'cloud', label: 'Frog Cloud', when: 'Mac, signed out or never used the cloud.' },
+      { id: 'watch', label: 'Apple Watch', when: 'iPhone users without the Watch app.' },
+      { id: 'routines', label: 'Routines (Pro)', when: 'Free users with a few weeks of sessions.' },
+      { id: 'oss', label: 'Open source', when: 'Docs and the about page.' },
+    ] };
+  }
+}
+</script>
+</body>
+</html>
