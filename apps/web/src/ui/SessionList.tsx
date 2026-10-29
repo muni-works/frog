@@ -157,7 +157,7 @@ export function SessionList(p: {
     const quiet = !glyph && s.id !== p.current
     const status = glyph === 'run' ? (s.state === 'starting' ? 'Starting' : 'Running') : glyph === 'ask' ? 'Needs you' : glyph === 'fail' ? 'Failed' : glyph === 'paused' ? 'Paused' : null
     return (
-      <button key={s.id} type="button" className={`srow${s.id === p.current ? ' on' : ''}${detail || !view.compact ? ' two' : ''}`} onClick={() => p.onOpen(s.id)}
+      <button key={s.id} type="button" className={`srow${s.id === p.current ? ' on' : ''}${(detail && s.id === p.current) || !view.compact ? ' two' : ''}`} onClick={() => p.onOpen(s.id)}
         onContextMenu={(e) => { e.preventDefault(); setCtx({ s, x: e.clientX, y: e.clientY }) }}
         title={s.state === 'error' ? s.error ?? "The sandbox couldn't start" : undefined}>
         <span className="sbody">
@@ -175,7 +175,7 @@ export function SessionList(p: {
               : null}
           </span>
           {view.compact
-            ? detail && <span className={`sdetail${glyph === 'ask' ? ' ask' : ''}`}>{detail}</span>
+            ? detail && s.id === p.current && <span className={`sdetail${glyph === 'ask' ? ' ask' : ''}`}>{detail}</span>
             : <span className={`sdetail${glyph === 'ask' ? ' ask' : glyph === 'run' ? ' run' : glyph === 'fail' ? ' fail' : ''}`}>{detail ?? second(s, t)}</span>}
         </span>
       </button>
