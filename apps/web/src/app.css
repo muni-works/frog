@@ -79,11 +79,15 @@ a { color: var(--frog); }
 
 /* composer */
 .cz { position: relative; width: 100%; box-sizing: border-box; padding: 6px 0; }
-.cz-box { border-radius: 24px; padding: 12px 10px 10px 16px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); box-shadow: 0 8px 24px -14px rgba(0,0,0,.35); }
+.cz-box { border-radius: 22px; padding: 8px 8px 8px 8px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); box-shadow: 0 8px 24px -14px rgba(0,0,0,.35); }
 .cz-box:focus-within { border-color: var(--line-strong); }
-.cz-box textarea { border: 0; background: transparent; resize: none; outline: none; font: 15px/21px var(--font-sans); color: var(--fg); padding: 0 2px; }
+.cz-box textarea { flex: 1; min-width: 0; border: 0; background: transparent; resize: none; outline: none; font: 15px/21px var(--font-sans); color: var(--fg); padding: 5px 2px; max-height: 220px; box-sizing: border-box; line-height: 21px; height: 31px; }
 .cz-box textarea::placeholder { color: var(--faint); }
 .cz-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cz-row > .cz-ic, .cz-row > .cz-send, .cz-row > .cz-signin { margin-bottom: 0; }
+.cz-row > span { align-self: center; }
+.cz-under { display: flex; align-items: center; gap: 4px; padding: 6px 10px 0; min-width: 0; }
+.cz-under > .f-pill--cloud { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cz-ic { display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; border-radius: 50%; }
 .cz-ic:hover { background: var(--hover); color: var(--fg); }
 .cz-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 3px 10px; font: 12px/16px var(--font-sans); color: var(--muted); background: transparent; cursor: pointer; white-space: nowrap; }
@@ -121,8 +125,7 @@ a { color: var(--frog); }
 /* A narrow composer (inspector open, small window): the row never wraps; the model name
    truncates before the send button is pushed out. */
 .cz-box { container-type: inline-size; }
-.cz-row > * { flex-shrink: 0; }
-.cz-row > .f-pill--cloud { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cz-row > :not(textarea) { flex-shrink: 0; }
 .cz-list { max-height: 260px; overflow-y: auto; }
 .cz-more { display: block; padding: 8px 10px 4px; margin-top: 4px; border-top: 1px solid var(--line); font-size: 12px; }
 .turn { position: relative; }
@@ -212,7 +215,7 @@ button.tool:hover { color: var(--fg); }
   .main.home h1 { font-size: 24px; text-align: center; }
   .starters { gap: 6px; }
   .insp { position: fixed; z-index: 30; inset: 48px 0 0 0; width: auto; border-left: 0; }
-  .cz-box { padding: 10px 8px 8px 12px; border-radius: 20px; }
+  .cz-box { padding: 6px; border-radius: 20px; }
   .cz-box textarea { font-size: 16px; } /* 16px keeps iOS from zooming the page on focus */
   .cz-menu { left: 4px !important; right: 4px; width: auto !important; max-width: none; }
   .cz-bar { margin: 0 4px 6px; gap: 8px; }
@@ -351,3 +354,4 @@ button.tool:hover { color: var(--fg); }
 .ctx-h { display: flex; justify-content: space-between; font-size: 13px; }
 .ctx-bar { height: 4px; border-radius: 2px; background: var(--well); overflow: hidden; }
 .ctx-bar span { display: block; height: 100%; border-radius: 2px; }
+.cz-row > .cz-ic { width: 32px; height: 32px; border-radius: 50%; }
