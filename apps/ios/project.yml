@@ -17,6 +17,7 @@ targets:
     platform: iOS
     dependencies:
       - target: FrogNotify
+      - target: FrogPush
       - target: FrogWidgets
       - target: FrogWatch
       - target: FrogShare
@@ -87,6 +88,34 @@ targets:
             UNNotificationExtensionCategory: PERMISSION
             UNNotificationExtensionDefaultContentHidden: true
             UNNotificationExtensionInitialContentSizeRatio: 0.5
+  # Opens a sealed push from the Mac before iOS shows it (PushCrypto): the relay and Apple
+  # carry a placeholder; the phone has the pairing code.
+  FrogPush:
+    type: app-extension
+    platform: iOS
+    dependencies:
+      - sdk: UserNotifications.framework
+    sources:
+      - path: PushService
+        excludes: ["*.entitlements"]
+      - path: Shared/PairingCode.swift
+        group: Shared
+      - path: ../FrogKit/Core/PushCrypto.swift
+        group: FrogKit/Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.push
+        CODE_SIGN_ENTITLEMENTS: PushService/PushService.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Frog
+    info:
+      path: PushService/Info.plist
+      properties:
+        CFBundleDisplayName: Frog
+        FrogKeychainGroup: $(AppIdentifierPrefix)toys.frog.remote
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
   # The lock screen and Dynamic Island while a turn runs; later, widgets and controls.
   FrogWidgets:
     type: app-extension

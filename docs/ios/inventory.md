@@ -129,7 +129,11 @@ Problems in the push path:
 3. ~~No caller auth and no rate limits.~~ A shared `PUSH_RELAY_SECRET` (the Mac's Settings ›
    General) and 30 pushes a minute per isolate. Per-Mac secrets minted at pairing are still the
    plan.
-4. **Payloads are plaintext.** The command text and diff hunks pass through the frog relay and
+4. ~~Payloads are plaintext.~~ Alert pushes are sealed with ChaChaPoly under a key derived from
+   the pairing code (`FrogKit/Core/PushCrypto.swift`); `FrogPush`, a notification service
+   extension, opens them on the phone. Live Activity updates (the activity line and step count)
+   still go in the clear, since iOS renders those itself. Details below are the old state.
+   **Payloads were plaintext.** The command text and diff hunks pass through the frog relay and
    APNs. There's no Notification Service Extension to decrypt an encrypted payload (`FrogNotify`
    is a content extension). For a privacy-first product, that's a shipping blocker.
 5. **One Live Activity at a time.** `LiveActivities.current` holds a single activity for the

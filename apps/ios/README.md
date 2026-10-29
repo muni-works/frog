@@ -34,6 +34,7 @@ is the sidebar's row menu (archive, pin, rename).
 |---|---|
 | `Frog` | the app: list, threads, glass composer, questions, Siri/Shortcuts intents |
 | `FrogNotify` | long-press a question: the command or diff |
+| `FrogPush` | opens a sealed push (the relay and Apple see "frog needs you"; the phone has the key) |
 | `FrogWidgets` | Live Activity + Dynamic Island, home/lock widgets, Control Center control |
 | `FrogShare` | "Send to frog" in the share sheet |
 | `FrogWatch` | what needs you (the command, why, Allow / Deny / Always), what's running (Stop), what frog said (Reply) |
