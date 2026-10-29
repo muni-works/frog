@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionSummary } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
-import { lastReply, outOfCredits } from '../store'
+import { outOfCredits, peek } from '../store'
 
 // The sidebar's sessions, after the Mac's: quiet one-line rows filed under days, a glyph only
 // when the state means something, a second line only while a session is live or wants you,
@@ -32,14 +32,6 @@ function day(ms: number, now: number): string {
   return 'Older'
 }
 
-function age(ms: number, now: number) {
-  const s = (now - ms) / 1000
-  if (s < 60) return 'now'
-  if (s < 3600) return `${Math.floor(s / 60)}m`
-  if (s < 86_400) return `${Math.floor(s / 3600)}h`
-  if (s < 7 * 86_400) return `${Math.floor(s / 86_400)}d`
-  return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
 
 type View = { group: 'date' | 'repo' | 'none'; sort: 'activity' | 'created' | 'name'; compact: boolean; archived: boolean }
 const VIEW = 'frog.sidebar'
@@ -49,15 +41,18 @@ function loadView(): View {
 }
 
 /** The second line, when rows aren't compact: what's true of the session right now. */
-function second(s: SessionSummary, t: Thread, now: number): string {
+function second(s: SessionSummary, t: Thread): string {
+  if (s.state === 'error') return s.error ?? "Couldn't start"
+  if (s.state === 'starting') return 'Starting a sandbox'
+  const kept = peek(s.id, s.updated)
   const live = [...t.turns].reverse().flatMap((u) => [...u.entries].reverse()).find((e) => e.kind === 'message')
-  const said = (live && 'text' in live ? (live.text as string) : null) ?? lastReply(s.id, s.updated)
+  const said = (live && 'text' in live ? (live.text as string) : null) ?? kept.reply
   const snippet = said?.replace(/[#*_`>|]/g, '').replace(/\s+/g, ' ').trim()
-  const state = s.state === 'error' ? s.error ?? "Couldn't start"
-    : s.state === 'starting' ? 'Starting a sandbox'
-    : s.last_turn ? `${s.state === 'running' ? 'Awake' : 'Done'} ${age(s.last_turn, now)} ago` : s.state === 'running' ? 'Awake' : 'Asleep'
-  const where = s.repo ? s.repo.split('/')[1] ?? s.repo : null
-  return [where, s.state === 'error' ? state : snippet || state].filter(Boolean).join(' · ')
+  if (snippet) return [s.repo ? s.repo.split('/')[1] ?? s.repo : null, snippet].filter(Boolean).join(' · ')
+  // At rest with nothing kept: what it is, not that it's asleep.
+  const turns = t.turns.length || kept.turns
+  const model = (t.model ?? kept.model)?.split('/').pop()
+  return [s.repo ? s.repo.split('/')[1] ?? s.repo : null, turns ? `${turns} turn${turns === 1 ? '' : 's'}` : null, model].filter(Boolean).join(' · ') || (s.repo || 'Scratch sandbox, no repo')
 }
 
 // When you last looked at each session, so a turn that ended since gets a dot. Keyed off the
@@ -177,11 +172,11 @@ export function SessionList(p: {
             )}
             {status ? <span className={`sstate sstate-${glyph}`}><span className={`sg sg-${glyph}`} />{status}</span>
               : glyph === 'unread' ? <span className="sg sg-unread" aria-label="New" />
-              : <span className="sage">{age(s.updated, now)}</span>}
+              : null}
           </span>
           {view.compact
             ? detail && <span className={`sdetail${glyph === 'ask' ? ' ask' : ''}`}>{detail}</span>
-            : <span className={`sdetail${glyph === 'ask' ? ' ask' : glyph === 'run' ? ' run' : glyph === 'fail' ? ' fail' : ''}`}>{detail ?? second(s, t, now)}</span>}
+            : <span className={`sdetail${glyph === 'ask' ? ' ask' : glyph === 'run' ? ' run' : glyph === 'fail' ? ' fail' : ''}`}>{detail ?? second(s, t)}</span>}
         </span>
       </button>
     )
