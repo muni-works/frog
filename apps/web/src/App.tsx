@@ -129,8 +129,15 @@ export default function App() {
 
   useEffect(() => cloud?.watch((id, s) => setConn((all) => ({ ...all, [id]: s }))), [cloud])
 
-  const send = useCallback((id: string, text: string, images: Image[] = []) =>
-    cloud?.send(id, { op: 'submit', text, ...(images.length ? { images } : {}) }), [cloud])
+  // What you sent, shown at once: until the engine starts it as a turn it waits here, with a
+  // clock (queued until the socket is up), one tick (on the wire), or Not sent.
+  type Out = { id: number; text: string; images: Image[]; state: 'sending' | 'sent' | 'failed'; at: number; seen: number }
+  const [outbox, setOutbox] = useState<Record<string, Out[]>>({})
+  const outSeq = useRef(0)
+  const send = useCallback((id: string, text: string, images: Image[] = []) => {
+    setOutbox((o) => ({ ...o, [id]: [...(o[id] ?? []), { id: ++outSeq.current, text, images, state: 'sending', at: Date.now(), seen: thread(id).turns.filter((u) => u.input === text).length }] }))
+    cloud?.send(id, { op: 'submit', text, ...(images.length ? { images } : {}) })
+  }, [cloud, thread])
 
 
   const [pending, setPending] = useState<string | null>(null)
@@ -235,6 +242,33 @@ export default function App() {
 
 
   // ---------- signed out ----------
+  // Ticks follow the socket; a message leaves the outbox when its turn starts.
+  useEffect(() => {
+    setOutbox((o) => {
+      let changed = false
+      const next: typeof o = {}
+      for (const [id, list] of Object.entries(o)) {
+        const started = (text: string) => thread(id).turns.filter((u) => u.input === text).length
+        const live = conn[id]?.state === 'live'
+        const dead = conn[id]?.state === 'refused' || conn[id]?.state === 'closed'
+        // Delivered: a turn with this text started since it was sent.
+        const kept = list.filter((m) => started(m.text) <= m.seen).map((m) => {
+          const state: Out['state'] = m.state === 'failed' || dead || (!live && Date.now() - m.at > 20_000) ? 'failed' : live ? 'sent' : 'sending'
+          return state === m.state ? m : { ...m, state }
+        })
+        if (kept.length !== list.length || kept.some((m, i) => m !== list[i])) changed = true
+        if (kept.length) next[id] = kept
+      }
+      return changed ? next : o
+    })
+  })
+  const resend = (id: string, n: number) => {
+    const m = outbox[id]?.find((x) => x.id === n)
+    if (!m) return
+    setOutbox((o) => ({ ...o, [id]: (o[id] ?? []).filter((x) => x.id !== n) }))
+    send(id, m.text, m.images)
+  }
+
   if (!key) return (
     <div className="win">
       <main className="main home">
@@ -296,10 +330,14 @@ export default function App() {
             <div className="det">{current ? `${current.repo || 'No repo'} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}${ct?.context?.used ? ` · ${Math.round(ct.context.used / 1000)}k of ${Math.round(ct.context.window / 1000)}k context` : ''}` : 'Runs in a private Frog Cloud sandbox'}</div>
           </div>
           {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? 'In Frog Cloud' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
-          {current && <button type="button" className="f-btn f-btn--plain" onClick={() => setInspector(!inspector)} aria-pressed={inspector}>{inspector ? 'Hide inspector' : 'Inspector'}</button>}
+          {current && <button type="button" className="ic-btn" onClick={() => setInspector(!inspector)} aria-pressed={inspector} aria-label={inspector ? 'Hide inspector' : 'Show inspector'} title={inspector ? 'Hide inspector' : 'Inspector'}>
+            <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" />{inspector && <path d="M15 4h3a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-3z" fill="currentColor" stroke="none" opacity=".35" />}</svg>
+          </button>}
           {current && (
             <div className="title-menu">
-              <button type="button" className="f-btn f-btn--plain" aria-label="Session menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>⋯</button>
+              <button type="button" className="ic-btn" aria-label="Session menu" title="Session menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
+                <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
+              </button>
               {menuOpen && (
                 <div className="f-card cz-menu" role="menu" style={{ top: 30, bottom: 'auto', right: 0, left: 'auto', width: 180 }} onMouseLeave={() => setMenuOpen(false)}>
                   <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename</button>
@@ -331,7 +369,8 @@ export default function App() {
             <Transcript thread={ct} models={models} onDecide={(a) => decide(current.id, a)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
-              onRetry={() => send(current.id, 'Try that again.')} />
+              onRetry={() => send(current.id, 'Try that again.')}
+              outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)} />
             {/* A sandbox that couldn't start says so here, by the composer, not above the conversation. */}
             {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ?? "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
             {paused && (

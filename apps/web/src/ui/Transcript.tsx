@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { FileDiff } from '../cloud/protocol'
+import type { FileDiff, Image } from '../cloud/protocol'
 import type { Ask, Entry, Thread } from '../engine/thread'
 import type { Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
@@ -66,7 +66,7 @@ function ToolLine({ e }: { e: Entry }) {
   )
 }
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = [] }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = [], outbox = [], onResend }: {
   thread: Thread
   onDecide: (allow: boolean) => void
   onAnswer: (choices: string[], other?: string) => void
@@ -74,6 +74,9 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   /** Try again, offered on the last turn when it ended on an error. */
   onRetry?: () => void
   models?: Model[]
+  /** Messages sent but not yet started as a turn: shown at once, with a tick once on the wire. */
+  outbox?: { id: number; text: string; images: Image[]; state: 'sending' | 'sent' | 'failed' }[]
+  onResend?: (id: number) => void
 }) {
   const lastTurn = thread.turns[thread.turns.length - 1]?.turn
   const lastDone = [...thread.turns].reverse().find((u) => u.usage && (u.reason?.type === 'complete' || u.reason?.type === 'denied'))?.turn
@@ -85,6 +88,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
             <div key={i} className="me">
               {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
               {m.text}
+              {i === 0 && <Ticks n={2} />}
             </div>
           ))}
           {turn.entries.map((e) => {
@@ -134,6 +138,33 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
       {thread.running && thread.activity && !thread.ask && !thread.question && !thread.elicitation && (
         <div className="tool" style={{ color: thread.activity.warn ? 'var(--notice)' : undefined }}>… {thread.activity.text}</div>
       )}
+      {outbox.map((m) => (
+        <div key={`out-${m.id}`} className="turn">
+          <div className={`me${m.state === 'failed' ? ' failed' : ''}`}>
+            {m.images.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
+            {m.text}
+            {m.state === 'failed' ? null : <Ticks n={m.state === 'sent' ? 1 : 0} />}
+          </div>
+          {m.state === 'failed' && <div className="me-fail">Not sent · <button type="button" onClick={() => onResend?.(m.id)}>Try again</button></div>}
+        </div>
+      ))}
     </>
+  )
+}
+
+/** WhatsApp-style receipts on your messages: a clock while sending, one tick on the wire, two
+ * once Frog has started on it. */
+function Ticks({ n }: { n: 0 | 1 | 2 }) {
+  const label = n === 2 ? 'Received' : n === 1 ? 'Sent' : 'Sending'
+  return (
+    <span className={`ticks t${n}`} role="img" aria-label={label} title={label}>
+      {n === 0 ? (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+      ) : (
+        <svg width={n === 2 ? 16 : 11} height="11" viewBox={n === 2 ? '0 0 34 24' : '0 0 24 24'} fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 13l5 5L20 6" />{n === 2 && <path d="M15 17l1 1L31 6" />}
+        </svg>
+      )}
+    </span>
   )
 }

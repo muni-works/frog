@@ -311,3 +311,12 @@ button.tool:hover { color: var(--fg); }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -50% 0; } }
 @keyframes ghost-in { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) { .ghost, .ghost-me, .ghost-line { animation: none; } }
+.ic-btn { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.ic-btn:hover, .ic-btn[aria-pressed="true"], .ic-btn[aria-expanded="true"] { background: var(--hover); color: var(--fg); }
+/* Read receipts on your messages. */
+.me { position: relative; }
+.ticks { display: inline-flex; vertical-align: -1px; margin-left: 8px; color: var(--faint); }
+.ticks.t2 { color: var(--frog); }
+.me.failed { opacity: .7; }
+.me-fail { align-self: flex-end; font-size: 11.5px; color: var(--warn); }
+.me-fail button { border: 0; background: none; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
