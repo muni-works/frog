@@ -502,6 +502,22 @@ struct FrogCloudCard: View {
     @State private var store = ProviderStore.shared
 
     static let getKeyURL = URL(string: "https://api.frog.toys/beta")!
+    @State private var signingIn = false
+
+    /// GitHub in the browser, back to this Mac with its own key, saved where frog reads it.
+    private func signIn() {
+        signingIn = true
+        Task {
+            defer { signingIn = false }
+            do {
+                let key = try await CloudSignIn.run()
+                await store.setKey(key, for: provider?.id ?? "cloud")
+                await CloudAccount.shared.refresh()
+            } catch {
+                store.error = error.localizedDescription
+            }
+        }
+    }
 
     /// Where the key comes from, or nil when there's none. FROG_API_KEY wins over a saved key.
     static func keyLine(_ source: String?) -> String? {
@@ -535,11 +551,9 @@ struct FrogCloudCard: View {
             }
             Spacer()
             if provider?.key == nil {
-                #if FROG_SIGN_IN
-                Button("Sign In") {}
+                Button(signingIn ? "Signing In…" : "Sign In with GitHub") { signIn() }
                     .controlSize(.small)
-                    .disabled(true) // device flow lands post-launch (docs/plans/2026-10-21-frog-account-design.md)
-                #endif
+                    .disabled(signingIn)
                 Link("Get a Key", destination: Self.getKeyURL)
                     .controlSize(.small)
                 if let provider {
@@ -548,6 +562,7 @@ struct FrogCloudCard: View {
                 }
             } else if let provider {
                 Menu {
+                    Button("Sign In Again with GitHub") { signIn() }
                     Button("Change Key…") { addKey(provider) }
                     // Only a saved key can be removed here; an environment key is the shell's.
                     if provider.key == "keychain" {

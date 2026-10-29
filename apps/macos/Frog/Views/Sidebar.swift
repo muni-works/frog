@@ -14,6 +14,7 @@ struct SessionList: View {
     let maxHeight: CGFloat
     var collapse: (() -> Void)?
     @State private var library = Library.shared
+    @State private var cloud = CloudSessions.shared
     @State private var query: String
 
     init(workspace: Workspace, maxHeight: CGFloat, query: String = "", collapse: (() -> Void)? = nil) {
@@ -224,7 +225,7 @@ struct SessionList: View {
             footer
         }
         .frame(maxHeight: maxHeight)
-        .onAppear { library.refresh() }
+        .onAppear { library.refresh(); cloud.start() }
         .alert("Rename Conversation", isPresented: Binding { renaming != nil } set: { if !$0 { renaming = nil } }) {
             TextField("Title", text: $newTitle)
             Button("Rename") {
@@ -361,6 +362,7 @@ struct SessionList: View {
             }
             treeEntries(built.layout.yours, folds: built.folds, git: git, highlight: q)
         }
+        cloudSection(q)
         if !q.isEmpty {
             let archived = archiveMatches(q)
             if !archived.isEmpty {
@@ -375,6 +377,43 @@ struct SessionList: View {
             }
         } else if built.layout.org.isEmpty && built.layout.yours.isEmpty && library.chiefSession == nil {
             empty("No conversations yet")
+        }
+    }
+
+    /// Frog Cloud: the account's sandbox sessions, as the web lists them. Two lines each,
+    /// title then repo and age; the menu archives or deletes, as on the web.
+    @ViewBuilder
+    private func cloudSection(_ q: String) -> some View {
+        let rows = cloud.live.filter { q.isEmpty || $0.title.lowercased().contains(q) || $0.repo.lowercased().contains(q) }
+        if !rows.isEmpty {
+            treeLabel("Frog Cloud", count: rows.count)
+            ForEach(rows) { s in
+                Button { workspace.openCloud(s.id) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: s.state == "running" ? "cloud.fill" : "cloud")
+                            .font(.frog(size: 11))
+                            .foregroundStyle(s.state == "error" ? .red : .green.opacity(0.85))
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.title.isEmpty ? "New session" : s.title).lineLimit(1)
+                            Text([s.repo.isEmpty ? "No repo" : s.repo, SessionAge.short(Date(timeIntervalSince1970: (s.last_turn ?? s.updated) / 1000))].joined(separator: " · "))
+                                .font(.frog(size: 10.5))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(s.id == current ? Color.primary.opacity(0.08) : .clear, in: .rect(cornerRadius: 8))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button("Archive") { Task { await cloud.archive(s.id, true) } }
+                    Button("Delete Session", role: .destructive) { Task { await cloud.remove(s.id) } }
+                }
+            }
         }
     }
 
