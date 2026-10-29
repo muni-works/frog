@@ -4,13 +4,19 @@
   "main": "worker.js",
   "compatibility_date": "2026-05-03",
   "assets": {
-    "directory": ".",
+    // site/build.sh fills dist: the web app at /, marketing at /mac.
+    "directory": "./dist",
     // /energy -> /energy/, /index.html -> /, like vercel.json's cleanUrls.
     "html_handling": "auto-trailing-slash",
     // No SPA fallback: unmatched paths go to the worker, which 404s.
     "not_found_handling": "none"
   },
   "workers_dev": true,
+  "vars": {
+    // The Frog Cloud gateway the app's /v1 requests (and session websockets) go to. Same
+    // origin for the browser, so no CORS. Placeholder until the production gateway exists.
+    "GATEWAY_ORIGIN": "https://cloud.frog.toys"
+  },
   "routes": [
     { "pattern": "frog.toys", "custom_domain": true },
     { "pattern": "www.frog.toys", "custom_domain": true }
