@@ -428,7 +428,7 @@ struct CommandDetail: View {
         }
         .background(.background.opacity(0.6))
         .clipShape(.rect(cornerRadius: TurnSpace.Card.nestedRadius))
-        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.nestedRadius).strokeBorder(.quaternary, lineWidth: 0.5))
+        
     }
 
     @ViewBuilder

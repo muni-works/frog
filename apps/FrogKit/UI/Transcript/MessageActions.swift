@@ -52,7 +52,7 @@ struct ActionTooltip: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(.regularMaterial, in: .rect(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 0.5))
+            
             .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
             .allowsHitTesting(false)
     }

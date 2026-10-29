@@ -198,7 +198,7 @@ struct PresentCard: View {
         .padding(TurnSpace.Card.padding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: TurnSpace.Card.radius))
-        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.quaternary, lineWidth: 0.5))
+        
     }
 
     @ViewBuilder
@@ -325,6 +325,6 @@ private struct PresentTable: View {
         }
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: TurnSpace.Card.radius))
-        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.quaternary, lineWidth: 0.5))
+        
     }
 }

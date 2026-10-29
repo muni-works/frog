@@ -342,7 +342,7 @@ struct DiagramCard: View {
             }
         }
         .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: TurnSpace.Card.radius))
-        .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.quaternary, lineWidth: 0.5))
+        
         .contextMenu { DiagramExportMenu(diagram: diagram) }
     }
 

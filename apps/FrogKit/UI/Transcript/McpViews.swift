@@ -249,7 +249,7 @@ struct McpAppCard: View {
                 AppWebView(app: app, input: item.result?.input ?? .object([:]), conversation: conversation, height: $height)
                     .frame(height: height)
                     .clipShape(.rect(cornerRadius: TurnSpace.Card.radius))
-                    .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.radius).strokeBorder(.separator))
+                    
             } else {
                 Text("This app's view is no longer available.")
                     .font(.callout)

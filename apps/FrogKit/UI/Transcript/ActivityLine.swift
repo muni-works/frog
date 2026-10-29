@@ -242,7 +242,6 @@ struct ActivitySteps: View {
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(steps.enumerated()), id: \.element.id) { i, step in
-                        if i > 0 { Divider().opacity(0.4) }
                         if case .tool("Task", let arg) = step.kind, !step.done {
                             // A running agent keeps its live row open too: what it's doing now,
                             // its plan, Stop, and its run a click away (a plain step row said
@@ -256,7 +255,7 @@ struct ActivitySteps: View {
                     }
                 }
                 .padding(.vertical, TurnSpace.Inset.hair)
-                .overlay(RoundedRectangle(cornerRadius: TurnSpace.Card.nestedRadius).strokeBorder(.separator, lineWidth: 0.5))
+                .background(Tokens.raised.opacity(0.6), in: RoundedRectangle(cornerRadius: TurnSpace.Card.nestedRadius))
             }
         }
     }

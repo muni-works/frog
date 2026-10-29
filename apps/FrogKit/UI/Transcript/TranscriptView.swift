@@ -433,7 +433,7 @@ struct UserPrompt: View {
                                 .aspectRatio(contentMode: .fill)
                                 .frame(width: images.count == 1 ? 220 : 110, height: images.count == 1 ? 150 : 80)
                                 .clipShape(.rect(cornerRadius: 12))
-                                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+                                
                                 .opensInLightbox(images, at: i)
                         }
                     }
