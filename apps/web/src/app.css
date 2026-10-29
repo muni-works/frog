@@ -268,7 +268,7 @@ button.tool:hover { color: var(--fg); }
 .ssearch input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font: inherit; font-size: 12.5px; }
 .ssearch input::placeholder { color: var(--faint); }
 .ssearch kbd { font: 11px var(--font-mono); color: var(--faint); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
-.srow { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 5px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.srow { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 1px; border: 0; border-radius: 8px; background: transparent; color: var(--fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .srow.two { align-items: flex-start; }
 .srow:hover, .srow.on { background: var(--hover); }
 .srow:focus-visible { outline: 2px solid var(--frog-pad); outline-offset: -2px; }
@@ -364,8 +364,6 @@ button.tool:hover { color: var(--fg); }
 .sview button:hover { background: var(--hover); }
 .sview .ok { color: var(--frog); }
 .sview-sep { height: 1px; background: var(--line); margin: 4px 6px; }
-.slist.compact .srow { padding-top: 3px; padding-bottom: 3px; font-size: 12.5px; }
-.slist.compact .sdetail, .slist.compact .srepo { display: none; }
 .sctx { position: fixed; z-index: 30; width: 170px; padding: 6px; box-shadow: var(--shadow-float); }
 .sctx button { display: flex; width: 100%; border: 0; background: transparent; padding: 6px 10px; border-radius: var(--radius-plate); font: 13px/18px var(--font-sans); color: var(--fg); cursor: pointer; text-align: left; }
 .sctx button:hover { background: var(--hover); }
@@ -404,3 +402,6 @@ button.tool:hover { color: var(--fg); }
 .insp-grip:hover::after, .insp-grip.on::after { background: var(--frog); height: 64px; margin-top: -32px; opacity: 1; }
 body.resizing { cursor: col-resize; user-select: none; }
 @media (max-width: 760px) { .insp-grip { display: none; } }
+.srow.two .sbody { gap: 3px; }
+.sdetail.fail { color: var(--warn); }
+.slist.compact .srow { padding-top: 7px; padding-bottom: 7px; }
