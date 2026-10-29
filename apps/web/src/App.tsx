@@ -10,6 +10,7 @@ import { Composer } from './ui/Composer'
 import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
 import { SessionList } from './ui/SessionList'
+import { Starting } from './ui/Starting'
 import { creditLine, Palette, Settings, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 
@@ -50,7 +51,7 @@ export default function App() {
   /** Sessions still opening: their first message (and repo), from the moment you send until the
    * first turn starts. The placeholder and then the real session show the same bubble and one
    * status line, so the hand-over doesn't flicker between two different "starting" states. */
-  const [opening, setOpening] = useState<Record<string, { text: string; repo?: string }>>({})
+  const [opening, setOpening] = useState<Record<string, { text: string; repo?: string; at: number }>>({})
   // Follow-ups typed while Frog works wait here (per session) and go together, in order, as the
   // next turn once this one ends, like the Mac app. × takes one back into the field.
   const [queue, setQueue] = useState<Record<string, { text: string; images: Image[] }[]>>({})
@@ -147,7 +148,7 @@ export default function App() {
     // Open the session at once, as a placeholder, and swap in the real one when the gateway
     // answers: starting a conversation should feel instant, not wait on a round trip.
     const temp = `${PENDING}${Date.now()}`
-    setOpening((o) => ({ ...o, [temp]: { text, repo } }))
+    setOpening((o) => ({ ...o, [temp]: { text, repo, at: Date.now() } }))
     setSessions((all) => [{ id: temp, title: text.length > 60 ? text.slice(0, 57) + '…' : text, repo: repo ?? '', branch: '', state: 'starting', updated: Date.now() }, ...all])
     setView({ kind: 'session', id: temp })
     try {
@@ -155,7 +156,7 @@ export default function App() {
       // A session without a repo comes back titled "New session" until the engine names it.
       const s = { ...s0, title: s0.repo ? s0.title : text.length > 60 ? text.slice(0, 57) + '…' : text }
       setSessions((all) => [s, ...all.filter((x) => x.id !== s.id && x.id !== temp)])
-      setOpening(({ [temp]: first, ...rest }) => ({ ...rest, [s.id]: first ?? { text, repo } }))
+      setOpening(({ [temp]: first, ...rest }) => ({ ...rest, [s.id]: first ?? { text, repo, at: Date.now() } }))
       setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'session', id: s.id } : v))
       if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
       send(s.id, text, images) // queued until the session's socket is live
@@ -360,11 +361,8 @@ export default function App() {
                 <div className="ghost-line" style={{ width: '54%' }} />
               </div>
             )}
-            {opening[current.id] && ct.turns.length === 0 && current.state !== 'error' && (
-              <div className="turn">
-                <div className="me">{opening[current.id].text}</div>
-                <div className="tool">… {opening[current.id].repo ? `Starting a sandbox with ${opening[current.id].repo}` : 'Starting a sandbox'}</div>
-              </div>
+            {opening[current.id] && ct.turns.length === 0 && !outbox[current.id]?.length && current.state !== 'error' && (
+              <div className="turn"><div className="me">{opening[current.id].text}</div></div>
             )}
             <Transcript thread={ct} models={models} onDecide={(a) => decide(current.id, a)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
@@ -372,6 +370,10 @@ export default function App() {
               onRetry={() => send(current.id, 'Try that again.')}
               outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)}
               onEdit={(text) => setRestore({ text, images: [] })} />
+            {opening[current.id] && ct.turns.length === 0 && current.state !== 'error' && (
+              <Starting repo={opening[current.id].repo} since={opening[current.id].at}
+                step={current.id.startsWith(PENDING) ? 0 : cs?.state === 'live' ? 2 : 1} />
+            )}
             {/* A sandbox that couldn't start says so here, by the composer, not above the conversation. */}
             {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ?? "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
             {paused && (
