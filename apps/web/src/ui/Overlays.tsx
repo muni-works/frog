@@ -1,3 +1,4 @@
+import { TOP_UPS } from '../auth'
 import { useEffect, useMemo, useState } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
 import { API, firstName, type Account } from '../auth'
@@ -59,9 +60,30 @@ export function dollars(d: number) {
   return d > 0 && d < 0.01 ? '<$0.01' : `$${d.toFixed(2)}`
 }
 
+/** Add credit: pick an amount, then Stripe Checkout. */
+function TopUp({ onTopUp }: { onTopUp: (dollars: number) => Promise<void> }) {
+  const [amount, setAmount] = useState(TOP_UPS[1])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <div className="topup">
+      <b>Add credit</b>
+      <div className="topup-amts" role="radiogroup" aria-label="Amount">
+        {TOP_UPS.map((d) => <button key={d} type="button" role="radio" aria-checked={amount === d} className={amount === d ? 'on' : ''} onClick={() => setAmount(d)}>${d}</button>)}
+      </div>
+      <button type="button" className="f-btn f-btn--prominent" disabled={busy} style={{ justifyContent: 'center' }}
+        onClick={() => { setBusy(true); setError(null); onTopUp(amount).catch((e) => { setBusy(false); setError(e instanceof Error ? e.message : String(e)) }) }}>
+        {busy ? 'Opening Stripe…' : `Add $${amount}`}
+      </button>
+      {error && <div className="det" style={{ color: 'var(--warn)' }}>Couldn't start checkout ({error}). Try again.</div>}
+      <div className="det wrap">Paid through Stripe. Credit doesn't expire.</div>
+    </div>
+  )
+}
+
 const tabs = ['Account', 'Plan'] as const
 
-export function Settings({ account, models = [], onSignOut, onClose }: { account: Account | null; models?: Model[]; onSignOut: () => void; onClose: () => void }) {
+export function Settings({ account, models = [], onSignOut, onClose, onTopUp }: { account: Account | null; models?: Model[]; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void> }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>('Account')
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -92,8 +114,8 @@ export function Settings({ account, models = [], onSignOut, onClose }: { account
             <h2>Plan</h2>
             <div className="set-row">
               <div style={{ flex: 1 }}><b style={{ textTransform: 'capitalize' }}>{account?.plan ?? '…'}</b><div className="det">{creditLine(account)} left{account?.resets_at ? ` · resets ${new Date(account.resets_at).toLocaleDateString()}` : ''}</div></div>
-              <a className="f-btn f-btn--bordered" href={`${API}/billing`} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Billing</a>
             </div>
+            {onTopUp && <TopUp onTopUp={onTopUp} />}
             <p className="det wrap">Frog Cloud is pay per token: each turn costs what its model calls used, at the model's prices below. Frog for Mac is free with local models.</p>
             {models.length > 0 && (
               <div className="set-prices">
