@@ -386,6 +386,14 @@ struct ComposerView: View {
     private var plusMenu: some View {
         Menu {
             Button("Attach Images…", systemImage: "photo") { attachFromPanel() }
+            if CloudSessions.shared.gateway != nil, conversation.cloudSession == nil {
+                // As on the web: this message, in its own sandbox on this folder's repo.
+                Button("Run in Frog Cloud", systemImage: "cloud") {
+                    let message = text
+                    text = ""
+                    Task { await workspace.runInCloud(message) }
+                }
+            }
             if !workspace.isChat {
                 Button("Mention a File", systemImage: "at") {
                     controller.focus()
