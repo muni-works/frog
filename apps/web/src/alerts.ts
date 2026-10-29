@@ -31,7 +31,7 @@ export function useAlerts(signals: Signal[], open: (id: string) => void) {
       if (!before || document.visibilityState === 'visible' || !notifyOn()) continue
       const body = s.waiting && s.waiting !== before.waiting ? s.waiting : s.finished && !before.finished ? 'Finished' : null
       if (!body) continue
-      const n = new Notification(s.title, { body, tag: s.id, icon: '/frog.svg' })
+      const n = new Notification(s.title, { body, tag: s.id, icon: '/frog-icon.svg' })
       n.onclick = () => { window.focus(); open(s.id); n.close() }
     }
   }, [signals, open])

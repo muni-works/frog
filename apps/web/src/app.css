@@ -1,14 +1,14 @@
 /* Layout for the web workspace. Colors come only from tokens.css. */
 html, body, #root { height: 100%; margin: 0; }
 body { background: var(--canvas); color: var(--fg); font: 13px/1.45 var(--font-sans); -webkit-font-smoothing: antialiased; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --canvas: #1c1c1c; --bg: #161616; --card: #232323; --well: #2a2a2a; --line: #2e2e2e; --line-strong: #3e3e3e; --hover: rgba(255,255,255,.08); --fg: #ececec; --muted: #9b9b9b; --faint: #646464; --frog: #58cc6f; --on-frog: #0d1a10; --frog-pad: rgba(88,204,111,.22); --place-local: #0a84ff; --place-cloud: #30d158; --badge-bg: rgba(48,209,88,.18); --warn: #e5775f; --notice: #ff9f0a; --notice-bg: rgba(255,159,10,.09); --glass-fill: rgba(44,44,46,.6); --glass-fallback: #2a2a2b; --glass-edge: rgba(255,255,255,.12); } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --canvas: #1c1c1c; --bg: #161616; --card: #232323; --well: #2a2a2a; --line: #2e2e2e; --line-strong: #3e3e3e; --hover: rgba(255,255,255,.08); --fg: #ececec; --muted: #9b9b9b; --faint: #646464; --frog: #58cc6f; --on-frog: #0d1a10; --frog-pad: rgba(88,204,111,.22); --place-local: #0a84ff; --place-cloud: #30d158; --badge-bg: rgba(48,209,88,.18); --warn: #e5775f; --notice: #ff9f0a; --notice-bg: rgba(255,159,10,.09); --glass-fill: rgba(44,44,46,.6); --glass-fallback: #2a2a2b; --glass-edge: rgba(255,255,255,.12); --shadow-glass: 0 1px 0 rgba(255,255,255,.12) inset, 0 8px 24px -14px rgba(0,0,0,.35); } }
 button { font: inherit; color: inherit; }
 a { color: var(--frog); }
 .sr { position: absolute; left: -9999px; }
 .wrap { white-space: normal !important; }
 .ellip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .num { font-variant-numeric: tabular-nums; }
-.mark { display: inline-block; flex: none; background: var(--frog); -webkit-mask: url(/frog.svg) center / contain no-repeat; mask: url(/frog.svg) center / contain no-repeat; }
+.mark { display: inline-block; flex: none; background: url(/frog-mark.svg) center / contain no-repeat; }
 
 .win { display: flex; height: 100vh; overflow: hidden; background: var(--canvas); }
 .side { width: 270px; flex: none; display: flex; flex-direction: column; gap: 1px; padding: 12px 10px; border-radius: 0; box-shadow: none; border-right: 1px solid var(--line); overflow-y: auto; box-sizing: border-box; }
@@ -79,7 +79,8 @@ a { color: var(--frog); }
 
 /* composer */
 .cz { position: relative; width: 100%; box-sizing: border-box; padding: 6px 0; }
-.cz-box { border-radius: 24px; padding: 12px 10px 10px 16px; display: flex; flex-direction: column; gap: 8px; }
+.cz-box { border-radius: 24px; padding: 12px 10px 10px 16px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); box-shadow: 0 8px 24px -14px rgba(0,0,0,.35); }
+.cz-box:focus-within { border-color: var(--line-strong); }
 .cz-box textarea { border: 0; background: transparent; resize: none; outline: none; font: 15px/21px var(--font-sans); color: var(--fg); padding: 0 2px; }
 .cz-box textarea::placeholder { color: var(--faint); }
 .cz-row { display: flex; align-items: center; gap: 6px; min-width: 0; }

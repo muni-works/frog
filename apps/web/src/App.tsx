@@ -243,7 +243,7 @@ export default function App() {
         <ellipse cx="112" cy="58" rx="86" ry="26" fill="none" stroke="var(--fg)" strokeOpacity=".12" strokeDasharray="2 5" />
         <circle cx="31" cy="52" r="4" fill="var(--place-local)" /><circle cx="186" cy="74" r="3.5" fill="var(--notice)" /><circle cx="166" cy="36" r="3" fill="var(--frog)" />
         <rect x="66" y="40" width="92" height="56" rx="6" fill="var(--icon-ground)" /><rect x="70" y="44" width="84" height="48" rx="3" fill="#20251f" />
-        <image href="/frog.svg" x="96" y="52" width="32" height="32" style={{ filter: 'invert(1)' }} />
+        <image href="/frog-mark.svg" x="96" y="52" width="32" height="32" />
         <path d="M54 96 h116 a4 4 0 0 1 -4 6 h-108 a4 4 0 0 1 -4 -6z" fill="var(--line-strong)" />
         <text x="31" y="66" textAnchor="middle" fontSize="7" fill="var(--muted)" fontFamily="var(--font-mono)">model</text>
         <text x="186" y="88" textAnchor="middle" fontSize="7" fill="var(--muted)" fontFamily="var(--font-mono)">repo</text>
