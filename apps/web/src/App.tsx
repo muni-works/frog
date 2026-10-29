@@ -474,16 +474,18 @@ export default function App() {
 
         {view.kind === 'new' && (
           <div className="main home">
-            <Mark size={56} />
-            <h1>What should we work on?</h1>
-            <div style={{ width: '100%', maxWidth: 680 }}>
+            <div className="home-hero">
+              <Mark size={56} />
+              <h1>What should we work on?</h1>
+              <div className="starters">
+                {starters.map((t) => <button key={t.title} type="button" className="cz-chip" onClick={() => setDraft(t.title)}>{t.i} {t.title}</button>)}
+              </div>
+            </div>
+            <div className="dock">
               <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images) }} />
-            </div>
-            <div className="starters">
-              {starters.map((t) => <button key={t.title} type="button" className="cz-chip" onClick={() => setDraft(t.title)}>{t.i} {t.title}</button>)}
             </div>
           </div>
         )}
