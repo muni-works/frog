@@ -4,7 +4,7 @@ import type { Thread } from '../engine/thread'
 import { TerminalPane } from './TerminalPane'
 
 export function Inspector({ thread, branch, onCommit, onPr, hasPr, send }: { thread: Thread; branch: string; hasPr: boolean; onCommit: () => void; onPr: () => void; send: (op: Op) => void }) {
-  const [pane, setPane] = useState<'changes' | 'terminal' | 'preview'>('changes')
+  const [pane, setPane] = useState<'changes' | 'terminal'>('changes')
   const [log, setLog] = useState(false)
   // The newest terminal pane that's still open, else the newest one.
   const terms = Object.values(thread.panes).filter((p) => p.kind === 'terminal')
@@ -14,7 +14,7 @@ export function Inspector({ thread, branch, onCommit, onPr, hasPr, send }: { thr
     <section className="insp" aria-label="Inspector">
       <div className="insp-top">
         <div className="seg" role="tablist" style={{ flex: 1 }}>
-          {(['changes', 'terminal', 'preview'] as const).map((p) => (
+          {(['changes', 'terminal'] as const).map((p) => (
             <button key={p} type="button" role="tab" aria-selected={pane === p} onClick={() => setPane(p)}>
               {p[0].toUpperCase() + p.slice(1)}
             </button>
@@ -23,8 +23,7 @@ export function Inspector({ thread, branch, onCommit, onPr, hasPr, send }: { thr
       </div>
       {pane === 'changes' && (
         <div className="insp-body">
-          <div className="insp-h">Made by this session</div>
-          {thread.changes.length === 0 && <div className="det" style={{ padding: '4px 14px' }}>No changes yet.</div>}
+          {thread.changes.length === 0 && <div className="insp-empty det wrap">Files Frog changes in this session show up here, ready to commit or open as a PR.</div>}
           <div className="insp-files">
             {thread.changes.map((c) => (
               <div key={c.path} style={{ display: 'flex' }}>
@@ -34,10 +33,12 @@ export function Inspector({ thread, branch, onCommit, onPr, hasPr, send }: { thr
             ))}
           </div>
           <span style={{ flex: 1 }} />
-          <div className="insp-acts">
-            <button type="button" className="f-btn f-btn--bordered" disabled={!thread.changes.length} onClick={onCommit}>Commit</button>
-            <button type="button" className="f-btn f-btn--prominent" disabled={!thread.changes.length} onClick={onPr}>{hasPr ? 'Push' : 'Open PR'}</button>
-          </div>
+          {thread.changes.length > 0 && (
+            <div className="insp-acts">
+              <button type="button" className="f-btn f-btn--bordered" onClick={onCommit}>Commit</button>
+              <button type="button" className="f-btn f-btn--prominent" onClick={onPr}>{hasPr ? 'Push' : 'Open PR'}</button>
+            </div>
+          )}
         </div>
       )}
       {pane === 'terminal' && (
@@ -63,11 +64,7 @@ export function Inspector({ thread, branch, onCommit, onPr, hasPr, send }: { thr
           )}
         </div>
       )}
-      {pane === 'preview' && (
-        <div className="insp-body" style={{ alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div className="det wrap" style={{ textAlign: 'center' }}>When Frog starts a dev server in the sandbox, its page shows up here.</div>
-        </div>
-      )}
+
     </section>
   )
 }
