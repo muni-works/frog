@@ -557,3 +557,5 @@ button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
   --canvas: #fff; --bg: #fff; --card: #f4f4f4; --well: #ececec; --hover: rgba(0,0,0,.05);
   --glass-fill: rgba(250,250,250,.78); --glass-fallback: #fafafa;
 }
+.insp-top { gap: 6px; }
+.insp-x { flex: none; }

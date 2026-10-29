@@ -4,7 +4,7 @@ import type { Thread } from '../engine/thread'
 import { FileRow } from './Diff'
 import { TerminalPane } from './TerminalPane'
 
-export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thread; branch?: string; hasPr: boolean; onCommit: () => void; onPr: () => void; send: (op: Op) => void }) {
+export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose }: { onClose: () => void; thread: Thread; branch?: string; hasPr: boolean; onCommit: () => void; onPr: () => void; send: (op: Op) => void }) {
   // Width, dragged from the left edge and kept per browser.
   const [width, setWidth] = useState(() => { try { return Number(localStorage.getItem('frog.inspectorWidth')) || 330 } catch { return 330 } })
   const [dragging, setDragging] = useState(false)
@@ -40,6 +40,9 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send }: { thread: Thr
             </button>
           ))}
         </div>
+        <button type="button" className="ic-btn insp-x" aria-label="Close the inspector" title="Close" onClick={onClose}>
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
       </div>
       {pane === 'changes' && (
         <div className="insp-body">
