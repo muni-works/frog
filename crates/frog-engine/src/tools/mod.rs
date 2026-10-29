@@ -292,6 +292,8 @@ pub fn kind(name: &str) -> Kind {
         // A subagent can only read.
         crate::subagent::TOOL => Kind::Read,
         crate::skills::TOOL => Kind::Read,
+        // Writes ask like an edit; list/get are let through (`compiled_memory::is_read`).
+        crate::compiled_memory::TOOL => Kind::Edit,
         // Moving into a folder hands over its files and shell: always asks.
         crate::folder::TOOL => Kind::Exec,
         _ => Kind::Read,

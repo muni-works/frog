@@ -321,6 +321,9 @@ pub struct Config {
     /// unless configured; read-only tools never card anyway.
     #[serde(default)]
     pub mcp_trust: BTreeMap<String, McpTrust>,
+    /// `[memory]`: `compiled = "auto" | "on" | "off"` (see `compiled_memory`).
+    #[serde(default)]
+    pub memory: crate::compiled_memory::Settings,
 }
 
 /// How far a `[mcp_trust]` grant goes for one MCP server.

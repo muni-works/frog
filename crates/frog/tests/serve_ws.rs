@@ -106,7 +106,10 @@ async fn fake_model(script: Vec<String>, models: Arc<Mutex<Vec<String>>>) -> Str
                 if !first.starts_with("POST") {
                     return respond(&mut sock, "application/json", r#"{"data":[]}"#).await;
                 }
-                if let Ok(v) = serde_json::from_str::<Value>(&body) {
+                // Only model requests name a model; the compiled-memory probe doesn't.
+                if let Ok(v) = serde_json::from_str::<Value>(&body)
+                    && v.get("model").is_some()
+                {
                     models
                         .lock()
                         .unwrap()
