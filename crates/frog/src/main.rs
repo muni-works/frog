@@ -264,6 +264,10 @@ async fn run() -> Result<bool> {
         }
         return Ok(true);
     }
+    // `frog memory dump|forget <name>|clear [--model M]`: this project's compiled memory.
+    if args.get(1).map(String::as_str) == Some("memory") {
+        return memory_command(&args[2..]).await;
+    }
     let cli = Cli::parse();
     if cli.attempts.is_some() || cli.apply_attempt.is_some() || !cli.discard_attempt.is_empty() {
         return attempts(&cli);
@@ -1049,6 +1053,62 @@ fn attempts(cli: &Cli) -> Result<bool> {
     }
     if !cli.discard_attempt.is_empty() {
         checkpoint::remove_attempts(&root, &cli.discard_attempt);
+    }
+    Ok(true)
+}
+
+/// `frog memory …`: read or edit this project's compiled-memory blob. Reading or deleting one
+/// file needs the model server that wrote it (only it can read its store); `clear` doesn't.
+async fn memory_command(args: &[String]) -> Result<bool> {
+    use frog_engine::compiled_memory as cm;
+    let cwd = std::env::current_dir()?;
+    let store = frog_engine::memory::Store::new(&frog_engine::memory::default_root(), Some(&cwd));
+    let path = cm::blob_path(&store);
+    let model = args
+        .iter()
+        .position(|a| a == "--model" || a == "-m")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let remote = || -> Result<cm::Remote> {
+        let cfg = Config::load()?;
+        let (name, profile) = cfg.resolve(model.as_deref())?;
+        let provider = frog_engine::provider::Provider::new(&profile)?;
+        provider.memory_remote().with_context(|| {
+            format!("{name} has no compiled memory (it needs tang-llm serve --memory-layer N)")
+        })
+    };
+    match args.first().map(String::as_str) {
+        Some("clear") => {
+            if cm::clear(&path)? {
+                println!("Cleared {}", path.display());
+            } else {
+                println!("No compiled memory for this project.");
+            }
+        }
+        Some("dump") => {
+            let Some(blob) = cm::read_blob(&path)? else {
+                println!("No compiled memory for this project.");
+                return Ok(true);
+            };
+            let files = cm::dump(&remote()?, &blob).await?;
+            if files.is_empty() {
+                println!("Compiled memory is empty ({}).", path.display());
+            }
+            for (name, text) in files {
+                println!("== {name} ==\n{text}\n");
+            }
+        }
+        Some("forget") => {
+            let name = args.get(1).filter(|n| !n.starts_with('-'));
+            let name = name.context("usage: frog memory forget <name>")?;
+            if cm::forget(&remote()?, &path, name).await? {
+                println!("Forgot {name}.");
+            } else {
+                println!("No file named {name}.");
+                return Ok(false);
+            }
+        }
+        _ => anyhow::bail!("usage: frog memory dump | forget <name> | clear  [--model M]"),
     }
     Ok(true)
 }
