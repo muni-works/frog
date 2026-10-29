@@ -326,6 +326,7 @@ private struct PriceList: View {
         switch spec.split(separator: "/").first {
         case "openrouter": ("OpenRouter's model list", URL(string: "https://openrouter.ai/models")!)
         case "vercel": ("Vercel AI Gateway's model list", URL(string: "https://vercel.com/ai-gateway/models")!)
+        case "cloudflare": ("Cloudflare's model catalog", URL(string: "https://developers.cloudflare.com/ai/models/")!)
         default: ("models.dev", URL(string: "https://models.dev")!)
         }
     }

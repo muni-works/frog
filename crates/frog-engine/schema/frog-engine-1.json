@@ -1146,6 +1146,49 @@
           "type": "object"
         },
         {
+          "description": "The model's suggested next prompt (its `Next` tool), sent just before a completed\nturn's [`Event::TurnEnded`]. Live only: a replaying client shows no stale suggestion.",
+          "properties": {
+            "act": {
+              "description": "It acts outside the project (push, send, deploy): show a button, not ghost text.",
+              "type": "boolean"
+            },
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "next_suggested",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "text": {
+              "description": "One line in the user's voice; empty never arrives.",
+              "type": "string"
+            },
+            "turn": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "turn",
+            "text",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "description": "A chapter's title, written by a small side-model when the next chapter opened (see\n`chapter`). The app derives chapters and a heuristic title itself; this one, when it\narrives, wins. Durable, so a replaying client shows it too.",
           "properties": {
             "created": {
@@ -3169,6 +3212,34 @@
             "item",
             "command",
             "gist"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The model's suggested next prompt (its `Next` tool), sent just before a completed\nturn's [`Event::TurnEnded`]. Live only: a replaying client shows no stale suggestion.",
+          "properties": {
+            "act": {
+              "description": "It acts outside the project (push, send, deploy): show a button, not ghost text.",
+              "type": "boolean"
+            },
+            "event": {
+              "const": "next_suggested",
+              "type": "string"
+            },
+            "text": {
+              "description": "One line in the user's voice; empty never arrives.",
+              "type": "string"
+            },
+            "turn": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "turn",
+            "text"
           ],
           "type": "object"
         },

@@ -15,6 +15,11 @@ pub struct Client {
     pub settings: Settings,
 }
 
+/// Cloudflare's AI Gateway REST API (`api.cloudflare.com/client/v4/accounts/{id}/ai`).
+pub fn on_cloudflare(base: &str) -> bool {
+    base.starts_with("https://api.cloudflare.com/client/v4/accounts/")
+}
+
 /// Per-profile request options (see the matching `Profile` fields).
 #[derive(Clone, Debug, Default)]
 pub struct Settings {
@@ -280,10 +285,16 @@ impl Client {
         req: &Request<'_>,
         on: &mut (dyn FnMut(StreamEvent) + Send),
     ) -> Result<Response> {
-        let resp = self
+        let rb = self
             .http
-            .post(format!("{}/v1/messages", self.base.trim_end_matches('/')))
-            .header("x-api-key", &self.key)
+            .post(format!("{}/v1/messages", self.base.trim_end_matches('/')));
+        // Cloudflare's AI Gateway takes its API token as a bearer, not Anthropic's header.
+        let rb = if on_cloudflare(&self.base) {
+            rb.bearer_auth(&self.key)
+        } else {
+            rb.header("x-api-key", &self.key)
+        };
+        let resp = rb
             .header("anthropic-version", "2023-06-01")
             .json(&self.body(req))
             .send()

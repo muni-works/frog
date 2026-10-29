@@ -16,13 +16,15 @@ pub struct Client {
 }
 
 impl Client {
-    /// `vercel/anthropic/*` on Vercel's AI Gateway: the gateway also serves the Anthropic
-    /// Messages API (same host, `/v1/messages`, `x-api-key`), which keeps `cache_control`,
-    /// thinking and effort and returns real cache usage, none of which survive the
-    /// chat-completions translation.
+    /// `anthropic/*` on Vercel's or Cloudflare's AI Gateway: both also serve the Anthropic
+    /// Messages API (same base, `/v1/messages`), which keeps `cache_control`, thinking and
+    /// effort and returns real cache usage, none of which survive the chat-completions
+    /// translation.
     fn gateway_claude(&self) -> Option<super::anthropic::Client> {
         let base = self.base.trim_end_matches('/');
-        if !base.contains("ai-gateway.vercel.sh") || !self.model.starts_with("anthropic/") {
+        let gateway =
+            base.contains("ai-gateway.vercel.sh") || super::anthropic::on_cloudflare(base);
+        if !gateway || !self.model.starts_with("anthropic/") {
             return None;
         }
         Some(super::anthropic::Client {
@@ -553,6 +555,22 @@ mod gateway_tests {
         assert_eq!(c.base, "https://ai-gateway.vercel.sh");
         assert_eq!(c.model, "anthropic/claude-opus-5.5");
         assert_eq!(c.key, "gw-key");
+    }
+
+    #[test]
+    fn cloudflare_anthropic_models_use_the_messages_api() {
+        let c = client(
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
+            "anthropic/claude-opus-5.5",
+            Some("cf-token"),
+        )
+        .gateway_claude()
+        .unwrap();
+        assert_eq!(
+            c.base,
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai"
+        );
+        assert_eq!(c.model, "anthropic/claude-opus-5.5");
     }
 
     #[test]
