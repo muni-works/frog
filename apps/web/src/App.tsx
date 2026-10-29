@@ -102,6 +102,14 @@ export default function App() {
   }), [sessions, thread]), useCallback((id: string) => setView({ kind: 'session', id }), []))
 
   useEffect(() => setDrawer(false), [view])
+  // The sidebar folds away on wide screens (⌘\\), as on the Mac; remembered per browser.
+  const [collapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem('frog.sidebarCollapsed') === '1' } catch { return false } })
+  const setCollapsed = (v: boolean) => { setCollapsedState(v); try { localStorage.setItem('frog.sidebarCollapsed', v ? '1' : '0') } catch { /* private mode */ } }
+  const sideToggle = (open: boolean) => (
+    <button type="button" className={`ic-btn side-toggle${open ? '' : ' out'}`} aria-label={open ? 'Hide sidebar (⌘\\)' : 'Show sidebar (⌘\\)'} title={open ? 'Hide sidebar ⌘\\' : 'Show sidebar ⌘\\'} onClick={() => setCollapsed(open)}>
+      <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /></svg>
+    </button>
+  )
   const Burger = () => (
     <button type="button" className="burger" aria-label="Sessions" aria-expanded={drawer} onClick={() => setDrawer(!drawer)}>
       <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
@@ -221,6 +229,7 @@ export default function App() {
     const k = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
       if (e.key === 'k') { e.preventDefault(); setPalette((p) => !p) }
+      if (e.key === '\\') { e.preventDefault(); setCollapsedState((c) => { try { localStorage.setItem('frog.sidebarCollapsed', c ? '0' : '1') } catch { /* private mode */ } return !c }) }
       if (!key) return
       if (e.key === 'n') { e.preventDefault(); setView({ kind: 'new' }) }
       if (e.key === ',') { e.preventDefault(); setSettings(true) }
@@ -316,10 +325,10 @@ export default function App() {
   const cs = current ? conn[current.id] : undefined
 
   return (
-    <div className={`win ${drawer ? 'drawer' : ''}`}>
+    <div className={`win ${drawer ? 'drawer' : ''}${collapsed ? ' collapsed' : ''}`}>
       <div className="side-scrim" onClick={() => setDrawer(false)} />
       <aside className="side f-glass">
-        <div className="brand"><Mark /><b>Frog</b></div>
+        <div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b>{sideToggle(true)}</div>
         <Nav />
         <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
           onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
@@ -337,6 +346,7 @@ export default function App() {
       <main className="main">
         {current ? (<div className="titlebar">
           <Burger />
+          {collapsed && sideToggle(false)}
           <div style={{ flex: 1, minWidth: 0 }}>
             {current && renaming === current.id ? (
               <input className="f-field title-edit" autoFocus defaultValue={title(current)} aria-label="Session name"
@@ -364,7 +374,7 @@ export default function App() {
               )}
             </div>
           )}
-        </div>) : <div className="phone-bar floating"><Burger /><b>Frog</b></div>}
+        </div>) : <>{collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div></>}
 
         {view.kind === 'session' && current && ct && (<>
           <div className="scroll" ref={(el) => { if (el) el.scrollTop = el.scrollHeight }}><div className="col">
