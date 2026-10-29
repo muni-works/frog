@@ -13,6 +13,9 @@ import { Palette, Settings, tasksLine, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
+/** Placeholder session ids, shown while POST /v1/sessions is in flight. */
+const PENDING = 'pending-'
+
 type View = { kind: 'session'; id: string } | { kind: 'new'; repo?: string; pick?: boolean }
 
 /** Dev only: a key for the mock gateway (any non-empty key is an account there). Skips sign-in. */
@@ -63,11 +66,12 @@ export default function App() {
   const [view, setView] = useState<View>({ kind: 'new' })
   const [palette, setPalette] = useState(false)
   const [settings, setSettings] = useState(false)
-  const [inspector, setInspector] = useState(true)
+  const [inspector, setInspector] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [draft, setDraft] = useState<string | undefined>()
-  const [busy, setBusy] = useState(false)
+  /** Sessions shown before the gateway has created them: placeholder id → the first message. */
+  const [pending, setPending] = useState<Record<string, string>>({})
   const [conn, setConn] = useState<Record<string, ConnectionState>>({})
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -81,12 +85,10 @@ export default function App() {
   const repoList = useRepos(cloud)
   const { sessions, error: listError, setSessions } = useSessions(cloud)
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined
-  // Stream the open session and any with a live sandbox (for Needs you), not sleeping ones:
-  // attaching would wake them.
-  const live = useMemo(() => {
-    const ids = sessions.filter((s) => s.state === 'running' || s.state === 'starting').slice(0, 8).map((s) => s.id)
-    return current && !ids.includes(current.id) ? [current.id, ...ids] : ids
-  }, [sessions, current])
+  // Stream only the open session. Attaching to a session wakes its sandbox, and the sockets
+  // reconnect after a sandbox sleeps, so streaming every running session kept them all awake
+  // (and the account at its running-sandbox limit). Other sessions show the listed state.
+  const live = useMemo(() => (current && !current.id.startsWith(PENDING) ? [current.id] : []), [current])
   const thread = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
   const title = (s: SessionSummary) => thread(s.id).title ?? s.title
@@ -123,17 +125,27 @@ export default function App() {
 
   const start = useCallback(async (text: string, repo?: string) => {
     if (!cloud) return
-    setBusy(true)
+    // Open the session at once, as a placeholder, and swap in the real one when the gateway
+    // answers: starting a conversation should feel instant, not wait on a round trip.
+    const temp = `${PENDING}${Date.now()}`
+    setPending((p) => ({ ...p, [temp]: text }))
+    setSessions((all) => [{ id: temp, title: text.length > 60 ? text.slice(0, 57) + '…' : text, repo: repo ?? '', branch: '', state: 'starting', updated: Date.now() }, ...all])
+    setView({ kind: 'session', id: temp })
     try {
-      const s = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(newModel ? { model: spec(newModel) } : {}) })
-      setSessions((all) => [{ ...s, title: s.title || text }, ...all.filter((x) => x.id !== s.id)])
-      setView({ kind: 'session', id: s.id })
+      const s0 = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(newModel ? { model: spec(newModel) } : {}) })
+      // A session without a repo comes back titled "New session" until the engine names it.
+      const s = { ...s0, title: s0.repo ? s0.title : text.length > 60 ? text.slice(0, 57) + '…' : text }
+      setSessions((all) => [s, ...all.filter((x) => x.id !== s.id && x.id !== temp)])
+      setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'session', id: s.id } : v))
       if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
       send(s.id, text) // queued until the session's socket is live
     } catch (e) {
+      setSessions((all) => all.filter((x) => x.id !== temp))
+      setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'new', repo } : v))
+      setDraft(text)
       say(`Couldn't start a sandbox: ${e instanceof Error ? e.message : e}`)
     } finally {
-      setBusy(false)
+      setPending((p) => { const { [temp]: _, ...rest } = p; return rest })
     }
   }, [cloud, send, setSessions, newModel, newMode])
 
@@ -378,7 +390,8 @@ export default function App() {
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{cs.refused.upgrade ? <a className="f-btn f-btn--bordered f-btn--small" href={cs.refused.upgrade} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
             {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ?? "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
-            {ct.turns.length === 0 && cs?.state !== 'refused' && current.state !== 'error' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Nothing here yet.'}</div>}
+            {ct.turns.length === 0 && !pending[current.id] && cs?.state !== 'refused' && current.state !== 'error' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Nothing here yet.'}</div>}
+            {pending[current.id] && <div className="turn"><div className="me">{pending[current.id]}</div><div className="tool">… Starting the sandbox</div></div>}
             <Transcript thread={ct} models={models} onDecide={(a) => decide(current.id, a)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })} />
@@ -414,7 +427,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} state={ct.running ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
+            <Composer key={current.id} state={ct.running || pending[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
@@ -428,7 +441,7 @@ export default function App() {
             <Mark size={56} />
             <h1>What should we work on?</h1>
             <div style={{ width: '100%', maxWidth: 680 }}>
-              <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} busy={busy}
+              <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text) => { setDraft(undefined); start(text, view.repo) }} />
