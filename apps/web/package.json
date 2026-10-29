@@ -1,0 +1,29 @@
+{
+  "name": "frog-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "mock": "node test/mock/mock-gateway.mjs",
+    "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^7.0.2",
+    "vite": "^5.4.21",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "ws": "^8.18.0"
+  }
+}
