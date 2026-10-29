@@ -38,14 +38,7 @@ struct AgentStepRow: View {
             }
             Spacer(minLength: 8)
             if running {
-                if let since = item.startedAt {
-                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                        Text(ActivityWords.duration(ctx.date.timeIntervalSince(since)))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                            .fixedSize()
-                    }
-                }
+                // No per-agent clock: the turn's live status row is the app's one clock.
                 Button {
                     conversation.stopSubagent(item.id)
                 } label: {

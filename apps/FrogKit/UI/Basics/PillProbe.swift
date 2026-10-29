@@ -26,7 +26,8 @@ enum PillProbe {
     static var lineBodies = 0
     /// `ActivityLabel` bodies built (the pill's words and icon layout).
     static var labelBodies = 0
-    /// `ActivityLabel`'s periodic clock ticks (the honest 1 Hz elapsed timer).
+    /// `ActivityLabel`'s clock ticks. The pill no longer runs a clock (the transcript's live
+    /// status row is the app's one), so this reads 0; kept so the benchmark's line says so.
     static var clockTicks = 0
 
     static func reset() {

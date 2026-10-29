@@ -71,7 +71,6 @@ Each of these needs an API that doesn't exist yet, so the UI leaves it out inste
 - MCP servers, routines and skills.
 - The Preview tab. It needs a sandbox port.
 - Email sign-in.
-- Asks after a reconnect. `PermissionRequest` isn't durable, so a client that attaches mid-ask (after a reload, or on another device) doesn't see the open ask. The engine or gateway needs to re-send outstanding asks after replay.
 
 ## Frog Cloud transport
 
