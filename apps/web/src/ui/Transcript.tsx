@@ -92,7 +92,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
                 {m.text}
               </div>
             ))}
-            <div className={`hover-row mine${turn.entries.length ? '' : ' waiting'}`}>
+            <div className={`hover-row mine${turn.entries.length || turn.reason ? '' : ' waiting'}`}>
               <Ticks n={2} />
               {turn.at ? <span className="when" title={new Date(turn.at).toLocaleString()}>{ago(turn.at)}</span> : null}
               <span className="sep" aria-hidden="true">·</span>
