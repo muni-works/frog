@@ -110,7 +110,7 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
         return;
       }
       s.info.updated = Date.now();
-      if (v.op === "submit") void s.rec.play(typeof v.input === "string" ? v.input : "", delayMs);
+      if (v.op === "submit") void s.rec.play(typeof v.text === "string" ? v.text : "", delayMs);
       else if (v.op === "permission" && typeof v.id === "string") s.rec.permission(v);
     };
     conn.onclose = () => s.rec.peers.delete(conn);

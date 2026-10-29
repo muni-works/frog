@@ -150,6 +150,9 @@ impl Agent {
         if self.has_recall() {
             specs.push(crate::recall::spec());
         }
+        if self.compiled.is_some() {
+            specs.push(crate::compiled_memory::spec());
+        }
         // MCP tools last: servers that connect late (or tools loaded on demand) then only
         // append to the list, and the prefix before them stays cached.
         if !self.subagent {

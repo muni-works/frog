@@ -391,7 +391,8 @@ enum ActivityWords {
 }
 
 /// Which turns show their model/speed footer without hovering: the latest finished one, one
-/// whose model differs from the turn before, and one that cost money.
+/// whose model differs from the turn before, and one that cost money. Touch screens only: on
+/// the Mac every footer is hover-only (`TranscriptView`), so nothing is pinned at rest.
 enum TurnFooter {
     static func pinned(_ turns: [TurnState], cost: (TurnUsage) -> Double? = { _ in nil }) -> Set<TurnState.ID> {
         var out = Set<TurnState.ID>()

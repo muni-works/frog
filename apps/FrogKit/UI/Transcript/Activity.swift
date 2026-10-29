@@ -4,7 +4,8 @@ import SwiftUI
 /// "Interrupted". The Mac's activity viewer leads with it; the phone's chat title shows it.
 struct ActivityLabel: View {
     let conversation: Conversation
-    /// The frog's face as the icon, or a plain symbol (Settings › Appearance on the Mac).
+    /// Playful words ("Hopping to it", "Caught it") or plain ones (Settings › Appearance on the
+    /// Mac). The icon is a plain symbol either way.
     var playful = true
     var maxWidth: CGFloat = 300
 
@@ -24,18 +25,14 @@ struct ActivityLabel: View {
                 Text("Opening…").foregroundStyle(.secondary)
             }
         } else if conversation.busy, let turn = conversation.turns.last, !turn.finished {
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                #if DEBUG
-                let _ = PillProbe.tick()
-                #endif
-                HStack(spacing: 7) {
-                    icon(at: ctx.date) { Image(systemName: Self.symbol(turn)).foregroundStyle(.tint) }
-                    // Hugs the text, up to `maxWidth`.
-                    Text(Self.live(turn, in: conversation)).lineLimit(1).truncationMode(.middle)
-                        .frame(maxWidth: maxWidth, alignment: .leading)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Text(Self.elapsed(turn)).foregroundStyle(.secondary).monospacedDigit()
-                }
+            // No clock here: the app keeps exactly one, the live status row in the transcript.
+            // The words change when the work does, so the label has nothing to tick for.
+            HStack(spacing: 7) {
+                icon { Image(systemName: Self.symbol(turn)).foregroundStyle(.tint) }
+                // Hugs the text, up to `maxWidth`.
+                Text(Self.live(turn, in: conversation)).lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: maxWidth, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         } else if conversation.busy {
             HStack(spacing: 7) {
@@ -63,21 +60,10 @@ struct ActivityLabel: View {
         }
     }
 
-    /// The frog, or the plain symbol when the playful frog is off. The pill's frog does not
-    /// run its own 30/s timeline: it rides this label's 1Hz clock (the mood changes when work
-    /// changes, not per frame), so the capsule costs a frame a second instead of thirty.
-    /// Settled (done, ready, stopped) it holds its pose: an idle pill's frog looping at 30/s
-    /// redrew the whole window, glass and all, for as long as the app sat open.
-    /// DEBUG churn benchmarking holds its pose through `PillChurn.noFrog` (Reduce Motion).
-    @ViewBuilder
-    private func icon(at: Date? = nil, @ViewBuilder plain: () -> some View) -> some View {
-        if playful {
-            let settled = !conversation.busy && !conversation.justFinished
-            FrogFace(mood: conversation.failure != nil ? .sad : conversation.mood, size: 16,
-                     animating: !PillChurn.noFrog && !settled, at: at).frame(width: 16)
-        } else {
-            plain().frame(width: 14)
-        }
+    /// The state's plain symbol. The frog's face is retired from the live chrome (it stays on
+    /// the empty page and decorative spots); `playful` now only flavors the words.
+    private func icon(@ViewBuilder plain: () -> some View) -> some View {
+        plain().frame(width: 14)
     }
 
     /// A permission prompt or a server's question, in a few words.
@@ -117,12 +103,7 @@ struct ActivityLabel: View {
         }
     }
 
-    /// "12s", "3m 4s": a running turn so far, or a finished one start to end.
-    static func elapsed(_ turn: TurnState) -> String {
-        guard let a = turn.startedAt else { return "" }
-        return clock(Int((turn.endedAt ?? .now).timeIntervalSince(a)))
-    }
-
+    /// "12s", "3m 4s": a finished turn, start to end.
     static func duration(_ turn: TurnState) -> String? {
         guard let a = turn.startedAt, let b = turn.endedAt else { return nil }
         return clock(Int(b.timeIntervalSince(a)))
@@ -201,8 +182,9 @@ struct ActivityPanel: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(turn.number.map { "Turn \($0)" } ?? "This turn").font(.headline)
                 Spacer()
-                TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    Text(ActivityLabel.elapsed(turn)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                // How long it took, once it's done; a running turn's clock is the transcript's.
+                if let d = ActivityLabel.duration(turn) {
+                    Text(d).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
             if !turn.input.isEmpty {

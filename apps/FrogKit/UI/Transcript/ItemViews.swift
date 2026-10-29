@@ -570,9 +570,10 @@ struct ApprovalDetails: View {
     }
 }
 
-/// The answer as it writes itself, in an iMessage-style bubble while it streams: a frog
-/// beside it, the words arriving inside, and the model's speed at its edge. The status line
-/// ("Thinking… 4s") stays for the work before and between answers; this is for the answer.
+/// The answer as it writes itself, in a quiet bubble while it streams: the words arriving
+/// inside and the model's speed at its edge (no frog: the mascot is retired from the live flow
+/// and keeps the empty page). The status line ("Thinking… 4s") stays for the work before and
+/// between answers; this is for the answer.
 ///
 /// This is the message row's only view, from the first word to history: at the handoff the
 /// words are already in place, and the bubble's chrome and insets ease out to the plain row in
@@ -580,19 +581,15 @@ struct ApprovalDetails: View {
 struct TypingBubble: View {
     let text: String
     let conversation: Conversation
-    /// Still streaming: the bubble and its frog show; settling fades them out.
+    /// Still streaming: the bubble shows; settling fades it out.
     var writing: Bool
     @State private var settled = false
 
     var body: some View {
         let live = writing && !settled
-        // No gap beside a collapsed frog: a finished answer lines up with the activity lines.
+        // No gap beside a collapsed speed readout: a finished answer lines up with the
+        // activity lines.
         HStack(alignment: .top, spacing: live ? TurnSpace.Inset.row : 0) {
-            // Every finished message is this view too: its hidden frog mustn't keep ticking.
-            FrogFace(mood: .idle, size: 14, animating: live)
-                .padding(.top, TurnSpace.Inset.tight)
-                .opacity(live ? 1 : 0)
-                .frame(width: live ? 14 : 0)
             MarkdownView(text: text, streaming: live)
                 .frame(maxWidth: .infinity, alignment: .leading)
             speed

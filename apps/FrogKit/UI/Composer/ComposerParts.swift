@@ -62,26 +62,41 @@ struct SendButton: View {
     }
 }
 
+/// What's queued to send when the turn ends: a quiet strip above the field, one small-caps
+/// QUEUED tag for all of it, each message on a line with an ✕ that takes it back to edit.
 struct QueuedMessages: View {
     let conversation: Conversation
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(conversation.queue.map(\.text).enumerated()), id: \.offset) { i, text in
-                HStack(spacing: 6) {
-                    Image(systemName: "clock").foregroundStyle(.secondary)
-                    Text(text).lineLimit(1)
-                    Spacer()
-                    Button("Back to the Field", systemImage: "xmark.circle.fill") { conversation.unqueue(at: i) }
-                        .help("Take it out of the queue and back into the field to edit")
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
+        HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.row) {
+            Text("QUEUED")
+                .font(.system(size: Tokens.Size.label, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(Tokens.textTertiary)
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
+                ForEach(Array(conversation.queue.map(\.text).enumerated()), id: \.offset) { i, text in
+                    HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.snug) {
+                        Text(text)
+                            .font(.system(size: Tokens.Size.secondary))
+                            .foregroundStyle(Tokens.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: TurnSpace.Inset.row)
+                        Button("Back to the Field", systemImage: "xmark") { conversation.unqueue(at: i) }
+                            .help("Take it out of the queue and back into the field to edit")
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                            .font(.system(size: Tokens.Size.label, weight: .semibold))
+                            .foregroundStyle(Tokens.textTertiary)
+                    }
                 }
-                .font(.callout)
             }
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, TurnSpace.Inset.tight)
+        .padding(.bottom, TurnSpace.Inset.snug)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Tokens.hairline).frame(height: 0.5)
+        }
     }
 }
 
