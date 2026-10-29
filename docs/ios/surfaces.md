@@ -109,8 +109,9 @@ bottleneck.
 
 - `apps/ios-spike` proves that tang-llm links and runs in an iPhone app. It's capped by the free
   team's memory limit, and no benchmarks are committed.
-- "The house" (`HouseIntents.swift` → `frog --listen`) already reaches a non-Mac frog over
-  HTTPS from Siri. It's one turn per request, `--chat`, and can't ask for permission.
+- `frog --listen` (crates/frog/src/listen.rs) answers one turn per HTTPS request from any
+  client. It's `--chat` only and can't ask for permission. The iOS "house" client that used it
+  was removed in October 2026.
 - Product memory: the head Jetson works as a zest node when docked and idle, ~8B-class only.
   Orin NX can't fit Coder-Next.
 
@@ -147,4 +148,4 @@ problem bites, as an engine feature behind the same phone app.
 | (a) iPhone remote, the org's pager (+ watch) | **high**: it attacks 83% of blocked agent-time | M total, mostly plumbing | medium | ~80% of the UI |
 | (b) iPad full client | low | L–XL for parity, L+ for CAD | **highest** (parity drift) | the iPad layout, as part of (a) |
 | (c1) on-phone agent | ~none | L | very high | spike only |
-| (c2) edge node for the same remote | medium, later | M–L (engine) | moderate, and lowers drift | "the house" pattern |
+| (c2) edge node for the same remote | medium, later | M–L (engine) | moderate, and lowers drift | `--listen` pattern |

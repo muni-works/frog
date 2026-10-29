@@ -31,7 +31,7 @@ first half is wrong and the second half is right, and both matter:
 
 | target | platform | what's real | key files |
 |---|---|---|---|
-| `Frog` (`eco.frog.remote`) | iPhone + iPad (`TARGETED_DEVICE_FAMILY 1,2`) | Pair by QR or code. Session list with "Needs you / Pinned / Open on your Mac / by day" sections. Full FrogKit transcript, glass composer, Ask and permission cards. Model picker (the Mac decides). Changes inspector, row menu (archive/pin/rename), photo attach and lightbox, fork/rewind/Mermaid, spend and energy settings. Handoff (`eco.frog.conversation`). Siri/Shortcuts intents. "The house" (talks to `frog --listen` with no Mac). Fixture playback. | `Frog/FrogApp.swift` (iPad `NavigationSplitView`), `Remote.swift` (501), `ChatView.swift`, `SessionListView.swift`, `Notifications.swift`, `LiveActivities.swift`, `Intents.swift`, `HouseIntents.swift`, `WatchLink.swift` |
+| `Frog` (`toys.frog.remote`) | iPhone + iPad (`TARGETED_DEVICE_FAMILY 1,2`) | Pair by QR or code. Session list with "Needs you / Pinned / Open on your Mac / by day" sections. Full FrogKit transcript, glass composer, Ask and permission cards. Model picker (the Mac decides). Changes inspector, row menu (archive/pin/rename), photo attach and lightbox, fork/rewind/Mermaid, spend and energy settings. Handoff (`eco.frog.conversation`). Siri/Shortcuts intents. Fixture playback. | `Frog/FrogApp.swift` (iPad `NavigationSplitView`), `Remote.swift` (501), `ChatView.swift`, `SessionListView.swift`, `Notifications.swift`, `LiveActivities.swift`, `Intents.swift`, `WatchLink.swift` |
 | `FrogNotify` | iOS content extension | Long-press a `PERMISSION` notification to see the command or diff in FrogKit's `QuestionBody` | `NotificationContent/NotificationViewController.swift` |
 | `FrogWidgets` | iOS WidgetKit | A Live Activity and Dynamic Island per running turn. Home and lock status widgets, a Control Center control. | `Widgets/FrogWidgets.swift`, `StatusWidgets.swift`, `Shared/TurnActivity.swift` |
 | `FrogShare` | iOS share extension | "Send to frog": text, a URL or an image into an open conversation | `ShareExtension/ShareViewController.swift` |
@@ -118,7 +118,7 @@ client must say `hello{token}` first.
 
 Delivery goes through `xcrun simctl push` for simulators, or POSTs to a relay for real phones.
 The relay holds the APNs key (`site/api/_apns.js`). It validates the token format, the topic
-(`eco.frog.remote`), the size limits and `push_type`. On a 410 it tells the Mac to forget the
+(`toys.frog.remote`), the size limits and `push_type`. On a 410 it tells the Mac to forget the
 device.
 
 Problems in the push path:

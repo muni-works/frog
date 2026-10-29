@@ -20,7 +20,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>eco.frog.remote</string>
+			<string>toys.frog.remote</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>frog</string>
@@ -30,7 +30,7 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>FrogKeychainGroup</key>
-	<string>$(AppIdentifierPrefix)eco.frog.remote</string>
+	<string>$(AppIdentifierPrefix)toys.frog.remote</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
