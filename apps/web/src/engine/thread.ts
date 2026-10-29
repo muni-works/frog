@@ -28,6 +28,10 @@ export interface Pane { id: string; kind: 'terminal' | 'preview'; title: string;
 
 export interface Thread {
   lastSeq: number
+  /** The last envelope taken: its time and seq. A session woken from its sleep snapshot runs a
+   * new engine whose seqs restart low (until ecto/frog#154 ships), so newer-in-time beats seq. */
+  lastAt?: number
+  lastRaw?: number
   /** Each turn's input and items; `usage` and `reason` once it ends. */
   turns: { turn: number; input: string; images?: Image[]; more?: Part[]; entries: Entry[]; usage?: TurnUsage; reason?: EndReason }[]
   running: boolean
@@ -149,8 +153,12 @@ function apply(t: Thread, ev: Event, created: number): Thread {
 }
 
 export function reduce(t: Thread, env: Envelope): Thread {
-  if (env.seq <= t.lastSeq) return t // already seen (a replay overlapping live)
-  return { ...apply(t, env, env.created), lastSeq: env.seq }
+  // Already seen: a replay overlapping live. Unless it's newer than anything taken, which is a
+  // woken engine numbering from 0 again; those come in time order, so take them.
+  const at = t.lastAt
+  const fresh = env.seq > t.lastSeq || (at !== undefined && (env.created > at || (env.created === at && env.seq > (t.lastRaw ?? 0))))
+  if (!fresh) return t
+  return { ...apply(t, env, env.created), lastSeq: Math.max(t.lastSeq, env.seq), lastAt: Math.max(at ?? 0, env.created), lastRaw: env.seq }
 }
 
 /** The engine's notices, in words: a model call it's retrying reads as what happened and when

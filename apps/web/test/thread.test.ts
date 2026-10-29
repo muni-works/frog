@@ -95,3 +95,18 @@ test("next_suggested holds the model's suggestion until the next turn starts", (
   t = reduce(t, env({ event: "turn_started", turn: 2, input: "push it" }));
   assert.equal(t.next, null);
 });
+
+test("a woken engine's restarted seqs still land, by time; real replays stay dropped", () => {
+  const at = (e: Event, seq: number, created: number) => ({ ...e, seq, session: "s1", created }) as Envelope;
+  let t = [
+    at({ event: "turn_started", turn: 1, input: "hi" }, 1, 100),
+    at({ event: "turn_ended", turn: 1, reason: "complete" }, 2, 200),
+  ].reduce(reduce, emptyThread);
+  t = reduce(t, at({ event: "turn_ended", turn: 1, reason: "complete" }, 2, 200)); // replay
+  assert.equal(t.turns.length, 1);
+  t = reduce(t, at({ event: "turn_started", turn: 2, input: "try again" }, 1, 900)); // new process
+  t = reduce(t, at({ event: "turn_ended", turn: 2, reason: "complete" }, 2, 950));
+  assert.deepEqual(t.turns.map((u) => u.input), ["hi", "try again"]);
+  assert.equal(t.running, false);
+  assert.equal(t.lastSeq, 2);
+});
