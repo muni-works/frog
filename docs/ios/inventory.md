@@ -123,14 +123,12 @@ device.
 
 Problems in the push path:
 
-1. **Wrong host.** `RemotePush.relay` defaults to `https://frog.eco/api/push`. The site moved to
-   **frog.toys on Cloudflare Pages** on 2026-10-22 (9e524b9).
-2. **The Cloudflare function is broken as written.** `site/functions/api/push.js` uses `require`
-   inside an ES-module `onRequest`. It also reads `context.env.request` instead of
-   `context.request`, and that destructure shadows the `request()` helper it imports. The
-   Vercel version (`site/api/push.js`) looks right but is no longer the deploy target.
-3. **No caller auth and no rate limits.** Anyone who holds a device token can push to it. The
-   README already lists rate limits as missing.
+1. ~~Wrong host.~~ `RemotePush.relay` is `https://frog.toys/api/push`, served by `site/worker.js`
+   on Workers (October 2026).
+2. ~~The Cloudflare function is broken.~~ Fixed; `site/api/` is the unused Vercel copy.
+3. ~~No caller auth and no rate limits.~~ A shared `PUSH_RELAY_SECRET` (the Mac's Settings ›
+   General) and 30 pushes a minute per isolate. Per-Mac secrets minted at pairing are still the
+   plan.
 4. **Payloads are plaintext.** The command text and diff hunks pass through the frog relay and
    APNs. There's no Notification Service Extension to decrypt an encrypted payload (`FrogNotify`
    is a content extension). For a privacy-first product, that's a shipping blocker.

@@ -27,6 +27,7 @@ private struct GeneralSettings: View {
     @AppStorage("editor") private var editor = ""
     @AppStorage("notifyWhenDone") private var notifyWhenDone = true
     @AppStorage("remoteEnabled") private var remote = false
+    @AppStorage(RemotePush.secretKey) private var pushSecret = ""
     @State private var code = RemoteBridge.token
     @State private var pond = Pond.shared
     @AppStorage(CalendarSense.key) private var calendarSense = false
@@ -102,9 +103,10 @@ private struct GeneralSettings: View {
                         RemoteBridge.shared.start()
                         code = RemoteBridge.token
                     }
+                    SecureField("Push relay secret", text: $pushSecret)
                 }
             } footer: {
-                Text("Scan the code with your iPhone's camera, or pick this Mac in frog and type the code. The connection is encrypted with it. A new code signs out every phone.")
+                Text("Scan the code with your iPhone's camera, or pick this Mac in frog and type the code. The connection is encrypted with it. A new code signs out every phone. The relay secret lets this Mac wake your phone through frog.toys when frog needs you; without it, you only hear while the app is open.")
             }
         }
         .formStyle(.grouped)
