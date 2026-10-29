@@ -5,7 +5,7 @@ import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
 import { idOf, spec, useModels } from './models'
-import { outOfCredits, pickStarters, useCloud, useRepos, useSessions, useThreads } from './store'
+import { clearThreads, outOfCredits, pickStarters, useCloud, useRepos, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
@@ -122,7 +122,7 @@ export default function App() {
       if (!k || DEV_KEY) return
       setAccount(await me(k))
     }).catch((e) => {
-      if (e instanceof AuthError && e.status === 401) { signOut(); setKey(null); return }
+      if (e instanceof AuthError && e.status === 401) { signOut(); clearThreads(); setKey(null); return }
       setAuthError(e instanceof AuthError ? e.code : String(e))
     })
   }, [])
@@ -390,7 +390,7 @@ export default function App() {
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} models={models} onSignOut={() => { setSettings(false); signOut(); setKey(null); setAccount(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
+      {settings && <Settings account={account} models={models} onSignOut={() => { setSettings(false); signOut(); clearThreads(); setKey(null); setAccount(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   )

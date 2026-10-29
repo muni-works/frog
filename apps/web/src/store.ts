@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Gateway } from './cloud/client'
 import type { EndReason, RepoList, SessionSummary } from './cloud/protocol'
 import { CloudEngine } from './engine/cloud'
@@ -78,17 +78,57 @@ export function useSessions(cloud: CloudEngine | null) {
 }
 
 /** Subscribe to these sessions' streams and keep a folded `Thread` per session. */
+// Threads are kept in this browser too, so opening a session shows it at once (even after a
+// reload) and the socket only fetches what came after. Capped: the newest few, none too big.
+const THREADS = 'frog.thread.'
+const KEEP = 24
+const MAX_BYTES = 400_000
+function loadThread(id: string): Thread | null {
+  try { const v = localStorage.getItem(THREADS + id); return v ? { ...emptyThread, ...JSON.parse(v) } : null } catch { return null }
+}
+function saveThread(id: string, t: Thread) {
+  try {
+    // Kept whole: resuming after lastSeq delivers whatever ended or changed since. Only the
+    // live activity line is dropped, since it's stale by the time anyone reads it back.
+    const json = JSON.stringify({ ...t, activity: null })
+    if (json.length > MAX_BYTES) return
+    localStorage.setItem(THREADS + id, json)
+    const index: string[] = JSON.parse(localStorage.getItem(THREADS + 'index') ?? '[]').filter((x: string) => x !== id)
+    index.unshift(id)
+    for (const old of index.splice(KEEP)) localStorage.removeItem(THREADS + old)
+    localStorage.setItem(THREADS + 'index', JSON.stringify(index))
+  } catch { /* full or private mode: memory only */ }
+}
+
+/** Sign-out forgets every thread this browser kept. */
+export function clearThreads() {
+  try { Object.keys(localStorage).filter((k) => k.startsWith(THREADS)).forEach((k) => localStorage.removeItem(k)) } catch { /* nothing kept */ }
+}
+
 export function useThreads(cloud: CloudEngine | null, ids: string[]) {
   const [threads, setThreads] = useState<Record<string, Thread>>({})
+  const cache = useRef(threads)
+  cache.current = threads
   const key = ids.join(',')
   useEffect(() => {
     if (!cloud) return
-    const offs = ids.map((id) => cloud.subscribe(id, 0, (env) =>
-      setThreads((all) => ({ ...all, [id]: reduce(all[id] ?? emptyThread, env) }))))
+    const offs = ids.map((id) => {
+      const known = cache.current[id] ?? loadThread(id)
+      if (known && !cache.current[id]) setThreads((all) => ({ ...all, [id]: known }))
+      return cloud.subscribe(id, known?.lastSeq ?? 0, (env) =>
+        setThreads((all) => ({ ...all, [id]: reduce(all[id] ?? known ?? emptyThread, env) })))
+    })
     return () => offs.forEach((off) => off())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, key])
-  return useCallback((id: string) => threads[id] ?? emptyThread, [threads])
+  // Saved a moment after it settles, not on every streamed token.
+  useEffect(() => {
+    const t = setTimeout(() => ids.forEach((id) => threads[id] && saveThread(id, threads[id])), 800)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threads, key])
+  // A session not streaming yet still shows what this browser kept of it.
+  return useCallback((id: string) => threads[id] ?? (ids.includes(id) ? loadThread(id) : null) ?? emptyThread, [threads, key]) // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 /** The edge answers 402 `insufficient_credit` on inference; the engine ends the turn with that error. */
