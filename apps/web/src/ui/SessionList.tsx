@@ -115,18 +115,25 @@ export function SessionList(p: {
     const { glyph, detail } = look(s, t, unread)
     const repo = s.repo ? s.repo.split('/')[1] ?? s.repo : null
     const quiet = !glyph && s.id !== p.current
+    const status = glyph === 'run' ? (s.state === 'starting' ? 'Starting' : 'Running') : glyph === 'ask' ? 'Needs you' : glyph === 'fail' ? 'Failed' : glyph === 'paused' ? 'Paused' : null
     return (
       <button key={s.id} type="button" className={`srow${s.id === p.current ? ' on' : ''}${detail ? ' two' : ''}`} onClick={() => p.onOpen(s.id)}
         title={s.state === 'error' ? s.error ?? "The sandbox couldn't start" : undefined}>
-        <span className={`sg${glyph ? ` sg-${glyph}` : ''}`} aria-label={glyph ?? undefined} />
         <span className="sbody">
           <span className="sline">
             <span className={`stitle${quiet ? ' quiet' : ''}`}>{p.title(s)}</span>
-            {s.pr && <span className="stag">PR {s.pr.replace(/^#/, '')}</span>}
-            {!s.pr && repo && <span className="stag">{repo}</span>}
-            <span className="sage">{age(s.updated, now)}</span>
+            {repo && <span className="srepo">{repo}</span>}
+            {s.pr && (
+              <span className="spr" title={`Pull request ${s.pr}`}>
+                <svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="18" r="2.5" /><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-4" /></svg>
+                {s.pr.replace(/^#/, '')}
+              </span>
+            )}
+            {status ? <span className={`sstate sstate-${glyph}`}><span className={`sg sg-${glyph}`} />{status}</span>
+              : glyph === 'unread' ? <span className="sg sg-unread" aria-label="New" />
+              : <span className="sage">{age(s.updated, now)}</span>}
           </span>
-          {detail && <span className={`sdetail${glyph === 'ask' ? ' ask' : glyph === 'run' ? ' run' : ''}`}>{detail}</span>}
+          {detail && <span className={`sdetail${glyph === 'ask' ? ' ask' : ''}`}>{detail}</span>}
         </span>
       </button>
     )
@@ -152,7 +159,7 @@ export function SessionList(p: {
       {failed.length > 0 && <>
             <div className="srow sfold">
               <button type="button" className="sfold-t" aria-expanded={failedOpen} onClick={() => setFailedOpen(!failedOpen)}>
-                <span className="sg"><span className={`chev2${failedOpen ? ' open' : ''}`}>›</span></span>
+                <span className="sgf"><span className={`chev2${failedOpen ? ' open' : ''}`}>›</span></span>
                 <span>{failed.length} couldn't start</span>
               </button>
               <button type="button" className="sclear" onClick={() => p.onClear(failed.map((s) => s.id))}>Clear</button>

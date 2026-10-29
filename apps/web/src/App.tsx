@@ -228,7 +228,6 @@ export default function App() {
   const Nav = () => (
     <nav aria-label="Main" className="nav">
       <button type="button" className="row big" onClick={() => setView({ kind: 'new' })}><Icon d={icons.new} /><span style={{ flex: 1 }}>New session</span><span className="kb">⌘N</span></button>
-      <button type="button" className="row big" onClick={() => setPalette(true)}><Icon d={icons.search} /><span style={{ flex: 1 }}>Search</span><span className="kb">⌘K</span></button>
     </nav>
   )
 

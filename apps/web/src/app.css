@@ -265,7 +265,6 @@ button.tool:hover { color: var(--fg); }
 .ssearch kbd { font: 11px var(--font-mono); color: var(--faint); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 .srow { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 5px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .srow.two { align-items: flex-start; }
-.srow.two .sg { margin-top: 4px; }
 .srow:hover, .srow.on { background: var(--hover); }
 .srow:focus-visible { outline: 2px solid var(--frog-pad); outline-offset: -2px; }
 .sg { width: 14px; height: 14px; flex: none; display: grid; place-items: center; box-sizing: border-box; }
@@ -293,3 +292,11 @@ button.tool:hover { color: var(--fg); }
 .chev2.open { transform: rotate(90deg); }
 .sclear { border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0; }
 .sclear:hover { color: var(--warn); }
+.srepo { flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--faint); }
+.spr { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; color: var(--frog); font-variant-numeric: tabular-nums; }
+.sstate { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); }
+.sstate-run { color: var(--frog); }
+.sstate-ask { color: var(--notice); }
+.sstate-fail { color: var(--warn); }
+.sstate .sg { width: 10px; height: 10px; }
+.sgf { width: 10px; flex: none; }
