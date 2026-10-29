@@ -55,9 +55,12 @@ export interface Thread {
   /** Whether the session's model reads images (status.vision); null until the engine says. */
   vision: boolean | null
   panes: Record<string, Pane>
+  /** The model's suggested next message (its `Next` tool) for the last finished turn; `act`
+   * means it acts outside the project (push, deploy). Cleared when the next turn starts. */
+  next: { text: string; act: boolean } | null
 }
 
-export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null, activity: null, question: null, elicitation: null, todos: [], vision: null, panes: {} }
+export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null, activity: null, question: null, elicitation: null, todos: [], vision: null, panes: {}, next: null }
 
 /** Item ids are only unique within a turn, so updates go to the latest turn. */
 function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
@@ -69,7 +72,9 @@ function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
 function apply(t: Thread, ev: Event, created: number): Thread {
   switch (ev.event) {
     case 'turn_started':
-      return { ...t, running: true, ended: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, images: ev.images, more: ev.more, entries: [] }] }
+      return { ...t, running: true, ended: null, next: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, images: ev.images, more: ev.more, entries: [] }] }
+    case 'next_suggested':
+      return { ...t, next: { text: ev.text, act: !!ev.act } }
     case 'turn_ended': {
       const turns = t.turns.map((u) => (u.turn === ev.turn ? { ...u, usage: ev.usage, reason: ev.reason } : u))
       return { ...t, turns, running: false, ask: null, question: null, elicitation: null, ended: ev.reason, activity: null }

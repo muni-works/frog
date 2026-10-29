@@ -25,6 +25,9 @@ export interface ComposerProps {
   mode?: Mode | null
   onMode?: (mode: Mode) => void
   onSend: (text: string, images: Image[]) => void
+  /** Suggestion chips over the box while it's empty. `send` chips send on click; others fill
+   * the box. `act` marks one that acts outside the project (push, deploy). */
+  chips?: { text: string; send?: boolean; act?: boolean }[]
   /** Messages sent while Frog works: they go together when the turn ends. × takes one back. */
   queued?: { text: string; images: Image[] }[]
   onUnqueue?: (i: number) => void
@@ -118,6 +121,16 @@ export function Composer(p: ComposerProps) {
 
   return (
     <div className="cz" ref={root}>
+      {!text && !images.length && !working && !!p.chips?.length && (
+        <div className="cz-chips">
+          {p.chips.map((c) => (
+            <button key={c.text} type="button" className={`cz-sug${c.act ? ' act' : ''}`}
+              onClick={() => { if (c.send) p.onSend(c.text, []); else { setText(c.text); ref.current?.focus() } }}>
+              {c.act ? '↗ ' : ''}{c.text}
+            </button>
+          ))}
+        </div>
+      )}
       {menu === 'plus' && (
         <div className="f-card cz-menu" role="menu" style={{ left: 8 }}>
           <button type="button" role="menuitem" onClick={() => { setMenu(null); file.current?.click() }}><span>▣</span>Attach images…</button>

@@ -6,7 +6,7 @@ import type { SessionSummary } from './cloud/protocol'
 import type { Thread } from './engine/thread'
 import type { Image, Mode } from './cloud/protocol'
 import { idOf, spec, useModels } from './models'
-import { outOfCredits, starters, useCloud, useRepos, useSessions, useThreads } from './store'
+import { outOfCredits, pickStarters, useCloud, useRepos, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
@@ -153,6 +153,7 @@ export default function App() {
 
 
   const [pending, setPending] = useState<string | null>(null)
+  const starterChips = useMemo(() => pickStarters().map((text) => ({ text })), [])
   const start = useCallback(async (text: string, repo?: string, images: Image[] = []) => {
     if (!cloud) return
     // Open the session at once, as a placeholder, and swap in the real one when the gateway
@@ -260,7 +261,7 @@ export default function App() {
           <Trust />
         </div>
         <div className="dock"><div>
-          <Composer repo="Connect a repo" onSend={(text) => leave(text)} autoFocus />
+          <Composer repo="Connect a repo" onSend={(text) => leave(text)} autoFocus chips={starterChips} />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening GitHub… your message is saved.</div>}
         </div></div>
         <footer className="muni-foot"><a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a></footer>
@@ -414,7 +415,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} autoFocus state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
+            <Composer key={current.id} autoFocus chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
@@ -432,13 +433,10 @@ export default function App() {
               <Pond />
               <Mark size={56} />
               <h1>What should we work on?</h1>
-              <div className="starters">
-                {starters.map((t) => <button key={t.title} type="button" className="cz-chip" onClick={() => setDraft(t.title)}>{t.i} {t.title}</button>)}
-              </div>
               <HowItWorks />
             </div>
             <div className="dock">
-              <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick}
+              <Composer repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images) }} />

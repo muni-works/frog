@@ -84,3 +84,14 @@ test("retry notices read as what happened and when it tries again", async () => 
   assert.equal(humanize("HTTP 503: no inference capacity right now — retrying in 8s (3/6)"), "No model is free on Frog Cloud right now. Trying again in 8s (3 of 6).");
   assert.equal(humanize("context window: 32768 tokens"), "context window: 32768 tokens");
 });
+
+test("next_suggested holds the model's suggestion until the next turn starts", () => {
+  let t = [
+    { event: "turn_started", turn: 1, input: "fix it" },
+    { event: "next_suggested", turn: 1, text: "push it", act: true },
+    { event: "turn_ended", turn: 1, reason: "complete" },
+  ].reduce((t, e) => reduce(t, env(e as Event)), emptyThread);
+  assert.deepEqual(t.next, { text: "push it", act: true });
+  t = reduce(t, env({ event: "turn_started", turn: 2, input: "push it" }));
+  assert.equal(t.next, null);
+});

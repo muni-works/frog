@@ -100,6 +100,7 @@ export type Event =
   | { event: "permission_request"; id: string; item: string; name: string; arg: string; always: string; preview?: FileDiff; reason?: string }
   | { event: "permission_resolved"; id: string; decision: Decision }
   | { event: "titled"; title: string }
+  | { event: "next_suggested"; turn: number; text: string; act?: boolean }
   | { event: "status"; model: string; mode: Mode; context_tokens: number | null; context_window: number; todos?: Todo[]; vision?: boolean }
   | { event: "question"; id: string; item: string; question: string; options: { label: string; detail?: string }[]; multi?: boolean; allow_other?: boolean }
   | { event: "question_resolved"; id: string; choices?: string[]; other?: string }

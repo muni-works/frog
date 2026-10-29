@@ -10,12 +10,30 @@ import { emptyThread, reduce, type Thread } from './engine/thread'
 /** The gateway's origin. In dev, Vite proxies /v1 to $GATEWAY (default the mock). */
 export const GATEWAY = (import.meta.env.VITE_GATEWAY as string | undefined) ?? location.origin
 
-export const starters = [
-  { i: '✓', title: 'Fix the failing tests', detail: 'Runs them, finds why, fixes it' },
-  { i: '⑂', title: 'Review my open PR', detail: 'Reads the diff, leaves notes' },
-  { i: '?', title: 'Explain this codebase', detail: 'A map of how it fits together' },
-  { i: '+', title: 'Add a small feature', detail: 'Plans it, builds it, opens a PR' },
+// New-session suggestions: three drawn at random from this pool on each visit. Concrete,
+// worth a sandbox, and each one shows a different thing Frog is good at.
+const POOL = [
+  'Fix the failing tests',
+  'Review my open PR and leave notes',
+  'Explain how this codebase fits together',
+  'Find and fix a bug from the open issues',
+  'Add tests for the least-covered module',
+  'Upgrade outdated dependencies and fix what breaks',
+  'Speed up the slowest test',
+  'Write a README for this repo',
+  'Find dead code and remove it',
+  'Add a dark mode',
+  'Make the CI faster',
+  'Audit this repo for security issues',
+  'Turn the TODOs into a plan',
+  'Add types where they’re missing',
 ]
+
+export function pickStarters(n = 3): string[] {
+  const a = [...POOL]
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] }
+  return a.slice(0, n)
+}
 
 export function useCloud(key: string | null) {
   return useMemo(() => (key ? new CloudEngine(new Gateway({ origin: GATEWAY, token: key })) : null), [key])
