@@ -1,31 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { API, type Account } from '../auth'
 import type { SessionSummary } from '../cloud/protocol'
-import { parseRepo } from '../store'
-
-/** No repo listing API yet, so this takes owner/name or a GitHub URL, plus the account's recent repos. */
-export function RepoPicker({ recent, onPick, busy }: { recent: string[]; onPick: (repo: string) => void; busy?: boolean }) {
-  const [q, setQ] = useState('')
-  const repo = parseRepo(q)
-  const list = recent.filter((r) => r.includes(q.trim().toLowerCase()))
-  return (
-    <div className="cardx picker">
-      <form style={{ padding: '10px 12px', display: 'flex', gap: 8 }} onSubmit={(e) => { e.preventDefault(); if (repo) onPick(repo) }}>
-        <input className="f-field" autoFocus value={q} placeholder="owner/name, or paste a GitHub URL" aria-label="Repo" style={{ fontSize: 14, padding: '8px 10px' }}
-          onChange={(e) => setQ(e.target.value)} />
-        <button type="submit" className="f-btn f-btn--prominent" disabled={!repo || busy}>{busy ? 'Starting…' : 'Start'}</button>
-      </form>
-      {list.map((r) => (
-        <button key={r} type="button" className="row pick" disabled={busy} onClick={() => onPick(r)}>
-          <span className="det">▤</span><span style={{ flex: 1 }}><b style={{ fontWeight: 600 }}>{r}</b></span><span className="det">used before</span>
-        </button>
-      ))}
-      <div className="row pick" style={{ color: 'var(--muted)', cursor: 'default' }}>
-        <span>Private repos need the Frog GitHub App on that repo. Public repos work without it.</span>
-      </div>
-    </div>
-  )
-}
 
 export interface Command { id: string; label: string; hint?: string; run: () => void }
 

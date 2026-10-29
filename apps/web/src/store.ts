@@ -68,3 +68,13 @@ export function parseRepo(s: string): string | null {
   const m = s.trim().match(/^(?:https?:\/\/github\.com\/|git@github\.com:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/)
   return m ? `${m[1]}/${m[2]}` : null
 }
+
+/** Why a turn stopped on an error, in a line, unless it's the out-of-credits case (it has its own card). */
+export function turnError(t: Thread): string | null {
+  if (t.ended?.type !== 'error' || outOfCredits(t)) return null
+  const e = (t.ended as { error?: { type?: string; status?: number; message?: string } }).error ?? {}
+  let detail = e.message ?? ''
+  try { detail = JSON.parse(detail)?.error?.message ?? detail } catch { /* not JSON */ }
+  if (e.status === 401) return `The model provider refused this session's key${detail ? ` (${detail})` : ''}.`
+  return [e.type === 'provider' ? 'The model call failed' : 'The turn stopped', e.status ? `(${e.status})` : '', detail ? `: ${detail}` : ''].join(' ').replace(' :', ':').trim() + '.'
+}
