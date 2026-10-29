@@ -71,6 +71,9 @@ export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
   const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | null>(p.pickRepo ? 'repo' : null)
   const [q, setQ] = useState('')
+  // Where the open menu's button sits, so the menu opens right above it.
+  const [at, setAt] = useState(8)
+  const anchor = (e: { currentTarget: Element }) => setAt(e.currentTarget.getBoundingClientRect().left - (root.current?.getBoundingClientRect().left ?? 0))
   const ref = useRef<HTMLTextAreaElement>(null)
   const working = p.state === 'working', paused = p.state === 'paused'
   const timer = useTimer(working ? p.startedAt : undefined)
@@ -123,7 +126,7 @@ export function Composer(p: ComposerProps) {
 
   return (
     <div className="cz" ref={root}>
-      {!text && !images.length && !working && !!p.chips?.length && (
+      {!text && !images.length && !working && !menu && !!p.chips?.length && (
         <div className="cz-chips">
           {p.chips.map((c) => (
             <button key={c.text} type="button" className={`cz-sug${c.act ? ' act' : ''}`}
@@ -141,7 +144,7 @@ export function Composer(p: ComposerProps) {
       )}
 
       {menu === 'model' && (
-        <div className="f-card cz-menu" role="menu" aria-label="Model" style={{ left: 150, width: 300 }}>
+        <div className="f-card cz-menu" role="menu" aria-label="Model" style={{ left: at, width: 300 }}>
           <div className="cz-menu-h">Model on Frog Cloud</div>
           {p.models?.map((m) => (
             <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null) }}>
@@ -190,7 +193,7 @@ export function Composer(p: ComposerProps) {
         )
       })()}
       {menu === 'mode' && (
-        <div className="f-card cz-menu" role="menu" aria-label="When Frog asks" style={{ left: 150, width: 300 }}>
+        <div className="f-card cz-menu" role="menu" aria-label="When Frog asks" style={{ left: at, width: 300 }}>
           <div className="cz-menu-h">When Frog asks</div>
           {modes.map((m) => (
             <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.mode} onClick={() => { p.onMode?.(m.id); setMenu(null) }}>
@@ -265,14 +268,14 @@ export function Composer(p: ComposerProps) {
           </button>
           {(!!p.model || !!p.models?.length) && (
             <button type="button" className="f-pill f-pill--cloud" aria-label={`Model: ${p.model ?? 'default'} on Frog Cloud`} aria-expanded={menu === 'model'}
-              disabled={!p.models?.length || !p.onModel} onClick={() => setMenu(menu === 'model' ? null : 'model')}>
+              disabled={!p.models?.length || !p.onModel} onClick={(e) => { anchor(e); setMenu(menu === 'model' ? null : 'model') }}>
               <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z" /></svg>
               {p.model ?? 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
             </button>
           )}
           {p.mode && p.onMode && (
             <button type="button" className="f-pill" style={{ color: p.mode === 'yolo' ? 'var(--notice)' : 'var(--muted)' }} aria-expanded={menu === 'mode'}
-              title="When Frog asks before acting" onClick={() => setMenu(menu === 'mode' ? null : 'mode')}>
+              title="When Frog asks before acting" onClick={(e) => { anchor(e); setMenu(menu === 'mode' ? null : 'mode') }}>
               {modes.find((m) => m.id === p.mode)?.label} <span className="chev">▾</span>
             </button>
           )}
