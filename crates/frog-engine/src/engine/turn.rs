@@ -515,6 +515,7 @@ impl Agent {
                 );
             }
             let answer = msg.text();
+            let silent = answer.trim().is_empty();
             let nudge = (!nudged && !used_tools && resp.stop != Stop::Length)
                 .then(|| self.file_nudge(&answer, &named))
                 .flatten();
@@ -566,7 +567,14 @@ impl Agent {
                 if resp.stop == Stop::Length && continued < MAX_CONTINUES {
                     continued += 1;
                     self.notice(Level::Info, "reply hit the output limit; continuing");
-                    self.push_user("Continue exactly where you left off.".into());
+                    // No text came back: the cut fell inside a tool call, which was dropped.
+                    // "Continue" would only restart the same oversized call, so ask for smaller
+                    // pieces instead.
+                    self.push_user(if silent {
+                        CUT_TOOL_CALL.into()
+                    } else {
+                        "Continue exactly where you left off.".into()
+                    });
                     continue;
                 }
                 break if resp.stop == Stop::Length {
@@ -626,3 +634,9 @@ impl Agent {
         Ok(())
     }
 }
+
+/// Sent after a reply cut off at the output limit inside a tool call (no text came back, and
+/// the half-written call can't run).
+const CUT_TOOL_CALL: &str = "Your last reply hit the output limit partway through a tool call, so \
+that call was dropped and nothing ran. Don't repeat it in one piece: split it into smaller calls. \
+For a long file, Write the first part, then add the rest with Edit, a section at a time.";
