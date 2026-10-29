@@ -116,12 +116,11 @@ a { color: var(--frog); }
 .cz-search::placeholder { color: var(--faint); }
 .cz-chip:disabled { cursor: default; }
 .f-pill { white-space: nowrap; }
-/* A narrow composer (inspector open, small window): the row never wraps; the run-on chip drops
-   its label and the model name truncates before the send button is pushed out. */
+/* A narrow composer (inspector open, small window): the row never wraps; the model name
+   truncates before the send button is pushed out. */
 .cz-box { container-type: inline-size; }
 .cz-row > * { flex-shrink: 0; }
 .cz-row > .f-pill--cloud { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-@container (max-width: 480px) { .cz-label { display: none; } }
 .cz-list { max-height: 260px; overflow-y: auto; }
 .cz-more { display: block; padding: 8px 10px 4px; margin-top: 4px; border-top: 1px solid var(--line); font-size: 12px; }
 .turn { position: relative; }

@@ -3,7 +3,8 @@ import type { Image, Mode } from '../cloud/protocol'
 import { modes, price, type Model } from '../models'
 import { parseRepo } from '../store'
 
-// Port of Composer.dc.html with platform="web": the run-on chip is fixed to Frog Cloud.
+// Port of Composer.dc.html with platform="web". The web is all Frog Cloud, so there is no run-on
+// chip (the Mac's "this Mac / Frog Cloud" choice).
 
 export interface ComposerProps {
   state?: 'idle' | 'working' | 'paused'
@@ -185,7 +186,8 @@ export function Composer(p: ComposerProps) {
         </div>
       )}
 
-      {p.branch && (
+      {/* The context bar: only once there's something to show, a bound PR or file changes. */}
+      {p.branch && (!!p.pr || hasGit) && (
         <div className="cz-bar" title="Where this conversation works, and what's changed there">
           <span style={{ color: 'var(--fg)' }}>{p.repo?.split('/')[1] ?? p.repo}</span>
           <span style={{ color: 'var(--faint)' }}>{p.branch}</span>
@@ -246,9 +248,6 @@ export function Composer(p: ComposerProps) {
           <button type="button" className="cz-ic" onClick={() => setMenu(menu === 'plus' ? null : 'plus')} aria-label="Attach images or mention a file" aria-expanded={menu === 'plus'} style={{ width: 28, height: 28, border: '1px solid var(--line)' }}>
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           </button>
-          <span className="cz-chip" title="Web sessions run in a private Frog Cloud sandbox" style={{ color: 'var(--place-cloud)', cursor: 'default' }}>
-            <span aria-hidden="true">☁</span><span className="cz-label">Frog Cloud</span>
-          </span>
           {(!!p.model || !!p.models?.length) && (
             <button type="button" className="f-pill f-pill--cloud" aria-label={`Model: ${p.model ?? 'default'} on Frog Cloud`} aria-expanded={menu === 'model'}
               disabled={!p.models?.length || !p.onModel} onClick={() => setMenu(menu === 'model' ? null : 'model')}>
