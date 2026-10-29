@@ -8,7 +8,7 @@ import type { Image, Mode } from './cloud/protocol'
 import { idOf, spec, useModels } from './models'
 import { outOfCredits, starters, useCloud, useRepos, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
-import { Pond, HowItWorks, Trust } from './ui/Pond'
+import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
 import { creditLine, Palette, Settings, type Command } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
@@ -253,16 +253,17 @@ export default function App() {
         {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
         <div className="home-hero">
           <Pond />
-          <span className="beta-pill"><i />Now in beta · $5 free to start</span>
           <Mark size={56} />
+          <span className="beta-pill"><i />Now in beta · $5 free to start</span>
           <h1>What should we work on?</h1>
           <HowItWorks />
           <Trust />
         </div>
         <div className="dock"><div>
           <Composer repo="Connect a repo" onSend={(text) => leave(text)} autoFocus />
-          <div className="det" style={{ textAlign: 'center' }}>{leaving ? 'Opening GitHub… your message is saved.' : 'Send signs you in with GitHub and starts right here. $5 free, no card.'}</div>
+          {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening GitHub… your message is saved.</div>}
         </div></div>
+        <footer className="muni-foot"><Muni /><span>Made by Municipal Robotics</span></footer>
       </main>
     </div>
   )

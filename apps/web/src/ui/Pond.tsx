@@ -203,3 +203,18 @@ export function Trust() {
     </ul>
   )
 }
+
+/** The Municipal Robotics squiggle (from muni/web/public/images), drawn in currentColor. */
+export function Muni() {
+  return (
+    <svg viewBox="-60 -60 880 400" width="44" height="20" aria-label="Municipal Robotics" role="img" fill="none">
+      <g stroke="currentColor" strokeWidth="40" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 240 L20 100 C20 50,80 50,100 50 C140 50,160 70,160 100" />
+        <path d="M160 240 L160 100" />
+        <path d="M160 100 C160 50,220 50,240 50 C280 50,300 70,300 100 L300 240 C300 270,330 280,370 280 C410 280,440 270,440 240 L440 100" />
+        <path d="M440 100 C440 50,500 50,520 50 C560 50,600 70,600 100 L600 240 C600 270,630 280,670 280 C710 280,740 270,740 240 L740 100" />
+      </g>
+      <circle cx="740" cy="30" r="28" fill="currentColor" />
+    </svg>
+  )
+}
