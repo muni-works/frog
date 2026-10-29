@@ -31,6 +31,12 @@ const icons = {
   search: 'M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M20 20l-4-4',
 }
 
+/** The view a path names: /s/<id> is that session, anything else the new-session page. */
+function viewOf(path: string): View {
+  const m = path.match(/^\/s\/([\w-]+)\/?$/)
+  return m ? { kind: 'session', id: m[1] } : { kind: 'new' }
+}
+
 function Mark({ size = 22 }: { size?: number }) {
   return <span className="mark" style={{ width: size, height: size }} aria-hidden="true" />
 }
@@ -42,7 +48,19 @@ export default function App() {
   const [account, setAccount] = useState<Account | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
   const [leaving, setLeaving] = useState(false)
-  const [view, setView] = useState<View>({ kind: 'new' })
+  // Each conversation has its own URL (/s/<id>), so refresh, back and links return to it.
+  const [view, setView] = useState<View>(() => viewOf(location.pathname))
+  useEffect(() => {
+    // A session still being created (a placeholder id) waits for its real id.
+    const path = view.kind === 'session' ? (view.id.startsWith(PENDING) ? null : `/s/${view.id}`) : '/'
+    if (path === null || location.pathname === path) return
+    history.pushState(null, '', path)
+  }, [view])
+  useEffect(() => {
+    const back = () => setView(viewOf(location.pathname))
+    addEventListener('popstate', back)
+    return () => removeEventListener('popstate', back)
+  }, [])
   const [palette, setPalette] = useState(false)
   const [settings, setSettings] = useState(false)
   // Open or closed, kept per browser like its tab and width.
