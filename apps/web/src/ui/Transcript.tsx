@@ -42,20 +42,47 @@ function clip(out: string) {
 
 /** One step: a summary line that opens to what it ran and what came back. A running shell
  * command shows its live output; a failure opens by itself. */
+// What each tool did, as a verb and an icon: "Ran git status", "Read src/a.ts".
+const TOOL_LOOK: Record<string, { verb: [string, string]; icon: string }> = {
+  bash: { verb: ['Running', 'Ran'], icon: 'M4 6l5 5-5 5M11 17h8' },
+  read: { verb: ['Reading', 'Read'], icon: 'M6 3h8l4 4v14H6zM14 3v4h4' },
+  write: { verb: ['Writing', 'Wrote'], icon: 'M6 3h8l4 4v14H6zM14 3v4h4M9 13h6M9 17h4' },
+  edit: { verb: ['Editing', 'Edited'], icon: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4' },
+  grep: { verb: ['Searching', 'Searched'], icon: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4' },
+  glob: { verb: ['Finding', 'Found'], icon: 'M3 7h6l2 2h10v10H3z' },
+  webfetch: { verb: ['Fetching', 'Fetched'], icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18' },
+  websearch: { verb: ['Searching the web for', 'Searched the web for'], icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18' },
+  todowrite: { verb: ['Planning', 'Planned'], icon: 'M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2' },
+  settitle: { verb: ['Naming', 'Named'], icon: 'M4 7V5h16v2M12 5v14M9 19h6' },
+}
+const OTHER = { verb: ['Using', 'Used'] as [string, string], icon: 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z' }
+
 function ToolLine({ e }: { e: Entry }) {
   const [open, setOpen] = useState<boolean | null>(null)
-  const mark = !e.done ? '…' : e.outcome === 'denied' ? '✕' : e.outcome === 'error' ? '!' : '✓'
-  const label = e.done ? e.display ?? `${e.name?.toLowerCase()} ${e.arg}` : `${e.name} ${e.arg}`
+  const name = (e.name ?? '').toLowerCase()
+  const look = TOOL_LOOK[name] ?? OTHER
   const output = e.output.trim()
   const shown = open ?? (e.outcome === 'error' || (!e.done && !!output))
+  const state = !e.done ? 'run' : e.outcome === 'error' ? 'err' : e.outcome === 'denied' ? 'denied' : 'ok'
+  // The engine's one-line gist (display) when it has one, else the argument.
+  const what = (e.done && e.display) || e.arg || (TOOL_LOOK[name] ? '' : e.name)
   return (
-    <div className={`tool-row ${e.outcome === 'error' ? 'err' : ''}`}>
+    <div className={`tool-row ${state}`}>
       <button type="button" className="tool" aria-expanded={shown} onClick={() => setOpen(!shown)}>
-        <span className="tool-chev">{shown ? '▾' : '▸'}</span>{mark} {label}{e.outcome === 'denied' && ' · denied'}
+        <span className="tool-ic" aria-hidden="true">
+          {state === 'run'
+            ? <span className="tool-spin" />
+            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={look.icon} /></svg>}
+        </span>
+        <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>
+        {what && <span className="tool-what">{what}</span>}
+        {state === 'err' && <span className="tool-tag err">failed</span>}
+        {state === 'denied' && <span className="tool-tag">denied</span>}
+        <span className="tool-chev" aria-hidden="true">›</span>
       </button>
       {shown && (
         <div className="tool-body">
-          {e.arg && <div className="tool-arg"><span className="det">{e.name}</span> {e.arg}</div>}
+          {e.arg && e.display && <div className="tool-arg">{e.arg}</div>}
           {output ? <pre className="tool-out">{clip(output)}</pre> : <div className="det">{e.done ? 'No output.' : 'Running…'}</div>}
         </div>
       )}
