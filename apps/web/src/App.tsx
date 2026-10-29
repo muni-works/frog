@@ -381,7 +381,7 @@ export default function App() {
           ))}
         </div>
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
-          <Mark size={28} />
+          {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} /> : <Mark size={28} />}
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
             <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
             <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
