@@ -41,10 +41,10 @@ function age(ms: number, now: number) {
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-type View = { group: 'date' | 'repo' | 'none'; sort: 'activity' | 'name'; compact: boolean }
+type View = { group: 'date' | 'repo' | 'none'; sort: 'activity' | 'created' | 'name'; compact: boolean; archived: boolean }
 const VIEW = 'frog.sidebar'
 function loadView(): View {
-  const d: View = { group: 'date', sort: 'activity', compact: false }
+  const d: View = { group: 'date', sort: 'activity', compact: false, archived: false }
   try { return { ...d, ...JSON.parse(localStorage.getItem(VIEW) ?? '{}') } } catch { return d }
 }
 
@@ -60,12 +60,23 @@ export function SessionList(p: {
   onOpen: (id: string) => void
   /** The search button opens the ⌘K palette, which searches sessions and their transcripts. */
   onSearch: () => void
+  /** The row's right-click menu, as on the Mac. */
+  onRename: (s: SessionSummary) => void
+  onArchive: (s: SessionSummary, archived: boolean) => void
+  onDelete: (s: SessionSummary) => void
   onClear: (ids: string[]) => void
   error: string | null
 }) {
   // View options, as on the Mac (sidebarGroup, sidebarSort, compactSidebar), kept per browser.
   const [view, setViewOpts] = useState<View>(loadView)
   const [menu, setMenu] = useState(false)
+  const [ctx, setCtx] = useState<{ s: SessionSummary; x: number; y: number } | null>(null)
+  useEffect(() => {
+    if (!ctx) return
+    const close = () => setCtx(null)
+    addEventListener('mousedown', close); addEventListener('keydown', close); addEventListener('blur', close)
+    return () => { removeEventListener('mousedown', close); removeEventListener('keydown', close); removeEventListener('blur', close) }
+  }, [ctx])
   const setView = (v: Partial<View>) => { const next = { ...view, ...v }; setViewOpts(next); try { localStorage.setItem(VIEW, JSON.stringify(next)) } catch { /* private mode */ } }
   const [failedOpen, setFailedOpen] = useState(false)
   const [seen, setSeen] = useState(loadSeen)
@@ -101,10 +112,13 @@ export function SessionList(p: {
   const { groups, failed } = useMemo(() => {
     // A sandbox that never got a turn in, and isn't open, is clutter: it folds.
     const neverStarted = (s: SessionSummary) => s.state === 'error' && s.id !== p.current && !p.thread(s.id).turns.length
-    const failed = p.sessions.filter(neverStarted)
-    const rest = p.sessions.filter((s) => !neverStarted(s))
-      .sort(view.sort === 'name' ? (a, b) => p.title(a).localeCompare(p.title(b)) : (a, b) => b.updated - a.updated)
-    const key = (s: SessionSummary) => view.group === 'date' ? day(s.updated, now) : view.group === 'repo' ? (s.repo || 'No repo') : ''
+    // Show: the active list, or what's been archived (the open session stays either way).
+    const pool = p.sessions.filter((s) => !!s.archived === view.archived || s.id === p.current)
+    const failed = view.archived ? [] : pool.filter(neverStarted)
+    const when = (s: SessionSummary) => (view.sort === 'created' ? s.created ?? s.updated : s.updated)
+    const rest = pool.filter((s) => view.archived || !neverStarted(s))
+      .sort(view.sort === 'name' ? (a, b) => p.title(a).localeCompare(p.title(b)) : (a, b) => when(b) - when(a))
+    const key = (s: SessionSummary) => view.group === 'date' ? day(when(s), now) : view.group === 'repo' ? (s.repo || 'No repo') : ''
     const groups: { name: string; rows: SessionSummary[] }[] = []
     for (const s of rest) {
       const name = key(s)
@@ -135,6 +149,7 @@ export function SessionList(p: {
     const status = glyph === 'run' ? (s.state === 'starting' ? 'Starting' : 'Running') : glyph === 'ask' ? 'Needs you' : glyph === 'fail' ? 'Failed' : glyph === 'paused' ? 'Paused' : null
     return (
       <button key={s.id} type="button" className={`srow${s.id === p.current ? ' on' : ''}${detail ? ' two' : ''}`} onClick={() => p.onOpen(s.id)}
+        onContextMenu={(e) => { e.preventDefault(); setCtx({ s, x: e.clientX, y: e.clientY }) }}
         title={s.state === 'error' ? s.error ?? "The sandbox couldn't start" : undefined}>
         <span className="sbody">
           <span className="sline">
@@ -169,6 +184,12 @@ export function SessionList(p: {
         </button>
         {menu && (
           <div className="f-card sview" role="menu" aria-label="View options">
+            <div className="cz-menu-h">Show</div>
+            {([false, true] as const).map((a) => (
+              <button key={String(a)} type="button" role="menuitemradio" aria-checked={view.archived === a} onClick={() => setView({ archived: a })}>
+                <span style={{ flex: 1 }}>{a ? 'Archived' : 'Active'}</span>{view.archived === a && <span className="ok">✓</span>}
+              </button>
+            ))}
             <div className="cz-menu-h">Group by</div>
             {(['date', 'repo', 'none'] as const).map((g) => (
               <button key={g} type="button" role="menuitemradio" aria-checked={view.group === g} onClick={() => setView({ group: g })}>
@@ -176,9 +197,9 @@ export function SessionList(p: {
               </button>
             ))}
             <div className="cz-menu-h">Sort by</div>
-            {(['activity', 'name'] as const).map((o) => (
+            {(['activity', 'created', 'name'] as const).map((o) => (
               <button key={o} type="button" role="menuitemradio" aria-checked={view.sort === o} onClick={() => setView({ sort: o })}>
-                <span style={{ flex: 1 }}>{{ activity: 'Last activity', name: 'Name' }[o]}</span>{view.sort === o && <span className="ok">✓</span>}
+                <span style={{ flex: 1 }}>{{ activity: 'Last activity', created: 'Date created', name: 'Name' }[o]}</span>{view.sort === o && <span className="ok">✓</span>}
               </button>
             ))}
             <div className="sview-sep" />
@@ -189,6 +210,7 @@ export function SessionList(p: {
         )}
       </div>
       {p.error && <div className="det wrap" style={{ padding: '10px 8px', color: 'var(--warn)' }}>Couldn't load sessions: {p.error}</div>}
+      {view.archived && !groups.length && <div className="det wrap" style={{ padding: '14px 8px' }}>Nothing archived. Archive a session from its ⋯ menu.</div>}
       {!p.error && p.sessions.length === 0 && <div className="det wrap" style={{ padding: '14px 8px' }}>No sessions yet. Start one and it shows up here, and in Frog on your other devices.</div>}
       {groups.map((g) => (
         <div key={g.name}>
@@ -196,6 +218,14 @@ export function SessionList(p: {
           {g.rows.map(row)}
         </div>
       ))}
+      {ctx && (
+        <div className="f-card sctx" role="menu" style={{ left: ctx.x, top: ctx.y }} onMouseDown={(e) => e.stopPropagation()}>
+          <button type="button" role="menuitem" onClick={() => { setCtx(null); p.onOpen(ctx.s.id); p.onRename(ctx.s) }}>Rename…</button>
+          <button type="button" role="menuitem" onClick={() => { setCtx(null); p.onArchive(ctx.s, !ctx.s.archived) }}>{ctx.s.archived ? 'Unarchive' : 'Archive'}</button>
+          <div className="sview-sep" />
+          <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setCtx(null); p.onDelete(ctx.s) }}>Delete…</button>
+        </div>
+      )}
       {failed.length > 0 && <>
             <div className="srow sfold">
               <button type="button" className="sfold-t" aria-expanded={failedOpen} onClick={() => setFailedOpen(!failedOpen)}>

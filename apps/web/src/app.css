@@ -365,3 +365,6 @@ button.tool:hover { color: var(--fg); }
 .sview-sep { height: 1px; background: var(--line); margin: 4px 6px; }
 .slist.compact .srow { padding-top: 3px; padding-bottom: 3px; font-size: 12.5px; }
 .slist.compact .sdetail, .slist.compact .srepo { display: none; }
+.sctx { position: fixed; z-index: 30; width: 170px; padding: 6px; box-shadow: var(--shadow-float); }
+.sctx button { display: flex; width: 100%; border: 0; background: transparent; padding: 6px 10px; border-radius: var(--radius-plate); font: 13px/18px var(--font-sans); color: var(--fg); cursor: pointer; text-align: left; }
+.sctx button:hover { background: var(--hover); }

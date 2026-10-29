@@ -72,6 +72,11 @@ export class Gateway {
     await this.req("DELETE", `/v1/sessions/${encodeURIComponent(id)}`);
   }
 
+  /** Archive or restore a session: it moves to or from the Archived list, nothing is lost. */
+  async archive(id: string, archived: boolean): Promise<SessionSummary> {
+    return this.req("PATCH", `/v1/sessions/${encodeURIComponent(id)}`, { archived });
+  }
+
   /** Opens the session's websocket; it reconnects with `resume_after` until closed. */
   connect(id: string, handlers: ConnectionHandlers, resumeAfter = 0): Connection {
     return new Connection(this, id, handlers, resumeAfter);

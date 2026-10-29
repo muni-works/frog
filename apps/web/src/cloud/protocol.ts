@@ -142,8 +142,12 @@ export interface SessionSummary {
   repo: string;
   branch: string;
   state: string;
+  /** When it was made; older gateways leave it out. */
+  created?: number;
   updated: number;
   pr?: string;
+  /** Put away (PATCH archived); listed under Archived. */
+  archived?: boolean;
   /** With state "error": why the sandbox couldn't start, in words a person can act on. */
   error?: string;
 }

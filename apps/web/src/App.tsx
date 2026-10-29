@@ -187,9 +187,19 @@ export default function App() {
     try {
       await cloud?.gateway.remove(s.id)
       setSessions((all) => all.filter((x) => x.id !== s.id))
-      setView({ kind: 'new' })
+      setView((v) => (v.kind === 'session' && v.id === s.id ? { kind: 'new' } : v))
     } catch (e) {
       say(`Couldn't delete: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  const archive = async (s: SessionSummary, archived: boolean) => {
+    try {
+      const next = await cloud!.gateway.archive(s.id, archived)
+      setSessions((all) => all.map((x) => (x.id === s.id ? { ...x, ...next } : x)))
+      say(archived ? 'Archived. Find it under View options → Archived.' : 'Moved back to your sessions.')
+    } catch (e) {
+      say(`Couldn't ${archived ? 'archive' : 'restore'} it: ${e instanceof Error ? e.message : e}`)
     }
   }
 
@@ -227,6 +237,7 @@ export default function App() {
     { id: 'c-settings', label: 'Settings', hint: '⌘,', run: () => key && setSettings(true) },
     ...(current ? [
       { id: 'c-rename', label: 'Rename session', run: () => setRenaming(current.id) },
+      { id: 'c-archive', label: current.archived ? 'Unarchive session' : 'Archive session', run: () => archive(current, !current.archived) },
       { id: 'c-delete', label: 'Delete session', run: () => remove(current) },
     ] : []),
     { id: 'c-insp', label: inspector ? 'Hide inspector' : 'Show inspector', run: () => setInspector(!inspector) },
@@ -306,7 +317,8 @@ export default function App() {
         <div className="brand"><Mark /><b>Frog</b></div>
         <Nav />
         <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
-          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)} />
+          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
+          onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
           {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} /> : <Mark size={28} />}
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
@@ -341,6 +353,7 @@ export default function App() {
               {menuOpen && (
                 <div className="f-card cz-menu" role="menu" style={{ top: 30, bottom: 'auto', right: 0, left: 'auto', width: 180 }} onMouseLeave={() => setMenuOpen(false)}>
                   <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename</button>
+                  <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); archive(current, !current.archived) }}>{current.archived ? 'Unarchive' : 'Archive'}</button>
                   <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setMenuOpen(false); remove(current) }}>Delete session</button>
                 </div>
               )}
