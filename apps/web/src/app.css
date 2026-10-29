@@ -535,3 +535,14 @@ button.tool:hover .tool-chev, button.tool[aria-expanded="true"] .tool-chev { opa
 button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
 .tool-spin { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--frog-pad); border-top-color: var(--frog); animation: spin 1s linear infinite; }
 .tool-body { margin: 2px 0 6px 7px; }
+
+/* Dark is true black, like the iPhone app: surfaces step up from black instead of from grey. */
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --canvas: #000; --bg: #000; --card: #121212; --well: #1a1a1a; --line: #222; --line-strong: #2e2e2e;
+  --hover: rgba(255,255,255,.07); --glass-fill: rgba(10,10,10,.72); --glass-fallback: #0a0a0a;
+  --shadow-float: 0 16px 40px -12px rgba(0,0,0,.95);
+} }
+:root[data-theme="dark"] {
+  --canvas: #000; --bg: #000; --card: #121212; --well: #1a1a1a; --line: #222; --line-strong: #2e2e2e;
+  --hover: rgba(255,255,255,.07); --glass-fill: rgba(10,10,10,.72); --glass-fallback: #0a0a0a;
+}
