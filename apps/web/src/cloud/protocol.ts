@@ -9,6 +9,7 @@ export type Op =
   | { op: "permission"; id: string; decision: Decision }
   | { op: "answer"; id: string; choices?: string[]; other?: string }
   | { op: "elicit"; id: string; action: "accept" | "decline" | "cancel"; content?: unknown }
+  | { op: "set_title"; title: string }
   | { op: "set_model"; spec: string }
   | { op: "set_mode"; mode: Mode };
 
@@ -129,6 +130,8 @@ export interface SessionSummary {
   state: string;
   updated: number;
   pr?: string;
+  /** With state "error": why the sandbox couldn't start, in words a person can act on. */
+  error?: string;
 }
 export interface NewSession {
   /** Omit for a session without a repo (an empty git repo in the sandbox). */

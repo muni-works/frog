@@ -1,16 +1,28 @@
 import { useEffect, useMemo, useState } from 'react'
+import { notifyOn, notifySupported, setNotify } from '../alerts'
 import { API, firstName, type Account } from '../auth'
 import type { SessionSummary } from '../cloud/protocol'
 
 export interface Command { id: string; label: string; hint?: string; run: () => void }
 
-export function Palette({ commands, sessions, onOpen, onClose }: { commands: Command[]; sessions: SessionSummary[]; onOpen: (id: string) => void; onClose: () => void }) {
+export function Palette({ commands, sessions, onOpen, onClose, text }: { commands: Command[]; sessions: SessionSummary[]; onOpen: (id: string) => void; onClose: () => void; text?: (id: string) => string }) {
   const [q, setQ] = useState('')
   const [hi, setHi] = useState(0)
   const items = useMemo(() => {
-    const all: Command[] = [...commands, ...sessions.map((s) => ({ id: s.id, label: s.title, hint: s.repo.split('/')[1], run: () => onOpen(s.id) }))]
-    return all.filter((c) => c.label.toLowerCase().includes(q.toLowerCase()))
-  }, [q, commands, sessions, onOpen])
+    const needle = q.trim().toLowerCase()
+    const named = [...commands, ...sessions.map((s) => ({ id: s.id, label: s.title, hint: s.repo.split('/')[1] ?? 'No repo', run: () => onOpen(s.id) }))]
+      .filter((c) => c.label.toLowerCase().includes(needle))
+    // Sessions whose loaded conversation mentions it, with the line it's on.
+    const said: Command[] = needle.length < 3 || !text ? [] : sessions.flatMap((s) => {
+      if (named.some((c) => c.id === s.id)) return []
+      const body = text(s.id)
+      const at = body.toLowerCase().indexOf(needle)
+      if (at < 0) return []
+      const line = body.slice(Math.max(0, body.lastIndexOf('\n', at) + 1), body.indexOf('\n', at) < 0 ? undefined : body.indexOf('\n', at)).trim()
+      return [{ id: `t-${s.id}`, label: s.title, hint: line.length > 60 ? line.slice(0, 57) + '…' : line, run: () => onOpen(s.id) }]
+    })
+    return [...named, ...said]
+  }, [q, commands, sessions, onOpen, text])
   const run = (c?: Command) => { if (!c) return; onClose(); c.run() }
   return (
     <div className="scrim" onMouseDown={onClose}>
@@ -68,6 +80,7 @@ export function Settings({ account, onSignOut, onClose }: { account: Account | n
             </div>
             <p className="det wrap">Cloud sessions belong to your account, so they show up on every device you sign in on.</p>
             <div className="set-row"><span style={{ flex: 1 }}>Devices and keys</span><a href={`${API}/account`} target="_blank" rel="noreferrer">Manage</a></div>
+            {notifySupported() && <Notify />}
           </>)}
           {tab === 'Plan' && (<>
             <h2>Plan</h2>
@@ -80,5 +93,15 @@ export function Settings({ account, onSignOut, onClose }: { account: Account | n
         </div>
       </div>
     </div>
+  )
+}
+
+function Notify() {
+  const [on, setOn] = useState(notifyOn())
+  return (
+    <label className="set-row">
+      <div style={{ flex: 1 }}><b>Notifications</b><div className="det wrap">When a session needs you or finishes while Frog is in the background.</div></div>
+      <input type="checkbox" role="switch" checked={on} onChange={async (e) => setOn(await setNotify(e.target.checked))} />
+    </label>
   )
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useAlerts } from './alerts'
 import { finishSignIn, firstName, me, savedKey, signIn, signOut, API, AuthError, type Account } from './auth'
 import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
@@ -45,7 +46,7 @@ function sym(s: SessionSummary, t: Thread) {
   if (outOfCredits(t)) return { ch: '', cls: 'sym paused', detail: 'Paused · out of credits' }
   if (t.running) return { ch: '', cls: 'sym ring', detail: 'Working…' }
   if (s.state === 'starting') return { ch: '', cls: 'sym ring', detail: 'Starting the sandbox…' }
-  if (s.state === 'error') return { ch: '!', cls: 'sym paused', detail: 'The sandbox hit an error' }
+  if (s.state === 'error') return { ch: '!', cls: 'sym paused', detail: s.error ?? "The sandbox couldn't start" }
   if (s.state === 'sleeping') return { ch: '', cls: 'sym merged', detail: s.pr ? `Sleeping · ${s.pr}` : 'Sleeping' }
   if (t.ended?.type === 'error') return { ch: '!', cls: 'sym paused', detail: 'Stopped on an error' }
   if (t.ended?.type === 'denied') return { ch: '✕', cls: 'sym merged', detail: 'Stopped · you denied a step' }
@@ -68,6 +69,8 @@ export default function App() {
   const [draft, setDraft] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
   const [conn, setConn] = useState<Record<string, ConnectionState>>({})
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [renaming, setRenaming] = useState<string | null>(null)
   // What a new session starts with: null model = the gateway's default.
   const [newModel, setNewModel] = useState<string | null>(null)
   const [newMode, setNewMode] = useState<Mode>('auto')
@@ -86,6 +89,13 @@ export default function App() {
   }, [sessions, current])
   const thread = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
+  const title = (s: SessionSummary) => thread(s.id).title ?? s.title
+  // Alerts: the tab title's badge and background notifications, from every streamed session.
+  useAlerts(useMemo(() => sessions.map((s) => {
+    const t = thread(s.id)
+    const waiting = t.ask ? `Can I ${t.ask.name.toLowerCase()} ${t.ask.arg}?` : t.question ? t.question.question : t.elicitation ? `${t.elicitation.server} needs your input` : null
+    return { id: s.id, title: t.title ?? s.title, waiting, finished: !t.running && t.ended?.type === 'complete' }
+  }), [sessions, thread]), useCallback((id: string) => setView({ kind: 'session', id }), []))
 
   const say = (t: string) => { setToast(t); clearTimeout(toastTimer.current); toastTimer.current = window.setTimeout(() => setToast(null), 3200) }
 
@@ -132,6 +142,24 @@ export default function App() {
     if (ask) cloud?.send(id, { op: 'permission', id: ask.id, decision: allow ? 'allow' : 'deny' })
   }, [thread, cloud])
 
+  const rename = (s: SessionSummary, to: string) => {
+    const t = to.trim()
+    setRenaming(null)
+    if (!t || t === title(s)) return
+    cloud?.send(s.id, { op: 'set_title', title: t }) // the engine's titled event renames it everywhere
+    setSessions((all) => all.map((x) => (x.id === s.id ? { ...x, title: t } : x)))
+  }
+  const remove = async (s: SessionSummary) => {
+    if (!confirm(`Delete "${title(s)}"? Its sandbox, changes and conversation are gone for good.`)) return
+    try {
+      await cloud?.gateway.remove(s.id)
+      setSessions((all) => all.filter((x) => x.id !== s.id))
+      setView({ kind: 'new' })
+    } catch (e) {
+      say(`Couldn't delete: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
   // Commit and push are asks to the agent, so they show up in the conversation like any step.
   const commit = (s: SessionSummary) => send(s.id, 'Commit the changes with a clear message.')
   const push = (s: SessionSummary) => send(s.id, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
@@ -157,6 +185,10 @@ export default function App() {
     { id: 'c-new', label: 'New session', hint: '⌘N', run: () => key && setView({ kind: 'new' }) },
     { id: 'c-repo', label: 'Connect a repo', run: () => key && setView({ kind: 'new', pick: true }) },
     { id: 'c-settings', label: 'Settings', hint: '⌘,', run: () => key && setSettings(true) },
+    ...(current ? [
+      { id: 'c-rename', label: 'Rename session', run: () => setRenaming(current.id) },
+      { id: 'c-delete', label: 'Delete session', run: () => remove(current) },
+    ] : []),
     { id: 'c-insp', label: inspector ? 'Hide inspector' : 'Show inspector', run: () => setInspector(!inspector) },
     { id: 'c-theme', label: 'Toggle dark mode', run: () => { const r = document.documentElement; r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark' } },
   ]
@@ -248,7 +280,6 @@ export default function App() {
   const dels = ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
   const paused = ct ? outOfCredits(ct) : false
   const cs = current ? conn[current.id] : undefined
-  const title = (s: SessionSummary) => thread(s.id).title ?? s.title
 
   return (
     <div className="win">
@@ -317,11 +348,28 @@ export default function App() {
       <main className="main">
         <div className="titlebar">
           <div style={{ flex: 1, minWidth: 0 }}>
-            <b style={{ fontSize: 14 }}>{current ? title(current) : 'New session'}</b>
+            {current && renaming === current.id ? (
+              <input className="f-field title-edit" autoFocus defaultValue={title(current)} aria-label="Session name"
+                onBlur={(e) => rename(current, e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') rename(current, (e.target as HTMLInputElement).value); if (e.key === 'Escape') setRenaming(null) }} />
+            ) : (
+              <b style={{ fontSize: 14 }} onDoubleClick={() => current && setRenaming(current.id)} title={current ? 'Double-click to rename' : undefined}>{current ? title(current) : 'New session'}</b>
+            )}
             <div className="det">{current ? `${current.repo || 'No repo'} · ${current.branch}${current.pr ? ` · PR ${current.pr}` : ''}${paused ? ' · paused' : ''}${ct?.context?.used ? ` · ${Math.round(ct.context.used / 1000)}k of ${Math.round(ct.context.window / 1000)}k context` : ''}` : 'Runs in a private Frog Cloud sandbox'}</div>
           </div>
           {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--place-cloud)' : 'var(--muted)' }}>{cs?.state === 'live' ? 'In Frog Cloud' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
           {current && <button type="button" className="f-btn f-btn--plain" onClick={() => setInspector(!inspector)} aria-pressed={inspector}>{inspector ? 'Hide inspector' : 'Inspector'}</button>}
+          {current && (
+            <div className="title-menu">
+              <button type="button" className="f-btn f-btn--plain" aria-label="Session menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>⋯</button>
+              {menuOpen && (
+                <div className="f-card cz-menu" role="menu" style={{ top: 30, bottom: 'auto', right: 0, left: 'auto', width: 180 }} onMouseLeave={() => setMenuOpen(false)}>
+                  <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename</button>
+                  <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setMenuOpen(false); remove(current) }}>Delete session</button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {view.kind === 'session' && current && ct && (<>
@@ -329,7 +377,8 @@ export default function App() {
             {banner && <div role="status" className="banner"><span style={{ color: 'var(--place-cloud)' }}>✓</span><span style={{ flex: 1 }}>{banner}</span><button type="button" className="f-btn f-btn--plain" aria-label="Dismiss" onClick={() => setBanner(null)}>✕</button></div>}
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{cs.refused.upgrade ? <a className="f-btn f-btn--bordered f-btn--small" href={cs.refused.upgrade} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
-            {ct.turns.length === 0 && cs?.state !== 'refused' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Nothing here yet.'}</div>}
+            {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ?? "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
+            {ct.turns.length === 0 && cs?.state !== 'refused' && current.state !== 'error' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Nothing here yet.'}</div>}
             <Transcript thread={ct} models={models} onDecide={(a) => decide(current.id, a)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })} />
@@ -396,7 +445,8 @@ export default function App() {
         <Inspector thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={() => push(current)} />
       )}
 
-      {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)} />}
+      {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
+        text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
       {settings && <Settings account={account} onSignOut={() => { setSettings(false); signOut(); setKey(null); setAccount(null); setGate(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>

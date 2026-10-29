@@ -173,3 +173,5 @@ button.tool:hover { color: var(--fg); }
 .plan { margin: 0 8px 6px; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; max-height: 140px; overflow-y: auto; }
 .plan-item { display: flex; gap: 8px; color: var(--muted); } .plan-item.in_progress { color: var(--fg); } .plan-item.completed { color: var(--faint); text-decoration: line-through; }
 .plan-item span { width: 12px; flex: none; color: var(--frog); }
+.title-menu { position: relative; }
+.title-edit { font-size: 14px; font-weight: 600; padding: 2px 6px; max-width: 420px; }
