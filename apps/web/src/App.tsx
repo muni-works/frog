@@ -426,6 +426,9 @@ export default function App() {
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}
               outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)}
+              waiting={cs?.state === 'connecting' ? (cs.attempt ? 'reconnecting to the sandbox' : 'connecting to the sandbox')
+                : current.state === 'sleeping' ? 'waking the sandbox' : current.state === 'starting' ? 'starting the sandbox'
+                : ct.running ? 'Frog is finishing the last turn' : undefined}
               onEdit={(text) => setRestore({ text, images: [] })} />
             {opening[current.id] && ct.turns.length === 0 && current.state !== 'error' && (
               <Starting repo={opening[current.id].repo} since={opening[current.id].at}

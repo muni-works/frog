@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import type { FileDiff, Image } from '../cloud/protocol'
 import type { Ask, Entry, Thread } from '../engine/thread'
 import type { Model } from '../models'
@@ -63,7 +63,7 @@ function ToolLine({ e }: { e: Entry }) {
   )
 }
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = [], outbox = [], onResend, onEdit }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = [], outbox = [], onResend, onEdit, waiting }: {
   thread: Thread
   onDecide: (allow: boolean) => void
   onAnswer: (choices: string[], other?: string) => void
@@ -72,10 +72,12 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   onRetry?: () => void
   models?: Model[]
   /** Messages sent but not yet started as a turn: shown at once, with a tick once on the wire. */
-  outbox?: { id: number; text: string; images: Image[]; state: 'sending' | 'sent' | 'failed' }[]
+  outbox?: { id: number; text: string; images: Image[]; state: 'sending' | 'sent' | 'failed'; at: number }[]
   onResend?: (id: number) => void
   /** Put one of your messages back in the composer to change and resend. */
   onEdit?: (text: string) => void
+  /** What a sent message is waiting on, in a few words ("waking the sandbox"). */
+  waiting?: string
 }) {
   const lastTurn = thread.turns[thread.turns.length - 1]?.turn
   return (
@@ -155,7 +157,12 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
             {m.images.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
             {m.text}
           </div>
-          {m.state !== 'failed' && <div className="hover-row mine waiting"><Ticks n={m.state === 'sent' ? 1 : 0} /></div>}
+          {m.state !== 'failed' && (
+            <div className="hover-row mine waiting">
+              <span className="wait-why">{m.state === 'sent' ? `Sent · ${waiting ?? 'waiting for Frog to start'}` : waiting ? `Sending · ${waiting}` : 'Sending'} · <Elapsed since={m.at} /></span>
+              <Ticks n={m.state === 'sent' ? 1 : 0} />
+            </div>
+          )}
           {m.state === 'failed' && <div className="me-fail">Frog didn't pick this up · <button type="button" onClick={() => onResend?.(m.id)}>Try again</button></div>}
         </div>
       ))}
@@ -214,4 +221,12 @@ function ago(ms: number) {
 /** Where the context was shrunk: a quiet rule across the conversation, with what it saved. */
 function Mark({ m }: { m: { text: string; failed?: boolean } }) {
   return <div className={`ctx-mark${m.failed ? ' failed' : ''}`} role="note"><span>{m.text}</span></div>
+}
+
+/** Seconds since `since`, ticking. */
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
+  const s = Math.max(0, Math.floor((now - since) / 1000))
+  return <>{s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`}</>
 }
