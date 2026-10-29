@@ -252,19 +252,14 @@ export default function App() {
       <div className="side-scrim" onClick={() => setDrawer(false)} />
       <aside className="side f-glass">
         <div className="brand"><Mark /><b>Frog</b></div>
-        <Nav />
         <span style={{ flex: 1 }} />
-        <div className="signup">
-          <div className="signup-glow" aria-hidden="true" />
-          <b className="signup-h">Start with $5 free</b>
-          <ul className="signup-perks">
-            <li>No card, no subscription</li>
-            <li>Works on your GitHub repos</li>
-            <li>Pay per token after that</li>
-          </ul>
+        <div className="pitch">
+          <h2>Hand it off.<br /><span>Come back to a PR.</span></h2>
           <button type="button" className="f-btn f-btn--prominent signup-go" disabled={leaving} onClick={() => leave(gate)}><GitHub />{leaving ? 'Opening GitHub…' : 'Continue with GitHub'}</button>
-          <div className="det" style={{ textAlign: 'center' }}>New or returning, it's the same button.</div>
+          <div className="det">$5 free · no card</div>
         </div>
+        <span style={{ flex: 1 }} />
+        <div className="det pitch-foot">Made by Municipal Robotics</div>
       </aside>
       {gate ? (
         <main className="main">
