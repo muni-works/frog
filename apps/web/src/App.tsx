@@ -78,6 +78,8 @@ export default function App() {
   const [restore, setRestore] = useState<{ text: string; images: Image[] } | null>(null)
   const [conn, setConn] = useState<Record<string, ConnectionState>>({})
   const [menuOpen, setMenuOpen] = useState(false)
+  // Phone layout: the sidebar is a drawer, closed whenever you go somewhere.
+  const [drawer, setDrawer] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   // What a new session starts with: null model = the gateway's default.
   const [newModel, setNewModel] = useState<string | null>(null)
@@ -111,6 +113,13 @@ export default function App() {
     const waiting = t.ask ? `Can I ${t.ask.name.toLowerCase()} ${t.ask.arg}?` : t.question ? t.question.question : t.elicitation ? `${t.elicitation.server} needs your input` : null
     return { id: s.id, title: t.title ?? s.title, waiting, finished: !t.running && t.ended?.type === 'complete' }
   }), [sessions, thread]), useCallback((id: string) => setView({ kind: 'session', id }), []))
+
+  useEffect(() => setDrawer(false), [view])
+  const Burger = () => (
+    <button type="button" className="burger" aria-label="Sessions" aria-expanded={drawer} onClick={() => setDrawer(!drawer)}>
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+    </button>
+  )
 
   const say = (t: string) => { setToast(t); clearTimeout(toastTimer.current); toastTimer.current = window.setTimeout(() => setToast(null), 3200) }
 
@@ -252,7 +261,8 @@ export default function App() {
 
   // ---------- signed out ----------
   if (!key) return (
-    <div className="win">
+    <div className={`win ${drawer ? 'drawer' : ''}`}>
+      <div className="side-scrim" onClick={() => setDrawer(false)} />
       <aside className="side f-glass">
         <div className="brand"><Mark /><b>Frog</b></div>
         <Nav />
@@ -272,6 +282,7 @@ export default function App() {
       </aside>
       {gate ? (
         <main className="main">
+          <div className="phone-bar"><Burger /><b>Frog</b></div>
           <div className="scroll"><div className="col">
             {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
             <div className="me">{gate}</div>
@@ -287,6 +298,7 @@ export default function App() {
         </main>
       ) : (
         <main className="main home">
+          <div className="phone-bar floating"><Burger /><b>Frog</b></div>
           {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
           <Mark size={56} />
           <h1>What should we work on?</h1>
@@ -309,7 +321,8 @@ export default function App() {
   const cs = current ? conn[current.id] : undefined
 
   return (
-    <div className="win">
+    <div className={`win ${drawer ? 'drawer' : ''}`}>
+      <div className="side-scrim" onClick={() => setDrawer(false)} />
       <aside className="side f-glass">
         <div className="brand"><Mark /><b>Frog</b></div>
         <Nav />
@@ -374,6 +387,7 @@ export default function App() {
 
       <main className="main">
         <div className="titlebar">
+          <Burger />
           <div style={{ flex: 1, minWidth: 0 }}>
             {current && renaming === current.id ? (
               <input className="f-field title-edit" autoFocus defaultValue={title(current)} aria-label="Session name"
