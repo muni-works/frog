@@ -187,3 +187,19 @@ export function HowItWorks() {
     </ul>
   )
 }
+
+// Only claims that are true of the product today: no invented user counts or logos.
+const TRUST = [
+  'Only the repos you pick, through a GitHub App',
+  'A private sandbox per session, gone when you delete it',
+  'Nothing merges without your review',
+  'See the cost of every turn',
+]
+
+export function Trust() {
+  return (
+    <ul className="trust" aria-label="How Frog keeps your code safe">
+      {TRUST.map((t) => <li key={t}>{t}</li>)}
+    </ul>
+  )
+}
