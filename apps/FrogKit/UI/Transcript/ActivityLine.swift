@@ -278,7 +278,12 @@ struct ActivityStepRow: View {
                 withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
             } label: {
                 HStack(spacing: TurnSpace.Inset.snug) {
-                    Text(rowTitle)
+                    // Like the web: the tool's glyph, then its verb, then what it touched.
+                    Image(systemName: ToolLook.icon(name))
+                        .font(.frog(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 14)
+                    ToolLook.title(rowTitle)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     outcome
@@ -494,5 +499,31 @@ private struct ModelLoadBar: View {
         }
         .frame(height: 7)
         .accessibilityHidden(true)
+    }
+}
+
+/// The web's tool line, natively: one glyph per tool, the verb in the primary color and
+/// the rest (path, command, query) quieter.
+enum ToolLook {
+    static func icon(_ name: String) -> String {
+        switch name.lowercased() {
+        case "bash", "!": "terminal"
+        case "read": "doc"
+        case "write": "doc.text"
+        case "edit", "multiedit": "pencil"
+        case "grep": "magnifyingglass"
+        case "glob": "folder"
+        case "webfetch", "websearch": "globe"
+        case "todowrite": "checklist"
+        case "settitle", "renamesession": "textformat"
+        case "task": "person.2"
+        default: "wrench.and.screwdriver"
+        }
+    }
+
+    static func title(_ text: String) -> Text {
+        let lead = text.hasPrefix("Searched the web for ") ? "Searched the web for" : String(text.prefix { $0 != " " })
+        let rest = text.dropFirst(lead.count)
+        return Text(lead).foregroundStyle(.primary) + Text(rest)
     }
 }

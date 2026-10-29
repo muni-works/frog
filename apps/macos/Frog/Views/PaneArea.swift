@@ -28,7 +28,6 @@ struct PaneArea: View {
     var body: some View {
         VStack(spacing: 0) {
             strip
-            Divider().opacity(0.5)
             ZStack {
                 if current == .changes {
                     ChangesInspector(conversation: conversation, maxHeight: height - 44)

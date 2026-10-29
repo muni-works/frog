@@ -374,7 +374,7 @@ struct ComposerView: View {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
             }
             ModelPicker(workspace: workspace, conversation: conversation)
-            if let status = conversation.status, paneWidth == .wide {
+            if let status = conversation.status, paneWidth > .narrow {
                 ContextButton(conversation: conversation, status: status)
             }
         }
