@@ -44,10 +44,10 @@ More in [docs/quickstart.md](docs/quickstart.md).
 
 ## Run on frog cloud
 
-Local models are private and free, but slow on small machines. frog cloud hosts Qwen3-Coder-Next, powered by tang, for when you want speed. It is in free, invite-only beta.
+Local models are private and free, but slow on small machines. frog cloud hosts Qwen3-Coder-Next, powered by tang, for when you want speed. Sign in at [api.frog.toys](https://api.frog.toys) with GitHub or an email link — new accounts start with a small free credit, no card needed.
 
 ```sh
-export FROG_API_KEY=...              # during the beta, get one at https://api.frog.toys/beta
+export FROG_API_KEY=...              # sign in at https://api.frog.toys to get one; the app's Settings → frog cloud sign-in mints it automatically
 frog -m cloud/qwen3-coder-next
 ```
 
@@ -56,13 +56,13 @@ If frog cloud is offline or out of credit or capacity, frog says so and carries 
 ### Other agents
 
 frog cloud's endpoint, frog api, is OpenAI-compatible, so other agents can use it too. Base URL
-`https://api.frog.toys/v1`, model `qwen3-coder-next`, key `FROG_API_KEY` (get one at
-[api.frog.toys/beta](https://api.frog.toys/beta)). Beta limits are low, and you'll get a 503 when
-it's at capacity.
+`https://api.frog.toys/v1`, model `qwen3-coder-next`, key `FROG_API_KEY` (sign in at
+[api.frog.toys](https://api.frog.toys)). If it's at capacity, you'll get a 503 and frog falls
+back to a local model.
 
 **opencode** (`opencode.json`)
 ```json
-{"provider":{"frog":{"npm":"@ai-sdk/openai-compatible","name":"frog cloud","options":{"baseURL":"https://api.frog.toys/v1","apiKey":"{env:FROG_API_KEY}"},"models":{"qwen3-coder-next":{"name":"Qwen3-Coder-Next (frog cloud)"}}}},"model":"frog/qwen3-coder-next"}
+{"provider":{"frog":{"npm":"@ai-sdk/openai-compatible","name":"frog cloud","options":{"baseURL":"https://api.frog.toys/v1","apiKey":"{env:FROG_API_KEY}"},"models":{"qwen3-coder-next":{"name":"Qwen3-Coder-Next (frog cloud)","limit":{"context":131072,"output":16384}}}}},"model":"frog/qwen3-coder-next"}
 ```
 
 **Cline, Roo Code, Kilo Code**: Settings → API Provider: **OpenAI Compatible** → Base URL

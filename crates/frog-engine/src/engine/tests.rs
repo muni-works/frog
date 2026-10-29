@@ -9304,6 +9304,416 @@ async fn auto_mode_writes_its_own_fresh_temp_scratch_without_a_card() {
     assert_eq!(theirs_now.as_deref(), Some("someone else's\n"));
 }
 
+// ---- delegated approvals: the second pass (docs/design/delegation.md) ----
+
+/// An auto-mode engine whose classifier is scripted (`auto::script_judge` /
+/// `auto::script_rejudge`); the spec only has to resolve, never answer.
+fn engine_deleg(script: Vec<Response>, cfg: Option<Config>) -> Handle {
+    let mut cfg = cfg.unwrap_or_else(|| Config {
+        hermetic: true,
+        sandbox_shell: false,
+        ..Config::default()
+    });
+    cfg.auto_classifier = Some("ollama/deleg-test-classifier".into());
+    engine_perm_cfg(script, Mode::Auto, cfg)
+}
+
+fn layers(evs: &[Envelope], call: &str) -> Vec<(String, String)> {
+    evs.iter()
+        .filter_map(|e| match &e.event {
+            Event::PermissionDecision { item, layer, outcome, .. } if item == call => {
+                Some((layer.clone(), outcome.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A fresh scratch dir under the shared temp dir (/private/tmp on macOS, /tmp
+/// elsewhere), not yet created.
+fn scratch_path(tag: &str) -> PathBuf {
+    let tmp = if cfg!(target_os = "macos") { "/private/tmp" } else { "/tmp" };
+    crate::approval::normalize(&std::path::Path::new(tmp).join(format!("deleg-{tag}-{}", new_id())))
+}
+
+/// Run one turn; for each `SessionRequest`, call `on(id, tool)` (the test may
+/// reply via `Op::SessionReply`); deny every card. Collects events until `Idle`.
+async fn loop_collect(
+    h: &mut Handle,
+    mut on: impl FnMut(&str, &str),
+) -> Vec<Envelope> {
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "go".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    let mut evs: Vec<Envelope> = Vec::new();
+    // `SetClientCaps` also ends in an `Idle`; only the one after this turn counts.
+    let mut started = false;
+    loop {
+        let env = h.events.recv().await.unwrap();
+        started |= matches!(env.event, Event::TurnStarted { .. });
+        if let Event::SessionRequest { id, tool, .. } = &env.event {
+            let (id, tool) = (id.clone(), tool.clone());
+            on(&id, &tool);
+        }
+        // A card that reaches the user is denied (the tests count them).
+        if let Event::PermissionRequest { id, .. } = &env.event {
+            h.ops
+                .send(Op::Permission { id: id.clone(), decision: Decision::Deny, note: None })
+                .unwrap();
+        }
+        if started && matches!(env.event, Event::Idle) {
+            return evs;
+        }
+        evs.push(env);
+    }
+}
+
+/// `rm -rf` of a scratch dir this session made trips the hard rule (an absolute
+/// path), so provenance can't pass it — the second pass, seeing "created by this
+/// session", lets it run without a card.
+#[tokio::test]
+async fn second_pass_allows_deleting_the_sessions_own_scratch() {
+    let dir = scratch_path("own");
+    crate::auto::script_rejudge(
+        "created by this session",
+        crate::auto::Verdict::Allow("cleanup of its own scratch".into()),
+    );
+    crate::auto::script_rejudge(
+        &format!("{}/a", dir.display()),
+        crate::auto::Verdict::Allow("cleanup of its own scratch".into()),
+    );
+    let script = vec![
+        bash_call("mk", &format!("mkdir -p {}/a", dir.display())),
+        bash_call("rm", &format!("rm -rf {}", dir.display())),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(script, None);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    let gone = !dir.exists();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(asked(&evs), 0, "{:?} layers={:?}", names(&evs), layers(&evs, "rm"));
+    assert_eq!(outcome_of(&evs, "rm"), Some(ToolOutcome::Ok));
+    assert!(gone, "the scratch dir was deleted");
+    assert_eq!(layers(&evs, "rm"), vec![("second-pass".into(), "allow".into())]);
+    assert!(evs.iter().any(|e| matches!(&e.event,
+        Event::Notice { message, .. } if message.starts_with("second pass:"))));
+}
+
+/// `rm -rf` of a tree the session didn't make is never delegable: it cards the
+/// user even when the second pass (and a chief grant) would have allowed it.
+#[tokio::test]
+async fn rm_rf_outside_scratch_is_never_delegated() {
+    // Outside the shared temp dir: on Linux the test engine's project root *is*
+    // /tmp, so a tree there would count as in-project.
+    let dir = crate::approval::normalize(
+        &std::path::Path::new("/var/tmp").join(format!("deleg-theirs-{}", new_id())),
+    );
+    std::fs::create_dir_all(&dir).unwrap();
+    crate::auto::script_judge(
+        &dir.display().to_string(),
+        crate::auto::Verdict::Allow("looks like cleanup".into()),
+    );
+    crate::auto::script_rejudge(
+        &dir.display().to_string(),
+        crate::auto::Verdict::Allow("looks like cleanup".into()),
+    );
+    let script = vec![
+        bash_call("rm", &format!("rm -rf {}", dir.display())),
+        reply(vec![text("done")], Stop::End),
+    ];
+    // Even with a chief granted scratch-deletes.
+    let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+    cfg.delegation.chief = vec!["chief".into()];
+    cfg.delegation.chief_classes = vec!["scratch-deletes".into()];
+    let mut h = engine_deleg(script, Some(cfg));
+    caps(&h, true);
+    let mut asked_chief = false;
+    let evs = loop_collect(&mut h, |_, tool| asked_chief |= tool == "DelegateApproval").await;
+    shutdown(h).await;
+    let kept = dir.exists();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!asked_chief, "the chief was asked about rm -rf outside scratch");
+    assert_eq!(asked(&evs), 1);
+    assert!(kept, "nothing was deleted");
+    assert_eq!(outcome_of(&evs, "rm"), Some(ToolOutcome::Denied));
+    let l = layers(&evs, "rm");
+    assert_eq!(l.first(), Some(&("never-delegable".to_string(), "ask".to_string())), "{l:?}");
+}
+
+/// `ssh` into a host the session brought up (it's in an earlier tool result) is
+/// cleared by the second pass; `ssh` into a host it never saw keeps the card.
+#[tokio::test]
+async fn ssh_into_its_own_scratch_runs_and_ssh_elsewhere_cards() {
+    let id = new_id();
+    let mine = format!("pod-{id}-mine");
+    let other = format!("box-{id}-other");
+    crate::auto::script_judge(&mine, crate::auto::Verdict::Ask("remote shell".into()));
+    crate::auto::script_judge(&other, crate::auto::Verdict::Ask("remote shell".into()));
+    crate::auto::script_rejudge(
+        &format!("{mine} — remote host seen earlier in this session"),
+        crate::auto::Verdict::Allow("the pod it just created".into()),
+    );
+    crate::auto::script_rejudge(
+        &format!("{other} — remote host not seen earlier"),
+        crate::auto::Verdict::Ask("a host this session didn't create".into()),
+    );
+    // `ssh` exits non-zero on these made-up hosts; only the permission path matters.
+    let script = vec![
+        bash_call("made", &format!("echo created {mine}")),
+        bash_call("mine", &format!("ssh -o ConnectTimeout=1 root@{mine} true")),
+        bash_call("other", &format!("ssh -o ConnectTimeout=1 root@{other} true")),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(script, None);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    assert_eq!(layers(&evs, "mine"), vec![("second-pass".into(), "allow".into())]);
+    assert_ne!(outcome_of(&evs, "mine"), Some(ToolOutcome::Denied));
+    assert_eq!(asked(&evs), 1, "only the foreign host asked");
+    assert_eq!(outcome_of(&evs, "other"), Some(ToolOutcome::Denied));
+    assert_eq!(layers(&evs, "other").first(), Some(&("second-pass".to_string(), "ask".to_string())));
+}
+
+/// A second pass that errors keeps the flag: the card goes up (never fail-open).
+#[tokio::test]
+async fn a_failed_second_pass_cards() {
+    let dir = scratch_path("err");
+    crate::auto::script_rejudge(
+        &dir.display().to_string(),
+        crate::auto::Verdict::Failed("timed out".into()),
+    );
+    let script = vec![
+        bash_call("mk", &format!("mkdir -p {}", dir.display())),
+        bash_call("rm", &format!("rm -rf {}", dir.display())),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(script, None);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    let kept = dir.exists();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(asked(&evs), 1);
+    assert!(kept);
+    let reason = evs.iter().find_map(|e| match &e.event {
+        Event::PermissionDecision { item, layer, reason, .. } if item == "rm" && layer == "second-pass" => Some(reason.clone()),
+        _ => None,
+    });
+    assert!(reason.as_deref().is_some_and(|r| r.contains("couldn't finish")), "{reason:?}");
+}
+
+/// Still flagged and in the chief's grant list: the engine asks the client to
+/// delegate (`DelegateApproval` session request). The chief approves, so the
+/// call runs and the audit trail says `delegated`.
+#[tokio::test]
+async fn chief_approval_delegates_the_flagged_call() {
+    let dir = scratch_path("chief-ok");
+    std::fs::create_dir_all(&dir).unwrap();
+    crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
+    crate::auto::script_rejudge(
+        &dir.display().to_string(),
+        crate::auto::Verdict::Ask("still flagged".into()),
+    );
+    let script = vec![
+        bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+    cfg.delegation.chief = vec!["chief".into()];
+    cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+    let mut h = engine_deleg(script, Some(cfg));
+    caps(&h, true);
+    let ops = h.ops.clone();
+    let evs = loop_collect(&mut h, |id, tool| {
+        if tool == "DelegateApproval" {
+            ops.send(Op::SessionReply { id: id.to_string(), result: Some(json!("approve — session infra")), error: None }).unwrap();
+        }
+    }).await;
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(evs.iter().any(|e| matches!(&e.event,
+        Event::Notice { message, .. } if message.contains("delegated:chief") && message.contains("approved"))));
+    assert!(layers(&evs, "ssh").contains(&("delegated".into(), "allow".into())));
+    assert_eq!(asked(&evs), 0, "{:?}", names(&evs));
+}
+
+/// Chief unreachable (the broker errors): the card falls back to the user.
+#[tokio::test]
+async fn unreachable_chief_falls_back_to_a_card() {
+    let dir = scratch_path("chief-dead");
+    std::fs::create_dir_all(&dir).unwrap();
+    crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
+    crate::auto::script_rejudge(&dir.display().to_string(), crate::auto::Verdict::Ask("still flagged".into()));
+    let script = vec![
+        bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+    cfg.delegation.chief = vec!["chief".into()];
+    cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+    let mut h = engine_deleg(script, Some(cfg));
+    caps(&h, true);
+    let ops = h.ops.clone();
+    let evs = loop_collect(&mut h, |id, tool| {
+        if tool == "DelegateApproval" {
+            ops.send(Op::SessionReply { id: id.to_string(), result: None, error: Some("chief folder is gone".into()) }).unwrap();
+        }
+    }).await;
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
+    assert!(evs.iter().any(|e| matches!(&e.event,
+        Event::Notice { message, .. } if message.contains("delegated:chief: fell back to the user") && message.contains("chief folder is gone"))));
+    assert!(layers(&evs, "ssh").contains(&("delegated".into(), "ask".into())));
+}
+
+/// A chief that never answers: after `chief_timeout_secs` the card falls back to the
+/// user; a broker-shaped JSON answer (`ResolveDelegated`) is honored, note and all.
+#[tokio::test]
+async fn silent_chief_times_out_to_a_card_and_json_answers_are_honored() {
+    for (tag, answer) in [("silent", None), ("json", Some(json!({"decision": "allow", "note": "its pod"})))] {
+        let dir = scratch_path(&format!("chief-{tag}"));
+        crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
+        crate::auto::script_rejudge(&dir.display().to_string(), crate::auto::Verdict::Ask("still flagged".into()));
+        let script = vec![
+            bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+        cfg.delegation.chief = vec!["chief".into()];
+        cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+        cfg.delegation.chief_timeout_secs = 1;
+        let mut h = engine_deleg(script, Some(cfg));
+        caps(&h, true);
+        let ops = h.ops.clone();
+        let evs = loop_collect(&mut h, |id, tool| {
+            if let (Some(a), "DelegateApproval") = (&answer, tool) {
+                ops.send(Op::SessionReply { id: id.to_string(), result: Some(a.clone()), error: None }).unwrap();
+            }
+        })
+        .await;
+        shutdown(h).await;
+        if answer.is_none() {
+            assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
+            assert!(evs.iter().any(|e| matches!(&e.event,
+                Event::Notice { message, .. } if message.contains("didn't answer in 1s"))));
+        } else {
+            assert_eq!(asked(&evs), 0, "{:?}", names(&evs));
+            let why = evs.iter().find_map(|e| match &e.event {
+                Event::PermissionDecision { layer, reason, .. } if layer == "delegated" => Some(reason.clone()),
+                _ => None,
+            });
+            assert_eq!(why.as_deref(), Some("chief approved it (its pod) [ssh-scratch]"));
+        }
+    }
+}
+
+/// Chief declines: the call is denied without ever reaching the user's card queue.
+#[tokio::test]
+async fn chief_decline_denies_without_a_card() {
+    let dir = scratch_path("chief-no");
+    std::fs::create_dir_all(&dir).unwrap();
+    crate::auto::script_judge(&dir.display().to_string(), crate::auto::Verdict::Ask("remote host".into()));
+    crate::auto::script_rejudge(&dir.display().to_string(), crate::auto::Verdict::Ask("still flagged".into()));
+    let script = vec![
+        bash_call("ssh", &format!("ssh -o ConnectTimeout=1 host@{} true", dir.display())),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+    cfg.delegation.chief = vec!["chief".into()];
+    cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+    let mut h = engine_deleg(script, Some(cfg));
+    caps(&h, true);
+    let ops = h.ops.clone();
+    let evs = loop_collect(&mut h, |id, tool| {
+        if tool == "DelegateApproval" {
+            ops.send(Op::SessionReply { id: id.to_string(), result: Some(json!("deny — not ours")), error: None }).unwrap();
+        }
+    }).await;
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(asked(&evs), 0);
+    assert_eq!(outcome_of(&evs, "ssh"), Some(ToolOutcome::Denied));
+    assert!(layers(&evs, "ssh").contains(&("delegated".into(), "deny".into())));
+    assert!(evs.iter().any(|e| matches!(&e.event,
+        Event::Notice { message, .. } if message.contains("delegated:chief") && message.contains("declined"))));
+}
+
+/// The digest roll-up counts each path once: a classifier allow, a chief
+/// approval, and a never-delegable card. `Op::ApprovalDigest` replies with today's counts.
+#[tokio::test]
+async fn digest_counts_each_path() {
+    let dir = scratch_path("digest");
+    std::fs::create_dir_all(&dir).unwrap();
+    let plain = format!("python3 -c 'print(1)' # {}", dir.display());
+    crate::auto::script_judge(&plain, crate::auto::Verdict::Allow("ordinary".into()));
+    let ssh = format!("ssh -o ConnectTimeout=1 host@{} true", dir.display());
+    crate::auto::script_judge(&ssh, crate::auto::Verdict::Ask("flagged".into()));
+    crate::auto::script_rejudge(&format!("host@{}", dir.display()), crate::auto::Verdict::Ask("still".into()));
+    let script = vec![
+        bash_call("a", &plain),
+        bash_call("ssh", &ssh),
+        bash_call("push", &format!("git push --force origin {}", new_id())),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+    cfg.delegation.chief = vec!["chief".into()];
+    cfg.delegation.chief_classes = vec!["ssh-scratch".into()];
+    cfg.delegation.digest = true;
+    let mut h = engine_deleg(script, Some(cfg));
+    caps(&h, true);
+    let ops = h.ops.clone();
+    let evs = loop_collect(&mut h, |id, tool| {
+        if tool == "DelegateApproval" {
+            ops.send(Op::SessionReply { id: id.to_string(), result: Some(json!("approve")), error: None }).unwrap();
+        }
+    }).await;
+    h.ops.send(Op::ApprovalDigest).unwrap();
+    let summary = loop {
+        if let Event::ApprovalDigest { summary } = h.events.recv().await.unwrap().event {
+            break summary;
+        }
+    };
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
+    assert!(summary.contains("1 auto-allowed"), "{summary}");
+    assert!(summary.contains("1 chief-approved"), "{summary}");
+    assert!(summary.contains("1 blocked (1 never-delegable)"), "{summary}");
+    assert!(summary.contains("(3 calls total)"), "{summary}");
+    // The first card of the day carries the roll-up, once.
+    let daily = evs.iter().filter(|e| matches!(&e.event,
+        Event::Notice { message, .. } if message.starts_with("approvals today:"))).count();
+    assert_eq!(daily, 1);
+}
+
+/// A never-delegable call cards the user even when the chief's grants cover
+/// its soft shape (a force push is also a push to a remote).
+#[tokio::test]
+async fn a_chief_grant_never_routes_a_never_delegable_call() {
+    let branch = format!("deleg-{}", new_id());
+    let script = vec![
+        bash_call("push", &format!("git push --force origin {branch}")),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+    cfg.delegation.chief = vec!["chief".into()];
+    cfg.delegation.chief_classes = vec!["network-read-writes".into()];
+    let mut h = engine_deleg(script, Some(cfg));
+    caps(&h, true);
+    let mut asked_chief = false;
+    let evs = loop_collect(&mut h, |_, tool| asked_chief |= tool == "DelegateApproval").await;
+    shutdown(h).await;
+    assert!(!asked_chief, "the chief was asked about a force push");
+    assert_eq!(asked(&evs), 1);
+    assert_eq!(layers(&evs, "push").first(), Some(&("never-delegable".to_string(), "ask".to_string())));
+}
+
 #[tokio::test]
 async fn memory_tool_is_offered_only_with_compiled_memory() {
     // The scripted provider has no memory endpoints: no Memory tool, no prompt line.

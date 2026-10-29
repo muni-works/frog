@@ -60,7 +60,7 @@ final class MessageTextTests: XCTestCase {
 
         - top level bullet with enough words that it wraps onto another line under its own text
           - nested bullet
-        1. numbered, with a [link](https://frog.eco) and *emphasis*
+        1. numbered, with a [link](https://frog.toys) and *emphasis*
 
         ```swift
         let x = 1

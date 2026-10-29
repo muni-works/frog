@@ -154,14 +154,14 @@ fn save_in(path: &std::path::Path, p: &Profile, caps: &Caps) {
 }
 
 /// Models whose native tool calling is known to work, so a probe or a session's evidence never
-/// moves them off it: hosted frontier APIs, and Claude through any cloud gateway (Vercel AI
-/// Gateway serves it on the Messages API; OpenRouter and the rest translate faithfully).
+/// moves them off it: hosted frontier APIs, and Claude through any cloud gateway (Vercel's and
+/// Cloudflare's AI Gateways serve it on the Messages API; OpenRouter and the rest translate faithfully).
 pub fn native_known(p: &Profile) -> bool {
     is_hosted(p) || (is_cloud(p) && p.model.to_lowercase().contains("claude"))
 }
 
 /// A model that runs in someone's data center: a hosted API, or one reached through a cloud
-/// gateway (OpenRouter, Vercel AI Gateway). Its window and output limits are the API's, and its
+/// gateway (OpenRouter, Vercel or Cloudflare AI Gateway). Its window and output limits are the API's, and its
 /// energy can only be estimated. A server of your own isn't one: its window is real.
 pub fn is_cloud(p: &Profile) -> bool {
     let url = p.base_url.as_deref().map(|u| u.trim_end_matches('/'));

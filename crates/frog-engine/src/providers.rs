@@ -148,12 +148,13 @@ pub const PRESETS: &[Preset] = &[
         key_url: "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys",
         local: false,
     },
-    // Cloudflare Workers AI: OpenAI-compatible, but the account id lives in the URL, so
-    // the base URL is built at request time from CLOUDFLARE_ACCOUNT_ID (cf_base_url).
-    // Model names keep their @cf/ prefix: cloudflare/@cf/zai-org/glm-5.3.
+    // Cloudflare AI Gateway: its REST API serves Workers AI models (cloudflare/@cf/zai-org/glm-5.3)
+    // and third-party ones on unified billing (cloudflare/anthropic/claude-opus-5.5), one token
+    // for all. The account id lives in the URL, so the base URL is built at request time
+    // from CLOUDFLARE_ACCOUNT_ID (cf_base_url).
     Preset {
         id: "cloudflare",
-        name: "Cloudflare Workers AI",
+        name: "Cloudflare AI Gateway",
         kind: ProviderKind::Openai,
         base_url: "", // resolved per-request via cf_base_url_from
         key_env: &["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY"],
@@ -203,7 +204,7 @@ pub fn preset(id: &str) -> Option<&'static Preset> {
     PRESETS.iter().find(|p| p.id == id)
 }
 
-/// Cloudflare Workers AI's base URL, OpenAI-compatible, with the account id in the URL.
+/// Cloudflare AI Gateway's base URL, OpenAI-compatible, with the account id in the URL.
 /// `None` until `CLOUDFLARE_ACCOUNT_ID` is set: it can't be a static `Preset::base_url`.
 pub fn cf_base_url_from(env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     let id = env("CLOUDFLARE_ACCOUNT_ID")?;
@@ -212,15 +213,17 @@ pub fn cf_base_url_from(env: &dyn Fn(&str) -> Option<String>) -> Option<String> 
     ))
 }
 
-/// Cloudflare Workers AI's base URL, once `CLOUDFLARE_ACCOUNT_ID` is set.
+/// Cloudflare AI Gateway's base URL, once `CLOUDFLARE_ACCOUNT_ID` is set.
 pub fn cf_base_url() -> Option<String> {
     cf_base_url_from(&env_var)
 }
 
-/// Cloudflare's models on Workers AI frog suggests: the two this eval added it for.
-pub const CF_MODELS: &[(&str, &str)] = &[
-    ("@cf/zai-org/glm-5.3", "GLM 5.3"),
-    ("@cf/deepseek-ai/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash"),
+/// Cloudflare's models frog suggests: Workers AI's own, and Claude through the gateway.
+/// (id, name, context)
+pub const CF_MODELS: &[(&str, &str, u64)] = &[
+    ("@cf/zai-org/glm-5.3", "GLM 5.3", 1_048_576),
+    ("@cf/deepseek-ai/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash", 1_048_576),
+    ("anthropic/claude-opus-5.5", "Claude Opus 5.5", 200_000),
 ];
 
 /// frog cloud's base URL, from the first non-empty override, else the preset's.
@@ -846,7 +849,7 @@ mod tests {
 
     #[test]
     fn cf_model_specs_round_trip() {
-        for (id, _) in CF_MODELS {
+        for (id, _, _) in CF_MODELS {
             let spec = format!("cloudflare/{id}");
             assert_eq!(normalize(&spec), spec);
             let (prov, model) = spec.split_once('/').unwrap();

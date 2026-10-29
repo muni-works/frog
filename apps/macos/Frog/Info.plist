@@ -29,7 +29,7 @@
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Frog reads your calendar on this Mac to shape your brief around your day. It never leaves this Mac.</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>© 2026 Cam Pedersen</string>
+	<string>© 2026 Municipal Robotics</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>frog on your iPhone connects to this Mac over your network.</string>
 	<key>NSMicrophoneUsageDescription</key>
@@ -41,7 +41,7 @@
 		<string>eco.frog.conversation</string>
 	</array>
 	<key>SUFeedURL</key>
-	<string>https://frog.eco/appcast.xml</string>
+	<string>https://frog.toys/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>$(SPARKLE_PUBLIC_KEY)</string>
 </dict>
