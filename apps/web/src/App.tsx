@@ -84,7 +84,7 @@ export default function App() {
   const cloud = useCloud(key)
   const models = useModels(DEV_KEY ? null : key)
   const repoList = useRepos(cloud)
-  const { sessions, error: listError, setSessions } = useSessions(cloud)
+  const { sessions, error: listError, setSessions, refresh: refreshSessions } = useSessions(cloud)
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined
   useEffect(() => setMenuOpen(false), [view])
   // Stream only the open session. Attaching to a session wakes its sandbox, and the sockets
@@ -93,6 +93,8 @@ export default function App() {
   const live = useMemo(() => (current && !current.id.startsWith(PENDING) ? [current.id] : []), [current])
   const thread = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
+  // The open session's own changes show in the list at once, not at the next poll.
+  useEffect(() => { refreshSessions() }, [ct?.running, ct?.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (current && compacting[current.id] && (ct?.marks ?? []).length >= compacting[current.id]) setCompacting(({ [current.id]: _, ...rest }) => rest) }, [current, ct?.marks, compacting]) // eslint-disable-line react-hooks/exhaustive-deps
   const title = (s: SessionSummary) => thread(s.id).title ?? s.title
   // The turn ended: what was queued goes as the next turn, one Submit with the rest as `more`.
