@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Gateway } from './cloud/client'
-import type { RepoList, SessionSummary } from './cloud/protocol'
+import type { EndReason, RepoList, SessionSummary } from './cloud/protocol'
 import { CloudEngine } from './engine/cloud'
 import { emptyThread, reduce, type Thread } from './engine/thread'
 
@@ -71,11 +71,18 @@ export function parseRepo(s: string): string | null {
 
 /** Why a turn stopped on an error, in a line, unless it's the out-of-credits case (it has its own card). */
 export function turnError(t: Thread): string | null {
-  if (t.ended?.type !== 'error' || outOfCredits(t)) return null
-  const e = (t.ended as { error?: { type?: string; status?: number; message?: string } }).error ?? {}
+  return outOfCredits(t) ? null : endError(t.ended)
+}
+
+/** Why a turn ended on an error, in a line; null for any other ending. */
+export function endError(reason: EndReason | null | undefined): string | null {
+  if (reason?.type !== 'error') return null
+  const e = (reason as { error?: { type?: string; status?: number; message?: string } }).error ?? {}
   let detail = e.message ?? ''
   try { detail = JSON.parse(detail)?.error?.message ?? detail } catch { /* not JSON */ }
   if (e.status === 401) return `The model provider refused this session's key${detail ? ` (${detail})` : ''}.`
+  if (e.status === 429) return 'Frog Cloud was too busy to answer, even after retrying. Try again in a moment.'
+  if (e.status === 503) return 'No model was free on Frog Cloud, even after retrying. Try again in a moment.'
   return [e.type === 'provider' ? 'The model call failed' : 'The turn stopped', e.status ? `(${e.status})` : '', detail ? `: ${detail}` : ''].join(' ').replace(' :', ':').trim() + '.'
 }
 

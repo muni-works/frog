@@ -77,7 +77,7 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     case 'progress':
       return t.running ? { ...t, activity: { text: ev.label, warn: false } } : t
     case 'notice':
-      return t.running ? { ...t, activity: { text: ev.message, warn: ev.level === 'warn' } } : t
+      return t.running ? { ...t, activity: { text: humanize(ev.message), warn: ev.level === 'warn' } } : t
     case 'item_started': {
       const k = ev.kind
       const entry: Entry = k.type === 'tool_call'
@@ -146,4 +146,16 @@ function apply(t: Thread, ev: Event, created: number): Thread {
 export function reduce(t: Thread, env: Envelope): Thread {
   if (env.seq <= t.lastSeq) return t // already seen (a replay overlapping live)
   return { ...apply(t, env, env.created), lastSeq: env.seq }
+}
+
+/** The engine's notices, in words: a model call it's retrying reads as what happened and when
+ * it tries again, not as an HTTP status and a JSON body. Anything else passes through. */
+export function humanize(message: string): string {
+  const retry = message.match(/retrying in (\d+)s \((\d+)\/(\d+)\)/)
+  const when = retry ? ` Trying again in ${retry[1]}s (${retry[2]} of ${retry[3]}).` : ''
+  if (/\b429\b|too many concurrent|rate[_ ]limit/i.test(message)) return `Frog Cloud is busy right now.${when}`
+  if (/\b503\b|no inference capacity|service_unavailable/i.test(message)) return `No model is free on Frog Cloud right now.${when}`
+  if (/\b502\b|\b504\b|timed? ?out|connection (reset|refused)/i.test(message)) return `Couldn't reach the model.${when}`
+  if (retry) return `The model call failed.${when}`
+  return message
 }

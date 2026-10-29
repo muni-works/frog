@@ -74,3 +74,13 @@ test("a turn keeps its images and the follow-ups sent with it", () => {
   assert.equal(t.turns[0].images?.[0].mime, "image/png");
   assert.equal(t.turns[0].more?.[0].text, "and this");
 });
+
+test("retry notices read as what happened and when it tries again", async () => {
+  const { humanize } = await import("../src/engine/thread.ts");
+  assert.equal(
+    humanize('HTTP 429: {"error":{"message":"too many concurrent requests","type":"rate_limit_error","code":429}} — retrying in 4s (2/6)'),
+    "Frog Cloud is busy right now. Trying again in 4s (2 of 6).",
+  );
+  assert.equal(humanize("HTTP 503: no inference capacity right now — retrying in 8s (3/6)"), "No model is free on Frog Cloud right now. Trying again in 8s (3 of 6).");
+  assert.equal(humanize("context window: 32768 tokens"), "context window: 32768 tokens");
+});

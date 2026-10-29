@@ -6,7 +6,7 @@ import type { SessionSummary } from './cloud/protocol'
 import type { Thread } from './engine/thread'
 import type { Image, Mode } from './cloud/protocol'
 import { idOf, spec, useModels } from './models'
-import { outOfCredits, starters, turnError, useCloud, useRepos, useSessions, useThreads } from './store'
+import { outOfCredits, starters, useCloud, useRepos, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Inspector } from './ui/Inspector'
 import { creditLine, Palette, Settings, type Command } from './ui/Overlays'
@@ -67,7 +67,6 @@ export default function App() {
   const [palette, setPalette] = useState(false)
   const [settings, setSettings] = useState(false)
   const [inspector, setInspector] = useState(false)
-  const [banner, setBanner] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [draft, setDraft] = useState<string | undefined>()
   /** Sessions still opening: their first message (and repo), from the moment you send until the
@@ -134,7 +133,6 @@ export default function App() {
     finishSignIn().then(async (done) => {
       if (done) {
         setKey(done.key); setAccount(done.account)
-        setBanner(`Hi ${firstName(done.account) ?? 'there'}. ${creditLine(done.account)} to spend on Frog Cloud.`)
         if (done.after) { setDraft(done.after); setView({ kind: 'new', pick: true }) }
         return
       }
@@ -421,10 +419,8 @@ export default function App() {
 
         {view.kind === 'session' && current && ct && (<>
           <div className="scroll" ref={(el) => { if (el) el.scrollTop = el.scrollHeight }}><div className="col">
-            {banner && <div role="status" className="banner"><span style={{ color: 'var(--place-cloud)' }}>✓</span><span style={{ flex: 1 }}>{banner}</span><button type="button" className="f-btn f-btn--plain" aria-label="Dismiss" onClick={() => setBanner(null)}>✕</button></div>}
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{cs.refused.upgrade ? <a className="f-btn f-btn--bordered f-btn--small" href={cs.refused.upgrade} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
-            {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ?? "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
             {ct.turns.length === 0 && !opening[current.id] && cs?.state !== 'refused' && current.state !== 'error' && <div className="det wrap" style={{ textAlign: 'center', padding: 24 }}>{current.state === 'starting' ? (current.repo ? 'Starting the sandbox and cloning the repo…' : 'Starting the sandbox…') : 'Nothing here yet.'}</div>}
             {opening[current.id] && ct.turns.length === 0 && current.state !== 'error' && (
               <div className="turn">
@@ -434,13 +430,10 @@ export default function App() {
             )}
             <Transcript thread={ct} models={models} onDecide={(a) => decide(current.id, a)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
-              onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })} />
-            {turnError(ct) && (
-              <div role="status" className="banner warn">
-                <span style={{ flex: 1 }}>{turnError(ct)}</span>
-                <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => send(current.id, 'Try that again.')}>Try again</button>
-              </div>
-            )}
+              onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
+              onRetry={() => send(current.id, 'Try that again.')} />
+            {/* A sandbox that couldn't start says so here, by the composer, not above the conversation. */}
+            {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ?? "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
             {paused && (
               <section className="cardx outs" aria-label="Out of credits">
                 <b style={{ fontSize: 15 }}>You're out of cloud credits</b>
@@ -467,7 +460,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
+            <Composer key={current.id} autoFocus state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
@@ -481,7 +474,6 @@ export default function App() {
 
         {view.kind === 'new' && (
           <div className="main home">
-            {banner && <div role="status" className="banner"><span style={{ color: 'var(--place-cloud)' }}>✓</span><span style={{ flex: 1 }}>{banner}</span><button type="button" className="f-btn f-btn--plain" aria-label="Dismiss" onClick={() => setBanner(null)}>✕</button></div>}
             <Mark size={56} />
             <h1>What should we work on?</h1>
             <div style={{ width: '100%', maxWidth: 680 }}>

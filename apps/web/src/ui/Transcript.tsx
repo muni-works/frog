@@ -4,6 +4,7 @@ import type { Ask, Entry, Thread } from '../engine/thread'
 import type { Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
 import { Markdown } from './Markdown'
+import { endError } from '../store'
 import { TurnFooter } from './TurnFooter'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
@@ -65,11 +66,13 @@ function ToolLine({ e }: { e: Entry }) {
   )
 }
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, models = [] }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = [] }: {
   thread: Thread
   onDecide: (allow: boolean) => void
   onAnswer: (choices: string[], other?: string) => void
   onElicit: (action: 'accept' | 'decline' | 'cancel', content?: Record<string, string | number | boolean>) => void
+  /** Try again, offered on the last turn when it ended on an error. */
+  onRetry?: () => void
   models?: Model[]
 }) {
   const lastTurn = thread.turns[thread.turns.length - 1]?.turn
@@ -113,6 +116,14 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, models = [] }
           {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
             <TurnFooter usage={turn.usage} models={models} pinned={turn.turn === lastDone}
               answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''} />
+          )}
+          {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
+          {turn.reason?.type === 'cancelled' && <div className="tool">Stopped</div>}
+          {endError(turn.reason) && !/insufficient_credit|out_of_credits|402/.test(JSON.stringify(turn.reason)) && (
+            <div role="status" className="banner warn">
+              <span style={{ flex: 1 }}>{endError(turn.reason)}</span>
+              {turn.turn === lastTurn && !thread.running && onRetry && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onRetry}>Try again</button>}
+            </div>
           )}
         </div>
       ))}
