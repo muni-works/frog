@@ -124,6 +124,9 @@ struct ComposerView: View {
                     .font(.frog(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    // One toast at a time: a new one replaces the last instead of crossfading
+                    // its text over it.
+                    .id(toast)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if let fallback = conversation.fallbackNotice {

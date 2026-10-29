@@ -385,8 +385,8 @@ struct SessionList: View {
     @ViewBuilder
     private func cloudSection(_ q: String) -> some View {
         let rows = cloud.live.filter { q.isEmpty || $0.title.lowercased().contains(q) || $0.repo.lowercased().contains(q) }
-        if !rows.isEmpty {
-            treeLabel("Frog Cloud", count: rows.count)
+        if cloud.gateway != nil, q.isEmpty || !rows.isEmpty {
+            treeLabel("Frog Cloud", count: rows.isEmpty ? nil : rows.count) { CloudNewMenu(workspace: workspace) }
             ForEach(rows) { s in
                 Button { workspace.openCloud(s.id) } label: {
                     HStack(spacing: 6) {
@@ -1589,6 +1589,50 @@ final class SidebarClock {
     private init() {
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
             MainActor.assumeIsolated { SidebarClock.shared.now = Date() }
+        }
+    }
+}
+
+/// The Frog Cloud header's +: a new sandbox on one of the repos the Frog GitHub App reaches
+/// (or none), as the web's start screen offers, and the App's page for more.
+private struct CloudNewMenu: View {
+    let workspace: Workspace
+    @State private var repos: CloudGateway.Repos?
+
+    var body: some View {
+        Menu {
+            Button("No Repo") { start(nil) }
+            if let repos {
+                if !repos.repos.isEmpty { Divider() }
+                ForEach(repos.repos, id: \.self) { r in
+                    Button { start(r.name) } label: {
+                        Label(r.name, systemImage: r.private ? "lock" : "book.closed")
+                    }
+                }
+                if let install = repos.install.flatMap(URL.init(string:)) {
+                    Divider()
+                    Link("Give Frog Access to More Repos…", destination: install)
+                }
+            } else {
+                Text("Loading repos…")
+            }
+        } label: {
+            Image(systemName: "plus").font(.system(size: 10, weight: .semibold)).frame(width: 18, height: 18)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("New Frog Cloud session")
+        .task { repos = (try? await CloudSessions.shared.gateway?.repos()) ?? CloudGateway.Repos(repos: [], install: nil) }
+    }
+
+    private func start(_ repo: String?) {
+        Task {
+            do {
+                if let s = try await CloudSessions.shared.create(repo: repo) { workspace.openCloud(s.id) }
+            } catch {
+                workspace.raceError = error.localizedDescription
+            }
         }
     }
 }
