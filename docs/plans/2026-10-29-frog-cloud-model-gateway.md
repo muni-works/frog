@@ -235,15 +235,34 @@ User code now passes through frog's infrastructure and then an upstream.
 | This Mac | MLX 4-bit, ~45 GB | needs a 64 GB+ Mac; not in `LOCAL_MODELS` yet |
 | third-party backups | FP8 | Together, Novita, Parasail, Bedrock |
 
-Q4 and Q8 differ by less than the noise between providers, and FP8 is close to Q8, so an FP8
-upstream counts as "same model, different host". Confirm with a frog-bench run on the backup
-before turning overflow on. If it isn't close enough, serve Q8_0 on tang (5% slower) so tang
-and the backup are both 8-bit.
+Q4 and Q8 differ by less than the noise between providers, so a higher-precision upstream
+counts as "same model, different host".
+
+**frog-bench, 2026-10-29** (9 tasks × 3, tool mode auto, tang on 1× H200 with zest-node
+`sha256:1b3c1bdf…`, OpenRouter pinned to Parasail):
+
+| | pass | avg s | calls/run | tokens/solve | cache hit | cache busts | prefill s/call |
+|---|---|---|---|---|---|---|---|
+| tang, Q4 | 16/27 | 12.5 | 3.6 | 67.6k | 73% | 0 | 2.36 |
+| OpenRouter (Parasail, bf16) | 17/27 | 11.8 | 5.6 | 102.1k | 62% | 27 | 0.90 |
+
+Per task the two match, except `present-next-steps` (1/3 vs 0/3) and one tang `find-answer`
+run that hit the edge's own 429 ("too many concurrent requests"). Both fail every
+`present-latency` and `present-restraint` run: a model limit, not a host one. Same model in
+practice, so Parasail is a valid overflow upstream for dart.
+
+Found along the way:
+- OpenRouter has one host for Qwen3-Coder-Next today (Parasail, bf16, $0.12 / $0.80 per M). No
+  FP8 host, so no redundancy behind the backup yet; add Together direct as a second.
+- Parasail busts prompt caches (27 cold calls) and the edge's sticky sessions can't fix that.
+- `zest-node:latest` (`sha256:903996…`, the image the GLM node used) crashes dart on the first
+  multi-thousand-token prompt: `fe_q8` `CUDA_ERROR_ILLEGAL_ADDRESS` at `coder.rs:2405`. Pin the
+  dart image by digest in `node-up.sh` until it's fixed.
+- tang prefill per call is ~2.6× slower than Parasail's; decode and turn counts make up for it.
 
 ### Backup provider
 
-**OpenRouter, pinned to FP8** (`provider: {quantizations: ["fp8"], allow_fallbacks: true}`
-inside the FP8 set). One key and one integration covers several FP8 hosts (Together, Novita,
+**OpenRouter, pinned to Parasail** (bf16; the only Qwen3-Coder-Next host on OpenRouter today). One key and one integration covers several FP8 hosts (Together, Novita,
 Parasail), so an outage at one doesn't take overflow down, and the same upstream serves the
 other models (decision 9). The cost is OpenRouter's credit fee. Prices reported by third
 parties, unverified: OpenRouter ~$0.12 / $0.80 per M, Together FP8 $0.50 / $1.20.
