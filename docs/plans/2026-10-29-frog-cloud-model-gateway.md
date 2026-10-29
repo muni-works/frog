@@ -91,6 +91,10 @@ qwen3-coder-next:
 
 Rules:
 
+- **Our GPUs first, third parties for overflow** (Cam, 2026-10-29). Every model's first
+  upstream is tang. Third-party upstreams add launch capacity and absorb peaks; they're never
+  the plan. A new session goes to tang when a router has room (the edge's existing "full" answer,
+  `relay.ts`), and spills to the next upstream only when every router is full or gone.
 - **Sticky per session.** Prompt caches live with one upstream, so moving a session busts its
   cache: on Opus with 100k of context, the next turn costs ~10x. The engine sends
   `x-frog-session: <id>`; the edge pins that session to the upstream that served it and moves
@@ -211,9 +215,34 @@ User code now passes through frog's infrastructure and then an upstream.
    handles `anthropic/*` over its Messages API since `1ad4a4c7`), not as how frog itself reaches
    models.
 
+3. **Launch with three models** (Cam, 2026-10-29): `frog/dart` (Qwen3-Coder-Next), `frog/tree`
+   (GLM 5.3), `frog/bull` (DeepSeek V4.1 Flash). No Claude or GPT on Frog Cloud at launch;
+   people who want them add their own key.
+
+## Serving the launch models
+
+Own GPUs are margin only when they're busy. Price each model at least at its third-party list
+price, so overflow breaks even and every token tang serves is margin. Break-even output
+throughput for one rented B300 ($8.99/hr), counting output revenue only:
+
+| model | output $/M | tokens/s to break even | tang today |
+|---|---|---|---|
+| dart | (ours) | n/a | in production on the router fleet |
+| tree | $4.40 | ~570 | single stream ~130 tok/s (MTP, B300), no batching; `frog/glm5-forward`, paused |
+| bull | $1.20 | ~2,100 | no port |
+
+So:
+
+- **dart**: tang only at launch; add a third-party overflow upstream once one serves the same
+  weights.
+- **tree**: third-party at launch, tang takes over once GLM batching lands and clears the
+  break-even line. Overflow must serve the same weights and defaults as tang (tang runs
+  UD-Q4_K_XL, 4-bit), or the two are different frog models: same name, same behavior.
+- **bull**: third-party only for now. At $1.20/M the GPU math is hard; worth it only if tang's
+  batched throughput gets there.
+
 ## Open decisions
 
-3. **Launch models.** Which Frog Cloud models ship first, given price and demand. **Open.**
 4. **Margin.** Where frog makes money on third-party tokens. **Open.**
 5. **The free offer.** What new users get instead of, or besides, a one-time $5 credit.
    **Open.**
