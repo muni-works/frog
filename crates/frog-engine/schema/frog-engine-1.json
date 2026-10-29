@@ -2761,6 +2761,38 @@
           "type": "object"
         },
         {
+          "description": "The answer to [`Op::ApprovalDigest`]: today's approvals roll-up.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "approval_digest",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "summary",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "description": "A terminal pane's grid after processing output. Coalesced to at most ~30/s per pane.\nPlain text for now (no attributes).",
           "properties": {
             "cols": {
@@ -4261,6 +4293,23 @@
           "type": "object"
         },
         {
+          "description": "The answer to [`Op::ApprovalDigest`]: today's approvals roll-up.",
+          "properties": {
+            "event": {
+              "const": "approval_digest",
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "summary"
+          ],
+          "type": "object"
+        },
+        {
           "description": "A terminal pane's grid after processing output. Coalesced to at most ~30/s per pane.\nPlain text for now (no attributes).",
           "properties": {
             "cols": {
@@ -5124,6 +5173,19 @@
           "required": [
             "op",
             "command"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "This session's approvals roll-up for today (docs/design/delegation.md) as\ntext, answered with [`Event::ApprovalDigest`]: what the classifier and the\nsecond pass allowed, what the chief decided, what blocked.",
+          "properties": {
+            "op": {
+              "const": "approval_digest",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op"
           ],
           "type": "object"
         },

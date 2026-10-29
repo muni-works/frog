@@ -226,3 +226,13 @@ Loaded from `~/.config/frog/FROG.md`, `~/.claude/CLAUDE.md`, and any `AGENTS.md`
 
 `/remember` saves a note as a markdown file under `~/.local/share/frog/memory/` (`global/`, or `projects/<path>/` for one project, shared by its worktrees), readable only by you and easy to edit by hand. Obvious secrets (API keys, tokens, private keys, `password=` values) are redacted before anything is written. Each session starts with a short index of your notes in the system prompt, framed as possibly out-of-date data rather than instructions and sized to the model: about 400 tokens for small models, 1k for mid-size and 2.5k for large ones. Notes that mention files that have since disappeared are marked possibly stale.
 
+
+### Compiled memory
+
+With a model server that keeps memory in the model itself (tang-llm serve `--memory-layer N`; design in `docs/design/compiled-memory.md`), frog also offers the model a `Memory` tool: named text files that persist across sessions in this project and cost no context, because the server reads and writes them inside the model's recurrent state instead of the prompt.
+
+- **Tool.** `Memory` takes `action` = `list`, `get` (`name`), `put` (`name`, `text`; replaces the file) or `delete` (`name`). `list` and `get` run without asking, like Read; `put` and `delete` ask like an edit (allowed in accept-edits mode, and in auto mode).
+- **Where it lives.** Between sessions the store is a 768 KiB blob at `~/.local/share/frog/memory/projects/<path>/compiled-memory.blob` (the global memory folder for a chat), mode 0600, replaced atomically after every write and at session end. If the server says the store failed its audit (409), frog keeps the last good blob and tells you.
+- **Text memory.** `/remember` notes work as before and keep their index in the system prompt. The compiled store is never put in the prompt; while it's active the prompt gains one line pointing the model at `Memory`. Servers without the feature (every server but tang with `--memory-layer`) see one probe per session and nothing else changes.
+- **Config.** `[memory] compiled = "auto"` (default: use it when the server offers it), `"on"` (use it, and warn when the server doesn't), `"off"` (no probe, no tool).
+- **Commands.** `frog memory dump` prints every file in this project's blob as text (it loads the blob into a throwaway session on the model's server, since only that model can read it; `--model M` picks the profile). `frog memory forget <name>` deletes one file the same way. `frog memory clear` deletes the blob; no server needed.

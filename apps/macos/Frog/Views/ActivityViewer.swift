@@ -60,7 +60,7 @@ struct ActivityViewer: View {
                     if let last = conversation.turns.last { jump(last.id) }
                 } label: {
                     HStack(spacing: 7) {
-                        icon(.waiting) { Image(systemName: "hand.raised.fill") }
+                        Image(systemName: "hand.raised.fill").frame(width: 14)
                         Text(waiting).fontWeight(.medium).lineLimit(1)
                         Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
                     }
@@ -130,17 +130,6 @@ struct ActivityViewer: View {
         .animation(.snappy(duration: 0.2), value: waiting)
         .animation(.snappy(duration: 0.15), value: hovering)
         .animation(.snappy(duration: 0.2), value: others.count)
-    }
-
-    /// The frog in the pill, or the plain symbol when the playful frog is off. DEBUG churn
-    /// benchmarking holds its pose through `PillChurn.noFrog` (the Reduce Motion path).
-    @ViewBuilder
-    private func icon(_ mood: FrogMood, @ViewBuilder plain: () -> some View) -> some View {
-        if playful {
-            FrogFace(mood: mood, size: 16, animating: !PillChurn.noFrog).frame(width: 16)
-        } else {
-            plain().frame(width: 14)
-        }
     }
 
     private var tint: Glass {

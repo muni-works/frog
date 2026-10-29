@@ -5,7 +5,7 @@ import SwiftUI
 /// is shown.
 enum TurnCostCopy {
     /// Grams of CO₂e per kWh: the world's average electricity in 2025 (Ember, Global
-    /// Electricity Review 2026). frog.eco/energy uses the same.
+    /// Electricity Review 2026). frog.toys/energy uses the same.
     static let gridGramsPerKWh = 458.0
     /// A phone battery's worth, about 4,000 mAh at 3.85 V.
     static let phoneWh = 15.0
@@ -108,7 +108,7 @@ struct EnergyCard: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
-                Link(destination: URL(string: "https://frog.eco/energy")!) {
+                Link(destination: URL(string: "https://frog.toys/energy")!) {
                     Label("How it's measured", systemImage: "arrow.up.right")
                         .labelStyle(.titleAndIcon)
                         .font(.caption.weight(.semibold))

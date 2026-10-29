@@ -756,13 +756,13 @@ private struct AppearanceSettings: View {
                 .foregroundStyle(.secondary)
             Section {
                 Toggle("Playful frog", isOn: $playfulFrog)
-                    .help("The frog blinks, reads and hops along with the conversation.")
+                    .help("The frog greets you on a new conversation and hops when you drop a file; the activity line gets playful words.")
                 Toggle("Frog sounds", isOn: $playfulSounds)
                     .help("A quiet plip when you send, a ribbit when a turn finishes, a drip when it needs permission.")
             }
             Section {
                 Toggle("Show energy use", isOn: $showEnergy)
-                    .help("Each turn's watt-hours, from this Mac's power sensor, above what it drew at rest. Cloud models add an estimate for their data center. frog.eco/energy has the method.")
+                    .help("Each turn's watt-hours, from this Mac's power sensor, above what it drew at rest. Cloud models add an estimate for their data center. frog.toys/energy has the method.")
             }
         }
         .formStyle(.grouped)

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in to Frog</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--frog)}a:hover{color:var(--fg)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="min-height: 860px; background: var(--bg); display: flex; flex-direction: column; font-size: 17px; line-height: 1.55;">
+  <header style="display: flex; align-items: center; justify-content: space-between; padding: 20px 32px; flex-wrap: wrap; gap: 12px;">
+    <a href="WebSettings.dc.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--fg);">
+      <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 28px; height: 28px;">
+      <span style="font-weight: 700; font-size: 19px; letter-spacing: -0.01em;">Frog</span>
+    </a>
+    <span style="font-size: 14px; color: var(--muted);">Opened from Frog on Sam's MacBook Pro</span>
+  </header>
+
+  <main style="flex: 1; display: flex; align-items: center; justify-content: center; padding: 32px 16px 64px;">
+    <div style="width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 24px;">
+
+      <sc-if value="{{showForm}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; flex-direction: column; gap: 24px;">
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center;">
+            <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 72px; height: 72px;">
+            <h1 style="margin: 0; font-family: var(--font-display); font-size: 40px; line-height: 1.1; letter-spacing: -0.03em; font-weight: 700;">Save Pip</h1>
+            <p style="margin: 0; font-size: 19px; line-height: 1.45; color: var(--muted);">Sign in and Pip comes with you: its name, its notes on ledger and its routines, on any Mac. Nothing changes if you don't.</p>
+          </div>
+
+          <sc-if value="{{failed}}" hint-placeholder-val="{{ false }}">
+            <div role="status" style="display: flex; gap: 10px; align-items: flex-start; background: var(--notice-bg); border: 1px solid var(--notice); border-radius: var(--radius-banner); padding: 12px 14px; font-size: 15px;">
+              <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--notice)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 2px;"><path d="M12 3 2 20h20L12 3z"></path><path d="M12 10v4"></path><path d="M12 17h.01"></path></svg>
+              <span>GitHub didn't let me in. Pip is still here, on your Mac. Nothing's lost.</span>
+            </div>
+          </sc-if>
+
+          <div class="f-card" style="padding: 24px; display: flex; flex-direction: column; gap: 16px; border-radius: var(--radius-field);">
+            <button type="button" onClick="{{signIn}}" style="display: flex; align-items: center; justify-content: center; gap: 10px; height: 48px; border: 0; border-radius: var(--radius-pill); background: var(--fg); color: var(--bg); font: 600 17px/22px var(--font-sans); cursor: pointer;">
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.27 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"></path></svg>
+              Continue with GitHub
+            </button>
+            <div style="display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 14px;">
+              <span style="flex: 1; height: 1px; background: var(--line);"></span>or<span style="flex: 1; height: 1px; background: var(--line);"></span>
+            </div>
+            <label for="email" style="font-size: 14px; font-weight: 600;">Email</label>
+            <input id="email" type="email" class="f-field" placeholder="you@example.com" value="sam@hey.com" style="font-size: 17px; line-height: 22px; padding: 12px 14px; border-radius: 12px; margin-top: -10px;">
+            <a href="CheckEmail.dc.html" class="f-btn f-btn--bordered" style="justify-content: center; height: 48px; box-sizing: border-box; font-size: 17px; text-decoration: none;">Email me a link</a>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 6px; text-align: center; font-size: 15px; color: var(--muted);">
+            <span>No card. $5 in cloud credits when you sign in.</span>
+            <span>Signing in adds cloud speed, routines while your Mac sleeps and Pip on every device. It never takes anything away.</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{done}}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center;">
+          <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 72px; height: 72px;">
+          <h1 style="margin: 0; font-family: var(--font-display); font-size: 40px; line-height: 1.1; letter-spacing: -0.03em; font-weight: 700;">Pip is saved</h1>
+          <p style="margin: 0; font-size: 19px; color: var(--muted);">Signed in as samr via GitHub. You can close this tab and head back to Frog.</p>
+          <div class="f-card" style="display: flex; gap: 12px; align-items: center; padding: 14px 18px; font-size: 15px; text-align: left;">
+            <span class="f-badge" style="font-size: 12px; line-height: 16px; padding: 2px 8px;">$5.00</span>
+            <span>Cloud credits for hard tasks. Your Mac stays the default.</span>
+          </div>
+          <button type="button" class="f-btn f-btn--plain" onClick="{{reset}}" style="font-size: 15px;">Start over</button>
+        </div>
+      </sc-if>
+
+    </div>
+  </main>
+
+  <footer style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; padding: 20px 16px 28px; font-size: 14px; color: var(--muted);">
+    <span>Frog is free and open source</span>
+    <a href="Plans.dc.html">Plans</a>
+    <a href="#">Privacy</a>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"failed":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const done = !!(this.state && this.state.done);
+    return {
+      theme: this.props.theme ?? 'dark',
+      failed: !!this.props.failed,
+      done,
+      showForm: !done,
+      signIn: () => this.setState({ done: true }),
+      reset: () => this.setState({ done: false }),
+    };
+  }
+}
+</script>
+</body>
+</html>

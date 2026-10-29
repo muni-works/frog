@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog docs</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--frog)}a:hover{color:var(--fg)}
+.dn a{display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:var(--radius-plate);text-decoration:none;font-size:14px;color:var(--muted);cursor:pointer}
+.dn a:hover{background:var(--hover);color:var(--fg)}
+.dn a[aria-current=page]{background:var(--hover);color:var(--fg);font-weight:600}
+.dh{font-size:12px;font-weight:600;color:var(--fg);padding:0 10px 4px}
+.toc a{display:block;padding:3px 0 3px 12px;border-left:2px solid var(--line);font-size:13px;color:var(--muted);text-decoration:none}
+.toc a[aria-current=true]{border-color:var(--frog);color:var(--fg)}
+.art p{margin:0}
+.art h2{margin:14px 0 0;font-size:22px;letter-spacing:-0.01em;scroll-margin-top:80px}
+.art code{font-family:var(--font-mono);font-size:.88em;background:var(--well);padding:1px 5px;border-radius:5px}
+.tag{font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;flex:none;line-height:18px}
+.rel{display:grid;grid-template-columns:120px 1fr;gap:4px 28px;padding:22px 0;border-top:1px solid var(--line)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="min-height: 1100px; background: var(--bg); font-size: 16px; line-height: 1.6;">
+  <header style="position: sticky; top: 0; z-index: 2; padding: 10px 16px;">
+    <nav class="f-glass f-glass--capsule" aria-label="Site" style="max-width: 1280px; margin: 0 auto; display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 16px;">
+      <a href="Landing.dc.html" style="display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--fg); margin-right: 12px;"><img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 24px; height: 24px;"><span style="font-weight: 700;">Frog</span></a>
+      <a href="SiteMac.dc.html" style="padding: 6px 12px; font-size: 15px; color: var(--muted); text-decoration: none;">Mac</a>
+      <a href="SiteDocs.dc.html" style="padding: 6px 12px; font-size: 15px; color: var(--fg); text-decoration: none; font-weight: 600;">Docs</a>
+      <a href="Plans.dc.html" style="padding: 6px 12px; font-size: 15px; color: var(--muted); text-decoration: none;">Pricing</a>
+      <span style="flex: 1;"></span>
+      <a href="SiteMac.dc.html" class="f-btn f-btn--prominent" style="text-decoration: none; font-size: 14px;">Download</a>
+    </nav>
+  </header>
+
+  <div style="max-width: 1280px; margin: 0 auto; padding: 20px 24px 72px; display: grid; grid-template-columns: 240px minmax(0, 1fr) 200px; gap: 48px; align-items: start;">
+
+    <!-- left: search + nav -->
+    <nav aria-label="Docs" class="dn" style="position: sticky; top: 80px; display: flex; flex-direction: column; gap: 18px;">
+      <button type="button" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-field); background: var(--card); font: 14px var(--font-sans); color: var(--faint); cursor: pointer;">
+        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
+        <span style="flex: 1; text-align: left;">Search docs</span><span style="font-size: 12px; border: 1px solid var(--line); border-radius: 5px; padding: 0 5px;">⌘K</span>
+      </button>
+      <div style="display: flex; flex-direction: column; gap: 1px;">
+        <a aria-current="{{clCur}}" onClick="{{goChangelog}}">
+          <span style="width: 7px; height: 7px; border-radius: 50%; background: var(--frog);"></span><span style="flex: 1;">What's new</span><span style="font-size: 11px; color: var(--muted);">Oct 27</span>
+        </a>
+      </div>
+      <sc-for list="{{groups}}" as="g" hint-placeholder-count="5">
+        <div style="display: flex; flex-direction: column; gap: 1px;">
+          <div class="dh">{{g.name}}</div>
+          <sc-for list="{{g.pages}}" as="p" hint-placeholder-count="3">
+            <a aria-current="{{p.cur}}" onClick="{{p.go}}">{{p.title}}</a>
+          </sc-for>
+        </div>
+      </sc-for>
+    </nav>
+
+    <!-- center -->
+    <article class="art" style="min-width: 0; max-width: 720px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);"><a href="#" style="color: var(--muted); text-decoration: none;">Docs</a><span>›</span><span>{{crumb}}</span></div>
+
+      <sc-if value="{{isModel}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <h1 style="margin: 0; font-family: var(--font-display); font-size: 40px; line-height: 1.1; letter-spacing: -0.03em;">Choosing a model</h1>
+          <p style="font-size: 19px; color: var(--muted);">Frog runs on your Mac by default. Every model id says where it runs.</p>
+
+          <h2 id="where">Where models run</h2>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+            <div class="f-card" style="padding: 14px 16px;"><code style="color: var(--place-local); background: none; padding: 0;">local/</code><div style="font-weight: 600; margin-top: 4px;">This Mac</div><div style="font-size: 14px; color: var(--muted);">On Metal. Free and private.</div></div>
+            <div class="f-card" style="padding: 14px 16px;"><code style="color: var(--place-local); background: none; padding: 0;">ollama/</code><div style="font-weight: 600; margin-top: 4px;">Your server</div><div style="font-size: 14px; color: var(--muted);">ollama or LM Studio.</div></div>
+            <div class="f-card" style="padding: 14px 16px;"><code style="color: var(--frog); background: none; padding: 0;">cloud/</code><div style="font-weight: 600; margin-top: 4px;">Frog Cloud</div><div style="font-size: 14px; color: var(--muted);">Faster, from your credits.</div></div>
+          </div>
+
+          <h2 id="add">Add your own</h2>
+          <p>Put models in <code>~/.config/frog/config.toml</code>. Any OpenAI-compatible server works.</p>
+          <div style="border-radius: var(--radius-card); overflow: hidden; background: var(--icon-ground);">
+            <div style="display: flex; justify-content: space-between; padding: 8px 14px; font: 12px var(--font-mono); color: #9a9a96; border-bottom: 1px solid rgba(255,255,255,.08);"><span>~/.config/frog/config.toml</span><button type="button" style="border: 0; background: none; color: #9a9a96; font: 12px var(--font-sans); cursor: pointer;">Copy</button></div>
+            <pre style="margin: 0; padding: 14px 16px; color: #ecebe6; font: 13px/1.7 var(--font-mono); overflow-x: auto;">default_model = "qwen"
+
+[models.qwen]
+provider = "ollama"
+model = "qwen3-coder:30b"
+context_window = 65536       # sent as num_ctx — ollama's default is tiny
+
+[models.lmstudio]
+provider = "openai"
+base_url = "http://localhost:1234/v1"
+model = "qwen/qwen3-coder-30b"</pre>
+          </div>
+
+          <h2 id="fallback">When the cloud is out</h2>
+          <div role="note" style="display: flex; gap: 12px; padding: 14px 16px; border-radius: var(--radius-banner); background: var(--frog-pad); font-size: 15px;">
+            <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex: none; margin-top: 3px;"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v6M12 7.5h.01"></path></svg>
+            <span>When Frog Cloud is out of credits or offline, Frog finishes on your Mac instead. Set <code>FROG_FALLBACK_MODEL</code> to choose which model.</span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
+            <a href="#" class="f-card" style="padding: 14px 16px; text-decoration: none; color: var(--fg);"><div style="font-size: 12px; color: var(--muted);">Previous</div><div style="font-weight: 600;">← Quickstart</div></a>
+            <a href="#" class="f-card" style="padding: 14px 16px; text-decoration: none; color: var(--fg); text-align: right;"><div style="font-size: 12px; color: var(--muted);">Next</div><div style="font-weight: 600;">Frog Cloud →</div></a>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{isChangelog}}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; flex-direction: column;">
+          <h1 style="margin: 0; font-family: var(--font-display); font-size: 40px; line-height: 1.1; letter-spacing: -0.03em;">What's new</h1>
+          <p style="font-size: 19px; color: var(--muted); margin: 10px 0 18px;">Frog updates itself. Here's what changed, newest first.</p>
+          <sc-for list="{{releases}}" as="r" hint-placeholder-count="3">
+            <section class="rel" id="{{r.id}}">
+              <div style="font-size: 13px; color: var(--muted); padding-top: 4px;">{{r.date}}<sc-if value="{{r.latest}}" hint-placeholder-val="{{ false }}"><div><span class="tag" style="background: var(--badge-bg); color: var(--place-cloud);">Latest</span></div></sc-if></div>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <h2 style="margin: 0;">{{r.title}}</h2>
+                <sc-for list="{{r.items}}" as="it" hint-placeholder-count="3">
+                  <div style="display: flex; gap: 10px; align-items: baseline; font-size: 15px;"><span class="tag" style="background: {{it.bg}}; color: {{it.fg}};">{{it.kind}}</span><span>{{it.text}}</span></div>
+                </sc-for>
+              </div>
+            </section>
+          </sc-for>
+          <div style="border-top: 1px solid var(--line); padding-top: 16px; font-size: 14px; color: var(--muted);">Older releases are on <a href="#">GitHub</a>.</div>
+        </div>
+      </sc-if>
+    </article>
+
+    <!-- right: on this page -->
+    <aside style="position: sticky; top: 80px; display: flex; flex-direction: column; gap: 14px; font-size: 13px;">
+      <div class="toc">
+        <div style="font-weight: 600; font-size: 12px; margin-bottom: 6px;">On this page</div>
+        <sc-for list="{{toc}}" as="t" hint-placeholder-count="3"><a href="#" aria-current="{{t.cur}}">{{t.label}}</a></sc-for>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line);">
+        <a href="#" style="color: var(--muted); text-decoration: none;">Edit this page on GitHub</a>
+        <a href="#" style="color: var(--muted); text-decoration: none;">Ask Frog about this page</a>
+        <span style="color: var(--faint);">Updated Oct 27</span>
+      </div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"page":{"editor":"enum","options":["model","changelog"],"default":"model"},"$preview":{"width":1280,"height":1100}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const page = (this.state && this.state.page) || this.props.page || 'model';
+    const go = (pg) => () => this.setState({ page: pg });
+    const groups = [
+      { name: 'Start', pages: ['Quickstart', 'The Mac app', 'The CLI', 'The web app'] },
+      { name: 'Models', pages: ['Choosing a model', 'Frog Cloud', 'Keys'] },
+      { name: 'Working', pages: ['Project instructions', 'Permissions and sandbox', 'PRs and branches', 'Rewind and fork', 'Subagents'] },
+      { name: 'Connect', pages: ['MCP servers', 'Quarantined tools', 'iPhone and Watch'] },
+      { name: 'Reference', pages: ['config.toml', 'CLI flags', 'Shortcuts'] },
+    ].map((g) => ({ ...g, pages: g.pages.map((t) => ({ title: t, cur: page === 'model' && t === 'Choosing a model' ? 'page' : 'false', go: t === 'Choosing a model' ? go('model') : () => {} })) }));
+    const K = { New: ['var(--badge-bg)', 'var(--place-cloud)'], Better: ['rgba(0,122,255,.12)', 'var(--place-local)'], Fixed: ['var(--notice-bg)', 'var(--notice)'] };
+    const it = (kind, text) => ({ kind, text, bg: K[kind][0], fg: K[kind][1] });
+    const releases = [
+      { id: 'oct-27', date: 'Oct 27, 2026', latest: true, title: 'A new face', items: [
+        it('New', 'The new app icon, mark and favicon, everywhere.'),
+        it('Better', 'Sentence case across the Mac, iPhone and Watch apps.'),
+        it('New', 'Frog Cloud reads its context window from the server, and adds qwen3-8b and qwen3-vl-8b.') ] },
+      { id: 'oct-26', date: 'Oct 26, 2026', latest: false, title: 'Calm agents', items: [
+        it('New', 'Background agents show as steps in the transcript and as rows under their session in the sidebar.'),
+        it('New', 'Git badges on sessions and repos, with a hover card for branch, PR and diff stats.'),
+        it('Better', 'Dismiss all stops pending timers and monitors; running jobs keep going.'),
+        it('Fixed', 'Switching away from a session never stops it.') ] },
+      { id: 'oct-21', date: 'Oct 21, 2026', latest: false, title: 'Frog Cloud', items: [
+        it('New', 'Model ids say where they run: local/ for this Mac, cloud/ for Frog Cloud.'),
+        it('New', 'Out of credits or offline, Frog finishes on your Mac instead.'),
+        it('Fixed', 'Sessions come back after a quit or crash, and interrupted turns resume.') ] },
+    ];
+    const isModel = page === 'model';
+    const toc = (isModel ? ['Where models run', 'Add your own', 'When the cloud is out'] : releases.map((r) => r.date)).map((label, i) => ({ label, cur: i === 0 ? 'true' : 'false' }));
+    return {
+      theme: this.props.theme ?? 'dark', groups, releases, toc,
+      isModel, isChangelog: !isModel,
+      crumb: isModel ? 'Models › Choosing a model' : "What's new",
+      clCur: isModel ? 'false' : 'page',
+      goChangelog: go('changelog'),
+    };
+  }
+}
+</script>
+</body>
+</html>

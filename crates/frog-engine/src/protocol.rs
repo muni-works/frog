@@ -145,6 +145,10 @@ pub enum Op {
     Shell {
         command: String,
     },
+    /// This session's approvals roll-up for today (docs/design/delegation.md) as
+    /// text, answered with [`Event::ApprovalDigest`]: what the classifier and the
+    /// second pass allowed, what the chief decided, what blocked.
+    ApprovalDigest,
     Interrupt,
     Permission {
         id: String,
@@ -778,6 +782,10 @@ pub enum Event {
     Notice {
         level: Level,
         message: String,
+    },
+    /// The answer to [`Op::ApprovalDigest`]: today's approvals roll-up.
+    ApprovalDigest {
+        summary: String,
     },
     /// A terminal pane's grid after processing output. Coalesced to at most ~30/s per pane.
     /// Plain text for now (no attributes).

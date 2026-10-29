@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use frog_engine::config::{Config, ToolMode};
 use frog_engine::session;
+use frog_engine::protocol::Event;
 use frog_engine::{Mode, Options};
 use std::io::Read;
 
@@ -132,6 +133,10 @@ struct Cli {
     /// List sessions started in this directory and exit.
     #[arg(long)]
     sessions: bool,
+    /// Today's delegation roll-up (docs/design/delegation.md) across this directory's
+    /// (or --all) sessions, from their logs, and exit.
+    #[arg(long, requires = "sessions")]
+    digest: bool,
     /// Draw this directory's sessions and their forks as a diagram (JSON with --json) and exit.
     #[arg(long)]
     session_tree: bool,
@@ -244,6 +249,56 @@ struct Cli {
     probe: bool,
 }
 
+/// `frog approvals`: who decided what since `--since` (default 24h): the classifier,
+/// the second pass, the chief, or the user.
+fn approvals(args: &[String]) -> Result<bool> {
+    let mut since = "24h".to_string();
+    let mut json = false;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--json" => json = true,
+            "--since" => since = it.next().cloned().unwrap_or_default(),
+            s if s.starts_with("--since=") => since = s["--since=".len()..].to_string(),
+            other => anyhow::bail!("frog approvals [--since 24h] [--json]: unexpected `{other}`"),
+        }
+    }
+    let secs = parse_span(&since)
+        .ok_or_else(|| anyhow::anyhow!("--since takes a span like 24h, 90m, 7d or 3600s, not `{since}`"))?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let counts = frog_engine::digest::rollup(
+        &frog_engine::session::default_dir(),
+        now_ms - (secs as i64) * 1000,
+    );
+    if json {
+        println!("{}", serde_json::to_string(&counts)?);
+    } else {
+        println!("{}", counts.render(&format!("in the last {since}")));
+    }
+    Ok(true)
+}
+
+/// `24h`, `90m`, `7d`, `3600s` or bare seconds, as seconds.
+fn parse_span(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let (n, unit) = match s.char_indices().find(|(_, c)| !c.is_ascii_digit()) {
+        Some((i, _)) => (&s[..i], &s[i..]),
+        None => (s, "s"),
+    };
+    let n: u64 = n.parse().ok()?;
+    let mult = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        _ => return None,
+    };
+    Some(n * mult)
+}
+
 #[tokio::main]
 async fn main() {
     match run().await {
@@ -277,10 +332,19 @@ async fn run() -> Result<bool> {
         }
         return Ok(true);
     }
+    // `frog memory dump|forget <name>|clear [--model M]`: this project's compiled memory.
+    if args.get(1).map(String::as_str) == Some("memory") {
+        return memory_command(&args[2..]).await;
+    }
     // `frog git-credential get`: git's credential helper under --git-credential-gateway.
     if args.get(1).map(String::as_str) == Some("git-credential") {
         git_credential::helper(args.get(2).map(String::as_str)).await?;
         return Ok(true);
+    }
+    // `frog approvals [--since 24h] [--json]`: the approvals roll-up across every
+    // session's log (docs/design/delegation.md). Local only.
+    if args.get(1).map(String::as_str) == Some("approvals") {
+        return approvals(&args[2..]);
     }
     let cli = Cli::parse();
     if let Some(url) = &cli.git_credential_gateway {
@@ -406,6 +470,10 @@ async fn run() -> Result<bool> {
     let store = cli.store.clone().unwrap_or_else(session::default_dir);
     if let Some(r) = &cli.rename {
         session::retitle(&store, &r[0], &r[1])?;
+        return Ok(true);
+    }
+    if cli.sessions && cli.digest {
+        digest(&store, &cwd, cli.all)?;
         return Ok(true);
     }
     if cli.sessions {
@@ -984,6 +1052,53 @@ fn bytes(n: u64) -> String {
     }
 }
 
+/// Today's delegation roll-up from session logs: count this day's
+/// `permission_decision` events by layer, across sessions. The engine's own
+/// `Op::Digest` counts in memory; this reads the record, so it covers every
+/// session that ran today, including closed ones.
+fn digest(
+    store: &std::path::Path,
+    cwd: &std::path::Path,
+    all: bool,
+) -> Result<()> {
+    let sessions = session::list(store, (!all).then_some(cwd))?;
+    let today = chrono::Utc::now().date_naive();
+    let mut auto_allowed = 0u32;
+    let mut second_pass = 0u32;
+    let mut delegated = 0u32;
+    let mut blocked = 0u32;
+    let mut cards = 0u32;
+    for s in &sessions {
+        let Ok(records) = session::events_after(store, &s.id, 0) else {
+            continue;
+        };
+        for env in records {
+            // Only today's decisions.
+            let day = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(env.created)
+                .map(|t| t.date_naive());
+            if day != Some(today) {
+                continue;
+            }
+            let Event::PermissionDecision { layer, outcome, .. } = &env.event else {
+                continue;
+            };
+            match (layer.as_str(), outcome.as_str()) {
+                ("classifier", "allow") => auto_allowed += 1,
+                ("second-pass", "allow") => second_pass += 1,
+                ("delegated", "allow") => delegated += 1,
+                ("delegated", "ask") => blocked += 1,
+                ("never-delegable", "ask") | ("breaker", "deny") | ("repeat", "deny") => blocked += 1,
+                (_, "ask") | (_, "deny") => cards += 1,
+                _ => {}
+            }
+        }
+    }
+    println!(
+        "delegation today: {auto_allowed} auto-allowed, {second_pass} second-pass upgrades, {delegated} chief-approved, {blocked} blocked, {cards} other asks (target: <=5 cards/day)"
+    );
+    Ok(())
+}
+
 fn list_sessions(
     store: &std::path::Path,
     cwd: &std::path::Path,
@@ -1092,6 +1207,75 @@ fn attempts(cli: &Cli) -> Result<bool> {
     }
     if !cli.discard_attempt.is_empty() {
         checkpoint::remove_attempts(&root, &cli.discard_attempt);
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod approvals_tests {
+    #[test]
+    fn spans_parse_to_seconds() {
+        assert_eq!(super::parse_span("24h"), Some(86_400));
+        assert_eq!(super::parse_span("90m"), Some(5_400));
+        assert_eq!(super::parse_span("7d"), Some(604_800));
+        assert_eq!(super::parse_span("3600"), Some(3_600));
+        assert_eq!(super::parse_span("1w"), None);
+        assert_eq!(super::parse_span(""), None);
+    }
+}
+
+/// `frog memory …`: read or edit this project's compiled-memory blob. Reading or deleting one
+/// file needs the model server that wrote it (only it can read its store); `clear` doesn't.
+async fn memory_command(args: &[String]) -> Result<bool> {
+    use frog_engine::compiled_memory as cm;
+    let cwd = std::env::current_dir()?;
+    let store = frog_engine::memory::Store::new(&frog_engine::memory::default_root(), Some(&cwd));
+    let path = cm::blob_path(&store);
+    let model = args
+        .iter()
+        .position(|a| a == "--model" || a == "-m")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let remote = || -> Result<cm::Remote> {
+        let cfg = Config::load()?;
+        let (name, profile) = cfg.resolve(model.as_deref())?;
+        let provider = frog_engine::provider::Provider::new(&profile)?;
+        provider.memory_remote().with_context(|| {
+            format!("{name} has no compiled memory (it needs tang-llm serve --memory-layer N)")
+        })
+    };
+    match args.first().map(String::as_str) {
+        Some("clear") => {
+            if cm::clear(&path)? {
+                println!("Cleared {}", path.display());
+            } else {
+                println!("No compiled memory for this project.");
+            }
+        }
+        Some("dump") => {
+            let Some(blob) = cm::read_blob(&path)? else {
+                println!("No compiled memory for this project.");
+                return Ok(true);
+            };
+            let files = cm::dump(&remote()?, &blob).await?;
+            if files.is_empty() {
+                println!("Compiled memory is empty ({}).", path.display());
+            }
+            for (name, text) in files {
+                println!("== {name} ==\n{text}\n");
+            }
+        }
+        Some("forget") => {
+            let name = args.get(1).filter(|n| !n.starts_with('-'));
+            let name = name.context("usage: frog memory forget <name>")?;
+            if cm::forget(&remote()?, &path, name).await? {
+                println!("Forgot {name}.");
+            } else {
+                println!("No file named {name}.");
+                return Ok(false);
+            }
+        }
+        _ => anyhow::bail!("usage: frog memory dump | forget <name> | clear  [--model M]"),
     }
     Ok(true)
 }

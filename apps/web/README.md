@@ -11,6 +11,8 @@ VITE_DEV_KEY=dev npm run dev    # Vite proxies /v1 (HTTP and websockets) to $GAT
 npm run check && npm test && npm run build
 ```
 
+For real sessions instead of the mock, run the Frog Cloud gateway locally (zest `sandbox/dev/run.sh`, which builds the image with a local frog and serves on :8787), then `GATEWAY=http://127.0.0.1:8787 VITE_DEV_KEY=$FROG_KEY npm run dev`. Model calls are billed to `FROG_KEY` at api.frog.toys.
+
 `VITE_DEV_KEY` (dev builds only) skips sign-in and uses that key with the gateway. Without it you get the real sign-in, which needs the edge to allow your origin (below).
 
 | Variable | Default | What |
@@ -53,7 +55,10 @@ interface EngineClient {
 | `PermissionRequest { id, item, name, arg, preview, reason }` | A diff card (edits) or a command card, with Allow ⌘↩ / Deny ⌘., and the Needs you card in the sidebar. Answered with `Op::Permission`. |
 | `PermissionResolved` | Clears the ask. |
 | `Titled { title }` | The session's name in the sidebar and title bar. |
+| `Status { model, mode, context_tokens, context_window }`, `ModelChanged`, `ModeChanged` | The composer's model pill and mode chip, and the context line in the title bar. Changed with `Op::SetModel { spec: "cloud/<id>" }` and `Op::SetMode { mode }`. |
 | `TurnEnded { reason }` | Stops the turn. An `error` mentioning `insufficient_credit` (the edge's 402) shows the out-of-credits card. |
+
+Models come from the edge's `GET /v1/models` (with prices). A new session starts on the picked model (`POST /v1/sessions {repo, model: "cloud/<id>"}`) and mode (`Op::SetMode` before the first message; Auto by default).
 
 Sessions come from `GET /v1/sessions` (refreshed every 15 s), new ones from `POST /v1/sessions {repo}`. The app streams the open session and any whose sandbox is `running` or `starting`. It doesn't attach to `sleeping` ones, because attaching would wake them. Commit, Push and Open PR are messages to the agent, so they show up in the conversation like any other step.
 
@@ -61,13 +66,11 @@ Sessions come from `GET /v1/sessions` (refreshed every 15 s), new ones from `POS
 
 Each of these needs an API that doesn't exist yet, so the UI leaves it out instead of faking it:
 
-- A list of the repos the GitHub App can see. The picker takes `owner/name` or a URL.
+- A list of the repos the GitHub App can see. The composer's repo menu offers recent repos and takes `owner/name` or a URL.
 - PR checks. The PR number shows when the session summary has one.
-- A model list and model switching.
-- Permission modes, MCP servers, routines and skills.
+- MCP servers, routines and skills.
 - The Preview tab. It needs a sandbox port.
 - Email sign-in.
-- Asks after a reconnect. `PermissionRequest` isn't durable, so a client that attaches mid-ask (after a reload, or on another device) doesn't see the open ask. The engine or gateway needs to re-send outstanding asks after replay.
 
 ## Frog Cloud transport
 

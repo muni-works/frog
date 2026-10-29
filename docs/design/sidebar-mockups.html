@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>frog sidebar refactor: options</title>
+<style>
+/* tokens.css: mirror of design/system/tokens.json (frog-design-system worktree) */
+:root{
+  --font-ui:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  --font-rounded:ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --radius-s:6px;--radius-m:8px;--radius-l:10px;--radius-xl:12px;--radius-card:14px;
+  --shadow-menu:0 2px 6px rgba(0,0,0,.25);--shadow-float:0 10px 24px rgba(0,0,0,.35);
+  --motion-quick:220ms cubic-bezier(.25,1,.5,1);--motion-hover:120ms cubic-bezier(0,0,.58,1);
+}
+.light{color-scheme:light;
+  --color-bg:#f4f4f4;--color-surface:#e8e8e8;--color-hover:#e0e0e0;--color-line:#dcdcdc;--color-line-strong:#d2d2d2;
+  --color-text:#15171a;--color-muted:#6b6f75;--color-faint:#9a9da2;--color-accent:#2e9e4f;--color-on-accent:#ffffff;
+  --color-success:#34c759;--color-warning:#ff9500;--color-danger:#ff3b30;--color-info:#007aff;
+  --sidebar:#ebebeb;--sel:rgba(46,158,79,.18)}
+.dark{color-scheme:dark;
+  --color-bg:#1e1e1e;--color-surface:#292929;--color-hover:#303030;--color-line:#343434;--color-line-strong:#3e3e3e;
+  --color-text:#e8e8e6;--color-muted:#8f9297;--color-faint:#6b6e73;--color-accent:#58cc6f;--color-on-accent:#0f2419;
+  --color-success:#30d158;--color-warning:#ff9f0a;--color-danger:#ff453a;--color-info:#0a84ff;
+  --sidebar:#262626;--sel:rgba(88,204,111,.20)}
+
+*{box-sizing:border-box}html,body{margin:0}
+body{font:13px/20px var(--font-ui);-webkit-font-smoothing:antialiased;min-width:1280px;background:#111211;color:#e8e8e6}
+body.pagelight{background:#dcdddb;color:#15171a}
+
+/* page chrome */
+.top{display:flex;align-items:center;gap:16px;padding:12px 28px;border-bottom:1px solid rgba(128,128,128,.25)}
+.top h1{font:600 15px var(--font-rounded);margin:0;white-space:nowrap}
+.tabs{display:flex;gap:2px}
+.tab{font:500 12px var(--font-ui);padding:4px 9px;border-radius:999px;cursor:pointer;color:inherit;opacity:.6;border:1px solid transparent;white-space:nowrap;background:none}
+.tab:hover{opacity:1}
+.tab.on{opacity:1;border-color:rgba(128,128,128,.45);background:rgba(128,128,128,.14)}
+.tab kbd{font:600 10px var(--font-mono);opacity:.65;margin-right:5px}
+.tab.rec{color:#58cc6f}.pagelight .tab.rec{color:#2e9e4f}
+.top .sp{flex:1}
+.top .hint{font:11px var(--font-mono);opacity:.5;white-space:nowrap}
+
+.stage{display:flex;gap:26px;padding:20px 28px;align-items:flex-start}
+
+/* window */
+.win{display:flex;border-radius:12px;overflow:hidden;height:692px;flex:none;background:var(--color-bg);color:var(--color-text);
+  box-shadow:0 0 0 .5px rgba(0,0,0,.4),0 18px 40px rgba(0,0,0,.3);position:relative}
+.sb{width:288px;flex:none;background:var(--sidebar);border-right:.5px solid var(--color-line);display:flex;flex-direction:column;min-height:0;position:relative}
+.lights{display:flex;gap:8px;padding:14px 14px 4px}
+.lights i{width:12px;height:12px;border-radius:50%;background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.sbhead{display:flex;align-items:center;gap:6px;padding:6px 10px}
+.search{flex:1;display:flex;align-items:center;gap:6px;height:26px;border-radius:8px;background:color-mix(in srgb,var(--color-text) 6%,transparent);padding:0 8px;color:var(--color-faint);font-size:12px;min-width:0;white-space:nowrap}
+.search .k{margin-left:auto;font:10px var(--font-mono);color:var(--color-faint)}
+.ib{width:24px;height:24px;display:grid;place-items:center;color:var(--color-muted);border-radius:6px;font-size:13px;flex:none}
+.list{flex:1;overflow:hidden;padding:0 6px 8px;min-height:0;position:relative}
+.list.fade::after{content:"";position:absolute;left:0;right:0;bottom:0;height:44px;background:linear-gradient(transparent,var(--sidebar));pointer-events:none}
+.foot{display:flex;align-items:center;gap:8px;padding:8px 14px 10px;font-size:11px;color:var(--color-muted);border-top:.5px solid var(--color-line);white-space:nowrap}
+.foot .sp{flex:1}
+.num{font-family:var(--font-rounded);font-variant-numeric:tabular-nums}
+
+/* rows */
+.sec{display:flex;align-items:center;gap:6px;font:600 11px var(--font-ui);color:var(--color-muted);padding:12px 8px 3px;white-space:nowrap}
+.sec .sp{flex:1}
+.sec .cnt{font:600 10px var(--font-rounded);color:var(--color-faint)}
+.sec.caps{font:600 10px var(--font-ui);letter-spacing:.04em;text-transform:uppercase;color:var(--color-faint)}
+.sec .warn{color:var(--color-warning)}
+.row{display:flex;align-items:center;gap:6px;height:26px;padding:0 6px;border-radius:6px;cursor:default;white-space:nowrap;min-width:0;font-size:13px}
+.row:hover{background:color-mix(in srgb,var(--color-text) 6%,transparent)}
+.row.sel{background:var(--sel)}
+.row .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.row .meta{font:11px var(--font-rounded);color:var(--color-faint);font-variant-numeric:tabular-nums;flex:none}
+.row .sum{font:10.5px var(--font-rounded);color:var(--color-muted);flex:none}
+.row .badge{font:600 10px var(--font-rounded);color:var(--color-faint);flex:none}
+.row.mgr .t{font-weight:600}
+.row.quiet{color:var(--color-muted)}
+.row.quiet .t{font-size:12px}
+.row.faint{color:var(--color-faint)}
+.row.fail .t{color:var(--color-danger)}
+.row.done-fold{color:var(--color-faint);font-size:11px;height:22px}
+.row.two{height:auto;padding:4px 6px;align-items:center}
+.row.two .col{flex:1;min-width:0;display:flex;flex-direction:column}
+.row.two .col .t{flex:none;line-height:17px}
+.row.two .d{font-size:11px;color:var(--color-muted);overflow:hidden;text-overflow:ellipsis;line-height:15px}
+.row.two .d.w{color:var(--color-warning)}
+.ind{display:inline-block;flex:none}
+.rail1{width:1px;height:18px;background:var(--color-line-strong);flex:none;margin:0 5px 0 4px}
+.tri{width:12px;flex:none;color:var(--color-faint);font-size:7.5px;text-align:center;transition:transform var(--motion-quick);cursor:pointer;line-height:12px}
+.tri.open{transform:rotate(90deg)}
+.tri.none{visibility:hidden}
+
+.mono{width:18px;height:18px;border-radius:5px;display:grid;place-items:center;font:600 9px var(--font-rounded);flex:none;position:relative}
+.mono.l{width:30px;height:30px;border-radius:8.4px;font-size:13px}
+.mono.xl{width:34px;height:34px;border-radius:9.5px;font-size:14px}
+.chip{font:10.5px var(--font-mono);color:var(--color-muted);background:color-mix(in srgb,var(--color-text) 6%,transparent);border-radius:4px;padding:0 4px;line-height:15px;flex:none}
+.chip.pr{color:#9051e0}.dark .chip.pr{color:#a45cff}
+.chip.merged{color:var(--color-success)}
+.repo-dot{width:7px;height:7px;border-radius:2px;flex:none}
+
+/* status glyphs (background-work spec §2) */
+.g{width:12px;height:12px;flex:none;display:grid;place-items:center;position:relative}
+.g.run::before{content:"";width:8px;height:8px;border-radius:50%;border:1.6px solid color-mix(in srgb,var(--color-muted) 30%,transparent);border-top-color:var(--color-muted);animation:spin .9s linear infinite}
+.g.wait::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--color-warning);box-shadow:0 0 0 3px color-mix(in srgb,var(--color-warning) 22%,transparent)}
+.g.new::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--color-accent)}
+.g.fail::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--color-danger)}
+.g.done::before{content:"✓";font:700 10px var(--font-ui);color:color-mix(in srgb,var(--color-success) 60%,transparent)}
+.g.idle::before{content:"";width:6px;height:6px;border-radius:50%;border:1.2px solid var(--color-faint)}
+.g.dead::before{content:"";width:10px;height:2px;background:var(--color-danger);border-radius:1px}
+.g.orph::before{content:"";width:8px;height:8px;border-radius:50%;border:1.3px dashed var(--color-danger)}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.g.run::before{animation:none}}
+
+/* chief tile */
+.chief{display:flex;align-items:center;gap:8px;margin:4px 4px 2px;padding:6px 8px;border-radius:9px;background:color-mix(in srgb,var(--color-text) 6%,transparent)}
+.chief .c{flex:1;min-width:0}
+.chief .c b{display:block;font-weight:600;font-size:13px;line-height:17px}
+.chief .c span{display:block;font-size:11px;color:var(--color-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:15px}
+
+/* content pane */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.mhead{height:44px;display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:.5px solid var(--color-line);flex:none;min-width:0}
+.mhead .crumb{font-size:12px;color:var(--color-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mhead .crumb b{color:var(--color-text);font-weight:600}
+.mbody{flex:1;display:flex;min-height:0}
+.tx{flex:1;padding:18px 22px;overflow:hidden;min-width:0}
+.tx p{margin:0 0 12px;max-width:520px}
+.tx .bub{margin:0 0 16px auto;width:fit-content;max-width:300px;background:#0a84ff;color:#fff;border-radius:18px;padding:8px 13px;line-height:18px}
+.tx .bar{height:9px;border-radius:5px;background:color-mix(in srgb,var(--color-text) 8%,transparent);margin:0 0 9px}
+.tx .tool{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--color-muted);padding:3px 0;max-width:520px;white-space:nowrap;overflow:hidden}
+.tx .tool code{font:12px var(--font-mono);color:var(--color-text);overflow:hidden;text-overflow:ellipsis}
+.minimap{width:28px;flex:none;border-left:.5px solid var(--color-line);position:relative;padding:12px 0}
+.minimap i{display:block;height:2px;margin:0 7px 5px;border-radius:1px;background:var(--color-faint);opacity:.5}
+.minimap i.w{opacity:1;background:var(--color-muted)}
+.minimap i.r{background:var(--color-danger);opacity:.8}
+.minimap .lit{position:absolute;left:3px;right:3px;top:96px;height:110px;border-radius:5px;background:color-mix(in srgb,var(--color-text) 7%,transparent)}
+.composer{margin:10px 16px 14px;border:1px solid var(--color-line-strong);border-radius:16px;padding:10px 14px;color:var(--color-faint);display:flex;align-items:center;gap:8px;background:color-mix(in srgb,var(--color-text) 4%,var(--color-bg));white-space:nowrap}
+.composer .sp{flex:1}
+.pill{font:500 11px var(--font-ui);color:var(--color-muted);border-radius:999px;padding:2px 8px;background:color-mix(in srgb,var(--color-text) 6%,transparent);white-space:nowrap}
+
+/* notes */
+.notes{flex:1;min-width:0;max-width:430px;font-size:13px;line-height:19px}
+.notes h2{font:600 19px var(--font-rounded);margin:0 0 2px}
+.notes .tag{font:11px var(--font-mono);opacity:.6;margin-bottom:12px}
+.notes h3{font:600 10px var(--font-mono);letter-spacing:.07em;text-transform:uppercase;opacity:.55;margin:13px 0 3px}
+.notes p{margin:0 0 6px;opacity:.88}
+.notes ul{margin:0;padding-left:16px;opacity:.88}.notes li{margin:0 0 2px}
+.score{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:12px;margin-top:4px}
+.score span:nth-child(odd){opacity:.75}
+.dots{font:11px var(--font-mono);letter-spacing:2px;color:#58cc6f}.pagelight .dots{color:#2e9e4f}
+.dots s{text-decoration:none;opacity:.25}
+
+/* option 3 popover, option 5 palette */
+.pop{position:absolute;z-index:5;background:var(--color-bg);border:.5px solid var(--color-line-strong);border-radius:12px;box-shadow:var(--shadow-float);padding:6px}
+.palette{position:absolute;z-index:5;left:50%;top:64px;transform:translateX(-50%);width:430px;background:var(--color-bg);backdrop-filter:blur(20px) saturate(1.6);border:.5px solid var(--color-line-strong);border-radius:14px;box-shadow:var(--shadow-float);overflow:hidden}
+.palette .q{display:flex;align-items:center;gap:8px;padding:12px 14px;font-size:16px;border-bottom:.5px solid var(--color-line)}
+.palette .q .cur{width:1.5px;height:18px;background:var(--color-accent);margin-left:-6px}
+.palette .grp{font:600 10px var(--font-ui);letter-spacing:.04em;text-transform:uppercase;color:var(--color-faint);padding:8px 14px 2px}
+.palette .row{margin:0 6px;height:30px}
+.palette mark{background:none;color:var(--color-accent);font-weight:600}
+.palette .pf{display:flex;gap:14px;padding:8px 14px;border-top:.5px solid var(--color-line);font:10.5px var(--font-mono);color:var(--color-faint)}
+
+/* option 4 cards */
+.card{margin:4px 4px 6px;padding:8px 9px 7px;border-radius:10px;background:color-mix(in srgb,var(--color-text) 5%,transparent);border:.5px solid var(--color-line)}
+.card .h{display:flex;align-items:center;gap:7px}
+.card .h b{font-weight:600;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .last{font-size:11px;color:var(--color-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:3px 0 4px 25px}
+.card .last.w{color:var(--color-warning)}
+.card .f{display:flex;align-items:center;gap:6px;margin-left:25px;font:10.5px var(--font-rounded);color:var(--color-faint);white-space:nowrap}
+.card .f svg{flex:none}
+.card .f .sp{flex:1}
+.card .f .cs{min-width:0;overflow:hidden;text-overflow:ellipsis}.card .f .num{flex:none}
+.card.quiet{background:none;border-color:transparent;padding:3px 9px;margin:0 4px}
+.card .kids{margin:5px 0 0 20px}
+.card .kids .row{height:22px;font-size:12px}
+
+/* option 6 rail */
+.rail{width:58px;flex:none;background:color-mix(in srgb,var(--sidebar) 80%,var(--color-text) 5%);border-right:.5px solid var(--color-line);display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:44px;position:relative}
+.rail .rt{position:relative;cursor:pointer}
+.rail .rt.on::before{content:"";position:absolute;left:-12px;top:7px;bottom:7px;width:3px;border-radius:2px;background:var(--color-text)}
+.rail .bdg{position:absolute;right:-6px;top:-6px;min-width:16px;height:16px;border-radius:8px;background:var(--color-warning);color:#fff;font:700 9.5px var(--font-rounded);display:grid;place-items:center;padding:0 4px;border:2px solid var(--sidebar)}
+.rail .live{position:absolute;right:-4px;bottom:-4px;background:var(--sidebar);border-radius:50%;padding:1px}
+.rail .sep{width:26px;height:1px;background:var(--color-line-strong)}
+.rail .lights{position:absolute;top:0;left:0;padding:14px 9px;gap:6px}
+.rail .lights i{width:10px;height:10px}
+.rail .lbl{font:9px var(--font-ui);color:var(--color-faint);margin-top:-8px}
+
+/* rec */
+.seg{display:flex;background:color-mix(in srgb,var(--color-text) 7%,transparent);border-radius:6px;padding:1px;margin-left:auto}
+.seg button{all:unset;font:500 10.5px var(--font-ui);padding:0 7px;line-height:17px;border-radius:5px;color:var(--color-muted);cursor:pointer;text-transform:none;letter-spacing:0}
+.seg button.on{background:var(--color-bg);color:var(--color-text);box-shadow:0 0 0 .5px var(--color-line-strong),0 1px 2px rgba(0,0,0,.08)}
+.inbox .row.two{background:none}
+.inbox .row.two .t{font-weight:500}
+.duo{display:flex;gap:20px;padding:20px 28px 10px}
+.cap{font:11px var(--font-mono);opacity:.55;margin:8px 2px 0}
+.recnotes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 28px;padding:6px 28px 30px;font-size:12.5px;line-height:18px}
+.recnotes h3{font:600 10px var(--font-mono);letter-spacing:.07em;text-transform:uppercase;opacity:.55;margin:8px 0 4px}
+.recnotes ul{margin:0;padding-left:16px;opacity:.9}.recnotes li{margin:0 0 3px}
+.dense .row{height:24px}.dense .row.two{height:auto}.dense .row.done-fold{height:21px}.dense .sec{padding-top:10px}
+mark.hit{background:color-mix(in srgb,var(--color-accent) 22%,transparent);color:inherit;border-radius:3px;padding:0 1px}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>frog sidebar refactor</h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="sp"></div>
+  <div class="hint">0–7 options · t theme · / search (7)</div>
+  <button class="tab on" id="themebtn"></button>
+</div>
+<div id="stage"></div>
+<script>
+// ───────── data: Cam's org, Oct 25 (titles from ListSessions; states staged for one moment) ─────────
+// st: run | wait | new | done | fail | idle | dead | orph
+const REPO = {
+  chief:'#4f9fb8', frog:'#4c8fe0', okc:'#b061c9', zest:'#d6588c',
+  tang:'#33a893', rose:'#8a7fe0', home:'#8f9297', dev:'#5aa86a'
+};
+const N = (t, st, repo, o={}) => ({t, st, repo, kids:[], ...o});
+const frogDone = ['delegation pipeline v4','org reliability fixes','opus text-mode fix','transcript perf batch',
+  'accounts ux spec v3','pr viral spec v2','challenges spec','pr viral spec','accounts ux spec','approvals never stall',
+  'pr lifecycle spec','auto mode less skittish','type to focus','degraded mode badge','worker worktrees',
+  'session nesting','pr status chips'].map((t,i) => N(t,'done','frog',{age:i<5?'5h':i<11?'1d':'2d', today:i<5}));
+frogDone.splice(5,0,N('mode silently reverts','fail','frog',{age:'6h', today:true, why:'tests failed · exit 101'}));
+
+const ORG = [
+  N('frog manager','run','frog',{mgr:true, age:'now', line:'reviewing graceful restart · 1 worker live', spark:[2,3,3,5,4,6,7,5,6,8,7,9], cost:'$1.84', kids:[
+    N('graceful restart implementation','run','frog',{age:'now', sel:true, kids:[
+      N('restart drill tests','run','frog',{age:'now'}),
+      N('graceful restart design','done','frog',{age:'3h', today:true}),
+    ]}),
+    ...frogDone,
+  ]}),
+  N('okc manager','idle','okc',{mgr:true, age:'12m', line:'waiting on 3 workers', spark:[6,5,4,4,3,2,2,1,1,1,1,1], cost:'$0.92', kids:[
+    N('okc decode layer','run','okc',{age:'now'}),
+    N('okc bf16 proj','wait','okc',{age:'4m', ask:'pod past its 2h cap · $3.50/hr · extend?'}),
+    N('okc prefill layer','run','okc',{age:'now'}),
+    N('okc attn decode','done','okc',{age:'2h', today:true}),
+    N('okc serving patch','done','okc',{age:'3h', today:true}),
+  ]}),
+  N('frog cloud manager','run','zest',{mgr:true, age:'now', line:'gateway batching ready to push', spark:[3,4,4,5,5,4,6,6,7,6,7,8], cost:'$2.31', kids:[
+    N('frog api keys','run','zest',{age:'now'}),
+    N('gateway batching','wait','zest',{age:'1m', ask:'push branch gateway-batching'}),
+    N('kv ttl','done','zest',{age:'5h', today:true}),
+    N('h200 fixes','done','zest',{age:'1d'}),
+  ]}),
+  N('tang manager','idle','tang',{mgr:true, age:'2d', line:'tiled prefill merged (#128)', spark:[1,1,1,1,1,1,1,1,1,1,1,1], cost:'$0.00', kids:[
+    N('dart prefill','done','tang',{age:'2d'}),
+    N('tree step1','done','tang',{age:'2d'}),
+    N('tiled prefill attention','done','tang',{age:'3d'}),
+    N('Continue this branch first: check git status/diff and keep any good partial work…','done','tang',{age:'3d', noisy:true}),
+    N('deepseek serving takeaways','done','tang',{age:'3d'}),
+    N('Untitled','done','tang',{age:'4d', noisy:true}),
+  ]}),
+  N('rose head mvp setup','idle','rose',{age:'3d', line:'paused after the fab package'}),
+];
+const CHIEF_KIDS = [
+  N('web app ux','done','chief',{age:'18h'}),
+  N('head as frog node','done','chief',{age:'1d'}),
+  N('background work ux','done','chief',{age:'2d'}),
+  N('frog design system','done','chief',{age:'2d'}),
+];
+const YOURS = [
+  N('blaze distill','run','dev',{age:'now'}),
+  N('Make the frog cloud node boot fast. Last boot log (Qwen3-Coder-Next UD-Q4_K_XL…','fail','tang',{age:'3d', noisy:true}),
+  N('mew gha runner setup','done','home',{age:'1d'}),
+];
+const CHIEF = {t:'chief', st:'run', repo:'chief', line:'relaying 2 merges to frog manager', kids:[...ORG, ...CHIEF_KIDS]};
+const walk = (ns, f, path=[]) => ns.forEach(n => { f(n, path); walk(n.kids, f, [...path, n]); });
+const ALL = []; const add = (n,p) => ALL.push({...n, under:p.map(x=>x.t)});
+walk(CHIEF.kids, add, [CHIEF]); walk(YOURS, add);
+const WAITS = ALL.filter(n => n.st === 'wait');
+const live = s => s === 'run' || s === 'wait' || s === 'new';
+const subLive = n => live(n.st) || n.kids.some(subLive);
+const subWait = n => n.st === 'wait' || n.kids.some(subWait);
+function counts(n){ const c={run:0,wait:0,done:0,fail:0};
+  n.kids.forEach(k => { const e = subWait(k)?'wait':subLive(k)?'run':k.st==='fail'?'fail':'done'; c[e]++; }); return c; }
+const summary = n => { const c=counts(n); return [[c.run,'running'],[c.wait,'waiting'],[c.fail,'failed'],[c.done,'done']].filter(x=>x[0]).map(x=>x[0]+' '+x[1]).join(' · '); };
+
+// ───────── pieces ─────────
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const initial = t => (t.match(/[a-z0-9]/i)||['?'])[0].toUpperCase();
+const mono = (n, cls='') => { const c = REPO[n.repo]; return `<span class="mono ${cls}" style="background:${c}2e;color:${c}">${initial(n.t)}</span>`; };
+const glyph = st => `<span class="g ${st}"></span>`;
+const tri = (open, show=true, id='') => `<span class="tri ${open?'open':''} ${show?'':'none'}" ${id?`data-tog="${esc(id)}"`:''}>▶</span>`;
+const pad = (d, w=14) => d ? `<span class="ind" style="width:${d*w}px"></span>` : '';
+const lights = `<div class="lights"><i></i><i></i><i></i></div>`;
+const head = (q='Search', k='') => `<div class="sbhead"><div class="search">⌕ <span>${q}</span>${k?`<span class="k">${k}</span>`:''}</div><span class="ib">≡</span><span class="ib">✎</span></div>`;
+const chiefTile = () => `<div class="chief">${mono(CHIEF,'l')}<div class="c"><b>chief</b><span>${CHIEF.line}</span></div>${glyph('run')}</div>`;
+
+function theWindow(sidebar, o={}){
+  const theme = o.theme || STATE.theme;
+  return `<div class="win ${theme}" style="width:${o.w||860}px;${o.h?`height:${o.h}px`:''}">
+    ${sidebar}
+    <div class="main">
+      <div class="mhead"><span class="crumb">chief › frog manager › <b>graceful restart implementation</b></span><span style="flex:1"></span><span class="pill">frog-dart · cloud</span></div>
+      <div class="mbody">
+        <div class="tx">
+          <div class="bub">wire the graceful restart path and prove it with a drill</div>
+          <p>the engine now writes a restart marker before it exits, and the app reattaches running jobs from the ledger on launch.</p>
+          <div class="tool">⌕ Read <code>crates/frog-engine/src/background.rs</code></div>
+          <div class="tool">✎ Edit <code>crates/frog-engine/src/engine.rs</code> <span style="color:var(--color-success)">+48</span><span style="color:var(--color-danger)">−9</span></div>
+          <div class="tool">›_ Bash <code>cargo test -p frog-engine restart</code> <span class="g run"></span></div>
+          <p style="margin-top:14px">two of three drills pass. the third restarts mid-turn; checking that its wake isn't dropped.</p>
+          <div class="bar" style="width:86%"></div><div class="bar" style="width:72%"></div><div class="bar" style="width:40%"></div>
+        </div>
+        <div class="minimap"><i></i><i class="w"></i><i></i><i></i><i class="w"></i><i></i><i class="r"></i><i></i><i class="w"></i><i></i><i></i><i class="w"></i><i></i><i class="w"></i><i></i><i></i><i class="w"></i><i class="w"></i><div class="lit"></div></div>
+      </div>
+      <div class="composer">ask, or / for commands<span class="sp"></span><span class="pill">auto</span></div>
+      ${o.overlay||''}
+    </div>
+  </div>`;
+}
+
+// ───────── 0 · today (what Cam sees now) ─────────
+function optToday(){
+  let h = lights + head() + `<div class="list fade">` + chiefTile();
+  const sec = (name, repo) => `<div class="sec"><span class="tri open">▶</span><span class="repo-dot" style="background:${REPO[repo]}"></span>${name}</div>`;
+  const r = (n, d=0, o={}) => `<div class="row ${n.sel?'sel':''} ${n.st==='fail'?'fail':''}">${d?`<span class="ind" style="width:${(d-1)*8+2}px"></span><span class="rail1"></span>`:'<span class="ind" style="width:4px"></span>'}${o.tri?tri(true):''}<span class="t">${esc(n.t)}</span>${n.kids.length?`<span class="badge">${n.kids.length}</span>`:''}<span class="meta">${d?'':n.age}</span>${glyph(n.st==='idle'?'':n.st)}</div>`;
+  h += sec('chief','chief');
+  CHIEF_KIDS.slice(0,2).forEach(k => h += r(k));
+  const okc = ORG[1]; h += r(okc); okc.kids.forEach(k => h += r(k,1));
+  h += sec('frog','frog');
+  const fm = ORG[0]; h += r(fm);
+  const gr = fm.kids[0]; h += r(gr,1,{tri:true});
+  gr.kids.forEach(k => h += r(k,2));
+  h += `<div class="row done-fold"><span class="ind" style="width:14px"></span><span class="tri">▶</span>+18 done <span style="color:var(--color-danger);opacity:.85">· 1 failed</span></div>`;
+  h += r(ORG[2]); ORG[2].kids.forEach(k=>h+=r(k,1));
+  h += r(YOURS[1]);
+  h += sec('tang','tang'); h += r(ORG[3]); ORG[3].kids.slice(0,4).forEach(k=>h+=r(k,1));
+  h += sec('rose','rose'); h += r(ORG[4]);
+  h += `</div><div class="foot">🗄 Archived (158)</div>`;
+  return theWindow(`<div class="sb">${h}</div>`);
+}
+
+// ───────── 1 · full native tree ─────────
+function optTree(){
+  let h = lights + head() + `<div class="list fade" style="padding-top:2px">`;
+  h += `<div class="sec caps">Sessions</div>`;
+  let rows = 0;
+  const rec = (n, d) => {
+    const open = n.kids.length && STATE.closed1[n.t] !== true;
+    const icon = d===0 || n.mgr ? `<span style="width:15px;text-align:center;color:${REPO[n.repo]};flex:none;font-size:11px">●</span>`
+      : n.kids.length ? `<span style="width:15px;text-align:center;color:var(--color-muted);flex:none;font-size:10px">◆</span>`
+      : `<span style="width:15px;text-align:center;color:var(--color-faint);flex:none;font-size:10px">◇</span>`;
+    rows++;
+    h += `<div class="row ${n.sel?'sel':''} ${n.st==='fail'?'fail':''}" style="height:24px">${pad(d,16)}${tri(open, n.kids.length, n.t)}${icon}<span class="t">${esc(n.t)}</span>${glyph(n.st==='idle'?'':n.st)}</div>`;
+    if (open) n.kids.forEach(k => rec(k, d+1));
+  };
+  rec(CHIEF, 0);
+  YOURS.forEach(n => rec(n,0));
+  h += `</div><div class="foot">🗄 Archived <span class="num">158</span><span class="sp"></span><span class="num">${rows} rows · 27 visible</span></div>`;
+  return theWindow(`<div class="sb">${h}</div>`);
+}
+
+// ───────── 2 · workspace (repo) grouping ─────────
+function optWorkspace(){
+  let h = lights + head() + `<div class="list fade">` + chiefTile();
+  const byRepo = {}; ALL.forEach(n => (byRepo[n.repo] = byRepo[n.repo] || []).push(n));
+  const order = [['frog','frog','main · 3 PRs'],['okc','okc','4 worktrees'],['zest','zest','main · 1 PR'],['tang','tang','main'],['chief','chief',''],['rose','rose',''],['dev','~/Developer',''],['home','home','']];
+  const chips = {'graceful restart implementation':'<span class="chip pr">#97</span>','gateway batching':'<span class="chip pr">#41</span>','okc bf16 proj':'<span class="chip">bf16_proj</span>','okc decode layer':'<span class="chip">decode_layer</span>','okc prefill layer':'<span class="chip">prefill_layer</span>','frog api keys':'<span class="chip">api-keys</span>','restart drill tests':'<span class="chip">drill</span>'};
+  order.forEach(([k, name, sub]) => {
+    const items = byRepo[k]; if (!items) return;
+    const liveN = items.filter(n => live(n.st)).length;
+    const quiet = !liveN;
+    h += `<div class="sec" style="padding-top:11px">${tri(!quiet)}<span class="repo-dot" style="background:${REPO[k]}"></span><span style="color:var(--color-text)">${name}</span><span style="font-weight:400;color:var(--color-faint);font-size:10.5px">${sub}</span><span class="sp"></span>${liveN?`<span class="cnt" style="color:var(--color-muted)">${liveN} live</span>`:`<span class="cnt">${items.length}</span>`}</div>`;
+    if (quiet) return;
+    const lv = items.filter(n => live(n.st) || n.mgr || n.st==='fail');
+    const dn = items.filter(n => !lv.includes(n));
+    lv.forEach(n => {
+      h += `<div class="row ${n.sel?'sel':''} ${n.st==='fail'?'fail':''}">${pad(1,8)}${n.mgr?`<span style="font-size:10px;color:var(--color-faint);flex:none" title="manager">👤</span>`:''}<span class="t" ${n.mgr?'style="color:var(--color-muted)"':''}>${esc(n.t)}</span>${chips[n.t]||''}${glyph(n.st==='idle'?'':n.st)}</div>`;
+    });
+    if (dn.length) h += `<div class="row done-fold">${pad(1,8)}<span class="tri">▶</span>${dn.length} done<span style="flex:1"></span><span class="chip merged" style="font-size:10px">${Math.max(1,Math.floor(dn.length*.6))} merged</span></div>`;
+  });
+  h += `</div><div class="foot">🗄 Archived <span class="num">158</span><span class="sp"></span>8 repos · 4 worktrees live</div>`;
+  return theWindow(`<div class="sb">${h}</div>`);
+}
+
+// ───────── 3 · activity-first ─────────
+function optActivity(){
+  let h = lights + head() + `<div class="list fade">` + chiefTile();
+  const boss = n => n.under.length ? n.under[n.under.length-1] : 'yours';
+  const two = n => `<div class="row two ${n.sel?'sel':''}">${mono(n)}<div class="col"><span class="t">${esc(n.t)}</span><span class="d ${n.ask?'w':''}">${n.ask || boss(n)+' · '+n.age}</span></div>${glyph(n.st)}</div>`;
+  const one = n => `<div class="row quiet ${n.st==='fail'?'fail':''}">${mono(n)}<span class="t">${esc(n.t)}</span><span class="meta" style="max-width:80px;overflow:hidden;text-overflow:ellipsis">${boss(n).replace(' manager','')}</span></div>`;
+  h += `<div class="sec caps"><span class="warn">Needs you</span><span class="sp"></span><span class="cnt warn">${WAITS.length}</span></div>`;
+  WAITS.forEach(n => h += two(n));
+  const run = ALL.filter(n => n.st==='run');
+  h += `<div class="sec caps">Running<span class="sp"></span><span class="cnt">${run.length}</span></div>`;
+  run.forEach(n => h += two(n));
+  const fails = ALL.filter(n => n.st==='fail');
+  h += `<div class="sec caps">Failed<span class="sp"></span><span class="cnt" style="color:var(--color-danger)">${fails.length}</span></div>`;
+  fails.forEach(n => h += one(n));
+  const done = ALL.filter(n => n.today && n.st==='done');
+  h += `<div class="sec caps">Done today<span class="sp"></span><span class="cnt">${done.length}</span></div>`;
+  done.forEach(n => h += one(n));
+  h += `</div><div class="foot">🗄 Archived <span class="num">158</span><span class="sp"></span>org chart ⌘⇧O</div>`;
+  const ov = `<div class="pop" style="left:10px;top:236px;width:262px">
+    <div class="sec caps" style="padding-top:4px">org · frog manager</div>
+    <div class="row mgr">${mono(ORG[0])}<span class="t">frog manager</span>${glyph('run')}</div>
+    <div class="row">${pad(1,12)}<span class="t">graceful restart implementation</span>${glyph('run')}</div>
+    <div class="row">${pad(2,12)}<span class="t">restart drill tests</span>${glyph('run')}</div>
+    <div class="row done-fold">${pad(1,12)}<span class="tri">▶</span>18 done · <span style="color:var(--color-danger)">1 failed</span></div>
+    <div style="font-size:10.5px;color:var(--color-faint);padding:4px 6px 2px">opened from a row’s manager name (hover)</div>
+  </div>`;
+  return theWindow(`<div class="sb">${h}</div>`, {overlay:ov});
+}
+
+// ───────── 4 · sparkline status cards ─────────
+function spark(vals, st){
+  const w=44, hh=14, mx=Math.max(...vals,1);
+  const pts = vals.map((v,i)=>`${(i/(vals.length-1)*w).toFixed(1)},${(hh-1.5-(v/mx)*(hh-3)).toFixed(1)}`).join(' ');
+  const col = st==='run' ? 'var(--color-accent)' : 'var(--color-faint)';
+  return `<svg width="${w}" height="${hh}" viewBox="0 0 ${w} ${hh}"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+function optCards(){
+  let h = lights + head() + `<div class="list fade">` + chiefTile();
+  ORG.forEach((m,i) => {
+    const s = m.kids.length ? summary(m) : m.line;
+    if (!subLive(m)){
+      h += `<div class="card quiet"><div class="h">${mono(m)}<b style="font-weight:500;color:var(--color-muted);font-size:12px">${esc(m.t)}</b><span style="font:10.5px var(--font-rounded);color:var(--color-faint);white-space:nowrap">${m.kids.length?s:'idle'} · ${m.age}</span></div></div>`;
+      return;
+    }
+    const open = i === 0;
+    const w = m.kids.find(k=>k.st==='wait');
+    h += `<div class="card"><div class="h">${tri(open)}${mono(m)}<b>${esc(m.t)}</b>${glyph(m.st)}</div>
+      <div class="last ${w?'w':''}">${w? w.t+': '+w.ask : m.line}</div>
+      <div class="f">${spark(m.spark, m.st)}<span class="cs">${s}</span><span class="sp"></span><span class="num">${m.cost}</span></div>
+      ${open?`<div class="kids">
+        <div class="row sel">${glyph('run')}<span class="t">graceful restart implementation</span><span class="meta">14m</span></div>
+        <div class="row">${pad(1,12)}${glyph('run')}<span class="t">restart drill tests</span><span class="meta">3m</span></div>
+        <div class="row done-fold" style="height:20px"><span class="tri">▶</span>18 done · <span style="color:var(--color-danger)">1 failed</span></div></div>`:''}
+    </div>`;
+  });
+  h += `<div class="sec caps">Yours</div>`;
+  h += `<div class="card"><div class="h">${mono(YOURS[0])}<b>blaze distill</b>${glyph('run')}</div><div class="last">epoch 3/8 · loss 1.92</div><div class="f">${spark([2,3,5,4,5,6,5,6,6,7,6,7],'run')}<span>running 2h</span><span class="sp"></span><span class="num">$0.40</span></div></div>`;
+  h += `</div><div class="foot">🗄 Archived <span class="num">158</span><span class="sp"></span><span class="num">$5.47 today · $4.20/hr</span></div>`;
+  return theWindow(`<div class="sb">${h}</div>`);
+}
+
+// ───────── 5 · command-palette sidebar ─────────
+function optPalette(){
+  let h = lights + `<div class="sbhead"><div class="search" style="height:30px">⌕ <span>Jump to anything</span><span class="k">⌘K</span></div><span class="ib">✎</span></div><div class="list">` + chiefTile();
+  h += `<div class="sec caps"><span class="warn">Needs you</span><span class="sp"></span><span class="cnt warn">${WAITS.length}</span></div>`;
+  WAITS.forEach(n => h += `<div class="row">${mono(n)}<span class="t">${n.t}</span>${glyph('wait')}</div>`);
+  const run = ALL.filter(n=>n.st==='run');
+  h += `<div class="sec caps">Running<span class="sp"></span><span class="cnt">${run.length}</span></div>`;
+  run.forEach(n => h += `<div class="row ${n.sel?'sel':''}">${mono(n)}<span class="t">${n.t}</span>${glyph('run')}</div>`);
+  h += `<div style="margin:22px 10px 0;padding:14px;border:1px dashed var(--color-line-strong);border-radius:10px;color:var(--color-faint);font-size:11.5px;line-height:17px;text-align:center">${ALL.length - run.length - WAITS.length} more sessions, 158 archived<br>type anywhere, or <span style="font-family:var(--font-mono)">⌘K</span></div>`;
+  h += `</div><div class="foot">🗄 Archived <span class="num">158</span></div>`;
+  const pr = (n, mark, sub) => `<div class="row ${n.sel?'sel':''}">${mono(n)}<span class="t">${mark}</span><span class="meta">${sub}</span>${glyph(n.st==='idle'?'':n.st)}</div>`;
+  const ov = `<div class="palette">
+    <div class="q"><span style="color:var(--color-faint)">⌕</span><span>grace</span><span class="cur"></span><span style="flex:1"></span><span class="pill">sessions</span></div>
+    <div class="grp">Sessions</div>
+    ${pr({t:'g',repo:'frog',st:'run',sel:true}, '<mark>grace</mark>ful restart implementation', 'frog manager')}
+    ${pr({t:'g',repo:'frog',st:'done'}, '<mark>grace</mark>ful restart design', 'frog manager · 3h')}
+    ${pr({t:'r',repo:'frog',st:'run'}, 'restart drill tests', 'in <mark>grace</mark>ful restart')}
+    <div class="grp">Archived</div>
+    ${pr({t:'g',repo:'frog',st:''}, '<mark>grace</mark>ful restart spike', 'Oct 19')}
+    <div class="grp">Commands</div>
+    <div class="row"><span style="width:18px;text-align:center;color:var(--color-muted)">⤴</span><span class="t">Fork “<mark>grace</mark>ful restart…” after last turn</span></div>
+    <div class="pf"><span>↩ open</span><span>⌘↩ new pane</span><span>⌥↩ reveal in org</span><span>⇥ filter: running</span></div>
+  </div>`;
+  return theWindow(`<div class="sb">${h}</div>`, {overlay:ov});
+}
+
+// ───────── 6 · rail + list (two-pane master) ─────────
+function optRail(){
+  const pick = STATE.rail;
+  const tiles = [
+    {k:'inbox', icon:'✋', label:'needs you', badge:2},
+    {k:'chief', n:CHIEF, label:'chief'},
+    {k:'frog manager', n:ORG[0], label:'frog', live:true},
+    {k:'okc manager', n:ORG[1], label:'okc', badge:1},
+    {k:'frog cloud manager', n:ORG[2], label:'cloud', badge:1},
+    {k:'tang manager', n:ORG[3], label:'tang'},
+    {k:'rose head mvp setup', n:ORG[4], label:'rose'},
+    {k:'yours', n:{t:'Y',repo:'dev'}, label:'yours', live:true},
+  ];
+  let r = `<div class="rail">${lights}`;
+  tiles.forEach((t,i) => {
+    const inner = t.icon ? `<span class="mono xl" style="background:color-mix(in srgb,var(--color-warning) 18%,transparent);color:var(--color-warning);font-size:15px">${t.icon}</span>` : mono(t.n,'xl');
+    r += `<div class="rt ${pick===t.k?'on':''}" data-rail="${t.k}">${inner}${t.badge?`<span class="bdg">${t.badge}</span>`:''}${t.live&&!t.badge?`<span class="live">${glyph('run')}</span>`:''}</div><div class="lbl">${t.label}</div>`;
+    if (i===1) r += `<div class="sep"></div>`;
+  });
+  r += `<div style="flex:1"></div><div class="ib" style="margin-bottom:12px">🗄</div></div>`;
+  const node = [CHIEF, ...ORG].find(n => n.t === pick) || ORG[0];
+  let h = `<div class="sbhead" style="padding-top:12px"><div class="search">⌕ <span>Search ${pick==='inbox'?'everything':esc(node.t)}</span></div><span class="ib">✎</span></div><div class="list">`;
+  if (pick === 'inbox'){
+    h += `<div class="sec">Needs you</div>`;
+    WAITS.forEach(n => h += `<div class="row two">${mono(n)}<div class="col"><span class="t">${n.t}</span><span class="d">${n.ask}</span></div>${glyph('wait')}</div>`);
+  } else if (pick === 'yours'){
+    h += `<div class="sec">Yours</div>`; YOURS.forEach(n => h += `<div class="row ${n.st==='fail'?'fail':''}">${mono(n)}<span class="t">${esc(n.t)}</span>${glyph(n.st)}</div>`);
+  } else {
+    h += `<div class="row mgr" style="height:34px;margin-top:2px">${mono(node,'l')}<div style="flex:1;min-width:0"><div class="t" style="font-weight:600;line-height:16px">${esc(node.t)}</div><div style="font-size:11px;color:var(--color-muted);line-height:14px;overflow:hidden;text-overflow:ellipsis">${node.line||''}</div></div>${glyph(node.st==='idle'?'idle':node.st)}</div>`;
+    const lv = node.kids.filter(subLive), dn = node.kids.filter(k=>!subLive(k));
+    if (lv.length){ h += `<div class="sec">Live</div>`; const rec=(n,d)=>{ h += `<div class="row ${n.sel?'sel':''}">${pad(d,14)}<span class="t">${esc(n.t)}</span><span class="meta">${n.age}</span>${glyph(n.st)}</div>`; n.kids.filter(subLive).forEach(k=>rec(k,d+1)); }; lv.forEach(n=>rec(n,0)); }
+    if (dn.length){ h += `<div class="sec">Done<span class="sp"></span><span class="cnt">${dn.length}</span></div>`; dn.slice(0,14).forEach(n => h += `<div class="row quiet">${pad(0)}<span class="t">${esc(n.t)}</span><span class="meta">${n.age}</span>${glyph(n.st==='fail'?'fail':'')}</div>`); }
+  }
+  h += `</div><div class="foot">${pick==='inbox'?'2 waiting':summary(node)||''}</div>`;
+  return theWindow(r + `<div class="sb" style="width:262px">${h}</div>`, {w:900});
+}
+
+// ───────── 7 · recommended: the attention tree ─────────
+// native outline of the org (chief › managers › workers, any depth) under a "needs you" inbox,
+// scoped to live work by default, with three row weights and search that filters in place.
+function recSidebar(theme){
+  const scope = STATE.scope, q = STATE.q.trim().toLowerCase();
+  const hit = t => q && t.toLowerCase().includes(q);
+  const mark = t => { if (!q) return esc(t); const i = t.toLowerCase().indexOf(q); return i<0 ? esc(t) : esc(t.slice(0,i))+'<mark class="hit">'+esc(t.slice(i,i+q.length))+'</mark>'+esc(t.slice(i+q.length)); };
+  const anyHit = n => hit(n.t) || n.kids.some(anyHit);
+  const shownSettled = n => scope==='all' || (scope==='today' && n.today);
+  let h = lights + `<div class="sbhead"><div class="search">⌕ <input data-q value="${esc(STATE.q)}" placeholder="Search or jump" style="all:unset;flex:1;min-width:0;color:var(--color-text);font-size:12px"><span class="k">⌘K</span></div><span class="ib" title="view options">≡</span><span class="ib">✎</span></div><div class="list fade">`;
+
+  if (!q) h += chiefTile();
+
+  // needs you: a lens on the tree, never a second home
+  if (!q && WAITS.length){
+    h += `<div class="sec caps"><span class="warn">Needs you</span><span class="cnt warn">${WAITS.length}</span><span class="sp"></span><span style="font:10px var(--font-mono);text-transform:none;letter-spacing:0">⌘⇧0</span></div><div class="inbox">`;
+    WAITS.forEach(n => h += `<div class="row two">${glyph('wait')}<div class="col"><span class="t">${esc(n.t)}</span><span class="d">${n.ask}</span></div><span class="meta">${n.age}</span></div>`);
+    h += `</div>`;
+  }
+
+  const rowFor = (n, d, o={}) => {
+    const kids = n.kids;
+    const isOpen = kids.length && (q ? true : STATE.open7[n.t] ?? (subLive(n) || n.sel));
+    const settled = !subLive(n);
+    const tier = n.mgr ? (settled ? 'quiet' : 'mgr') : settled ? 'quiet' : '';
+    const showMono = d === 0;
+    let right = '';
+    if (kids.length && !isOpen) right = `<span class="sum">${summary(n)}</span>`;
+    const st = n.mgr && n.st==='idle' ? (settled ? '' : 'idle') : n.st==='done' ? (settled && d>0 ? 'done' : '') : n.st;
+    const meta = !live(n.st) && !(kids.length && !isOpen) ? `<span class="meta">${n.age}</span>` : '';
+    return `<div class="row ${tier} ${n.sel?'sel':''}" style="${tier==='quiet'&&d===0?'':''}">${pad(d,14)}${tri(isOpen, kids.length, n.t)}${showMono?mono(n):''}<span class="t" ${n.noisy?'style="font-style:italic"':''}>${mark(n.t)}</span>${right}${meta}${glyph(st)}</div>`;
+  };
+
+  const renderKids = (n, d) => {
+    let out = '';
+    const kids = n.kids;
+    const vis = q ? kids.filter(anyHit) : kids.filter(k => subLive(k) || k.sel || shownSettled(k));
+    const tucked = q ? [] : kids.filter(k => !vis.includes(k));
+    vis.forEach(k => out += node(k, d));
+    if (tucked.length){
+      const key = 'done:'+n.t, open = STATE.open7[key];
+      const failed = tucked.filter(k => k.st==='fail').length;
+      out += `<div class="row done-fold" data-tog="${esc(key)}">${pad(d,14)}${tri(open)}${tucked.length} ${scope==='today'?'earlier':'done'}${failed?` · <span style="color:var(--color-danger)">${failed} failed</span>`:''}</div>`;
+      if (open) tucked.forEach(k => out += node(k, d));
+    }
+    return out;
+  };
+  const node = (n, d) => {
+    const isOpen = n.kids.length && (q ? true : STATE.open7[n.t] ?? (subLive(n) || n.sel));
+    return rowFor(n, d) + (isOpen ? renderKids(n, d+1) : '');
+  };
+
+  // org
+  const orgSeg = `<div class="seg">${['live','today','all'].map(s=>`<button data-scope="${s}" class="${scope===s?'on':''}">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}</div>`;
+  h += `<div class="sec caps">Org${q?'':orgSeg}</div>`;
+  const tops = q ? ORG.filter(anyHit) : ORG;
+  tops.forEach(m => h += node(m, 0));
+  // the chief's own settled workers fold under one row
+  const ck = {t:'chief', kids:CHIEF_KIDS};
+  if (q){ CHIEF_KIDS.filter(anyHit).forEach(k => h += node(k,0)); }
+  else {
+    const vis = CHIEF_KIDS.filter(shownSettled), tucked = CHIEF_KIDS.filter(k=>!vis.includes(k));
+    vis.forEach(k => h += node(k,0));
+    if (tucked.length){ const open = STATE.open7['done:chief'];
+      h += `<div class="row done-fold" data-tog="done:chief"><span class="ind" style="width:0"></span>${tri(open)}${tucked.length} done by chief</div>`;
+      if (open) tucked.forEach(k => h += node(k,0)); }
+  }
+
+  // yours: sessions Cam started himself
+  const ys = q ? YOURS.filter(anyHit) : YOURS.filter(n => live(n.st) || n.st==='fail' || scope!=='live');
+  if (ys.length){
+    h += `<div class="sec caps">Yours</div>`;
+    ys.forEach(n => h += `<div class="row ${live(n.st)?'':'quiet'}">${tri(false,false)}${mono(n)}<span class="t" ${n.noisy?'style="font-style:italic"':''}>${mark(n.t)}</span>${live(n.st)?'':`<span class="meta">${n.age}</span>`}${glyph(n.st)}</div>`);
+  }
+  if (q){
+    const arch = [['graceful restart spike','Oct 19'],['frog manager (v1)','Oct 20'],['okc kv cache sweep','Oct 18']].filter(a=>a[0].includes(q));
+    if (arch.length) h += `<div class="sec caps">In archive<span class="sp"></span><span class="cnt">${arch.length}</span></div>`;
+    arch.forEach(([t,a]) => h += `<div class="row faint">${tri(false,false)}<span class="t">${mark(t)}</span><span class="meta">${a}</span></div>`);
+  }
+  h += `</div><div class="foot">🗄 Archived <span class="num">158</span><span class="sp"></span><span class="num">11 live · $4.20/hr</span></div>`;
+  return `<div class="sb dense">${h}</div>`;
+}
+function optRec(){
+  const one = t => `<div>${theWindow(recSidebar(t), {theme:t, w:604, h:760})}<div class="cap">${t} · scope: ${STATE.scope}${STATE.q?` · search “${esc(STATE.q)}”`:''}</div></div>`;
+  return `<div class="duo">${one('light')}${one('dark')}</div>
+  <div class="recnotes">
+    <div><h3>what it is</h3><ul>
+      <li><b>one native outline</b> of the org: chief › managers › workers, any depth. arrow keys, ←/→ fold, type-select, drag to a pane.</li>
+      <li><b>needs you</b> sits above it: every session blocked on Cam, anywhere in the tree. it’s a lens; the row also stays in place below.</li>
+      <li><b>scope</b> Live · Today · All. Live hides settled work behind one “N done” row per parent; quiet managers fold to one line with counts.</li>
+    </ul></div>
+    <div><h3>three weights</h3><ul>
+      <li><b>manager</b>: monogram, semibold. <b>live worker</b>: regular, no monogram (the width goes to the title). <b>settled</b>: 12pt muted, age instead of a glyph.</li>
+      <li>state color only on the glyph: spinner, orange dot (needs you), red dot (failed), dashed red ring (orphaned), red flatline (dead).</li>
+      <li>failed folds with done but keeps its red count; dead and orphaned never fold.</li>
+    </ul></div>
+    <div><h3>try it</h3><ul>
+      <li>click the Live / Today / All control, any ▶, or “18 done”.</li>
+      <li>press <b>/</b> and type “grace” or “okc”: the tree filters in place, ancestors kept, archive matches below.</li>
+      <li>footer: Archived (158) opens the archive as a scope; live count and burn rate come from the background-work ledger.</li>
+    </ul></div>
+  </div>`;
+}
+
+// ───────── notes per option ─────────
+const OPTS = [
+  {k:'0', name:'today', fn:optToday, title:'today’s sidebar (baseline)', tag:'what Cam sees with the org running',
+   model:'project folders, then a started-by tree inside each, with settled children under “+N done”.',
+   scale:'about 30 rows on screen, every one at the same weight. managers, live workers, finished work and a red failure all read alike, so finding anything means reading every row.',
+   breaks:['the org is split by folder: okc manager sits under “chief” and frog cloud under “frog”','prompt-as-title rows (“Make the frog cloud node boot fast…”) eat a line each','nothing says “this one needs you” except a small dot'],
+   who:'one person running 3–5 sessions. it was built for that.',
+   score:[2,2,1,3,2,5]},
+  {k:'1', name:'native tree', fn:optTree, title:'1 · full native tree', tag:'NSOutlineView: one row per session, any depth',
+   model:'the org chart is the list. chief at the root, managers under it, workers under them. one row per session, disclosure triangles, Finder-style.',
+   scale:`all ${ALL.length+1} sessions are rows. expanded, about 27 fit on screen and both sessions waiting on Cam are below the fold. folded to managers it’s 13 rows, and nothing live shows.`,
+   breaks:['nothing is ranked: a finished spec and a session waiting on you look the same','depth eats width: at level 3 a 288pt sidebar has ~170pt left for the title','“what needs me?” still means scanning or expanding everything','long-lived managers collect hundreds of children'],
+   who:'Cam’s instinct, and right for structure and keyboard nav. it’s the skeleton, not the whole answer.',
+   score:[3,1,2,5,5,4]},
+  {k:'2', name:'workspace', fn:optWorkspace, title:'2 · workspace grouping', tag:'repo › manager › worker',
+   model:'sessions belong to repos, not people. each repo is a group with its branch/PR state; managers are just the first row inside.',
+   scale:'quiet repos fold to one line, so 8 repos fit. worktree and PR chips make each row tell you what it shipped.',
+   breaks:['the org breaks: the chief and frog cloud manager work across repos; a worker in zest started by the frog manager lands far from it','managers become a label, not a parent','doesn’t answer “what needs me”','~/Developer and home become junk drawers'],
+   who:'someone running many workers in a few repos who thinks in branches and PRs. matches git, not the org.',
+   score:[3,2,4,4,1,4]},
+  {k:'3', name:'activity', fn:optActivity, title:'3 · activity-first', tag:'sections by state, org in a popover',
+   model:'the list answers “what now?”: needs you › running › failed › done today. each row says who it reports to; the org chart is a popover (⌘⇧O or hover the manager name).',
+   scale:'only live work takes space; done today is quiet and short. it scales to any org size because the hierarchy isn’t laid out.',
+   breaks:['rows jump sections as state changes, so you lose spatial memory: the thing you just looked at moves','siblings scatter: a manager’s 5 workers sit in 3 sections','managers and their workers are peers in one flat list; depth is gone','two places to look for structure'],
+   who:'an operator triaging a queue (on-call, inbox zero). great as a lens, tiring as the only view.',
+   score:[4,5,5,3,1,3]},
+  {k:'4', name:'cards', fn:optCards, title:'4 · sparkline status cards', tag:'each manager is a live card',
+   model:'one card per manager: what it’s doing (its last line or its question), an activity sparkline, counts, spend. expand a card for its workers. quiet managers drop to one line.',
+   scale:'the 5 managers are ~5 cards; workers stay inside. the best at a glance: you can see the frog manager is busy and okc is winding down.',
+   breaks:['tall: about 6 cards fit, and the chief, yours and the inbox compete for that space','always moving: sparklines and spend tick, which pulls the eye in peripheral vision','workers are second-class (no outline, no keyboard depth)','costly to render live for 50+ sessions'],
+   who:'a manager of managers watching health and cost, not opening sessions. a dashboard, better in Activity (⌘0) than in the sidebar.',
+   score:[2,3,3,2,3,2]},
+  {k:'5', name:'palette', fn:optPalette, title:'5 · command-palette sidebar', tag:'pinned + live only; everything else is ⌘K',
+   model:'the sidebar shows only the chief, needs you and running. everything else is one fuzzy search away (⌘K or just type), across titles, managers, archive and commands.',
+   scale:'it never grows: 30 or 300 sessions, the sidebar is the same 12 rows. the palette ranks by recency and live state.',
+   breaks:['you can’t browse: finding “the thing okc finished this morning” means remembering its name','finished work disappears, so reviewing the day needs another view','the org is invisible until you search','new users get an empty-looking app'],
+   who:'a keyboard person who knows what they want. the terminal answer, and the right answer for “jump”, not for “see”.',
+   score:[5,4,5,3,1,4]},
+  {k:'6', name:'rail + list', fn:optRail, title:'6 · rail + list (two-pane master)', tag:'Slack / Mail / Arc: managers as icons, a list pane',
+   model:'a fixed rail of managers (plus needs you and yours) with badges; the list pane shows one manager’s sessions, live then done.',
+   scale:'the rail holds ~10 managers; each list pane holds one manager’s 5–20 sessions. very calm per manager.',
+   breaks:['no cross-org view: “what’s running anywhere?” is 6 clicks','two clicks to reach any worker; ⌘1–9 now means managers, not sessions','eats ~320pt of width','the existing folded rail (SessionRail) would have to change meaning'],
+   who:'someone who works one manager at a time, like Slack channels. good if Cam lived inside the frog manager all day; he doesn’t.',
+   score:[3,3,4,4,3,3]},
+  {k:'7', name:'recommended', fn:optRec, title:'7 · recommended: the attention tree', tag:'native tree + needs-you lens + live scope + search-first'},
+];
+const CRIT = ['find a session','see what needs you','scales past 50','native feel','keeps the org','cheap to build'];
+
+// ───────── router ─────────
+const STATE = {opt:'7', theme:'dark', scope:'live', q:'', closed1:{}, open7:{}, rail:'frog manager'};
+function readHash(){
+  const m = (location.search.slice(1)+'&'+location.hash.slice(1)).split('&').filter(Boolean);
+  m.forEach(p => { if (/^[0-7]$/.test(p)) STATE.opt = p; else if (p==='light'||p==='dark') STATE.theme = p;
+    else if (p.startsWith('scope=')) STATE.scope = p.slice(6); else if (p.startsWith('q=')) STATE.q = decodeURIComponent(p.slice(2));
+    else if (p.startsWith('rail=')) STATE.rail = decodeURIComponent(p.slice(5)); else if (p.startsWith('open=')) p.slice(5).split(',').forEach(k=>STATE.open7[decodeURIComponent(k)]=true); });
+}
+readHash();
+window.addEventListener('hashchange', () => { readHash(); render(); });
+function render(){
+  document.body.className = STATE.theme==='light' ? 'pagelight' : '';
+  document.getElementById('tabs').innerHTML = OPTS.map(o => `<button class="tab ${o.k===STATE.opt?'on':''} ${o.k==='7'?'rec':''}" data-opt="${o.k}"><kbd>${o.k}</kbd>${o.name}</button>`).join('');
+  document.getElementById('themebtn').textContent = STATE.theme==='light' ? '☀ light' : '☾ dark';
+  const o = OPTS.find(x => x.k === STATE.opt);
+  const st = document.getElementById('stage');
+  if (o.k === '7'){ st.innerHTML = o.fn(); }
+  else {
+    const dots = n => '●'.repeat(n) + '<s>' + '●'.repeat(5-n) + '</s>';
+    st.innerHTML = `<div class="stage">${o.fn()}<div class="notes"><h2>${o.title}</h2><div class="tag">${o.tag}</div>
+      <h3>mental model</h3><p>${o.model}</p><h3>with 30+ sessions</h3><p>${o.scale}</p>
+      <h3>what breaks</h3><ul>${o.breaks.map(b=>`<li>${b}</li>`).join('')}</ul>
+      <h3>who it’s for</h3><p>${o.who}</p>
+      <h3>scorecard</h3><div class="score">${CRIT.map((c,i)=>`<span>${c}</span><span class="dots">${dots(o.score[i])}</span>`).join('')}</div></div></div>`;
+  }
+  const inp = st.querySelector('[data-q]');
+  if (inp && STATE.focus){ inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-opt],[data-scope],[data-tog],[data-rail],#themebtn');
+  if (!t) return;
+  if (t.id === 'themebtn') STATE.theme = STATE.theme==='light'?'dark':'light';
+  else if (t.dataset.opt) STATE.opt = t.dataset.opt;
+  else if (t.dataset.scope) STATE.scope = t.dataset.scope;
+  else if (t.dataset.rail) STATE.rail = t.dataset.rail;
+  else if (t.dataset.tog){ const k = t.dataset.tog;
+    if (STATE.opt==='1') STATE.closed1[k] = !STATE.closed1[k];
+    else { const cur = document.querySelector(`.tri[data-tog="${CSS.escape(k)}"]`); const open = STATE.open7[k] ?? !!(cur && cur.classList.contains('open')); STATE.open7[k] = !open; } }
+  STATE.focus = false; render();
+});
+document.addEventListener('input', e => { if (e.target.matches('[data-q]')){ STATE.q = e.target.value; STATE.focus = true; render(); } });
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input')){ if (e.key==='Escape'){ STATE.q=''; STATE.focus=false; render(); } return; }
+  if (/^[0-7]$/.test(e.key)){ STATE.opt = e.key; render(); }
+  else if (e.key==='t'){ STATE.theme = STATE.theme==='light'?'dark':'light'; render(); }
+  else if (e.key==='/' && STATE.opt==='7'){ e.preventDefault(); const i=document.querySelector('[data-q]'); i && i.focus(); }
+});
+render();
+</script>
+</body>
+</html>
