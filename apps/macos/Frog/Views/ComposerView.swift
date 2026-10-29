@@ -121,7 +121,7 @@ struct ComposerView: View {
         VStack(alignment: .leading, spacing: 8) {
             if let toast = conversation.toast {
                 Label(toast, systemImage: "info.circle")
-                    .font(.callout)
+                    .font(.frog(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -134,7 +134,7 @@ struct ComposerView: View {
                         Text("Frog cloud is unavailable")
                             .font(.callout.weight(.semibold))
                         Text(fallback)
-                            .font(.caption)
+                            .font(.frog(size: 10))
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
@@ -350,7 +350,7 @@ struct ComposerView: View {
         Text(conversation.busy
              ? "⏎ to queue for later · esc interrupts · ⇧⏎ new line"
              : "⏎ to send · ⏎ while frog works queues for later · ⇧⏎ new line")
-            .font(.system(size: Tokens.Size.meta))
+            .font(.frog(size: Tokens.Size.meta))
             .foregroundStyle(Tokens.textQuaternary)
             .lineLimit(1)
             .truncationMode(.tail)
@@ -378,7 +378,7 @@ struct ComposerView: View {
                 ContextButton(conversation: conversation, status: status)
             }
         }
-        .font(.callout)
+        .font(.frog(size: 12))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 5)
     }
@@ -406,7 +406,7 @@ struct ComposerView: View {
             }
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 15, weight: .medium))
+                .font(.frog(size: 15, weight: .medium))
                 .frame(width: 22, height: 22)
                 .hoverPlate(h: 3, v: 3)
         }
@@ -547,7 +547,7 @@ struct DictationButton: View {
                 switch dictation.phase {
                 case .idle:
                     Image(systemName: "mic")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.frog(size: 14, weight: .medium))
                         .frame(width: 22, height: 22)
                 case .starting:
                     ProgressView().controlSize(.small).frame(width: 22, height: 22)
@@ -560,7 +560,7 @@ struct DictationButton: View {
                 case .listening, .finishing:
                     HStack(spacing: 5) {
                         LevelMeter(level: dictation.phase == .listening ? dictation.level : 0)
-                        Image(systemName: "stop.fill").font(.system(size: 8))
+                        Image(systemName: "stop.fill").font(.frog(size: 8))
                     }
                     .foregroundStyle(.red)
                     .frame(height: 22)
@@ -623,7 +623,7 @@ private struct DictationProblemView: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
         }
-        .font(.callout)
+        .font(.frog(size: 12))
     }
 }
 
@@ -682,7 +682,7 @@ struct ContextBar<Content: View>: View {
 
     var body: some View {
         HStack(spacing: 12) { content }
-            .font(.callout)
+            .font(.frog(size: 12))
             .foregroundStyle(.secondary)
             .padding(.leading, 14)
             .padding(.trailing, 7)
@@ -709,18 +709,18 @@ struct SkillList: View {
                             Image(systemName: "sparkles.rectangle.stack").foregroundStyle(.secondary)
                             Text("/" + skill.name).fontWeight(.medium)
                             if skill.project {
-                                Text("project").font(.caption2).foregroundStyle(.secondary)
+                                Text("project").font(.frog(size: 10)).foregroundStyle(.secondary)
                                     .padding(.horizontal, 5).padding(.vertical, 1)
                                     .background(.quaternary, in: .capsule)
                             }
                         }
                         Text(skill.description)
-                            .font(.caption)
+                            .font(.frog(size: 10))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .padding(.leading, 22)
                     }
-                    .font(.callout)
+                    .font(.frog(size: 12))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
@@ -754,7 +754,7 @@ struct MentionList: View {
                         Text(dir).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
                         Spacer(minLength: 0)
                     }
-                    .font(.callout)
+                    .font(.frog(size: 12))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(i == picked ? AnyShapeStyle(.tint.opacity(0.22)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
@@ -804,7 +804,7 @@ private struct ModelDownloadStatus: View {
                 Button("Retry", action: retry)
                     .controlSize(.small)
             }
-            .font(.callout)
+            .font(.frog(size: 12))
         case nil:
             HStack(spacing: 8) {
                 Image(systemName: "pause.circle").foregroundStyle(.secondary)
@@ -812,7 +812,7 @@ private struct ModelDownloadStatus: View {
                 Spacer(minLength: 0)
                 Button("Resume", action: retry).controlSize(.small)
             }
-            .font(.callout)
+            .font(.frog(size: 12))
         default:
             EmptyView()
         }

@@ -57,6 +57,7 @@ struct FrogApp: App {
     var body: some Scene {
         WindowGroup("Frog", for: URL.self) { $folder in
             RootView(folder: $folder)
+                .font(.frog(size: 13))
                 .containerBackground(FrogCanvas.color, for: .window)
         }
         .defaultSize(width: 1100, height: 760)
@@ -271,7 +272,7 @@ struct ModelSuggestion: View {
                     .padding(.leading, 4)
                     .help("Don't suggest this again")
                 }
-                .font(.callout)
+                .font(.frog(size: 12))
                 .foregroundStyle(.secondary)
                 .transition(.opacity)
             }

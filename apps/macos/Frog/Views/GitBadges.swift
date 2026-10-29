@@ -20,7 +20,7 @@ struct GitBadgeView: View {
             if display.showsBranch {
                 HStack(spacing: 2) {
                     Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.frog(size: 10, weight: .semibold))
                         .foregroundStyle(branchTint)
                         .overlay(alignment: .topTrailing) {
                             if display.dirty {
@@ -35,7 +35,7 @@ struct GitBadgeView: View {
             if display.landed > 0 {
                 HStack(spacing: 2) {
                     Image(systemName: "arrow.triangle.merge")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.frog(size: 10, weight: .semibold))
                         .foregroundStyle(.green)
                     if !display.leaf { digits(display.landed).foregroundStyle(.secondary) }
                 }
@@ -448,9 +448,9 @@ struct GitCard: View {
         let links = linkRows(card)
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
-                Text(request.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Text(request.title).font(.frog(size: 12, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 12)
-                Text(request.counts).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                Text(request.counts).font(.frog(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12).padding(.top, 9).padding(.bottom, 3)
             if !card.landed.isEmpty {
@@ -471,7 +471,7 @@ struct GitCard: View {
                 if card.morePending > 0 { more("\(card.morePending) more") }
             }
             if card.landed.isEmpty && card.pending.isEmpty {
-                Text("Nothing to show yet").font(.system(size: 11)).foregroundStyle(.tertiary)
+                Text("Nothing to show yet").font(.frog(size: 11)).foregroundStyle(.tertiary)
                     .padding(.horizontal, 12).padding(.vertical, 6)
             }
             Divider().padding(.top, 6)
@@ -482,7 +482,7 @@ struct GitCard: View {
                 Spacer()
                 Text(pinned ? "↩ open · ⌘C copy · esc" : "click to pin").foregroundStyle(.tertiary)
             }
-            .font(.system(size: 11))
+            .font(.frog(size: 11))
             .padding(.horizontal, 12).padding(.vertical, 6)
         }
         .frame(width: 440, alignment: .leading)
@@ -555,13 +555,13 @@ struct GitCard: View {
 
     private func section(_ title: String) -> some View {
         Text(title.uppercased()).tracking(0.6)
-            .font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.tertiary)
+            .font(.frog(size: 9.5, weight: .semibold)).foregroundStyle(.tertiary)
             .lineLimit(1)
             .padding(.horizontal, 12).padding(.top, 7).padding(.bottom, 2)
     }
 
     private func more(_ text: String) -> some View {
-        Text("… " + text).font(.system(size: 11)).foregroundStyle(.tertiary)
+        Text("… " + text).font(.frog(size: 11)).foregroundStyle(.tertiary)
             .padding(.horizontal, 12).padding(.vertical, 2)
     }
 
@@ -577,13 +577,13 @@ struct GitCard: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(l.title).lineLimit(1).truncationMode(.tail)
                 if let s = l.session {
-                    Text(s).font(.system(size: 10.5)).foregroundStyle(.tertiary).lineLimit(1)
+                    Text(s).font(.frog(size: 10.5)).foregroundStyle(.tertiary).lineLimit(1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 5) {
                 MergedCapsule()
-                Text(ref(l)).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+                Text(ref(l)).font(.frog(size: 10.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
             }
             .fixedSize()
             stat(l.statKey)
@@ -609,16 +609,16 @@ struct GitCard: View {
             Text(p.title).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 5) {
                 if let b = p.branch {
-                    Text(b).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                    Text(b).font(.frog(size: 10, design: .monospaced)).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
                         .padding(.horizontal, 5).background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 4))
                         .frame(maxWidth: 140, alignment: .trailing)
                 }
-                Text("↑\(p.ahead)").font(.system(size: 10.5, design: .monospaced))
+                Text("↑\(p.ahead)").font(.frog(size: 10.5, design: .monospaced))
             }
             .fixedSize(horizontal: false, vertical: true)
             if let t = p.trouble {
-                Text(t.words).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.orange).frame(width: 84, alignment: .trailing)
+                Text(t.words).font(.frog(size: 10.5, design: .monospaced)).foregroundStyle(.orange).frame(width: 84, alignment: .trailing)
             } else {
                 stat(p.statKey)
             }
@@ -630,8 +630,8 @@ struct GitCard: View {
         let list = p.commitsKey.flatMap { index.commits[$0] } ?? []
         ForEach(list) { c in
             HStack(spacing: 7) {
-                Text(c.sha).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.tertiary)
-                Text(c.subject).font(.system(size: 11.5)).lineLimit(1).truncationMode(.tail)
+                Text(c.sha).font(.frog(size: 10.5, design: .monospaced)).foregroundStyle(.tertiary)
+                Text(c.subject).font(.frog(size: 11.5)).lineLimit(1).truncationMode(.tail)
             }
             .padding(.horizontal, 12).padding(.vertical, 2)
         }
@@ -648,7 +648,7 @@ struct GitCard: View {
             if let d = p.dirty, d > 0 { Text(" · ● \(d) uncommitted").foregroundStyle(.secondary) }
             else if p.dirty == 0 { Text(" · clean").foregroundStyle(.secondary) }
         }
-        .font(.system(size: 10.5, design: .monospaced))
+        .font(.frog(size: 10.5, design: .monospaced))
         .padding(.horizontal, 12).padding(.top, 3)
     }
 
@@ -662,7 +662,7 @@ struct GitCard: View {
                 Text(key == nil ? "" : "–").foregroundStyle(.tertiary)
             }
         }
-        .font(.system(size: 10.5, design: .monospaced))
+        .font(.frog(size: 10.5, design: .monospaced))
         .frame(width: 84, alignment: .trailing)
     }
 }
@@ -678,7 +678,7 @@ private struct CardRow<Content: View>: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) { content() }
-                .font(.system(size: 12))
+                .font(.frog(size: 12))
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .background(hovering || focused ? AnyShapeStyle(.tint.opacity(0.14)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 5))
                 .overlay {
@@ -697,8 +697,8 @@ private struct CardRow<Content: View>: View {
 private struct MergedCapsule: View {
     var body: some View {
         HStack(spacing: 2) {
-            Image(systemName: "arrow.triangle.merge").font(.system(size: 8.5, weight: .bold))
-            Text("Merged").font(.system(size: 10, weight: .semibold))
+            Image(systemName: "arrow.triangle.merge").font(.frog(size: 8.5, weight: .bold))
+            Text("Merged").font(.frog(size: 10, weight: .semibold))
         }
         .foregroundStyle(.white)
         .padding(.leading, 4).padding(.trailing, 6).padding(.vertical, 1)

@@ -16,7 +16,7 @@ struct Monogram: View {
             RoundedRectangle(cornerRadius: size * 0.28)
                 .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary), lineWidth: selected ? 1.5 : 0.5)
             if session.isChat {
-                Image(systemName: "bubble.left").font(.system(size: size * 0.38))
+                Image(systemName: "bubble.left").font(.frog(size: size * 0.38))
             } else {
                 Text(initial).font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
             }

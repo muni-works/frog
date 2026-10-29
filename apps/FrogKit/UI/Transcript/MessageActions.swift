@@ -16,7 +16,7 @@ struct MessageAction: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
+                .font(.frog(size: 12, weight: .medium))
                 .frame(width: 24, height: 22)
                 .foregroundStyle(hovering ? .primary : .tertiary)
                 .background(.quaternary.opacity(hovering ? 0.6 : 0), in: .rect(cornerRadius: 6))

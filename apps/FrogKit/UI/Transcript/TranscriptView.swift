@@ -441,7 +441,7 @@ struct UserPrompt: View {
             }
             if !message.isEmpty {
                 Text(message)
-                    .font(.system(size: TurnType.body))
+                    .font(.frog(size: TurnType.body))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, TurnSpace.Inset.roomy + TurnSpace.Inset.hair)

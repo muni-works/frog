@@ -51,7 +51,7 @@ struct ProjectGreeting: View {
         VStack(spacing: 10) {
             if let summary = glance.summary {
                 Text(summary)
-                    .font(.callout)
+                    .font(.frog(size: 12))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
@@ -60,7 +60,7 @@ struct ProjectGreeting: View {
                     Button { conversation.submit(start.prompt) } label: {
                         Text(start.title)
                             .lineLimit(1)
-                            .font(.callout)
+                            .font(.frog(size: 12))
                             .padding(.horizontal, 12)
                             .frame(height: 28)
                     }
@@ -112,7 +112,7 @@ struct RecentProjectChips: View {
                     } icon: {
                         Image(systemName: "folder.fill").foregroundStyle(FolderTint.color(url))
                     }
-                    .font(.callout)
+                    .font(.frog(size: 12))
                     .padding(.horizontal, 12)
                     .frame(height: 28)
                 }
@@ -223,7 +223,7 @@ struct SetupLine: View {
                     .padding(.leading, 4)
                     .help("Don't show this again")
                 }
-                .font(.callout)
+                .font(.frog(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .transition(.opacity)
@@ -333,7 +333,7 @@ struct BiggerModelLine: View {
                 .padding(.leading, 4)
                 .help("Keep using \(current?.name ?? "this model")")
             }
-            .font(.callout)
+            .font(.frog(size: 12))
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .frame(maxWidth: .infinity)
@@ -398,7 +398,7 @@ struct PingLine: View {
                     .buttonStyle(.link)
                     .foregroundStyle(.secondary)
                 }
-                .font(.callout)
+                .font(.frog(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)

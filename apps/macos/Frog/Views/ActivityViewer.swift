@@ -116,7 +116,7 @@ struct ActivityViewer: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
-        .font(.callout)
+        .font(.frog(size: 12))
         .padding(.horizontal, 14)
         // Hugs its content: a short state reads as a small pill, not a mostly empty bar.
         .fixedSize()
@@ -267,7 +267,7 @@ struct DegradedBadge: View {
                     ForEach(degraded, id: \.kind) { d in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(d.what).font(.callout.weight(.semibold))
-                            Text(d.why).font(.callout).foregroundStyle(.secondary)
+                            Text(d.why).font(.frog(size: 12)).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }

@@ -418,7 +418,7 @@ struct SessionList: View {
             Spacer(minLength: 4)
             trailing()
         }
-        .font(.system(size: 10, weight: .semibold))
+        .font(.frog(size: 10, weight: .semibold))
         .foregroundStyle(tint)
         .padding(.leading, 8)
         .padding(.trailing, 4)
@@ -470,7 +470,7 @@ struct SessionList: View {
             Button { toggleDone(parent) } label: {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: AttentionMetrics.leading(depth))
-                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                    Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
                         .rotationEffect(.degrees(open ? 90 : 0))
                         .frame(width: AttentionMetrics.disclosure)
                     Text("\(count) \(what)")
@@ -479,7 +479,7 @@ struct SessionList: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .font(.system(size: 11))
+                .font(.frog(size: 11))
                 .foregroundStyle(.tertiary)
                 .padding(.leading, 4)
                 .frame(height: 22)
@@ -506,7 +506,7 @@ struct SessionList: View {
             HStack(spacing: 5) {
                 Text(folder.lastPathComponent)
                     .lineLimit(1)
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 2)
                 repoBadge(folder, items)
@@ -542,7 +542,7 @@ struct SessionList: View {
     }
 
     private func compactHeader(_ title: String) -> some View {
-        Text(title).font(.caption).foregroundStyle(.secondary)
+        Text(title).font(.frog(size: 10)).foregroundStyle(.secondary)
             .padding(.leading, 6).padding(.top, 5).padding(.bottom, 1)
     }
 
@@ -586,7 +586,7 @@ struct SessionList: View {
     private func doneRow(parent: String, count: Int, failed: Int, open: Bool) -> some View {
         Button { toggleDone(parent) } label: {
             HStack(spacing: 4) {
-                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
                     .rotationEffect(.degrees(open ? 90 : 0))
                 Text("+\(count) done")
                 if failed > 0 {
@@ -594,7 +594,7 @@ struct SessionList: View {
                 }
                 Spacer(minLength: 0)
             }
-            .font(.system(size: 11))
+            .font(.frog(size: 11))
             .foregroundStyle(.tertiary)
             .frame(height: 22)
             .contentShape(.rect)
@@ -738,7 +738,7 @@ struct SessionList: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .font(.caption)
+                .font(.frog(size: 10))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
@@ -921,7 +921,7 @@ struct SessionList: View {
 
     private func empty(_ text: String) -> some View {
         Text(text)
-            .font(.callout)
+            .font(.frog(size: 12))
             .foregroundStyle(.tertiary)
             .frame(maxWidth: .infinity)
             .padding(.top, 24)
@@ -941,7 +941,7 @@ struct SessionList: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .font(.callout)
+            .font(.frog(size: 12))
             .padding(.horizontal, 8)
             .frame(height: 26)
             .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 8))
@@ -984,7 +984,7 @@ struct SessionList: View {
             }
         }
         .buttonStyle(.plain)
-        .font(.caption)
+        .font(.frog(size: 10))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
         .padding(.vertical, count > 0 || showArchived || liveCount > 0 ? 9 : 0)
@@ -1057,11 +1057,11 @@ private struct ChiefTile: View {
                 HStack(spacing: 4) {
                     Text(session.displayTitle).lineLimit(1).fontWeight(.semibold)
                     if session.isChat {
-                        Image(systemName: "bubble.left").font(.caption2).foregroundStyle(.tertiary)
+                        Image(systemName: "bubble.left").font(.frog(size: 10)).foregroundStyle(.tertiary)
                     }
                 }
                 Text(preview)
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .foregroundStyle(previewTint)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -1220,7 +1220,7 @@ private struct CompactSessionRow<Menu: View>: View {
             }
             if folded > 0 {
                 Button { onFold?() } label: {
-                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                    Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
                         .rotationEffect(.degrees(foldOpen ? 90 : 0))
                         .frame(width: 12, height: 20).contentShape(.rect)
                 }
@@ -1234,11 +1234,11 @@ private struct CompactSessionRow<Menu: View>: View {
             // own button, so the open target is a tap on the rest rather than a wrapping button.
             HStack(spacing: 5) {
                 Text(session.displayTitle).lineLimit(expandTitle ? 3 : 1).truncationMode(.tail)
-                    .font(.system(size: 13))
+                    .font(.frog(size: 13))
                     .foregroundStyle(Color.primary.opacity(selected || running ? 1 : 0.82))
                 if let suffix, showSuffix {
                     Text(suffix).lineLimit(1)
-                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                        .font(.frog(size: 11)).foregroundStyle(.tertiary)
                         .help(suffix)
                 }
                 if counts.total > 0 { childBadge }
@@ -1274,7 +1274,7 @@ private struct CompactSessionRow<Menu: View>: View {
             // always there).
             if !nested || hovering {
                 SwiftUI.Menu { menu() } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 10)).frame(width: 14, height: 20)
+                    Image(systemName: "ellipsis").font(.frog(size: 10)).frame(width: 14, height: 20)
                 }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).foregroundStyle(.secondary)
             }
@@ -1336,7 +1336,7 @@ private struct CompactSessionRow<Menu: View>: View {
             // A finished worker keeps a quiet check so it never reads as live work; a
             // top-level row only flashes it.
             if freshComplete || (depth > 0 && session.end == .complete) {
-                Image(systemName: "checkmark.circle.fill").font(.system(size: 11))
+                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11))
                     .foregroundStyle(.green.opacity(freshComplete ? 1 : 0.6)).help("done")
             } else {
                 EmptyView()
@@ -1444,7 +1444,7 @@ struct ConversationRow<Menu: View>: View {
                 HStack(spacing: 6) {
                     label
                     if let summary {
-                        Text(summary).font(.caption).foregroundStyle(.secondary)
+                        Text(summary).font(.frog(size: 10)).foregroundStyle(.secondary)
                             .lineLimit(1).fixedSize().help(summary)
                     }
                     Spacer(minLength: 0)
@@ -1497,18 +1497,18 @@ struct ConversationRow<Menu: View>: View {
         case .unread: LiveGlyph(live: .unread)
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
-                .font(.caption)
+                .font(.frog(size: 10))
                 .foregroundStyle(.red)
                 .help("ended with an error")
         case .idle:
             if pinned {
-                Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary)
+                Image(systemName: "pin.fill").font(.frog(size: 10)).foregroundStyle(.tertiary)
             } else if nested && session.end == .complete {
-                Image(systemName: "checkmark.circle.fill").font(.caption)
+                Image(systemName: "checkmark.circle.fill").font(.frog(size: 10))
                     .foregroundStyle(.green.opacity(0.6)).help("done")
             } else if !showPlace {
                 Text(SessionAge.short(session.modifiedDate))
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
             }

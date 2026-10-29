@@ -46,18 +46,18 @@ struct TerminalPane: View {
         HStack(spacing: 8) {
             Image(systemName: "terminal").foregroundStyle(.secondary)
             Text(pane.cwd.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? pane.title)
-                .font(.callout)
+                .font(.frog(size: 12))
                 .lineLimit(1)
                 .truncationMode(.head)
             Spacer()
             if let exit = pane.exit {
                 Text(exit == 0 ? "exited" : "exited \(exit)")
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .foregroundStyle(exit == 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
             } else if typedAt != nil {
                 // The engine shares this shell: show it when the user is the one typing.
                 Label("You", systemImage: "keyboard")
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .foregroundStyle(.secondary)
                     .transition(.opacity)
             }
@@ -69,7 +69,7 @@ struct TerminalPane: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             ProgressView().controlSize(.small)
-            Text("Starting shell…").font(.callout).foregroundStyle(.secondary)
+            Text("Starting shell…").font(.frog(size: 12)).foregroundStyle(.secondary)
         }
     }
 }

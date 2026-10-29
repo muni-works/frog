@@ -68,7 +68,7 @@ struct DiagramCanvas: View {
             .strokeBorder(.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
             .overlay(alignment: .topLeading) {
                 Text(label.uppercased())
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.frog(size: 10, weight: .semibold))
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                     .padding(.leading, 12)
@@ -117,7 +117,7 @@ struct DiagramCanvas: View {
     private func edgeLabel(_ path: Diagram.Layout.EdgePath) -> some View {
         if let at = path.labelAt, let text = diagram.edges[safe: path.edge]?.label {
             Text(text)
-                .font(.system(size: 11))
+                .font(.frog(size: 11))
                 .foregroundStyle(isHot(path.edge) ? .primary : .secondary)
                 .lineLimit(1)
                 .padding(.horizontal, 6)
@@ -201,13 +201,13 @@ private struct NodeBody: View {
         VStack(spacing: 2) {
             HStack(spacing: 5) {
                 if node.shape == .actor {
-                    Image(systemName: "person.fill").font(.system(size: 11)).foregroundStyle(.orange)
+                    Image(systemName: "person.fill").font(.frog(size: 11)).foregroundStyle(.orange)
                 }
                 if node.shape == .external {
-                    Image(systemName: "arrow.up.forward.square").font(.system(size: 10)).foregroundStyle(.secondary)
+                    Image(systemName: "arrow.up.forward.square").font(.frog(size: 10)).foregroundStyle(.secondary)
                 }
                 Text(node.label)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.frog(size: 13, weight: .medium))
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
                     .minimumScaleFactor(0.85)
@@ -215,7 +215,7 @@ private struct NodeBody: View {
             // The file, unless the label already says it (code maps label nodes by file).
             if let file = node.file, !node.label.hasSuffix((file as NSString).lastPathComponent) || node.line != nil {
                 Text((file as NSString).lastPathComponent + (node.line.map { ":\($0)" } ?? ""))
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.frog(size: 10, design: .monospaced))
                     .foregroundStyle(hot ? Color.accentColor : .secondary)
                     .lineLimit(1)
             }

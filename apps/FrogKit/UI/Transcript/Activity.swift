@@ -54,7 +54,7 @@ struct ActivityLabel: View {
             }
         } else {
             HStack(spacing: 7) {
-                icon { Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(.green) }
+                icon { Image(systemName: "circle.fill").font(.frog(size: 7)).foregroundStyle(.green) }
                 Text("Ready").foregroundStyle(.secondary)
             }
         }

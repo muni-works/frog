@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreText
 
 /// The shell's design tokens, so views read one palette, one type ramp and one set of radii
 /// instead of picking their own. Same as the web app (docs/design/frog-web/README.md, "as
@@ -101,4 +102,24 @@ extension Color {
         })
         #endif
     }
+}
+
+// MARK: - Type
+
+/// IBM Plex, like the web app: Sans for words, Mono for code. Rounded stays SF, since
+/// Plex has no rounded cut. Fonts ship in FrogKit/UI/Fonts and register on first use.
+public extension Font {
+    static func frog(size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
+        guard design != .rounded, PlexFonts.registered else { return .frog(size: size, weight: weight, design: design) }
+        return .custom(design == .monospaced ? "IBM Plex Mono" : "IBM Plex Sans", fixedSize: size).weight(weight)
+    }
+}
+
+enum PlexFonts {
+    static let registered: Bool = {
+        let urls = ["IBMPlexSans", "IBMPlexMono-Regular", "IBMPlexMono-Medium"]
+            .compactMap { Bundle.main.url(forResource: $0, withExtension: "ttf") }
+        urls.forEach { CTFontManagerRegisterFontsForURL($0 as CFURL, .process, nil) }
+        return !urls.isEmpty
+    }()
 }
