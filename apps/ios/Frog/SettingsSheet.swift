@@ -128,6 +128,20 @@ private struct CloudBilling: View {
     @State private var account = CloudAccount.shared
     @State private var amount = 10
 
+    /// One sign-in the account has, or a Connect button that adds it to this account.
+    private func login(_ name: String, _ who: String?, why: String, provider: String) -> some View {
+        LabeledContent {
+            if who != nil {
+                Text("Connected")
+            } else {
+                Button("Connect") { Task { await CloudPhone.shared.connect(provider) } }
+            }
+        } label: {
+            Text(name)
+            Text(who ?? "Not connected. \(why)")
+        }
+    }
+
     var body: some View {
         Group {
             if let me = account.me {
@@ -137,6 +151,10 @@ private struct CloudBilling: View {
                     }
                 } header: {
                     Text("Account")
+                }
+                Section("Sign-in") {
+                    login("GitHub", me.handle.map { "@\($0)" }, why: "Needed for your repos.", provider: "github")
+                    login("Google", me.google, why: "Sign in with your Google account.", provider: "google")
                 }
                 if let sub = me.subscription {
                     Section(sub.name) {

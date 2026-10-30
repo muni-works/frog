@@ -1,7 +1,7 @@
 import { PLANS, TOP_UPS } from '../auth'
 import { useEffect, useMemo, useState } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
-import { API, firstName, type Account } from '../auth'
+import { billingHistory, billingPortal, createKey, firstName, listKeys, revokeKey, type Account, type KeyInfo, type Provider } from '../auth'
 import type { Model } from '../models'
 import type { SessionSummary } from '../cloud/protocol'
 
@@ -61,7 +61,7 @@ export function dollars(d: number) {
 }
 
 /** The plan and its allowance, or (without one) the plans to pick from. */
-function Subscription({ account, onSubscribe }: { account: Account | null; onSubscribe?: (plan: string) => Promise<void> }) {
+function Subscription({ account, apiKey, onSubscribe }: { account: Account | null; apiKey?: string; onSubscribe?: (plan: string) => Promise<void> }) {
   const [busy, setBusy] = useState<string | null>(null)
   const sub = account?.subscription
   if (sub) return (
@@ -76,7 +76,8 @@ function Subscription({ account, onSubscribe }: { account: Account | null; onSub
           </div>
         )
       })}
-      <a className="det" href={`${API}/billing`} target="_blank" rel="noreferrer">Change or cancel your plan</a>
+      {apiKey && <button type="button" className="f-btn f-btn--plain f-btn--small" style={{ alignSelf: 'flex-start' }} disabled={busy === 'portal'}
+        onClick={() => { setBusy('portal'); billingPortal(apiKey).catch(() => setBusy(null)) }}>{busy === 'portal' ? 'Opening Stripe…' : 'Change or cancel your plan'}</button>}
     </div>
   )
   return (
@@ -119,9 +120,72 @@ function TopUp({ onTopUp }: { onTopUp: (dollars: number) => Promise<void> }) {
 }
 
 const tabs = ['Account', 'Billing'] as const
+export type SettingsTab = (typeof tabs)[number]
 
-export function Settings({ account, models = [], onSignOut, onClose, onTopUp, onSubscribe }: { account: Account | null; models?: Model[]; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void>; onSubscribe?: (plan: string) => Promise<void> }) {
-  const [tab, setTab] = useState<(typeof tabs)[number]>('Account')
+const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+
+/** Devices and keys, as api.frog.toys/account had them: each signed-in app, and keys made for
+ * the CLI or a tool. A new key shows once. Revoking this browser's own key signs it out. */
+function Keys({ apiKey }: { apiKey: string }) {
+  const [keys, setKeys] = useState<KeyInfo[] | null>(null)
+  const [made, setMade] = useState<string | null>(null)
+  const [name, setName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const load = () => listKeys(apiKey).then(setKeys, () => setError("Couldn't load your keys."))
+  useEffect(() => { load() }, [apiKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  const live = (keys ?? []).filter((k) => !k.revoked)
+  return (
+    <div className="set-keys">
+      <b>Devices and keys</b>
+      {!keys && !error && <div className="det">Loading…</div>}
+      {live.map((k) => (
+        <div key={k.id} className="set-row">
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <b>{k.name ?? (k.kind === 'device' ? 'A device' : 'API key')}</b>{k.current && <span className="f-badge" style={{ marginLeft: 6 }}>This browser</span>}
+            <div className="det">{k.kind === 'device' ? 'Signed in' : 'API key'} {day(k.created)}{k.last_used ? ` · last used ${day(k.last_used)}` : ''}</div>
+          </div>
+          {!k.current && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => revokeKey(apiKey, k.id).then(load, () => setError("Couldn't revoke it. Try again."))}>Revoke</button>}
+        </div>
+      ))}
+      {made ? (
+        <div className="set-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+          <div className="det wrap">Copy it now: it's only shown once. Use it as FROG_API_KEY.</div>
+          <code style={{ wordBreak: 'break-all', userSelect: 'all' }}>{made}</code>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => navigator.clipboard?.writeText(made)}>Copy</button>
+            <button type="button" className="f-btn f-btn--plain f-btn--small" onClick={() => setMade(null)}>Done</button>
+          </div>
+        </div>
+      ) : (
+        <form className="set-row" onSubmit={(e) => { e.preventDefault(); createKey(apiKey, name).then((r) => { setMade(r.key); setName(''); load() }, () => setError("Couldn't make a key. Try again.")) }}>
+          <input className="f-input" style={{ flex: 1 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="New API key name (optional)" aria-label="New API key name" />
+          <button type="submit" className="f-btn f-btn--bordered f-btn--small">Create key</button>
+        </form>
+      )}
+      {error && <div className="det" style={{ color: 'var(--warn)' }}>{error}</div>}
+    </div>
+  )
+}
+
+/** Credit purchases, newest first. */
+function History({ apiKey }: { apiKey: string }) {
+  const [rows, setRows] = useState<Awaited<ReturnType<typeof billingHistory>> | null>(null)
+  useEffect(() => { billingHistory(apiKey).then(setRows, () => setRows([])) }, [apiKey])
+  if (!rows?.length) return null
+  return (
+    <div className="set-prices">
+      <div className="set-price-h"><span>Credit added</span><span /><span /><span>Amount</span></div>
+      {rows.map((t) => (
+        <div key={t.at} className="set-price">
+          <span>{day(t.at)}</span><span /><span className="det">{t.status === 'succeeded' ? '' : t.status}</span><span>${(t.amount_micro_usd / 1e6).toFixed(2)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function Settings({ account, apiKey, tab: initial = 'Account', models = [], onConnect, onSignOut, onClose, onTopUp, onSubscribe }: { account: Account | null; apiKey?: string; tab?: SettingsTab; models?: Model[]; onConnect?: (provider: Provider) => void; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void>; onSubscribe?: (plan: string) => Promise<void> }) {
+  const [tab, setTab] = useState<SettingsTab>(initial)
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', k)
@@ -144,12 +208,13 @@ export function Settings({ account, models = [], onSignOut, onClose, onTopUp, on
               <div className="acts"><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onSignOut}>Sign out</button></div>
             </div>
             <p className="det wrap">Cloud sessions belong to your account, so they show up on every device you sign in on.</p>
-            <div className="set-row"><span style={{ flex: 1 }}>Devices and keys</span><a href={`${API}/account`} target="_blank" rel="noreferrer">Manage</a></div>
+            <Logins account={account} onConnect={onConnect} />
+            {apiKey && <Keys apiKey={apiKey} />}
             {notifySupported() && <Notify />}
           </>)}
           {tab === 'Billing' && (<>
             <h2>Billing</h2>
-            <Subscription account={account} onSubscribe={onSubscribe} />
+            <Subscription account={account} apiKey={apiKey} onSubscribe={onSubscribe} />
             <div className="bill-card">
               <div className="bill-h"><b>Usage credit</b><b className="num">{creditLine(account)}</b></div>
               <div className="det wrap">{account?.subscription
@@ -157,6 +222,7 @@ export function Settings({ account, models = [], onSignOut, onClose, onTopUp, on
                 : 'Each turn pays from credit at the model’s prices below.'}</div>
               {onTopUp && <TopUp onTopUp={onTopUp} />}
             </div>
+            {apiKey && <History apiKey={apiKey} />}
             {models.length > 0 && (
               <div className="set-prices">
                 <div className="set-price-h"><span>Model</span><span>Input</span><span>Cached</span><span>Output</span></div>
@@ -173,6 +239,20 @@ export function Settings({ account, models = [], onSignOut, onClose, onTopUp, on
       </div>
     </div>
   )
+}
+
+/** The sign-ins this account has, as on the Mac and iPhone: GitHub (its repos) and Google. */
+function Logins({ account, onConnect }: { account: Account | null; onConnect?: (provider: Provider) => void }) {
+  const rows: [Provider, string, string | null | undefined, string][] = [
+    ['github', 'GitHub', account?.handle && `@${account.handle}`, 'Needed for your repos.'],
+    ['google', 'Google', account?.google, 'Sign in with your Google account.'],
+  ]
+  return rows.map(([id, name, who, why]) => (
+    <div key={id} className="set-row">
+      <div style={{ flex: 1 }}><b>{name}</b><div className="det wrap">{who ?? `Not connected. ${why}`}</div></div>
+      {who ? <span className="det">Connected</span> : onConnect && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => onConnect(id)}>Connect</button>}
+    </div>
+  ))
 }
 
 function Notify() {

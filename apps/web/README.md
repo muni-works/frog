@@ -28,7 +28,7 @@ GitHub or Google on api.frog.toys, ending in a `frog_` key for this browser (`sr
 
 1. `signIn()` makes a PKCE verifier, an S256 challenge and a state, keeps them in sessionStorage, and goes to `api.frog.toys/auth/web?challenge&state&device&return&provider` (ecto/zest#77). The edge runs GitHub or Google if you're signed out, then 302s back with `?code&state`.
 2. `finishSignIn()` checks the state and calls `POST /v1/auth/exchange {code, verifier, device_name}`, which returns `{key, account}`. The key goes in localStorage and is the bearer for the gateway and `/v1/me`.
-3. The device is `frog.toys web · xxxx`, one per browser, so it can be revoked on its own from api.frog.toys/account. Signing in again on the same browser replaces it.
+3. The device is `frog.toys web · xxxx`, one per browser, so it can be revoked on its own from Settings › Account. Signing in again on the same browser replaces it.
 
 Accounts link by verified email, so GitHub and Google with the same address are one account. A Google account has no repos until it connects GitHub: its repo menu offers "Connect GitHub", which is the same round trip with `provider=github` and a `link` token from `POST /v1/auth/link` (this browser's key), so the edge signs in as this account whatever its cookie says. It adds GitHub to that account (whatever GitHub's email), and the app comes back to the repo menu with what you'd typed.
 

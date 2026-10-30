@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAlerts } from './alerts'
-import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topUp, API, AuthError, type Account, type Provider } from './auth'
+import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topUp, AuthError, type Account, type Provider } from './auth'
 import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
@@ -11,7 +11,7 @@ import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
 import { SessionList } from './ui/SessionList'
 import { Starting } from './ui/Starting'
-import { creditLine, Palette, Settings, type Command } from './ui/Overlays'
+import { creditLine, Palette, Settings, type Command, type SettingsTab } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
@@ -62,7 +62,14 @@ export default function App() {
     return () => removeEventListener('popstate', back)
   }, [])
   const [palette, setPalette] = useState(false)
-  const [settings, setSettings] = useState(false)
+  // api.frog.toys/account and /billing land here as ?settings=account|billing (as does Stripe).
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(() => new URLSearchParams(location.search).get('settings') === 'billing' ? 'Billing' : 'Account')
+  const [settings, setSettings] = useState(() => new URLSearchParams(location.search).has('settings'))
+  useEffect(() => {
+    const q = new URLSearchParams(location.search)
+    if (q.has('settings')) { q.delete('settings'); history.replaceState(null, '', location.pathname + (q.size ? `?${q}` : '')) }
+  }, [])
+  const openSettings = (tab: SettingsTab = 'Account') => { setSettingsTab(tab); setSettings(true) }
   // Open or closed, kept per browser like its tab and width.
   const [inspector, setInspectorState] = useState(() => { try { return localStorage.getItem('frog.inspector') === '1' } catch { return false } })
   const setInspector = (v: boolean) => { setInspectorState(v); try { localStorage.setItem('frog.inspector', v ? '1' : '0') } catch { /* private mode */ } }
@@ -282,7 +289,7 @@ export default function App() {
   const commit = (s: SessionSummary) => send(s.id, 'Commit the changes with a clear message.')
   const push = (s: SessionSummary) => send(s.id, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
 
-  const leave = (after: string | null, provider: Provider = 'github', connect?: string) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect).catch(() => setLeavingFor(null)) }
+  const leave = (after: string | null, provider: Provider = 'github', connect?: string, pick = !!connect) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect, pick).catch(() => setLeavingFor(null)) }
 
   // Keyboard: ⌘K palette, ⌘N new, ⌘, settings, ⌘↩ / ⌘. answer the current ask.
   useEffect(() => {
@@ -475,7 +482,7 @@ export default function App() {
                 <div className="det wrap" style={{ marginTop: -4 }}>Nothing is lost. The sandbox, the changes and this conversation stay put.</div>
                 <div className="out" style={{ borderColor: 'var(--frog)' }}>
                   <div style={{ flex: 1 }}><b>Add credit</b><div className="det wrap">Pay as you go, or go Pro for cloud usage every month. Then keep going here.</div></div>
-                  <a className="f-btn f-btn--prominent" href={`${API}/billing`} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Billing</a>
+                  <button type="button" className="f-btn f-btn--prominent" onClick={() => openSettings('Billing')}>Billing</button>
                 </div>
                 <div className="out" style={{ borderColor: 'var(--line)' }}>
                   <div style={{ flex: 1 }}><b>Finish on your Mac</b><div className="det wrap">Frog for Mac runs local models for free.</div></div>
@@ -495,7 +502,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => setSettings(true), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
+            <Composer key={current.id} autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
               onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
@@ -517,7 +524,7 @@ export default function App() {
               <HowItWorks />
             </div>
             <div className="dock">
-              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => setSettings(true), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
+              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
                 model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
@@ -534,7 +541,7 @@ export default function App() {
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onSignOut={() => { setSettings(false); signOut(); clearThreads(); setKey(null); setAccount(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
+      {settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={() => { setSettings(false); signOut(); clearThreads(); setKey(null); setAccount(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   )
