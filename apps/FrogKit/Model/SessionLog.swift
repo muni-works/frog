@@ -168,6 +168,23 @@ struct SessionHistory: @unchecked Sendable {
         return history
     }
 
+    /// Read and decode the history off the main thread, then keep it for `open`: a click
+    /// changes the screen at once and the log is read meanwhile.
+    static func prefetch(_ id: String, at url: URL, rows: Int = tailRows) async {
+        if await MainActor.run(body: { cache[id].map { $0.log.url == url && unchanged($0.log) } ?? false }) { return }
+        let read: SessionHistory? = await Task.detached(priority: .userInitiated) {
+            guard let log = SessionLog(url: url), !log.events.isEmpty else { return nil }
+            let start = log.tailStart(rows: rows)
+            return SessionHistory(log: log, tailStart: start, tail: log.decode(start..<log.events.count),
+                                  meta: log.meta(before: start))
+        }.value
+        guard let read else { return }
+        await MainActor.run {
+            cache[id] = read
+            touch(id)
+        }
+    }
+
     /// Forget a session's history (its log changed under it in a way a length can't tell).
     @MainActor static func forget(_ id: String) {
         cache[id] = nil

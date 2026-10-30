@@ -325,9 +325,15 @@ final class Workspace {
             opening = nil
             return
         }
+        // The click changes the screen now (the pane shows `opening`); the log is read off
+        // the main thread, then the engine starts on a warm history.
         opening = id
-        selection = id  // the sidebar moves on the click, not when the engine answers
-        start(arguments: ["-r", id])
+        selection = id
+        Task {
+            await SessionHistory.prefetch(id, at: Frog.sessions.appending(path: "\(id).jsonl"))
+            guard opening == id else { return }  // another click since
+            start(arguments: ["-r", id])
+        }
     }
 
     /// Branch the current session right after `turn`, and switch to the branch.
