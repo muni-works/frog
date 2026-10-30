@@ -1,6 +1,7 @@
 //! `--serve-ws`, driven over a real websocket: the handshake, refusals, a peer replacing
 //! another, a permission round trip, and the git credential helper. The model is a scripted
-//! OpenAI-compatible server reached through FROG_PROVIDER_BASE_URL, with no key.
+//! OpenAI-compatible server standing in for Frog Cloud (FROG_BASE_URL), with a placeholder
+//! FROG_API_KEY, as in Frog Cloud's sandbox.
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -26,7 +27,7 @@ fn temp_dir(name: &str) -> PathBuf {
     d
 }
 
-/// Read one HTTP/1.1 request: its first line and body.
+/// Read one HTTP/1.1 request: its head (request line and headers) and body.
 async fn read_request(sock: &mut TcpStream) -> Option<(String, String)> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -56,8 +57,7 @@ async fn read_request(sock: &mut TcpStream) -> Option<(String, String)> {
         }
         buf.extend_from_slice(&chunk[..n]);
     }
-    let first = head.lines().next().unwrap_or("").to_string();
-    Some((first, String::from_utf8_lossy(&buf[end..]).into_owned()))
+    Some((head, String::from_utf8_lossy(&buf[end..]).into_owned()))
 }
 
 async fn respond(sock: &mut TcpStream, kind: &str, body: &str) {
@@ -91,7 +91,7 @@ fn tool_reply(name: &str, args: Value) -> String {
 
 /// An OpenAI-compatible server that answers each turn request with the next scripted reply
 /// (then "ok"), and anything else (model lists, titles) blandly. Returns its `/v1` base.
-async fn fake_model(script: Vec<String>, models: Arc<Mutex<Vec<String>>>) -> String {
+async fn fake_model(script: Vec<String>, models: Models) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let script = Arc::new(Mutex::new(VecDeque::from(script)));
@@ -100,20 +100,28 @@ async fn fake_model(script: Vec<String>, models: Arc<Mutex<Vec<String>>>) -> Str
             let (mut sock, _) = listener.accept().await.unwrap();
             let (script, models) = (script.clone(), models.clone());
             tokio::spawn(async move {
-                let Some((first, body)) = read_request(&mut sock).await else {
+                let Some((head, body)) = read_request(&mut sock).await else {
                     return;
                 };
-                if !first.starts_with("POST") {
+                if !head.starts_with("POST") {
                     return respond(&mut sock, "application/json", r#"{"data":[]}"#).await;
                 }
                 // Only model requests name a model; the compiled-memory probe doesn't.
                 if let Ok(v) = serde_json::from_str::<Value>(&body)
                     && v.get("model").is_some()
                 {
+                    let auth = head
+                        .lines()
+                        .find_map(|l| {
+                            let (k, v) = l.split_once(':')?;
+                            k.eq_ignore_ascii_case("authorization")
+                                .then(|| v.trim().to_string())
+                        })
+                        .unwrap_or_default();
                     models
                         .lock()
                         .unwrap()
-                        .push(v["model"].as_str().unwrap_or("").into());
+                        .push((v["model"].as_str().unwrap_or("").into(), auth));
                 }
                 // A turn carries the tools; side requests (titles, summaries) don't.
                 let next = body
@@ -131,9 +139,11 @@ async fn fake_model(script: Vec<String>, models: Arc<Mutex<Vec<String>>>) -> Str
 struct Frog {
     child: tokio::process::Child,
     addr: String,
-    /// The model each request named.
-    models: Arc<Mutex<Vec<String>>>,
+    /// The model each request named, and its Authorization header.
+    models: Models,
 }
+
+type Models = Arc<Mutex<Vec<(String, String)>>>;
 
 impl Drop for Frog {
     fn drop(&mut self) {
@@ -142,11 +152,14 @@ impl Drop for Frog {
 }
 
 async fn frog(script: Vec<String>, extra: &[&str]) -> Frog {
-    frog_on(script, Some("openai/scripted"), extra).await
+    frog_on(script, Some("cloud/scripted"), extra).await
 }
 
+/// The key Frog Cloud's sandbox hands the engine; its gateway swaps in the real one.
+const PLACEHOLDER_KEY: &str = "frog-sandbox-placeholder";
+
 async fn frog_on(script: Vec<String>, model: Option<&str>, extra: &[&str]) -> Frog {
-    let models: Arc<Mutex<Vec<String>>> = Default::default();
+    let models: Models = Default::default();
     let base = fake_model(script, models.clone()).await;
     let home = temp_dir("home");
     let work = temp_dir("work");
@@ -165,8 +178,12 @@ async fn frog_on(script: Vec<String>, model: Option<&str>, extra: &[&str]) -> Fr
         .args(extra)
         .current_dir(&work)
         .env("HOME", &home)
-        .env("FROG_PROVIDER_BASE_URL", &base)
+        // A plain Frog Cloud client, with its base URL pointed at the scripted server.
+        .env("FROG_BASE_URL", &base)
+        .env("FROG_API_KEY", PLACEHOLDER_KEY)
         .env("FROG_KEYCHAIN", "off")
+        .env_remove("TANG_CLOUD_BASE_URL")
+        .env_remove("TANG_BASE_URL")
         .env_remove("FROG_MODEL")
         .env_remove("OPENAI_API_KEY")
         .stdin(Stdio::null())
@@ -501,8 +518,11 @@ async fn git_credential_helper_asks_the_gateway() {
         tokio::spawn(async move {
             loop {
                 let (mut sock, _) = listener.accept().await.unwrap();
-                let (first, _) = read_request(&mut sock).await.unwrap();
-                asked.lock().unwrap().push(first);
+                let (head, _) = read_request(&mut sock).await.unwrap();
+                asked
+                    .lock()
+                    .unwrap()
+                    .push(head.lines().next().unwrap_or("").to_string());
                 let body = json!({"username": "x-access-token", "password": "ghs_secret", "expires": "2026-10-28T20:00:00Z"});
                 respond(&mut sock, "application/json", &body.to_string()).await;
             }
@@ -588,5 +608,28 @@ async fn without_a_model_the_gateway_gets_frog_clouds() {
     until(&mut ws, "turn_ended").await;
     let models = f.models.lock().unwrap().clone();
     assert!(!models.is_empty());
-    assert!(models.iter().all(|m| m == "qwen3-coder-next"), "{models:?}");
+    assert!(
+        models.iter().all(|(m, _)| m == "qwen3-coder-next"),
+        "{models:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn switching_cloud_models_keeps_frog_clouds_base_and_key() {
+    // Nothing sandbox-specific: a mid-session switch goes where the first model did, with the
+    // same key.
+    let f = frog(vec![text_reply("one"), text_reply("two")], &[]).await;
+    let mut ws = connect(&f.addr).await;
+    hello(&mut ws, 0).await;
+    send(&mut ws, json!({"op": "submit", "text": "first"})).await;
+    until(&mut ws, "turn_ended").await;
+    send(&mut ws, json!({"op": "set_model", "spec": "cloud/other"})).await;
+    until(&mut ws, "model_changed").await;
+    send(&mut ws, json!({"op": "submit", "text": "second"})).await;
+    until(&mut ws, "turn_ended").await;
+    let models = f.models.lock().unwrap().clone();
+    let bearer = format!("Bearer {PLACEHOLDER_KEY}");
+    assert!(models.iter().any(|(m, _)| m == "scripted"), "{models:?}");
+    assert!(models.iter().any(|(m, _)| m == "other"), "{models:?}");
+    assert!(models.iter().all(|(_, a)| *a == bearer), "{models:?}");
 }

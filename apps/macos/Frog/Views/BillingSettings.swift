@@ -14,11 +14,13 @@ struct BillingSettings: View {
                 Section {
                     Text("Sign in to see your plan and credit. Everything on this Mac works without an account; Frog Cloud adds sessions in their own sandbox and hosted models, with $5 free to start.")
                         .foregroundStyle(.secondary)
-                    Button(signingIn ? "Signing In…" : "Sign In with GitHub") {
-                        signingIn = true
-                        Task { defer { signingIn = false }; try? await CloudAccount.signInAndSave() }
+                    ForEach([("github", "Sign In with GitHub"), ("google", "Sign In with Google")], id: \.0) { provider, title in
+                        Button(signingIn ? "Signing In…" : title) {
+                            signingIn = true
+                            Task { defer { signingIn = false }; try? await CloudAccount.signInAndSave(provider: provider) }
+                        }
+                        .disabled(signingIn)
                     }
-                    .disabled(signingIn)
                 }
             } else if let me = account.me {
                 Section("Account") {

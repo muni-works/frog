@@ -24,13 +24,15 @@ For real sessions instead of the mock, run the Frog Cloud gateway locally (zest 
 
 ## Sign-in
 
-GitHub on api.frog.toys, ending in a `frog_` key for this browser (`src/auth.ts`):
+GitHub or Google on api.frog.toys, ending in a `frog_` key for this browser (`src/auth.ts`):
 
-1. `signIn()` makes a PKCE verifier, an S256 challenge and a state, keeps them in sessionStorage, and goes to `api.frog.toys/auth/web?challenge&state&device&return` (ecto/zest#77). The edge runs GitHub if you're signed out, then 302s back with `?code&state`.
+1. `signIn()` makes a PKCE verifier, an S256 challenge and a state, keeps them in sessionStorage, and goes to `api.frog.toys/auth/web?challenge&state&device&return&provider` (ecto/zest#77). The edge runs GitHub or Google if you're signed out, then 302s back with `?code&state`.
 2. `finishSignIn()` checks the state and calls `POST /v1/auth/exchange {code, verifier, device_name}`, which returns `{key, account}`. The key goes in localStorage and is the bearer for the gateway and `/v1/me`.
 3. The device is `frog.toys web · xxxx`, one per browser, so it can be revoked on its own from api.frog.toys/account. Signing in again on the same browser replaces it.
 
-If you typed a message before signing up, it survives the GitHub round trip, and the repo picker opens with it once you're back. The edge only redirects to origins in its `WEB_APP_ORIGINS` var. To sign in from localhost, add `http://localhost:5173` there.
+Accounts link by verified email, so GitHub and Google with the same address are one account. A Google account has no repos until it connects GitHub: its repo menu offers "Connect GitHub", which is the same round trip with `provider=github` and a `link` token from `POST /v1/auth/link` (this browser's key), so the edge signs in as this account whatever its cookie says. It adds GitHub to that account (whatever GitHub's email), and the app comes back to the repo menu with what you'd typed.
+
+If you typed a message before signing up, it survives the round trip, and the repo picker opens with it once you're back. The edge only redirects to origins in its `WEB_APP_ORIGINS` var. To sign in from localhost, add `http://localhost:5173` there.
 
 ## How it maps to the engine protocol
 

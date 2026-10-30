@@ -89,7 +89,7 @@ test("next_suggested holds the model's suggestion until the next turn starts", (
   let t = [
     { event: "turn_started", turn: 1, input: "fix it" },
     { event: "next_suggested", turn: 1, text: "push it", act: true },
-    { event: "turn_ended", turn: 1, reason: "complete" },
+    { event: "turn_ended", turn: 1, reason: { type: "complete" } },
   ].reduce((t, e) => reduce(t, env(e as Event)), emptyThread);
   assert.deepEqual(t.next, { text: "push it", act: true });
   t = reduce(t, env({ event: "turn_started", turn: 2, input: "push it" }));
@@ -100,12 +100,12 @@ test("a woken engine's restarted seqs still land, by time; real replays stay dro
   const at = (e: Event, seq: number, created: number) => ({ ...e, seq, session: "s1", created }) as Envelope;
   let t = [
     at({ event: "turn_started", turn: 1, input: "hi" }, 1, 100),
-    at({ event: "turn_ended", turn: 1, reason: "complete" }, 2, 200),
+    at({ event: "turn_ended", turn: 1, reason: { type: "complete" } }, 2, 200),
   ].reduce(reduce, emptyThread);
-  t = reduce(t, at({ event: "turn_ended", turn: 1, reason: "complete" }, 2, 200)); // replay
+  t = reduce(t, at({ event: "turn_ended", turn: 1, reason: { type: "complete" } }, 2, 200)); // replay
   assert.equal(t.turns.length, 1);
   t = reduce(t, at({ event: "turn_started", turn: 2, input: "try again" }, 1, 900)); // new process
-  t = reduce(t, at({ event: "turn_ended", turn: 2, reason: "complete" }, 2, 950));
+  t = reduce(t, at({ event: "turn_ended", turn: 2, reason: { type: "complete" } }, 2, 950));
   assert.deepEqual(t.turns.map((u) => u.input), ["hi", "try again"]);
   assert.equal(t.running, false);
   assert.equal(t.lastSeq, 2);
@@ -131,7 +131,7 @@ test("a file edited twice keeps both edits' hunks and summed counts", () => {
 test("compaction leaves a mark after the turn it followed", () => {
   const t = [
     { event: "turn_started", turn: 1, input: "hi" },
-    { event: "turn_ended", turn: 1, reason: "complete" },
+    { event: "turn_ended", turn: 1, reason: { type: "complete" } },
     { event: "compacted", tokens_before: 82_000, tokens_after: 9_100 },
   ].reduce((t, e) => reduce(t, env(e as Event)), emptyThread);
   assert.deepEqual(t.marks, [{ after: 1, text: "Compacted · 82k → 9k tokens" }]);

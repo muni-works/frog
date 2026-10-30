@@ -156,6 +156,37 @@ pub fn cloud_models() -> Vec<Model> {
         .unwrap_or_else(built_in_cloud)
 }
 
+/// How long frog cloud's own list is trusted: it changes when frog cloud adds a model or moves
+/// one to another server, and every app should show the change the same hour (the web app
+/// reads `/v1/models` on every load).
+const CLOUD_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// frog cloud's models as `/v1/models` lists them now: fetched when older than `CLOUD_TTL`,
+/// else the cached list; unreachable, the last list (or the built-in one).
+pub async fn cloud_models_fresh() -> Vec<Model> {
+    let cached = read_cache(providers::CLOUD);
+    if let Some(c) = &cached
+        && now().saturating_sub(c.fetched) < CLOUD_TTL.as_secs()
+        && !c.models.is_empty()
+    {
+        return c.models.clone();
+    }
+    let info = providers::list(&providers::State::load())
+        .into_iter()
+        .find(|p| p.id == providers::CLOUD && p.connected);
+    if let Some(p) = info {
+        let dev = std::sync::Arc::new(tokio::sync::OnceCell::new());
+        if let Some(models) = fetch(&p, &dev).await.filter(|m| !m.is_empty()) {
+            write_cache(providers::CLOUD, &models);
+            return models;
+        }
+    }
+    cached
+        .map(|c| c.models)
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(built_in_cloud)
+}
+
 /// Gateways whose model lists are public: browsable before you connect them, and fetched
 /// without a key (a wrong key would get the request refused).
 fn public(provider: &str) -> bool {
@@ -308,6 +339,12 @@ async fn fetch(p: &ProviderInfo, dev: &Dev) -> Option<Vec<Model>> {
                     served_by: (p.id == providers::CLOUD)
                         .then(|| ServedBy::parse(&m["served_by"]))
                         .flatten(),
+                    // frog cloud prices its models in OpenRouter's shape (dollars per token)
+                    // and says how long their context is; other servers don't, models.dev does.
+                    context: m["context_length"].as_u64(),
+                    cost_in: per_million(&m["pricing"]["prompt"]),
+                    cost_out: per_million(&m["pricing"]["completion"]),
+                    cost_cache_read: per_million(&m["pricing"]["input_cache_read"]),
                     ..Default::default()
                 })
             })

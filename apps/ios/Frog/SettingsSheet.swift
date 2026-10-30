@@ -17,7 +17,9 @@ struct SettingsSheet: View {
                     if cloud.key != nil {
                         Button("Sign Out", role: .destructive) { cloud.signOut() }
                     } else {
-                        Button(cloud.signingIn ? "Signing In…" : "Sign In with GitHub") { cloud.signIn() }
+                        Button(cloud.signingIn ? "Signing In…" : "Sign In with GitHub") { cloud.signIn(provider: "github") }
+                            .disabled(cloud.signingIn)
+                        Button("Sign In with Google") { cloud.signIn(provider: "google") }
                             .disabled(cloud.signingIn)
                     }
                     if let e = cloud.error { Text(e).font(.footnote).foregroundStyle(.red) }
