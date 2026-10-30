@@ -509,6 +509,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .side { overflow: hidden; }
 /* A hairline between the sidebar and the page, so the two never run together on a flat screen. */
 @media (min-width: 761px) { .side { border-right: 1px solid var(--line); } }
+/* The composer is where you type: a hairline keeps it findable on any screen. */
+.f-composer, .cz-box { box-shadow: inset 0 0 0 1px var(--line); }
 .slist { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 -10px; padding: 0 10px 8px;
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%); }
@@ -543,31 +545,31 @@ button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
 .tool-body { margin: 2px 0 6px 7px; }
 
 /* Dark is true black, like the iPhone app: surfaces step up from black instead of from grey.
-   Contrast pass (2026-10-30): the sidebar is a visible step up (#131313) with a hairline, and
-   muted/faint text clear 4.5:1 on black, so it reads on LCDs as well as OLED. */
+   Contrast pass (2026-10-30), so it reads on LCDs as well as OLED: page #000 < sidebar #111 <
+   cards #1a1a1a < wells #242424, each a visible step; muted/faint text clear 4.5:1 on black. */
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --canvas: #000; --bg: #000; --card: #121212; --well: #1a1a1a; --line: #262626; --line-strong: #333;
-  --hover: rgba(255,255,255,.09); --glass-fill: rgba(20,20,20,.86); --glass-fallback: #131313;
+  --canvas: #000; --bg: #000; --card: #1a1a1a; --well: #242424; --line: #2a2a2a; --line-strong: #383838;
+  --hover: rgba(255,255,255,.09); --glass-fill: rgba(17,17,17,.9); --glass-fallback: #111;
   --muted: #a3a3a3; --faint: #808080;
   --shadow-float: 0 16px 40px -12px rgba(0,0,0,.95);
 } }
 :root[data-theme="dark"] {
-  --canvas: #000; --bg: #000; --card: #121212; --well: #1a1a1a; --line: #262626; --line-strong: #333;
-  --hover: rgba(255,255,255,.09); --glass-fill: rgba(20,20,20,.86); --glass-fallback: #131313;
+  --canvas: #000; --bg: #000; --card: #1a1a1a; --well: #242424; --line: #2a2a2a; --line-strong: #383838;
+  --hover: rgba(255,255,255,.09); --glass-fill: rgba(17,17,17,.9); --glass-fallback: #111;
   --muted: #a3a3a3; --faint: #808080;
 }
 
 /* Light is true white, the mirror of dark's true black: surfaces step down from white. The
-   sidebar steps down to #f3f3f3; faint text is #767676, 4.5:1 on white. */
+   page #fff > sidebar #f6f6f6 > cards #efefef > wells #e6e6e6; faint text is #767676, 4.5:1. */
 @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
-  --canvas: #fff; --bg: #fff; --card: #f4f4f4; --well: #ececec; --hover: rgba(0,0,0,.06);
-  --glass-fill: rgba(243,243,243,.88); --glass-fallback: #f3f3f3;
+  --canvas: #fff; --bg: #fff; --card: #efefef; --well: #e6e6e6; --hover: rgba(0,0,0,.06);
+  --glass-fill: rgba(246,246,246,.9); --glass-fallback: #f6f6f6;
   --muted: #5e5e5e; --faint: #767676;
   --shadow-float: 0 16px 40px -14px rgba(0,0,0,.22);
 } }
 :root[data-theme="light"] {
-  --canvas: #fff; --bg: #fff; --card: #f4f4f4; --well: #ececec; --hover: rgba(0,0,0,.06);
-  --glass-fill: rgba(243,243,243,.88); --glass-fallback: #f3f3f3;
+  --canvas: #fff; --bg: #fff; --card: #efefef; --well: #e6e6e6; --hover: rgba(0,0,0,.06);
+  --glass-fill: rgba(246,246,246,.9); --glass-fallback: #f6f6f6;
   --muted: #5e5e5e; --faint: #767676;
 }
 .insp-top { gap: 6px; }
