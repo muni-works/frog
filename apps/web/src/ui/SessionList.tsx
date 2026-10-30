@@ -34,10 +34,11 @@ function day(ms: number, now: number): string {
 }
 
 
-type View = { group: 'date' | 'repo' | 'none'; sort: 'activity' | 'created' | 'name'; compact: boolean; archived: boolean }
+/** `folded`: group headings collapsed in this browser, by name ("Yesterday", a repo). */
+type View = { group: 'date' | 'repo' | 'none'; sort: 'activity' | 'created' | 'name'; compact: boolean; archived: boolean; folded: string[] }
 const VIEW = 'frog.sidebar'
 function loadView(): View {
-  const d: View = { group: 'date', sort: 'activity', compact: false, archived: false }
+  const d: View = { group: 'date', sort: 'activity', compact: false, archived: false, folded: [] }
   try { return { ...d, ...JSON.parse(localStorage.getItem(VIEW) ?? '{}') } } catch { return d }
 }
 
@@ -237,12 +238,22 @@ export function SessionList(p: {
       {p.error && <div className="det wrap" style={{ padding: '10px 8px', color: 'var(--warn)' }}>Couldn't load sessions: {p.error}</div>}
       {view.archived && !groups.length && <div className="det wrap" style={{ padding: '14px 8px' }}>Nothing archived. Archive a session from its ⋯ menu.</div>}
       {!p.error && p.sessions.length === 0 && <div className="det wrap" style={{ padding: '14px 8px' }}>No sessions yet. Start one and it shows up here, and in Frog on your other devices.</div>}
-      {groups.map((g) => (
-        <div key={g.name}>
-          {g.name && <div className="h"><span>{g.name}</span></div>}
-          {g.rows.map(row)}
-        </div>
-      ))}
+      {groups.map((g) => {
+        const names = view.folded ?? []
+        const folded = !!g.name && names.includes(g.name)
+        const fold = () => setView({ folded: folded ? names.filter((n) => n !== g.name) : [...names, g.name] })
+        return (
+          <div key={g.name}>
+            {g.name && (
+              <button type="button" className="h sgroup" aria-expanded={!folded} onClick={fold}>
+                <span>{g.name}</span>
+                <span className="sgroup-n">{folded ? g.rows.length : ''}<span className={`chev2${folded ? '' : ' open'}`}>›</span></span>
+              </button>
+            )}
+            {!folded && g.rows.map(row)}
+          </div>
+        )
+      })}
       {total > shown && <div ref={more} className="slist-more" aria-hidden="true" />}
       {ctx && (
         <div className="f-card sctx" role="menu" style={{ left: ctx.x, top: ctx.y }} onMouseDown={(e) => e.stopPropagation()}>
