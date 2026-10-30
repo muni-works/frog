@@ -201,7 +201,8 @@ struct SessionList: View {
                         flat
                     } else {
                         chiefTile
-                        if compactSidebar {
+                        // Compact is density, not grouping: by date stays by date (as on the web).
+                        if compactSidebar, grouping == .project || grouping == .org {
                             compactTabs
                         } else {
                             switch grouping {
@@ -209,7 +210,7 @@ struct SessionList: View {
                             case .date: pinTiles; dated(unpinned)
                             case .none:
                                 pinTiles
-                                ForEach(unpinned.sorted(by: before)) { row($0, showPlace: true) }
+                                ForEach(unpinned.sorted(by: before)) { listRow($0) }
                             }
                         }
                     }
@@ -826,8 +827,14 @@ struct SessionList: View {
                 .padding(.horizontal, 10)
                 .padding(.top, 12)
                 .padding(.bottom, 3)
-            ForEach(items) { row($0, showPlace: true) }
+            ForEach(items) { listRow($0) }
         }
+    }
+
+    /// A row of a flat list: one line when compact, two otherwise.
+    @ViewBuilder
+    private func listRow(_ s: SessionInfo) -> some View {
+        if compactSidebar { compactRow(s, depth: 0) } else { row(s, showPlace: true) }
     }
 
     @ViewBuilder
