@@ -38,7 +38,7 @@ struct SessionList: View {
     /// Folded project groups, by folder path (newline-separated).
     @AppStorage("foldedGroups") private var foldedRaw = ""
     /// Org (the attention tree) by default; the older project and date views stay a choice.
-    @AppStorage("sidebarGroup") private var grouping = Grouping.org
+    @AppStorage("sidebarGroup") private var grouping = Grouping.date
     @AppStorage("sidebarSort") private var sort = Sort.activity
     /// The tree's scope (Live · Today · All), per window like the grouping.
     @AppStorage("sidebarScope") private var scope = AttentionTree.Scope.live
@@ -226,7 +226,15 @@ struct SessionList: View {
             UserFooter()
         }
         .frame(maxHeight: maxHeight)
-        .onAppear { library.refresh(); cloud.start() }
+        .onAppear {
+            library.refresh()
+            cloud.start()
+            // Once: the calm, web-like list (by date) becomes the view; the tree stays a choice.
+            if !UserDefaults.standard.bool(forKey: "calmSidebar") {
+                UserDefaults.standard.set(true, forKey: "calmSidebar")
+                grouping = .date
+            }
+        }
         .alert("Rename Conversation", isPresented: Binding { renaming != nil } set: { if !$0 { renaming = nil } }) {
             TextField("Title", text: $newTitle)
             Button("Rename") {
@@ -360,7 +368,6 @@ struct SessionList: View {
         if !built.layout.yours.isEmpty {
             treeLabel("Yours") {
                 if q.isEmpty, built.layout.org.isEmpty { scopePicker }
-                if cloud.gateway != nil { CloudNewMenu(workspace: workspace) }
             }
             treeEntries(built.layout.yours, folds: built.folds, git: git, highlight: q)
         }
@@ -932,11 +939,34 @@ struct SessionList: View {
             .padding(.top, 24)
     }
 
+    /// Calm, as on the web: the frog and its name with the view options and collapse, then
+    /// New session and Search as rows of their own.
     private var header: some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 5) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
-                TextField(grouping == .org ? "Search or jump" : "Search", text: $query)
+        VStack(spacing: 2) {
+            HStack(spacing: 6) {
+                FrogFace(mood: .waiting, size: 20)
+                Text("Frog").font(.frog(size: 13.5, weight: .semibold))
+                Spacer(minLength: 4)
+                if cloud.gateway != nil { CloudNewMenu(workspace: workspace) }
+                viewOptions
+                if let collapse {
+                    Button(action: collapse) {
+                        Image(systemName: "sidebar.left").frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Collapse conversations (⌃⌘S)")
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+            Button { switchFolder?(nil) } label: {
+                navRow("square.and.pencil", "New session", key: "⌘N")
+            }
+            .buttonStyle(.plain)
+            HStack(spacing: 9) {
+                Image(systemName: "magnifyingglass").frame(width: 16).foregroundStyle(.secondary)
+                TextField("Search", text: $query)
                     .textFieldStyle(.plain)
                     .onSubmit(jumpToFirstMatch)
                     .onExitCommand { query = "" }
@@ -946,29 +976,27 @@ struct SessionList: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .font(.frog(size: 12))
+            .font(.frog(size: 13))
             .padding(.horizontal, 8)
-            .frame(height: 26)
-            .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 8))
-            viewOptions
-            Button {
-                switchFolder?(nil)
-            } label: {
-                Image(systemName: "square.and.pencil").frame(width: 24, height: 24)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("New conversation")
-            if let collapse {
-                Button(action: collapse) {
-                    Image(systemName: "sidebar.left").frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Collapse conversations (⌃⌘S)")
-            }
+            .frame(height: 30)
         }
-        .padding(10)
+        .padding(.horizontal, 6)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+    }
+
+    private func navRow(_ symbol: String, _ title: String, key: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol).frame(width: 16).foregroundStyle(.secondary)
+            Text(title)
+            Spacer(minLength: 4)
+            Text(key).font(.frog(size: 11)).foregroundStyle(.tertiary)
+        }
+        .font(.frog(size: 13))
+        .padding(.horizontal, 8)
+        .frame(height: 30)
+        .contentShape(.rect)
+        .hoverPlate(h: 0, v: 0)
     }
 
     private var footer: some View {
@@ -1583,7 +1611,7 @@ private struct CloudNewMenu: View {
                 Text("Loading repos…")
             }
         } label: {
-            Image(systemName: "plus").font(.system(size: 10, weight: .semibold)).frame(width: 18, height: 18)
+            Image(systemName: "cloud").frame(width: 24, height: 24).accessibilityLabel("New Frog Cloud session")
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
