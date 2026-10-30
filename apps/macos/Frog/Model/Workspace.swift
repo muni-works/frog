@@ -294,7 +294,7 @@ final class Workspace {
     /// A Frog Cloud session on screen: the same transcript and composer, its engine in a
     /// sandbox through the gateway instead of `frog --serve` here.
     func openCloud(_ id: String) {
-        guard id != conversation?.sessionID, let gateway = CloudSessions.shared.gateway else { return }
+        guard id != conversation?.cloudSession, let gateway = CloudSessions.shared.gateway else { return }
         let c = Conversation(folder: folder, link: CloudLink(gateway: gateway, session: id), replay: false, session: id)
         c.cloudSession = id
         incoming?.stop(reason: "open superseded")
