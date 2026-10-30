@@ -1,6 +1,6 @@
-// Sign-in for the web app: GitHub on api.frog.toys, PKCE code → a `frog_` device key.
+// Sign-in for the web app: GitHub or Google on api.frog.toys, PKCE code → a `frog_` device key.
 //
-//   signIn()          → api.frog.toys/auth/web?challenge&state&device&return (GitHub if signed out)
+//   signIn()          → api.frog.toys/auth/web?challenge&state&device&return&provider (the provider if signed out)
 //   back on frog.toys → ?code&state; finishSignIn() POSTs /v1/auth/exchange {code, verifier, device_name}
 //   → {key, account}; the key is this browser's bearer for the edge (/v1/me) and the gateway.
 //
@@ -12,9 +12,12 @@ export const API = (import.meta.env.VITE_API as string | undefined) ?? 'https://
 /** The account shape every app gets from the edge (accounts-ux §5). */
 export interface Account {
   plan: string
-  /** The name they go by (GitHub's display name); null until they sign in again, or by email. */
+  /** The name they go by (GitHub's or Google's display name); null until they sign in again, or by email. */
   name?: string | null
+  /** Their GitHub login; null until they connect GitHub (signed in with Google or email). */
   handle: string | null
+  /** Their picture (GitHub's, else Google's). Older edges leave it out. */
+  image?: string | null
   email: string | null
   /** Live credit in cents (may be fractional): Frog Cloud bills per token, at each model's
    * prices, against this. The edge still sends tasks_left (credit / $0.25), which no app shows. */
@@ -62,30 +65,37 @@ async function call<T>(path: string, init: RequestInit = {}, key?: string): Prom
   return json as T
 }
 
-/** Leaves for GitHub. `after` (e.g. the message the user tried to send) survives the trip. */
-export async function signIn(after?: string) {
+export type Provider = 'github' | 'google'
+
+/** Leaves for GitHub or Google. `after` (e.g. the message the user tried to send) survives the
+ * trip. Signed in with Google, `connect` (this browser's key) connects GitHub to that account:
+ * a link token signs the edge in as it, whatever its cookie says. The repo menu then reopens
+ * with `after` back in the box instead of starting a session. */
+export async function signIn(after?: string, provider: Provider = 'github', connect?: string) {
+  const link = connect ? (await call<{ link: string }>('/v1/auth/link', { method: 'POST', body: '{}' }, connect)).link : undefined
+  const pick = !!connect
   const verifier = random(32)
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
   const state = random(16)
-  store.set(sessionStorage, PENDING, JSON.stringify({ verifier, state, after }))
-  const q = new URLSearchParams({ challenge: b64url(digest), state, device: device(), return: location.origin + '/' })
+  store.set(sessionStorage, PENDING, JSON.stringify({ verifier, state, after, pick }))
+  const q = new URLSearchParams({ challenge: b64url(digest), state, device: device(), return: location.origin + '/', provider, ...(link ? { link } : {}) })
   location.assign(`${API}/auth/web?${q}`)
 }
 
 /** On load: finishes a sign-in if the URL carries ?code&state. Returns what was pending. */
-export async function finishSignIn(): Promise<{ key: string; account: Account; after?: string } | null> {
+export async function finishSignIn(): Promise<{ key: string; account: Account; after?: string; pick?: boolean } | null> {
   const q = new URLSearchParams(location.search)
   const code = q.get('code'), state = q.get('state')
   if (!code || !state) return null
   history.replaceState(null, '', location.pathname) // the code is single-use; keep it out of history
-  const pending = JSON.parse(store.get(sessionStorage, PENDING) ?? 'null') as { verifier: string; state: string; after?: string } | null
+  const pending = JSON.parse(store.get(sessionStorage, PENDING) ?? 'null') as { verifier: string; state: string; after?: string; pick?: boolean } | null
   store.del(sessionStorage, PENDING)
   if (!pending || pending.state !== state) throw new AuthError(400, 'state_mismatch')
   const r = await call<{ key: string; account: Account }>('/v1/auth/exchange', {
     method: 'POST', body: JSON.stringify({ code, verifier: pending.verifier, device_name: device() }),
   })
   store.set(localStorage, KEY, r.key)
-  return { ...r, after: pending.after }
+  return { ...r, after: pending.after, pick: pending.pick }
 }
 
 /** Subscriptions: an allowance each, then usage pricing from credit past it. */

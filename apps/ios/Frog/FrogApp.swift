@@ -167,7 +167,9 @@ struct ConnectView: View {
                 }
             }
             Section {
-                Button(CloudPhone.shared.signingIn ? "Signing In…" : "Sign In to Frog Cloud", systemImage: "cloud") { CloudPhone.shared.signIn() }
+                Button(CloudPhone.shared.signingIn ? "Signing In…" : "Sign In with GitHub", systemImage: "cloud") { CloudPhone.shared.signIn(provider: "github") }
+                    .disabled(CloudPhone.shared.signingIn)
+                Button("Sign In with Google", systemImage: "person.crop.circle") { CloudPhone.shared.signIn(provider: "google") }
                     .disabled(CloudPhone.shared.signingIn)
             } footer: {
                 Text("No Mac needed: sessions run in their own cloud sandbox, on a repo you pick.")

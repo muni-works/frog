@@ -4,7 +4,7 @@ import Foundation
 import Observation
 import Security
 
-/// Frog Cloud on the iPhone, without a Mac: the web app's sessions, signed in with GitHub
+/// Frog Cloud on the iPhone, without a Mac: the web app's sessions, signed in with GitHub or Google
 /// (PKCE at the edge's `/auth/web`, back on frog://signin), the key in this phone's Keychain.
 @MainActor
 @Observable
@@ -74,9 +74,27 @@ final class CloudPhone: NSObject {
     // MARK: Sign-in
 
     private struct Exchange: Decodable { let key: String }
+    private struct Link: Decodable { let link: String }
     private var auth: ASWebAuthenticationSession?
 
-    func signIn() {
+    /// Signed in with Google: GitHub, joined to this phone's account (the link token signs the
+    /// sheet in as it, whatever Safari's cookie says), so its repos show up.
+    func connectGitHub() async {
+        guard let key else { return }
+        var r = URLRequest(url: CloudGateway.origin.appending(path: "v1/auth/link"))
+        r.httpMethod = "POST"
+        r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: r)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { error = "Couldn't connect GitHub. Try again."; return }
+            signIn(provider: "github", link: try JSONDecoder().decode(Link.self, from: data).link)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// `provider` is "github" or "google".
+    func signIn(provider: String = "github", link: String? = nil) {
         let verifier = Self.random(32)
         let state = Self.random(16)
         var u = URLComponents(url: CloudGateway.origin.appending(path: "auth/web"), resolvingAgainstBaseURL: false)!
@@ -84,7 +102,8 @@ final class CloudPhone: NSObject {
             .init(name: "challenge", value: Self.b64url(Data(SHA256.hash(data: Data(verifier.utf8))))),
             .init(name: "state", value: state), .init(name: "device", value: Self.device),
             .init(name: "return", value: "frog://signin"),
-        ]
+            .init(name: "provider", value: provider),
+        ] + (link.map { [.init(name: "link", value: $0)] } ?? [])
         signingIn = true
         let session = ASWebAuthenticationSession(url: u.url!, callback: .customScheme("frog")) { [weak self] url, failure in
             Task { @MainActor in

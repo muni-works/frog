@@ -504,13 +504,13 @@ struct FrogCloudCard: View {
     static let getKeyURL = URL(string: "https://api.frog.toys/beta")!
     @State private var signingIn = false
 
-    /// GitHub in the browser, back to this Mac with its own key, saved where frog reads it.
-    private func signIn() {
+    /// GitHub or Google in the browser, back to this Mac with its own key, saved where frog reads it.
+    private func signIn(_ provider: String = "github") {
         signingIn = true
         Task {
             defer { signingIn = false }
             do {
-                try await CloudAccount.signInAndSave()
+                try await CloudAccount.signInAndSave(provider: provider)
             } catch {
                 store.error = error.localizedDescription
             }
@@ -549,9 +549,13 @@ struct FrogCloudCard: View {
             }
             Spacer()
             if provider?.key == nil {
-                Button(signingIn ? "Signing In…" : "Sign In with GitHub") { signIn() }
-                    .controlSize(.small)
-                    .disabled(signingIn)
+                Menu(signingIn ? "Signing In…" : "Sign In") {
+                    Button("Continue with GitHub") { signIn("github") }
+                    Button("Continue with Google") { signIn("google") }
+                }
+                .controlSize(.small)
+                .fixedSize()
+                .disabled(signingIn)
                 Link("Get a Key", destination: Self.getKeyURL)
                     .controlSize(.small)
                 if let provider {
@@ -560,7 +564,8 @@ struct FrogCloudCard: View {
                 }
             } else if let provider {
                 Menu {
-                    Button("Sign In Again with GitHub") { signIn() }
+                    Button("Sign In Again with GitHub") { signIn("github") }
+                    Button("Sign In Again with Google") { signIn("google") }
                     Button("Change Key…") { addKey(provider) }
                     // Only a saved key can be removed here; an environment key is the shell's.
                     if provider.key == "keychain" {

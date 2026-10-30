@@ -17,19 +17,24 @@ struct UserFooter: View {
                     settingsTab = "billing"
                     openSettings()
                 } label: {
-                    row(avatar: me.handle, title: Self.firstName(me) ?? "Signed in", detail: Self.creditLine(me), warn: me.credit_cents <= 0 && me.subscription == nil)
+                    row(avatar: me.handle.map { "https://github.com/\($0).png?size=56" } ?? me.image, title: Self.firstName(me) ?? "Signed in", detail: Self.creditLine(me), warn: me.credit_cents <= 0 && me.subscription == nil)
                 }
                 .help("Account and billing")
             } else if account.signedIn && account.error == nil {
                 row(avatar: nil, title: "Frog Cloud", detail: "Loading…")
             } else {
-                Button(action: signIn) {
+                Menu {
+                    Button("Continue with GitHub") { signIn("github") }
+                    Button("Continue with Google") { signIn("google") }
+                } label: {
                     row(avatar: nil, title: signingIn ? "Signing in…" : "Sign in to Frog Cloud",
                         detail: failure ?? (account.signedIn ? "Access to more powerful models" : "Cloud sessions · $5 free to start"),
                         warn: failure != nil)
                 }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .disabled(signingIn)
-                .help("Sign in with GitHub. Your conversations on this Mac don't need it.")
+                .help("Sign in with GitHub or Google. Your conversations on this Mac don't need it.")
             }
         }
         .buttonStyle(.plain)
@@ -38,10 +43,10 @@ struct UserFooter: View {
         .task { await account.refresh() }
     }
 
-    private func row(avatar handle: String?, title: String, detail: String, warn: Bool = false) -> some View {
+    private func row(avatar: String?, title: String, detail: String, warn: Bool = false) -> some View {
         HStack(spacing: 9) {
             Group {
-                if let handle, let url = URL(string: "https://github.com/\(handle).png?size=56") {
+                if let avatar, let url = URL(string: avatar) {
                     AsyncImage(url: url) { $0.resizable() } placeholder: { Circle().fill(Tokens.raised) }
                         .clipShape(Circle())
                 } else {
@@ -63,13 +68,13 @@ struct UserFooter: View {
         .hoverPlate(h: 0, v: 0, radius: 8)
     }
 
-    private func signIn() {
+    private func signIn(_ provider: String) {
         signingIn = true
         failure = nil
         Task {
             defer { signingIn = false }
             do {
-                try await CloudAccount.signInAndSave()
+                try await CloudAccount.signInAndSave(provider: provider)
             } catch {
                 failure = "Sign-in didn't finish. Try again."
             }
@@ -89,10 +94,21 @@ struct UserFooter: View {
 }
 
 extension CloudAccount {
-    /// GitHub in the browser, back with this Mac's own key, saved where frog reads it; then
-    /// everything that shows the account catches up.
-    static func signInAndSave() async throws {
-        let key = try await CloudSignIn.run()
+    /// GitHub or Google in the browser, back with this Mac's own key, saved where frog reads it;
+    /// then everything that shows the account catches up.
+    static func signInAndSave(provider: String = "github") async throws {
+        let key = try await CloudSignIn.run(provider: provider)
+        await ProviderStore.shared.setKey(key, for: "cloud")
+        await shared.reloadKey()
+        await shared.refresh()
+        await CloudSessions.shared.refresh()
+    }
+
+    /// Signed in with Google: GitHub in the browser, joined to this Mac's account (the link
+    /// token makes sure of that, whatever the browser's cookie), so its repos show up.
+    static func connectGitHub() async throws {
+        let link = try await shared.linkToken()
+        let key = try await CloudSignIn.run(provider: "github", link: link)
         await ProviderStore.shared.setKey(key, for: "cloud")
         await shared.reloadKey()
         await shared.refresh()

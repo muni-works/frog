@@ -29,6 +29,8 @@ struct CloudGateway: Sendable {
         struct Repo: Decodable, Hashable, Sendable { let name: String; let `private`: Bool }
         let repos: [Repo]
         let install: String?
+        /// The account's GitHub login; nil when it signed in with Google and hasn't connected GitHub.
+        var login: String? = nil
     }
 
     private struct List: Decodable { let sessions: [Session] }

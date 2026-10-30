@@ -2,6 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import type { Image, Mode } from '../cloud/protocol'
 import { modes, price, type Model } from '../models'
 import { parseRepo } from '../store'
+import type { Provider } from '../auth'
+
+const gh = (n: number) => (
+  <svg aria-hidden="true" width={n} height={n} viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z" /></svg>
+)
+const google = (n: number) => (
+  <svg aria-hidden="true" width={n} height={n} viewBox="0 0 24 24"><path fill="#4285F4" d="M23.5 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.45a5.52 5.52 0 0 1-2.4 3.62v3h3.88c2.27-2.09 3.57-5.17 3.57-8.81z" /><path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.94-2.9l-3.88-3.02c-1.07.72-2.45 1.15-4.06 1.15-3.13 0-5.78-2.11-6.72-4.95H1.27v3.11A12 12 0 0 0 12 24z" /><path fill="#FBBC05" d="M5.28 14.28a7.2 7.2 0 0 1 0-4.56V6.61H1.27a12 12 0 0 0 0 10.78z" /><path fill="#EA4335" d="M12 4.77c1.76 0 3.34.61 4.59 1.8l3.44-3.44A11.97 11.97 0 0 0 12 0 12 12 0 0 0 1.27 6.61l4.01 3.11C6.22 6.88 8.87 4.77 12 4.77z" /></svg>
+)
 
 // Port of Composer.dc.html with platform="web". The web is all Frog Cloud, so there is no run-on
 // chip (the Mac's "this Mac / Frog Cloud" choice).
@@ -27,10 +35,11 @@ export interface ComposerProps {
   /** The model id (without `cloud/`) and the ones to pick from; the menu shows when there's a list. */
   model?: string | null
   models?: Model[]
-  /** Signed out: the repo chip asks to sign in (with what's typed) instead of opening the picker. */
-  onConnect?: (text: string) => void
-  /** Signed out: with nothing typed, the send button is a sign-in button instead. */
-  onSignIn?: () => void
+  /** Signed out: the send button (a sign-in button with nothing typed) and the repo chip open a
+   * GitHub / Google menu instead, and what's typed goes along. */
+  onSignIn?: (provider: Provider, text: string) => void
+  /** Signed in without GitHub: the repo menu offers to connect it, with what's typed. */
+  onConnectGithub?: (text: string) => void
   onModel?: (id: string) => void
   /** When the engine asks before acting; the chip shows once the engine (or a new session) says. */
   mode?: Mode | null
@@ -78,7 +87,7 @@ function useTimer(since?: number) {
 
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
-  const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | null>(p.pickRepo ? 'repo' : null)
+  const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | 'signin' | null>(p.pickRepo ? 'repo' : null)
   const [q, setQ] = useState('')
   // Where the open menu's button sits, so the menu opens right above it.
   const [at, setAt] = useState(8)
@@ -129,6 +138,7 @@ export function Composer(p: ComposerProps) {
   }
   const send = () => {
     const t = text.trim()
+    if (p.onSignIn) { setMenu('signin'); return }
     if ((!t && !images.length) || paused || p.busy) return
     // "/compact [what to keep]" asks the engine to summarize rather than sending a message.
     const c = t.match(/^\/compact\b\s*(.*)$/s)
@@ -149,7 +159,7 @@ export function Composer(p: ComposerProps) {
         <div className="cz-chips">
           {p.chips.map((c) => (
             <button key={c.text} type="button" className={`cz-sug${c.act ? ' act' : ''}`}
-              onClick={() => { if (c.send) p.onSend(c.text, []); else { setText(c.text); ref.current?.focus() } }}>
+              onClick={() => { if (c.send && p.onSignIn) { setText(c.text); setMenu('signin') } else if (c.send) p.onSend(c.text, []); else { setText(c.text); ref.current?.focus() } }}>
               {c.act ? '↗ ' : ''}{c.text}
             </button>
           ))}
@@ -207,10 +217,17 @@ export function Composer(p: ComposerProps) {
               ))}
             </div>
             {!typed && list.length === 0 && q && <div className="det wrap" style={{ padding: '6px 10px' }}>No match. Type owner/name or paste a GitHub URL.</div>}
+            {p.onConnectGithub && <button type="button" role="menuitem" className="cz-more" onClick={() => p.onConnectGithub!(text)}>{gh(14)}<span style={{ flex: 1 }}>Connect GitHub to see your repos</span></button>}
             {p.install && <a className="cz-more" href={p.install} target="_blank" rel="noreferrer">Give Frog access to more repos</a>}
           </div>
         )
       })()}
+      {menu === 'signin' && p.onSignIn && (
+        <div className="f-card cz-menu" role="menu" aria-label="Sign in" style={{ right: 8, left: 'auto', width: 230 }}>
+          <button type="button" role="menuitem" onClick={() => p.onSignIn!('github', text.trim())}>{gh(14)}Continue with GitHub</button>
+          <button type="button" role="menuitem" onClick={() => p.onSignIn!('google', text.trim())}>{google(14)}Continue with Google</button>
+        </div>
+      )}
       {menu === 'mode' && (
         <div className="f-card cz-menu" role="menu" aria-label="When Frog asks" style={{ left: at, width: 300 }}>
           <div className="cz-menu-h">When Frog asks</div>
@@ -293,8 +310,8 @@ export function Composer(p: ComposerProps) {
               <svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
             </button>
           ) : p.onSignIn && !text.trim() && !images.length ? (
-            <button type="button" className="cz-signin" onClick={p.onSignIn}>
-              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z" /></svg>
+            <button type="button" className="cz-signin" aria-expanded={menu === 'signin'} onClick={() => setMenu(menu === 'signin' ? null : 'signin')}>
+              {gh(14)}
               Sign in
             </button>
           ) : (
@@ -312,7 +329,7 @@ export function Composer(p: ComposerProps) {
           </button>
         )}
         {!p.branch && (
-          <button type="button" className="cz-chip" disabled={!p.onRepo && !p.onConnect} aria-expanded={menu === 'repo'} onClick={() => (p.onConnect ? p.onConnect(text) : setMenu(menu === 'repo' ? null : 'repo'))}>
+          <button type="button" className="cz-chip" disabled={!p.onRepo && !p.onSignIn} aria-expanded={menu === 'repo'} onClick={() => (p.onSignIn ? setMenu('signin') : setMenu(menu === 'repo' ? null : 'repo'))}>
             <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h6l2 2h10v10H3z" /></svg>
             {p.repo || 'No repo'}
           </button>

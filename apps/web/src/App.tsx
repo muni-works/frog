@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAlerts } from './alerts'
-import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topUp, API, AuthError, type Account } from './auth'
+import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topUp, API, AuthError, type Account, type Provider } from './auth'
 import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
@@ -47,7 +47,7 @@ export default function App() {
   const [key, setKey] = useState<string | null>(DEV_KEY ?? savedKey())
   const [account, setAccount] = useState<Account | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
-  const [leaving, setLeaving] = useState(false)
+  const [leaving, setLeavingFor] = useState<Provider | null>(null)
   // Each conversation has its own URL (/s/<id>), so refresh, back and links return to it.
   const [view, setView] = useState<View>(() => viewOf(location.pathname))
   useEffect(() => {
@@ -176,11 +176,13 @@ export default function App() {
     return () => t.forEach(clearTimeout)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sign-in: finish a GitHub round trip if the URL has one, else check the saved key.
+  // Sign-in: finish a GitHub or Google round trip if the URL has one, else check the saved key.
   useEffect(() => {
     finishSignIn().then(async (done) => {
       if (done) {
         setKey(done.key); setAccount(done.account)
+        // Back from connecting GitHub: the repo menu again, with what was typed.
+        if (done.pick) { setDraft(done.after); setView({ kind: 'new', pick: true }); return }
         // The message typed before signing in starts its conversation as soon as we're in.
         if (done.after) setPending(done.after)
         return
@@ -280,7 +282,7 @@ export default function App() {
   const commit = (s: SessionSummary) => send(s.id, 'Commit the changes with a clear message.')
   const push = (s: SessionSummary) => send(s.id, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
 
-  const leave = (after: string | null) => { setLeaving(true); signIn(after ?? undefined).catch(() => setLeaving(false)) }
+  const leave = (after: string | null, provider: Provider = 'github', connect?: string) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect).catch(() => setLeavingFor(null)) }
 
   // Keyboard: ⌘K palette, ⌘N new, ⌘, settings, ⌘↩ / ⌘. answer the current ask.
   useEffect(() => {
@@ -368,9 +370,9 @@ export default function App() {
           <Trust />
         </div>
         <div className="dock"><div>
-          <Composer repo="Connect a repo" onSend={(text) => leave(text)} onConnect={(text) => leave(text || null)} onSignIn={() => leave(null)} autoFocus chips={starterChips}
+          <Composer repo="Connect a repo" onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips}
             model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
-          {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening GitHub… your message is saved.</div>}
+          {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
         </div></div>
         <footer className="muni-foot"><a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a></footer>
       </main>
@@ -393,7 +395,8 @@ export default function App() {
           onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
           onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
-          {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} /> : <Mark size={28} />}
+          {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} />
+              : account?.image ? <img className="avatar" src={account.image} alt="" width={28} height={28} referrerPolicy="no-referrer" /> : <Mark size={28} />}
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
             <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
             <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
@@ -516,6 +519,7 @@ export default function App() {
             <div className="dock">
               <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => setSettings(true), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
+                onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
                 model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images) }} />
             </div>

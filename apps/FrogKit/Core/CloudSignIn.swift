@@ -4,14 +4,17 @@ import CryptoKit
 import Foundation
 import Network
 
-/// GitHub sign-in for Frog Cloud, the web app's way (PKCE at the edge's `/auth/web`), coming
+/// GitHub or Google sign-in for Frog Cloud, the web app's way (PKCE at the edge's `/auth/web`), coming
 /// back to a one-shot listener on 127.0.0.1 (RFC 8252) instead of a page. The key it gets is
 /// this Mac's own ("Frog for Mac · …"), saved where frog keeps its Frog Cloud key.
 @MainActor
 enum CloudSignIn {
     struct Exchange: Decodable { let key: String }
 
-    static func run() async throws -> String {
+    /// `provider` is "github" or "google". `link` (from `/v1/auth/link`) signs the browser in as
+    /// this Mac's account first, so "github" then connects GitHub to it rather than to whoever
+    /// the browser's cookie is.
+    static func run(provider: String = "github", link: String? = nil) async throws -> String {
         let verifier = random(32)
         let challenge = b64url(Data(SHA256.hash(data: Data(verifier.utf8))))
         let state = random(16)
@@ -49,7 +52,8 @@ enum CloudSignIn {
                             .init(name: "challenge", value: challenge), .init(name: "state", value: state),
                             .init(name: "device", value: device),
                             .init(name: "return", value: "http://127.0.0.1:\(port)/frog-signin"),
-                        ]
+                            .init(name: "provider", value: provider),
+                        ] + (link.map { [.init(name: "link", value: $0)] } ?? [])
                         NSWorkspace.shared.open(u.url!)
                     case .failed(let e): finish(.failure(e))
                     default: break
@@ -57,7 +61,7 @@ enum CloudSignIn {
                 }
             }
             listener.start(queue: .main)
-            // Ten minutes is plenty for GitHub; past it, stop listening.
+            // Ten minutes is plenty for GitHub or Google; past it, stop listening.
             DispatchQueue.main.asyncAfter(deadline: .now() + 600) {
                 MainActor.assumeIsolated { finish(.failure(URLError(.timedOut))) }
             }
