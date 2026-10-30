@@ -37,7 +37,7 @@ struct BillingSettings: View {
                 }
                 Section {
                     HStack {
-                        Link("Devices and keys", destination: CloudAccount.origin.appending(path: "account"))
+                        Link("Devices and keys", destination: URL(string: "https://frog.toys/?settings=account")!)
                         Spacer()
                         Button("Sign Out") { Task { await signOut() } }
                     }
@@ -90,7 +90,7 @@ struct BillingSettings: View {
         if let sub = me.subscription {
             Section(sub.name) {
                 ForEach(sub.windows, id: \.self) { WindowBar(window: $0) }
-                Link("Change or cancel your plan", destination: CloudAccount.origin.appending(path: "account"))
+                Link("Change or cancel your plan", destination: URL(string: "https://frog.toys/?settings=billing")!)
                     .font(.frog(size: 12))
             }
         } else {

@@ -5,7 +5,7 @@
 //   → {key, account}; the key is this browser's bearer for the edge (/v1/me) and the gateway.
 //
 // The key is per browser ("frog.toys web · <4 chars>"), so it can be revoked on its own
-// from api.frog.toys/account. Signing in again on the same browser replaces it.
+// from Settings › Account. Signing in again on the same browser replaces it.
 
 export const API = (import.meta.env.VITE_API as string | undefined) ?? 'https://api.frog.toys'
 
@@ -118,6 +118,22 @@ export const TOP_UPS = [5, 10, 25, 50, 100]
 /** Leaves for Stripe Checkout to add credit; it comes back here with ?session_id. */
 export async function topUp(key: string, dollars: number) {
   const r = await call<{ url: string }>('/v1/billing/topup', { method: 'POST', body: JSON.stringify({ amount: dollars * 1e6, return: location.origin }) }, key)
+  location.assign(r.url)
+}
+
+/** A device (a signed-in app) or a key made for the CLI or a tool. */
+export interface KeyInfo { id: string; name: string | null; kind: 'device' | 'key'; created: string; last_used: string | null; revoked: boolean; current: boolean }
+
+export const listKeys = async (key: string) => (await call<{ keys: KeyInfo[] }>('/v1/keys', {}, key)).keys
+/** A new API key, shown once. */
+export const createKey = (key: string, name: string) => call<{ key: string; id: string }>('/v1/keys', { method: 'POST', body: JSON.stringify({ name }) }, key)
+export const revokeKey = (key: string, id: string) => call<{ ok: true }>(`/v1/keys/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: '{}' }, key)
+export const billingHistory = async (key: string) =>
+  (await call<{ topups: { at: string; amount_micro_usd: number; status: string }[] }>('/v1/billing/history', {}, key)).topups
+
+/** Leaves for Stripe's portal: change or cancel the plan, or the card. */
+export async function billingPortal(key: string) {
+  const r = await call<{ url: string }>('/v1/billing/portal', { method: 'POST', body: JSON.stringify({ return: location.origin }) }, key)
   location.assign(r.url)
 }
 
