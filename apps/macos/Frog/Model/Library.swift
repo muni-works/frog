@@ -24,6 +24,12 @@ final class Library {
     /// Frog Cloud's list changed (`CloudSessions` polls it): its rows join this Mac's.
     func cloudChanged(_ rows: [CloudGateway.Session]) {
         let mapped = rows.filter { $0.archived != true }.map(Self.row)
+        // A sandbox still starting reads as running.
+        for r in rows where r.archived != true {
+            let busy = r.state == "starting"  // as on the web; an open one says so itself
+            if busy, live[r.id] == nil { live[r.id] = .running }
+            if !busy, live[r.id] == .running { live[r.id] = nil }
+        }
         guard mapped != cloud else { return }
         cloud = mapped
         cloudIDs = Set(mapped.map(\.id))
