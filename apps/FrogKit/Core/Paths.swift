@@ -1,6 +1,13 @@
 import Foundation
 
 enum FrogPaths {
+    /// Under ~/Documents, ~/Desktop or ~/Downloads, which macOS guards per app (TCC): the
+    /// first touch shows an "access files in your Documents folder" prompt.
+    static func isPrivacyProtected(_ path: String) -> Bool {
+        let home = NSHomeDirectory()
+        return ["Documents", "Desktop", "Downloads"].contains { path == "\(home)/\($0)" || path.hasPrefix("\(home)/\($0)/") }
+    }
+
     /// Plain chats (no project) run in this folder on the Mac.
     static let chatSuffix = "/.local/share/frog/chat"
 
