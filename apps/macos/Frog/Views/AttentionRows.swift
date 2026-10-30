@@ -156,10 +156,9 @@ struct TreeRow<Menu: View>: View {
         AttentionGlyph(state: state, end: session.end, nested: depth > 0, pinned: pinned)
     }
 
+    /// As on the web: the row you're on and the row under the pointer share one quiet fill.
     private var background: AnyShapeStyle {
-        if selected { return AnyShapeStyle(.tint.opacity(0.22)) }
-        if hovering { return AnyShapeStyle(.quaternary.opacity(0.5)) }
-        return AnyShapeStyle(.clear)
+        AnyShapeStyle(selected || hovering ? Tokens.hover : .clear)
     }
 
     private var helpText: String {
@@ -233,7 +232,7 @@ struct NeedsYouRow<Menu: View>: View {
         .padding(.leading, 8)
         .padding(.trailing, 8)
         .padding(.vertical, 4)
-        .background(selected ? AnyShapeStyle(.tint.opacity(0.22)) : hovering ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear),
+        .background(selected || hovering ? Tokens.hover : .clear,
                     in: .rect(cornerRadius: 6))
         .contentShape(.rect)
         .onTapGesture(perform: open)

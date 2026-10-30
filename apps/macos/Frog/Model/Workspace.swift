@@ -326,6 +326,7 @@ final class Workspace {
             return
         }
         opening = id
+        selection = id  // the sidebar moves on the click, not when the engine answers
         start(arguments: ["-r", id])
     }
 
@@ -414,15 +415,9 @@ final class Workspace {
         }
         incoming?.stop(reason: "open superseded")
         incoming = c
-        // Nothing to cut from, or nothing to wait for: straight on screen.
-        guard conversation != nil, !c.showable else {
-            show(c)
-            return c
-        }
-        Task {
-            await c.loaded(within: .milliseconds(300))
-            show(c)
-        }
+        // Straight on screen, as on the web: its newest turns are already folded in from the
+        // log, and the rest fill in where you're looking.
+        show(c)
         return c
     }
 
