@@ -4,7 +4,7 @@ import XCTest
 /// The chief of staff: one pinned session as a tile above everything else in the sidebar.
 @MainActor
 final class ChiefTests: XCTestCase {
-    /// `Library.shared` persists to the host app's defaults (eco.frog.dev, shared with every
+    /// `Library.shared` persists to the host app's defaults (toys.frog.dev, shared with every
     /// dev build), so put back whatever a real chief and real pins were.
     private static let keys = ["chiefSession", "pinnedSessions", "archivedSessions"]
     private var saved: [String: Any] = [:]

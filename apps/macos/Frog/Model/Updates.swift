@@ -2,7 +2,7 @@ import Combine
 import Foundation
 import Sparkle
 
-/// Sparkle updates for the release build. Debug builds (eco.frog.dev), test hosts and builds
+/// Sparkle updates for the release build. Debug builds (toys.frog.dev), test hosts and builds
 /// without an update key never check, so a stray build can't replace itself with a release.
 ///
 /// With graceful restarts on (`UpdateDrain.enabled`), the delegate hands the install step to
@@ -24,7 +24,7 @@ final class Updates: NSObject {
     private override init() {
         super.init()
         let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? ""
-        guard Bundle.main.bundleIdentifier == "eco.frog", !SingleInstance.isTesting, !key.isEmpty else { return }
+        guard Bundle.main.bundleIdentifier == "toys.frog", !SingleInstance.isTesting, !key.isEmpty else { return }
         let c = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
         controller = c
         observation = c.updater.publisher(for: \.canCheckForUpdates)

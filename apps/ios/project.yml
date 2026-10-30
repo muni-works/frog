@@ -24,6 +24,9 @@ targets:
     sources:
       - path: Frog
         excludes: ["*.entitlements"]
+      # The Mac's layered Icon Composer icon, so iPhone and Mac share one (AppIcon).
+      - path: ../macos/Frog/AppIcon.icon
+        buildPhase: resources
       - path: Shared
       - path: ../FrogKit
         excludes: ["README.md"]
@@ -52,7 +55,7 @@ targets:
       properties:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-        NSUserActivityTypes: [eco.frog.conversation]
+        NSUserActivityTypes: [toys.frog.conversation]
         FrogKeychainGroup: $(AppIdentifierPrefix)toys.frog.remote
         NSSupportsLiveActivities: true
         NSBonjourServices: [_frog._tcp]

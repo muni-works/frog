@@ -38,7 +38,7 @@
 	<string>Frog turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else.</string>
 	<key>NSUserActivityTypes</key>
 	<array>
-		<string>eco.frog.conversation</string>
+		<string>toys.frog.conversation</string>
 	</array>
 	<key>SUFeedURL</key>
 	<string>https://frog.toys/appcast.xml</string>

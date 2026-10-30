@@ -56,8 +56,8 @@ xcrun simctl launch booted toys.frog.remote -fixture long-answer    # straight i
 ## Against the Mac, in the Simulator
 
 ```
-defaults write eco.frog.dev remoteEnabled -bool YES     # the debug Mac app, eco.frog.dev
-defaults read eco.frog.dev remoteToken                  # the code
+defaults write toys.frog.dev remoteEnabled -bool YES     # the debug Mac app, toys.frog.dev
+defaults read toys.frog.dev remoteToken                  # the code
 SIMCTL_CHILD_FROG_REMOTE_CODE=<code> xcrun simctl launch booted toys.frog.remote
 ```
 

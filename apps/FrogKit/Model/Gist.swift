@@ -21,7 +21,7 @@ final class Gists {
 
     private static let file: URL = {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appending(path: Bundle.main.bundleIdentifier ?? "eco.frog")
+            .appending(path: Bundle.main.bundleIdentifier ?? "toys.frog")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appending(path: "gists.json")
     }()
