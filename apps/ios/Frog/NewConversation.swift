@@ -17,6 +17,11 @@ struct NewChatView: View {
     /// A conversation whose folder to start in; nil for a chat.
     @State private var like: String?
     @State private var sending = false
+    /// Frog Cloud instead of the Mac: `.some(nil)` a sandbox with no repo, `.some(repo)` on it.
+    @State private var cloud: String??
+    @State private var repos: [CloudGateway.Repos.Repo] = []
+    @State private var made: CloudGateway.Session?
+    @State private var firstMessage: String?
     /// What was sent, shown as sent while the Mac starts it.
     @State private var sent: String?
     @State private var failure: String?
@@ -31,14 +36,22 @@ struct NewChatView: View {
         }
     }
 
-    private var place: String { like.flatMap { id in places.first { $0.id == id }?.folder } ?? "Chat" }
-    private var canSend: Bool { !sending && remote.isConnected && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var place: String {
+        switch cloud {
+        case .some(.none): return "Frog Cloud"
+        case .some(.some(let r)): return r.split(separator: "/").last.map(String.init) ?? r
+        case .none: return like.flatMap { id in places.first { $0.id == id }?.folder } ?? "Chat"
+        }
+    }
+    private var canSend: Bool {
+        !sending && (cloud != nil || remote.isConnected) && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 14) {
             Spacer()
             FrogFace(mood: sending ? .thinking : .idle, size: 64).tint(Color.frog)
-            Text(sending ? "Starting on your Mac…" : "What should frog do?")
+            Text(sending ? (cloud == nil ? "Starting on your Mac…" : "Starting a sandbox…") : "What should frog do?")
                 .font(.title3.weight(.semibold))
                 .contentTransition(.opacity)
             placeMenu
@@ -69,21 +82,38 @@ struct NewChatView: View {
         .navigationTitle("New Chat")
         .navigationBarTitleDisplayMode(.inline)
         .animation(.snappy, value: sending)
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            // Without a Mac, a new conversation can only run in the cloud.
+            if !remote.isConnected, CloudPhone.shared.key != nil, cloud == nil { cloud = .some(nil) }
+        }
+        .task { repos = (try? await CloudPhone.shared.gateway?.repos())?.repos ?? [] }
+        .navigationDestination(item: $made) { CloudChat(session: $0, first: firstMessage) }
     }
 
     /// Where it runs: a chat, or one of your projects.
     private var placeMenu: some View {
         Menu {
-            Picker("Where", selection: $like) {
-                Label("Chat", systemImage: "bubble.left").tag(String?.none)
-                ForEach(places) { s in
-                    Label(s.folder ?? s.title, systemImage: "folder").tag(Optional(s.id))
+            if remote.isConnected {
+                Section("Your Mac") {
+                    Button("Chat", systemImage: "bubble.left") { cloud = nil; like = nil }
+                    ForEach(places) { s in
+                        Button(s.folder ?? s.title, systemImage: "folder") { cloud = nil; like = s.id }
+                    }
+                }
+            }
+            if CloudPhone.shared.key != nil {
+                // As on the web: the repo picker, a sandbox of its own.
+                Section("Frog Cloud") {
+                    ForEach(repos, id: \.self) { r in
+                        Button(r.name, systemImage: r.private ? "lock" : "book.closed") { cloud = .some(r.name) }
+                    }
+                    Button("No Repo", systemImage: "cloud") { cloud = .some(nil) }
                 }
             }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: like == nil ? "bubble.left" : "folder")
+                Image(systemName: cloud != nil ? "cloud" : like == nil ? "bubble.left" : "folder")
                 Text(place)
                 Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
             }
@@ -131,6 +161,17 @@ struct NewChatView: View {
         sent = message
         text = ""
         FrogSounds.shared.play(.plip)
+        if let target = cloud {
+            if let session = await CloudPhone.shared.create(repo: target) {
+                firstMessage = message
+                made = session
+            } else {
+                failure = CloudPhone.shared.error ?? "Couldn't start a sandbox."
+            }
+            sending = false
+            sent = nil
+            return
+        }
         switch await remote.startNew(message, like: like) {
         case .success(let id):
             // The root swaps this screen for the conversation once the list has it.

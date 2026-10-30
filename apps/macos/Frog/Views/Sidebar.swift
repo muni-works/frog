@@ -954,7 +954,6 @@ struct SessionList: View {
                 FrogFace(mood: .waiting, size: 20)
                 Text("Frog").font(.frog(size: 13.5, weight: .semibold))
                 Spacer(minLength: 4)
-                if cloud.gateway != nil { CloudNewMenu(workspace: workspace) }
                 viewOptions
                 if let collapse {
                     Button(action: collapse) {
@@ -1593,46 +1592,3 @@ final class SidebarClock {
     }
 }
 
-/// The Frog Cloud header's +: a new sandbox on one of the repos the Frog GitHub App reaches
-/// (or none), as the web's start screen offers, and the App's page for more.
-private struct CloudNewMenu: View {
-    let workspace: Workspace
-    @State private var repos: CloudGateway.Repos?
-
-    var body: some View {
-        Menu {
-            Button("No Repo") { start(nil) }
-            if let repos {
-                if !repos.repos.isEmpty { Divider() }
-                ForEach(repos.repos, id: \.self) { r in
-                    Button { start(r.name) } label: {
-                        Label(r.name, systemImage: r.private ? "lock" : "book.closed")
-                    }
-                }
-                if let install = repos.install.flatMap(URL.init(string:)) {
-                    Divider()
-                    Link("Give Frog Access to More Repos…", destination: install)
-                }
-            } else {
-                Text("Loading repos…")
-            }
-        } label: {
-            Image(systemName: "cloud").frame(width: 24, height: 24).accessibilityLabel("New Frog Cloud session")
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("New Frog Cloud session")
-        .task { repos = (try? await CloudSessions.shared.gateway?.repos()) ?? CloudGateway.Repos(repos: [], install: nil) }
-    }
-
-    private func start(_ repo: String?) {
-        Task {
-            do {
-                if let s = try await CloudSessions.shared.create(repo: repo) { workspace.openCloud(s.id) }
-            } catch {
-                workspace.raceError = error.localizedDescription
-            }
-        }
-    }
-}

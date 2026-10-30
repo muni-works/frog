@@ -305,10 +305,16 @@ final class Workspace {
 
     /// "Run in Frog Cloud": a new sandbox on this folder's GitHub repo (none: an empty one),
     /// opened here with `text` as its first message.
-    func runInCloud(_ text: String) async {
-        let repo = CloudSessions.githubRepo(of: folder)
+    /// Where the next new conversation runs, as the composer's location picker says: nil is
+    /// this Mac; `.some(nil)` a Frog Cloud sandbox with no repo; `.some("owner/name")` one on
+    /// that repo.
+    var cloudTarget: String??
+
+    func runInCloud(_ text: String, repo: String?? = nil) async {
+        let repo: String? = repo ?? CloudSessions.githubRepo(of: folder)
         do {
             guard let s = try await CloudSessions.shared.create(repo: repo) else { return }
+            cloudTarget = nil
             openCloud(s.id)
             if !text.isEmpty { conversation?.submit(text) }
         } catch {
