@@ -5,6 +5,9 @@ extension Color {
     /// own hardware (this Mac, your server), green in the cloud.
     static func place(cloud: Bool) -> Color { cloud ? .green : .blue }
 
+    /// Who served a Frog Cloud answer: blue on Frog Cloud's own GPUs, green for a third party.
+    static func served(_ by: ServedBy) -> Color { by.isThirdParty ? .green : .blue }
+
     /// The app mark's green, a little brighter in the dark (the Mac's accent color).
     static let frog = Color(light: (0.180, 0.620, 0.310), dark: (0.345, 0.800, 0.435))
 

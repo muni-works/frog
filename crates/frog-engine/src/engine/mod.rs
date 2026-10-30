@@ -1954,6 +1954,11 @@ impl Agent {
         if let Some(model) = &u.model {
             self.turn_usage.model = Some(model.clone());
         }
+        if !compact {
+            let served =
+                crate::protocol::ServedBy::resolve(&self.profile_name, u.upstream.as_deref());
+            self.turn_usage.served_by = served.or(self.turn_usage.served_by.take());
+        }
         let (ttft, decode, think) = (ms(streamed.ttft), ms(streamed.decode), ms(streamed.think));
         let t = &mut self.timing;
         if compact {

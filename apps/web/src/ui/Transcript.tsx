@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
-import type { FileDiff, Image } from '../cloud/protocol'
+import { servedClass, type FileDiff, type Image } from '../cloud/protocol'
 import type { Ask, Entry, Thread } from '../engine/thread'
 import type { Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
@@ -134,7 +134,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
             if (e.kind === 'reasoning') return (
               <div key={e.id} className="decided"><b>Decided</b> · {e.text}</div>
             )
-            if (e.kind === 'message') return <div key={e.id} className="say"><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
+            if (e.kind === 'message') return <div key={e.id} className={`say ${servedClass(turn.usage?.served_by)}`} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
             if (turn.turn === lastTurn && thread.question?.item === e.id) return <QuestionCard key={e.id} q={thread.question} onAnswer={onAnswer} />
             const asking = turn.turn === lastTurn && thread.ask?.item === e.id ? thread.ask : null
             const diff = e.diff ?? asking?.preview

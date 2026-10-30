@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { TurnUsage } from '../cloud/protocol'
+import { servedClass, type TurnUsage } from '../cloud/protocol'
 import { idOf, type Model } from '../models'
 import { money, seconds, tokens, turnCost } from '../usage'
 import { CopyButton, IconButton } from './Transcript'
@@ -33,6 +33,7 @@ export function TurnFooter({ usage, models, answer, pinned, onRetry }: { usage: 
         {onRetry && <IconButton label="Try again" icon="retry" onClick={onRetry} />}
       </span>
       {id && <span>{id}</span>}
+      {usage.served_by && <span className={servedClass(usage.served_by)}>{usage.served_by.name}</span>}
       {cost && (
         <button type="button" className="turn-plate" aria-expanded={open} title="Cost of this turn" onClick={() => setOpen(!open)}>{money(cost.total)}</button>
       )}

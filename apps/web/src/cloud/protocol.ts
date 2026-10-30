@@ -90,6 +90,21 @@ export interface TurnUsage {
   /** The model spec the turn ran on, e.g. `cloud/qwen3-coder-next`. */
   model?: string | null;
   timing?: { wall_ms: number; prefill_ms: number; decode_ms: number; think_ms?: number; tool_ms: number } | null;
+  /** Who served a Frog Cloud turn: `frog` (its own GPUs) or a third party. Absent when unknown. */
+  served_by?: ServedBy | null;
+}
+
+/** protocol.rs `ServedBy`. */
+export interface ServedBy {
+  id: string;
+  name: string;
+  third_party?: boolean;
+}
+
+/** Blue on Frog Cloud's own GPUs, green for a third party (the `served-*` classes). */
+export function servedClass(s: ServedBy | null | undefined): string {
+  if (!s) return '';
+  return (s.third_party ?? s.id !== 'frog') ? 'served-third' : 'served-frog';
 }
 
 export type Event =

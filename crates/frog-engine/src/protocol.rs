@@ -1145,6 +1145,65 @@ pub struct TurnUsage {
     /// What the turn cost in energy, when it was measured (`--energy`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub energy: Option<TurnEnergy>,
+    /// Who served the turn's model calls, for a frog cloud model: frog cloud's own GPUs or a
+    /// third party. Absent when unknown (other providers, older logs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub served_by: Option<ServedBy>,
+}
+
+/// Who runs a frog cloud model: `frog` (its own GPUs) or a third party (`workers-ai`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct ServedBy {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub third_party: bool,
+}
+
+impl ServedBy {
+    /// From an id alone (the `x-frog-upstream` header), naming the ones frog cloud uses.
+    pub fn from_id(id: &str) -> Self {
+        let name = match id {
+            "frog" => "Frog Cloud",
+            "workers-ai" => "Cloudflare Workers AI",
+            other => other,
+        };
+        Self {
+            id: id.into(),
+            name: name.into(),
+            third_party: id != "frog",
+        }
+    }
+
+    /// A `/v1/models` entry's `served_by` object.
+    pub fn parse(v: &serde_json::Value) -> Option<Self> {
+        let id = v["id"].as_str().filter(|s| !s.is_empty())?;
+        let known = Self::from_id(id);
+        Some(Self {
+            name: v["name"].as_str().map(Into::into).unwrap_or(known.name),
+            third_party: v["third_party"].as_bool().unwrap_or(known.third_party),
+            id: known.id,
+        })
+    }
+
+    /// Who served a call to `spec`: the response's `x-frog-upstream` when it said, else the
+    /// catalog's entry for the model. Only frog cloud's models have one.
+    pub fn resolve(spec: &str, upstream: Option<&str>) -> Option<Self> {
+        if spec.split_once('/')?.0 != crate::providers::CLOUD {
+            return None;
+        }
+        let listed = crate::catalog::cached(spec)
+            .and_then(|m| m.served_by)
+            .or_else(|| crate::catalog::built_in_served_by(spec));
+        match upstream.filter(|s| !s.is_empty()) {
+            Some(id) => Some(
+                listed
+                    .filter(|l| l.id == id)
+                    .unwrap_or_else(|| Self::from_id(id)),
+            ),
+            None => listed,
+        }
+    }
 }
 
 /// What a compaction kept, as a receipt ([`Event::Compacted`]'s `summary`): the structured

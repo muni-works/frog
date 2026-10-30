@@ -89,6 +89,8 @@ pub struct Usage {
     /// The part of `input` written to the cache (Anthropic bills these above the input rate).
     pub cache_write: u64,
     pub model: Option<String>,
+    /// The response's `x-frog-upstream` header (frog cloud says who served the call).
+    pub upstream: Option<String>,
 }
 
 impl Usage {

@@ -517,6 +517,9 @@ struct EndView: View {
                     if let spec = usage.model {
                         ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
                     }
+                    if let s = usage.servedBy {
+                        Text(s.name).foregroundStyle(Color.served(s))
+                    }
                     // What it cost (cloud) or how fast it wrote; each opens its working.
                     if let c = ModelStats.shared.cost(of: usage) {
                         PriceHint(cost: c, usage: usage)
