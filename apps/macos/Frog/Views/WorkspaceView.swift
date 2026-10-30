@@ -29,7 +29,7 @@ struct WorkspaceView: View {
     @State private var renamingTitle = false
     @State private var newTitle = ""
     // The sidebar's view options, for the quick-switch shortcuts' reading of it.
-    @AppStorage("sidebarGroup") private var sidebarGroup = SessionList.Grouping.org
+    @AppStorage("sidebarGroup") private var sidebarGroup = SessionList.Grouping.date
     @AppStorage("sidebarSort") private var sidebarSort = SessionList.Sort.activity
     @AppStorage("sidebarScope") private var sidebarScope = AttentionTree.Scope.live
 
