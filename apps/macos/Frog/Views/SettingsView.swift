@@ -510,9 +510,7 @@ struct FrogCloudCard: View {
         Task {
             defer { signingIn = false }
             do {
-                let key = try await CloudSignIn.run()
-                await store.setKey(key, for: provider?.id ?? "cloud")
-                await CloudAccount.shared.refresh()
+                try await CloudAccount.signInAndSave()
             } catch {
                 store.error = error.localizedDescription
             }

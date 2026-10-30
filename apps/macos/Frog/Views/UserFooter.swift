@@ -1,0 +1,100 @@
+import SwiftUI
+
+/// The sidebar's foot, as on the web: who's signed in to Frog Cloud and their credit, a click
+/// from Settings › Billing. Signed out, the same place offers sign-in and says what it adds,
+/// since everything on this Mac works without it.
+struct UserFooter: View {
+    @State private var account = CloudAccount.shared
+    @State private var signingIn = false
+    @State private var failure: String?
+    @AppStorage("settingsTab") private var settingsTab = "general"
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Group {
+            if let me = account.me {
+                Button {
+                    settingsTab = "billing"
+                    openSettings()
+                } label: {
+                    row(avatar: me.handle, title: Self.firstName(me) ?? "Signed in", detail: Self.creditLine(me), warn: me.credit_cents <= 0 && me.subscription == nil)
+                }
+                .help("Account and billing")
+            } else if account.signedIn && account.error == nil {
+                row(avatar: nil, title: "Frog Cloud", detail: "Loading…")
+            } else {
+                Button(action: signIn) {
+                    row(avatar: nil, title: signingIn ? "Signing in…" : "Sign in to Frog Cloud",
+                        detail: failure ?? (account.signedIn ? "For your plan and credit" : "Cloud sessions · $5 free to start"),
+                        warn: failure != nil)
+                }
+                .disabled(signingIn)
+                .help("Sign in with GitHub. Your conversations on this Mac don't need it.")
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 8)
+        .task { await account.refresh() }
+    }
+
+    private func row(avatar handle: String?, title: String, detail: String, warn: Bool = false) -> some View {
+        HStack(spacing: 9) {
+            Group {
+                if let handle, let url = URL(string: "https://github.com/\(handle).png?size=56") {
+                    AsyncImage(url: url) { $0.resizable() } placeholder: { Circle().fill(Tokens.raised) }
+                        .clipShape(Circle())
+                } else {
+                    Image(systemName: account.me == nil ? "person.crop.circle.badge.plus" : "person.crop.circle")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.green.opacity(0.85))
+                }
+            }
+            .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.frog(size: 12.5, weight: .semibold)).lineLimit(1)
+                Text(detail).font(.frog(size: 11)).foregroundStyle(warn ? .orange : .secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .contentShape(.rect)
+        .hoverPlate(h: 0, v: 0)
+    }
+
+    private func signIn() {
+        signingIn = true
+        failure = nil
+        Task {
+            defer { signingIn = false }
+            do {
+                try await CloudAccount.signInAndSave()
+            } catch {
+                failure = "Sign-in didn't finish. Try again."
+            }
+        }
+    }
+
+    static func firstName(_ me: CloudAccount.Me) -> String? {
+        me.name?.split(separator: " ").first.map(String.init) ?? me.handle ?? me.email
+    }
+
+    /// "Pro · $12.40 credit", or just the credit on usage pricing.
+    static func creditLine(_ me: CloudAccount.Me) -> String {
+        let d = me.credit_cents / 100
+        let credit = d > 0 && d < 0.01 ? "<$0.01" : String(format: "$%.2f", d)
+        return [me.subscription?.name, "\(credit) credit"].compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+extension CloudAccount {
+    /// GitHub in the browser, back with this Mac's own key, saved where frog reads it; then
+    /// everything that shows the account catches up.
+    static func signInAndSave() async throws {
+        let key = try await CloudSignIn.run()
+        await ProviderStore.shared.setKey(key, for: "cloud")
+        await shared.refresh()
+        await CloudSessions.shared.refresh()
+    }
+}

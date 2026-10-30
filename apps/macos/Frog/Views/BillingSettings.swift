@@ -6,13 +6,19 @@ import SwiftUI
 struct BillingSettings: View {
     @State private var account = CloudAccount.shared
     @State private var amount = 10
+    @State private var signingIn = false
 
     var body: some View {
         Form {
             if !account.signedIn {
                 Section {
-                    Text("Add a Frog Cloud key in Settings › Models to see your plan and credit.")
+                    Text("Sign in to see your plan and credit. Everything on this Mac works without an account; Frog Cloud adds sessions in their own sandbox and hosted models, with $5 free to start.")
                         .foregroundStyle(.secondary)
+                    Button(signingIn ? "Signing In…" : "Sign In with GitHub") {
+                        signingIn = true
+                        Task { defer { signingIn = false }; try? await CloudAccount.signInAndSave() }
+                    }
+                    .disabled(signingIn)
                 }
             } else if let me = account.me {
                 Section("Account") {
