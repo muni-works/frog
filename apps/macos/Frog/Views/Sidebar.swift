@@ -239,7 +239,14 @@ struct SessionList: View {
         .alert("Rename Conversation", isPresented: Binding { renaming != nil } set: { if !$0 { renaming = nil } }) {
             TextField("Title", text: $newTitle)
             Button("Rename") {
-                if let s = renaming { Task { await library.rename(s.id, to: newTitle) } }
+                if let s = renaming {
+                    if library.isCloud(s.id), let gateway = cloud.gateway {
+                        CloudLink.rename(s.id, to: newTitle, gateway: gateway)
+                        Task { try? await Task.sleep(for: .seconds(9)); await cloud.refresh() }
+                    } else {
+                        Task { await library.rename(s.id, to: newTitle) }
+                    }
+                }
                 renaming = nil
             }
             Button("Cancel", role: .cancel) { renaming = nil }

@@ -240,6 +240,9 @@ struct FixtureListView: View {
 struct CloudSection: View {
     let query: String
     @State private var cloud = CloudPhone.shared
+    @State private var renaming: CloudGateway.Session?
+    @State private var deleting: CloudGateway.Session?
+    @State private var newTitle = ""
 
     private var rows: [CloudGateway.Session] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -265,13 +268,38 @@ struct CloudSection: View {
                         }
                     }
                     .swipeActions {
+                        Button("Delete", role: .destructive) { deleting = s }
                         Button("Archive") { Task { await cloud.archive(s.id) } }.tint(.indigo)
+                    }
+                    .contextMenu {
+                        Button("Rename", systemImage: "pencil") { newTitle = s.title; renaming = s }
+                        Button("Archive", systemImage: "archivebox") { Task { await cloud.archive(s.id) } }
+                        Button("Delete", systemImage: "trash", role: .destructive) { deleting = s }
                     }
                 }
             } header: {
                 Label("Frog Cloud", systemImage: "cloud")
             }
             .task { cloud.start() }
+            .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+                TextField("Title", text: $newTitle)
+                Button("Rename") {
+                    if let s = renaming, let gateway = cloud.gateway {
+                        CloudLink.rename(s.id, to: newTitle, gateway: gateway)
+                        Task { try? await Task.sleep(for: .seconds(9)); await cloud.refresh() }
+                    }
+                    renaming = nil
+                }
+                Button("Cancel", role: .cancel) { renaming = nil }
+            }
+            .confirmationDialog("Delete this session?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    if let s = deleting { Task { await cloud.remove(s.id) } }
+                    deleting = nil
+                }
+            } message: {
+                Text("Its sandbox, changes and conversation are gone for good.")
+            }
         }
     }
 }

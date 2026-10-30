@@ -254,3 +254,18 @@ final class CloudLink: ConversationLink {
         }
     }
 }
+
+extension CloudLink {
+    /// Rename a cloud session as the web does: `set_title` to its engine, whose `titled`
+    /// event renames it everywhere. A short-lived link when the session isn't open here.
+    static func rename(_ id: String, to title: String, gateway: CloudGateway) {
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        let link = CloudLink(gateway: gateway, session: id)
+        link.send(.setTitle(t))
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(8))  // a sleeping sandbox wakes first
+            link.stop()
+        }
+    }
+}
