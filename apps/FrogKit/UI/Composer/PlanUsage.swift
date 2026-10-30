@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// The plan's allowance windows, as the web's ring popover shows them, and the credit that
@@ -56,4 +55,3 @@ enum CloudFormat {
         weekly ? d.formatted(.dateTime.weekday(.abbreviated)) : d.formatted(date: .omitted, time: .shortened)
     }
 }
-#endif

@@ -1,6 +1,10 @@
 #if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import Foundation
+import Security
 import Observation
 
 /// The Frog Cloud account, as the web app shows it: credit, and the plan's 5-hour and weekly
@@ -100,7 +104,13 @@ final class CloudAccount {
         body["return"] = "https://frog.toys"
         do {
             let r = try await call(Checkout.self, path, key: key, body: body)
-            if let url = URL(string: r.url) { NSWorkspace.shared.open(url) }
+            if let url = URL(string: r.url) {
+                #if os(macOS)
+                NSWorkspace.shared.open(url)
+                #else
+                await UIApplication.shared.open(url)
+                #endif
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -133,7 +143,27 @@ final class CloudAccount {
         }
     }
 
+    /// Where the app keeps its key, when it isn't the Keychain item read below (the iPhone
+    /// hands over the key its own sign-in holds).
+    nonisolated(unsafe) static var keyProvider: (@Sendable () -> String?)?
+
     nonisolated static func readKey() -> String? {
+        if let env = ProcessInfo.processInfo.environment["FROG_API_KEY"], !env.isEmpty { return env }
+        if let key = keyProvider?() { return key }
+        #if os(macOS)
+        return macKey()
+        #else
+        // The phone's own sign-in key (CloudPhone keeps it under the same service and account).
+        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "frog",
+                                kSecAttrAccount as String: "cloud", kSecReturnData as String: true]
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
+        return String(data: d, encoding: .utf8)
+        #endif
+    }
+
+    #if os(macOS)
+    nonisolated private static func macKey() -> String? {
         if let env = ProcessInfo.processInfo.environment["FROG_API_KEY"], !env.isEmpty { return env }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
@@ -148,5 +178,5 @@ final class CloudAccount {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return key.isEmpty ? nil : key
     }
+    #endif
 }
-#endif
