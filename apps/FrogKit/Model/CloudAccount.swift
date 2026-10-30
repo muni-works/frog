@@ -43,7 +43,10 @@ final class CloudAccount {
 
     struct Me: Decodable {
         let name: String?
+        /// The GitHub login; nil until GitHub is connected (signed in with Google or email).
         let handle: String?
+        /// GitHub's picture, else Google's. Older edges leave it out.
+        let image: String?
         let email: String?
         let credit_cents: Double
         let subscription: Subscription?
@@ -97,6 +100,14 @@ final class CloudAccount {
     func topUp(_ dollars: Int) async { await checkout("/v1/billing/topup", ["amount": dollars * 1_000_000]) }
 
     private struct Checkout: Decodable { let url: String }
+    private struct Link: Decodable { let link: String }
+
+    /// A 10-minute token that signs a browser in as this key's account (`/auth/web?link=…`).
+    func linkToken() async throws -> String {
+        await ensureKey()
+        guard let key else { throw CloudError.rejected }
+        return try await call(Link.self, "/v1/auth/link", key: key, body: [:]).link
+    }
 
     private func checkout(_ path: String, _ body: [String: Any]) async {
         guard let key else { return }

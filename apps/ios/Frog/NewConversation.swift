@@ -20,6 +20,7 @@ struct NewChatView: View {
     /// Frog Cloud instead of the Mac: `.some(nil)` a sandbox with no repo, `.some(repo)` on it.
     @State private var cloud: String??
     @State private var repos: [CloudGateway.Repos.Repo] = []
+    @State private var needsGitHub = false
     @State private var made: CloudGateway.Session?
     @State private var firstMessage: String?
     /// What was sent, shown as sent while the Mac starts it.
@@ -87,7 +88,11 @@ struct NewChatView: View {
             // Without a Mac, a new conversation can only run in the cloud.
             if !remote.isConnected, CloudPhone.shared.key != nil, cloud == nil { cloud = .some(nil) }
         }
-        .task { repos = (try? await CloudPhone.shared.gateway?.repos())?.repos ?? [] }
+        .task(id: CloudPhone.shared.key) {
+            let r = try? await CloudPhone.shared.gateway?.repos()
+            repos = r?.repos ?? []
+            needsGitHub = r != nil && r?.login == nil
+        }
         .navigationDestination(item: $made) { CloudChat(session: $0, first: firstMessage) }
     }
 
@@ -109,6 +114,10 @@ struct NewChatView: View {
                         Button(r.name, systemImage: r.private ? "lock" : "book.closed") { cloud = .some(r.name) }
                     }
                     Button("No Repo", systemImage: "cloud") { cloud = .some(nil) }
+                    // Signed in with Google: no GitHub login, so no repos until it's connected.
+                    if needsGitHub {
+                        Button("Connect GitHub to See Your Repos", systemImage: "link") { Task { await CloudPhone.shared.connectGitHub() } }
+                    }
                 }
             }
         } label: {

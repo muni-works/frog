@@ -845,6 +845,7 @@ private struct ModelDownloadStatus: View {
 private struct LocationPicker: View {
     @Bindable var workspace: Workspace
     @State private var repos: CloudGateway.Repos?
+    @State private var fetched = false
 
     private var label: String {
         switch workspace.cloudTarget {
@@ -865,6 +866,10 @@ private struct LocationPicker: View {
                     Button(r.name, systemImage: r.private ? "lock" : "book.closed") { workspace.cloudTarget = .some(r.name) }
                 }
                 Button("No Repo", systemImage: "cloud") { workspace.cloudTarget = .some(nil) }
+                // Signed in with Google: no GitHub login, so no repos until it's connected.
+                if fetched, repos?.login == nil {
+                    Button("Connect GitHub to See Your Repos…", systemImage: "link") { connect() }
+                }
                 if let install = repos?.install.flatMap(URL.init(string:)) {
                     Link("Give Frog Access to More Repos…", destination: install)
                 }
@@ -877,6 +882,23 @@ private struct LocationPicker: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Where this conversation runs")
-        .task { repos = (try? await CloudSessions.shared.gateway?.repos()) ?? CloudGateway.Repos(repos: [], install: nil) }
+        .task { await load() }
+    }
+
+    private func load() async {
+        let r = try? await CloudSessions.shared.gateway?.repos()
+        fetched = r != nil
+        repos = r ?? CloudGateway.Repos(repos: [], install: nil)
+    }
+
+    private func connect() {
+        Task {
+            do {
+                try await CloudAccount.connectGitHub()
+                await load()
+            } catch {
+                workspace.raceError = error.localizedDescription
+            }
+        }
     }
 }
