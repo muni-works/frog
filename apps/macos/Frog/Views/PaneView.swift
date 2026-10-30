@@ -148,7 +148,7 @@ struct PaneView: View {
     private var detail: some View {
         if let race = workspace.race {
             RaceView(race: race) { workspace.endRace() }
-        } else if let id = workspace.opening, id != workspace.conversation?.sessionID {
+        } else if let id = workspace.opening, id != workspace.conversation?.sessionID, id != workspace.conversation?.cloudSession {
             OpeningPane(title: Library.shared.sessions.first { $0.id == id }?.displayTitle)
         } else if let conversation = workspace.conversation {
             TranscriptView(

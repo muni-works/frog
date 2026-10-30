@@ -75,7 +75,7 @@ final class MacEffects: ConversationEffects {
     static let shared = MacEffects()
 
     func turnEnded(_ c: Conversation, turn: TurnState) {
-        if let id = c.sessionID { Library.shared.turnEnded(id) }
+        if let id = c.cloudSession ?? c.sessionID { Library.shared.turnEnded(id) }
         if let usage = turn.usage { ModelStats.shared.record(usage, model: c.status?.model) }
         Notifier.shared.turnFinished(project: c.folder.lastPathComponent, text: Conversation.summary(turn))
         if c.title == nil, case .complete? = turn.end { nameSession(c, from: turn) }
@@ -92,7 +92,8 @@ final class MacEffects: ConversationEffects {
     }
 
     func live(_ c: Conversation, running: Bool, waiting: Bool) {
-        guard let id = c.sessionID else { return }
+        // A cloud session's events carry its engine's own id; its row is the gateway's.
+        guard let id = c.cloudSession ?? c.sessionID else { return }
         Library.shared.report(id, conversation: c, running: running, waiting: waiting)
     }
 

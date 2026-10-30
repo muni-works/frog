@@ -89,7 +89,7 @@ struct SessionList: View {
     /// Conversations shown per project before "Show more".
     static let groupLimit = 5
 
-    private var current: String? { workspace.opening ?? workspace.conversation?.sessionID }
+    private var current: String? { workspace.opening ?? workspace.conversation?.cloudSession ?? workspace.conversation?.sessionID }
     private var folded: Set<String> { Set(foldedRaw.split(separator: "\n").map(String.init)) }
     private var filtering: Bool { showArchived || !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -1398,7 +1398,7 @@ struct SessionRail: View {
 
     static let width: CGFloat = 52
 
-    private var current: String? { workspace.opening ?? workspace.conversation?.sessionID }
+    private var current: String? { workspace.opening ?? workspace.conversation?.cloudSession ?? workspace.conversation?.sessionID }
 
     private var pins: [SessionInfo] {
         library.sessions.filter { library.pinned.contains($0.id) && !library.archived.contains($0.id) }
