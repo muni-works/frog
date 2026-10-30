@@ -51,7 +51,7 @@ struct Cli {
     /// With --serve: the client can answer MCP elicitations and host MCP Apps.
     #[arg(long, requires = "serve", hide = true)]
     rich: bool,
-    /// Profile name from config.toml, or provider/model (e.g. local/qwen3-4b, cloud/qwen3-coder-next, ollama/qwen3, anthropic/claude-sonnet-5)
+    /// Profile name from config.toml, or provider/model (e.g. local/qwen3-4b, cloud/tree, ollama/qwen3, anthropic/claude-sonnet-5)
     #[arg(short, long)]
     model: Option<String>,
     /// Load an alternate config file (useful for isolated setups and testing).
@@ -421,11 +421,15 @@ async fn run() -> Result<bool> {
         None if std::env::var_os("FROG_MODEL").is_some() || cfg.default_model.is_some() => None,
         None => match frog_engine::models::last_used() {
             Some(m) => Some(m),
-            // Frog Cloud connected through the environment (as in its sandbox): its default.
+            // Frog Cloud connected through the environment (as in its sandbox): its default,
+            // from the list it serves now (tree while listed, else its first).
             None if frog_engine::providers::key_source(frog_engine::providers::CLOUD)
-                == Some("env") =>
+                == Some("env")
+                && let Some(m) = frog_engine::catalog::cloud_default(
+                    &frog_engine::catalog::cloud_models_fresh().await,
+                ) =>
             {
-                Some("cloud/qwen3-coder-next".into())
+                Some(m)
             }
             None => match frog_engine::models::pick_default().await {
                 Some((m, _)) => Some(m),

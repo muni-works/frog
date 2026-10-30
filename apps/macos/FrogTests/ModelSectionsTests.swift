@@ -46,7 +46,7 @@ final class ModelSectionsTests: XCTestCase {
             entry("anthropic/claude-sonnet-5", source: "remote"),
             entry("local/mlx-community/Qwen3-4B-4bit", source: "local"),
         ]
-        if listCloud { entries.append(entry("cloud/qwen3-coder-next", source: "remote")) }
+        if listCloud { entries.append(entry("cloud/tree", source: "remote")) }
         if server { entries.append(entry("mew/qwen3:32b", source: "server")) }
         return ModelSections.make(usable: entries.map(ModelIdentity.init), suggested: [])
     }
@@ -73,11 +73,10 @@ final class ModelSectionsTests: XCTestCase {
         }
     }
 
-    /// An engine that doesn't list frog cloud yet still gets the section, from the built-in model.
-    func testFrogCloudAlwaysPresent() {
+    /// Frog Cloud's section is only what the engine listed: nothing built in fills it.
+    func testNoFrogCloudSectionWhenNothingListedIt() {
         let s = sections(cloudKey: nil, server: false, listCloud: false)
-        XCTAssertEqual(s.map(\.title), ["This Mac", "frog cloud", "Cloud · Anthropic", "Cloud · OpenAI"])
-        XCTAssertEqual(s[1].models.map(\.spec), ["cloud/qwen3-coder-next"])
+        XCTAssertFalse(s.map(\.title).contains("frog cloud"))
     }
 
     /// Old ids in saved state mean the same providers.

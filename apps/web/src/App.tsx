@@ -4,7 +4,7 @@ import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topU
 import type { ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
-import { idOf, spec, useModels } from './models'
+import { defaultModel, idOf, spec, useModels } from './models'
 import { clearThreads, outOfCredits, pickStarters, useCloud, useRepos, useSessions, useThreads } from './store'
 import { Composer } from './ui/Composer'
 import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
@@ -378,7 +378,7 @@ export default function App() {
         </div>
         <div className="dock"><div>
           <Composer repo="Connect a repo" onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips}
-            model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
+            model={newModel ?? defaultModel(models)} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
         </div></div>
         <footer className="muni-foot"><a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a></footer>
@@ -527,7 +527,7 @@ export default function App() {
               <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
-                model={newModel ?? models[0]?.id} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
+                model={newModel ?? defaultModel(models)} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images) }} />
             </div>
           </div>

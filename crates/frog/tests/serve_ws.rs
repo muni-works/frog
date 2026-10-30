@@ -104,7 +104,13 @@ async fn fake_model(script: Vec<String>, models: Models) -> String {
                     return;
                 };
                 if !head.starts_with("POST") {
-                    return respond(&mut sock, "application/json", r#"{"data":[]}"#).await;
+                    // Frog Cloud's list: tree is the default even when it isn't first.
+                    let list = if head.starts_with("GET /v1/models") {
+                        r#"{"data":[{"id":"bull"},{"id":"tree"}]}"#
+                    } else {
+                        r#"{"data":[]}"#
+                    };
+                    return respond(&mut sock, "application/json", list).await;
                 }
                 // Only model requests name a model; the compiled-memory probe doesn't.
                 if let Ok(v) = serde_json::from_str::<Value>(&body)
@@ -608,10 +614,7 @@ async fn without_a_model_the_gateway_gets_frog_clouds() {
     until(&mut ws, "turn_ended").await;
     let models = f.models.lock().unwrap().clone();
     assert!(!models.is_empty());
-    assert!(
-        models.iter().all(|(m, _)| m == "qwen3-coder-next"),
-        "{models:?}"
-    );
+    assert!(models.iter().all(|(m, _)| m == "tree"), "{models:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

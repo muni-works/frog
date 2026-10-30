@@ -77,7 +77,7 @@ struct ModelMenu: View {
     private var sections: [(title: String, models: [ModelIdentity])] {
         let words = query.lowercased().split(separator: " ")
         let match = { (m: ModelIdentity) in words.allSatisfy { (m.name + " " + m.spec).lowercased().contains($0) } }
-        return ModelSections.make(usable: usable.filter(match), suggested: SuggestedModel.all.map(ModelIdentity.init).filter(match), alwaysFrogCloud: query.isEmpty)
+        return ModelSections.make(usable: usable.filter(match), suggested: SuggestedModel.all.map(ModelIdentity.init).filter(match))
     }
 
     private var flat: [ModelIdentity] { sections.flatMap(\.models) }

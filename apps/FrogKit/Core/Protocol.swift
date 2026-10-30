@@ -1313,8 +1313,6 @@ enum ProviderID {
     static let local = "local"
     /// frog's hosted service ("frog cloud").
     static let cloud = "cloud"
-    /// The model frog cloud always lists, even signed out.
-    static let cloudModel = "cloud/qwen3-coder-next"
     static let localName = "This Mac"
     static let cloudName = "frog cloud"
 

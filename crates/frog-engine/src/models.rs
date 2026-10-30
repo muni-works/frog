@@ -148,18 +148,17 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
             out.push(entry(spec, "server", &p));
         }
     }
-    // frog cloud, when connected: every model it lists, the same list the web app shows, so
-    // a model frog cloud adds shows up everywhere without turning it on.
-    if crate::providers::key(crate::providers::CLOUD).is_some() {
-        for m in crate::catalog::cloud_models_fresh().await {
-            if out.iter().any(|e| e.spec == m.spec) {
-                continue;
-            }
-            if let Ok((_, p)) = cfg.resolve(Some(&m.spec)) {
-                let mut e = entry(m.spec.clone(), "remote", &p);
-                e.info = Some(m);
-                out.push(e);
-            }
+    // frog cloud: every model it lists now, the same list the web app shows, so a model frog
+    // cloud adds (or stops serving) shows up everywhere without turning it on. Signed out, its
+    // public list, so the apps can offer sign-in on what it actually serves.
+    for m in crate::catalog::cloud_models_fresh().await {
+        if out.iter().any(|e| e.spec == m.spec) {
+            continue;
+        }
+        if let Ok((_, p)) = cfg.resolve(Some(&m.spec)) {
+            let mut e = entry(m.spec.clone(), "remote", &p);
+            e.info = Some(m);
+            out.push(e);
         }
     }
     // Models you turned on from connected providers, described by their catalogs.
@@ -242,8 +241,9 @@ fn runnable_snapshot(dir: &Path) -> bool {
 /// `default_model` or last pick): the first that would answer right now, and why it was
 /// chosen. Order: this Mac first (frog's own engine, a running ollama or LM Studio, whose
 /// pulled models are likely bigger than anything frog would pick, then Apple's on-device
-/// model), then frog cloud when connected, then a cloud model you turned on, then Anthropic
-/// with a key in the environment. None when nothing here can answer.
+/// model), then frog cloud when connected (tree while it lists it, else its first model), then
+/// a cloud model you turned on, then Anthropic with a key in the environment. None when
+/// nothing here can answer.
 pub async fn pick_default() -> Option<(String, String)> {
     if crate::sidecar::available("tang") {
         return Some((
@@ -265,25 +265,26 @@ pub async fn pick_default() -> Option<(String, String)> {
     if crate::sidecar::available(crate::sidecar::APPLE) {
         return Some(("apple/on-device".into(), "Apple Intelligence".into()));
     }
+    let cloud = match crate::providers::key_source(crate::providers::CLOUD) {
+        Some(_) => crate::catalog::cloud_default(&crate::catalog::cloud_models_fresh().await),
+        None => None,
+    };
     pick_remote(
-        crate::providers::key_source(crate::providers::CLOUD).is_some(),
+        cloud,
         crate::providers::State::load().enabled.into_iter().next(),
         std::env::var_os("ANTHROPIC_API_KEY").is_some(),
     )
 }
 
-/// After this Mac: a connected frog cloud, then a cloud model you turned on
-/// (`--enable-model`), then Anthropic with a key in the environment.
+/// After this Mac: a connected frog cloud's default (`cloud`: tree while it lists it, else the
+/// first model it lists), then a cloud model you turned on (`--enable-model`), then Anthropic
+/// with a key in the environment.
 fn pick_remote(
-    cloud: bool,
+    cloud: Option<String>,
     enabled: Option<String>,
     anthropic_env: bool,
 ) -> Option<(String, String)> {
-    if cloud {
-        let spec = crate::catalog::cloud_models()
-            .into_iter()
-            .next()
-            .map_or_else(|| "cloud/qwen3-coder-next".to_string(), |m| m.spec);
+    if let Some(spec) = cloud {
         return Some((spec, "frog cloud is connected".into()));
     }
     if let Some(spec) = enabled {
@@ -346,11 +347,12 @@ mod pick_tests {
     #[test]
     fn default_prefers_cloud_over_enabled_anthropic() {
         let enabled = Some("anthropic/claude-sonnet-5".to_string());
-        let (spec, _) = pick_remote(true, enabled.clone(), true).unwrap();
-        assert!(spec.starts_with("cloud/"), "{spec}");
-        let (spec, _) = pick_remote(false, enabled, true).unwrap();
+        let tree = Some("cloud/tree".to_string());
+        let (spec, _) = pick_remote(tree, enabled.clone(), true).unwrap();
+        assert_eq!(spec, "cloud/tree");
+        let (spec, _) = pick_remote(None, enabled, true).unwrap();
         assert_eq!(spec, "anthropic/claude-sonnet-5");
-        assert_eq!(pick_remote(false, None, false), None);
+        assert_eq!(pick_remote(None, None, false), None);
     }
 
     #[test]

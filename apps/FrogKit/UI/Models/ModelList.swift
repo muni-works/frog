@@ -12,10 +12,10 @@ enum ModelSections {
 
     /// `usable`: what frog listed (plus the current model, even if it wasn't listed).
     /// `suggested`: what frog recommends downloading.
-    /// `alwaysFrogCloud`: show frog cloud even when nothing listed it (signed out, or an older
-    /// engine), with its built-in model. Off while searching.
+    /// Frog Cloud's models are only what the engine listed (Frog Cloud's own `/v1/models`, its
+    /// public list when signed out): none listed, no Frog Cloud section.
     @MainActor
-    static func make(usable: [ModelIdentity], suggested: [ModelIdentity], alwaysFrogCloud: Bool = true) -> [(title: String, models: [ModelIdentity])] {
+    static func make(usable: [ModelIdentity], suggested: [ModelIdentity]) -> [(title: String, models: [ModelIdentity])] {
         let order: (ModelIdentity.Place) -> Int = { p in
             switch p {
             case .mac, .apple: 0
@@ -42,9 +42,6 @@ enum ModelSections {
         let have = Set(usable.map { ProviderID.canonicalSpec($0.spec) })
         var all = usable + suggested.filter { !have.contains(ProviderID.canonicalSpec($0.spec)) }
         if frogCloudOnly { all = all.filter(\.place.isFrogCloud) }
-        if alwaysFrogCloud, !all.contains(where: \.place.isFrogCloud) {
-            all.append(ModelIdentity.of(ProviderID.cloudModel, in: []))
-        }
         return Dictionary(grouping: all) { $0.place.label }
             .sorted { a, b in
                 let pa = order(a.value[0].place), pb = order(b.value[0].place)

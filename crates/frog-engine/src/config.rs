@@ -632,8 +632,8 @@ impl Config {
     }
 }
 
-/// A bare model name (`qwen3-coder-next`, `qwen3-4b`) as a full spec, when exactly one
-/// provider frog knows offers it. No network: bundled local names and frog cloud's list.
+/// A bare model name (`tree`, `qwen3-4b`) as a full spec, when exactly one provider frog
+/// knows offers it. No network: bundled local names and frog cloud's last-fetched list.
 fn bare(spec: &str) -> Option<String> {
     if spec.contains('/') {
         return None;
@@ -738,8 +738,26 @@ mod tests {
             assert_eq!(spec, "cloud/qwen3-coder-next");
             assert!(p.base_url.is_some());
         }
-        let (spec, _) = cfg.resolve(Some("qwen3-coder-next")).unwrap();
-        assert_eq!(spec, "cloud/qwen3-coder-next");
+        // A bare name frog cloud lists resolves to it.
+        let tree = "cloud/tree-bare-test";
+        crate::catalog::TEST_CACHE
+            .lock()
+            .unwrap()
+            .get_or_insert_with(Default::default)
+            .insert(
+                tree.into(),
+                crate::catalog::Model {
+                    spec: tree.into(),
+                    provider: "cloud".into(),
+                    id: "tree-bare-test".into(),
+                    ..Default::default()
+                },
+            );
+        let (spec, _) = cfg.resolve(Some("tree-bare-test")).unwrap();
+        if let Some(c) = crate::catalog::TEST_CACHE.lock().unwrap().as_mut() {
+            c.remove(tree);
+        }
+        assert_eq!(spec, tree);
         let (spec, _) = cfg.resolve(Some("qwen3-4b")).unwrap();
         assert_eq!(spec, "local/qwen3-4b");
         let (spec, p) = cfg.resolve(Some("codex/default")).unwrap();

@@ -7759,7 +7759,9 @@ async fn an_unknown_window_uses_the_catalog_value() {
     let mut h = engine_named(vec![reply(vec![text("hi")], Stop::End)], spec, None);
     assert_eq!(resolved_window(&mut h).await, 100_000);
     shutdown(h).await;
-    crate::catalog::TEST_CACHE.lock().unwrap().take();
+    if let Some(c) = crate::catalog::TEST_CACHE.lock().unwrap().as_mut() {
+        c.remove(spec);
+    }
 }
 
 /// A successful compaction carries what it kept (the #53 receipt: files with +/−, turns
@@ -9781,9 +9783,27 @@ async fn a_frog_cloud_turn_records_who_served_it() {
     assert_eq!((s.name.as_str(), s.third_party), ("Cloudflare Workers AI", true));
     let s = served(&format!("{cloud}/tree"), Some("frog")).await.unwrap();
     assert!(!s.third_party);
-    // An old deploy without the header: the catalog says.
-    let s = served(&format!("{cloud}/qwen3-coder-next"), None).await.unwrap();
+    // An old deploy without the header: frog cloud's list says.
+    let listed = format!("{cloud}/served-test");
+    crate::catalog::TEST_CACHE
+        .lock()
+        .unwrap()
+        .get_or_insert_with(Default::default)
+        .insert(
+            listed.clone(),
+            crate::catalog::Model {
+                spec: listed.clone(),
+                served_by: Some(crate::protocol::ServedBy::from_id("frog")),
+                ..Default::default()
+            },
+        );
+    let s = served(&listed, None).await.unwrap();
     assert_eq!(s.id, "frog");
+    // Not listed and no header: unknown, never guessed.
+    assert!(served(&format!("{cloud}/no-such-model"), None).await.is_none());
+    if let Some(c) = crate::catalog::TEST_CACHE.lock().unwrap().as_mut() {
+        c.remove(&listed);
+    }
     // Anything else stays unknown.
     assert!(served("testprov/m", Some("workers-ai")).await.is_none());
 }
