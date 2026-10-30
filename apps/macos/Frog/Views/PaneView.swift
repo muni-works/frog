@@ -164,6 +164,8 @@ struct PaneView: View {
             // Another conversation is a fresh scroll view, starting at its end, not this one's
             // offset over different content.
             .id(ObjectIdentifier(conversation))
+            // No gray scroll-edge wash behind the composer: true black runs to the bottom.
+            .scrollEdgeEffectHidden(true, for: .bottom)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     ResumedBanner(conversation: conversation)

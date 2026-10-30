@@ -94,6 +94,7 @@ extension CloudAccount {
     static func signInAndSave() async throws {
         let key = try await CloudSignIn.run()
         await ProviderStore.shared.setKey(key, for: "cloud")
+        await shared.reloadKey()
         await shared.refresh()
         await CloudSessions.shared.refresh()
     }

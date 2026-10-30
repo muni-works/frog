@@ -54,6 +54,7 @@ struct BillingSettings: View {
     /// Forgets this Mac's Frog Cloud key, as signing out on the web forgets the browser's.
     private func signOut() async {
         await ProviderStore.shared.setKey("", for: "cloud")
+        await account.reloadKey()
         await account.refresh()
         await CloudSessions.shared.refresh()
     }
