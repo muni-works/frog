@@ -12,7 +12,9 @@ final class CloudPhone: NSObject {
     static let shared = CloudPhone()
 
     // `FROG_GATEWAY_KEY` (with `FROG_GATEWAY`) for a local gateway, as on the Mac.
-    private(set) var key: String? = ProcessInfo.processInfo.environment["FROG_GATEWAY_KEY"] ?? CloudPhone.readKey()
+    private(set) var key: String? = ProcessInfo.processInfo.environment["FROG_GATEWAY_KEY"] ?? CloudPhone.readKey() {
+        didSet { Self.currentKey = key }
+    }
     private(set) var sessions: [CloudGateway.Session] = []
     /// Cloud sessions whose open conversation has a turn running (see `CloudChat`).
     var running: Set<String> = []
@@ -21,9 +23,14 @@ final class CloudPhone: NSObject {
     private var poll: Task<Void, Never>?
 
     var gateway: CloudGateway? { key.map(CloudGateway.init(token:)) }
+
+    /// The key as a plain value other threads may read (the shared account model asks for it).
+    nonisolated(unsafe) static var currentKey: String?
     var live: [CloudGateway.Session] { sessions.filter { $0.archived != true } }
 
     func start() {
+        Self.currentKey = key
+        CloudAccount.keyProvider = { CloudPhone.currentKey }
         guard poll == nil else { return }
         poll = Task {
             while !Task.isCancelled {
@@ -112,6 +119,8 @@ final class CloudPhone: NSObject {
             self.key = key
             error = nil
             await refresh()
+            await CloudAccount.shared.reloadKey()
+            await CloudAccount.shared.refresh()
         } catch {
             self.error = error.localizedDescription
         }
@@ -121,6 +130,10 @@ final class CloudPhone: NSObject {
         Self.writeKey(nil)
         key = nil
         sessions = []
+        Task {
+            await CloudAccount.shared.reloadKey()
+            await CloudAccount.shared.refresh()
+        }
     }
 
     private static var device: String {

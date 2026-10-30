@@ -27,6 +27,10 @@ struct SettingsSheet: View {
                     Text("Sessions in their own cloud sandbox, on a repo you pick. They belong to your account, so they show up on the web and your Mac too.")
                 }
 
+                if cloud.key != nil {
+                    CloudBilling()
+                }
+
                 Section {
                     LabeledContent("This week", value: ModelStats.spent(stats.spentThisWeek))
                     if stats.monthlyCap > 0 {
@@ -112,6 +116,64 @@ struct EnergyHistorySheet: View {
                         Button("Done", systemImage: "checkmark") { dismiss() }
                     }
                 }
+        }
+    }
+}
+
+/// Account and billing, as the web's Settings and the Mac's Settings › Billing: who's signed
+/// in, the plan's allowance windows (or the plans), and credit with Stripe top-ups.
+private struct CloudBilling: View {
+    @State private var account = CloudAccount.shared
+    @State private var amount = 10
+
+    var body: some View {
+        Group {
+            if let me = account.me {
+                Section {
+                    LabeledContent(me.name ?? me.handle ?? "Signed in") {
+                        Text([me.handle.map { "@\($0)" }, me.email].compactMap { $0 }.joined(separator: " · "))
+                    }
+                } header: {
+                    Text("Account")
+                }
+                if let sub = me.subscription {
+                    Section(sub.name) {
+                        ForEach(sub.windows, id: \.self) { WindowBar(window: $0) }
+                    }
+                } else {
+                    Section {
+                        ForEach(CloudAccount.plans, id: \.id) { p in
+                            Button { Task { await account.subscribe(p.id) } } label: {
+                                LabeledContent(p.name, value: "$\(p.price)/mo")
+                            }
+                        }
+                    } header: {
+                        Text("Usage pricing · no subscription")
+                    } footer: {
+                        Text("Subscribe for an included allowance every 5 hours and every week. Past it, you keep going on credit at usage prices.")
+                    }
+                }
+                Section {
+                    LabeledContent("Usage credit", value: CloudFormat.dollars(me.credit_cents))
+                    Picker("Add credit", selection: $amount) {
+                        ForEach(CloudAccount.topUps, id: \.self) { Text("$\($0)").tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    Button("Add $\(amount)") { Task { await account.topUp(amount) } }
+                } footer: {
+                    Text(me.subscription == nil ? "Each turn pays from credit at the model's prices. Paid through Stripe; credit doesn't expire." : "Used only past your plan's allowance. Paid through Stripe; credit doesn't expire.")
+                }
+            } else if let e = account.error {
+                Section { Text(e).foregroundStyle(.red) }
+            } else if account.loading {
+                Section { ProgressView().frame(maxWidth: .infinity) }
+            }
+        }
+        .task {
+            CloudAccount.keyProvider = { CloudPhone.currentKey }
+            CloudPhone.currentKey = CloudPhone.shared.key
+            await account.reloadKey()
+            await account.refresh()
         }
     }
 }
