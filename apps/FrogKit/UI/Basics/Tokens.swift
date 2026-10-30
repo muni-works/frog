@@ -17,6 +17,8 @@ enum Tokens {
     /// The sidebar and inspector: opaque, one step off the canvas (#0a0a0a).
     static let sidebar = Color(light: (0.980, 0.980, 0.980), dark: (0.039, 0.039, 0.039))
     /// Bubbles, cards, the composer field, menus (#121212).
+    /// The web's `--hover`: one quiet fill for a row under the pointer and the row you're on.
+    static let hover = Color(light: (0, 0, 0, 0.05), dark: (1, 1, 1, 0.07))
     static let raised = Color(light: (0.957, 0.957, 0.957), dark: (0.071, 0.071, 0.071))
     /// The prompt bubble: `raised` in the dark; a soft gray in the light, where white would
     /// vanish on a white phone background.

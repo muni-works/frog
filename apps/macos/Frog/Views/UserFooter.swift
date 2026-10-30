@@ -60,7 +60,7 @@ struct UserFooter: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .contentShape(.rect)
-        .hoverPlate(h: 0, v: 0)
+        .hoverPlate(h: 0, v: 0, radius: 8)
     }
 
     private func signIn() {

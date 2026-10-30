@@ -1003,7 +1003,7 @@ struct SessionList: View {
         .padding(.horizontal, 8)
         .frame(height: 30)
         .contentShape(.rect)
-        .hoverPlate(h: 0, v: 0)
+        .hoverPlate(h: 0, v: 0, radius: 8)
     }
 
     private var footer: some View {
@@ -1112,7 +1112,7 @@ private struct ChiefTile: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(background, in: .rect(cornerRadius: 9))
+        .background(background, in: .rect(cornerRadius: 8))
         .contentShape(.rect)
         .help(helpText)
     }
@@ -1229,7 +1229,7 @@ private struct CompactSessionRow<Menu: View>: View {
         .padding(.vertical, expandTitle ? 4 : 0)
         .frame(minHeight: 28)
         .padding(.trailing, 3)
-        .background(selected ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
+        .background(selected || hovering ? Tokens.hover : .clear, in: .rect(cornerRadius: 8))
         .contentShape(.rect)
         .contextMenu { DeferredMenu(make: menu) }
         .paneDraggable(.session(session), title: session.displayTitle)
@@ -1496,7 +1496,7 @@ struct ConversationRow<Menu: View>: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, showPlace ? 6 : 5)
-        .background(background, in: .rect(cornerRadius: 9))
+        .background(background, in: .rect(cornerRadius: 8))
         .onHover { hovering = $0 }
         .contextMenu { DeferredMenu(make: menu) }
         // Onto a pane: its edge opens this beside it, its middle shows it there.
@@ -1555,10 +1555,9 @@ struct ConversationRow<Menu: View>: View {
         }
     }
 
+    /// As on the web: the row you're on and the row under the pointer share one quiet fill.
     private var background: AnyShapeStyle {
-        if selected { return AnyShapeStyle(.tint.opacity(0.22)) }
-        if hovering { return AnyShapeStyle(.quaternary.opacity(0.6)) }
-        return AnyShapeStyle(.clear)
+        AnyShapeStyle(selected || hovering ? Tokens.hover : .clear)
     }
 
     private var helpText: String {
