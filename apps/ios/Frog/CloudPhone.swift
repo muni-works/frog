@@ -14,6 +14,8 @@ final class CloudPhone: NSObject {
     // `FROG_GATEWAY_KEY` (with `FROG_GATEWAY`) for a local gateway, as on the Mac.
     private(set) var key: String? = ProcessInfo.processInfo.environment["FROG_GATEWAY_KEY"] ?? CloudPhone.readKey()
     private(set) var sessions: [CloudGateway.Session] = []
+    /// Cloud sessions whose open conversation has a turn running (see `CloudChat`).
+    var running: Set<String> = []
     private(set) var error: String?
     private(set) var signingIn = false
     private var poll: Task<Void, Never>?

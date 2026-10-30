@@ -251,10 +251,17 @@ struct CloudSection: View {
             Section {
                 ForEach(rows) { s in
                     NavigationLink(value: s) {
+                        HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(s.title.isEmpty ? "New session" : s.title).lineLimit(1)
                             Text([s.repo.isEmpty ? "No repo" : s.repo, SessionAge.short(Date(timeIntervalSince1970: (s.last_turn ?? s.updated) / 1000))].joined(separator: " · "))
                                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer(minLength: 4)
+                        // As on the web: a sandbox starting, or the open session's turn, runs.
+                        if s.state == "starting" || cloud.running.contains(s.id) {
+                            ProgressView().controlSize(.small)
+                        }
                         }
                     }
                     .swipeActions {
@@ -310,6 +317,12 @@ struct CloudChat: View {
             }
         }
         .task { if conversation == nil { conversation = CloudPhone.shared.conversation(session) } }
-        .onDisappear { conversation?.stop() }
+        .onChange(of: conversation?.busy) { _, busy in
+            if busy == true { CloudPhone.shared.running.insert(session.id) } else { CloudPhone.shared.running.remove(session.id) }
+        }
+        .onDisappear {
+            conversation?.stop()
+            CloudPhone.shared.running.remove(session.id)
+        }
     }
 }
