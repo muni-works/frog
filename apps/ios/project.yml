@@ -24,6 +24,9 @@ targets:
     sources:
       - path: Frog
         excludes: ["*.entitlements"]
+      # The Mac's layered Icon Composer icon, so iPhone and Mac share one (AppIcon).
+      - path: ../macos/Frog/AppIcon.icon
+        buildPhase: resources
       - path: Shared
       - path: ../FrogKit
         excludes: ["README.md"]
