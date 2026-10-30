@@ -25,7 +25,7 @@ struct UserFooter: View {
             } else {
                 Button(action: signIn) {
                     row(avatar: nil, title: signingIn ? "Signing in…" : "Sign in to Frog Cloud",
-                        detail: failure ?? (account.signedIn ? "For your plan and credit" : "Cloud sessions · $5 free to start"),
+                        detail: failure ?? (account.signedIn ? "Access to more powerful models" : "Cloud sessions · $5 free to start"),
                         warn: failure != nil)
                 }
                 .disabled(signingIn)

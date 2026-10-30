@@ -360,10 +360,10 @@ struct SessionList: View {
         if !built.layout.yours.isEmpty {
             treeLabel("Yours") {
                 if q.isEmpty, built.layout.org.isEmpty { scopePicker }
+                if cloud.gateway != nil { CloudNewMenu(workspace: workspace) }
             }
             treeEntries(built.layout.yours, folds: built.folds, git: git, highlight: q)
         }
-        cloudSection(q)
         if !q.isEmpty {
             let archived = archiveMatches(q)
             if !archived.isEmpty {
@@ -378,43 +378,6 @@ struct SessionList: View {
             }
         } else if built.layout.org.isEmpty && built.layout.yours.isEmpty && library.chiefSession == nil {
             empty("No conversations yet")
-        }
-    }
-
-    /// Frog Cloud: the account's sandbox sessions, as the web lists them. Two lines each,
-    /// title then repo and age; the menu archives or deletes, as on the web.
-    @ViewBuilder
-    private func cloudSection(_ q: String) -> some View {
-        let rows = cloud.live.filter { q.isEmpty || $0.title.lowercased().contains(q) || $0.repo.lowercased().contains(q) }
-        if cloud.gateway != nil, q.isEmpty || !rows.isEmpty {
-            treeLabel("Frog Cloud", count: rows.isEmpty ? nil : rows.count) { CloudNewMenu(workspace: workspace) }
-            ForEach(rows) { s in
-                Button { workspace.openCloud(s.id) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: s.state == "running" ? "cloud.fill" : "cloud")
-                            .font(.frog(size: 11))
-                            .foregroundStyle(s.state == "error" ? .red : .green.opacity(0.85))
-                            .frame(width: 16)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(s.title.isEmpty ? "New session" : s.title).lineLimit(1)
-                            Text([s.repo.isEmpty ? "No repo" : s.repo, SessionAge.short(Date(timeIntervalSince1970: (s.last_turn ?? s.updated) / 1000))].joined(separator: " · "))
-                                .font(.frog(size: 10.5))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(s.id == current ? Color.primary.opacity(0.08) : .clear, in: .rect(cornerRadius: 8))
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    Button("Archive") { Task { await cloud.archive(s.id, true) } }
-                    Button("Delete Session", role: .destructive) { Task { await cloud.remove(s.id) } }
-                }
-            }
         }
     }
 
@@ -940,6 +903,8 @@ struct SessionList: View {
 
     /// ⌘-click opens beside the focused pane instead of in it.
     private func open(_ s: SessionInfo) {
+        // Frog Cloud's rows share the list; they open through the gateway, not frog here.
+        if library.isCloud(s.id) { return workspace.openCloud(s.id) }
         if NSEvent.modifierFlags.contains(.command), let openInSplit {
             openInSplit(s)
         } else {

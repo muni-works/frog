@@ -1173,6 +1173,8 @@ struct SessionInfo: Codable, Sendable, Identifiable, Hashable {
     }
     var folder: URL? { cwd.map { URL(fileURLWithPath: $0) } }
     var isChat: Bool { folder.map(FrogPaths.isChat) ?? false }
+    /// A Frog Cloud session shown among this Mac's (see the Mac's `Library.row`).
+    var isCloud: Bool { cwd == "/Frog Cloud" || cwd?.hasPrefix("/Frog Cloud/") == true }
 
     var modifiedDate: Date { Date(timeIntervalSince1970: Double(modified) / 1000) }
 

@@ -31,10 +31,11 @@ final class CloudSessions {
     }
 
     func refresh() async {
-        guard let gateway else { sessions = []; return }
+        guard let gateway else { sessions = []; Library.shared.cloudChanged([]); return }
         do {
             sessions = try await gateway.sessions().sorted { ($0.last_turn ?? $0.updated) > ($1.last_turn ?? $1.updated) }
             error = nil
+            Library.shared.cloudChanged(sessions)
         } catch {
             self.error = error.localizedDescription
         }

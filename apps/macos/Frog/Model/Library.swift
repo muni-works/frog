@@ -13,6 +13,32 @@ final class Library {
     typealias Live = SessionLive
 
     private(set) var sessions: [SessionInfo] = []
+    /// This Mac's sessions and Frog Cloud's, which `sessions` lists together: one list, as
+    /// on the web, each opening through its own link (`isCloud`).
+    private var local: [SessionInfo] = []
+    private var cloud: [SessionInfo] = []
+    private(set) var cloudIDs: Set<String> = []
+
+    func isCloud(_ id: String) -> Bool { cloudIDs.contains(id) }
+
+    /// Frog Cloud's list changed (`CloudSessions` polls it): its rows join this Mac's.
+    func cloudChanged(_ rows: [CloudGateway.Session]) {
+        let mapped = rows.filter { $0.archived != true }.map(Self.row)
+        guard mapped != cloud else { return }
+        cloud = mapped
+        cloudIDs = Set(mapped.map(\.id))
+        sessions = local + mapped
+    }
+
+    /// A cloud session as a row: its repo stands where a folder would (`/Frog Cloud/owner/repo`,
+    /// so the row's place reads as the repo), its times the gateway's.
+    static func row(_ s: CloudGateway.Session) -> SessionInfo {
+        let modified = Int64(s.last_turn ?? s.updated)
+        return SessionInfo(id: s.id, modified: modified, created: Int64(s.created ?? s.updated), model: "",
+                           firstInput: nil, title: s.title.isEmpty ? "New session" : s.title,
+                           end: s.state == "error" ? .failed : nil, forkedFrom: nil,
+                           cwd: s.repo.isEmpty ? "/Frog Cloud" : "/Frog Cloud/\(s.repo)")
+    }
     private(set) var pinned: Set<String>
     private(set) var archived: Set<String>
     private(set) var live: [String: Live] = [:] {
@@ -74,8 +100,9 @@ final class Library {
                     return FrogPaths.isPrivacyProtected(cwd) || FileManager.default.fileExists(atPath: cwd)
                 }
                 // Unchanged, it isn't written: every view of the list would rebuild for nothing.
-                guard listed != sessions else { return }
-                sessions = listed
+                guard listed != local else { return }
+                local = listed
+                sessions = listed + cloud
                 GitIndex.shared.listingChanged(listed)
                 archiveQuietChats()
                 RemoteBridge.shared.listChanged()
