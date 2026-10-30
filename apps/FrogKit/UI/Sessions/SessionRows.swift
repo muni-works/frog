@@ -104,7 +104,7 @@ struct ConversationRowLabel: View {
                     .lineLimit(1)
             } else if showPlace {
                 HStack(spacing: 4) {
-                    Image(systemName: session.isChat ? "bubble.left" : "folder")
+                    Image(systemName: session.isCloud ? "cloud" : session.isChat ? "bubble.left" : "folder")
                     Text(session.isChat ? "Chat" : session.folder?.lastPathComponent ?? "")
                         .lineLimit(1)
                     Text("·")
