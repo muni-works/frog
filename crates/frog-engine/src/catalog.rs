@@ -100,60 +100,40 @@ pub fn cached(spec: &str) -> Option<Model> {
     if provider == "cloudflare" {
         return found.or_else(|| cf_models().into_iter().find(|m| m.spec == spec));
     }
-    found.or_else(|| {
-        (provider == providers::CLOUD)
-            .then(|| built_in_cloud().into_iter().find(|m| m.spec == spec))
-            .flatten()
-    })
+    found
 }
 
-/// frog cloud's models, built in: what the picker shows before you connect, so nothing calls
-/// frog cloud while you're logged out. (id, name, context, inputs, reasoning, served by)
-const STATIC_CLOUD: &[(&str, &str, u64, &[&str], bool, Option<&str>)] = &[
-    ("qwen3-coder-next", "Qwen3 Coder Next", 131_072, &["text"], false, Some("frog")),
-    // GLM-5.3-Flash and DeepSeek-V4.1-Flash, served through Cloudflare Workers AI
-    ("tree", "Tree (GLM-5.3 Flash)", 1_048_576, &["text", "image"], true, Some("workers-ai")),
-    ("bull", "Bull (DeepSeek V4.1 Flash)", 1_048_576, &["text", "image"], true, Some("workers-ai")),
-    ("qwen3-8b", "Qwen3 8B", 16_384, &["text"], false, None),
-    ("qwen3-vl-8b", "Qwen3 VL 8B", 16_384, &["text", "image"], false, None),
-];
-
-fn static_model(
-    &(id, name, context, inputs, reasoning, served): &(&str, &str, u64, &[&str], bool, Option<&str>),
-) -> Model {
-    Model {
-        reasoning,
-        served_by: served.map(ServedBy::from_id),
-        spec: format!("{}/{id}", providers::CLOUD),
-        provider: providers::CLOUD.into(),
-        id: id.into(),
-        name: name.into(),
-        context: Some(context),
-        inputs: inputs.iter().map(|s| s.to_string()).collect(),
-        tools: true,
-        ..Default::default()
-    }
-}
-
-/// frog cloud's built-in list, as models.
-fn built_in_cloud() -> Vec<Model> {
-    STATIC_CLOUD.iter().map(static_model).collect()
-}
-
-/// Who serves a frog cloud model, by the built-in list (for a cache fetched before it said).
-pub fn built_in_served_by(spec: &str) -> Option<ServedBy> {
-    built_in_cloud()
-        .into_iter()
-        .find(|m| m.spec == spec)
-        .and_then(|m| m.served_by)
-}
-
-/// frog cloud's models, without the network: the last fetched list, else the built-in one.
+/// frog cloud's models, without the network: the last list `/v1/models` gave (empty when it
+/// was never reached). frog cloud's own list is the only word on what it serves.
 pub fn cloud_models() -> Vec<Model> {
+    #[cfg(test)]
+    {
+        let seeded: Vec<Model> = TEST_CACHE
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|c| c.values())
+            .filter(|m| m.provider == providers::CLOUD)
+            .cloned()
+            .collect();
+        if !seeded.is_empty() {
+            return seeded;
+        }
+    }
     read_cache(providers::CLOUD)
         .map(|c| c.models)
-        .filter(|m| !m.is_empty())
-        .unwrap_or_else(built_in_cloud)
+        .unwrap_or_default()
+}
+
+/// The frog cloud model to start on when nothing names one: `cloud/tree` while frog cloud
+/// lists it (it always serves it), else the first model it lists.
+pub fn cloud_default(models: &[Model]) -> Option<String> {
+    let tree = format!("{}/tree", providers::CLOUD);
+    models
+        .iter()
+        .find(|m| m.spec == tree)
+        .or_else(|| models.first())
+        .map(|m| m.spec.clone())
 }
 
 /// How long frog cloud's own list is trusted: it changes when frog cloud adds a model or moves
@@ -162,7 +142,7 @@ pub fn cloud_models() -> Vec<Model> {
 const CLOUD_TTL: Duration = Duration::from_secs(10 * 60);
 
 /// frog cloud's models as `/v1/models` lists them now: fetched when older than `CLOUD_TTL`,
-/// else the cached list; unreachable, the last list (or the built-in one).
+/// else the cached list; unreachable, the last list (or none). Signed out, its public list.
 pub async fn cloud_models_fresh() -> Vec<Model> {
     let cached = read_cache(providers::CLOUD);
     if let Some(c) = &cached
@@ -173,7 +153,7 @@ pub async fn cloud_models_fresh() -> Vec<Model> {
     }
     let info = providers::list(&providers::State::load())
         .into_iter()
-        .find(|p| p.id == providers::CLOUD && p.connected);
+        .find(|p| p.id == providers::CLOUD);
     if let Some(p) = info {
         let dev = std::sync::Arc::new(tokio::sync::OnceCell::new());
         if let Some(models) = fetch(&p, &dev).await.filter(|m| !m.is_empty()) {
@@ -181,16 +161,19 @@ pub async fn cloud_models_fresh() -> Vec<Model> {
             return models;
         }
     }
-    cached
-        .map(|c| c.models)
-        .filter(|m| !m.is_empty())
-        .unwrap_or_else(built_in_cloud)
+    cached.map(|c| c.models).unwrap_or_default()
 }
 
 /// Gateways whose model lists are public: browsable before you connect them, and fetched
 /// without a key (a wrong key would get the request refused).
 fn public(provider: &str) -> bool {
     matches!(provider, "openrouter" | "vercel")
+}
+
+/// Providers listed before you connect them: the public gateways, and frog cloud, whose
+/// `/v1/models` answers without a key (and with one, once connected).
+fn listed_signed_out(provider: &str) -> bool {
+    public(provider) || provider == providers::CLOUD
 }
 
 /// Cloudflare AI Gateway's suggested models, built in: the account id in the base URL means
@@ -217,21 +200,16 @@ fn cf_models() -> Vec<Model> {
         .unwrap_or_else(|| STATIC_CF.iter().map(static_cf_model).collect())
 }
 
-/// The models of every connected remote provider (and the public gateways): cached, or
-/// fetched when stale (or when `refresh`). A provider that can't be reached keeps its last list.
+/// The models of every connected remote provider (and the public gateways and frog cloud,
+/// listed without a key when not connected): cached, or fetched when stale (or when
+/// `refresh`). A provider that can't be reached keeps its last list (none, if it never had one).
 pub async fn all(refresh: bool) -> Vec<Model> {
     let state = providers::State::load();
     let all = providers::list(&state);
-    // Logged out, frog cloud is its built-in list: never fetched without a key.
-    let cloud_static = all
-        .iter()
-        .any(|p| p.id == providers::CLOUD && !p.connected)
-        .then(built_in_cloud)
-        .unwrap_or_default();
     let cf_connected = all.iter().any(|p| p.id == "cloudflare" && p.connected);
     let remote: Vec<ProviderInfo> = all
         .into_iter()
-        .filter(|p| !p.local && (p.connected || public(&p.id)))
+        .filter(|p| !p.local && (p.connected || listed_signed_out(&p.id)))
         .collect();
     let dev = std::sync::Arc::new(tokio::sync::OnceCell::new());
     let jobs = remote.into_iter().map(|p| {
@@ -249,16 +227,7 @@ pub async fn all(refresh: bool) -> Vec<Model> {
                     write_cache(&p.id, &models);
                     models
                 }
-                _ => cached
-                    .map(|c| c.models)
-                    .filter(|m| !m.is_empty())
-                    .unwrap_or_else(|| {
-                        if p.id == providers::CLOUD {
-                            built_in_cloud()
-                        } else {
-                            Vec::new()
-                        }
-                    }),
+                _ => cached.map(|c| c.models).unwrap_or_default(),
             }
         }
     });
@@ -267,7 +236,6 @@ pub async fn all(refresh: bool) -> Vec<Model> {
         .into_iter()
         .flatten()
         .collect();
-    out.extend(cloud_static);
     // Cloudflare's suggested models: its live list is fetched too, so only fill in
     // when the fetch (and cache) came back empty.
     if cf_connected && !out.iter().any(|m| m.provider == "cloudflare") {
@@ -326,6 +294,7 @@ async fn fetch(p: &ProviderInfo, dev: &Dev) -> Option<Vec<Model>> {
     let mut models: Vec<Model> = match p.id.as_str() {
         "openrouter" => data.iter().filter_map(|m| openrouter(&p.id, m)).collect(),
         "vercel" => data.iter().filter_map(|m| vercel(&p.id, m)).collect(),
+        providers::CLOUD => data.iter().filter_map(frog_cloud).collect(),
         _ => data
             .iter()
             .filter_map(|m| {
@@ -336,37 +305,11 @@ async fn fetch(p: &ProviderInfo, dev: &Dev) -> Option<Vec<Model>> {
                     id: id.into(),
                     name: m["display_name"].as_str().unwrap_or(id).into(),
                     inputs: vec!["text".into()],
-                    served_by: (p.id == providers::CLOUD)
-                        .then(|| ServedBy::parse(&m["served_by"]))
-                        .flatten(),
-                    // frog cloud prices its models in OpenRouter's shape (dollars per token)
-                    // and says how long their context is; other servers don't, models.dev does.
-                    context: m["context_length"].as_u64(),
-                    cost_in: per_million(&m["pricing"]["prompt"]),
-                    cost_out: per_million(&m["pricing"]["completion"]),
-                    cost_cache_read: per_million(&m["pricing"]["input_cache_read"]),
                     ..Default::default()
                 })
             })
             .collect(),
     };
-    // frog cloud's own models: the built-in list knows them.
-    if p.id == providers::CLOUD {
-        for m in models.iter_mut() {
-            if let Some(s) = STATIC_CLOUD.iter().map(static_model).find(|s| s.id == m.id) {
-                m.context = m.context.or(s.context);
-                m.tools = true;
-                m.served_by = m.served_by.take().or(s.served_by);
-                if m.inputs == ["text"] {
-                    m.inputs = s.inputs;
-                }
-                m.reasoning |= s.reasoning;
-                if m.name == m.id {
-                    m.name = s.name;
-                }
-            }
-        }
-    }
     // Fill the gaps from models.dev (context, inputs, reasoning, tools, price).
     if models.iter().any(|m| m.context.is_none())
         && let Some(dev) = models_dev(dev).await
@@ -388,6 +331,17 @@ fn per_million(v: &Value) -> Option<f64> {
         _ => return None,
     };
     (per_token >= 0.0).then_some(per_token * 1_000_000.0)
+}
+
+/// A frog cloud `/v1/models` entry: OpenRouter's shape (context, input modalities, supported
+/// parameters, dollars per token) plus its display name and who serves it.
+fn frog_cloud(m: &Value) -> Option<Model> {
+    let mut model = openrouter(providers::CLOUD, m)?;
+    if let Some(name) = m["display_name"].as_str() {
+        model.name = name.into();
+    }
+    model.served_by = ServedBy::parse(&m["served_by"]);
+    Some(model)
 }
 
 fn openrouter(provider: &str, m: &Value) -> Option<Model> {
@@ -581,17 +535,50 @@ mod tests {
     }
 
     #[test]
-    fn cloud_has_a_built_in_list() {
-        let m = built_in_cloud()
-            .into_iter()
-            .find(|m| m.spec == "cloud/qwen3-coder-next")
-            .unwrap();
-        assert_eq!(m.context, Some(131_072));
-        let models = built_in_cloud();
-        assert!(models.iter().any(|m| m.id == "qwen3-coder-next"));
-        assert!(models.iter().any(|m| m.id == "qwen3-8b"));
-        assert!(models.iter().any(|m| m.id == "qwen3-vl-8b"));
-        assert!(models.iter().any(|m| m.vision() && m.id == "qwen3-vl-8b"));
+    fn frog_cloud_entries_describe_themselves() {
+        let entry = json!({
+            "id": "tree", "object": "model", "display_name": "Tree (GLM-5.3 Flash)",
+            "context_length": 1048576,
+            "architecture": {"input_modalities": ["text", "image"]},
+            "supported_parameters": ["tools", "reasoning"],
+            "served_by": {"id": "workers-ai", "name": "Cloudflare Workers AI", "third_party": true},
+            "pricing": {"prompt": "0.00000018", "completion": "0.0000006",
+                        "input_cache_read": "0.000000036", "request": "0", "image": "0"}
+        });
+        let m = frog_cloud(&entry).unwrap();
+        assert_eq!(m.spec, format!("{}/tree", providers::CLOUD));
+        assert_eq!(m.name, "Tree (GLM-5.3 Flash)");
+        assert_eq!(m.context, Some(1_048_576));
+        assert!(m.vision() && m.reasoning && m.tools);
+        assert!((m.cost_in.unwrap() - 0.18).abs() < 1e-9);
+        assert!((m.cost_out.unwrap() - 0.6).abs() < 1e-9);
+        assert!((m.cost_cache_read.unwrap() - 0.036).abs() < 1e-9);
+        assert_eq!(m.served_by.unwrap().id, "workers-ai");
+
+        // A bare entry: text only, no reasoning or tools claimed, named by its id.
+        let m = frog_cloud(&json!({"id": "dart"})).unwrap();
+        assert_eq!(m.name, "dart");
+        assert_eq!(m.inputs, ["text"]);
+        assert!(!m.reasoning && !m.tools && m.served_by.is_none());
+    }
+
+    #[test]
+    fn the_default_frog_cloud_model_is_tree_else_the_first_listed() {
+        let m = |id: &str| Model {
+            spec: format!("{}/{id}", providers::CLOUD),
+            id: id.into(),
+            ..Default::default()
+        };
+        let cloud = providers::CLOUD;
+        assert_eq!(
+            cloud_default(&[m("bull"), m("dart"), m("tree")]),
+            Some(format!("{cloud}/tree"))
+        );
+        assert_eq!(
+            cloud_default(&[m("bull"), m("dart")]),
+            Some(format!("{cloud}/bull"))
+        );
+        assert_eq!(cloud_default(&[]), None);
     }
 
     #[test]
@@ -626,31 +613,37 @@ mod tests {
         let frog = ServedBy::parse(&json!({"id": "frog"})).unwrap();
         assert_eq!((frog.name.as_str(), frog.third_party), ("Frog Cloud", false));
         assert!(ServedBy::parse(&json!(null)).is_none());
-
-        let built_in = built_in_cloud();
-        let by = |id: &str| built_in.iter().find(|m| m.id == id).unwrap().clone();
-        for id in ["tree", "bull"] {
-            let m = by(id);
-            assert_eq!(m.served_by.as_ref().unwrap().id, "workers-ai");
-            assert_eq!(m.context, Some(1_048_576));
-            assert!(m.vision() && m.reasoning && m.tools);
-        }
-        assert_eq!(by("qwen3-coder-next").served_by.unwrap().id, "frog");
     }
 
     #[test]
     fn the_upstream_header_wins_and_only_frog_cloud_has_one() {
         let cloud = providers::CLOUD;
-        // No header: the built-in list says.
-        let s = ServedBy::resolve(&format!("{cloud}/tree"), None).unwrap();
+        // No header: frog cloud's (cached) list says.
+        let listed = format!("{cloud}/resolve-test");
+        TEST_CACHE
+            .lock()
+            .unwrap()
+            .get_or_insert_with(Default::default)
+            .insert(
+                listed.clone(),
+                Model {
+                    spec: listed.clone(),
+                    served_by: Some(ServedBy::from_id("workers-ai")),
+                    ..Default::default()
+                },
+            );
+        let s = ServedBy::resolve(&listed, None).unwrap();
         assert!(s.third_party);
         // The header overrides it.
-        let s = ServedBy::resolve(&format!("{cloud}/tree"), Some("frog")).unwrap();
+        let s = ServedBy::resolve(&listed, Some("frog")).unwrap();
         assert_eq!((s.id.as_str(), s.name.as_str(), s.third_party), ("frog", "Frog Cloud", false));
         // Unknown to the list and no header: unknown.
         assert!(ServedBy::resolve(&format!("{cloud}/no-such-model"), None).is_none());
         // The user's own providers never get one, even if a server sent the header.
         assert!(ServedBy::resolve("openrouter/x", Some("workers-ai")).is_none());
         assert!(ServedBy::resolve("ollama/qwen3", None).is_none());
+        if let Some(c) = TEST_CACHE.lock().unwrap().as_mut() {
+            c.remove(&listed);
+        }
     }
 }

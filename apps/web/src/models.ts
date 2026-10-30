@@ -17,9 +17,9 @@ export function price(m: Model) {
   return `${f(m.input)} in · ${f(m.output)} out per M tokens`
 }
 
-// Signed out, /v1/models answers without a key; until it does (or on an older edge that
-// still wants one), the picker shows Frog Cloud's public default.
-const SIGNED_OUT: Model[] = [{ id: 'qwen3-coder-next', context: null, input: null, output: null, cached: null }]
+/** The model a new session starts on: tree while Frog Cloud lists it (it always serves it),
+ *  else the first it lists. Nothing is built in: no list, no default. */
+export const defaultModel = (models: Model[]) => (models.find((m) => m.id === 'tree') ?? models[0])?.id
 
 /** The smallest context window worth offering for agent sessions. */
 const MIN_AGENT_CONTEXT = 64_000
@@ -27,12 +27,14 @@ const MIN_AGENT_CONTEXT = 64_000
 export function useModels(key: string | null) {
   const [models, setModels] = useState<Model[]>([])
   useEffect(() => {
-    if (!key) setModels(SIGNED_OUT)
+    // Signed out, /v1/models answers without a key: the picker shows only what Frog Cloud
+    // serves now, and nothing until it answers.
+    setModels([])
     let live = true
     fetch(`${API}/v1/models`, key ? { headers: { authorization: `Bearer ${key}` } } : {})
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((v: { data?: { id: string; context_length?: number; pricing?: { prompt?: string; completion?: string; input_cache_read?: string } }[] }) => {
-        if (!live || !v.data?.length) return
+        if (!live) return
         // Agent work needs room: the system prompt and tools alone take ~9k tokens, so models
         // with a small window (the 8B helpers the engine uses for side jobs) aren't offered.
         setModels((v.data ?? []).filter((m) => (m.context_length ?? MIN_AGENT_CONTEXT) >= MIN_AGENT_CONTEXT).map((m) => ({
@@ -43,7 +45,7 @@ export function useModels(key: string | null) {
           cached: m.pricing?.input_cache_read != null ? Number(m.pricing.input_cache_read) : null,
         })))
       })
-      .catch(() => live && setModels(key ? [] : SIGNED_OUT))
+      .catch(() => live && setModels([]))
     return () => { live = false }
   }, [key])
   return models

@@ -43,7 +43,7 @@ export interface Thread {
   startedAt: number
   /** From `titled`, when the engine names the session. */
   title: string | null
-  /** The engine's model spec (e.g. `cloud/qwen3-coder-next`) and mode, from `status` and the
+  /** The engine's model spec (e.g. `cloud/tree`) and mode, from `status` and the
    * `*_changed` events; null until the engine says. */
   model: string | null
   mode: Mode | null

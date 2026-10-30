@@ -1186,15 +1186,13 @@ impl ServedBy {
         })
     }
 
-    /// Who served a call to `spec`: the response's `x-frog-upstream` when it said, else the
-    /// catalog's entry for the model. Only frog cloud's models have one.
+    /// Who served a call to `spec`: the response's `x-frog-upstream` when it said, else frog
+    /// cloud's cached `/v1/models` entry for the model. Only frog cloud's models have one.
     pub fn resolve(spec: &str, upstream: Option<&str>) -> Option<Self> {
         if spec.split_once('/')?.0 != crate::providers::CLOUD {
             return None;
         }
-        let listed = crate::catalog::cached(spec)
-            .and_then(|m| m.served_by)
-            .or_else(|| crate::catalog::built_in_served_by(spec));
+        let listed = crate::catalog::cached(spec).and_then(|m| m.served_by);
         match upstream.filter(|s| !s.is_empty()) {
             Some(id) => Some(
                 listed

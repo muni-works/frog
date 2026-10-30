@@ -87,7 +87,7 @@ export interface TurnUsage {
   cache_write_tokens?: number;
   model_calls: number;
   tokens_per_sec?: number | null;
-  /** The model spec the turn ran on, e.g. `cloud/qwen3-coder-next`. */
+  /** The model spec the turn ran on, e.g. `cloud/tree`. */
   model?: string | null;
   timing?: { wall_ms: number; prefill_ms: number; decode_ms: number; think_ms?: number; tool_ms: number } | null;
   /** Who served a Frog Cloud turn: `frog` (its own GPUs) or a third party. Absent when unknown. */
