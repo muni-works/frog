@@ -112,6 +112,9 @@ final class CloudLink: ConversationLink {
     private var caughtUpAt: UInt64?
     private var openTurn = false
     private var lastCreated: Int64 = 0
+    /// Per engine (its session id), how far its turn numbers are shifted; see `take`.
+    private var turnOffset: [String: Int] = [:]
+    private var maxTurn = 0
     private let encoder = JSONEncoder()
 
     init(gateway: CloudGateway, session: String, after: UInt64 = 0) {
@@ -179,7 +182,21 @@ final class CloudLink: ConversationLink {
 
     private func take(_ data: Data) {
         guard !live else {
-            let event = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["event"] as? String
+            var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let event = object?["event"] as? String
+            // A sandbox woken from its sleep snapshot runs a new engine (a new session id in
+            // its envelopes) that numbers turns from 1 again: shift its turns past the last
+            // engine's, so its first turn is a new one rather than folded into turn 1.
+            var data = data
+            if let engine = object?["session"] as? String, let turn = (object?["turn"] as? NSNumber)?.intValue {
+                if turnOffset[engine] == nil { turnOffset[engine] = turnOffset.isEmpty ? 0 : maxTurn }
+                let shifted = turn + (turnOffset[engine] ?? 0)
+                maxTurn = max(maxTurn, shifted)
+                if shifted != turn {
+                    object?["turn"] = shifted
+                    if let o = object, let d = try? JSONSerialization.data(withJSONObject: o) { data = d }
+                }
+            }
             if event == "turn_started" { openTurn = true }
             if event == "turn_ended" || event == "idle" { openTurn = false }
             let decoded: Envelope?
