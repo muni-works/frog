@@ -268,9 +268,6 @@ struct CloudSection: View {
                         Button("Archive") { Task { await cloud.archive(s.id) } }.tint(.indigo)
                     }
                 }
-                if query.isEmpty {
-                    NewCloudSession()
-                }
             } header: {
                 Label("Frog Cloud", systemImage: "cloud")
             }
@@ -279,33 +276,11 @@ struct CloudSection: View {
     }
 }
 
-/// A new sandbox: on a repo the Frog GitHub App reaches, or none.
-private struct NewCloudSession: View {
-    @State private var cloud = CloudPhone.shared
-    @State private var repos: CloudGateway.Repos?
-    @State private var made: CloudGateway.Session?
-
-    var body: some View {
-        Menu {
-            Button("No Repo") { start(nil) }
-            ForEach(repos?.repos ?? [], id: \.self) { r in
-                Button(r.name, systemImage: r.private ? "lock" : "book.closed") { start(r.name) }
-            }
-        } label: {
-            Label("New cloud session", systemImage: "plus")
-        }
-        .task { repos = (try? await cloud.gateway?.repos()) ?? CloudGateway.Repos(repos: [], install: nil) }
-        .navigationDestination(item: $made) { CloudChat(session: $0) }
-    }
-
-    private func start(_ repo: String?) {
-        Task { made = await cloud.create(repo: repo) }
-    }
-}
-
 /// One cloud session, in the same chat view as the Mac's.
 struct CloudChat: View {
     let session: CloudGateway.Session
+    /// Sent once it's open: the first message from the new-chat screen.
+    var first: String? = nil
     @State private var conversation: Conversation?
 
     var body: some View {
@@ -316,7 +291,11 @@ struct CloudChat: View {
                 ProgressView()
             }
         }
-        .task { if conversation == nil { conversation = CloudPhone.shared.conversation(session) } }
+        .task {
+            guard conversation == nil else { return }
+            conversation = CloudPhone.shared.conversation(session)
+            if let first { conversation?.submit(first) }
+        }
         .onChange(of: conversation?.busy) { _, busy in
             if busy == true { CloudPhone.shared.running.insert(session.id) } else { CloudPhone.shared.running.remove(session.id) }
         }

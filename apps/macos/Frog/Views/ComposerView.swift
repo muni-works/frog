@@ -372,6 +372,11 @@ struct ComposerView: View {
                 DictationButton(dictation: dictation, toggle: toggleDictation)
             }
             ModePicker(conversation: conversation)
+            if conversation.turns.isEmpty, conversation.cloudSession == nil, CloudSessions.shared.gateway != nil {
+                LocationPicker(workspace: workspace)
+            } else if conversation.cloudSession != nil {
+                Label("Frog Cloud", systemImage: "cloud").foregroundStyle(.green.opacity(0.85))
+            }
             Spacer()
             if let e = workspace.raceError {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
@@ -389,14 +394,6 @@ struct ComposerView: View {
     private var plusMenu: some View {
         Menu {
             Button("Attach Images…", systemImage: "photo") { attachFromPanel() }
-            if CloudSessions.shared.gateway != nil, conversation.cloudSession == nil {
-                // As on the web: this message, in its own sandbox on this folder's repo.
-                Button("Run in Frog Cloud", systemImage: "cloud") {
-                    let message = text
-                    text = ""
-                    Task { await workspace.runInCloud(message) }
-                }
-            }
             if !workspace.isChat {
                 Button("Mention a File", systemImage: "at") {
                     controller.focus()
@@ -451,6 +448,14 @@ struct ComposerView: View {
 
     private func send() {
         guard canSend else { return }
+        // A new conversation set to run in Frog Cloud starts its sandbox with this message.
+        if conversation.turns.isEmpty, conversation.cloudSession == nil, let target = workspace.cloudTarget {
+            let message = text
+            text = ""
+            attachments = []
+            Task { await workspace.runInCloud(message, repo: .some(target)) }
+            return
+        }
         // What's in the field is what goes, words still settling included.
         dictation.cancel()
         conversation.submit(text, images: attachments)
@@ -832,5 +837,46 @@ private struct ModelDownloadStatus: View {
     private static func size(_ fraction: Double, of total: Double?) -> String {
         guard let total else { return "\(Int((fraction * 100).rounded()))%" }
         return String(format: "%.1f GB of %.1f GB", fraction * total, total)
+    }
+}
+
+/// Where a new conversation runs, beside the mode, as the web's repo picker: this Mac, or a
+/// Frog Cloud sandbox on a repo the GitHub App reaches (or none).
+private struct LocationPicker: View {
+    @Bindable var workspace: Workspace
+    @State private var repos: CloudGateway.Repos?
+
+    private var label: String {
+        switch workspace.cloudTarget {
+        case .none: "This Mac"
+        case .some(.none): "Frog Cloud"
+        case .some(.some(let r)): r.split(separator: "/").last.map(String.init) ?? r
+        }
+    }
+
+    var body: some View {
+        Menu {
+            Button("This Mac", systemImage: "laptopcomputer") { workspace.cloudTarget = nil }
+            Section("Frog Cloud") {
+                if let here = CloudSessions.githubRepo(of: workspace.folder) {
+                    Button(here, systemImage: "cloud") { workspace.cloudTarget = .some(here) }
+                }
+                ForEach((repos?.repos ?? []).filter { $0.name != CloudSessions.githubRepo(of: workspace.folder) }, id: \.self) { r in
+                    Button(r.name, systemImage: r.private ? "lock" : "book.closed") { workspace.cloudTarget = .some(r.name) }
+                }
+                Button("No Repo", systemImage: "cloud") { workspace.cloudTarget = .some(nil) }
+                if let install = repos?.install.flatMap(URL.init(string:)) {
+                    Link("Give Frog Access to More Repos…", destination: install)
+                }
+            }
+        } label: {
+            Label(label, systemImage: workspace.cloudTarget == nil ? "laptopcomputer" : "cloud")
+                .foregroundStyle(workspace.cloudTarget == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.green.opacity(0.85)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Where this conversation runs")
+        .task { repos = (try? await CloudSessions.shared.gateway?.repos()) ?? CloudGateway.Repos(repos: [], install: nil) }
     }
 }
