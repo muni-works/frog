@@ -49,10 +49,27 @@ final class CloudAccount {
     private(set) var error: String?
     private(set) var loading = false
 
-    var signedIn: Bool { Self.key() != nil }
+    /// frog's Frog Cloud key, read off the main thread (`security` blocks) and kept: views
+    /// read this, never `readKey()`, since waiting on a process mid-render crashes SwiftUI.
+    private(set) var key: String? = ProcessInfo.processInfo.environment["FROG_API_KEY"].flatMap { $0.isEmpty ? nil : $0 }
+    private var keyLoaded = false
+    var signedIn: Bool { key != nil }
+
+    func ensureKey() async { if !keyLoaded { await reloadKey() } }
+
+    /// Read the key again (at launch, and after signing in or out).
+    func reloadKey() async {
+        key = await Task.detached(priority: .userInitiated) { Self.readKey() }.value
+        keyLoaded = true
+    }
+
+    private init() {
+        Task { await reloadKey() }
+    }
 
     func refresh() async {
-        guard let key = Self.key() else { me = nil; error = nil; return }
+        if !keyLoaded { await reloadKey() }
+        guard let key else { me = nil; error = nil; return }
         loading = true
         defer { loading = false }
         do {
@@ -70,7 +87,7 @@ final class CloudAccount {
     private struct Checkout: Decodable { let url: String }
 
     private func checkout(_ path: String, _ body: [String: Any]) async {
-        guard let key = Self.key() else { return }
+        guard let key else { return }
         var body = body
         body["return"] = "https://frog.toys"
         do {
@@ -108,7 +125,7 @@ final class CloudAccount {
         }
     }
 
-    nonisolated static func key() -> String? {
+    nonisolated static func readKey() -> String? {
         if let env = ProcessInfo.processInfo.environment["FROG_API_KEY"], !env.isEmpty { return env }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/security")

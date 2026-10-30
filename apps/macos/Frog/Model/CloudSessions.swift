@@ -15,7 +15,7 @@ final class CloudSessions {
 
     var gateway: CloudGateway? {
         let env = ProcessInfo.processInfo.environment["FROG_GATEWAY_KEY"]
-        return (env ?? CloudAccount.key()).map(CloudGateway.init(token:))
+        return (env ?? CloudAccount.shared.key).map(CloudGateway.init(token:))
     }
 
     var live: [CloudGateway.Session] { sessions.filter { $0.archived != true } }
@@ -31,6 +31,7 @@ final class CloudSessions {
     }
 
     func refresh() async {
+        await CloudAccount.shared.ensureKey()
         guard let gateway else { sessions = []; Library.shared.cloudChanged([]); return }
         do {
             sessions = try await gateway.sessions().sorted { ($0.last_turn ?? $0.updated) > ($1.last_turn ?? $1.updated) }
