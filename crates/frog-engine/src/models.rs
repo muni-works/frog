@@ -148,6 +148,20 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
             out.push(entry(spec, "server", &p));
         }
     }
+    // frog cloud, when connected: every model it lists, the same list the web app shows, so
+    // a model frog cloud adds shows up everywhere without turning it on.
+    if crate::providers::key(crate::providers::CLOUD).is_some() {
+        for m in crate::catalog::cloud_models_fresh().await {
+            if out.iter().any(|e| e.spec == m.spec) {
+                continue;
+            }
+            if let Ok((_, p)) = cfg.resolve(Some(&m.spec)) {
+                let mut e = entry(m.spec.clone(), "remote", &p);
+                e.info = Some(m);
+                out.push(e);
+            }
+        }
+    }
     // Models you turned on from connected providers, described by their catalogs.
     for spec in &state.enabled {
         if out.iter().any(|e| &e.spec == spec) {
