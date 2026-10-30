@@ -416,17 +416,17 @@ async fn run() -> Result<bool> {
     if let Some(done) = pond(&cli, &cfg).await? {
         return Ok(done);
     }
-    // Frog Cloud's sandbox: an OpenAI-compatible endpoint that adds the key itself.
-    let provider_base = std::env::var("FROG_PROVIDER_BASE_URL")
-        .ok()
-        .filter(|u| !u.is_empty());
     let chosen = match &cli.model {
         Some(m) => Some(m.clone()),
         None if std::env::var_os("FROG_MODEL").is_some() || cfg.default_model.is_some() => None,
-        // The gateway names a model only when the session picked one; otherwise Frog Cloud's.
-        None if provider_base.is_some() => Some("cloud/qwen3-coder-next".into()),
         None => match frog_engine::models::last_used() {
             Some(m) => Some(m),
+            // Frog Cloud connected through the environment (as in its sandbox): its default.
+            None if frog_engine::providers::key_source(frog_engine::providers::CLOUD)
+                == Some("env") =>
+            {
+                Some("cloud/qwen3-coder-next".into())
+            }
             None => match frog_engine::models::pick_default().await {
                 Some((m, _)) => Some(m),
                 None => {
@@ -448,14 +448,6 @@ async fn run() -> Result<bool> {
             }
         }
         profile.base_url = Some(b);
-    }
-    if let Some(b) = provider_base {
-        profile.provider = frog_engine::config::ProviderKind::Openai;
-        profile.base_url = Some(b);
-        profile.api_key = None;
-        profile.api_key_env = None;
-        profile.sidecar = None;
-        profile.draft_model = None;
     }
     if cli.text_tools {
         profile.tool_mode = ToolMode::Text;
