@@ -167,6 +167,7 @@ struct NewChatView: View {
                 made = session
             } else {
                 failure = CloudPhone.shared.error ?? "Couldn't start a sandbox."
+                text = message  // nothing started: what you wrote stays
             }
             sending = false
             sent = nil
