@@ -223,6 +223,7 @@ struct SessionList: View {
                 if abs(new - old) > 1 { GitCardController.shared.close() }
             }
             footer
+            UserFooter()
         }
         .frame(maxHeight: maxHeight)
         .onAppear { library.refresh(); cloud.start() }

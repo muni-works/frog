@@ -102,7 +102,7 @@ final class CloudAccount {
         case rejected, status(Int)
         var errorDescription: String? {
             switch self {
-            case .rejected: "Frog Cloud didn't accept this key. Add a new one in Settings › Models."
+            case .rejected: "This key can't read your account (it may predate sign-in). Sign in with GitHub to see your plan and credit."
             case .status(let code): "Frog Cloud answered \(code). Try again in a moment."
             }
         }
