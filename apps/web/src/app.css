@@ -299,6 +299,12 @@ button.tool:hover { color: var(--fg); }
 .sfold-t:hover { color: var(--muted); }
 .chev2 { display: inline-block; transition: transform .15s; font-size: 13px; line-height: 1; }
 .chev2.open { transform: rotate(90deg); }
+/* Sidebar group headings fold: the whole heading is the button; folded ones show their count. */
+button.sgroup { width: 100%; border: 0; background: none; font-family: inherit; text-align: left; cursor: pointer; border-radius: 6px; }
+button.sgroup:hover { color: var(--fg); }
+.sgroup-n { display: inline-flex; align-items: center; gap: 6px; color: var(--faint); font-weight: 500; }
+button.sgroup .chev2 { opacity: 0; transition: opacity .12s, transform .15s; }
+button.sgroup:hover .chev2, button.sgroup:focus-visible .chev2, button.sgroup[aria-expanded="false"] .chev2 { opacity: 1; }
 .sclear { border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0; }
 .sclear:hover { color: var(--warn); }
 .srepo { flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--faint); }
