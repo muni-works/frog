@@ -148,6 +148,8 @@ struct PaneView: View {
     private var detail: some View {
         if let race = workspace.race {
             RaceView(race: race) { workspace.endRace() }
+        } else if let id = workspace.opening, id != workspace.conversation?.sessionID {
+            OpeningPane(title: Library.shared.sessions.first { $0.id == id }?.displayTitle)
         } else if let conversation = workspace.conversation {
             TranscriptView(
                 conversation: conversation,
@@ -389,5 +391,24 @@ struct PaneDividerHandle: View {
             )
             .animation(.easeOut(duration: 0.12), value: hovering)
             .help("Drag to resize, double-click to even out")
+    }
+}
+
+/// The click's answer while a conversation opens: its title where the transcript will be,
+/// so the screen changes at once rather than when its log has been read.
+private struct OpeningPane: View {
+    let title: String?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            ProgressView().controlSize(.small)
+            if let title {
+                Text(title).font(.frog(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(FrogCanvas.color)
     }
 }
