@@ -5,6 +5,11 @@ import SwiftUI
 /// don't: This Mac, then your servers, then frog cloud, then each other cloud provider. A model
 /// you'd download is just a model on this Mac in the Not downloaded state.
 enum ModelSections {
+    /// Launch: every picker lists Frog Cloud's models and nothing else: no models on this Mac,
+    /// your servers or other providers, and no Models settings page (Cam, 2026-10-30). The
+    /// engine still lists them all; turning this off brings the full list back.
+    static let frogCloudOnly = true
+
     /// `usable`: what frog listed (plus the current model, even if it wasn't listed).
     /// `suggested`: what frog recommends downloading.
     /// `alwaysFrogCloud`: show frog cloud even when nothing listed it (signed out, or an older
@@ -36,6 +41,7 @@ enum ModelSections {
         // Compared with old ids folded in: an older engine may still say "tang/…".
         let have = Set(usable.map { ProviderID.canonicalSpec($0.spec) })
         var all = usable + suggested.filter { !have.contains(ProviderID.canonicalSpec($0.spec)) }
+        if frogCloudOnly { all = all.filter(\.place.isFrogCloud) }
         if alwaysFrogCloud, !all.contains(where: \.place.isFrogCloud) {
             all.append(ModelIdentity.of(ProviderID.cloudModel, in: []))
         }

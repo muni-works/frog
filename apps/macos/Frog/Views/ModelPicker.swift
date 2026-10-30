@@ -135,25 +135,27 @@ struct ModelMenu: View {
                         header(section.title)
                         ForEach(section.models, id: \.spec) { m in row(m) }
                     }
-                    if noCloud {
+                    if noCloud, !ModelSections.frogCloudOnly {
                         header("Cloud")
                         cloudSetup
                     }
                 }
                 .padding(6)
             }
-            Divider()
-            Button {
-                settingsTab = "models"
-                close()
-                openSettings()
-            } label: {
-                Label("Manage Models…", systemImage: "slider.horizontal.3")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .hoverPlate(h: 8, v: 6)
+            if !ModelSections.frogCloudOnly {
+                Divider()
+                Button {
+                    settingsTab = "models"
+                    close()
+                    openSettings()
+                } label: {
+                    Label("Manage Models…", systemImage: "slider.horizontal.3")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .hoverPlate(h: 8, v: 6)
+                }
+                .buttonStyle(.plain)
+                .padding(6)
             }
-            .buttonStyle(.plain)
-            .padding(6)
         }
         .frame(width: 340)
         // Opened from inside the canvas, it would inherit its scroll margins.
