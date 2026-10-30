@@ -4,7 +4,7 @@
 #
 #   apps/macos/scripts/hero-shot.sh
 #
-# It builds its own copy of the app (eco.frog.shot) with a throwaway HOME, so the window starts at
+# It builds its own copy of the app (toys.frog.shot) with a throwaway HOME, so the window starts at
 # its default size and the sidebar holds only the fixture's invented sessions, never yours.
 # The terminal running it needs Screen Recording permission.
 set -euo pipefail
@@ -12,7 +12,7 @@ set -euo pipefail
 HERE=${0:A:h}
 APP_DIR=${HERE:h}
 ROOT=${APP_DIR:h:h}
-ID=eco.frog.shot
+ID=toys.frog.shot
 WORK=$(mktemp -d -t frog-shot)
 trap 'rm -rf "$WORK"' EXIT
 

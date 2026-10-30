@@ -44,7 +44,7 @@
 	<true/>
 	<key>NSUserActivityTypes</key>
 	<array>
-		<string>eco.frog.conversation</string>
+		<string>toys.frog.conversation</string>
 	</array>
 </dict>
 </plist>

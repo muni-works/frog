@@ -1,6 +1,6 @@
 name: Frog
 options:
-  bundleIdPrefix: eco.frog
+  bundleIdPrefix: toys.frog
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
@@ -42,11 +42,11 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # Sparkle: frog.toys redirects to the latest release's appcast, so hosting can move
-        # without shipping an update. Only the release build (eco.frog) ever checks it.
+        # without shipping an update. Only the release build (toys.frog) ever checks it.
         SUFeedURL: https://frog.toys/appcast.xml
         SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
         LSApplicationCategoryType: public.app-category.developer-tools
-        NSUserActivityTypes: [eco.frog.conversation]
+        NSUserActivityTypes: [toys.frog.conversation]
         NSLocalNetworkUsageDescription: "frog on your iPhone connects to this Mac over your network."
         NSBonjourServices: [_frog._tcp]
         NSHumanReadableCopyright: "© 2026 Municipal Robotics"
@@ -55,7 +55,7 @@ targets:
         NSSpeechRecognitionUsageDescription: "Frog turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else."
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: eco.frog
+        PRODUCT_BUNDLE_IDENTIFIER: toys.frog
         CODE_SIGN_ENTITLEMENTS: Frog/Frog.entitlements
         # The EdDSA public key for update signatures. Its private half lives in the release
         # machine's Keychain (Sparkle's generate_keys); see scripts/release.sh.
@@ -66,7 +66,7 @@ targets:
       # hands the installed frog's notifications, URLs or relaunches to a stray build.
       configs:
         Debug:
-          PRODUCT_BUNDLE_IDENTIFIER: eco.frog.dev
+          PRODUCT_BUNDLE_IDENTIFIER: toys.frog.dev
     preBuildScripts:
       - name: Build frog engine
         script: '"$SRCROOT/scripts/build-engine.sh"'
@@ -84,7 +84,7 @@ targets:
       - target: Frog
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: eco.frog.tests
+        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.tests
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Frog.app/Contents/MacOS/Frog"
         BUNDLE_LOADER: "$(TEST_HOST)"

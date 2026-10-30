@@ -71,5 +71,5 @@ enum MorningNotice {
 
 extension Notification.Name {
     /// Show the brief: a new chat, where it sits under the frog.
-    static let showBrief = Notification.Name("eco.frog.showBrief")
+    static let showBrief = Notification.Name("toys.frog.showBrief")
 }

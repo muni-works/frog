@@ -8,7 +8,7 @@ It does three things, in this order:
 3. **Nudge.** Press a next step, say a few words, or stop a turn that's gone wrong.
 
 Anything longer (diffs line by line, transcripts, starting real work) belongs on the Mac or the
-iPhone. A long press, or Handoff (`eco.frog.conversation`), takes you there.
+iPhone. A long press, or Handoff (`toys.frog.conversation`), takes you there.
 
 This doc starts from what `WatchApp.swift` does today and proposes what to change.
 

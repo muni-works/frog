@@ -144,7 +144,7 @@ enum SingleInstance {
     }
 
     /// Per bundle id, so a debug frog and the installed one don't open each other's folders.
-    static let openFolder = Notification.Name("\(Bundle.main.bundleIdentifier ?? "eco.frog").openFolder")
+    static let openFolder = Notification.Name("\(Bundle.main.bundleIdentifier ?? "toys.frog").openFolder")
 
     /// Another copy of this frog is running.
     static var otherIsRunning: Bool {
@@ -308,9 +308,15 @@ enum LegacyKiln {
                 try? fm.createSymbolicLink(at: from, withDestinationURL: to)
             }
         }
-        // Then the preferences, newest bundle id first: frog was com.campedersen.frog before
-        // eco.frog, and com.campedersen.kiln before that.
+        // Then the preferences, newest bundle id first: frog was eco.frog before toys.frog,
+        // com.campedersen.frog before that, and com.campedersen.kiln first.
         let defaults = UserDefaults.standard
+        // eco.frog → toys.frog came later than the first import, so it has its own flag.
+        if !defaults.bool(forKey: "importedEcoDefaults") {
+            let dev = Bundle.main.bundleIdentifier?.hasSuffix(".dev") == true
+            importDefaults(from: dev ? "eco.frog.dev" : "eco.frog", into: defaults)
+            defaults.set(true, forKey: "importedEcoDefaults")
+        }
         guard !defaults.bool(forKey: "importedLegacyDefaults") else { return }
         for oldID in ["com.campedersen.frog", "com.campedersen.kiln"] {
             let id = oldID as CFString
@@ -322,5 +328,14 @@ enum LegacyKiln {
             }
         }
         defaults.set(true, forKey: "importedLegacyDefaults")
+    }
+
+    /// Copy what an old bundle id's preferences hold that these don't yet.
+    private static func importDefaults(from oldID: String, into defaults: UserDefaults) {
+        let id = oldID as CFString
+        let keys = CFPreferencesCopyKeyList(id, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? [String] ?? []
+        for key in keys where defaults.object(forKey: key) == nil {
+            if let value = CFPreferencesCopyAppValue(key as CFString, id) { defaults.set(value, forKey: key) }
+        }
     }
 }

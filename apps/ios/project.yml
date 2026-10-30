@@ -55,7 +55,7 @@ targets:
       properties:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-        NSUserActivityTypes: [eco.frog.conversation]
+        NSUserActivityTypes: [toys.frog.conversation]
         FrogKeychainGroup: $(AppIdentifierPrefix)toys.frog.remote
         NSSupportsLiveActivities: true
         NSBonjourServices: [_frog._tcp]
