@@ -5978,6 +5978,26 @@
       ],
       "type": "object"
     },
+    "ServedBy": {
+      "description": "Who runs a frog cloud model: `frog` (its own GPUs) or a third party (`workers-ai`).",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "third_party": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
     "Shape": {
       "oneOf": [
         {
@@ -6446,6 +6466,17 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "served_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServedBy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who served the turn's model calls, for a frog cloud model: frog cloud's own GPUs or a\nthird party. Absent when unknown (other providers, older logs)."
         },
         "timing": {
           "anyOf": [

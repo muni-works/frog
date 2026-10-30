@@ -35,6 +35,7 @@ fn reply(content: Vec<Block>, stop: Stop) -> Response {
             cache_read: 0,
             cache_write: 0,
             model: None,
+            upstream: None,
         },
         stop,
     }
@@ -9756,4 +9757,33 @@ async fn memory_tool_is_offered_only_with_compiled_memory() {
     assert!(!req.contains(&format!("<tool {}>", crate::compiled_memory::TOOL)));
     assert!(!req.contains(crate::compiled_memory::PROMPT.trim()));
     shutdown(h).await;
+}
+
+/// Who served a frog cloud turn reaches its `TurnEnded` (what the apps tint by and the
+/// session log keeps): the response's `x-frog-upstream` over the catalog's word.
+#[tokio::test]
+async fn a_frog_cloud_turn_records_who_served_it() {
+    async fn served(spec: &str, upstream: Option<&str>) -> Option<crate::protocol::ServedBy> {
+        let mut r = reply(vec![text("hi")], Stop::End);
+        r.usage.upstream = upstream.map(Into::into);
+        let mut h = engine_named(vec![r], spec, Some(32_768));
+        let evs = run(&mut h, "hello").await;
+        shutdown(h).await;
+        evs.iter()
+            .find_map(|e| match &e.event {
+                Event::TurnEnded { usage, .. } => Some(usage.served_by.clone()),
+                _ => None,
+            })
+            .expect("a TurnEnded")
+    }
+    let cloud = crate::providers::CLOUD;
+    let s = served(&format!("{cloud}/tree"), Some("workers-ai")).await.unwrap();
+    assert_eq!((s.name.as_str(), s.third_party), ("Cloudflare Workers AI", true));
+    let s = served(&format!("{cloud}/tree"), Some("frog")).await.unwrap();
+    assert!(!s.third_party);
+    // An old deploy without the header: the catalog says.
+    let s = served(&format!("{cloud}/qwen3-coder-next"), None).await.unwrap();
+    assert_eq!(s.id, "frog");
+    // Anything else stays unknown.
+    assert!(served("testprov/m", Some("workers-ai")).await.is_none());
 }

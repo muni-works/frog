@@ -515,7 +515,11 @@ struct EndView: View {
                 HStack(spacing: TurnSpace.Inset.card) {
                     // Where it ran, then what it cost (cloud) or how fast it wrote.
                     if let spec = usage.model {
-                        ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
+                        // A Frog Cloud turn takes the color of who served it, not cloud green.
+                        ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption, tint: usage.servedBy.map(Color.served))
+                    }
+                    if let s = usage.servedBy {
+                        Text(s.name).foregroundStyle(Color.served(s))
                     }
                     // What it cost (cloud) or how fast it wrote; each opens its working.
                     if let c = ModelStats.shared.cost(of: usage) {

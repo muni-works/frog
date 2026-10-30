@@ -20,6 +20,8 @@ struct ModelLabel: View {
     var detail: String? = nil
     /// Whether `.row` names the place. Lists grouped by place leave it to the section.
     var showsPlace = true
+    /// A color in place of the place's, for `.caption`: who served a Frog Cloud turn.
+    var tint: Color? = nil
 
     var body: some View {
         content
@@ -38,8 +40,8 @@ struct ModelLabel: View {
             }
         case .caption:
             HStack(spacing: 5) {
-                PlaceIcon(place: model.place)
-                Text(model.name).foregroundStyle(model.place.color.opacity(0.75))
+                PlaceIcon(place: model.place, tint: tint)
+                Text(model.name).foregroundStyle((tint ?? model.place.color).opacity(0.75))
                 Text("· \(model.stateLine ?? model.place.label)").foregroundStyle(.tertiary)
             }
             .lineLimit(1)
@@ -120,10 +122,11 @@ struct StateBadge: View {
 /// Where a model runs, as its icon, in its place's color.
 struct PlaceIcon: View {
     let place: ModelIdentity.Place
+    var tint: Color? = nil
 
     var body: some View {
         Image(systemName: place.symbol)
-            .foregroundStyle(place.color)
+            .foregroundStyle(tint ?? place.color)
             .imageScale(.small)
             .help(place.label)
     }

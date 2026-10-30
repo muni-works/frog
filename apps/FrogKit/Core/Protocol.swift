@@ -371,6 +371,8 @@ struct TurnUsage: Decodable, Sendable {
     var model: String?
     /// What the turn cost in energy, when the engine measured it (`--energy`).
     var energy: TurnEnergy?
+    /// Who served a Frog Cloud turn: its own GPUs or a third party. Absent when unknown.
+    var servedBy: ServedBy?
     /// Per-call timing; only its cache counts are read, for logs from before `cachedTokens`.
     var timing: Timing?
 
@@ -387,6 +389,15 @@ struct TurnUsage: Decodable, Sendable {
     var cacheWritten: UInt64 { min(cacheWriteTokens ?? 0, inputTokens - cached) }
     /// Input tokens read fresh, at the full input rate (cache writes included).
     var fresh: UInt64 { inputTokens - cached }
+}
+
+/// Who ran a Frog Cloud model: `frog` (Frog Cloud's GPUs) or a third party (`workers-ai`).
+struct ServedBy: Decodable, Sendable, Equatable {
+    var id: String
+    var name: String
+    var thirdParty: Bool?
+
+    var isThirdParty: Bool { thirdParty ?? (id != "frog") }
 }
 
 /// Watt-hours: the whole Mac above its idle power, and a hosted model's data center, estimated.

@@ -234,6 +234,7 @@ impl Client {
             rb = rb.bearer_auth(k);
         }
         let resp = sse::check(rb.send().await?).await?;
+        let upstream = upstream(resp.headers());
 
         let mut text = String::new();
         let mut thinking = String::new();
@@ -332,12 +333,19 @@ impl Client {
             .filter(|c| !c.1.is_empty())
             .map(|(id, name, args)| (id, name, parse_args(&args)))
             .collect();
+        usage.upstream = upstream;
         Ok(Response {
             message: assistant_message(thinking, None, text, calls),
             usage,
             stop: stop.unwrap_or(Stop::Incomplete),
         })
     }
+}
+
+/// Who served the call, when the server says (frog cloud's `x-frog-upstream`).
+fn upstream(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    let v = headers.get("x-frog-upstream")?.to_str().ok()?.trim();
+    (!v.is_empty()).then(|| v.to_string())
 }
 
 /// A chat-completions `usage` object. `prompt_tokens` includes the cached part; gateways that
@@ -359,6 +367,7 @@ fn read_usage(u: &Value) -> Usage {
         cache_write: written.min(input),
         output: u["completion_tokens"].as_u64().unwrap_or(0),
         model: None,
+        upstream: None,
     }
 }
 
@@ -541,6 +550,44 @@ mod gateway_tests {
             extra: None,
             anthropic: Default::default(),
         }
+    }
+
+    /// Frog cloud's `x-frog-upstream` lands on the response's usage.
+    #[tokio::test]
+    async fn the_upstream_header_is_kept() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 65536];
+            let _ = s.read(&mut buf).await;
+            let body = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"hm\"}}]}\n\n\
+                        data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\n\
+                        data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n\n\
+                        data: [DONE]\n\n";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nx-frog-upstream: workers-ai\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            s.write_all(head.as_bytes()).await.unwrap();
+            s.write_all(body.as_bytes()).await.unwrap();
+        });
+        let c = client(&format!("http://{addr}/v1"), "tree", None);
+        let messages = vec![crate::message::Message::user("hello")];
+        let req = Request {
+            system: "",
+            messages: &messages,
+            tools: &[],
+            max_tokens: None,
+            format: None,
+            think: None,
+            think_budget: None,
+            cache_key: None,
+        };
+        let resp = c.complete(&req, &mut |_| {}).await.unwrap();
+        assert_eq!(resp.usage.upstream.as_deref(), Some("workers-ai"));
+        assert_eq!(resp.usage.output, 1);
     }
 
     #[test]
