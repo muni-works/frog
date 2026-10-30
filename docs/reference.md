@@ -117,11 +117,11 @@ Starting a message with `/skill-name` loads that skill directly. `frog --skills`
 **Web.** `WebFetch` reads an http(s) page as markdown. It keeps the page's `<main>`/`<article>` and drops navigation, scripts and media. With a `query` it returns only the matching sections, so an 8k-context model isn't flooded. Pages are cached for 15 minutes per session. `WebSearch` returns title, URL and snippet lines from the backend you configure:
 
 ```toml
-web_search = "searxng"                  # or "brave", "exa", "tavily"
+web_search = "searxng"                  # or "brave", "exa", "tavily", "frog"
 searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=json)
 ```
 
-- **Keys:** `echo $KEY | frog --set-key brave` (or `exa`, `tavily`) stores one in the Keychain. `BRAVE_SEARCH_API_KEY`, `EXA_API_KEY` and `TAVILY_API_KEY` work too. With no `web_search` set, frog uses `searxng_url` or a key found in the environment. With nothing configured, `WebSearch` isn't offered.
+- **Keys:** `echo $KEY | frog --set-key brave` (or `exa`, `tavily`) stores one in the Keychain. `BRAVE_SEARCH_API_KEY`, `EXA_API_KEY` and `TAVILY_API_KEY` work too. `frog` is Frog Cloud's own search, with your Frog Cloud key. With no `web_search` set, frog uses `searxng_url`, then a key found in the environment, then Frog Cloud's search if Frog Cloud is connected. With nothing configured, `WebSearch` isn't offered.
 - **Untrusted content:** results come back wrapped as untrusted data, and the model is told not to follow instructions in them.
 - **Private addresses:** `WebFetch` only reaches public addresses. Loopback, RFC 1918, CGNAT (100.64/10), link-local, ULA and other special ranges are refused. Every address a name resolves to is checked when connecting, which covers redirects and DNS rebinding. Set `web_allow_private = true` to reach your LAN or localhost.
 - **Permissions:** the web tools work in plain chats too. They don't ask in `default`/`accept-edits` mode, just as reads and sandboxed commands (which can already reach the network) don't, and each fetch shows its URL on the tool card. In auto mode the classifier sees the URL or query first, and "always allow" is per host.

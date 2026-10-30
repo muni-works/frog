@@ -300,8 +300,9 @@ pub struct Config {
     /// tools. Not a config.toml key.
     #[serde(skip)]
     pub subagent_write: bool,
-    /// The WebSearch backend: "searxng", "brave", "exa" or "tavily". Unset: a configured
-    /// `searxng_url`, else a search key in the environment, else no WebSearch.
+    /// The WebSearch backend: "searxng", "brave", "exa", "tavily" or "frog". Unset: a configured
+    /// `searxng_url`, else a search key in the environment, else Frog Cloud's search when
+    /// connected, else no WebSearch.
     #[serde(default)]
     pub web_search: Option<String>,
     /// Your SearXNG instance, e.g. `http://localhost:8888`.
