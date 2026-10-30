@@ -19,7 +19,12 @@ final class CloudAccount {
         let resets_at: String
         var label: String { kind == "5h" ? "This 5 hours" : "This week" }
         var fraction: Double { limit > 0 ? min(1, used / limit) : 0 }
-        var resets: Date? { ISO8601DateFormatter().date(from: resets_at) }
+        /// The edge's `toISOString()`: milliseconds included.
+        var resets: Date? {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return f.date(from: resets_at) ?? ISO8601DateFormatter().date(from: resets_at)
+        }
     }
 
     struct Subscription: Decodable, Hashable {
@@ -28,6 +33,9 @@ final class CloudAccount {
         let windows: [Window]
         let over: Bool
     }
+
+    /// `/v1/me` answers `{"account": {...}}`.
+    private struct MeResponse: Decodable { let account: Me }
 
     struct Me: Decodable {
         let name: String?
@@ -73,7 +81,7 @@ final class CloudAccount {
         loading = true
         defer { loading = false }
         do {
-            me = try await call(Me.self, "/v1/me", key: key)
+            me = try await call(MeResponse.self, "/v1/me", key: key).account
             error = nil
         } catch {
             self.error = error.localizedDescription
