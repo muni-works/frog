@@ -339,6 +339,12 @@ async fn fetch(p: &ProviderInfo, dev: &Dev) -> Option<Vec<Model>> {
                     served_by: (p.id == providers::CLOUD)
                         .then(|| ServedBy::parse(&m["served_by"]))
                         .flatten(),
+                    // frog cloud prices its models in OpenRouter's shape (dollars per token)
+                    // and says how long their context is; other servers don't, models.dev does.
+                    context: m["context_length"].as_u64(),
+                    cost_in: per_million(&m["pricing"]["prompt"]),
+                    cost_out: per_million(&m["pricing"]["completion"]),
+                    cost_cache_read: per_million(&m["pricing"]["input_cache_read"]),
                     ..Default::default()
                 })
             })
