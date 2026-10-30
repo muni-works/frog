@@ -106,9 +106,12 @@ extension CloudAccount {
 
     /// Signed in with Google: GitHub in the browser, joined to this Mac's account (the link
     /// token makes sure of that, whatever the browser's cookie), so its repos show up.
-    static func connectGitHub() async throws {
+    static func connectGitHub() async throws { try await connect("github") }
+
+    /// Adds a sign-in ("github" or "google") to this Mac's account, as `connectGitHub` does.
+    static func connect(_ provider: String) async throws {
         let link = try await shared.linkToken()
-        let key = try await CloudSignIn.run(provider: "github", link: link)
+        let key = try await CloudSignIn.run(provider: provider, link: link)
         await ProviderStore.shared.setKey(key, for: "cloud")
         await shared.reloadKey()
         await shared.refresh()

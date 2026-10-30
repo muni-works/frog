@@ -282,7 +282,7 @@ export default function App() {
   const commit = (s: SessionSummary) => send(s.id, 'Commit the changes with a clear message.')
   const push = (s: SessionSummary) => send(s.id, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
 
-  const leave = (after: string | null, provider: Provider = 'github', connect?: string) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect).catch(() => setLeavingFor(null)) }
+  const leave = (after: string | null, provider: Provider = 'github', connect?: string, pick = !!connect) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect, pick).catch(() => setLeavingFor(null)) }
 
   // Keyboard: ⌘K palette, ⌘N new, ⌘, settings, ⌘↩ / ⌘. answer the current ask.
   useEffect(() => {
@@ -534,7 +534,7 @@ export default function App() {
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onSignOut={() => { setSettings(false); signOut(); clearThreads(); setKey(null); setAccount(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
+      {settings && <Settings account={account} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={() => { setSettings(false); signOut(); clearThreads(); setKey(null); setAccount(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   )

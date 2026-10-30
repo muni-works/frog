@@ -47,6 +47,8 @@ final class CloudAccount {
         let handle: String?
         /// GitHub's picture, else Google's. Older edges leave it out.
         let image: String?
+        /// The Google account they sign in with; nil until they do. Older edges leave it out.
+        let google: String?
         let email: String?
         let credit_cents: Double
         let subscription: Subscription?

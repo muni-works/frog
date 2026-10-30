@@ -18,6 +18,8 @@ export interface Account {
   handle: string | null
   /** Their picture (GitHub's, else Google's). Older edges leave it out. */
   image?: string | null
+  /** The Google account they sign in with; null until they do. Older edges leave it out. */
+  google?: string | null
   email: string | null
   /** Live credit in cents (may be fractional): Frog Cloud bills per token, at each model's
    * prices, against this. The edge still sends tasks_left (credit / $0.25), which no app shows. */
@@ -71,9 +73,8 @@ export type Provider = 'github' | 'google'
  * trip. Signed in with Google, `connect` (this browser's key) connects GitHub to that account:
  * a link token signs the edge in as it, whatever its cookie says. The repo menu then reopens
  * with `after` back in the box instead of starting a session. */
-export async function signIn(after?: string, provider: Provider = 'github', connect?: string) {
+export async function signIn(after?: string, provider: Provider = 'github', connect?: string, pick = !!connect) {
   const link = connect ? (await call<{ link: string }>('/v1/auth/link', { method: 'POST', body: '{}' }, connect)).link : undefined
-  const pick = !!connect
   const verifier = random(32)
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
   const state = random(16)

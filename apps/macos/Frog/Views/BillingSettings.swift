@@ -30,6 +30,12 @@ struct BillingSettings: View {
                     }
                     Text("Cloud sessions belong to your account, so they show up on every device you sign in on.")
                         .font(.frog(size: 11)).foregroundStyle(.secondary)
+                }
+                Section("Sign-in") {
+                    login("GitHub", me.handle.map { "@\($0)" }, why: "Needed for your repos.", provider: "github")
+                    login("Google", me.google, why: "Sign in with your Google account.", provider: "google")
+                }
+                Section {
                     HStack {
                         Link("Devices and keys", destination: CloudAccount.origin.appending(path: "account"))
                         Spacer()
@@ -59,6 +65,24 @@ struct BillingSettings: View {
         await account.reloadKey()
         await account.refresh()
         await CloudSessions.shared.refresh()
+    }
+
+    /// One sign-in the account has, or a Connect button that adds it to this account.
+    private func login(_ name: String, _ who: String?, why: String, provider: String) -> some View {
+        LabeledContent {
+            if who != nil {
+                Text("Connected").foregroundStyle(.secondary)
+            } else {
+                Button("Connect") {
+                    signingIn = true
+                    Task { defer { signingIn = false }; try? await CloudAccount.connect(provider) }
+                }
+                .disabled(signingIn)
+            }
+        } label: {
+            Text(name)
+            Text(who ?? "Not connected. \(why)")
+        }
     }
 
     @ViewBuilder

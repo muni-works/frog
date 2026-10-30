@@ -79,15 +79,19 @@ final class CloudPhone: NSObject {
 
     /// Signed in with Google: GitHub, joined to this phone's account (the link token signs the
     /// sheet in as it, whatever Safari's cookie says), so its repos show up.
-    func connectGitHub() async {
+    func connectGitHub() async { await connect("github") }
+
+    /// Adds a sign-in ("github" or "google") to this phone's account: the link token signs the
+    /// sheet in as it, whatever Safari's cookie says.
+    func connect(_ provider: String) async {
         guard let key else { return }
         var r = URLRequest(url: CloudGateway.origin.appending(path: "v1/auth/link"))
         r.httpMethod = "POST"
         r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         do {
             let (data, response) = try await URLSession.shared.data(for: r)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { error = "Couldn't connect GitHub. Try again."; return }
-            signIn(provider: "github", link: try JSONDecoder().decode(Link.self, from: data).link)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { error = "Couldn't connect. Try again."; return }
+            signIn(provider: provider, link: try JSONDecoder().decode(Link.self, from: data).link)
         } catch {
             self.error = error.localizedDescription
         }

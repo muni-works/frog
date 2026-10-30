@@ -1,7 +1,7 @@
 import { PLANS, TOP_UPS } from '../auth'
 import { useEffect, useMemo, useState } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
-import { API, firstName, type Account } from '../auth'
+import { API, firstName, type Account, type Provider } from '../auth'
 import type { Model } from '../models'
 import type { SessionSummary } from '../cloud/protocol'
 
@@ -120,7 +120,7 @@ function TopUp({ onTopUp }: { onTopUp: (dollars: number) => Promise<void> }) {
 
 const tabs = ['Account', 'Billing'] as const
 
-export function Settings({ account, models = [], onSignOut, onClose, onTopUp, onSubscribe }: { account: Account | null; models?: Model[]; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void>; onSubscribe?: (plan: string) => Promise<void> }) {
+export function Settings({ account, models = [], onConnect, onSignOut, onClose, onTopUp, onSubscribe }: { account: Account | null; models?: Model[]; onConnect?: (provider: Provider) => void; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void>; onSubscribe?: (plan: string) => Promise<void> }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>('Account')
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -144,6 +144,7 @@ export function Settings({ account, models = [], onSignOut, onClose, onTopUp, on
               <div className="acts"><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onSignOut}>Sign out</button></div>
             </div>
             <p className="det wrap">Cloud sessions belong to your account, so they show up on every device you sign in on.</p>
+            <Logins account={account} onConnect={onConnect} />
             <div className="set-row"><span style={{ flex: 1 }}>Devices and keys</span><a href={`${API}/account`} target="_blank" rel="noreferrer">Manage</a></div>
             {notifySupported() && <Notify />}
           </>)}
@@ -173,6 +174,20 @@ export function Settings({ account, models = [], onSignOut, onClose, onTopUp, on
       </div>
     </div>
   )
+}
+
+/** The sign-ins this account has, as on the Mac and iPhone: GitHub (its repos) and Google. */
+function Logins({ account, onConnect }: { account: Account | null; onConnect?: (provider: Provider) => void }) {
+  const rows: [Provider, string, string | null | undefined, string][] = [
+    ['github', 'GitHub', account?.handle && `@${account.handle}`, 'Needed for your repos.'],
+    ['google', 'Google', account?.google, 'Sign in with your Google account.'],
+  ]
+  return rows.map(([id, name, who, why]) => (
+    <div key={id} className="set-row">
+      <div style={{ flex: 1 }}><b>{name}</b><div className="det wrap">{who ?? `Not connected. ${why}`}</div></div>
+      {who ? <span className="det">Connected</span> : onConnect && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => onConnect(id)}>Connect</button>}
+    </div>
+  ))
 }
 
 function Notify() {
