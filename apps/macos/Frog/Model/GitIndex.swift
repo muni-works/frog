@@ -132,6 +132,8 @@ final class GitIndex {
         var newRepos: Set<String> = []
         for s in sessions {
             guard let folder = s.cwd, !(s.folder.map(FrogPaths.isChat) ?? false) else { continue }
+            // No git badges there: reading .git would ask for the folder at launch (see Library).
+            guard !FrogPaths.isPrivacyProtected(folder) else { continue }
             guard let ref = tree(folder) else { continue }
             sessionTree[s.id] = ref.top
             if trees[ref.top] == nil { trees[ref.top] = TreeState(ref: ref) }

@@ -69,7 +69,9 @@ final class Library {
                 // shown under their repo (see `Sidebar.home`).
                 let listed = all.filter { s in
                     guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/") else { return false }
-                    return FileManager.default.fileExists(atPath: cwd)
+                    // Documents, Desktop and Downloads ask macOS's permission on first touch: a
+                    // listing never touches them, only opening that conversation does.
+                    return FrogPaths.isPrivacyProtected(cwd) || FileManager.default.fileExists(atPath: cwd)
                 }
                 // Unchanged, it isn't written: every view of the list would rebuild for nothing.
                 guard listed != sessions else { return }
