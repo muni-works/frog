@@ -619,6 +619,16 @@ async fn run() -> Result<bool> {
         (Some("auto"), _) | (None, (_, _, true)) => Mode::Auto,
         _ => Mode::Default,
     };
+    // A resume runs on the session's own model, unless -m says otherwise: `config.toml`'s
+    // default (or the last model used anywhere) may name one this session never ran on, or
+    // one whose key is gone — every turn then fails with the provider's 401.
+    let (profile_name, profile) = match &resume {
+        Some(id) if cli.model.is_none() => match session::model_of(&store, id) {
+            Ok(spec) => cfg.resolve(Some(&spec))?,
+            Err(_) => (profile_name, profile),
+        },
+        _ => (profile_name, profile),
+    };
     if cli.acp {
         acp::serve(cfg.clone(), profile_name, profile, store, cli.sandbox).await?;
         return Ok(true);
