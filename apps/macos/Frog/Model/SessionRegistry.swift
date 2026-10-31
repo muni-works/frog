@@ -272,9 +272,11 @@ private struct WeakPanes {
 final class QuitGuard: NSObject, NSApplicationDelegate {
     /// One Frog at a time: a second copy (opened from another path, a backup, or twice by a
     /// script) would run its own engines on the same sessions. It hands over to the copy
-    /// that's already running and leaves before opening a window.
+    /// that's already running and leaves before opening a window. Test hosts are left alone:
+    /// XCTest launches the app to run its tests, and its runner exits "code 0 before
+    /// establishing connection" if this quits while one is open.
     func applicationWillFinishLaunching(_ notification: Notification) {
-        guard let id = Bundle.main.bundleIdentifier else { return }
+        guard !SingleInstance.isTesting, let id = Bundle.main.bundleIdentifier else { return }
         let me = ProcessInfo.processInfo.processIdentifier
         guard let other = NSRunningApplication.runningApplications(withBundleIdentifier: id)
             .first(where: { $0.processIdentifier != me && !$0.isTerminated })
