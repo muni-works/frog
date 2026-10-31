@@ -34,10 +34,11 @@ struct ComposerView: View {
         }
     }
 
-    private var suggestions: [String] {
-        guard let mention else { return [] }
-        return FileIndex.search(workspace.files, mention)
-    }
+    /// The files matching the `@query` at the cursor, worked out when the query changes (see
+    /// `onMention`) rather than read back from a body pass: fuzzy-matching every path in the
+    /// project is the composer's most expensive step, and the body re-evaluates for a great many
+    /// reasons that have nothing to do with what's typed.
+    @State private var suggestions: [String] = []
 
     /// `/sk…` at the start of the message: matching skills.
     private var skillSuggestions: [SkillInfo] {
@@ -101,7 +102,7 @@ struct ComposerView: View {
     /// chat). After it: the repository's branch and changes, for a folder in git.
     @ViewBuilder
     private var topRow: some View {
-        if conversation.turns.isEmpty, !conversation.replaying {
+        if !conversation.started, !conversation.replaying {
             ContextBar {
                 // Its hover plate's margin, so the text lines up with the git bar's.
                 FolderChip(folder: workspace.folder, choose: switchFolder)
@@ -226,6 +227,7 @@ struct ComposerView: View {
                             if query != nil { workspace.loadFiles() }
                             if query != mention { picked = 0 }
                             mention = query
+                            suggestions = query.map { FileIndex.search(workspace.files, $0) } ?? []
                         },
                         onMentionKey: handleMentionKey,
                         onTab: {
@@ -302,7 +304,9 @@ struct ComposerView: View {
             conversation.panes.insert = nil
             controller.insert(mention)
         }
-        .onChange(of: text, initial: true) { conversation.panes.draft = text }
+        // The preview's chip asks whether its mention is still typed (only that answer is
+        // observed; see `PaneHub.noteDraft`).
+        .onChange(of: text, initial: true) { conversation.panes.noteDraft(text) }
         // Keep the model warm for what's about to be sent: when the conversation is shown, and
         // after each pause in typing (`.task(id:)` restarts on every keystroke).
         .task(id: text) {
@@ -335,7 +339,7 @@ struct ComposerView: View {
         // The keys are under the field (`hint`), at rest too; the placeholder just says so.
         if conversation.busy { return "Working… type a follow-up" }
         // A new conversation's placeholder is its only hint (the empty page is just a question).
-        let new = conversation.turns.isEmpty && !conversation.replaying
+        let new = !conversation.started && !conversation.replaying
         if workspace.isChat {
             return new ? "Ask anything, or pick a folder to work on code" : "Ask anything"
         }
@@ -372,7 +376,7 @@ struct ComposerView: View {
                 DictationButton(dictation: dictation, toggle: toggleDictation)
             }
             ModePicker(conversation: conversation)
-            if conversation.turns.isEmpty, conversation.cloudSession == nil, CloudSessions.shared.gateway != nil {
+            if !conversation.started, conversation.cloudSession == nil, CloudSessions.shared.available {
                 LocationPicker(workspace: workspace)
             } else if conversation.cloudSession != nil {
                 Label("Frog Cloud", systemImage: "cloud").foregroundStyle(.green.opacity(0.85))
@@ -449,7 +453,7 @@ struct ComposerView: View {
     private func send() {
         guard canSend else { return }
         // A new conversation set to run in Frog Cloud starts its sandbox with this message.
-        if conversation.turns.isEmpty, conversation.cloudSession == nil, let target = workspace.cloudTarget {
+        if !conversation.started, conversation.cloudSession == nil, let target = workspace.cloudTarget {
             let message = text
             text = ""
             attachments = []
@@ -463,6 +467,7 @@ struct ComposerView: View {
         text = ""
         attachments = []
         mention = nil
+        suggestions = []
         // It went: the draft is gone (a pending keystroke save must not bring it back).
         draftSave?.cancel()
         draftSave = nil
@@ -546,7 +551,7 @@ struct ComposerView: View {
         case .up: picked = (picked - 1 + list.count) % list.count
         case .down: picked = (picked + 1) % list.count
         case .accept: controller.insertMention(list[min(picked, list.count - 1)])
-        case .cancel: mention = nil
+        case .cancel: mention = nil; suggestions = []
         }
         return true
     }

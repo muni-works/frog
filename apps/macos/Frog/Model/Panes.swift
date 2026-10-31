@@ -30,7 +30,7 @@ final class Pane: Identifiable {
     var hasTabs: Bool { changeCount > 0 || toolCount > 0 }
     /// A preview needs room to be useful; changes alone read fine narrower.
     var cardWidth: CGFloat { toolCount > 0 ? PaneArea.minWidth + 60 : WorkspaceView.changesWidth }
-    var hasRail: Bool { !(conversation?.turns.isEmpty ?? true) }
+    var hasRail: Bool { conversation?.started ?? false }
 }
 
 /// How a window's panes are arranged: a tree of rows and columns with a pane at each leaf.

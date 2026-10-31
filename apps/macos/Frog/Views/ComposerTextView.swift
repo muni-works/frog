@@ -194,8 +194,12 @@ struct ComposerTextView: NSViewRepresentable {
         tv.string = text
         controller.textView = tv
         DispatchQueue.main.async {
-            tv.window?.makeFirstResponder(tv)
-            context.coordinator.updateHeight(tv)
+            // A pane that comes back (a switch, a split) mustn't pull the caret out of whatever
+            // the user is already in — a search field, the terminal, another pane's composer.
+            if let window = tv.window, window.firstResponder == nil || window.firstResponder === window {
+                window.makeFirstResponder(tv)
+            }
+            context.coordinator.fitHeightNow(tv)
         }
         return scroll
     }
@@ -206,7 +210,7 @@ struct ComposerTextView: NSViewRepresentable {
         if tv.string != text {
             tv.string = text
             tv.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
-            context.coordinator.updateHeight(tv)
+            context.coordinator.fitHeightNow(tv)
         }
     }
 
@@ -221,8 +225,10 @@ struct ComposerTextView: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
             parent.text = tv.string
-            updateHeight(tv)
+            // The mention check comes first: it's a scan of the token under the cursor, where the
+            // height is a full layout pass, and the suggestion list should answer the keystroke.
             reportMention(tv)
+            updateHeight(tv)
         }
 
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
@@ -276,7 +282,25 @@ struct ComposerTextView: NSViewRepresentable {
             }
         }
 
+        /// A height update waiting for the current run loop turn to end.
+        private var heightScheduled = false
+
+        /// Fit the field to its text. Deferred to the next run loop turn, once per turn: the
+        /// write invalidates the composer's SwiftUI view (which rebuilds its controls, pickers
+        /// and popover anchors), and doing that from inside AppKit's text-change callback puts
+        /// the re-render in the middle of the edit. By the next turn the text view has laid
+        /// itself out for drawing anyway, so `usedRect` costs nothing.
         func updateHeight(_ tv: NSTextView) {
+            guard !heightScheduled else { return }
+            heightScheduled = true
+            DispatchQueue.main.async { [weak self, weak tv] in
+                self?.heightScheduled = false
+                guard let self, let tv else { return }
+                self.applyHeight(tv)
+            }
+        }
+
+        private func applyHeight(_ tv: NSTextView) {
             guard let container = tv.textContainer, let layout = tv.layoutManager else { return }
             layout.ensureLayout(for: container)
             let used = layout.usedRect(for: container).height + tv.textContainerInset.height * 2
@@ -284,6 +308,13 @@ struct ComposerTextView: NSViewRepresentable {
             if abs(h - parent.height) > 0.5 {
                 parent.height = h
             }
+        }
+
+        /// Fit it now, for the two places that are already off the edit (the first layout, and
+        /// a binding write from SwiftUI), so the field never flashes at the wrong height.
+        func fitHeightNow(_ tv: NSTextView) {
+            heightScheduled = false
+            applyHeight(tv)
         }
     }
 }

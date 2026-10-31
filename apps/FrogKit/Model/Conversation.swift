@@ -49,7 +49,18 @@ final class Conversation {
     let folder: URL
     private(set) var sessionID: String?
     private(set) var status: Status?
-    private(set) var turns: [TurnState] = []
+    private(set) var turns: [TurnState] = [] {
+        didSet {
+            // Published apart from `turns` so views that only need "has anything been said"
+            // don't rebuild on every streamed delta (see `started`).
+            let now = !turns.isEmpty
+            if now != started { started = now }
+        }
+    }
+    /// Whether anything has been said here. For views that only need that (the composer's
+    /// placeholder, its folder bar, its location picker): reading `turns` instead makes them
+    /// rebuild on every streamed delta, which is 30 a second while a turn runs.
+    private(set) var started = false
     private(set) var busy = true
     /// The Frog Cloud session this shows, when its engine is a sandbox (`CloudLink`).
     var cloudSession: String?

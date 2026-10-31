@@ -18,6 +18,11 @@ final class CloudSessions {
         return (env ?? CloudAccount.shared.key).map(CloudGateway.init(token:))
     }
 
+    /// Whether Frog Cloud can run a session here: a gateway key, or a signed-in account. For
+    /// views that only need the yes/no — `gateway` reads the account on every call, which the
+    /// composer did on every body pass.
+    var available: Bool { ProcessInfo.processInfo.environment["FROG_GATEWAY_KEY"] != nil || CloudAccount.shared.signedIn }
+
     var live: [CloudGateway.Session] { sessions.filter { $0.archived != true } }
 
     func start() {
