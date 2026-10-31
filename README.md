@@ -95,6 +95,15 @@ models:
 - **Built for small models.** frog probes each local model once and picks how to call tools (native, text or grammar-constrained JSON), budgets thinking, and guards against loops.
 - Agent Skills, subagents, offline dependency docs, web fetch and search, project memory, and `AGENTS.md`/`CLAUDE.md` instructions.
 
+### The chief pattern
+
+For running an org of sessions, the pattern is the nesting and the pins — no feature, no special
+tile. Run a long-lived session in a workspace (`~/Developer/chief`, say), keep it **pinned** in
+the sidebar, and have it start the others (`StartSession`): a session's row nests the sessions it
+started under it, so the whole org reads as one tree with the long-lived session at the top.
+Pins float above the list, and a pinned row shows what it's doing and what it's waiting on like
+any other. Open two windows on the same session when you want to watch it work.
+
 ## Docs
 
 - [Quickstart](docs/quickstart.md)

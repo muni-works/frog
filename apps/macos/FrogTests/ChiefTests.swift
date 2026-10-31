@@ -2,6 +2,9 @@ import XCTest
 @testable import Frog
 
 /// The chief of staff: one pinned session as a tile above everything else in the sidebar.
+/// The whole class runs only with `FeatureFlags.chief` on — the flag is off by default (the
+/// chief UI is too complex for new users), and the off-state behavior is `ChiefFlagOffTests`.
+/// Flipping the flag brings both the feature and this coverage back.
 @MainActor
 final class ChiefTests: XCTestCase {
     /// `Library.shared` persists to the host app's defaults (toys.frog.dev, shared with every
@@ -9,7 +12,8 @@ final class ChiefTests: XCTestCase {
     private static let keys = ["chiefSession", "pinnedSessions", "archivedSessions"]
     private var saved: [String: Any] = [:]
 
-    override func setUp() {
+    override func setUpWithError() throws {
+        try XCTSkipUnless(FeatureFlags.chief, "chief is behind FeatureFlags.chief (off by default)")
         continueAfterFailure = false
         saved = Self.keys.reduce(into: [:]) { d, k in d[k] = UserDefaults.standard.object(forKey: k) }
     }

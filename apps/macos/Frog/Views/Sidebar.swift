@@ -98,7 +98,7 @@ struct SessionList: View {
     }
 
     private var pins: [SessionInfo] {
-        active.filter { library.pinned.contains($0.id) && $0.id != library.chief }
+        active.filter { library.pinned.contains($0.id) && (!FeatureFlags.chief || $0.id != library.chief) }
     }
 
     private var projects: [(folder: URL, items: [SessionInfo])] {
@@ -257,10 +257,11 @@ struct SessionList: View {
     }
 
     /// The chief of staff, always first: a wide tile with what it's doing or asking, like a
-    /// pinned chat at the top of Messages. Shown in every grouping; hidden while searching.
+    /// pinned chat at the top of Messages. Shown in every grouping; hidden while searching;
+    /// hidden with the flag off entirely (a pinned session is the home base instead).
     @ViewBuilder
     private var chiefTile: some View {
-        if let s = library.chiefSession {
+        if FeatureFlags.chief, let s = library.chiefSession {
             Button { open(s) } label: {
                 ChiefTile(session: s, selected: s.id == current, live: library.live[s.id], library: library)
             }
@@ -305,7 +306,7 @@ struct SessionList: View {
             active = AttentionTree.matching(active, parent: { library.parents[$0] }) { AttentionTree.matches($0, query) }
             scope = .all
         }
-        let chief = library.chief
+        let chief = FeatureFlags.chief ? library.chief : nil
         let others = active.filter { $0.id != chief }
         let folds = SessionFolds.group(others, parent: { library.parents[$0] })
         // A fold's parent is any member's (a resumed worker keeps its manager); a parent folded
@@ -355,8 +356,8 @@ struct SessionList: View {
         let built = Self.attention(library, sort: sort, scope: scope, current: current,
                                    openDone: openDone, collapsed: collapsedParents, query: q)
         let git = GitTreeBadges.build(built.layout.org + built.layout.yours, heads: built.heads, parentOf: built.parentOf,
-                                      folds: built.folds, chief: library.chief, state: rowState) { open($0) }
-        if q.isEmpty || library.chiefSession.map({ AttentionTree.matches($0, q) }) == true {
+                                      folds: built.folds, chief: FeatureFlags.chief ? library.chief : nil, state: rowState) { open($0) }
+        if FeatureFlags.chief, q.isEmpty || library.chiefSession.map({ AttentionTree.matches($0, q) }) == true {
             chiefTile
         }
         // A lens, not a move: each also keeps its place in the tree, with its orange dot.
@@ -391,7 +392,7 @@ struct SessionList: View {
             if built.layout.org.isEmpty && built.layout.yours.isEmpty && archived.isEmpty {
                 empty("No matches")
             }
-        } else if built.layout.org.isEmpty && built.layout.yours.isEmpty && library.chiefSession == nil {
+        } else if built.layout.org.isEmpty && built.layout.yours.isEmpty && (FeatureFlags.chief ? library.chiefSession : nil) == nil {
             empty("No conversations yet")
         }
     }
@@ -547,7 +548,7 @@ struct SessionList: View {
             compactHeader("Chats")
             ForEach(chats) { compactRow($0, depth: 0) }
         }
-        if projects.isEmpty && chats.isEmpty && pins.isEmpty && library.chiefSession == nil { empty("No conversations yet") }
+        if projects.isEmpty && chats.isEmpty && pins.isEmpty && (FeatureFlags.chief ? library.chiefSession : nil) == nil { empty("No conversations yet") }
     }
 
     private var compactPins: some View {
@@ -671,7 +672,7 @@ struct SessionList: View {
             }
             ForEach(chats) { row($0, showPlace: false) }
         }
-        if projects.isEmpty && chats.isEmpty && pins.isEmpty && library.chiefSession == nil {
+        if projects.isEmpty && chats.isEmpty && pins.isEmpty && (FeatureFlags.chief ? library.chiefSession : nil) == nil {
             empty("No conversations yet")
         }
     }
@@ -1056,11 +1057,12 @@ struct SessionList: View {
             renaming = s
         }
         Button(library.pinned.contains(s.id) ? "Unpin" : "Pin") { library.togglePin(s.id) }
-            .disabled(library.chief == s.id)
-        Button("Make Chief") { library.makeChief(s.id) }
-            .disabled(library.chief == s.id)
-        if library.chief == s.id {
-            Button("Remove Chief") { library.removeChief() }
+        if FeatureFlags.chief {
+            Button("Make Chief") { library.makeChief(s.id) }
+                .disabled(library.chief == s.id)
+            if library.chief == s.id {
+                Button("Remove Chief") { library.removeChief() }
+            }
         }
         if let folder = s.folder, !s.isChat {
             Button("Reveal Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
