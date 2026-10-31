@@ -55,7 +55,47 @@ Tests for org-tree-without-chief added to the brief's test set.
    tree ignores a saved chief); AttentionTreeTests already covers chief=nil logic.
 
 ## Progress
-- (none yet)
+- 138ee3a2 checkpoint 0
+- 79bfbce5 FeatureFlags.swift (apps/FrogKit/Core): `static let chief = false`.
+- d4bf4f81 Library: pin-keep (`togglePin`), archive-resign behind the flag; makeChief/removeChief
+  bodies intact (UI no longer calls them). A saved chief stays saved.
+- 9dd42c0c Sidebar: chiefTile hidden, Make/Remove Chief menu items hidden, org tree + git badges
+  + ⌘1…9 order read chief=nil when off; empty-state checks flag-aware. GitBadges needed no edit
+  (callers pass nil).
+- b809b6a2 README: "The chief pattern" — long-lived pinned session as home base, org nesting from
+  StartSession; no feature needed.
+- 7738cd75 tests: ChiefTests guarded `XCTSkipUnless(FeatureFlags.chief)` in setUpWithError; new
+  ChiefFlagOffTests (stale saved chief renders as a normal row, no chiefFold, ⌘ order unchanged,
+  pin-keep off, org tree roots at needs-you + started-by without any chief).
+- 8ba2be08 QuitGuard.applicationWillFinishLaunching spares test hosts — #228's one-frog handoff
+  exited the XCTest runner at bootstrap (exit 0 "before establishing connection") whenever a
+  frog (toys.frog.dev) was already open. `SingleInstance.isTesting` guard, same as handOff().
+  Root cause of the first two TEST FAILED runs (no Executed line, 0 tests).
+
+## The pinned row as home base (refinement 1, verified by reading)
+A plain pinned session renders well without chief logic: TreeRow depth-0 shows monogram + title
+(AttentionRows.swift:49), pinned glyph is a pin fill (ConversationRow status), pins float to the
+top of their level in the org tree (`before` puts pins first), and the rail/compact strip shows
+pinned tiles. The old ChiefTile's only extra was the wide preview line — the tree row's
+"needs you / running" glyph + the pin cover it.
+
+## Org tree without a chief (refinement 2, verified)
+AttentionTree.layout with chief=nil already roots at needs-you + the started-by tree (the chief
+becomes an ordinary top-level row; its children stay nested under it via parents). No
+chief-root assumption to remove — only the VIEW layer had to stop passing a saved chief while
+the flag is off (Sidebar.attention, WorkspaceView.sidebarOrder, GitTreeBadges.build call sites).
 
 ## Tests
-- (none yet)
+- Full suite (local, flag off): Executed 354, 3 failures, 4 skipped. Skips = ChiefTests (flag-on
+  guard, by design). Failures = ModelSectionsTests ×3 (testOrderWith/WithoutServersSignedIn,
+  testSignedOutFrogCloudStaysWithSignInAction) — PRE-EXISTING on main: they assert the full
+  model list while #224's `ModelSections.frogCloudOnly = true` filters everything but frog
+  cloud (dc26cff2, Oct 30). My diff touches no model code (verified: byte-identical to
+  origin/claude/no-built-in-cloud-list, the branch holding the fix). Not mine to fix here.
+- The QuitGuard fix (8ba2be08) is what let the suite run at all: first two runs died at
+  bootstrap (0 tests, "exited with code 0 before establishing connection") with Cam's frog open.
+- CI note: GitHub Actions billing is failing ("recent account payments have failed") — main's
+  own run (d13ac864, 41226257367) never started its jobs. PR CI will sit unstarted until that
+  clears; the chief decides.
+- /private/tmp/cf-dd + cf-fresh1 deleted (cf-fresh1 deleted at the end; ~11G).
+
