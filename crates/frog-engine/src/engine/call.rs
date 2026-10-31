@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Retries that pass without a word: the first ones are routine (2 s and 4 s of waiting).
+const QUIET_RETRIES: u32 = 2;
+
 impl Agent {
     /// One model request. Streams item events (unless `quiet`) and retries transient errors
     /// that happen before anything streamed. Without `offer_tools` the model can only answer:
@@ -350,13 +353,19 @@ impl Agent {
                     }
                     let wait = Duration::from_secs((1u64 << attempt.min(5)).min(20));
                     let budget = self.retry_budget(&e);
-                    self.notice(
-                        Level::Warn,
-                        format!(
-                            "{e:#} — retrying in {}s ({attempt}/{budget})",
-                            wait.as_secs()
-                        ),
-                    );
+                    // Quiet at first: a retry or two (a busy upstream, a rate limit) is routine
+                    // and usually over in seconds. Once it lasts, one plain line says so; the
+                    // raw error shows only if the step finally fails.
+                    if attempt > QUIET_RETRIES {
+                        let why = e
+                            .downcast_ref::<HttpError>()
+                            .map(HttpError::summary)
+                            .unwrap_or_else(|| format!("{e:#}"));
+                        self.notice(
+                            Level::Info,
+                            format!("{why} — still trying ({attempt}/{budget})"),
+                        );
+                    }
                     tokio::time::sleep(wait).await;
                 }
                 Err(e) => {

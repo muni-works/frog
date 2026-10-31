@@ -113,6 +113,17 @@ impl std::fmt::Display for HttpError {
 
 impl std::error::Error for HttpError {}
 
+impl HttpError {
+    /// What a person would want to read: the provider's own `error.message` when its body is
+    /// JSON (OpenAI's shape, which frog cloud uses), else the status alone.
+    pub fn summary(&self) -> String {
+        serde_json::from_str::<serde_json::Value>(&self.body)
+            .ok()
+            .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("HTTP {}", self.status))
+    }
+}
+
 /// An error event inside an otherwise-accepted (2xx) response stream: OpenAI-compatible
 /// gateways and Anthropic send these mid-stream when their upstream stumbles — the stream
 /// ends before the terminal chunk, the upstream is overloaded or timed out. The call may
@@ -414,5 +425,21 @@ pub fn deep_merge(a: &mut Value, b: &Value) {
             }
         }
         (a, b) => *a = b.clone(),
+    }
+}
+
+#[cfg(test)]
+mod http_error_tests {
+    use super::HttpError;
+
+    #[test]
+    fn summary_is_the_providers_own_message() {
+        let e = HttpError {
+            status: 429,
+            body: r#"{"error":{"message":"bull is busy right now","type":"rate_limit_error"}}"#.into(),
+        };
+        assert_eq!(e.summary(), "bull is busy right now");
+        let plain = HttpError { status: 502, body: "<html>bad gateway</html>".into() };
+        assert_eq!(plain.summary(), "HTTP 502");
     }
 }
