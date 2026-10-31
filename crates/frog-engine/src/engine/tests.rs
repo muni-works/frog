@@ -835,15 +835,16 @@ async fn incomplete_stream_is_retried_before_failing() {
         .collect();
     let mut h = engine(script, true);
     let evs = run(&mut h, "hi").await;
-    assert_eq!(
-        evs.iter()
-            .filter(|e| matches!(
-                e.event,
-                Event::Notice { message: ref m, .. } if m.contains("retrying")
-            ))
-            .count(),
-        3
-    );
+    // Three retries; the first two are quiet, the third says it's still trying.
+    let notices: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Notice { message, .. } => Some(message.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].ends_with("still trying (3/3)"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         &e.event,
         Event::TurnEnded {
@@ -865,11 +866,9 @@ async fn a_gateway_error_before_any_output_is_retried() {
         vec![reply(vec![text("all good")], Stop::End)],
     );
     let evs = run(&mut h, "hi").await;
-    // A retry happened: a warn notice, and the turn completed with the good reply.
-    assert!(evs.iter().any(|e| matches!(
-        e.event,
-        Event::Notice { level: Level::Warn, message: ref m } if m.contains("retrying")
-    )));
+    // A retry happened, quietly (one retry is routine: no notice), and the turn completed
+    // with the good reply.
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::Notice { .. })));
     assert!(evs.iter().any(|e| matches!(
         e.event,
         Event::TurnEnded {
@@ -986,16 +985,17 @@ async fn a_mid_stream_error_retries_only_up_to_budget() {
             .collect();
     let mut h = engine_fail(fails, vec![]);
     let evs = run(&mut h, "hi").await;
+    // Three retries, two of them quiet: one notice, on the third.
     let retries = evs
         .iter()
         .filter(|e| {
             matches!(
                 e.event,
-                Event::Notice { message: ref m, .. } if m.contains("retrying")
+                Event::Notice { message: ref m, .. } if m.contains("still trying (3/3)")
             )
         })
         .count();
-    assert_eq!(retries, 3);
+    assert_eq!(retries, 1);
     // Each failed attempt discarded its partial.
     assert_eq!(
         evs.iter()
