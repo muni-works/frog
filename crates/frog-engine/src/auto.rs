@@ -20,6 +20,16 @@ use std::path::Path;
 use std::sync::LazyLock;
 use std::time::Duration;
 
+/// frog cloud's small judging model, the chain's second step (the web sandbox's primary,
+/// the Mac's fallback): cheap, served by the gateway frog cloud already runs. When the
+/// gateway also lists Coder-Next (tang's own GPUs, the fastest tok/s frog serves), it
+/// judges first instead — the list is the availability signal, so nothing breaks when
+/// only some surfaces serve it.
+const DEFAULT_CLOUD: &str = "cloud/bull";
+/// Coder-Next through frog cloud, preferred over [`DEFAULT_CLOUD`] when the gateway
+/// lists it (the catalog is what the last `/v1/models` returned — no network here).
+pub const CODER_NEXT: &str = "cloud/qwen3-coder-next";
+
 #[derive(Clone)]
 pub enum Verdict {
     Allow(String),
@@ -395,19 +405,32 @@ pub struct Classifier {
 }
 
 impl Classifier {
-    /// Which model judges: `auto_classifier` from config when set, else
-    /// `cloud/qwen3-8b` (small and fast), else Apple's on-device model when it's
-    /// here. Each candidate the project's policy rejects (cloud for a
-    /// local-only project, say) is skipped for the next, and none of them being
-    /// usable is an error the caller turns into asking.
+    /// Which model judges: `auto_classifier` from config when set, else the
+    /// default chain — Apple's on-device model where it exists (the Mac: free,
+    /// local, no key; a gateway that wants one or is down shouldn't decide
+    /// whether auto mode works at all), then frog cloud's small model (the web
+    /// sandbox's primary; it has no FoundationModels). Each candidate the
+    /// project's policy rejects (cloud for a local-only project, say) or that
+    /// can't be resolved is skipped for the next; none usable is an error the
+    /// caller turns into asking. The session's model is the last classifier
+    /// before the rules: `fallback` builds it.
     pub fn new(cfg: &Config, dir: &std::path::Path) -> anyhow::Result<Self> {
-        let mut candidates: Vec<String> = match &cfg.auto_classifier {
+        let mut candidates = match &cfg.auto_classifier {
             Some(spec) => vec![spec.clone()],
-            None => vec!["cloud/qwen3-8b".into()],
+            None => {
+                // Coder-Next when frog cloud lists it (tang serving it is the whole
+                // point: fastest inference, on our own GPUs), else the small model.
+                let cloud = if crate::catalog::cached(CODER_NEXT).is_some() {
+                    CODER_NEXT
+                } else {
+                    DEFAULT_CLOUD
+                };
+                vec!["apple/on-device".into(), cloud.into()]
+            }
         };
-        if cfg.auto_classifier.is_none() && crate::sidecar::available(crate::sidecar::APPLE) {
-            candidates.push("apple/on-device".into());
-        }
+        candidates.retain(|spec| {
+            spec != "apple/on-device" || crate::sidecar::available(crate::sidecar::APPLE)
+        });
         let (name, profile) = candidates
             .iter()
             .find_map(|spec| {
@@ -422,20 +445,36 @@ impl Classifier {
         Self::build(cfg, name, profile)
     }
 
-    /// The model `auto_classifier` names, or the default, for telling the user which one
-    /// is down when it couldn't even start.
+    /// The model `auto_classifier` names, or the chain's first, for telling the
+    /// user which one is down when it couldn't even start.
     pub fn primary_spec(cfg: &Config) -> String {
-        cfg.auto_classifier
-            .clone()
-            .unwrap_or_else(|| "cloud/qwen3-8b".into())
+        cfg.auto_classifier.clone().unwrap_or_else(|| {
+            if crate::sidecar::available(crate::sidecar::APPLE) {
+                "apple/on-device".into()
+            } else {
+                DEFAULT_CLOUD.into()
+            }
+        })
     }
 
-    /// The second classifier, `auto_classifier_fallback`, when one is configured. `None`:
-    /// there is none, and the built-in rules are the fallback.
-    pub fn fallback(cfg: &Config, dir: &std::path::Path) -> Option<anyhow::Result<Self>> {
-        let spec = cfg.auto_classifier_fallback.as_ref()?;
+    /// The second classifier, tried when the first can't answer: `auto_classifier_fallback`
+    /// from config when set, else the session's own model (`session_model` — its key already
+    /// exists, so a dead gateway or a Mac without the on-device model still judges rather
+    /// than only rules). The caller passes `None` when the session's model already judged
+    /// (the first pass was that model): the same model answering the same question again
+    /// isn't a second opinion. `None` otherwise: no rules-eligible fallback exists, and the
+    /// built-in rules decide alone.
+    pub fn fallback(
+        cfg: &Config,
+        dir: &std::path::Path,
+        session_model: Option<&str>,
+    ) -> Option<anyhow::Result<Self>> {
+        let spec = cfg
+            .auto_classifier_fallback
+            .clone()
+            .or_else(|| session_model.map(String::from))?;
         Some((|| {
-            let (name, profile) = cfg.resolve(Some(spec))?;
+            let (name, profile) = cfg.resolve(Some(&spec))?;
             crate::policy::check(dir, &name, &profile)?;
             Self::build(cfg, name, profile)
         })())
@@ -494,10 +533,13 @@ impl Classifier {
             cache_key: None,
         };
         // A fast small model with a grammar: seconds, not minutes. Slower than
-        // this and asking the user is the better use of everyone's time.
+        // this and asking the user is the better use of everyone's time. 3s for
+        // the on-device model, 8s for a gateway call (the second pass's budget,
+        // which a cloud judge is slower than but within).
+        let budget = if self.profile.base_url.is_some() { 8 } else { 3 };
         let mut ignore = |_: crate::provider::StreamEvent| {};
         let answer = tokio::time::timeout(
-            Duration::from_secs(3),
+            Duration::from_secs(budget),
             self.provider.complete(&req, &mut ignore),
         )
         .await;
@@ -512,7 +554,7 @@ impl Classifier {
             Some(first) => {
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 match tokio::time::timeout(
-                    Duration::from_secs(3),
+                    Duration::from_secs(budget),
                     self.provider.complete(&req, &mut ignore),
                 )
                 .await
@@ -1114,6 +1156,42 @@ mod tests {
             "the answer was unreadable",
         ] {
             assert!(!transport_error(no), "{no}");
+        }
+    }
+
+    /// The default chain: the session's model is the fallback judge, but never when it
+    /// already judged the first pass (the same model twice isn't a second opinion), and
+    /// an explicit `auto_classifier_fallback` always wins over the session's model.
+    #[test]
+    fn the_session_model_is_the_fallback_unless_it_judged() {
+        let cfg = Config::default();
+        // No fallback configured, a cloud session model on the first pass: the session's
+        // model is the fallback (its key exists; the on-device primary is local).
+        let fb = Classifier::fallback(&cfg, Path::new("/work"), Some("cloud/bull"));
+        let spec = match fb {
+            Some(Ok(c)) => c.profile_name,
+            Some(Err(e)) => panic!("expected a fallback classifier, got an error: {e:#}"),
+            None => panic!("expected a fallback classifier, got none"),
+        };
+        assert_eq!(spec, "cloud/bull");
+        // A configured fallback always wins over the session's model — and `None` from the
+        // caller (the session model already judged) means no second pass at all.
+        assert!(Classifier::fallback(&cfg, Path::new("/work"), Some("cloud/bull")).is_some());
+        let cfg_judged = {
+            let mut c = Config::default();
+            c.auto_classifier = Some("cloud/bull".into());
+            c
+        };
+        assert!(Classifier::fallback(&cfg_judged, Path::new("/work"), Some("cloud/bull")).is_some());
+        assert!(Classifier::fallback(&cfg, Path::new("/work"), None).is_none());
+        // An explicit fallback is used even when the session model could serve.
+        let mut explicit = Config::default();
+        explicit.auto_classifier_fallback = Some("ollama/backup".into());
+        let fb = Classifier::fallback(&explicit, Path::new("/work"), Some("cloud/bull"));
+        match fb {
+            Some(Ok(c)) => assert_eq!(c.profile_name, "ollama/backup"),
+            Some(Err(e)) => panic!("expected the configured fallback, got an error: {e:#}"),
+            None => panic!("expected the configured fallback, got none"),
         }
     }
 

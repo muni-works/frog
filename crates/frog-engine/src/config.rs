@@ -265,11 +265,14 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub early_tools: bool,
     /// The model auto mode's classifier uses (a profile or provider/model). Default:
-    /// `cloud/qwen3-8b`, then Apple's on-device model; with neither usable, it asks.
+    /// Apple's on-device model where it exists, else frog cloud's small model
+    /// (`cloud/bull`, or `cloud/qwen3-coder-next` when the gateway lists it); the
+    /// session's model is the last classifier, then the built-in rules.
     #[serde(default)]
     pub auto_classifier: Option<String>,
     /// A second classifier model, tried when `auto_classifier` can't answer (unreachable,
-    /// timed out, an HTTP error). With neither answering, frog's built-in rules decide alone.
+    /// timed out, an HTTP error). Unset: the session's own model judges, then frog's
+    /// built-in rules decide alone.
     #[serde(default)]
     pub auto_classifier_fallback: Option<String>,
     /// Seconds a permission prompt waits for an answer before frog takes the safe path
@@ -281,8 +284,9 @@ pub struct Config {
     #[serde(default)]
     pub brief_model: Option<String>,
     /// The model that writes shell-command gists for tool rows (a profile or
-    /// provider/model). Default: `cloud/qwen3-8b`, then Apple's on-device model. With
-    /// neither usable, rows show the elided command.
+    /// provider/model). Default: Apple's on-device model, else frog cloud's small
+    /// model (`cloud/bull`, or `cloud/qwen3-coder-next` when the gateway lists it).
+    /// With neither usable, rows show the elided command.
     #[serde(default)]
     pub gist_model: Option<String>,
     /// The model `Task` subagents use (a profile or provider/model) unless a call names one.
