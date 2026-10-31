@@ -29,6 +29,7 @@ pub mod mcp;
 pub mod mcp_oauth;
 pub mod memory;
 pub mod message;
+pub mod model_policy;
 pub mod models;
 pub mod named_files;
 pub mod panes;

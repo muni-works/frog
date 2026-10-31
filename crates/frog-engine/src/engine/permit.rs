@@ -873,8 +873,20 @@ impl Agent {
             }
             Some(crate::auto::Verdict::Failed(why)) => Err(("classifier", why)),
             // Nothing could judge: the built-in rules decide alone. A down classifier never
-            // cards a call by itself; only a call no rule can prove harmless asks.
+            // cards a call by itself; only a call no rule can prove harmless asks. A worker on
+            // a BYOK model is the exception (docs/design/model-policy.md): it may not quietly
+            // degrade to rules, so the call stops and says how to fix the provider instead.
             None => match crate::auto::rules_fallback(name, input) {
+                Some(_) if !self.rules_may_decide_for_a_worker() => Err((
+                    "classifier",
+                    format!(
+                        "the classifier is down ({}) and a worker can't run on rules alone with a BYOK model; {}",
+                        self.classifier_down
+                            .as_ref()
+                            .map_or("no classifier answered", |(_, why)| why.as_str()),
+                        crate::model_policy::connect_line(&self.profile_name)
+                    ),
+                )),
                 Some(rule) => {
                     self.emit(Event::AutoApproved {
                         item: item.to_string(),
@@ -888,6 +900,17 @@ impl Agent {
                 None => Err(("fallback", CLASSIFIER_DOWN_ASK.into())),
             },
         }
+    }
+
+    /// Whether the built-in rules may decide alone for this session
+    /// (docs/design/model-policy.md): yes for an interactive session (a human is there to be
+    /// asked when a rule can't prove the call harmless), and for a worker on the platform's
+    /// own models — but a worker running on BYOK fails with the provider's fix instead of
+    /// quietly degrading to rules, because nobody is watching that key.
+    fn rules_may_decide_for_a_worker(&self) -> bool {
+        !self.cfg.worker
+            || crate::model_policy::tier(&self.profile_name, &self.profile)
+                != crate::model_policy::Tier::Byok
     }
 
     /// The second, context-rich classifier pass over a flagged call: the session's
@@ -1212,14 +1235,11 @@ impl Agent {
         };
         if !started {
             let built = if fallback {
-                // The fallback needs a model the first pass wasn't: when the first pass
-                // already runs on the session's model (the default chain's `apple` down,
-                // `cloud/bull` down), sending the same action to the same model again
-                // isn't a second opinion, so none is available and the rules decide.
-                let judged_by = self.classifier.as_ref().map(|c| c.profile_name.as_str());
-                let session = (judged_by != Some(self.profile_name.as_str()))
-                    .then_some(self.profile_name.as_str());
-                match crate::auto::Classifier::fallback(&self.cfg, &self.ctx.root, session) {
+                // The fallback is `auto_classifier_fallback` and nothing else
+                // (docs/design/model-policy.md): the session's own model is never a judge,
+                // so a dead BYOK key can't take auto mode down with it, and a cloud session
+                // doesn't get a judge that moves with it.
+                match crate::auto::Classifier::fallback(&self.cfg, &self.ctx.root) {
                     Some(b) => b,
                     None => return Err("no fallback classifier is configured".into()),
                 }
