@@ -18,6 +18,19 @@ Target dir /private/tmp/mp-target (delete when the suite passes, ~11G).
    plus the existing auto.rs chain tests rewritten to the new policy.
 7. FrogKit: served-tint left borders removed (ServedTint modifier + call site + any other
    Color.served left edge); the markdown blockquote bar stays.
+8. SessionBroker.escalate: a child's pending card reaches its parent as STATUS (inform, one
+   line) instead of a delivered turn; the card lives in needs-you / ListApprovals / SessionStatus.
+   Test: the parent's transcript gains no turn, its pending count still updates.
+
+## Result
+Engine: 560 passed, 0 failed, 8 ignored (`cargo test -p frog-engine`, unsandboxed — the sandbox
+blocks the shell tests and swiftpm's manifest). SessionBrokerTests: 52 passed. App builds.
+App tests must run with `PRODUCT_BUNDLE_IDENTIFIER=toys.frog.testhost`, or the installed
+toys.frog.dev app makes the test host hand over and exit ("Early unexpected exit").
+
+## Diffed against #231 (8981fbd1 = main d13ac864 for auto.rs, empty diff)
+Nothing duplicated: this branch is only the delta — the session-model leg's removal, the retry
+policy, spawn validation, the README paragraph, the tint removal, the escalation change.
 
 ## Where things are
 - crates/frog-engine/src/auto.rs: Classifier::new (chain), Classifier::fallback (second pass).
