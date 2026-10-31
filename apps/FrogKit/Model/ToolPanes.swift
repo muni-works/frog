@@ -48,8 +48,13 @@ final class PaneHub {
     var comparing: UInt64?
     /// The mention token last inserted from the preview, shown as a chip while it's in the composer.
     var mention: String?
-    /// What the composer currently holds, so the chip knows when the mention is gone.
-    var draft = ""
+    /// What the composer currently holds, so the chip knows when the mention is gone. Not
+    /// observed: the composer writes it on every keystroke, and a tracked write there would
+    /// re-render every view of the panes (the preview, the terminal, their tabs) per character.
+    /// What those views actually read is `draftHasMention`, which changes only when it flips.
+    @ObservationIgnored var draft = ""
+    /// Whether the mention is still in the draft (see `noteDraft`).
+    private(set) var draftHasMention = false
     /// Text the composer should insert at the cursor (a mention picked in the preview).
     var insert: String?
     /// The preview's inspect mode toggle, driven from the menu (⇧⌘I).
@@ -190,12 +195,18 @@ final class PaneHub {
         mention = token
         insert = token + " "
         inspecting = false
+        noteDraft(draft)
     }
 
     /// Is the mention still in what's being typed?
-    var mentionInDraft: Bool {
-        guard let mention else { return false }
-        return draft.contains(mention)
+    var mentionInDraft: Bool { draftHasMention }
+
+    /// The composer's text changed: keep it, and say whether the mention is still in it. Only
+    /// the answer is observed, so typing re-renders the chip when it should and nothing else.
+    func noteDraft(_ text: String) {
+        draft = text
+        let has = mention.map { text.contains($0) } ?? false
+        if has != draftHasMention { draftHasMention = has }
     }
 
     /// Keep a screenshot of the preview for `turn` (the engine asked with `for: checkpoint`).

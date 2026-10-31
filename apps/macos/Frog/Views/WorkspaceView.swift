@@ -204,12 +204,6 @@ struct WorkspaceView: View {
         docked.changes.contains(pane.id) || (pane.peekChanges && pane.hasTabs)
     }
 
-    /// Where the (only) pane's column is centered, relative to the window's center.
-    private var focusedOffset: CGFloat {
-        let p = placement(focused)
-        return p.frame.minX + p.insets.leading + (p.frame.width - p.insets.leading - p.insets.trailing) / 2 - canvasSize.width / 2
-    }
-
     private func toggleSessions() {
         Haptics.settle()
         let fitsOpen = panes.items.allSatisfy {
@@ -539,17 +533,6 @@ struct WorkspaceView: View {
                         .help("Show conversations (⌃⌘S)")
                 }
             }
-            ToolbarItem(placement: .principal) {
-                // Split, each pane shows its own in its header.
-                if !panes.isSplit, let c = workspace.conversation, workspace.race == nil {
-                    // Over the column, not the window.
-                    ActivityViewer(workspace: workspace, conversation: c) { focused.ui.jumpTo = $0 }
-                        .environment(\.openSession) { openInFocused($0) }
-                        .offset(x: focusedOffset)
-                }
-            }
-            // The viewer draws its own glass capsule; without this the toolbar adds a second.
-            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button("Terminal", systemImage: "terminal", action: showTerminal)
