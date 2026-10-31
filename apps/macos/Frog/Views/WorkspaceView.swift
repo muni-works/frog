@@ -85,10 +85,11 @@ struct WorkspaceView: View {
     private var sidebarOrder: [SessionInfo] {
         let library = Library.shared
         if sidebarGroup == .org {
-            // The attention tree: the chief, then its top-level org rows, then yours.
+            // The attention tree: what needs you, then the org's top-level rows, then yours —
+            // the chief first only with the flag on.
             let current = workspace.opening ?? workspace.conversation?.sessionID
             let tree = SessionList.attention(library, sort: sidebarSort, scope: sidebarScope, current: current)
-            return [library.chiefSession].compactMap(\.self) + tree.layout.topLevels
+            return (FeatureFlags.chief ? [library.chiefSession].compactMap(\.self) : []) + tree.layout.topLevels
         }
         let active = library.sessions.filter { !library.archived.contains($0.id) }
         let pins = active.filter { library.pinned.contains($0.id) }
