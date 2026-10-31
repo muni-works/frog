@@ -119,8 +119,13 @@ final class Workspace {
         if let explicitModelChoice { return explicitModelChoice }
         if let preferredModel,
            conversation?.turns.isEmpty != false { return preferredModel }
+        // The model the last turn that actually ran used. A turn that never reached the model
+        // (a provider error, a 401, an unreachable server) carries that model in its usage with
+        // no calls behind it: inheriting it would hand the next message the same dead model.
         if UserDefaults.standard.string(forKey: "newMessageModelPolicy") != "fixed",
-           let model = conversation?.turns.reversed().compactMap({ $0.usage?.model }).first { return model }
+           let model = conversation?.turns.reversed()
+            .compactMap({ $0.usage.flatMap { $0.modelCalls > 0 ? $0.model : nil } })
+            .first { return model }
         return conversation?.status?.model ?? preferredModel
     }
 
