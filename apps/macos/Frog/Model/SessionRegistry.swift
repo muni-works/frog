@@ -270,6 +270,19 @@ private struct WeakPanes {
 /// Asks before quitting while turns run: carry on with them next launch, or let them go.
 @MainActor
 final class QuitGuard: NSObject, NSApplicationDelegate {
+    /// One Frog at a time: a second copy (opened from another path, a backup, or twice by a
+    /// script) would run its own engines on the same sessions. It hands over to the copy
+    /// that's already running and leaves before opening a window.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        guard let id = Bundle.main.bundleIdentifier else { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        guard let other = NSRunningApplication.runningApplications(withBundleIdentifier: id)
+            .first(where: { $0.processIdentifier != me && !$0.isTerminated })
+        else { return }
+        other.activate()
+        exit(0)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let registry = SessionRegistry.shared
         let running = registry.running
