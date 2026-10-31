@@ -29,6 +29,7 @@ pub mod mcp;
 pub mod mcp_oauth;
 pub mod memory;
 pub mod message;
+pub mod model_policy;
 pub mod models;
 pub mod named_files;
 pub mod panes;
@@ -57,7 +58,7 @@ pub mod title;
 pub mod tools;
 pub mod worktree;
 
-pub use engine::{Handle, Options, spawn};
+pub use engine::{Handle, Options, spawn, spawn_checked};
 pub use follow::follow;
 pub use protocol::{
     Decision, Delta, EndReason, EngineError, Envelope, Event, Item, ItemKind, Level, Mode, Op,

@@ -843,25 +843,48 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertNil(SessionMessage.parse("just a prompt"))
     }
 
-    func testAPendingApprovalEscalatesToTheParentWithItsCard() throws {
+    /// A child's pending card reaches its parent as STATUS, not a turn: the parent's transcript
+    /// gains nothing (Cam kept clearing those rows), one informational line is recorded, and the
+    /// card is there structurally — needs-you, ListApprovals, SessionStatus's pending count.
+    @MainActor
+    func testAPendingApprovalReachesTheParentWithoutATurn() throws {
         let b = broker([chief, eng])
-        let parent = chief.id
-        b.parentOf = { $0 == "eng-0002" ? parent : nil }
+        var informed: [Delivery] = []
+        b.inform = { to, from, name, message in
+            informed.append(Delivery(to: to, from: from, name: name, message: message))
+            return true
+        }
+        b.parentOf = { $0 == "eng-0002" ? self.chief.id : nil }
+        let target = Conversation(preview: URL(fileURLWithPath: "/tmp/demo-escalate"))
+        b.track(target, as: eng.id)
         let line = #"{"seq":1,"session":"eng-0002","created":0,"event":"permission_request","id":"perm-1","item":"t1","name":"Bash","arg":"rm -rf /private/tmp/x","always":"","card":{"agent_reason":"cleaning up my build","trigger":"leaves the sandbox","touches":[{"path":"/private/tmp/x","exists":true,"dir":true,"bytes":2048,"created_here":true}],"risk":"deletes 1 path (2.0 KB) that this session created","recommendation":"allow: cleaning up its own output","prefix":"/private/tmp/x","timeout_secs":600}}"#
         let env = try JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8))
         guard case .permissionRequest(let req) = env.event else { return XCTFail() }
-        XCTAssertEqual(req.card?.touches?.first?.createdHere, true)
+        // The engine's card lands on the child's conversation (that's what makes it pending).
+        target.ingest(env)
         XCTAssertTrue(b.escalate(req, from: eng.id, name: eng.name))
-        XCTAssertEqual(delivered.count, 1)
-        let m = try XCTUnwrap(delivered.first)
+        // No turn for the parent: nothing was delivered, so no transcript row and no wake.
+        XCTAssertTrue(delivered.isEmpty, "the escalation started a turn: \(delivered)")
+        // One line, recorded as read, that names the card and where to see it.
+        XCTAssertEqual(informed.count, 1)
+        let m = try XCTUnwrap(informed.first)
         XCTAssertEqual(m.to, chief.id)
         XCTAssertEqual(m.from, "system")
-        for part in ["card: perm-1", "command: rm -rf /private/tmp/x", "agent says: cleaning up my build", "made by this session", "recommendation: allow", "10 min"] {
+        XCTAssertEqual(m.message.components(separatedBy: "\n").count, 1, "one line: \(m.message)")
+        for part in ["Approval pending", "perm-1", "ListApprovals", "needs-you"] {
             XCTAssertTrue(m.message.contains(part), "missing \(part): \(m.message)")
         }
+        // The card itself is there structurally, for whoever looks.
+        b.observe(eng.id, running: true, waiting: true)
+        XCTAssertEqual(b.approvalsForTesting.map(\.id), [eng.id])
+        XCTAssertEqual(b.approvalsForTesting.first?.tool, "Bash")
+        let status = b.statusForTesting(eng.id)
+        XCTAssertEqual(status?.pendingApprovals, 1)
+        XCTAssertEqual(status?.waiting, true)
         // A session nobody started has no one to escalate to.
         XCTAssertFalse(b.escalate(req, from: chief.id, name: chief.name))
-        XCTAssertEqual(delivered.count, 1)
+        XCTAssertEqual(informed.count, 1)
+        XCTAssertTrue(delivered.isEmpty)
     }
 
     func testDenyWithANoteEncodes() throws {

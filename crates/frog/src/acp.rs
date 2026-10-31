@@ -154,7 +154,7 @@ pub async fn serve(
                         subagent: false,
                         chat: false,
                     };
-                    match frog_engine::spawn(opts) {
+                    match frog_engine::spawn_checked(opts).await {
                         Ok(handle) => {
                             let session_id = frog_engine::session::new_id();
                             let turn = Arc::new(Mutex::new(None));

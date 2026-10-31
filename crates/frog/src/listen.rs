@@ -196,8 +196,13 @@ async fn handle(mut sock: TcpStream, token: &str, t: &Template) -> Result<()> {
         Ok(t) if !t.text.trim().is_empty() => t,
         _ => return respond(&mut sock, "400 Bad Request", "want {\"text\": ...}").await,
     };
-    let mut h = match (t.make)(turn.session, turn.model).and_then(frog_engine::spawn) {
-        Ok(h) => h,
+    let mut h = match (t.make)(turn.session, turn.model) {
+        Ok(opts) => match frog_engine::spawn_checked(opts).await {
+            Ok(h) => h,
+            Err(e) => {
+                return respond(&mut sock, "500 Internal Server Error", &format!("{e:#}")).await;
+            }
+        },
         Err(e) => return respond(&mut sock, "500 Internal Server Error", &format!("{e:#}")).await,
     };
     sock.write_all(

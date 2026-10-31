@@ -51,7 +51,11 @@ export FROG_API_KEY=...              # sign in at https://api.frog.toys to get o
 frog -m cloud/qwen3-coder-next
 ```
 
-If frog cloud is offline or out of credit or capacity, frog says so and carries on with a local model: `FROG_FALLBACK_MODEL` if set, otherwise the default `local/qwen3-4b`. `FROG_BASE_URL` points it at a different endpoint (a key saved in the app or Keychain only goes to `https://api.frog.toys`; elsewhere, only `FROG_API_KEY` is sent). `frog account` shows which key is in use. Old names (`frog-api/`, `tang/`) still work.
+If frog cloud is offline or out of capacity, frog says so and carries on with a local model: `FROG_FALLBACK_MODEL` if set, otherwise the default `local/qwen3-4b`. A credit error (402) doesn't fall back — the fix is money, not another model, so the turn stops with the one line saying where to add credits. `FROG_BASE_URL` points it at a different endpoint (a key saved in the app or Keychain only goes to `https://api.frog.toys`; elsewhere, only `FROG_API_KEY` is sent). `frog account` shows which key is in use. Old names (`frog-api/`, `tang/`) still work.
+
+### Two kinds of model
+
+frog runs on two tiers ([docs/design/model-policy.md](docs/design/model-policy.md)). **frog cloud** (`cloud/*`) is the platform's: the default for worker sessions, subagents, the auto-mode classifier and a fresh install. **BYOK** is your own account or machine — `vercel/`, `anthropic/`, `openai/`, `openrouter/`, `cloudflare/`, `ollama/`, `lmstudio/` and servers you add — for the interactive session you're sitting in. Nothing hops between the two: a worker on your own provider fails fast with one line naming it and the fix, an interactive session may carry on without it because you're there to see the notice, and auto mode's classifier is always `apple/on-device` then `cloud/bull`, never the model the session runs on. A busy provider (429 or a 5xx) is retried three times at 1 s, 2 s and 4 s with a single notice; a wrong key, an empty wallet or a model your gateway doesn't list (401/402/404) fails at once with the provider's fix in the transcript. A session only starts on a model its gateway's `/v1/models` lists right now (checked once at spawn, from a list cached for a minute); `cloud/*` always starts.
 
 ### Other agents
 

@@ -663,7 +663,7 @@ async fn run() -> Result<bool> {
         listen::run(addr, token, template).await?;
         return Ok(true);
     }
-    let handle = frog_engine::spawn(Options {
+    let handle = frog_engine::spawn_checked(Options {
         cfg: cfg.clone(),
         profile_name,
         profile,
@@ -680,7 +680,8 @@ async fn run() -> Result<bool> {
         rich: cli.rich,
         subagent: false,
         chat: cli.chat,
-    })?;
+    })
+    .await?;
 
     let mut prompt = cli.prompt.join(" ");
     if let Some(addr) = &cli.serve_ws {

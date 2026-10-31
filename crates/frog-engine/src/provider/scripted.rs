@@ -54,6 +54,8 @@ pub struct Client {
     pub tool_args: Option<Duration>,
     /// Calls that fail (see [`Fail`]), consumed before `responses`.
     pub fails: Mutex<VecDeque<Fail>>,
+    /// When each attempt started, for asserting a backoff sequence (paused-clock tests).
+    pub attempts: std::sync::Arc<Mutex<Vec<tokio::time::Instant>>>,
 }
 
 impl Client {
@@ -63,6 +65,7 @@ impl Client {
             sent: Default::default(),
             tool_args: None,
             fails: Default::default(),
+            attempts: Default::default(),
         }
     }
 
@@ -76,6 +79,7 @@ impl Client {
             .iter()
             .map(|t| format!("<tool {}>", t.name))
             .collect();
+        self.attempts.lock().unwrap().push(tokio::time::Instant::now());
         self.sent.lock().unwrap().push(format!(
             "{}{tools}{}",
             req.system,

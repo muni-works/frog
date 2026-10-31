@@ -172,7 +172,6 @@ struct TurnView: View {
     private func row(_ segment: TurnFlow.Segment) -> some View {
         SegmentRow(segment: segment, conversation: conversation, live: running, verbosity: verbosity)
             .equatable()
-            .modifier(ServedTint(served: answerServedBy(segment)))
             .modifier(FadeIn(enabled: running))
             .background {
                 // The answer being written: where it starts, so a long one stops there.
@@ -223,12 +222,6 @@ struct TurnView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .onHover(perform: hover)
         }
-    }
-
-    /// Who served the turn, for its answers: known once the turn ends, for Frog Cloud models.
-    private func answerServedBy(_ segment: TurnFlow.Segment) -> ServedBy? {
-        guard case .text(let item) = segment, item.kind == .message else { return nil }
-        return turn.usage?.servedBy
     }
 
     /// A finished turn's model/speed caption, as opposed to a banner for how it stopped
@@ -343,25 +336,6 @@ private struct SegmentRow: View, Equatable {
         case .text(let item), .visual(let item), .notice(let item):
             ItemView(item: item, conversation: conversation,
                      typing: live && !item.done && item.kind == .message)
-        }
-    }
-}
-
-/// A Frog Cloud answer's rule at its leading edge, in who served it (blue for Frog Cloud's
-/// GPUs, green for a third party), set in the margin so the text doesn't move. Unknown: none.
-private struct ServedTint: ViewModifier {
-    let served: ServedBy?
-
-    func body(content: Content) -> some View {
-        content.overlay(alignment: .leading) {
-            if let served {
-                Capsule()
-                    .fill(Color.served(served).opacity(0.6))
-                    .frame(width: 2)
-                    .offset(x: -TurnSpace.Inset.row)
-                    .help("Served by \(served.name)")
-                    .accessibilityLabel("Served by \(served.name)")
-            }
         }
     }
 }

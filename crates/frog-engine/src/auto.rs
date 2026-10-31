@@ -7,9 +7,13 @@
 //! the call against the user's recent requests, with grammar-constrained output. The call's
 //! arguments come from the agent, so they're marked untrusted: text in them that addresses the
 //! classifier carries no weight. When the classifier can't answer (unreachable, timed out, an
-//! HTTP error, an unreadable answer), `auto_classifier_fallback` is tried, then the built-in
-//! rules alone ([`rules_fallback`]): a down classifier never cards a call by itself, only a
-//! call no rule can prove harmless.
+//! HTTP error, an unreadable answer), an explicitly configured `auto_classifier_fallback` is
+//! tried, then the built-in rules alone ([`rules_fallback`]): a down classifier never cards a
+//! call by itself, only a call no rule can prove harmless.
+//!
+//! The judge is the platform's, never the session's (docs/design/model-policy.md): the chain is
+//! Apple's on-device model, then frog cloud's small model, whatever model the session runs on.
+//! A BYOK session's key failing can't take auto mode down with it, and nothing hops tiers.
 
 use crate::config::{Config, Profile};
 use crate::message::Message;
@@ -405,15 +409,16 @@ pub struct Classifier {
 }
 
 impl Classifier {
-    /// Which model judges: `auto_classifier` from config when set, else the
-    /// default chain — Apple's on-device model where it exists (the Mac: free,
-    /// local, no key; a gateway that wants one or is down shouldn't decide
-    /// whether auto mode works at all), then frog cloud's small model (the web
-    /// sandbox's primary; it has no FoundationModels). Each candidate the
-    /// project's policy rejects (cloud for a local-only project, say) or that
-    /// can't be resolved is skipped for the next; none usable is an error the
-    /// caller turns into asking. The session's model is the last classifier
-    /// before the rules: `fallback` builds it.
+    /// Which model judges: `auto_classifier` from config when set, else the platform's chain —
+    /// Apple's on-device model where it exists (free, local, no key), then frog cloud's small
+    /// model (the web sandbox's primary; it has no FoundationModels). Each candidate the
+    /// project's policy rejects (cloud for a local-only project, say) or that can't be resolved
+    /// is skipped for the next; none usable is an error the caller turns into asking.
+    ///
+    /// The session's model is never a candidate, whatever tier it runs on
+    /// (docs/design/model-policy.md): a judge that shares the session's key fails with it, and
+    /// a judge that changes with the session judges the same call two ways. See
+    /// [`Classifier::fallback`] for the second pass.
     pub fn new(cfg: &Config, dir: &std::path::Path) -> anyhow::Result<Self> {
         let mut candidates = match &cfg.auto_classifier {
             Some(spec) => vec![spec.clone()],
@@ -458,21 +463,13 @@ impl Classifier {
     }
 
     /// The second classifier, tried when the first can't answer: `auto_classifier_fallback`
-    /// from config when set, else the session's own model (`session_model` — its key already
-    /// exists, so a dead gateway or a Mac without the on-device model still judges rather
-    /// than only rules). The caller passes `None` when the session's model already judged
-    /// (the first pass was that model): the same model answering the same question again
-    /// isn't a second opinion. `None` otherwise: no rules-eligible fallback exists, and the
-    /// built-in rules decide alone.
-    pub fn fallback(
-        cfg: &Config,
-        dir: &std::path::Path,
-        session_model: Option<&str>,
-    ) -> Option<anyhow::Result<Self>> {
-        let spec = cfg
-            .auto_classifier_fallback
-            .clone()
-            .or_else(|| session_model.map(String::from))?;
+    /// from config, and only that. The session's model is not a candidate
+    /// (docs/design/model-policy.md): when the session runs on BYOK its key is the one that
+    /// just failed, and when it runs on frog cloud the judge would change with the session.
+    /// `None` when nothing is configured: no second opinion exists, and the built-in rules
+    /// decide alone.
+    pub fn fallback(cfg: &Config, dir: &std::path::Path) -> Option<anyhow::Result<Self>> {
+        let spec = cfg.auto_classifier_fallback.clone()?;
         Some((|| {
             let (name, profile) = cfg.resolve(Some(&spec))?;
             crate::policy::check(dir, &name, &profile)?;
@@ -525,7 +522,7 @@ impl Classifier {
             system: SYSTEM,
             messages: &msgs,
             tools: &[],
-            // Room for a thinking model (the fallback is the session's own) to reason first.
+            // Room for a thinking model to reason first, when the configured judge thinks.
             max_tokens: Some(1_500),
             format: Some(&schema),
             think: self.think,
@@ -1159,35 +1156,22 @@ mod tests {
         }
     }
 
-    /// The default chain: the session's model is the fallback judge, but never when it
-    /// already judged the first pass (the same model twice isn't a second opinion), and
-    /// an explicit `auto_classifier_fallback` always wins over the session's model.
+    /// The chain is the platform's: apple/on-device, then frog cloud's small model, and the
+    /// session's own model is never a candidate — a BYOK session's judge is the same as
+    /// everyone else's (docs/design/model-policy.md).
     #[test]
-    fn the_session_model_is_the_fallback_unless_it_judged() {
+    fn the_chain_is_on_device_then_frog_cloud_never_the_session() {
         let cfg = Config::default();
-        // No fallback configured, a cloud session model on the first pass: the session's
-        // model is the fallback (its key exists; the on-device primary is local).
-        let fb = Classifier::fallback(&cfg, Path::new("/work"), Some("cloud/bull"));
-        let spec = match fb {
-            Some(Ok(c)) => c.profile_name,
-            Some(Err(e)) => panic!("expected a fallback classifier, got an error: {e:#}"),
-            None => panic!("expected a fallback classifier, got none"),
-        };
-        assert_eq!(spec, "cloud/bull");
-        // A configured fallback always wins over the session's model — and `None` from the
-        // caller (the session model already judged) means no second pass at all.
-        assert!(Classifier::fallback(&cfg, Path::new("/work"), Some("cloud/bull")).is_some());
-        let cfg_judged = {
-            let mut c = Config::default();
-            c.auto_classifier = Some("cloud/bull".into());
-            c
-        };
-        assert!(Classifier::fallback(&cfg_judged, Path::new("/work"), Some("cloud/bull")).is_some());
-        assert!(Classifier::fallback(&cfg, Path::new("/work"), None).is_none());
-        // An explicit fallback is used even when the session model could serve.
+        // Nothing configured: apple first (where the Mac has it), else frog cloud's judge.
+        let primary = Classifier::primary_spec(&cfg);
+        assert!(primary == "apple/on-device" || primary == DEFAULT_CLOUD, "{primary}");
+        // No fallback configured: the session's model is NOT one. A BYOK session gets no
+        // second judge from its own key, and a cloud session gets no judge that moves with it.
+        assert!(Classifier::fallback(&cfg, Path::new("/work")).is_none());
+        // An explicit `auto_classifier_fallback` is the only second judge there is.
         let mut explicit = Config::default();
         explicit.auto_classifier_fallback = Some("ollama/backup".into());
-        let fb = Classifier::fallback(&explicit, Path::new("/work"), Some("cloud/bull"));
+        let fb = Classifier::fallback(&explicit, Path::new("/work"));
         match fb {
             Some(Ok(c)) => assert_eq!(c.profile_name, "ollama/backup"),
             Some(Err(e)) => panic!("expected the configured fallback, got an error: {e:#}"),

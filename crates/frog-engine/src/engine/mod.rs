@@ -560,6 +560,15 @@ pub fn spawn(opts: Options) -> Result<Handle> {
     start(opts, provider)
 }
 
+/// Start the engine on a model its gateway currently lists (docs/design/model-policy.md):
+/// `cloud/*` and this machine's models always start, a hosted BYOK model only while its
+/// gateway's `/v1/models` (cached for a minute) has it. Checked here, once, at spawn — never
+/// per call. Clients that can await should use this; [`spawn`] is the unchecked form.
+pub async fn spawn_checked(opts: Options) -> Result<Handle> {
+    crate::model_policy::check_spawn(&opts.profile_name, &opts.profile).await?;
+    spawn(opts)
+}
+
 /// Start a subagent's engine. Tests script it via `tests::child_script`.
 pub(crate) fn spawn_child(opts: Options) -> Result<Handle> {
     #[cfg(test)]
