@@ -860,6 +860,8 @@ final class SessionBrokerTests: XCTestCase {
         let line = #"{"seq":1,"session":"eng-0002","created":0,"event":"permission_request","id":"perm-1","item":"t1","name":"Bash","arg":"rm -rf /private/tmp/x","always":"","card":{"agent_reason":"cleaning up my build","trigger":"leaves the sandbox","touches":[{"path":"/private/tmp/x","exists":true,"dir":true,"bytes":2048,"created_here":true}],"risk":"deletes 1 path (2.0 KB) that this session created","recommendation":"allow: cleaning up its own output","prefix":"/private/tmp/x","timeout_secs":600}}"#
         let env = try JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8))
         guard case .permissionRequest(let req) = env.event else { return XCTFail() }
+        // The engine's card lands on the child's conversation (that's what makes it pending).
+        target.ingest(env)
         XCTAssertTrue(b.escalate(req, from: eng.id, name: eng.name))
         // No turn for the parent: nothing was delivered, so no transcript row and no wake.
         XCTAssertTrue(delivered.isEmpty, "the escalation started a turn: \(delivered)")
