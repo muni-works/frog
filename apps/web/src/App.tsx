@@ -108,6 +108,9 @@ export default function App() {
 
   const cloud = useCloud(key)
   const models = useModels(DEV_KEY ? null : key)
+  // The remembered pick only while Frog Cloud still lists it (dart drops out when no GPU node
+  // runs): otherwise the default, never a model nothing would answer.
+  const chosenModel = newModel && models.some((m) => m.id === idOf(newModel)) ? newModel : defaultModel(models)
   const repoList = useRepos(cloud)
   const { sessions, error: listError, setSessions, refresh: refreshSessions } = useSessions(cloud)
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined
@@ -227,7 +230,7 @@ export default function App() {
     setSessions((all) => [{ id: temp, title: text.length > 60 ? text.slice(0, 57) + '…' : text, repo: repo ?? '', branch: '', state: 'starting', updated: Date.now() }, ...all])
     setView({ kind: 'session', id: temp })
     try {
-      const s0 = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(newModel ? { model: spec(newModel) } : {}) })
+      const s0 = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(chosenModel ? { model: spec(chosenModel) } : {}) })
       // A session without a repo comes back titled "New session" until the engine names it.
       const s = { ...s0, title: s0.repo ? s0.title : text.length > 60 ? text.slice(0, 57) + '…' : text }
       setSessions((all) => [s, ...all.filter((x) => x.id !== s.id && x.id !== temp)])
@@ -242,7 +245,7 @@ export default function App() {
       setDraft(text)
       say(`Couldn't start a sandbox: ${e instanceof Error ? e.message : e}`)
     }
-  }, [cloud, send, setSessions, newModel, newMode])
+  }, [cloud, send, setSessions, chosenModel, newMode])
   useEffect(() => { if (pending && cloud) { setPending(null); start(pending) } }, [pending, cloud, start])
 
   const decide = useCallback((id: string, allow: boolean) => {
@@ -378,7 +381,7 @@ export default function App() {
         </div>
         <div className="dock"><div>
           <Composer repo="Connect a repo" onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips}
-            model={newModel ?? defaultModel(models)} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
+            model={chosenModel} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
         </div></div>
         <footer className="muni-foot"><a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a></footer>
@@ -527,7 +530,7 @@ export default function App() {
               <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
-                model={newModel ?? defaultModel(models)} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
+                model={chosenModel} models={models} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images) }} />
             </div>
           </div>
