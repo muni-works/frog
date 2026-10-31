@@ -119,12 +119,41 @@ fn engine_profile_failing(
     script: Vec<Response>,
     profile: Profile,
 ) -> (Handle, Arc<Mutex<Vec<String>>>) {
+    let (h, sent, _) = engine_profile_timed(fails, script, profile);
+    (h, sent)
+}
+
+/// [`engine_profile_failing`] that also keeps each attempt's start time, for backoff tests.
+fn engine_profile_timed(
+    fails: Vec<scripted::Fail>,
+    script: Vec<Response>,
+    profile: Profile,
+) -> (
+    Handle,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<tokio::time::Instant>>>,
+) {
+    engine_profile_named(fails, script, profile, "test")
+}
+
+/// [`engine_profile_timed`] on a named spec (the fix lines name the provider, so tests that
+/// check them run on the spec a session really would).
+fn engine_profile_named(
+    fails: Vec<scripted::Fail>,
+    script: Vec<Response>,
+    profile: Profile,
+    spec: &str,
+) -> (
+    Handle,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<tokio::time::Instant>>>,
+) {
     let opts = Options {
         cfg: Config {
             hermetic: true,
             ..Config::default()
         },
-        profile_name: "test".into(),
+        profile_name: spec.into(),
         profile,
         cwd: std::env::temp_dir(),
         mode: Mode::Default,
@@ -139,7 +168,12 @@ fn engine_profile_failing(
     let client = scripted::Client::new(script);
     *client.fails.lock().unwrap() = fails.into();
     let sent = client.sent.clone();
-    (start(opts, Provider::Scripted(client)).unwrap(), sent)
+    let attempts = client.attempts.clone();
+    (
+        start(opts, Provider::Scripted(client)).unwrap(),
+        sent,
+        attempts,
+    )
 }
 
 /// Opus on Vercel's AI Gateway, as `vercel/anthropic/claude-opus-5.5` resolves.
@@ -835,7 +869,7 @@ async fn incomplete_stream_is_retried_before_failing() {
         .collect();
     let mut h = engine(script, true);
     let evs = run(&mut h, "hi").await;
-    // Three retries; the first two are quiet, the third says it's still trying.
+    // Three retries, and ONE notice for the whole storm (docs/design/model-policy.md).
     let notices: Vec<&str> = evs
         .iter()
         .filter_map(|e| match &e.event {
@@ -844,7 +878,7 @@ async fn incomplete_stream_is_retried_before_failing() {
         })
         .collect();
     assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].ends_with("still trying (3/3)"), "{notices:?}");
+    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         &e.event,
         Event::TurnEnded {
@@ -866,9 +900,11 @@ async fn a_gateway_error_before_any_output_is_retried() {
         vec![reply(vec![text("all good")], Stop::End)],
     );
     let evs = run(&mut h, "hi").await;
-    // A retry happened, quietly (one retry is routine: no notice), and the turn completed
-    // with the good reply.
-    assert!(!evs.iter().any(|e| matches!(e.event, Event::Notice { .. })));
+    // A retry happened — ONE line says so, whether the storm is one retry or three
+    // (docs/design/model-policy.md) — and the turn completed with the good reply.
+    let notices = notices(&evs);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         e.event,
         Event::TurnEnded {
@@ -945,8 +981,8 @@ async fn a_gateway_error_mid_stream_discards_the_partial_and_retries() {
 
 #[tokio::test(start_paused = true)]
 async fn an_auth_error_is_never_retried() {
-    // 401 from the provider: fail the turn at once — no retry notice, no discard, and
-    // the unused scripted reply stays unconsumed.
+    // 401 from the provider: fail the turn at once — one notice saying how to fix it, no
+    // retry, no discard, and the unused scripted reply stays unconsumed.
     let mut h = engine_fail(
         vec![scripted::Fail::http(401, "{\"error\":\"invalid api key\"}")],
         vec![reply(vec![text("never reached")], Stop::End)],
@@ -960,11 +996,86 @@ async fn an_auth_error_is_never_retried() {
         !evs.iter()
             .any(|e| matches!(e.event, Event::ItemsDiscarded { .. }))
     );
+    // ONE notice, and it's the fix, not a retry count.
+    let notices = notices(&evs);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("rejected the key"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         &e.event,
         Event::TurnEnded {
             reason: EndReason::Error {
                 error: EngineError::Provider { status: 401, .. }
+            },
+            ..
+        }
+    )));
+}
+
+/// A 402 is the wallet, not the network: the first answer fails the call, the fix goes up as
+/// ONE notice, and the turn ends with the honest provider error — no five retries
+/// (docs/design/model-policy.md, the vercel incident).
+#[tokio::test(start_paused = true)]
+async fn out_of_credits_fails_at_once_with_the_fix() {
+    let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
+    p.base_url = Some("https://ai-gateway.vercel.sh/v1".into());
+    p.tool_mode = ToolMode::Native;
+    let fails = (0..5)
+        .map(|_| {
+            scripted::Fail::http(
+                402,
+                "{\"error\":{\"message\":\"Insufficient credits\",\"type\":\"insufficient_credits\"}}",
+            )
+        })
+        .collect();
+    let (mut h, _, attempts) =
+        engine_profile_named(fails, vec![], p, "vercel/openai/gpt-5");
+    let evs = run(&mut h, "hi").await;
+    // One attempt: no retry spends the budget on an empty wallet.
+    assert_eq!(attempts.lock().unwrap().len(), 1);
+    // One notice, and it's the provider's fix line.
+    let notices = notices(&evs);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("credits are out"), "{notices:?}");
+    assert!(notices[0].contains("add credits at"), "{notices:?}");
+    assert!(!notices[0].contains("retrying"), "{notices:?}");
+    // The turn ends with the provider's own error, not a swallowed one.
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded {
+            reason: EndReason::Error {
+                error: EngineError::Provider { status: 402, .. }
+            },
+            ..
+        }
+    )));
+}
+
+/// A busy provider retries 1 s, 2 s, 4 s and no further: four attempts, one notice for the
+/// whole storm (docs/design/model-policy.md).
+#[tokio::test(start_paused = true)]
+async fn a_rate_limited_provider_backs_off_one_two_four_and_stops() {
+    let mut p = Profile::new(ProviderKind::Ollama, "test");
+    p.tool_mode = ToolMode::Native;
+    let fails = (0..6)
+        .map(|_| scripted::Fail::http(429, "{\"error\":{\"message\":\"bull is busy\"}}"))
+        .collect();
+    let (mut h, _, attempts) = engine_profile_timed(fails, vec![], p);
+    let evs = run(&mut h, "hi").await;
+    let starts = attempts.lock().unwrap().clone();
+    assert_eq!(starts.len(), 4, "three retries after the first attempt");
+    let gaps: Vec<u64> = starts
+        .windows(2)
+        .map(|w| (w[1] - w[0]).as_secs())
+        .collect();
+    assert_eq!(gaps, [1, 2, 4], "{gaps:?}");
+    let notices = notices(&evs);
+    assert_eq!(notices.len(), 1, "one notice for the storm: {notices:?}");
+    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded {
+            reason: EndReason::Error {
+                error: EngineError::Provider { status: 429, .. }
             },
             ..
         }
@@ -985,13 +1096,13 @@ async fn a_mid_stream_error_retries_only_up_to_budget() {
             .collect();
     let mut h = engine_fail(fails, vec![]);
     let evs = run(&mut h, "hi").await;
-    // Three retries, two of them quiet: one notice, on the third.
+    // Three retries, ONE notice for the whole storm (docs/design/model-policy.md).
     let retries = evs
         .iter()
         .filter(|e| {
             matches!(
                 e.event,
-                Event::Notice { message: ref m, .. } if m.contains("still trying (3/3)")
+                Event::Notice { message: ref m, .. } if m.contains("retrying (up to 3 times)")
             )
         })
         .count();
@@ -9806,4 +9917,110 @@ async fn a_frog_cloud_turn_records_who_served_it() {
     }
     // Anything else stays unknown.
     assert!(served("testprov/m", Some("workers-ai")).await.is_none());
+}
+
+/// `StartSession` names a model: the engine checks it against that gateway's `/v1/models`
+/// before the client starts anything (docs/design/model-policy.md). A model the gateway
+/// doesn't list is refused with the fix; `cloud/*` always starts.
+#[tokio::test]
+async fn start_session_refuses_a_model_its_gateway_does_not_list() {
+    use std::collections::HashMap;
+    let base = "https://gateway.test/v1";
+    crate::model_policy::TEST_LISTS.with(|l| {
+        *l.borrow_mut() = Some(HashMap::from([(
+            base.to_string(),
+            vec!["openai/gpt-5".to_string()],
+        )]))
+    });
+    let start = |id: &str, model: &str| {
+        reply(
+            vec![Block::ToolUse {
+                id: id.into(),
+                name: "StartSession".into(),
+                input: json!({ "title": "a worker", "prompt": "do it", "model": model }),
+            }],
+            Stop::ToolUse,
+        )
+    };
+    let script = vec![
+        start("s1", "gateway/openai/gpt-9"),
+        start("s2", "gateway/openai/gpt-5"),
+        reply(vec![text("done")], Stop::End),
+    ];
+    // The gateway and its two models as config profiles, so nothing goes looking for a key:
+    // the check reads the list alone.
+    let mut cfg = Config {
+        hermetic: true,
+        ..Config::default()
+    };
+    for model in ["openai/gpt-9", "openai/gpt-5"] {
+        let mut p = Profile::new(ProviderKind::Openai, model);
+        p.base_url = Some(base.into());
+        p.tool_mode = ToolMode::Native;
+        cfg.models.insert(format!("gateway/{model}"), p);
+    }
+    let mut h = engine_perm_cfg(script, Mode::Default, cfg);
+    caps(&h, true);
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "start three".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    // The client answers every request it's actually given (the unlisted model's never is).
+    let mut evs = Vec::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        let idle = matches!(env.event, Event::TurnEnded { .. });
+        if let Event::SessionRequest { id, tool, .. } = &env.event {
+            assert_eq!(tool, "StartSession");
+            h.ops
+                .send(Op::SessionReply {
+                    id: id.clone(),
+                    result: Some(json!({ "id": "child-1", "name": "a worker" })),
+                    error: None,
+                })
+                .unwrap();
+        }
+        evs.push(env);
+        if idle {
+            break;
+        }
+    }
+    shutdown(h).await;
+    crate::model_policy::TEST_LISTS.with(|l| *l.borrow_mut() = None);
+
+    let outcome = |id: &str| {
+        evs.iter().find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                id: i,
+                item: Item::ToolCall { outcome, output, .. },
+            } if i == id => Some((*outcome, output.clone())),
+            _ => None,
+        })
+    };
+    // The unlisted model never reached the client: refused here, with the fix.
+    let (refused, why) = outcome("s1").expect("the refused call completed");
+    assert_eq!(refused, ToolOutcome::Error);
+    assert!(why.contains("model not listed"), "{why}");
+    assert!(why.contains("/v1/models"), "{why}");
+    // The listed one went through.
+    assert_eq!(outcome("s2").map(|o| o.0), Some(ToolOutcome::Ok));
+    // One request reached the client; the unlisted one never did.
+    let asked: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::SessionRequest { tool, .. } if tool == "StartSession" => Some(tool.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    // cloud/* is the platform's to serve: no gateway list is consulted, so it always starts.
+    assert!(
+        crate::model_policy::check_spawn_spec(&Config::default(), "cloud/bull")
+            .await
+            .is_ok()
+    );
 }

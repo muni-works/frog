@@ -132,6 +132,13 @@ pub fn fix_for(spec: &str, e: &anyhow::Error) -> Option<String> {
     fix_line(spec, class(h.status))
 }
 
+/// Whether `e` is the first and only answer: a wrong key, an empty wallet or a model the
+/// gateway doesn't serve. Retrying it only spends time, so it never does.
+pub fn is_fail_fast(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<HttpError>()
+        .is_some_and(|h| matches!(class(h.status), Failure::Auth | Failure::Credits | Failure::Missing))
+}
+
 /// The line that says how to connect `spec`'s provider, for errors that aren't the provider's
 /// own (a worker that can't run on rules alone, say).
 pub fn connect_line(spec: &str) -> String {
@@ -147,9 +154,14 @@ pub fn connect_line(spec: &str) -> String {
 }
 
 /// Tests seed this instead of the network: `Some(map)` means the test owns every gateway's
-/// list (a key with no entry is an unreachable gateway), `None` means fetch for real.
+/// list (a key with no entry is an unreachable gateway), `None` means fetch for real. Per
+/// thread, so parallel tests never see each other's gateways (tokio's test runtimes are
+/// single-threaded, so a test's own awaits stay on its thread).
 #[cfg(test)]
-pub static TEST_LISTS: Mutex<Option<HashMap<String, Vec<String>>>> = Mutex::new(None);
+thread_local! {
+    pub static TEST_LISTS: std::cell::RefCell<Option<HashMap<String, Vec<String>>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// The gateway lists fetched this process, by base URL, with when they were fetched.
 static LISTS: LazyLock<Mutex<HashMap<String, (Instant, Vec<String>)>>> =
@@ -161,7 +173,7 @@ static LISTS: LazyLock<Mutex<HashMap<String, (Instant, Vec<String>)>>> =
 async fn gateway_models(profile: &Profile) -> Option<Vec<String>> {
     let base = profile.base_url.as_deref()?.trim_end_matches('/').to_string();
     #[cfg(test)]
-    if let Some(lists) = TEST_LISTS.lock().unwrap().as_ref() {
+    if let Some(lists) = TEST_LISTS.with(|l| l.borrow().clone()) {
         return lists.get(&base).cloned();
     }
     if let Some((at, list)) = LISTS.lock().unwrap().get(&base)
@@ -231,6 +243,13 @@ pub async fn check_spawn(spec: &str, profile: &Profile) -> Result<()> {
         "{}",
         fix_line(spec, Failure::Missing).unwrap_or_else(|| "model not listed".into())
     )
+}
+
+/// [`check_spawn`] for a spec a client named (`StartSession`'s `model`, `SetSessionModel`'s):
+/// resolved first, so an unknown provider fails here rather than in a session that then dies.
+pub async fn check_spawn_spec(cfg: &crate::config::Config, spec: &str) -> Result<()> {
+    let (name, profile) = cfg.resolve(Some(spec))?;
+    check_spawn(&name, &profile).await
 }
 
 #[cfg(test)]
@@ -310,14 +329,22 @@ mod tests {
     #[tokio::test]
     async fn spawn_takes_cloud_and_this_machine_but_only_a_listed_byok_model() {
         let base = "https://gateway.test/v1";
-        *TEST_LISTS.lock().unwrap() = Some(HashMap::from([(
-            base.to_string(),
-            vec!["openai/gpt-5".to_string()],
-        )]));
-        let vercel = profile(ProviderKind::Openai, Some(base));
+        TEST_LISTS.with(|l| {
+            *l.borrow_mut() = Some(HashMap::from([(
+                base.to_string(),
+                vec!["openai/gpt-5".to_string()],
+            )]))
+        });
+        let listed = {
+            let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
+            p.base_url = Some(base.into());
+            p
+        };
         // A listed model starts; one the gateway doesn't serve doesn't, with the fix.
-        assert!(check_spawn("vercel/openai/gpt-5", &vercel).await.is_ok());
-        let refused = check_spawn("vercel/openai/gpt-9", &vercel).await.unwrap_err();
+        assert!(check_spawn("vercel/openai/gpt-5", &listed).await.is_ok());
+        let mut gone = listed.clone();
+        gone.model = "openai/gpt-9".into();
+        let refused = check_spawn("vercel/openai/gpt-9", &gone).await.unwrap_err();
         assert!(format!("{refused}").contains("model not listed"), "{refused}");
         // cloud/* is the platform's to serve: always valid, no list needed.
         let cloud = profile(ProviderKind::Openai, Some("https://api.frog.toys/v1"));
@@ -326,8 +353,8 @@ mod tests {
         let ollama = profile(ProviderKind::Ollama, Some("http://localhost:11434"));
         assert!(check_spawn("ollama/qwen3", &ollama).await.is_ok());
         // A gateway with no list (unreachable) isn't a rejection.
-        *TEST_LISTS.lock().unwrap() = Some(HashMap::new());
-        assert!(check_spawn("vercel/openai/gpt-9", &vercel).await.is_ok());
-        *TEST_LISTS.lock().unwrap() = None;
+        TEST_LISTS.with(|l| *l.borrow_mut() = Some(HashMap::new()));
+        assert!(check_spawn("vercel/openai/gpt-9", &gone).await.is_ok());
+        TEST_LISTS.with(|l| *l.borrow_mut() = None);
     }
 }

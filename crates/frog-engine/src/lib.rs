@@ -58,7 +58,7 @@ pub mod title;
 pub mod tools;
 pub mod worktree;
 
-pub use engine::{Handle, Options, spawn};
+pub use engine::{Handle, Options, spawn, spawn_checked};
 pub use follow::follow;
 pub use protocol::{
     Decision, Delta, EndReason, EngineError, Envelope, Event, Item, ItemKind, Level, Mode, Op,

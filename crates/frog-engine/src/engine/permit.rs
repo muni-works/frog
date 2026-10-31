@@ -713,6 +713,16 @@ impl Agent {
     ) -> Result<tools::Output> {
         use crate::tools::sessions;
         sessions::validate(name, input)?;
+        // A session starts on a model its gateway lists right now, or not at all
+        // (docs/design/model-policy.md): the check is here, once, so a model that dropped out
+        // of the gateway's list never becomes a session that dies on its first call.
+        if name == sessions::START
+            && let Some(spec) = input["model"].as_str().filter(|s| !s.trim().is_empty())
+        {
+            crate::model_policy::check_spawn_spec(&self.cfg, spec)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e:#}"))?;
+        }
         let (id, rx) = self.shared.sessions.open();
         self.emit(Event::SessionRequest {
             id,
