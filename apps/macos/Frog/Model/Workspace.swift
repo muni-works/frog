@@ -48,6 +48,19 @@ final class Workspace {
     private(set) var files: [String] = []
     /// The folder's git branch and uncommitted changes (nil outside a repository, and for chats).
     private(set) var git: GitInfo?
+    /// The repo this folder belongs to: the checkout a worktree hangs off, or the folder
+    /// itself when it's the main checkout. Nil for chats and non-repos. Asked once (a git
+    /// subprocess — not on the composer's body pass).
+    private(set) var repoRoot: URL?
+
+    private func resolveRepoRoot() {
+        guard !isChat else { return }
+        // The sidebar's convention first: a worktree path names its repo with no git run.
+        if SessionList.repoRoot(folder) != folder { repoRoot = SessionList.repoRoot(folder); return }
+        guard let top = Git.run(folder, ["rev-parse", "--show-toplevel"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !top.isEmpty else { return }
+        repoRoot = URL(fileURLWithPath: top)
+    }
     /// Agent Skills this folder sees, for `/skill` completion.
     private(set) var skills: [SkillInfo] = []
 
@@ -213,6 +226,7 @@ final class Workspace {
         let restoring = SessionRegistry.shared.hasPending
         let last = resume ?? (Self.restored || fresh || chat || restoring ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder)))
         Self.restored = true
+        resolveRepoRoot()
         let replay = Replay.arguments
         isReplay = replay != nil
         let wait = waitLock ? ["--wait-lock", "5"] : []
