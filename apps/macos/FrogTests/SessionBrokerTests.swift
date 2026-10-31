@@ -880,7 +880,7 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertEqual(b.approvalsForTesting.first?.tool, "Bash")
         let status = b.statusForTesting(eng.id)
         XCTAssertEqual(status?.pendingApprovals, 1)
-        XCTAssertEqual(status?.state, "waiting")
+        XCTAssertEqual(status?.waiting, true)
         // A session nobody started has no one to escalate to.
         XCTAssertFalse(b.escalate(req, from: chief.id, name: chief.name))
         XCTAssertEqual(informed.count, 1)
