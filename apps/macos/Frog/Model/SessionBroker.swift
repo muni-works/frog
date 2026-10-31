@@ -845,6 +845,10 @@ final class SessionBroker {
     /// Tests read the approval cards and their age tracking.
     var approvalsForTesting: [Approval] { approvals() }
     var waitingSinceForTesting: [String: Date] { waitingSince }
+    /// Tests read a tracked session's structured status (the same answer SessionStatus gives).
+    func statusForTesting(_ id: String) -> StatusInfo? {
+        (Library.shared.conversation(id) ?? background[id]).flatMap(selfStatus(of:))
+    }
     #endif
 
     /// The conversation tracked for session `id`: on screen or in the broker's background
@@ -861,38 +865,26 @@ final class SessionBroker {
         background.values.filter { $0.isLive }
     }
 
-    /// A permission prompt opened in session `child`: tell the session that started it,
-    /// so a manager can decide (or tell the user) instead of the prompt sitting unseen.
-    /// The child waits on it until answered or its timeout takes the safe path.
+    /// A permission prompt opened in session `child`: the session that started it hears about
+    /// it as a STATUS message, never a turn. The parent's own attention surface already carries
+    /// the card (the child shows as waiting in the sidebar's needs-you lens, `ListApprovals`
+    /// lists it with its age, and `SessionStatus` reports `pending_approvals`), so a transcript
+    /// row per card was noise Cam kept clearing. `inform` records the one line without starting
+    /// a turn or waking anything; the parent sees it with its next turn, if it has one.
+    /// The child waits on the card until answered or its timeout takes the safe path.
     @discardableResult
     func escalate(_ req: PermissionRequest, from child: String, name: String) -> Bool {
         guard let parent = parentOf(child), parent != child else { return false }
-        return reach(parent, "system", "system", Self.escalation(req, session: child, name: name))
+        return inform(parent, "system", "system", Self.escalation(req, session: child, name: name))
     }
 
-    /// The structured notice a parent gets for a child's pending approval.
+    /// The one line a parent gets for a child's pending approval. The card itself is the
+    /// parent's to see structurally (needs-you, `ListApprovals`, `SessionStatus`); this is just
+    /// enough for an agent to say something useful if it's asked. `SessionBroker.escalation`
+    /// used to build a full card dump here, one transcript turn per prompt.
     static func escalation(_ req: PermissionRequest, session: String, name: String) -> String {
-        var lines = [
-            "Approval pending in session \"\(name)\" (\(session)).",
-            "card: \(req.id)",
-            "tool: \(req.name)",
-            "command: \(req.arg)",
-        ]
-        if let r = req.reason { lines.append("reason: \(r)") }
-        if let c = req.card {
-            if let a = c.agentReason { lines.append("agent says: \(a)") }
-            lines.append("trigger: \(c.trigger)")
-            for t in c.touches ?? [] {
-                let size = t.bytes.map { " \(ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file))" } ?? ""
-                let mine = t.createdHere == true ? " (made by this session)" : ""
-                lines.append("touches: \(t.path)\(size)\(mine)")
-            }
-            lines.append("risk: \(c.risk)")
-            lines.append("recommendation: \(c.recommendation)")
-            lines.append("If nobody answers in \(c.timeoutSecs / 60) min it's denied and the session carries on.")
-        }
-        lines.append("Only the user can answer it, in that session's window; tell them if it matters.")
-        return lines.joined(separator: "\n")
+        let what = "\(req.name) \(req.arg)".trimmingCharacters(in: .whitespaces)
+        return "Approval pending in \"\(name)\" (\(session)): \(what). It's in needs-you and ListApprovals (card \(req.id)); only the user can answer it, in that session's window."
     }
 
     /// Report session `child`'s next turn back to `parent` when it goes idle (the hand-back).
