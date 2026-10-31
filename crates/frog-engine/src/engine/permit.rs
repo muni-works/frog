@@ -1212,7 +1212,14 @@ impl Agent {
         };
         if !started {
             let built = if fallback {
-                match crate::auto::Classifier::fallback(&self.cfg, &self.ctx.root) {
+                // The fallback needs a model the first pass wasn't: when the first pass
+                // already runs on the session's model (the default chain's `apple` down,
+                // `cloud/bull` down), sending the same action to the same model again
+                // isn't a second opinion, so none is available and the rules decide.
+                let judged_by = self.classifier.as_ref().map(|c| c.profile_name.as_str());
+                let session = (judged_by != Some(self.profile_name.as_str()))
+                    .then_some(self.profile_name.as_str());
+                match crate::auto::Classifier::fallback(&self.cfg, &self.ctx.root, session) {
                     Some(b) => b,
                     None => return Err("no fallback classifier is configured".into()),
                 }

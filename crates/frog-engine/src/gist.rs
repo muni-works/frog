@@ -41,18 +41,21 @@ fn schema() -> Value {
     })
 }
 
-/// Which small model writes gists: `gist_model` from config when set, else
-/// `cloud/qwen3-8b` (small and fast), else Apple's on-device model when it's here. A
-/// candidate this project's policy rejects is skipped for the next; none usable means no
-/// gists (the caller falls back to the elided command).
+/// Which small model writes gists: `gist_model` from config when set, else Apple's
+/// on-device model when it's here (free, local, no key), else frog cloud's small
+/// model — `cloud/qwen3-coder-next` when the gateway lists it, else `cloud/bull`. A
+/// candidate this project's policy rejects is skipped for the next; none usable means
+/// no gists (the caller falls back to the elided command).
 pub(crate) fn choose(cfg: &Config, dir: &std::path::Path) -> Option<(String, Profile)> {
     let mut candidates: Vec<String> = match &cfg.gist_model {
         Some(spec) => vec![spec.clone()],
-        None => vec!["cloud/qwen3-8b".into()],
+        None => vec![
+            "apple/on-device".into(),
+            crate::catalog::cached(crate::auto::CODER_NEXT)
+                .map_or_else(|| "cloud/bull".to_string(), |_| crate::auto::CODER_NEXT.into()),
+        ],
     };
-    if cfg.gist_model.is_none() && crate::sidecar::available(crate::sidecar::APPLE) {
-        candidates.push("apple/on-device".into());
-    }
+    candidates.retain(|spec| spec != "apple/on-device" || crate::sidecar::available(crate::sidecar::APPLE));
     candidates.iter().find_map(|spec| {
         let (name, profile) = cfg.resolve(Some(spec)).ok()?;
         crate::policy::check(dir, &name, &profile).ok()?;
